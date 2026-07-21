@@ -9,38 +9,8 @@ related:
   - "[[2026-07-21-index-backpressure-storage-hygiene-plan]]"
 ---
 
-<!-- FRONTMATTER RULES:
-     tags: one directory tag (hardcoded #exec) and one feature tag.
-     Replace index-backpressure-storage-hygiene with a kebab-case feature tag, e.g. #foo-bar.
-     Additional tags may be appended below the required pair.
 
-     modified: CLI-maintained last-modified stamp; set at scaffold time,
-     refreshed by mutating CLI verbs and vault check fix; never hand-edit.
 
-     step_id is the originating Step's canonical identifier, e.g. S01.
-     The S24 and 2026-07-21-index-backpressure-storage-hygiene-plan placeholders are machine-filled by
-     `vaultspec-core vault add exec`; do not fill them by hand.
-
-     Related: use wiki-links as '[[yyyy-mm-dd-foo-bar-plan]]' and link the
-     parent plan.
-
-     DO NOT add fields beyond those scaffolded; metadata lives
-     only in the frontmatter. -->
-
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the related: field above.
-     - NEVER use [[wiki-links]] or markdown links in the document body.
-     - NEVER reference file paths in the body. If you must name a source file,
-       class, or function, use inline backtick code: `src/module.py`. -->
-
-<!-- STEP RECORD:
-     This file represents one Step from the originating plan. Identified
-     by its canonical leaf identifier (S##) and ancestor display path.
-     The persist an active-jobs snapshot and mark jobs from a prior daemon life as interrupted at startup so killed jobs never vanish from server jobs and ## Scope
-
-- `src/vaultspec_rag/jobs.py` placeholders below are machine-filled
-     by `vaultspec-core vault add exec` from the originating Step row;
-     do not fill them by hand. -->
 
 # persist an active-jobs snapshot and mark jobs from a prior daemon life as interrupted at startup so killed jobs never vanish from server jobs
 
@@ -50,10 +20,20 @@ related:
 
 ## Description
 
-<!-- Succinct line-by-line list of steps executed. Use imperative language, mirroring git commit summary lines. -->
+Running jobs now persist a bounded snapshot (`jobs-active.json` in the
+status dir, atomic write) on start, finish, and step change; daemon
+startup restores a prior life's running jobs as phase `interrupted` with
+their last progress, start time, and initiator attribution, then consumes
+the snapshot so a second restart restores nothing. The `Phase` literal
+gains `interrupted`; `reset()` deliberately leaves the file so tests can
+simulate daemon death.
 
 ## Outcome
 
+Committed as the interrupted-jobs commit; restore semantics covered by
+`TestInterruptedJobRestore`.
+
 ## Notes
 
-<!-- Incidents. Data loss. Difficulties; persistent failures. Skipped work. Scaffolds left in code. Failures. -->
+Step-change persistence keeps write churn to a handful of writes per run
+while restored progress stays meaningful.

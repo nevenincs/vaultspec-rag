@@ -17,6 +17,18 @@ related:
 
 ## Description
 
+`prune_debris` in the storage-ops domain removes unlisted collection dirs
+by filesystem delete (Qdrant cannot load, snapshot, or drop them), gated
+behind the new `server storage prune --debris` flag plus the existing
+confirmation flow; dry-run previews, nothing-to-remove is a success, and
+the JSON envelope gains a `debris` block.
+
 ## Outcome
 
+Committed within the P05 storage commit; covered by the prune_debris
+tests including the only-unlisted-dirs safety case.
+
 ## Notes
+
+Debris has no manifest attribution, so automation never touches it - the
+operator flag is the confirmation, matching manual-prune semantics.

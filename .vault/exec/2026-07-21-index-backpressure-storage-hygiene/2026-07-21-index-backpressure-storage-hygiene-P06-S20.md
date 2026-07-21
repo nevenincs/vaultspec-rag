@@ -17,6 +17,14 @@ related:
 
 ## Description
 
+Docs: `storage-maintenance.md` gains the ephemeral idle-TTL section under
+automatic reclamation, the `prune --debris` recipe, and the totals/gauge
+rows; `configuration.md` adds the ephemeral TTL knob;
+`service-mode.md` documents `error_kind` remediation, the `stalled` flag
+across surfaces, and `interrupted` restore semantics.
+
 ## Outcome
+
+Committed as the docs commit for this feature.
 
 ## Notes

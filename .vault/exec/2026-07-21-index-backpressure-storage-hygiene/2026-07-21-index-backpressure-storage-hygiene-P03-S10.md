@@ -17,6 +17,17 @@ related:
 
 ## Description
 
+Verification found a real gap: `InsufficientDiskSpaceError` subclasses
+`RuntimeError`, so the in-process CLI index path routed a preflight
+refusal into `_handle_gpu_error` and misdiagnosed it as a torch problem.
+Added an explicit except branch ahead of the GPU handler emitting exactly
+one `disk_preflight_failed` envelope (`--json`) with storage remediation,
+or a plain error line in human mode; exit 1 on both.
+
 ## Outcome
+
+Committed as `fix(cli): disk-preflight refusal is a structured envelope,
+not a GPU misdiagnosis (#242)`; `TestDiskPreflightRefusal` (json + human)
+green.
 
 ## Notes

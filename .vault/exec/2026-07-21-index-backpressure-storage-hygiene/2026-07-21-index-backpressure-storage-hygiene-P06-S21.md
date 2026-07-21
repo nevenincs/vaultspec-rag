@@ -17,6 +17,15 @@ related:
 
 ## Description
 
+Two new ADR guards: `TestJobErrorTaxonomyStaysLight` (fresh-interpreter
+import of `_job_errors` loads neither torch nor any CLI module) and
+`TestEncodeRecoveryStaysBounded` (source scan pairing every CUDA-OOM
+handler in `embeddings.py` with the batch-size floor raise). The existing
+lifecycle-inertness guards already cover the new hygiene code since it
+lives inside the scanned modules.
+
 ## Outcome
+
+Committed with the P07 test commit; 32 ADR regression tests green.
 
 ## Notes

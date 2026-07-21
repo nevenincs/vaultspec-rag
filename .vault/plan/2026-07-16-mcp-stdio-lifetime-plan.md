@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#mcp-stdio-lifetime'
 date: '2026-07-16'
-modified: '2026-07-19'
+modified: '2026-07-21'
 tier: L2
 related:
   - '[[2026-07-16-mcp-stdio-lifetime-adr]]'

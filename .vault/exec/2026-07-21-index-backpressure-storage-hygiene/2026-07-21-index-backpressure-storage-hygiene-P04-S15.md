@@ -17,6 +17,16 @@ related:
 
 ## Description
 
+`TestEphemeralIdleTier` covers: idle empty reclaim, idle data taking the
+archive action, fresh-activity pending, missing-stamp pending, non-temp
+live untouched, zero-TTL disable, absent-mapping skip, and orphan
+priority under a shared cap of 1. `TestLastIndexedStamping` pins the
+manifest stamp overwrite. Suite plus manifest/survey/ADR-regression/
+indexer suites: 192 tests green.
+
 ## Outcome
+
+Committed as `test(storage): ephemeral idle-TTL tier invariants and
+activity-clock stamping (#242)`.
 
 ## Notes

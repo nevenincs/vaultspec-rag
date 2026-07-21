@@ -17,6 +17,15 @@ related:
 
 ## Description
 
+Verified upstream PR 245's normalization: `root_collection_prefix` strips
+the extended-length device prefixes (plain and UNC forms) before
+resolve+normcase, and it is the single hashing authority (store
+namespacing, `record_root`, `remove_root`, `rekey_prefix`, root-addressed
+delete all call it), so one fix covers registration, teardown, and rekey.
+The alias regression test ships upstream; no gaps found.
+
 ## Outcome
+
+Closed as verified-upstream; no code authored on this branch.
 
 ## Notes

@@ -17,6 +17,12 @@ related:
 
 ## Description
 
+`TestDebrisVisibility`: debris detection with footprints, no-storage-dir
+no-op, totals rollup across statuses, dry-run leaves dirs in place,
+removal spares live-listed dirs, idempotent empty result.
+
 ## Outcome
+
+Committed within the P05 storage commit; 37 storage-ops tests green.
 
 ## Notes

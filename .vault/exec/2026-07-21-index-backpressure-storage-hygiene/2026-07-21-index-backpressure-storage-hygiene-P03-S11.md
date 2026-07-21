@@ -17,6 +17,14 @@ related:
 
 ## Description
 
+Confirmed PR 246's `test_store_writes.py` already covers refusal
+(`floor breach`, impossible estimate with canonical disk-full phrasing),
+pass-through (ample headroom), and the remote-storage skip (missing local
+volume). The only gap was the CLI surfacing, closed in S10 with two new
+tests.
+
 ## Outcome
+
+Closed as verified-upstream plus the S10 CLI tests.
 
 ## Notes

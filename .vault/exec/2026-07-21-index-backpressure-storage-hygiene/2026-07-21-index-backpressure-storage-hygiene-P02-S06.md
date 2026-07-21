@@ -17,6 +17,16 @@ related:
 
 ## Description
 
+`/jobs` shaping gains `_job_stalled` (running, non-waiting, progress age past
+the shared threshold) exposed as a `stalled` field per record and a `stalled`
+count plus `error_kinds` histogram in the summary; `/health` gains a bounded
+`jobs` rollup: running count, stalled count, and the most recent failure's
+id/error_kind/finished_at.
+
 ## Outcome
+
+Committed as `feat(server): service-domain stalled flag on /jobs and bounded
+jobs rollup on /health (#242)`; covered by `TestJobStallShaping` and
+`TestHealthJobsRollup`.
 
 ## Notes

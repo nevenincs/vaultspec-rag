@@ -17,6 +17,14 @@ related:
 
 ## Description
 
+Tests: `TestJobErrorKind` (classification lifecycle on real records),
+`TestJobStallShaping` (liveness flag semantics + summary counts), and
+`TestHealthJobsRollup` (a real Starlette TestClient asserting the /health
+jobs block).
+
 ## Outcome
+
+Committed as `test(jobs): error_kind classification, stall shaping, /health
+jobs rollup (#242)`; 33 registry/route tests + 66 CLI tests green.
 
 ## Notes

@@ -17,6 +17,16 @@ related:
 
 ## Description
 
+The CLI now renders from the shared taxonomy: `_stale_progress_label` prefers
+the service-computed `stalled` flag (age fallback only for older services),
+the local threshold aliases `STALL_THRESHOLD_SECONDS`, and the disk-full
+string match is replaced by `remediation(classify_error_text(...))` so the
+CLI never grows its own error matching again. `server status` inherits both
+via the shared helpers.
+
 ## Outcome
+
+Committed as `refactor(cli): render jobs errors and stall from the shared
+service taxonomy (#242)`; existing CLI rendering suites stay green.
 
 ## Notes
