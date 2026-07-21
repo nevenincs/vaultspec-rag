@@ -27,12 +27,13 @@ from ..store import CodeChunk
 from ._ast_chunker import ASTChunker
 from ._chunking import LANGUAGE_MAP, TextSplitter
 from ._preprocess_cache import read_cached_output, write_cached_output
-from ._preprocess_runner import run_preprocessor
+from ._preprocess_runner import run_preprocessor, run_preprocessor_batch
 
 if TYPE_CHECKING:
     import pathlib
 
-    from ._preprocess_config import PreprocessContext
+    from ._preprocess_config import PreprocessContext, PreprocessRule
+    from ._preprocess_runner import PreprocessResult
     from ._preprocess_schema import PreprocOutput
 
 logger = logging.getLogger(__name__)
@@ -171,12 +172,23 @@ def preprocess_file(
     if cached is not None:
         return _PreprocessOutcome("ok", _chunks_from_output(cached, rel_path), None)
 
-    result = run_preprocessor(
-        path,
-        rule,
-        max_emitted_bytes=prep.max_emitted_bytes,
-        project_root=prep.project_root,
-    )
+    if rule.batch:
+        # A batch rule reaching the single-file path (a direct caller, or a
+        # scoped change of one matched file) runs as a one-file manifest, so it
+        # honours the same {paths} contract and cache token as the grouped path.
+        result = run_preprocessor_batch(
+            [path],
+            rule,
+            max_emitted_bytes=prep.max_emitted_bytes,
+            project_root=prep.project_root,
+        )[str(path)]
+    else:
+        result = run_preprocessor(
+            path,
+            rule,
+            max_emitted_bytes=prep.max_emitted_bytes,
+            project_root=prep.project_root,
+        )
     if result.status == "ok" and result.output is not None:
         write_cached_output(prep.cache_root, content_hash, cache_token, result.output)
         return _PreprocessOutcome(
@@ -373,20 +385,159 @@ def chunk_and_hash_file(
                 preprocess_reason=outcome.reason,
             )
         # "passthrough" / "none" fall through to ordinary chunking below.
+    return _raw_file_result(path, root_dir, rel_path, content_hash, raw)
+
+
+def _raw_file_result(
+    path: pathlib.Path,
+    root_dir: pathlib.Path,
+    rel_path: str,
+    content_hash: str,
+    raw: bytes,
+) -> FileChunkResult:
+    """Chunk already-read raw bytes into a hash-carrying :class:`FileChunkResult`.
+
+    The hash is already computed, so a decode or chunk failure still returns a
+    result (with no chunks) rather than raising: that keeps the file present in
+    the index metadata, matching the pre-rework behaviour where hashing was an
+    independent pass. Dropping it would make every later incremental run
+    re-chunk the file.
+    """
     content = _decode_source(raw, path)
     if content is None:
         return FileChunkResult(rel_path, content_hash, [])
     try:
         chunks = _chunk_decoded(content, path, root_dir, _resolve_html_strip())
     except Exception:
-        # The hash is already computed, so still return a result (with no
-        # chunks) rather than raising: that keeps the file present in the
-        # index metadata, matching the pre-rework behaviour where hashing was
-        # an independent pass. Dropping it would make every later incremental
-        # run re-chunk the file.
         logger.warning("Chunking failed for %s; indexing hash only", rel_path)
         return FileChunkResult(rel_path, content_hash, [])
     return FileChunkResult(rel_path, content_hash, chunks)
+
+
+@dataclass(slots=True)
+class _BatchMember:
+    """One file's read-time state carried across the batch's phases."""
+
+    path: pathlib.Path
+    rel_path: str
+    content_hash: str
+    cached: PreprocOutput | None
+
+
+def chunk_batch_files(
+    paths: list[pathlib.Path],
+    root_dir: pathlib.Path,
+    rule: PreprocessRule,
+    prep: PreprocessContext,
+) -> list[FileChunkResult]:
+    """Preprocess a group of files with one batch spawn, then chunk each (#241).
+
+    Reads and hashes every file, consults the D7 cache per file (cache token =
+    the batch rule's command), runs the batch hook once over the cache misses,
+    writes a cache entry for each success, then turns every file's output into
+    a :class:`FileChunkResult` exactly as the per-file path does: ``ok`` yields
+    preprocessor chunks, ``skipped`` yields none, and a ``passthrough`` failure
+    chunks the raw file normally. Unreadable files are dropped (no result),
+    matching :func:`chunk_and_hash_file`.
+
+    Raises:
+        PreprocessAbortError: If any file fails and ``on_error == "fail"`` -
+            propagates out of the worker to abort the run.
+    """
+    cache_token = rule.command or ""
+    members: list[_BatchMember] = []
+    misses: list[pathlib.Path] = []
+    for path in paths:
+        try:
+            raw = path.read_bytes()
+        except OSError as e:
+            logger.warning("Cannot read %s: %s", path, e)
+            continue
+        content_hash = hashlib.blake2b(raw).hexdigest()
+        rel_path = str(path.relative_to(root_dir)).replace("\\", "/")
+        cached = read_cached_output(prep.cache_root, content_hash, cache_token)
+        members.append(_BatchMember(path, rel_path, content_hash, cached))
+        if cached is None:
+            misses.append(path)
+
+    batch_results: dict[str, PreprocessResult] = {}
+    if misses:
+        batch_results = run_preprocessor_batch(
+            misses,
+            rule,
+            max_emitted_bytes=prep.max_emitted_bytes,
+            project_root=prep.project_root,
+        )
+        for member in members:
+            if member.cached is not None:
+                continue
+            result = batch_results.get(str(member.path))
+            if (
+                result is not None
+                and result.status == "ok"
+                and result.output is not None
+            ):
+                write_cached_output(
+                    prep.cache_root,
+                    member.content_hash,
+                    cache_token,
+                    result.output,
+                )
+
+    results: list[FileChunkResult] = []
+    for member in members:
+        results.append(_batch_member_result(member, root_dir, batch_results))
+    return results
+
+
+def _batch_member_result(
+    member: _BatchMember,
+    root_dir: pathlib.Path,
+    batch_results: dict[str, PreprocessResult],
+) -> FileChunkResult:
+    """Turn one batch member's disposition into a :class:`FileChunkResult`."""
+    output = member.cached
+    if output is None:
+        result = batch_results.get(str(member.path))
+        if result is not None and result.status == "passthrough":
+            return _passthrough_batch_member(member, root_dir)
+        if result is None or result.status != "ok" or result.output is None:
+            reason = result.reason if result is not None else None
+            return FileChunkResult(
+                member.rel_path,
+                member.content_hash,
+                [],
+                preprocess_status="skipped",
+                preprocess_reason=reason,
+            )
+        output = result.output
+    return FileChunkResult(
+        member.rel_path,
+        member.content_hash,
+        _chunks_from_output(output, member.rel_path),
+        preprocess_status="ok",
+    )
+
+
+def _passthrough_batch_member(
+    member: _BatchMember,
+    root_dir: pathlib.Path,
+) -> FileChunkResult:
+    """Chunk a passthrough batch member's raw source, mirroring the per-file path.
+
+    Passthrough re-reads the source rather than retaining every batch file's raw
+    bytes in memory; it only fires on a hook failure under ``on_error =
+    passthrough``. As on the per-file path, the raw chunks carry no preprocess
+    status (the file is indexed as ordinary source).
+    """
+    try:
+        raw = member.path.read_bytes()
+    except OSError as e:
+        logger.warning("Cannot read %s: %s", member.path, e)
+        return FileChunkResult(member.rel_path, member.content_hash, [])
+    return _raw_file_result(
+        member.path, root_dir, member.rel_path, member.content_hash, raw
+    )
 
 
 def chunk_with_ast(

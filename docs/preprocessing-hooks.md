@@ -163,6 +163,90 @@ Rules:
 - Provide **either** `units` (you chunk) **or** `text` (the indexer chunks it), never
   both and never neither. When you provide `units`, it must be non-empty.
 
+## Batch hooks
+
+One subprocess per file makes cheap hooks dominated by interpreter startup: a bare
+`python` noop hook measures **102.7 ms/file** (and **217.3 ms/file** through `uv run`),
+versus **1.2 ms/file** when one spawn handles 100 files. On a first index or a clean
+rebuild that constant is paid for every matched file. A batch hook amortizes it: one
+subprocess processes many files at once.
+
+Opt in per rule with `batch = true`. A batch rule's `command` receives a **manifest**
+of source paths via a `{paths}` placeholder (not the per-file `{path}`) and emits a JSON
+**array** of per-file outputs:
+
+```toml
+[[rule]]
+pattern  = "*.pdf"
+command  = "python tools/pdf_batch.py {paths}"   # {paths} is the manifest file path
+batch    = true
+on_error = "skip"
+timeout_s = 5                                     # per-file budget; see scaling below
+```
+
+Rules for a batch rule:
+
+- **`command` only.** `batch = true` is rejected on an `entry_point` rule (the
+  entry-point form keeps per-file semantics), on a command missing `{paths}`, or on a
+  command that also carries `{path}`. A non-batch command carrying `{paths}` is likewise
+  rejected. Like any config defect, an invalid batch rule is dropped (or fails
+  `preprocess check` in strict mode).
+
+The manifest and response contract:
+
+- **Manifest** - `{paths}` is replaced with the path of a temp file holding one absolute
+  source path per line, UTF-8 encoded. Read it, process each path, and delete nothing
+  (vaultspec-rag removes the manifest after the run).
+- **Response** - print **one JSON array** on stdout. Each element is a normal
+  [output object](#output-schema) plus a `"path"` field naming the source file it belongs
+  to (the absolute path from the manifest). vaultspec-rag maps each element back to its
+  file by that `"path"`.
+
+```jsonc
+[
+  {
+    "path": "/abs/docs/a.pdf",         // required; maps this element to its source file
+    "schema_version": 1,
+    "preprocessor_id": "pdf-batch",
+    "preprocessor_version": "1.0",
+    "source_path": "/abs/docs/a.pdf",
+    "units": [ /* ... */ ]
+  },
+  { "path": "/abs/docs/b.pdf", "schema_version": 1, /* ... */ "text": "..." }
+]
+```
+
+Bounds scale with the batch:
+
+- **Timeout** - the wall-clock budget is `timeout_s * (files in the batch)`, capped at
+  600 s, so the per-file budget you declared scales with the work handed over.
+- **Stdout cap** scales the same way so the whole array fits; the per-file emitted-text
+  cap (`VAULTSPEC_RAG_PREPROCESS_MAX_EMITTED_BYTES`) still applies unchanged to every
+  element.
+
+Failure handling is per file:
+
+- A file **missing** from the response array, or whose element fails schema validation or
+  the emitted-text cap, is resolved through the rule's `on_error` for that file alone
+  (`skip` / `passthrough` / `fail`); the other files in the batch are unaffected.
+- A **malformed envelope** - non-JSON, not an array, a non-zero exit, or a timeout -
+  fails the whole batch, and every file in it is resolved through `on_error`.
+- `on_error = "fail"` aborts the index run on the first affected file, exactly as it does
+  per file.
+
+> **Known interaction (`batch` + `on_error = "fail"`).** When a batching rule fails inside
+> the indexer's chunk worker pool, the pool reports it as a per-file *skip* rather than
+> aborting the run - the same way the per-file `command` path's abort is currently absorbed
+> by the pool. A whole batch that fails under `on_error = "fail"` therefore drops every file
+> in that group as skipped (they are counted and listed as skips, never silently) instead of
+> stopping the index. If a missing document must hard-stop the run, keep that rule per-file
+> (`batch = false`) until the pool propagates the abort.
+
+Batch results are cached per file under the same [cache](#cache-and-incremental-indexing)
+key, so cache hits keep bypassing the hook entirely and a mixed hit/miss set shrinks the
+manifest to just the misses. Matched files are grouped into manifests of at most 64 paths,
+each group a single spawn.
+
 ## Cache and incremental indexing
 
 Successful extraction output is cached under the data directory, keyed on the source

@@ -89,7 +89,9 @@ class PreprocessRule:
     Attributes:
         pattern: The gitignore-style glob this rule matched on.
         command: The subprocess command template with a ``{path}``
-            placeholder. Exactly one of ``command``/``entry_point`` is set.
+            placeholder (or a ``{paths}`` manifest placeholder when
+            ``batch`` is set). Exactly one of ``command``/``entry_point`` is
+            set.
         entry_point: A ``"module:callable"`` reference, executed out-of-process
             by the runner (the safe form of D9). Exactly one of
             ``command``/``entry_point`` is set.
@@ -102,6 +104,11 @@ class PreprocessRule:
         options: Opaque per-rule options forwarded to the preprocessor.
         order: Zero-based position of the rule in the source file, used as the
             deterministic tie-breaker after ``priority``.
+        batch: When ``True`` the command receives a manifest of source paths
+            via a ``{paths}`` placeholder and emits a JSON array of per-file
+            outputs, so one subprocess amortises the spawn cost across many
+            files. Valid only on ``command`` rules whose command carries
+            ``{paths}``; never combined with ``entry_point``.
     """
 
     pattern: str
@@ -112,6 +119,7 @@ class PreprocessRule:
     timeout_s: float | None
     options: Mapping[str, object]
     order: int
+    batch: bool = False
 
 
 class PreprocessConfig:
@@ -377,6 +385,7 @@ def _build_rule(
     on_error = _resolve_on_error(rule_map, reject)
     priority = _resolve_priority(rule_map, reject)
     timeout_s = _resolve_timeout(rule_map, reject)
+    batch = _resolve_batch(rule_map, command, entry_point, reject)
 
     options_raw = rule_map.get("options", {})
     if not isinstance(options_raw, dict):
@@ -392,6 +401,7 @@ def _build_rule(
         timeout_s=timeout_s,
         options=options,
         order=order,
+        batch=batch,
     )
 
 
@@ -419,6 +429,48 @@ def _resolve_invocation(
     if not sep or not module or not attr:
         raise reject("'entry_point' must be of the form 'module:callable'")
     return None, entry_raw
+
+
+#: The manifest placeholder a batch command must carry, and the per-file
+#: placeholder it must not (a batch command is handed a paths manifest, never a
+#: single path).
+_BATCH_PLACEHOLDER = "{paths}"
+_SINGLE_PLACEHOLDER = "{path}"
+
+
+def _resolve_batch(
+    rule_map: dict[str, object],
+    command: str | None,
+    entry_point: str | None,
+    reject: Callable[[str], _RuleRejectedError],
+) -> bool:
+    """Resolve and validate the ``batch`` knob against the invocation form.
+
+    ``batch = true`` is valid only on a ``command`` rule whose command carries
+    the ``{paths}`` manifest placeholder and not the per-file ``{path}``
+    placeholder; it is never combined with ``entry_point`` (which keeps v1
+    per-file semantics). A non-batch command must not carry ``{paths}`` - the
+    manifest placeholder is meaningless without a batch invocation.
+    """
+    batch_raw = rule_map.get("batch", False)
+    if not isinstance(batch_raw, bool):
+        raise reject("'batch' must be a boolean")
+    if not batch_raw:
+        if command is not None and _BATCH_PLACEHOLDER in command:
+            raise reject(f"'{_BATCH_PLACEHOLDER}' placeholder requires 'batch = true'")
+        return False
+    if entry_point is not None:
+        raise reject("'batch' is not valid with 'entry_point'")
+    if command is None or _BATCH_PLACEHOLDER not in command:
+        raise reject(
+            f"a batch command must contain the '{_BATCH_PLACEHOLDER}' placeholder"
+        )
+    if _SINGLE_PLACEHOLDER in command:
+        raise reject(
+            f"a batch command must not contain the '{_SINGLE_PLACEHOLDER}' "
+            f"placeholder; use '{_BATCH_PLACEHOLDER}'"
+        )
+    return True
 
 
 def _resolve_on_error(
