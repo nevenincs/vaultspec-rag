@@ -14,6 +14,7 @@ related:
   - '[[2026-07-21-large-index-resilience-W01-P02-S06]]'
   - '[[2026-07-21-large-index-resilience-W01-P03-S12]]'
   - '[[2026-07-21-large-index-resilience-W01-P03-S13]]'
+  - '[[2026-07-21-large-index-resilience-W01-P03-S14]]'
   - '[[2026-07-21-large-index-resilience-adr]]'
   - '[[2026-07-21-large-index-resilience-plan]]'
   - '[[2026-07-21-large-index-resilience-reference]]'
@@ -55,6 +56,7 @@ Auto-generated index of all documents tagged with `#large-index-resilience`.
 - `2026-07-21-large-index-resilience-W01-P02-S06` - Transfer sparse document outputs to CPU immediately after forward completion and narrow caller lock spans
 - `2026-07-21-large-index-resilience-W01-P03-S12` - Construct the server-mode store client from explicit operation timeout configuration
 - `2026-07-21-large-index-resilience-W01-P03-S13` - Clamp bounded write retry and sleep to the remaining durable no-progress budget
+- `2026-07-21-large-index-resilience-W01-P03-S14` - Implement durable-progress deadlines and interruptible queue, retry, and shutdown polling
 
 ### plan
 
