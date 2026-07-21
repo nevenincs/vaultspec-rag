@@ -531,6 +531,22 @@ def storage_prune(
 # -- reconcile --------------------------------------------------------------
 
 
+def _batch_status(result: ReconcileBatch) -> str:
+    """Machine-readable outcome for one reconcile pass.
+
+    A broker keys on this, so a preview must never read as an applied
+    change, and a pass that only issued updates must not claim the
+    reclamation it has not observed.
+    """
+    if not result.results:
+        return "already_converged"
+    if result.dry_run:
+        return "preview"
+    if any(r.status == "reconciled" for r in result.results):
+        return "applied"
+    return "issued"
+
+
 def _render_reconcile(result: ReconcileBatch, json_mode: bool) -> None:
     if json_mode:
         _emit_json(
@@ -553,18 +569,27 @@ def _render_reconcile(result: ReconcileBatch, json_mode: bool) -> None:
                 "drifted_remaining": result.drifted_remaining,
                 "reclaimed_bytes": result.reclaimed_bytes,
                 "dry_run": result.dry_run,
-                "status": "already_converged" if not result.results else "applied",
+                "status": _batch_status(result),
             },
         )
         return
     if not result.results:
         typer.echo("Every collection is already at the bounded geometry.")
         return
-    verb = "Would reconcile" if result.dry_run else "Reconciled"
+    # The verb has to follow what actually happened: an unwaited run has
+    # converged nothing, and calling it "Reconciled ... 0.0B reclaimed" reads
+    # as a failed reconcile rather than an unobserved one.
+    converged = sum(1 for r in result.results if r.status == "reconciled")
+    if result.dry_run:
+        verb = "Would reconcile"
+    elif converged:
+        verb = "Reconciled"
+    else:
+        verb = "Started reconcile on"
     typer.echo(
         f"{verb} {len(result.results)} collections "
         f"({_human_size(result.reclaimed_bytes)} reclaimed); "
-        f"{result.drifted_remaining} still drifted."
+        f"{result.drifted_remaining} still converging."
     )
     for r in result.results:
         detail = ""

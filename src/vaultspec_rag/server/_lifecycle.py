@@ -364,7 +364,7 @@ def _report_reconcile(batch: ReconcileBatch | None) -> list[ReconcileResult]:
     reconciled = [r for r in batch.results if r.status == "reconciled"]
     incr("maintenance_reconciled_total", len(reconciled))
     incr("maintenance_reconciled_bytes_total", batch.reclaimed_bytes)
-    observe("store_drifted_namespaces", float(batch.drifted_remaining))
+    observe("store_drifted_collections", float(batch.drifted_remaining))
     for entry in reconciled:
         log_event(
             logger,
@@ -399,7 +399,12 @@ def _storage_maintenance_tick_sync() -> None:
     from ..storage_ops import ReclaimPolicy, run_maintenance_cycle
 
     cfg = get_config()
-    if not cfg.effective_server_mode() or not bool(cfg.storage_autoprune):
+    autoprune = bool(cfg.storage_autoprune)
+    reconcile = bool(cfg.storage_reconcile)
+    # Reconcile is non-destructive and independent of the grace machinery, so
+    # an operator who disables auto-prune for safety must not silently lose it.
+    # The cycle runs while EITHER stage is enabled; each stage gates itself.
+    if not cfg.effective_server_mode() or not (autoprune or reconcile):
         return
     paths = _maintenance_paths()
     if paths is None:
@@ -408,11 +413,13 @@ def _storage_maintenance_tick_sync() -> None:
     policy = ReclaimPolicy(
         grace_hours=float(cfg.storage_autoprune_grace_hours),
         grace_hours_data=float(cfg.storage_autoprune_grace_hours_data),
-        max_per_cycle=int(cfg.storage_autoprune_max_per_cycle),
+        # A disabled auto-prune reclaims nothing: the cap is the gate, so the
+        # destructive stages evaluate and report but never act.
+        max_per_cycle=int(cfg.storage_autoprune_max_per_cycle) if autoprune else 0,
         archive_retention_days=float(cfg.storage_autoprune_archive_retention_days),
         archive_max_bytes=int(float(cfg.storage_autoprune_archive_max_gb) * 1024**3),
         ephemeral_idle_hours=float(cfg.storage_autoprune_ephemeral_idle_hours),
-        reconcile=bool(cfg.storage_reconcile),
+        reconcile=reconcile,
         reconcile_max_per_cycle=int(cfg.storage_reconcile_max_per_cycle),
         reconcile_budget_seconds=float(cfg.storage_reconcile_budget_seconds),
     )

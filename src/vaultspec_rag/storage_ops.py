@@ -21,6 +21,7 @@ Every destructive function:
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import time
@@ -30,21 +31,49 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from . import store_schema
+from ._store_writes import DISK_FLOOR_BYTES as _DISK_FLOOR_BYTES
 from .storage_manifest import load_manifest, remove_prefix
 from .storage_survey import NamespaceSurvey, classify_namespaces
 
 if TYPE_CHECKING:
+    import threading
     from collections.abc import Callable
 
     from qdrant_client import QdrantClient
+
+logger = logging.getLogger(__name__)
 
 # Convergence sampling. The optimizer transiently inflates size and segment
 # count while restructuring, so stability across consecutive settled samples -
 # not a single reading - is what proves it finished. The byte tolerance absorbs
 # incidental WAL churn without masking a real merge, which moves hundreds of MiB.
+# The poll interval is deliberately unhurried: each sample walks the collection
+# directory the optimizer is actively rewriting, so sampling hard would compete
+# with the very merge being measured.
 _CONVERGENCE_STABLE_SAMPLES = 4
-_CONVERGENCE_POLL_SECONDS = 1.0
+_CONVERGENCE_POLL_SECONDS = 3.0
 _CONVERGENCE_BYTE_TOLERANCE = 1024 * 1024
+# How long to wait for the optimizer to pick the work up before concluding
+# there was none. A merge queued behind saturated optimizer threads looks
+# exactly like a converged one if only stability is checked.
+_OPTIMIZER_START_BUDGET_SECONDS = 30.0
+# Transient headroom a merge needs: it inflates before it shrinks (~30%
+# measured), and these backends are reconciled precisely because they are full.
+# The floor is the store's existing write floor - one shared definition of
+# "too little space to let Qdrant near an optimizer pass".
+_RECONCILE_HEADROOM_FACTOR = 0.5
+
+
+def _free_bytes(path: Path) -> int | None:
+    """Free bytes on *path*'s volume, or ``None`` if it cannot be read."""
+    import shutil
+
+    try:
+        return shutil.disk_usage(path).free
+    except OSError:
+        logger.debug("free-space probe failed for %s", path, exc_info=True)
+        return None
+
 
 # A canonical per-root namespace prefix is exactly ``r`` + 12 hex + ``_``
 # (blake2b digest_size=6). Anchored at both ends so an empty or short prefix
@@ -337,12 +366,16 @@ class GeometryEntry:
         segments: Its current actual segment count.
         footprint_bytes: On-disk size, or ``None`` when the storage dir is
             not resolvable and size cannot be measured.
+        settled: Whether the collection reports ``green`` - no optimization
+            running or pending. A collection at target but not settled is
+            still merging and has not converged.
     """
 
     collection: str
     segment_target: int
     segments: int
     footprint_bytes: int | None
+    settled: bool = True
 
 
 @dataclass(frozen=True)
@@ -396,11 +429,31 @@ class ReconcileBatch:
     dry_run: bool
 
 
+def _is_settled(info: object) -> bool:
+    """Whether a collection has finished optimizing.
+
+    The busy signal is ``CollectionInfo.status`` (green / yellow / grey /
+    red), NOT ``optimizer_status``: the latter is an ok-or-error field with
+    no busy state at all, so gating on it would call every healthy sample
+    settled and let a queued, not-yet-started merge be measured as a
+    finished one. Only ``green`` is settled - ``yellow`` is optimizing,
+    ``grey`` is "possible but not triggered" (a merge still pending), and
+    ``red`` means an operation failed.
+    """
+    return str(getattr(info, "status", "")).lower().endswith("green")
+
+
 def read_geometry(
     client: QdrantClient,
     storage_dir: Path | None,
 ) -> list[GeometryEntry]:
-    """Read every live collection's segment geometry and footprint.
+    """Read this project's collections' segment geometry and footprint.
+
+    Scoped to canonically-prefixed namespaces (``r`` + 12 hex + ``_``), the
+    same guard every mutating path in this module applies. Reconcile is a
+    mutation, and a shared Qdrant instance may hold collections this
+    project does not own; widening a segment merge onto foreign data is not
+    ours to trigger.
 
     Args:
         client: Qdrant client for the managed server.
@@ -408,18 +461,26 @@ def read_geometry(
             footprints unmeasured rather than guessed.
 
     Returns:
-        One entry per live collection, ordered by name. Collections whose
+        One entry per owned collection, ordered by name. Collections whose
         config cannot be read are omitted - an unreadable collection is
         not evidence of drift.
     """
+    from .storage_survey import _prefix_of
+
+    try:
+        descriptors = sorted(client.get_collections().collections, key=lambda c: c.name)
+    except Exception:
+        logger.exception("geometry read failed to enumerate collections")
+        return []
     entries: list[GeometryEntry] = []
-    for descriptor in sorted(
-        client.get_collections().collections, key=lambda c: c.name
-    ):
+    for descriptor in descriptors:
         name = descriptor.name
+        if not _CANONICAL_PREFIX_RE.match(_prefix_of(name)):
+            continue
         try:
             info = client.get_collection(collection_name=name)
-        except (OSError, RuntimeError, ValueError):
+        except Exception:
+            logger.exception("geometry read failed for collection %s", name)
             continue
         target = getattr(info.config.optimizer_config, "default_segment_number", None)
         footprint: int | None = None
@@ -431,6 +492,7 @@ def read_geometry(
                 segment_target=int(target or 0),
                 segments=int(info.segments_count or 0),
                 footprint_bytes=footprint,
+                settled=_is_settled(info),
             )
         )
     return entries
@@ -473,6 +535,36 @@ def plan_reconcile(
     return drifted[:cap], max(len(drifted) - cap, 0)
 
 
+class _StabilityTracker:
+    """Counts consecutive unchanged samples of a converging collection.
+
+    A merge is finished when successive readings stop moving, so this
+    holds the run of agreeing samples and resets the moment one differs.
+    The byte tolerance absorbs incidental churn without masking a real
+    merge, which moves hundreds of MiB.
+    """
+
+    def __init__(self) -> None:
+        self._last: tuple[int, int] | None = None
+        self._run = 0
+
+    def observe(self, segments: int, size: int, *, ready: bool) -> bool:
+        """Record one sample; return True once it has held long enough.
+
+        ``ready`` gates counting on the collection actually being settled
+        and past its start, so an unstarted merge can never accumulate a
+        run of "stable" samples.
+        """
+        matches = (
+            self._last is not None
+            and self._last[0] == segments
+            and abs(size - self._last[1]) <= _CONVERGENCE_BYTE_TOLERANCE
+        )
+        self._run = self._run + 1 if (ready and matches) else 0
+        self._last = (segments, size)
+        return self._run >= _CONVERGENCE_STABLE_SAMPLES
+
+
 def _await_convergence(
     client: QdrantClient,
     collection: str,
@@ -482,6 +574,7 @@ def _await_convergence(
     poll_s: float,
     sleep: Callable[[float], None],
     monotonic: Callable[[], float],
+    stop: threading.Event | None = None,
 ) -> tuple[int, int | None] | None:
     """Wait until a reconciling collection stops changing.
 
@@ -490,36 +583,56 @@ def _await_convergence(
     above their starting values before falling - a 20,000-point collection
     measured 1185 MiB before, 1526 MiB mid-flight, and 440 MiB converged.
     So convergence is *stability*, never a first reading and never a
-    monotonic decrease: consecutive samples must agree on segment count
-    and size while the collection reports a settled optimizer status.
+    monotonic decrease.
+
+    Stability alone is not enough, though: a merge queued behind a
+    saturated optimizer thread pool has not started, so its segment count
+    and size are also perfectly stable. Waiting is therefore two-phase -
+    first observe the collection leave ``green`` (the optimizer picked the
+    work up), then wait for it to return to ``green`` and hold steady. A
+    collection that never leaves ``green`` within the start window had no
+    work to do, and its unchanged measurement is a truthful zero-reclaim
+    result rather than a pre-merge reading dressed up as a converged one.
 
     Returns:
         The converged ``(segments, bytes)`` (bytes ``None`` when
-        unmeasurable), or ``None`` if the budget expired first.
+        unmeasurable), or ``None`` if the budget expired or shutdown was
+        requested first.
     """
-    deadline = monotonic() + budget_s
-    last: tuple[int, int] | None = None
-    stable = 0
-    while monotonic() < deadline:
+
+    def _sample() -> tuple[int, int, bool] | None:
         try:
             info = client.get_collection(collection_name=collection)
-        except (OSError, RuntimeError, ValueError):
+        except Exception:
+            logger.exception("convergence sample failed for %s", collection)
             return None
-        segments = int(info.segments_count or 0)
-        size = _dir_bytes(path) if path is not None else 0
-        settled = "ok" in str(info.optimizer_status).lower()
-        if (
-            settled
-            and last is not None
-            and last[0] == segments
-            and abs(size - last[1]) <= _CONVERGENCE_BYTE_TOLERANCE
-        ):
-            stable += 1
-            if stable >= _CONVERGENCE_STABLE_SAMPLES:
-                return segments, (size if path is not None else None)
-        else:
-            stable = 0
-        last = (segments, size)
+        return (
+            int(info.segments_count or 0),
+            _dir_bytes(path) if path is not None else 0,
+            _is_settled(info),
+        )
+
+    def _result(segments: int, size: int) -> tuple[int, int | None]:
+        return segments, (size if path is not None else None)
+
+    deadline = monotonic() + budget_s
+    start_deadline = min(deadline, monotonic() + _OPTIMIZER_START_BUDGET_SECONDS)
+    tracker = _StabilityTracker()
+    started = False
+    while monotonic() < deadline:
+        if stop is not None and stop.is_set():
+            return None
+        sample = _sample()
+        if sample is None:
+            return None
+        segments, size, settled = sample
+        started = started or not settled
+        if not started and monotonic() >= start_deadline:
+            # Never left green: there was no merge to wait for, so the
+            # unchanged measurement is a truthful zero-reclaim result.
+            return _result(segments, size)
+        if tracker.observe(segments, size, ready=settled and started):
+            return _result(segments, size)
         sleep(poll_s)
     return None
 
@@ -535,6 +648,7 @@ def reconcile_collection(
     wait: bool = True,
     sleep: Callable[[float], None] = time.sleep,
     monotonic: Callable[[], float] = time.monotonic,
+    stop: threading.Event | None = None,
 ) -> ReconcileResult:
     """Reconcile one collection's segment geometry in place.
 
@@ -559,11 +673,39 @@ def reconcile_collection(
             without waiting.
         sleep: Injected for tests; defaults to :func:`time.sleep`.
         monotonic: Injected for tests; defaults to :func:`time.monotonic`.
+        stop: Set on shutdown to abandon the wait promptly.
 
     Returns:
         The :class:`ReconcileResult` for this collection.
     """
     from qdrant_client import models
+
+    path = None if storage_dir is None else storage_dir / entry.collection
+    # Measure immediately before mutating: the batch's survey reading can be
+    # many minutes stale by the time this collection's turn arrives, and the
+    # indexer writes concurrently, so a stale baseline would credit reconcile
+    # with someone else's bytes.
+    bytes_before = entry.footprint_bytes
+    if path is not None:
+        bytes_before = _dir_bytes(path)
+
+    # A merge inflates before it shrinks, and these backends are reconciled
+    # precisely because they are short on space. Refuse rather than push a
+    # full disk into the ENOSPC/WAL-wedge class.
+    if bytes_before and storage_dir is not None:
+        needed = int(bytes_before * _RECONCILE_HEADROOM_FACTOR)
+        free = _free_bytes(storage_dir)
+        if free is not None and free < needed + _DISK_FLOOR_BYTES:
+            return ReconcileResult(
+                entry.collection,
+                "skipped",
+                segments_before=entry.segments,
+                bytes_before=bytes_before,
+                reason=(
+                    f"insufficient_headroom: needs {needed + _DISK_FLOOR_BYTES} "
+                    f"bytes free, has {free}"
+                ),
+            )
 
     try:
         client.update_collection(
@@ -572,12 +714,13 @@ def reconcile_collection(
                 default_segment_number=target
             ),
         )
-    except (OSError, RuntimeError, ValueError) as exc:
+    except Exception as exc:
+        logger.exception("reconcile update failed for %s", entry.collection)
         return ReconcileResult(
             entry.collection,
             "failed",
             segments_before=entry.segments,
-            bytes_before=entry.footprint_bytes,
+            bytes_before=bytes_before,
             reason=str(exc),
         )
 
@@ -586,11 +729,10 @@ def reconcile_collection(
             entry.collection,
             "converging",
             segments_before=entry.segments,
-            bytes_before=entry.footprint_bytes,
+            bytes_before=bytes_before,
             reason="not_awaited",
         )
 
-    path = None if storage_dir is None else storage_dir / entry.collection
     converged = _await_convergence(
         client,
         entry.collection,
@@ -599,13 +741,14 @@ def reconcile_collection(
         poll_s=poll_s,
         sleep=sleep,
         monotonic=monotonic,
+        stop=stop,
     )
     if converged is None:
         return ReconcileResult(
             entry.collection,
             "converging",
             segments_before=entry.segments,
-            bytes_before=entry.footprint_bytes,
+            bytes_before=bytes_before,
             reason="convergence_budget_expired",
         )
     segments_after, bytes_after = converged
@@ -614,7 +757,7 @@ def reconcile_collection(
         "reconciled",
         segments_before=entry.segments,
         segments_after=segments_after,
-        bytes_before=entry.footprint_bytes,
+        bytes_before=bytes_before,
         bytes_after=bytes_after,
     )
 
@@ -628,6 +771,7 @@ def reconcile_collections(
     budget_s: float,
     dry_run: bool = False,
     wait: bool = True,
+    stop: threading.Event | None = None,
 ) -> ReconcileBatch:
     """Reconcile drifted collections toward the bounded geometry.
 
@@ -650,6 +794,13 @@ def reconcile_collections(
     """
     entries = read_geometry(client, storage_dir)
     selected, remaining = plan_reconcile(entries, target=target, cap=cap)
+    # A collection whose setting is already right but which is still merging
+    # is not converged, and the gauge must say so - otherwise "drift is zero"
+    # would fire while gigabytes are still in flight. Setting-drift alone is
+    # not the whole truth; unsettled collections count too.
+    unsettled_at_target = sum(
+        1 for e in entries if e.segment_target == target and not e.settled
+    )
 
     if dry_run:
         return ReconcileBatch(
@@ -662,7 +813,7 @@ def reconcile_collections(
                 )
                 for e in selected
             ],
-            drifted_remaining=remaining + len(selected),
+            drifted_remaining=remaining + len(selected) + unsettled_at_target,
             reclaimed_bytes=0,
             dry_run=True,
         )
@@ -675,13 +826,14 @@ def reconcile_collections(
             target=target,
             budget_s=budget_s,
             wait=wait,
+            stop=stop,
         )
         for entry in selected
     ]
     unconverged = sum(1 for r in results if r.status != "reconciled")
     return ReconcileBatch(
         results=results,
-        drifted_remaining=remaining + unconverged,
+        drifted_remaining=remaining + unconverged + unsettled_at_target,
         reclaimed_bytes=sum(r.reclaimed_bytes for r in results),
         dry_run=False,
     )

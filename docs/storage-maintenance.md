@@ -98,7 +98,11 @@ Reconciled 6 collections (23.4GB reclaimed); 0 still drifted.
   reconciled       r45b56789f389_vault_docs         8->1 segments, 1.0GB freed
 ```
 
-Merging is a background operation, so the command waits for each collection to settle before reporting what it saved. That wait matters: while the engine restructures a collection, both its segment count and its on-disk size briefly rise *above* where they started before falling well below. A figure read mid-merge would report a reclamation in progress as growth, so `vaultspec-rag` only ever reports a size it has watched stop changing. Pass `--no-wait` to issue the changes and return immediately; the collections still converge on their own, but that run reports no reclaimed bytes, because at that moment there is no honest number to give. `--limit` bounds how many collections one run touches.
+Merging is a background operation, so the command waits for each collection to settle before reporting what it saved. That wait matters: while the engine restructures a collection, both its segment count and its on-disk size briefly rise *above* where they started before falling well below. A figure read mid-merge would report a reclamation in progress as growth, so `vaultspec-rag` only ever reports a size it has watched stop changing — and it waits for the merge to actually *begin* before it starts watching, because a merge still queued behind a busy engine looks exactly as motionless as a finished one.
+
+Pass `--no-wait` to issue the changes and return immediately; the collections still converge on their own, but that run reports no reclaimed bytes, because at that moment there is no honest number to give. `--limit` bounds how many collections one run touches.
+
+A merge needs room to inflate before it shrinks, so a collection is skipped with `insufficient_headroom` when the volume is too full to absorb it safely. If you hit that, prune first and reconcile afterwards.
 
 Set `VAULTSPEC_RAG_STORAGE_RECONCILE=0` to disable the automatic stage; the per-cycle cap and the convergence budget are tunable alongside it.
 
@@ -190,22 +194,22 @@ Every cycle is a job: `uv run vaultspec-rag server jobs` lists it as a `storage 
 
 The token-gated `/metrics` route exports the rollup in Prometheus text format. All names carry the `vaultspec_rag_` prefix:
 
-| Metric                               | Type    | Meaning                                           |
-| ------------------------------------ | ------- | ------------------------------------------------- |
-| `maintenance_cycles_total`           | counter | Cycles run since service start                    |
-| `maintenance_reclaims_total`         | counter | Namespaces reclaimed since service start          |
-| `maintenance_disk_free_bytes`        | gauge   | Free disk on the store's volume at the last cycle |
-| `maintenance_dangling_bytes`         | gauge   | Total footprint of currently orphaned namespaces  |
-| `maintenance_pending_grace`          | gauge   | Orphans still inside their grace window           |
-| `maintenance_orphaned_namespaces`    | gauge   | Orphaned namespace count at the last cycle        |
-| `maintenance_last_reclaimed_bytes`   | gauge   | Bytes reclaimed by the last cycle                 |
-| `store_total_bytes`                  | gauge   | Whole-backend on-disk footprint (all statuses)    |
-| `store_namespaces`                   | gauge   | Total namespace count at the last cycle           |
-| `maintenance_reconciled_total`       | counter | Collections shrunk onto the bounded geometry      |
-| `maintenance_reconciled_bytes_total` | counter | Bytes reclaimed by geometry reconcile             |
-| `store_drifted_namespaces`           | gauge   | Collections still carrying oversized geometry     |
+| Metric                               | Type    | Meaning                                                 |
+| ------------------------------------ | ------- | ------------------------------------------------------- |
+| `maintenance_cycles_total`           | counter | Cycles run since service start                          |
+| `maintenance_reclaims_total`         | counter | Namespaces reclaimed since service start                |
+| `maintenance_disk_free_bytes`        | gauge   | Free disk on the store's volume at the last cycle       |
+| `maintenance_dangling_bytes`         | gauge   | Total footprint of currently orphaned namespaces        |
+| `maintenance_pending_grace`          | gauge   | Orphans still inside their grace window                 |
+| `maintenance_orphaned_namespaces`    | gauge   | Orphaned namespace count at the last cycle              |
+| `maintenance_last_reclaimed_bytes`   | gauge   | Bytes reclaimed by the last cycle                       |
+| `store_total_bytes`                  | gauge   | Whole-backend on-disk footprint (all statuses)          |
+| `store_namespaces`                   | gauge   | Total namespace count at the last cycle                 |
+| `maintenance_reconciled_total`       | counter | Collections shrunk onto the bounded geometry            |
+| `maintenance_reconciled_bytes_total` | counter | Bytes reclaimed by geometry reconcile                   |
+| `store_drifted_collections`          | gauge   | Collections not yet converged onto the bounded geometry |
 
-`store_drifted_namespaces` reaching zero is the signal that the backend has finished converging; until then, each cycle shrinks a few more collections.
+`store_drifted_collections` counts both collections still carrying oversized geometry and collections whose setting is already correct but whose merge is still running - so it reaching zero genuinely means the backend has finished converging, not merely that the settings have been written. Note that `maintenance_reconciled_bytes_total` credits only merges a cycle watched to completion; a merge that outlives its convergence budget still finishes, but its bytes go uncounted.
 
 The survey (`--json` and `GET /storage/survey`) carries the same rollup as a `totals` object: whole-backend bytes, namespace count, and a per-status byte breakdown - so a pile of live-but-leaked namespaces is visible even though it never counts as dangling.
 

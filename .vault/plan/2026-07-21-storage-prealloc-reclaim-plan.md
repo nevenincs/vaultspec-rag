@@ -10,6 +10,16 @@ related:
   - '[[2026-07-21-storage-prealloc-reclaim-research]]'
 ---
 
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
+
 # `storage-prealloc-reclaim` plan
 
 ### Phase `P01` - Drift detection and the reconcile primitive
@@ -19,14 +29,14 @@ Establish geometry drift as a readable property of a live collection and impleme
 - [x] `P01.S01` - Declare the bounded-geometry target as shared constants and add a drift predicate that compares a live collection's optimizer segment target against it; `src/vaultspec_rag/storage_ops.py, src/vaultspec_rag/store.py`.
 - [x] `P01.S02` - Implement single-collection reconcile: issue the optimizer config update, then wait for segment-count and directory-size stability under a bounded budget, returning reconciled / converging / failed outcomes; `src/vaultspec_rag/storage_ops.py`.
 - [x] `P01.S03` - Implement the capped batch reconcile over drifted collections with dry-run preview and deterministic ordering; `src/vaultspec_rag/storage_ops.py`.
-- [x] `P01.S04` - Unit-test drift detection, idempotent skip of converged collections, cap and dry-run behaviour, and that a budget expiry reports converging with no reclaim figure; `src/vaultspec_rag/tests/test_storage_ops.py`.
+- [x] `P01.S04` - Unit-test drift detection, prefix scoping, idempotent skip of converged collections, cap and dry-run behaviour, and the convergence contract against a scripted optimizer timeline; `src/vaultspec_rag/tests/test_storage_ops.py`.
 
 ### Phase `P02` - Scheduled convergence
 
 Wire the reconcile stage into the storage maintenance cycle behind config knobs, report it through the existing maintenance result, and extend the lifecycle-inertness guard.
 
 - [x] `P02.S05` - Add the reconcile enable, per-cycle cap, and convergence budget config knobs following existing naming conventions; `src/vaultspec_rag/config.py`.
-- [x] `P02.S06` - Run the reconcile stage from the maintenance cycle ahead of reclamation evaluation and carry its counts and reclaimed bytes on the maintenance result; `src/vaultspec_rag/storage_ops.py`.
+- [x] `P02.S06` - Run the reconcile stage from the maintenance cycle after reclamation, so no convergence budget is spent on a namespace the same cycle destroys, and carry its counts and reclaimed bytes on the maintenance result; `src/vaultspec_rag/storage_ops.py`.
 - [x] `P02.S07` - Emit reconcile counters, the drifted-collection gauge, and completion-only log lines from the maintenance tick; `src/vaultspec_rag/server/_lifecycle.py`.
 - [x] `P02.S08` - Extend the lifecycle-inertness regression guard to cover the reconcile surface; `src/vaultspec_rag/tests/test_adr_regression.py`.
 
@@ -34,9 +44,9 @@ Wire the reconcile stage into the storage maintenance cycle behind config knobs,
 
 Expose drift in the survey and add the structured reconcile verb to the storage command group.
 
-- [x] `P03.S09` - Surface geometry drift and its pending reclamation in the survey and its rollup; `src/vaultspec_rag/storage_ops.py, src/vaultspec_rag/storage_survey.py`.
+- [x] `P03.S09` - Expose geometry drift without authorising a change, through the non-mutating reconcile preview and the not-yet-converged gauge; `src/vaultspec_rag/storage_ops.py`.
 - [x] `P03.S10` - Add the storage reconcile verb with preview, collection bound, and no-wait mode, emitting exactly one structured envelope per exit path; `src/vaultspec_rag/cli/_service_storage.py`.
-- [x] `P03.S11` - Test the verb's structured outcomes including the no-drift success and the dry-run no-mutation guarantee; `src/vaultspec_rag/tests/test_cli_service_storage.py`.
+- [x] `P03.S11` - Test the verb's structured outcomes including the no-drift success, the preview status, and the dry-run no-mutation guarantee; `src/vaultspec_rag/tests/test_storage_adversarial.py`.
 
 ### Phase `P04` - Real-qdrant validation
 
