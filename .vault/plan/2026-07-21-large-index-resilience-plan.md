@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#large-index-resilience'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-22'
 tier: L3
 related:
   - '[[2026-07-21-large-index-resilience-adr]]'
@@ -63,7 +63,7 @@ Define configuration, typed safety outcomes, and one reusable RSS and CUDA budge
 
 Remove whole-corpus and device-retention amplifiers across full and both incremental code paths.
 
-- [ ] `W01.P02.S06` - Transfer sparse document outputs to CPU immediately after forward completion; `src/vaultspec_rag/embeddings.py`.
+- [x] `W01.P02.S06` - Transfer sparse document outputs to CPU immediately after forward completion and narrow caller lock spans; `src/vaultspec_rag/embeddings.py`, `src/vaultspec_rag/indexer/_streaming.py`.
 - [ ] `W01.P02.S07` - Define bounded file segments, weighted slices, CPU transfer, and immediate vector-field release; `src/vaultspec_rag/indexer/_streaming.py`.
 - [ ] `W01.P02.S08` - Convert full indexing to weighted production without whole-corpus vector sorting or retention; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [ ] `W01.P02.S09` - Convert unscoped incremental indexing to bounded file-segment streaming; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
