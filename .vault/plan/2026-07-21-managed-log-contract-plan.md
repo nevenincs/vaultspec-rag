@@ -54,7 +54,7 @@ Replace service-only retrieval with one bounded source-aware service-domain cont
 Read sparse rotated generations for service, Qdrant, or grouped all-source views within the requested line bound.
 
 - [x] `W02.P03.S06` - Replace the legacy service-only reader with bounded source-aware grouped log retrieval; `src/vaultspec_rag/logging_config.py`.
-- [ ] `W02.P03.S07` - Filter source-tagged groups without merging or fabricating chronology; `src/vaultspec_rag/server/_routes_logs.py`.
+- [x] `W02.P03.S07` - Filter source-tagged groups without merging or fabricating chronology; `src/vaultspec_rag/server/_routes_logs.py`.
 - [ ] `W02.P03.S08` - Verify sparse backup discovery, per-source limits, grouped output, and malformed-source rejection; `src/vaultspec_rag/tests/test_logging_config.py`.
 
 ### Phase `W02.P04` - expose one authenticated live contract
