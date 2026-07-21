@@ -21,7 +21,9 @@ concurrency:
 jobs:
   build:
     name: Build
-    runs-on: ubuntu-latest
+    # Artifact builds run on the shared self-hosted fleet (hosted
+    # multiplatform runners are cost-prohibitive); lint/test CI stays hosted.
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
@@ -48,7 +50,7 @@ jobs:
   smoke-test:
     name: Smoke Test
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
@@ -76,7 +78,9 @@ jobs:
   publish-pypi:
     name: Publish to PyPI
     needs: smoke-test
-    runs-on: ubuntu-latest
+    # OIDC trusted publishing works from self-hosted runners: the id-token
+    # comes from GitHub's OIDC provider, not from the runner host.
+    runs-on: [self-hosted, Linux, X64]
     environment:
       name: pypi
     permissions:
@@ -94,3 +98,45 @@ jobs:
 
       - name: Publish to PyPI
         run: uv publish --check-url https://pypi.org/simple/ dist/*
+
+  github-release:
+    name: Attach Release Assets
+    needs: smoke-test
+    # gh and sha256sum are both available on the self-hosted WSL runner;
+    # keep artifact jobs on the fleet alongside build/smoke-test/publish-pypi.
+    runs-on: [self-hosted, Linux, X64]
+    permissions:
+      contents: write
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: dist
+          path: dist/
+
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum ./* > SHA256SUMS
+
+      - name: Ensure the GitHub Release exists
+        # release-please normally creates the Release before dispatching this
+        # workflow, but the manual tag-push trigger can fire against a tag
+        # with no Release yet. --verify-tag refuses to create one for a tag
+        # that isn't pushed; `|| true` is safe because the only failure mode
+        # once the tag is verified is "already exists", which is the case we
+        # want to no-op through.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ inputs.tag || github.ref_name }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --generate-notes || true
+
+      - name: Attach wheel, sdist, and checksums to the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ inputs.tag || github.ref_name }}" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber

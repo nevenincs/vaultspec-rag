@@ -4,49 +4,47 @@
 
 # vaultspec-rag
 
-**The semantic retrieval layer for finding decisions and code by meaning.**
+**The semantic search component for vault and code.**
 
 [![build](https://img.shields.io/github/actions/workflow/status/nevenincs/vaultspec-rag/ci.yml?branch=main&style=for-the-badge&label=build&logo=githubactions&logoColor=white&labelColor=1b1a16)](https://github.com/nevenincs/vaultspec-rag/actions/workflows/ci.yml)
 [![release](https://img.shields.io/pypi/v/vaultspec-rag?style=for-the-badge&label=release&logo=pypi&logoColor=white&labelColor=1b1a16&color=8A72B5)](https://pypi.org/project/vaultspec-rag/)
-[![runtime](https://img.shields.io/badge/runtime-Python%203.13%2B%20%7C%20CUDA-3F9AA6?style=for-the-badge&logo=nvidia&logoColor=white&labelColor=1b1a16)](#requirements)
+[![runtime](https://img.shields.io/badge/runtime-Python%203.13%2B%20%7C%20CUDA-3F9AA6?style=for-the-badge&logo=nvidia&logoColor=white&labelColor=1b1a16)](#getting-started)
 [![license](https://img.shields.io/github/license/nevenincs/vaultspec-rag?style=for-the-badge&label=license&logo=opensourceinitiative&logoColor=white&labelColor=1b1a16&color=B3823C)](./LICENSE)
 
 [![cli](https://img.shields.io/badge/cli-bundled-B5703F?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=1b1a16)](./docs/cli.md)
-[![mcp](https://img.shields.io/badge/mcp-bundled-B05A6B?style=for-the-badge&logo=modelcontextprotocol&logoColor=white&labelColor=1b1a16)](./docs/mcp.md)
+[![mcp](https://img.shields.io/badge/mcp-optional-B05A6B?style=for-the-badge&logo=modelcontextprotocol&logoColor=white&labelColor=1b1a16)](./docs/mcp.md)
 
-[Get started](#quickstart) ·
-[Product](#searching-by-meaning) ·
+[Get started](#getting-started) ·
+[Product](#capabilities) ·
 [Documentation](#documentation) ·
 [Family](#the-vaultspec-family) ·
-[Support](#support-and-help)
+[Support](#status-help-and-license)
 
 </div>
-
-A [vaultspec-core](https://github.com/nevenincs/vaultspec-core) project accumulates a durable record of decisions, plans, research, and the code they produced. vaultspec-rag searches that record and your source code by meaning, not by keyword.
-
-Search `"file lock concurrent write per-root"` and vaultspec-rag surfaces the decision that governs it, even when the document never uses those exact words. It is the retrieval layer of the project: it finds and ranks the grounding, and a client such as a coding agent reads it.
 
 <p align="center">
 <img src="assets/term-search-vault.svg" alt="vaultspec-rag search - a plain-English query surfacing the governing ADR from this repository's own vault" width="880" />
 </p>
 
+A [vaultspec-core](https://github.com/nevenincs/vaultspec-core) project accumulates a durable record of decisions, plans, research, and the code they produced. vaultspec-rag searches that record and your source code by meaning, not by keyword.
+
+Search `"file lock concurrent write per-root"` and vaultspec-rag surfaces the decision that governs it, even when the document never uses those exact words. It is the retrieval layer of the project: it finds and ranks the grounding, and a client such as a coding agent reads it.
+
 Every terminal render on this page is real output against this repository's own vault and code. The [architecture overview](docs/architecture.md) explains how it works; the [glossary](docs/glossary.md) defines the terms used across the docs.
 
-## Requirements
+## Getting started
 
-Before you install, confirm your machine meets these minimum requirements:
-
-- Python 3.13 or newer
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) as the package manager
-- An NVIDIA GPU with CUDA support
-- About 3 GB of free GPU memory
-- Linux or Windows
-
-macOS, AMD GPUs, and Apple Silicon are not supported. The [architecture overview](docs/architecture.md) explains why the hardware floor sits where it does.
-
-## Quickstart
+vaultspec-rag needs an NVIDIA GPU with CUDA support (about 3 GB free) and Python 3.13+ on Linux or Windows; macOS, AMD GPUs, and Apple Silicon are not supported. See the [architecture overview](docs/architecture.md) for why the hardware floor sits where it does.
 
 ### Install
+
+Try it now with no project setup, straight from PyPI:
+
+```bash
+uvx vaultspec-rag install
+```
+
+Runs `install` in an ephemeral `uv tool` environment: it enrolls the current directory as a workspace, provisions the GPU PyTorch build, downloads the search models, and fetches the pinned Qdrant server binary, asking once before touching any config. Good for a first try. A bare `uvx` run does not pin the GPU torch build across invocations the way the project-dependency and standalone-tool paths do, so switch to one of those once you're keeping vaultspec-rag around.
 
 Add vaultspec-rag to your project and set it up:
 
@@ -58,7 +56,7 @@ uv sync
 
 `install` configures the GPU PyTorch build, downloads the search models, and provisions the managed search server. `uv sync` then pulls in that GPU build. The models total a few gigabytes, so the first download takes several minutes, but it runs only once.
 
-To install as a standalone tool instead, pin the GPU torch wheel in the tool receipt so `uv tool upgrade` keeps the CUDA build (a bare `uv tool install` re-resolves torch to a CPU-only wheel on every upgrade, and `--index` is not recorded in tool receipts):
+To install as a standalone tool instead, pin the GPU torch wheel in the tool receipt so `uv tool upgrade` keeps the CUDA build. A bare `uv tool install` re-resolves torch to a CPU-only wheel on every upgrade, and `--index` is not recorded in tool receipts, so the `--with` pin is the durable fix:
 
 ```bash
 uv tool install "vaultspec-rag[mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-win_amd64.whl"
@@ -97,41 +95,33 @@ The first run builds the index. After that, the running service watches your fil
 
 See the [getting started guide](docs/getting-started.md) for the full walkthrough.
 
-## Searching by meaning
+## Capabilities
 
-The index is hybrid. A semantic half matches concepts and a keyword half matches exact terms, so write your query as a short phrase that both describes the concept and names the domain terms the target text would use. Pure prose starves the keyword half.
-
-```bash
-uv run vaultspec-rag search "store-layer locking reentrant lock per collection local mode" --type vault
-```
-
-The render at the top of this page is that query against this repository's vault: the top hit is the accepted concurrency ADR, with its rationale ready to read. Each result is a rank, a location you can open, and the matching text. Vault hits carry a metadata line, so a superseded ADR shows as superseded before you read it.
-
-### Searching code and filtering
-
-Search code with `--type code`, and narrow with filters including `--language`, `--path`, and a symbol name. Add `--scores` to see the relevance number beside each rank:
-
-```bash
-uv run vaultspec-rag search "gpu section wrapping the reranker predict forward pass" --type code --language python --scores
-```
+| Capability               | What it gives you                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------------ |
+| Hybrid search            | Dense (semantic) and sparse (keyword) matching, cross-encoder reranked               |
+| Vault and code search    | `--type vault` or `--type code`, filterable by language, path, and symbol name       |
+| Managed or local backend | A supervised Qdrant server for throughput, or `--local-only` for a zero-server setup |
+| MCP integration          | `search_vault` and `search_codebase` tools for Claude Code and other MCP clients     |
+| Live reindexing          | The running service watches your files and reindexes changes automatically           |
+| Preprocessing hooks      | Convert PDFs, spreadsheets, and other non-text formats into indexable text           |
 
 <p align="center">
 <img src="assets/term-search-code.svg" alt="vaultspec-rag code search - the reranker implementation surfaced from a plain-English description" width="880" />
 </p>
 
-For the full filter set (path globs, document type, feature, date), see [search and index](docs/search-and-index.md).
+See [search and index](docs/search-and-index.md) for the full filter set, [MCP integration](docs/mcp.md) for client setup, and [preprocessing hooks](docs/preprocessing-hooks.md) for the extraction rule syntax and its trust model.
 
-### Preprocessing hooks
+## The vaultspec family
 
-A root's `.vaultragpreprocess.toml` can shell out to convert PDFs, spreadsheets, and other non-text formats into indexable text. Preprocessing is on by default and needs no trust step: a root's preprocess config **is code execution with your privileges**, the same trust class as running that repo's build scripts, so do not index a repository you would not build. Its rules run directly as bounded subprocesses - a curated environment with the daemon's secrets stripped, the project root as the working directory, and a wall-clock timeout and output caps - but with the filesystem and network access of the account running the service.
-
-`preprocess status` reports the mode, config presence, and rule count for a root. Set `VAULTSPEC_RAG_PREPROCESS=off` to disable preprocessing everywhere (the kill switch, mirrored as `--no-preprocess`). Edits to `.gitignore`, `.vaultragignore`, or `.vaultragpreprocess.toml` are detected automatically: the next index run - including the watcher's - reconciles or rebuilds as needed, with no manual reindex required.
-
-See [preprocessing hooks](docs/preprocessing-hooks.md) for the full rule syntax and supported formats.
+- [vaultspec-core](https://github.com/nevenincs/vaultspec-core) - Beta - The agent harness: the pipeline, the vault, and the CLI that drives them.
+- **vaultspec-rag** - Beta - The semantic search component for vault and code.
+- [vaultspec-dashboard](https://github.com/nevenincs/vaultspec-dashboard) - Beta - The application that runs it all as a UI.
+- [vaultspec-a2a](https://github.com/nevenincs/vaultspec-a2a) - Beta - Headless agent-to-agent orchestration.
 
 ## Documentation
 
-### Getting started
+### Getting started guide
 
 - [Getting started](docs/getting-started.md) - install, index, and run your first query end to end.
 - [Installation](docs/installation.md) - the GPU build, dependency provisioning, and recovery steps.
@@ -157,23 +147,10 @@ See [preprocessing hooks](docs/preprocessing-hooks.md) for the full rule syntax 
 - [Architecture](docs/architecture.md) - how it works, why a GPU is required, and the server and local-only modes.
 - [Indexing](docs/indexing.md) - indexing and retrieval internals.
 
-## The vaultspec family
+## Status, help, and license
 
-The family has three focused responsibilities: vaultspec-core governs the workflow and
-vault; vaultspec-rag retrieves decisions and code by meaning; and vaultspec-dashboard is
-the visual workspace that aggregates those views.
-
-- [vaultspec-core](https://github.com/nevenincs/vaultspec-core) - the governed `Research → Decide (ADRs) → Plan → Execute → Verify` workflow, git-tracked Markdown vault, CLI, and MCP server.
-- [vaultspec-dashboard](https://github.com/nevenincs/vaultspec-dashboard) - the visual workspace for exploring the vault, source tree, document graph, workflow state, and semantic search.
-
-## Support and help
-
-File bugs and ask questions on the [GitHub issue tracker](https://github.com/nevenincs/vaultspec-rag/issues).
+vaultspec-rag is Beta. File bugs and ask questions on the [GitHub issue tracker](https://github.com/nevenincs/vaultspec-rag/issues).
 
 A good bug report carries five things: your vaultspec-rag version, your operating system, your GPU model, the exact command you ran, and the full stderr output. With those, a maintainer can reproduce the fault. Without them, the report is hard to act on.
 
-## Changelog and license
-
-The [changelog](CHANGELOG.md) holds release notes and version history.
-
-vaultspec-rag is released under the MIT License. See [LICENSE](./LICENSE) for the full text.
+The [changelog](CHANGELOG.md) holds release notes and version history. vaultspec-rag is released under the [MIT License](./LICENSE).
