@@ -91,8 +91,13 @@ def _shape_survey_payload(
     """
     import pathlib
 
+    from ..storage_ops import backend_totals
     from ..storage_survey import is_temp_rooted
     from ..store import root_collection_prefix
+
+    # Whole-backend rollup, computed before any filter so consumers see
+    # true total size and per-status composition regardless of the view.
+    totals = backend_totals(surveys)
 
     if status_filter:
         surveys = [s for s in surveys if s.status == status_filter]
@@ -124,6 +129,7 @@ def _shape_survey_payload(
         "limit": limit,
         "computed_at": computed_at,
         "source": source,
+        "totals": totals,
     }
     if queried_root is not None:
         payload["queried_root"] = queried_root

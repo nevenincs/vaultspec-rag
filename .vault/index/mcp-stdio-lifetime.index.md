@@ -4,7 +4,7 @@ tags:
   - '#index'
   - '#mcp-stdio-lifetime'
 date: '2026-07-16'
-modified: '2026-07-19'
+modified: '2026-07-21'
 related:
   - '[[2026-07-16-mcp-stdio-lifetime-P01-S01]]'
   - '[[2026-07-16-mcp-stdio-lifetime-P01-S02]]'

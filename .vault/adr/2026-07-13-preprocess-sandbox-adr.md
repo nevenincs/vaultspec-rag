@@ -9,7 +9,7 @@ related:
   - "[[2026-06-10-preprocess-hooks-adr]]"
   - "[[2026-06-19-destructive-ops-security-audit]]"
 superseded_by: '2026-07-14-preprocess-sandbox-removal-adr'
-modified: '2026-07-19'
+modified: '2026-07-21'
 ---
 
 # `preprocess-sandbox` adr: `OS-sandboxed hooks replace consent as the server boundary` | (**status:** `superseded`)

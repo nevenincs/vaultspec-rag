@@ -1,4 +1,4 @@
-"""Unit tests for the issue-242 write-path guards.
+"""Unit tests for the store write-path guards.
 
 Pure logic: real exceptions, real closures, real tmp paths - no store, no
 GPU, no Qdrant. The classification, bounded retry, and disk-headroom

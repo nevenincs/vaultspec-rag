@@ -95,7 +95,8 @@ def _stream_encode_and_upsert_vault(
         key=lambda c: -(len(c.title) + len(c.text)),
     )
 
-    # Same fail-fast contract as the codebase path (issue #242).
+    # Same fail-fast contract as the codebase path: refuse a run the
+    # store volume cannot absorb before any encoding starts.
     store.disk_headroom_preflight(len(sorted_chunks))
 
     with MemoryProbe(name="vault-full-index") as probe:
@@ -274,8 +275,7 @@ def _stream_encode_and_upsert_codebase(
     sorted_chunks = sorted(chunks, key=lambda c: -len(c.content))
 
     # Fail in milliseconds, not at 1-2% hours later: a run whose estimated
-    # footprint cannot fit on the store volume must never start encoding
-    # (issue #242).
+    # footprint cannot fit on the store volume must never start encoding.
     store.disk_headroom_preflight(len(sorted_chunks))
 
     with MemoryProbe(name="codebase-full-index") as probe:

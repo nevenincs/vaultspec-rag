@@ -1,4 +1,4 @@
-"""Write-path hardening for the vector store (issue #242).
+"""Write-path hardening for the vector store.
 
 The 2026-07-21 incident: a full disk made the managed Qdrant server refuse
 (or stall) every upsert while the indexer kept encoding batches at 100% GPU

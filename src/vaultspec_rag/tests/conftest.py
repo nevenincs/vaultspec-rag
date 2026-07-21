@@ -27,6 +27,71 @@ from .corpus import CorpusManifest, build_synthetic_vault
 # GPU-only: sentence-transformers + Qwen3-Embedding-0.6B + SPLADE v3. Requires CUDA.
 
 
+@pytest.fixture(scope="session", autouse=True)
+def isolated_machine_singleton_dirs(
+    tmp_path_factory: TempPathFactory,
+) -> Generator[dict[str, str]]:
+    """Point the machine-singleton dirs at a session temp tree for every test.
+
+    The status dir and the qdrant storage dir resolve the machine-global
+    managed service, its lock, and its manifest. A test that forgets to
+    isolate them reaches the operator's real resident service - a pytest
+    run once terminated the shared production daemon mid-index exactly
+    this way, killing two in-flight jobs. Isolation is therefore
+    structural: the whole session runs against temp dirs unless the
+    operator explicitly pre-set the env vars, and individual tests may
+    still narrow further with their own overrides.
+    """
+    import os
+
+    from ..config import EnvVar
+
+    base = tmp_path_factory.mktemp("machine-singleton")
+    prior: dict[str, str | None] = {}
+    defaults = {
+        EnvVar.STATUS_DIR.value: str(base / "status"),
+        EnvVar.QDRANT_STORAGE_DIR.value: str(base / "qdrant-server" / "storage"),
+    }
+    for var, value in defaults.items():
+        prior[var] = os.environ.get(var)
+        if prior[var] is None:
+            os.environ[var] = value
+    reset_config()  # pyright: ignore[reportMissingTypeStubs]
+    reset_rag_config()
+    yield {var: os.environ[var] for var in defaults}
+    for var, value in prior.items():
+        if value is None:
+            os.environ.pop(var, None)
+        else:
+            os.environ[var] = value
+    reset_config()  # pyright: ignore[reportMissingTypeStubs]
+    reset_rag_config()
+
+
+@pytest.fixture(autouse=True)
+def rearm_machine_singleton_isolation(
+    isolated_machine_singleton_dirs: dict[str, str],
+) -> None:
+    """Re-arm the machine-dir isolation before every test.
+
+    A test that pops the isolation env vars without restoring them would
+    silently expose every later test to the machine-global dirs; this
+    cheap pre-test check restores the session values so the isolation
+    survives leaks instead of depending on every test's cleanup being
+    perfect.
+    """
+    import os
+
+    rearmed = False
+    for var, value in isolated_machine_singleton_dirs.items():
+        if os.environ.get(var) is None:
+            os.environ[var] = value
+            rearmed = True
+    if rearmed:
+        reset_config()  # pyright: ignore[reportMissingTypeStubs]
+        reset_rag_config()
+
+
 class RagComponents(TypedDict):
     """Typed bundle returned by :func:`_index_corpus` and yielded by RAG fixtures."""
 

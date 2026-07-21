@@ -108,6 +108,8 @@ uv run vaultspec-rag server logs
 
 Both commands accept `--json`.
 
+A failed job carries a stable `error_kind` (`disk_full`, `timeout`, `unavailable`, or `other`) in `--json` and on `GET /jobs`, classified once by the service so every surface agrees; the human feed renders the matching remediation (for example "not enough disk space; free disk space and retry"). A running job whose progress has not moved for five minutes is flagged `stalled` on `/jobs`, in the `server status` current-job detail, and in the `/health` jobs rollup - "progress never moves" is a first-class signal, never something an operator has to infer. If the service process dies mid-job, the next startup restores the jobs it was running as `interrupted`, with their last progress and who started them, so killed work never silently vanishes from `server jobs`.
+
 ## Keep the index fresh automatically
 
 Automatic updates are on by default: the service watches your files and reindexes changes for you, so you rarely need to index by hand. Manage updates on a running service with four commands:

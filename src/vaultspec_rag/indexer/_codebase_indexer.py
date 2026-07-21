@@ -72,7 +72,7 @@ logger = logging.getLogger(__name__)
 _CONSUMER_SHUTDOWN_TIMEOUT_S = 300.0
 
 #: Conservative chunks-per-file factor for the pre-pool disk pre-flight;
-#: the issue-242 incident tree measured ~12 chunks per source file.
+#: a measured large mixed-language tree averaged ~12 chunks per source file.
 _CHUNKS_PER_FILE_ESTIMATE = 12
 
 # Maximum number of source paths handed to one batch preprocess spawn (#241).
@@ -1171,7 +1171,7 @@ class CodebaseIndexer:
 
         # Chunk counts are unknown before the pool runs, so the pre-flight
         # estimates points from the file count with a conservative
-        # chunks-per-file factor (the issue-242 incident tree averaged ~12);
+        # chunks-per-file factor (a measured large tree averaged ~12);
         # the per-write floor check in the store still guards mid-run
         # exhaustion exactly.
         self.store.disk_headroom_preflight(len(paths) * _CHUNKS_PER_FILE_ESTIMATE)
@@ -1294,7 +1294,13 @@ class CodebaseIndexer:
                 root=self.root_dir,
             )
             try:
+                # Stamp the activity clock at run START as well as at
+                # completion: a long run spanning a maintenance tick must
+                # advance the ephemeral idle clock before any reclaim
+                # evaluation can see a stale stamp mid-write.
+                self.store.touch_manifest_last_indexed()
                 result = self._full_index_locked(clean=clean, reporter=reporter)
+                self.store.touch_manifest_last_indexed()
             except Exception as exc:
                 log_event(
                     logger,
@@ -1491,10 +1497,16 @@ class CodebaseIndexer:
                 root=self.root_dir,
             )
             try:
+                # Stamp the activity clock at run START as well as at
+                # completion: a long run spanning a maintenance tick must
+                # advance the ephemeral idle clock before any reclaim
+                # evaluation can see a stale stamp mid-write.
+                self.store.touch_manifest_last_indexed()
                 result = self._incremental_index_locked(
                     reporter=reporter,
                     changed_paths=changed_paths,
                 )
+                self.store.touch_manifest_last_indexed()
             except Exception as exc:
                 log_event(
                     logger,

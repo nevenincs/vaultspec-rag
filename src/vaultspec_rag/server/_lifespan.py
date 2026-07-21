@@ -293,6 +293,18 @@ async def _start_components() -> list[asyncio.Task[None]]:
     _m._install_daemon_shutdown_hooks()
     _m._lifecycle_log("startup", pid=os.getpid())
 
+    # Surface jobs a dead prior daemon left running: without this, a
+    # killed daemon silently erased every in-flight job from the
+    # in-memory registry and operators had no record the work died.
+    from .. import jobs as _jobs_module
+
+    interrupted = await _run_in_thread(_jobs_module.restore_interrupted)
+    if interrupted:
+        logger.warning(
+            "restored %d job(s) from a prior daemon life as interrupted",
+            interrupted,
+        )
+
     heartbeat_task = asyncio.create_task(_m._heartbeat_loop())
     # First heartbeat right away so a freshly started service is
     # immediately distinguishable from a stale CLI-only write.
@@ -415,9 +427,38 @@ async def health_handler(_request: Request) -> object:
     if status == "ready" and qdrant_state.mode == "server" and not qdrant_state.alive:
         status = "degraded"
 
+    # Bounded jobs-health rollup: running/stalled counts and the
+    # most recent failure's classification, so a broker probing /health
+    # sees a wedged or failing index without walking /jobs.
+    from .. import jobs as _jobs_registry
+    from ._routes_jobs import _job_stalled
+
+    now = time.time()
+    job_records = _jobs_registry.snapshot()
+    running_jobs = sum(1 for r in job_records if r.get("phase") == "running")
+    stalled_jobs = sum(1 for r in job_records if _job_stalled(r, now))
+    last_failed = next(
+        (r for r in job_records if str(r.get("phase", "")) in ("error", "failed")),
+        None,
+    )
+    jobs_health: dict[str, object] = {
+        "running": running_jobs,
+        "stalled": stalled_jobs,
+        "last_failed": (
+            {
+                "id": last_failed.get("id"),
+                "error_kind": last_failed.get("error_kind"),
+                "finished_at": last_failed.get("finished_at"),
+            }
+            if last_failed is not None
+            else None
+        ),
+    }
+
     return JSONResponse(
         {
             "status": status,
+            "jobs": jobs_health,
             "qdrant": qdrant_state.to_dict(),
             "pid": os.getpid(),
             "parent_pid": os.getppid(),

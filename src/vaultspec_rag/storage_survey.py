@@ -28,7 +28,12 @@ from dataclasses import dataclass, field
 
 from .storage_manifest import ManifestEntry, classify_root
 
-__all__ = ["NamespaceSurvey", "classify_namespaces", "is_temp_rooted"]
+__all__ = [
+    "NamespaceSurvey",
+    "_prefix_of",
+    "classify_namespaces",
+    "is_temp_rooted",
+]
 
 _PREFIX_RE = re.compile(r"^(r[0-9a-f]{12}_)")
 
@@ -36,7 +41,7 @@ _PREFIX_RE = re.compile(r"^(r[0-9a-f]{12}_)")
 def is_temp_rooted(root: str | None) -> bool:
     """Return whether a namespace root lives under an OS temp directory.
 
-    A live temp-rooted namespace is the issue-242 leak signature: a test or
+    A live temp-rooted namespace is the shared-backend leak signature: a test or
     demo harness indexed a throwaway directory into the shared server backend
     and never tore it down, and because the directory still exists it
     classifies ``live`` and survives pruning forever. The flag is report-only

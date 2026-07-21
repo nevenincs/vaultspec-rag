@@ -12,6 +12,7 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from .._store_writes import InsufficientDiskSpaceError
 from ..config import EnvVar
 from ..store import VaultStoreLockedError
 from ._app import CLIState, app
@@ -587,6 +588,25 @@ def _try_in_process_indexing(
                 markup=False,
                 highlight=False,
             )
+            raise typer.Exit(code=1) from None
+        except InsufficientDiskSpaceError as exc:
+            # A RuntimeError subclass: without this branch the disk
+            # preflight refusal would fall into the GPU-error handler
+            # and be misdiagnosed as a torch problem.
+            if json_mode:
+                _emit_json_error_and_exit(
+                    "index",
+                    "disk_preflight_failed",
+                    str(exc),
+                    1,
+                    index_type=index_type,
+                    remediation=[
+                        "vaultspec-rag server storage survey",
+                        "vaultspec-rag server storage prune --dry-run",
+                        "Free disk space on the store volume and retry.",
+                    ],
+                )
+            _cli.console.print(f"Error: {exc}", markup=False, highlight=False)
             raise typer.Exit(code=1) from None
         except (ImportError, RuntimeError) as e:
             _handle_gpu_error(e)

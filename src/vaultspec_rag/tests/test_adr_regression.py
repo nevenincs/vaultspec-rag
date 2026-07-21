@@ -485,6 +485,71 @@ assert not loaded, loaded
             )
 
 
+class TestJobErrorTaxonomyStaysLight:
+    """The shared job-failure taxonomy must stay torch- and CLI-free.
+
+    The taxonomy is consumed by the jobs registry (service domain), the
+    /jobs route shaping, and the CLI renderers; if it ever grew a torch
+    or CLI import, the CLI service commands would drag in weights (or a
+    lifecycle path) just to render an error label.
+    """
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    _IMPORT_CHECK = """
+import sys
+
+import vaultspec_rag._job_errors  # noqa: F401
+
+loaded = sorted(
+    m for m in sys.modules
+    if m == "torch"
+    or m == "vaultspec_rag.cli"
+    or m.startswith("vaultspec_rag.cli.")
+)
+assert not loaded, loaded
+"""
+
+    def test_taxonomy_import_graph_is_torch_and_cli_free(self):
+        import subprocess
+        import sys
+
+        proc = subprocess.run(
+            [sys.executable, "-c", self._IMPORT_CHECK],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode == 0, proc.stderr
+
+
+class TestEncodeRecoveryStaysBounded:
+    """No unbounded retry may stand between a storage error and job failure.
+
+    The silent index-wedge incident showed what an unbounded loop in the
+    embed-and-upsert path costs: hours of GPU burn with no failure. The
+    CUDA-OOM recovery must keep its floor - the halving ladder raises at
+    batch size 1 - so the source must pair every OOM handler with the
+    floor check.
+    """
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_every_oom_handler_keeps_the_floor_raise(self):
+        import inspect
+
+        from .. import embeddings
+
+        src = inspect.getsource(embeddings)
+        oom_handlers = src.count("except torch.cuda.OutOfMemoryError")
+        floor_raises = src.count("if batch_size <= 1:")
+        assert oom_handlers > 0
+        assert floor_raises >= oom_handlers, (
+            "an OutOfMemoryError handler in embeddings.py lacks the "
+            "batch-size floor raise; the recovery ladder must terminate"
+        )
+
+
 class TestStdioLifetimeWatchdogStaysThin:
     """The stdio lifetime watchdog honors the thin-client decisions.
 

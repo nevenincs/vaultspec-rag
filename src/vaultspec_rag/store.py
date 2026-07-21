@@ -54,8 +54,8 @@ __all__ = [
 EMBEDDING_DIM = store_schema.DEFAULT_DENSE_DIM  # Qwen3-Embedding-0.6B default
 
 #: Server-mode request timeout. Bounded so a Qdrant server wedged on a
-#: full-disk WAL raises instead of blocking an upsert socket forever
-#: (issue #242); generous enough for large batch upserts and slow scans.
+#: full-disk WAL raises instead of blocking an upsert socket forever;
+#: generous enough for large batch upserts and slow scans.
 _SERVER_REQUEST_TIMEOUT_S = 120
 
 
@@ -206,7 +206,7 @@ class VaultStore(_VaultSearchMixin):
             self._lock_helper = None
             # The managed server's storage volume, for write headroom
             # checks; a remote server's dir won't exist locally and the
-            # probe then skips itself (issue #242).
+            # probe then skips itself.
             self._storage_probe_path = _pathlib.Path(
                 cfg.qdrant_storage_dir
             ).expanduser()
@@ -214,7 +214,7 @@ class VaultStore(_VaultSearchMixin):
                 # An explicit request timeout: without one, a server
                 # stalling on a full-disk WAL blocks the upsert socket
                 # forever, freezing the job at completed=0 with no error
-                # ever raised (issue #242 defect 1).
+                # ever raised while the GPU keeps burning upstream.
                 self._client = _QdrantClient(
                     url=cfg.qdrant_url,
                     api_key=cfg.qdrant_api_key,
@@ -389,6 +389,19 @@ class VaultStore(_VaultSearchMixin):
             kwargs: dict[str, Any] = {}
             if quantization_config is not None:
                 kwargs["quantization_config"] = quantization_config
+            if self._server_mode:
+                # Bound per-collection preallocation: with server
+                # defaults an EMPTY namespace pair costs ~1.2 GiB on disk
+                # (WAL prealloc plus one segment per CPU); measured on the
+                # pinned 1.18.2, capping the WAL segment at 16 MiB and
+                # seeding two segments cuts that to ~336 MiB while keeping
+                # ingest and intra-collection search headroom. The
+                # optimizer still grows segments with real data. Local
+                # mode has no WAL/segment preallocation to bound.
+                kwargs["wal_config"] = models.WalConfigDiff(wal_capacity_mb=16)
+                kwargs["optimizers_config"] = models.OptimizersConfigDiff(
+                    default_segment_number=2
+                )
 
             self.client.create_collection(
                 collection_name=name,
@@ -474,6 +487,32 @@ class VaultStore(_VaultSearchMixin):
         except Exception:  # best-effort attribution hook; must never break indexing
             logger.debug(
                 "could not record storage manifest for %s",
+                self.root_dir,
+                exc_info=True,
+            )
+
+    def touch_manifest_last_indexed(self) -> None:
+        """Refresh this root's persisted ``last_indexed`` stamp (server mode).
+
+        The ephemeral idle-TTL reclaim tier treats a temp-rooted
+        namespace as dangling once this stamp is old enough, so every
+        successful index run must refresh it - the stamp is the persisted
+        activity clock that keeps an actively-used temp root protected.
+        Best-effort like :meth:`_record_manifest`: a manifest failure must
+        never fail the index run.
+        """
+        if not self._server_mode:
+            return
+        import datetime as _dt
+
+        try:
+            from .storage_manifest import record_root
+
+            stamp = _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds")
+            record_root(self.root_dir, backend="server", last_indexed=stamp)
+        except Exception:  # best-effort stamp; must never break indexing
+            logger.debug(
+                "could not stamp last_indexed for %s",
                 self.root_dir,
                 exc_info=True,
             )
@@ -668,7 +707,7 @@ class VaultStore(_VaultSearchMixin):
     def _guarded_upsert(
         self, collection_name: str, points: list[Any], description: str
     ) -> None:
-        """Upsert under the issue-242 write guards.
+        """Upsert under the write-failure guards.
 
         A cheap free-disk floor check refuses the write while the store
         volume is exhausted (before Qdrant can wedge on it), then the upsert

@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 
+from ._job_errors import classify_error_text
 from .concurrency import get_index_limiter
 from .logging_config import log_event
 from .registry import get_registry
@@ -38,6 +39,7 @@ __all__ = [
     "register_on_job_complete",
     "reset",
     "resource_snapshot",
+    "restore_interrupted",
     "snapshot",
     "start_reindex_codebase",
     "start_reindex_vault",
@@ -49,9 +51,19 @@ Source = Literal["vault", "code", "maintenance"]
 # What initiated the activity: a reindex tool call, the filesystem watcher,
 # or the daemon's periodic schedule.
 Trigger = Literal["tool", "watcher", "schedule"]
-# Lifecycle phase of a record.
+# Lifecycle phase of a record. ``interrupted`` marks a job restored at
+# daemon startup whose prior daemon life died mid-run - without it, a
+# killed daemon silently erased every in-flight job from the in-memory
+# ring and operators had no record the work ever died.
 Phase = Literal[
-    "running", "done", "error", "failed", "cancelled", "superseded", "skipped"
+    "running",
+    "done",
+    "error",
+    "failed",
+    "cancelled",
+    "superseded",
+    "skipped",
+    "interrupted",
 ]
 
 # Bounded ring buffer cap. Generous enough to retain a meaningful recent
@@ -62,6 +74,124 @@ _lock = threading.Lock()
 _records: deque[dict[str, object]] = deque(maxlen=MAX_RECORDS)
 _background_tasks: set[asyncio.Task[Any]] = set()
 _on_job_complete_callbacks: list[Callable[[float], None]] = []
+
+
+# Persisted active-jobs snapshot, under the managed status dir. Written on
+# every job start/finish and step change; read once at daemon startup to
+# re-register jobs a dead daemon left running as ``interrupted``.
+_ACTIVE_SNAPSHOT_FILENAME = "jobs-active.json"
+
+
+def _active_snapshot_path() -> object:
+    """Resolve the active-jobs snapshot path from the managed status dir."""
+    from pathlib import Path
+
+    from .config import get_config
+
+    return Path(str(get_config().status_dir)).expanduser() / _ACTIVE_SNAPSHOT_FILENAME
+
+
+def _persist_active_snapshot() -> None:
+    """Write the currently-running jobs to the status dir, atomically.
+
+    Best-effort durability for the in-memory ring: if this daemon dies,
+    the next startup reads the file and surfaces the jobs as
+    ``interrupted`` instead of letting them vanish. Never raises - jobs
+    bookkeeping must not fail a job.
+    """
+    import json as _json
+
+    with _lock:
+        active = [
+            {
+                "id": record.get("id"),
+                "source": record.get("source"),
+                "trigger": record.get("trigger"),
+                "started_at": record.get("started_at"),
+                "progress": dict(cast("dict[str, object]", progress))
+                if isinstance(progress := record.get("progress"), dict)
+                else None,
+                "initiator": dict(cast("dict[str, object]", initiator))
+                if isinstance(initiator := record.get("initiator"), dict)
+                else None,
+            }
+            for record in _records
+            if record.get("phase") == "running"
+        ]
+    try:
+        path = cast("Path", _active_snapshot_path())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(_json.dumps({"active": active}), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        logger.debug("could not persist active-jobs snapshot", exc_info=True)
+
+
+def restore_interrupted() -> int:
+    """Re-register jobs a prior daemon life left running as ``interrupted``.
+
+    Called once at daemon startup. Each restored record keeps its original
+    id, source/trigger, start time, last known progress, and initiator
+    attribution, and carries an explanatory result so ``server jobs``
+    shows what died instead of nothing. Returns the number restored.
+    """
+    import json as _json
+
+    path = cast("Path", _active_snapshot_path())
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return 0
+    except OSError:
+        logger.debug("active-jobs snapshot unreadable", exc_info=True)
+        return 0
+    entries_obj: object = []
+    try:
+        entries_obj = cast("dict[str, object]", _json.loads(raw)).get("active", [])
+    except (ValueError, AttributeError):
+        logger.debug("active-jobs snapshot malformed", exc_info=True)
+    entries = cast("list[object]", entries_obj) if isinstance(entries_obj, list) else []
+    restored = 0
+    now = time.time()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        data = cast("dict[str, object]", entry)
+        record: dict[str, object] = {
+            "id": data.get("id") or uuid.uuid4().hex,
+            "source": data.get("source"),
+            "trigger": data.get("trigger"),
+            "phase": "interrupted",
+            "started_at": data.get("started_at"),
+            "finished_at": now,
+            "result": "daemon terminated while this job was running",
+            "error_kind": None,
+            "progress": data.get("progress"),
+            "preprocess_ok": 0,
+            "preprocess_skipped": 0,
+            "preprocess_failures": [],
+            "initiator": data.get("initiator"),
+            "runtime": _runtime_context(),
+            "resources": {"started": None, "finished": None},
+        }
+        with _lock:
+            _records.append(record)
+        restored += 1
+        log_event(
+            logger,
+            "service.job",
+            "interrupted",
+            severity=logging.WARNING,
+            job_id=str(record["id"]),
+            source=record.get("source"),
+            trigger=record.get("trigger"),
+            phase="interrupted",
+        )
+    # The prior life's snapshot is consumed; persist the (empty) current
+    # running set so a second restart does not re-restore the same jobs.
+    _persist_active_snapshot()
+    return restored
 
 
 def _runtime_context() -> dict[str, object]:
@@ -129,6 +259,10 @@ def record_start(
         "started_at": time.time(),
         "finished_at": None,
         "result": None,
+        # Stable failure classification: stamped by record_finish
+        # from the error text so /jobs consumers and the CLI share one
+        # taxonomy instead of per-surface string matching.
+        "error_kind": None,
         "progress": None,
         # Document-preprocessing outcome, surfaced through /jobs so a
         # non-interactive client sees which files failed extraction rather than
@@ -151,6 +285,7 @@ def record_start(
     }
     with _lock:
         _records.append(record)
+    _persist_active_snapshot()
     log_event(
         logger,
         "service.job",
@@ -207,7 +342,54 @@ def record_progress(
                     }
                 break
     if log_fields is not None:
+        # Step transitions are rare (a handful per run), so refreshing the
+        # durable snapshot here keeps restored progress meaningful without
+        # per-batch write churn.
+        _persist_active_snapshot()
         log_event(logger, "service.job", "progress", fields=log_fields)
+
+
+def _finish_record(
+    record: dict[str, object],
+    *,
+    target_phase: str,
+    summary: str | None,
+    error: str | None,
+    preprocess_ok: int,
+    preprocess_skipped: int,
+    preprocess_failures: list[str] | None,
+) -> dict[str, object] | None:
+    """Apply the terminal state to *record* in place (caller holds the lock).
+
+    Returns the log fields for the finished event, or ``None`` when the
+    record already reached a terminal state (idempotent: cancellation
+    paths can race their cleanup; the first terminal state wins).
+    """
+    if record["finished_at"] is not None:
+        logger.debug(
+            "record_finish: job %s already finished; "
+            "keeping its original terminal state",
+            record.get("id"),
+        )
+        return None
+    record["phase"] = target_phase
+    record["finished_at"] = time.time()
+    record["result"] = summary
+    record["error_kind"] = classify_error_text(error) if error is not None else None
+    record["preprocess_ok"] = preprocess_ok
+    record["preprocess_skipped"] = preprocess_skipped
+    record["preprocess_failures"] = list(preprocess_failures or [])
+    resources = record.get("resources")
+    if isinstance(resources, dict):
+        cast("dict[str, object]", resources)["finished"] = resource_snapshot()
+    return {
+        "job_id": record.get("id"),
+        "source": record.get("source"),
+        "trigger": record.get("trigger"),
+        "phase": target_phase,
+        "result": summary,
+        "error_kind": record.get("error_kind"),
+    }
 
 
 def record_finish(
@@ -243,7 +425,6 @@ def record_finish(
             onto the record so a client sees which files failed extraction and
             why - not just a count.
     """
-    finished_at = time.time()
     if phase is not None:
         target_phase = phase
     else:
@@ -253,36 +434,20 @@ def record_finish(
     with _lock:
         for record in reversed(_records):
             if record["id"] == record_id:
-                if record["finished_at"] is not None:
-                    # Idempotent: cancellation paths can race their
-                    # cleanup (the canceller finishes the record, then
-                    # the owner's cleanup tries again); the first
-                    # terminal state wins and stays.
-                    logger.debug(
-                        "record_finish: job %s already finished; "
-                        "keeping its original terminal state",
-                        record_id,
-                    )
+                log_fields = _finish_record(
+                    record,
+                    target_phase=target_phase,
+                    summary=summary,
+                    error=error,
+                    preprocess_ok=preprocess_ok,
+                    preprocess_skipped=preprocess_skipped,
+                    preprocess_failures=preprocess_failures,
+                )
+                if log_fields is None:
                     return
-                record["phase"] = target_phase
-                record["finished_at"] = finished_at
-                record["result"] = summary
-                record["preprocess_ok"] = preprocess_ok
-                record["preprocess_skipped"] = preprocess_skipped
-                record["preprocess_failures"] = list(preprocess_failures or [])
-                resources = record.get("resources")
-                if isinstance(resources, dict):
-                    resources = cast("dict[str, object]", resources)
-                    resources["finished"] = resource_snapshot()
-                log_fields = {
-                    "job_id": record_id,
-                    "source": record.get("source"),
-                    "trigger": record.get("trigger"),
-                    "phase": target_phase,
-                    "result": summary,
-                }
                 break
     if log_fields is not None:
+        _persist_active_snapshot()
         level = logging.ERROR if target_phase == "error" else logging.INFO
         log_event(
             logger,
@@ -332,7 +497,12 @@ def snapshot() -> list[dict[str, object]]:
 
 
 def reset() -> None:
-    """Clear all recorded activity (test-only)."""
+    """Clear all recorded in-memory activity (test-only).
+
+    Deliberately leaves the persisted active-jobs snapshot alone so tests
+    can simulate a daemon death (records gone, snapshot intact) and then
+    exercise :func:`restore_interrupted`.
+    """
     with _lock:
         _records.clear()
 

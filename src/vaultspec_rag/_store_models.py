@@ -43,7 +43,7 @@ def root_collection_prefix(root_dir: pathlib.Path | str) -> str:
     prefixes (``\\\\?\\`` and ``\\\\?\\UNC\\``) are stripped before
     resolution: ``Path.resolve()`` does not reliably collapse them, so
     without the strip an aliased spelling of an already-registered root
-    mints a duplicate namespace for the same project (issue #242).
+    mints a duplicate namespace for the same project.
 
     Args:
         root_dir: Workspace root directory.
