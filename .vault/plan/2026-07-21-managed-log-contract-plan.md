@@ -88,7 +88,7 @@ Document the generic retention budget and the unified live/offline log workflow 
 
 Prove real rollover and operator behavior across supported paths, validate the vault artifacts, and complete formal review.
 
-- [ ] `W03.P07.S17` - Run focused unit and integration suites for configuration, writers, routes, transport, and CLI; `src/vaultspec_rag/tests`.
+- [x] `W03.P07.S17` - Run focused unit and integration suites for configuration, writers, routes, transport, and CLI; `src/vaultspec_rag/tests`.
 - [ ] `W03.P07.S18` - Run repository formatting, lint, type, and complete test gates required by project configuration; `pyproject.toml`.
 - [ ] `W03.P07.S19` - Validate managed-log vault artifacts and feature index integrity; `.vault`.
 - [ ] `W03.P07.S20` - Record formal safety, intent, and quality review findings; `.vault/audit`.
