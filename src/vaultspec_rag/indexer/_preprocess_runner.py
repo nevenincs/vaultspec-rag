@@ -24,12 +24,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shlex
 import subprocess
 import sys
+import tempfile
 import threading
 from dataclasses import dataclass
-from typing import IO, TYPE_CHECKING, Literal
+from typing import IO, TYPE_CHECKING, Literal, cast
 
 from pydantic import ValidationError
 
@@ -42,6 +44,7 @@ from ._preprocess_schema import (
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Sequence
 
     from ._preprocess_config import PreprocessRule
 
@@ -58,11 +61,22 @@ _MIN_STDOUT_CAP = 1024 * 1024
 #: Hard ceiling on captured stderr so a flooding child cannot OOM us either.
 _STDERR_CAP = 64 * 1024
 
+#: Hard ceiling on a batch invocation's wall-clock budget. The per-file
+#: ``timeout_s`` the author declared scales with the manifest size, but never
+#: past this bound, so one runaway batch cannot hang the indexer for hours.
+_MAX_BATCH_TIMEOUT_S = 600.0
+
+#: Absolute ceiling on a batch invocation's captured stdout, on top of the
+#: per-file scaling. Bounds peak memory for a large manifest so a runaway
+#: extractor cannot spike the worker before the per-file emitted-size cap fires.
+_MAX_BATCH_STDOUT_CAP = 64 * 1024 * 1024
+
 __all__ = [
     "PreprocessAbortError",
     "PreprocessResult",
     "PreprocessStatus",
     "run_preprocessor",
+    "run_preprocessor_batch",
 ]
 
 PreprocessStatus = Literal["ok", "skipped", "passthrough"]
@@ -357,18 +371,296 @@ def run_preprocessor(
             project_root=project_root,
         )
     except _PreprocessSkipError as exc:
-        reason = str(exc)
-        if rule.on_error == "fail":
-            abort = f"preprocessor for {source_path} failed (on_error=fail): {reason}"
-            raise PreprocessAbortError(abort) from exc
-        if rule.on_error == "passthrough":
-            logger.warning(
-                "preprocess passthrough for %s (%s); indexing raw source",
-                source_path,
-                reason,
-            )
-            return PreprocessResult(status="passthrough", output=None, reason=reason)
-        logger.warning("preprocess skip for %s (%s)", source_path, reason)
-        return PreprocessResult(status="skipped", output=None, reason=reason)
+        return _dispose_failure(source_path, rule, str(exc), cause=exc)
 
     return PreprocessResult(status="ok", output=output, reason=None)
+
+
+def _dispose_failure(
+    source_path: pathlib.Path,
+    rule: PreprocessRule,
+    reason: str,
+    *,
+    cause: BaseException | None = None,
+) -> PreprocessResult:
+    """Resolve a per-file failure through the rule's ``on_error`` disposition.
+
+    ``fail`` raises :class:`PreprocessAbortError` (aborting the run); ``skip``
+    and ``passthrough`` return the corresponding result. Shared by the per-file
+    and batch runners so both map failures identically.
+    """
+    if rule.on_error == "fail":
+        abort = f"preprocessor for {source_path} failed (on_error=fail): {reason}"
+        raise PreprocessAbortError(abort) from cause
+    if rule.on_error == "passthrough":
+        logger.warning(
+            "preprocess passthrough for %s (%s); indexing raw source",
+            source_path,
+            reason,
+        )
+        return PreprocessResult(status="passthrough", output=None, reason=reason)
+    logger.warning("preprocess skip for %s (%s)", source_path, reason)
+    return PreprocessResult(status="skipped", output=None, reason=reason)
+
+
+@dataclass(frozen=True, slots=True)
+class _BatchParse:
+    """Split batch envelope: per-file validated outputs and per-file reasons.
+
+    ``outputs`` holds the validated output for each source path the hook
+    returned a usable element for; ``failures`` holds a human reason for a
+    source path whose element was present but invalid (schema-invalid or over
+    the emitted cap). A source path absent from both was omitted by the hook.
+    """
+
+    outputs: dict[str, PreprocOutput]
+    failures: dict[str, str]
+
+
+def _substitute_paths(token: str, manifest_str: str) -> str:
+    """Substitute ``{paths}`` into one argv token, neutralising injection.
+
+    Mirrors :func:`_substitute_path` for the batch manifest placeholder: the
+    substitution is token-wise (never via a shell), and a standalone operand
+    that resolves to a ``-``-leading value is prefixed with ``./`` so the child
+    parses it as a path, not an option (CWE-88). A manifest temp path is
+    absolute in the normal case and never ``-``-leading.
+    """
+    substituted = token.replace("{paths}", manifest_str)
+    if substituted == manifest_str and substituted.startswith("-"):
+        return f"./{substituted}"
+    return substituted
+
+
+def _build_batch_argv(rule: PreprocessRule, manifest_path: str) -> list[str]:
+    """Build the subprocess argv for a batch command rule.
+
+    The command is shell-split with ``{paths}`` substituted token-wise for the
+    manifest path (never via a shell), matching the per-file command form's
+    injection safety.
+    """
+    command = rule.command or ""
+    tokens = shlex.split(command, posix=True)
+    return [_substitute_paths(token, manifest_path) for token in tokens]
+
+
+def _write_manifest_fd(fd: int, source_paths: Sequence[pathlib.Path]) -> None:
+    """Write one absolute source path per line (UTF-8) to an open manifest fd.
+
+    Takes ownership of ``fd`` and closes it. The caller creates the temp file
+    (capturing its path) before calling this, so a failing write is still
+    unlinked by the caller's cleanup.
+    """
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        for path in source_paths:
+            fh.write(f"{path}\n")
+
+
+def _delete_batch_manifest(manifest_path: str) -> None:
+    """Delete the batch manifest temp file, tolerating an already-gone file."""
+    try:
+        os.unlink(manifest_path)
+    except OSError as exc:
+        logger.debug("could not delete batch manifest %s: %s", manifest_path, exc)
+
+
+def _batch_key_lookup(source_paths: Sequence[pathlib.Path]) -> dict[str, str]:
+    """Map each source path's normalised form to its canonical ``str`` key.
+
+    A hook may echo a path that differs from the manifest line only in case or
+    separators, so the response ``path`` is matched against the normalised
+    absolute form rather than requiring a byte-identical string.
+    """
+    return {
+        os.path.normcase(os.path.abspath(str(path))): str(path) for path in source_paths
+    }
+
+
+def _match_batch_key(
+    raw_path: object,
+    keys_by_norm: dict[str, str],
+    project_root: pathlib.Path,
+) -> str | None:
+    """Resolve a response element's ``path`` to a source path key, or ``None``.
+
+    A relative echoed path is resolved against ``project_root`` (the hook's
+    working directory), not the indexer process's own cwd, so a hook that emits
+    paths relative to the project still maps back to its source files.
+    """
+    if not isinstance(raw_path, str) or not raw_path:
+        return None
+    resolved = raw_path
+    if not os.path.isabs(resolved):
+        resolved = os.path.join(str(project_root), resolved)
+    return keys_by_norm.get(os.path.normcase(os.path.abspath(resolved)))
+
+
+def _split_batch_output(
+    returncode: int,
+    stdout: bytes,
+    stderr: str,
+    stdout_cap: int,
+    max_emitted_bytes: int,
+    source_paths: Sequence[pathlib.Path],
+    project_root: pathlib.Path,
+) -> _BatchParse:
+    """Parse and validate a batch envelope into per-file outputs and failures.
+
+    Raises:
+        _PreprocessSkipError: On a whole-envelope failure (oversize stdout,
+            non-zero exit, non-JSON, or a non-array top level). The caller
+            resolves every file in the batch through ``on_error`` for these.
+    """
+    if len(stdout) > stdout_cap:
+        msg = f"preprocessor stdout exceeds {stdout_cap} bytes; skipping"
+        raise _PreprocessSkipError(msg)
+    if returncode != 0:
+        msg = f"preprocessor exited {returncode}: {stderr[:500]}"
+        raise _PreprocessSkipError(msg)
+    try:
+        payload = json.loads(stdout.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        msg = f"preprocessor stdout is not valid JSON: {exc}"
+        raise _PreprocessSkipError(msg) from exc
+    if not isinstance(payload, list):
+        msg = "preprocessor batch output must be a JSON array of per-file objects"
+        raise _PreprocessSkipError(msg)
+
+    keys_by_norm = _batch_key_lookup(source_paths)
+    outputs: dict[str, PreprocOutput] = {}
+    failures: dict[str, str] = {}
+    for raw_element in cast("list[object]", payload):
+        if not isinstance(raw_element, dict):
+            continue
+        element = cast("dict[str, object]", raw_element)
+        key = _match_batch_key(element.get("path"), keys_by_norm, project_root)
+        if key is None:
+            continue
+        body = {name: value for name, value in element.items() if name != "path"}
+        try:
+            output = validate_preproc_output(body)
+        except (ValidationError, UnsupportedSchemaVersionError) as exc:
+            failures[key] = f"preprocessor output failed validation: {exc}"
+            continue
+        emitted = _emitted_text_length(output)
+        if emitted > max_emitted_bytes:
+            failures[key] = f"emitted text {emitted} exceeds cap {max_emitted_bytes}"
+            continue
+        outputs[key] = output
+    return _BatchParse(outputs, failures)
+
+
+def _invoke_batch(
+    source_paths: Sequence[pathlib.Path],
+    rule: PreprocessRule,
+    max_emitted_bytes: int,
+    project_root: pathlib.Path,
+    manifest_path: str,
+) -> _BatchParse:
+    """Run the batch command once over the manifest and split its envelope.
+
+    The wall-clock budget is the per-file ``timeout_s`` scaled by the manifest
+    size (capped at :data:`_MAX_BATCH_TIMEOUT_S`), and the stdout cap scales the
+    same way so the whole array fits; the per-file emitted-text cap is enforced
+    unchanged on each element.
+
+    Raises:
+        _PreprocessSkipError: On a launch failure, timeout, or whole-envelope
+            defect (the caller resolves every file through ``on_error``).
+    """
+    argv = _build_batch_argv(rule, manifest_path)
+    count = len(source_paths)
+    stdout_cap = min(
+        max(max_emitted_bytes * _STDOUT_CAP_MULTIPLIER * count, _MIN_STDOUT_CAP),
+        _MAX_BATCH_STDOUT_CAP,
+    )
+    timeout_s = (
+        None
+        if rule.timeout_s is None
+        else min(rule.timeout_s * count, _MAX_BATCH_TIMEOUT_S)
+    )
+    returncode, stdout, stderr = _run_bounded(
+        argv,
+        timeout_s,
+        stdout_cap,
+        cwd=project_root,
+        env=_child_env(project_root),
+    )
+    return _split_batch_output(
+        returncode,
+        stdout,
+        stderr,
+        stdout_cap,
+        max_emitted_bytes,
+        source_paths,
+        project_root,
+    )
+
+
+def run_preprocessor_batch(
+    source_paths: Sequence[pathlib.Path],
+    rule: PreprocessRule,
+    *,
+    max_emitted_bytes: int,
+    project_root: pathlib.Path,
+) -> dict[str, PreprocessResult]:
+    """Run a batch command rule once over many files, resolving each in turn.
+
+    Writes the source paths to a manifest temp file, hands it to the command via
+    its ``{paths}`` placeholder in a single subprocess, and splits the returned
+    JSON array back into one :class:`PreprocessResult` per source path.
+
+    Failure semantics are per file: an element missing from the response, or one
+    that fails v1 validation or the emitted-text cap, resolves through the rule's
+    ``on_error`` for that file alone. A whole-envelope defect (non-JSON,
+    non-array, non-zero exit, timeout, or oversize stdout) resolves every file in
+    the batch through ``on_error``. ``on_error == "fail"`` raises
+    :class:`PreprocessAbortError` on the first affected file.
+
+    Args:
+        source_paths: Absolute paths of the files in this batch.
+        rule: The matched, validated batch command rule.
+        max_emitted_bytes: The per-file emitted-text length cap (D10).
+        project_root: The project root, placed on the child's ``PYTHONPATH`` and
+            used as its working directory.
+
+    Returns:
+        A mapping of ``str(source_path)`` to its :class:`PreprocessResult`, one
+        entry per input path.
+
+    Raises:
+        PreprocessAbortError: If any file fails and ``on_error == "fail"``.
+    """
+    if not source_paths:
+        return {}
+
+    # Capture the manifest path before writing so a failing write still unlinks
+    # it in the finally below.
+    fd, manifest_path = tempfile.mkstemp(prefix="vsrag-batch-", suffix=".txt")
+    try:
+        _write_manifest_fd(fd, source_paths)
+        try:
+            parsed = _invoke_batch(
+                source_paths, rule, max_emitted_bytes, project_root, manifest_path
+            )
+        except _PreprocessSkipError as exc:
+            reason = str(exc)
+            return {
+                str(path): _dispose_failure(path, rule, reason, cause=exc)
+                for path in source_paths
+            }
+
+        results: dict[str, PreprocessResult] = {}
+        for path in source_paths:
+            key = str(path)
+            output = parsed.outputs.get(key)
+            if output is not None:
+                results[key] = PreprocessResult(status="ok", output=output, reason=None)
+                continue
+            reason = parsed.failures.get(
+                key, "preprocessor returned no output for this file"
+            )
+            results[key] = _dispose_failure(path, rule, reason)
+        return results
+    finally:
+        _delete_batch_manifest(manifest_path)
