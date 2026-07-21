@@ -130,6 +130,9 @@ The daemon's scheduled storage-maintenance cycle - see the [storage and maintena
 | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB`         | float   | `20`       | Total-size cap on the archive directory (oldest evicted first)                     | -        |
 | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_MAX_PER_CYCLE`          | integer | `16`       | Maximum namespaces reclaimed per cycle                                             | -        |
 | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS`   | float   | `72`       | Idle hours before a live temp-rooted namespace is reclaimed (`0` disables)         | -        |
+| `VAULTSPEC_RAG_STORAGE_RECONCILE`                        | boolean | `1` (true) | Shrink pre-existing collections onto the bounded segment geometry                  | -        |
+| `VAULTSPEC_RAG_STORAGE_RECONCILE_MAX_PER_CYCLE`          | integer | `4`        | Maximum collections reconciled per cycle                                           | -        |
+| `VAULTSPEC_RAG_STORAGE_RECONCILE_BUDGET_SECONDS`         | float   | `300`      | Per-collection wait for the merge to settle before reporting                       | -        |
 
 ### Preprocessing
 

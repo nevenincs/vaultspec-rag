@@ -449,3 +449,265 @@ def test_migrate_copies_multiple_pages(
         assert client.count(collection_name="rbbbbbbbbbbbb_vault_docs").count == 5
     finally:
         client.close()
+
+
+# -- geometry reconcile -----------------------------------------------------
+#
+# Collections created before per-collection preallocation was bounded keep
+# their original segment target forever, because creation is the only place
+# the bound was applied and it returns early for an existing collection. These
+# tests drive the real optimizer: only a real server can prove that the merge
+# reclaims bytes, preserves points, and leaves answers unchanged.
+
+
+def _dir_size(path: Path) -> int:
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+
+
+def _make_legacy_collection(
+    client: QdrantClient,
+    name: str,
+    *,
+    segments: int = 6,
+    points: int = 0,
+) -> None:
+    """Create a collection carrying the pre-bound (drifted) geometry.
+
+    ``default_segment_number`` is set explicitly rather than left at the
+    server default, because the default derives from host CPU count and the
+    test must model the same drift on any machine.
+    """
+    import random
+
+    from qdrant_client import models
+
+    client.create_collection(
+        collection_name=name,
+        vectors_config={
+            "dense": models.VectorParams(size=64, distance=models.Distance.COSINE)
+        },
+        sparse_vectors_config={"sparse": models.SparseVectorParams()},
+        optimizers_config=models.OptimizersConfigDiff(default_segment_number=segments),
+    )
+    for field_name in ("path", "language"):
+        client.create_payload_index(
+            collection_name=name,
+            field_name=field_name,
+            field_schema=models.PayloadSchemaType.KEYWORD,
+        )
+    if not points:
+        return
+    rng = random.Random(7)
+    client.upsert(
+        collection_name=name,
+        points=[
+            models.PointStruct(
+                id=i,
+                vector={
+                    "dense": [rng.random() for _ in range(64)],
+                    "sparse": models.SparseVector(
+                        indices=sorted({i % 97, (i * 5 + 1) % 97}),
+                        values=[0.5, 0.25][: len(sorted({i % 97, (i * 5 + 1) % 97}))],
+                    ),
+                },
+                payload={"path": f"src/m{i % 20}.py", "language": "python"},
+            )
+            for i in range(points)
+        ],
+        wait=True,
+    )
+
+
+def _dense_probe(client: QdrantClient, name: str) -> list[list[int]]:
+    import random
+
+    rng = random.Random(31)
+    return [
+        [
+            int(hit.id)
+            for hit in client.query_points(
+                collection_name=name,
+                query=[rng.random() for _ in range(64)],
+                using="dense",
+                limit=8,
+            ).points
+        ]
+        for _ in range(5)
+    ]
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+def test_reconcile_reclaims_bytes_and_preserves_data(
+    ops_qdrant: QdrantSupervisor,
+) -> None:
+    """The whole value proposition, proven against the real optimizer."""
+    from qdrant_client import QdrantClient
+
+    from ...storage_ops import reconcile_collections
+
+    client = QdrantClient(url=ops_qdrant.url, timeout=600)
+    try:
+        name = "rfeedfacefeed_codebase_docs"
+        _make_legacy_collection(client, name, segments=6, points=200)
+        storage = ops_qdrant.storage_dir / "collections"
+
+        before_bytes = _dir_size(storage / name)
+        before_hits = _dense_probe(client, name)
+
+        batch = reconcile_collections(
+            client, storage_dir=storage, cap=10, budget_s=300.0
+        )
+
+        assert len(batch.results) == 1
+        result = batch.results[0]
+        assert result.status == "reconciled", result.reason
+        assert batch.drifted_remaining == 0
+
+        # Data is untouched: same points, same answers.
+        assert client.count(name, exact=True).count == 200
+        assert _dense_probe(client, name) == before_hits
+
+        # And the preallocation is actually gone from disk.
+        assert result.bytes_after is not None
+        assert result.bytes_after < before_bytes
+        assert result.reclaimed_bytes > 0
+        assert _dir_size(storage / name) < before_bytes
+        assert result.segments_after is not None
+        assert result.segments_after <= 2
+    finally:
+        client.close()
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+def test_reconcile_is_idempotent_on_a_converged_backend(
+    ops_qdrant: QdrantSupervisor,
+) -> None:
+    """A converged backend selects nothing, so the cycle stops doing work."""
+    from qdrant_client import QdrantClient
+
+    from ...storage_ops import reconcile_collections
+
+    client = QdrantClient(url=ops_qdrant.url, timeout=600)
+    try:
+        name = "rfeedfacefeed_vault_docs"
+        _make_legacy_collection(client, name, segments=6, points=50)
+        storage = ops_qdrant.storage_dir / "collections"
+
+        first = reconcile_collections(
+            client, storage_dir=storage, cap=10, budget_s=300.0
+        )
+        assert [r.status for r in first.results] == ["reconciled"]
+
+        second = reconcile_collections(
+            client, storage_dir=storage, cap=10, budget_s=300.0
+        )
+
+        assert second.results == []
+        assert second.drifted_remaining == 0
+        assert second.reclaimed_bytes == 0
+    finally:
+        client.close()
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+def test_unwaited_reconcile_never_reports_a_reclaim_figure(
+    ops_qdrant: QdrantSupervisor,
+) -> None:
+    """Mid-flight numbers are meaningless, so none are published.
+
+    The optimizer transiently inflates both size and segment count while
+    restructuring - a 20,000-point collection measured larger mid-merge than
+    it started - so a reconcile that has not been observed to converge
+    reports the state it is in and no reclamation at all. The setting still
+    persists, so the collection converges on its own and a later pass
+    correctly finds no drift left to fix.
+    """
+    import time
+
+    from qdrant_client import QdrantClient
+
+    from ...storage_ops import reconcile_collections
+
+    client = QdrantClient(url=ops_qdrant.url, timeout=600)
+    try:
+        name = "rfeedfacefeed_codebase_docs"
+        _make_legacy_collection(client, name, segments=6, points=100)
+        storage = ops_qdrant.storage_dir / "collections"
+        before_bytes = _dir_size(storage / name)
+
+        batch = reconcile_collections(
+            client, storage_dir=storage, cap=10, budget_s=300.0, wait=False
+        )
+
+        result = batch.results[0]
+        assert result.status == "converging"
+        assert result.reason == "not_awaited"
+        assert result.bytes_after is None
+        assert result.reclaimed_bytes == 0
+        assert batch.reclaimed_bytes == 0
+
+        # The target persisted, so no further pass is needed: the optimizer
+        # converges on its own and the backend reports no remaining drift.
+        deadline = time.monotonic() + 300.0
+        while time.monotonic() < deadline:
+            if _dir_size(storage / name) < before_bytes:
+                break
+            time.sleep(1.0)
+        assert _dir_size(storage / name) < before_bytes
+
+        again = reconcile_collections(
+            client, storage_dir=storage, cap=10, budget_s=300.0
+        )
+        assert again.results == []
+        assert again.drifted_remaining == 0
+    finally:
+        client.close()
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+def test_reconcile_dry_run_changes_nothing(ops_qdrant: QdrantSupervisor) -> None:
+    from qdrant_client import QdrantClient
+
+    from ...storage_ops import read_geometry, reconcile_collections
+
+    client = QdrantClient(url=ops_qdrant.url, timeout=600)
+    try:
+        name = "rfeedfacefeed_vault_docs"
+        _make_legacy_collection(client, name, segments=6)
+        storage = ops_qdrant.storage_dir / "collections"
+
+        batch = reconcile_collections(
+            client, storage_dir=storage, cap=10, budget_s=300.0, dry_run=True
+        )
+
+        assert [r.status for r in batch.results] == ["would_reconcile"]
+        assert batch.reclaimed_bytes == 0
+        assert batch.drifted_remaining == 1
+        # The live geometry is untouched by a preview.
+        assert read_geometry(client, storage)[0].segment_target == 6
+    finally:
+        client.close()
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+def test_reconcile_cap_defers_remaining_collections(
+    ops_qdrant: QdrantSupervisor,
+) -> None:
+    from qdrant_client import QdrantClient
+
+    from ...storage_ops import reconcile_collections
+
+    client = QdrantClient(url=ops_qdrant.url, timeout=600)
+    try:
+        storage = ops_qdrant.storage_dir / "collections"
+        for suffix in ("vault_docs", "codebase_docs"):
+            _make_legacy_collection(client, f"rfeedfacefeed_{suffix}", segments=6)
+
+        batch = reconcile_collections(
+            client, storage_dir=storage, cap=1, budget_s=300.0
+        )
+
+        assert len(batch.results) == 1
+        assert batch.drifted_remaining == 1
+    finally:
+        client.close()

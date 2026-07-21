@@ -24,7 +24,9 @@ One caveat on scope: this all applies to the shared server-mode store. A `--loca
 
 ## Why disk usage grows
 
-Creating a namespace preallocates roughly 2 GB of storage immediately, before a single document is indexed. Every root you have ever indexed - including throwaway ones like test directories, temporary worktrees, and scratch checkouts - keeps costing that space until it is reclaimed. One development machine accumulated 79 dead namespaces totalling 167.9 GB, all holding zero documents.
+Creating a namespace preallocates a large block of storage immediately, before a single document is indexed. Every root you have ever indexed - including throwaway ones like test directories, temporary worktrees, and scratch checkouts - keeps costing that space until it is reclaimed. One development machine accumulated 79 dead namespaces totalling 167.9 GB, all holding zero documents.
+
+That preallocation is why disk usage tracks the *number* of roots you have indexed far more closely than the amount of code and documents in them. It also means there are two different ways to get space back: removing namespaces you no longer need, and shrinking the ones you are keeping. Both are covered below, and the service does both on its own.
 
 The store lives at `~/.vaultspec-rag/qdrant-server/storage` by default; `VAULTSPEC_RAG_QDRANT_STORAGE_DIR` relocates it. Any location works, including deeply nested ones - on Windows the service hands the storage engine extended-length paths, so the classic 260-character path limit does not constrain where the store lives.
 
@@ -73,6 +75,34 @@ The cycle never touches `unknown` namespaces, `unverifiable` namespaces (an unpl
 The exception is temp-rooted namespaces. A harness temp directory that still exists classifies `live` and would otherwise survive every prune forever, which is exactly how leaked harness namespaces once filled a disk. A namespace whose root lives under an OS temp directory therefore runs on an additional clock: every successful index run stamps a persisted `last_indexed` time, and once that stamp is older than the ephemeral idle TTL (72 hours by default) the namespace is treated as dangling even though its root exists. The same tiers then apply - empty ones drop, data-bearing ones are archived first - under the same per-cycle cap, with ordinary orphans taking priority. An actively re-indexed temp root keeps refreshing its stamp and is never touched; set `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS=0` to disable the tier.
 
 The interval, both grace windows, the ephemeral idle TTL, the per-cycle cap, and the archive bounds are tunable - see the [storage maintenance knobs](configuration.md#storage-maintenance-auto-prune).
+
+## Shrinking collections you keep
+
+Reclamation removes namespaces you no longer need. Geometry reconcile is the other half: it shrinks the preallocation of namespaces you are keeping.
+
+A collection's on-disk cost is dominated by a fixed floor rather than by its contents - the storage engine preallocates a set of memory-mapped pages per segment, and it sizes the segment count from the host's CPU count unless told otherwise. On a 24-core machine that meant eight segments and roughly 1.2 GB for a collection holding zero documents. Newer versions cap this at creation, but a collection carries the geometry it was created with for its whole life, so upgrading does not shrink anything that already exists.
+
+The service converges them for you. Each maintenance cycle reconciles up to four drifted collections onto the bounded geometry, so a backend full of oversized collections shrinks over the following few hours without any action. Measured across collection sizes from empty to 20,000 documents, this reclaims 63-84% of each collection's footprint.
+
+Reconcile is not destructive. It changes a setting and lets the storage engine merge segments in the background: no document is moved or deleted, and the collection stays searchable throughout. It is also idempotent - a collection already at the target is skipped, so once your backend has converged the stage does nothing.
+
+To converge everything at once instead of waiting for the cycles, preview and then apply:
+
+```
+uv run vaultspec-rag server storage reconcile --dry-run
+uv run vaultspec-rag server storage reconcile --yes
+```
+
+```
+Reconciled 6 collections (23.4GB reclaimed); 0 still drifted.
+  reconciled       r45b56789f389_vault_docs         8->1 segments, 1.0GB freed
+```
+
+Merging is a background operation, so the command waits for each collection to settle before reporting what it saved. That wait matters: while the engine restructures a collection, both its segment count and its on-disk size briefly rise *above* where they started before falling well below. A figure read mid-merge would report a reclamation in progress as growth, so `vaultspec-rag` only ever reports a size it has watched stop changing. Pass `--no-wait` to issue the changes and return immediately; the collections still converge on their own, but that run reports no reclaimed bytes, because at that moment there is no honest number to give. `--limit` bounds how many collections one run touches.
+
+Set `VAULTSPEC_RAG_STORAGE_RECONCILE=0` to disable the automatic stage; the per-cycle cap and the convergence budget are tunable alongside it.
+
+One residue is left behind deliberately. The write-ahead log size is fixed when a collection is created and cannot be changed in place, so a reconciled collection keeps a 32 MiB log where a freshly created one takes 16 MiB. That is a small fraction of a floor measured in gigabytes, and removing it would mean recreating the collection - a far riskier operation for far less space.
 
 ## Archives and how to restore them
 
@@ -160,17 +190,22 @@ Every cycle is a job: `uv run vaultspec-rag server jobs` lists it as a `storage 
 
 The token-gated `/metrics` route exports the rollup in Prometheus text format. All names carry the `vaultspec_rag_` prefix:
 
-| Metric                             | Type    | Meaning                                           |
-| ---------------------------------- | ------- | ------------------------------------------------- |
-| `maintenance_cycles_total`         | counter | Cycles run since service start                    |
-| `maintenance_reclaims_total`       | counter | Namespaces reclaimed since service start          |
-| `maintenance_disk_free_bytes`      | gauge   | Free disk on the store's volume at the last cycle |
-| `maintenance_dangling_bytes`       | gauge   | Total footprint of currently orphaned namespaces  |
-| `maintenance_pending_grace`        | gauge   | Orphans still inside their grace window           |
-| `maintenance_orphaned_namespaces`  | gauge   | Orphaned namespace count at the last cycle        |
-| `maintenance_last_reclaimed_bytes` | gauge   | Bytes reclaimed by the last cycle                 |
-| `store_total_bytes`                | gauge   | Whole-backend on-disk footprint (all statuses)    |
-| `store_namespaces`                 | gauge   | Total namespace count at the last cycle           |
+| Metric                               | Type    | Meaning                                           |
+| ------------------------------------ | ------- | ------------------------------------------------- |
+| `maintenance_cycles_total`           | counter | Cycles run since service start                    |
+| `maintenance_reclaims_total`         | counter | Namespaces reclaimed since service start          |
+| `maintenance_disk_free_bytes`        | gauge   | Free disk on the store's volume at the last cycle |
+| `maintenance_dangling_bytes`         | gauge   | Total footprint of currently orphaned namespaces  |
+| `maintenance_pending_grace`          | gauge   | Orphans still inside their grace window           |
+| `maintenance_orphaned_namespaces`    | gauge   | Orphaned namespace count at the last cycle        |
+| `maintenance_last_reclaimed_bytes`   | gauge   | Bytes reclaimed by the last cycle                 |
+| `store_total_bytes`                  | gauge   | Whole-backend on-disk footprint (all statuses)    |
+| `store_namespaces`                   | gauge   | Total namespace count at the last cycle           |
+| `maintenance_reconciled_total`       | counter | Collections shrunk onto the bounded geometry      |
+| `maintenance_reconciled_bytes_total` | counter | Bytes reclaimed by geometry reconcile             |
+| `store_drifted_namespaces`           | gauge   | Collections still carrying oversized geometry     |
+
+`store_drifted_namespaces` reaching zero is the signal that the backend has finished converging; until then, each cycle shrinks a few more collections.
 
 The survey (`--json` and `GET /storage/survey`) carries the same rollup as a `totals` object: whole-backend bytes, namespace count, and a per-status byte breakdown - so a pile of live-but-leaked namespaces is visible even though it never counts as dangling.
 

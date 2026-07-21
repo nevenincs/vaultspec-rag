@@ -18,8 +18,16 @@ import pytest
 
 from ..config import reset_config
 from ..storage_manifest import load_manifest, record_root, update_orphan_stamps
-from ..storage_ops import ReclaimPolicy, evaluate_reclaim, sweep_archive
+from ..storage_ops import (
+    GeometryEntry,
+    ReclaimPolicy,
+    ReconcileResult,
+    evaluate_reclaim,
+    plan_reconcile,
+    sweep_archive,
+)
 from ..storage_survey import NamespaceSurvey
+from ..store_schema import SERVER_SEGMENT_NUMBER
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -577,4 +585,150 @@ class TestDebrisVisibility:
             cast("QdrantClient", _FakeClient([])), storage, dry_run=False
         )
         assert result.results == []
+        assert result.reclaimed_bytes == 0
+
+
+class TestPlanReconcile:
+    """Selection logic for the geometry reconcile pass.
+
+    Pure decision logic, so it is exercised directly: which collections
+    count as drifted, how the per-pass cap applies, and what is left over.
+    The client-coupled reconcile itself is covered at the integration tier
+    against a real server, because only a real optimizer can prove the
+    reclamation and the convergence behaviour.
+    """
+
+    @staticmethod
+    def _entry(
+        name: str,
+        *,
+        target: int,
+        segments: int = 8,
+        size: int | None = 1000,
+    ) -> GeometryEntry:
+        return GeometryEntry(
+            collection=name,
+            segment_target=target,
+            segments=segments,
+            footprint_bytes=size,
+        )
+
+    def test_collection_already_at_target_is_not_drifted(self) -> None:
+        entries = [self._entry("at_target", target=SERVER_SEGMENT_NUMBER)]
+
+        selected, remaining = plan_reconcile(entries, cap=10)
+
+        assert selected == []
+        assert remaining == 0
+
+    def test_actual_segment_count_does_not_imply_drift(self) -> None:
+        """A big collection legitimately grows segments past the target.
+
+        The setting is what drifts, not the outcome: the optimizer is
+        supposed to add segments as real data arrives, and reconciling
+        such a collection every cycle would be perpetual pointless work.
+        """
+        entries = [
+            self._entry("busy", target=SERVER_SEGMENT_NUMBER, segments=32),
+        ]
+
+        selected, _ = plan_reconcile(entries, cap=10)
+
+        assert selected == []
+
+    def test_server_default_zero_target_is_drifted(self) -> None:
+        """``0`` means derive-from-CPU-count - the pre-bound geometry."""
+        entries = [self._entry("legacy", target=0)]
+
+        selected, remaining = plan_reconcile(entries, cap=10)
+
+        assert [e.collection for e in selected] == ["legacy"]
+        assert remaining == 0
+
+    def test_cap_defers_the_remainder(self) -> None:
+        entries = [
+            self._entry("a", target=0, size=300),
+            self._entry("b", target=0, size=200),
+            self._entry("c", target=0, size=100),
+        ]
+
+        selected, remaining = plan_reconcile(entries, cap=2)
+
+        assert [e.collection for e in selected] == ["a", "b"]
+        assert remaining == 1
+
+    def test_largest_footprint_is_reconciled_first(self) -> None:
+        """A capped pass should reclaim the most bytes it can."""
+        entries = [
+            self._entry("small", target=0, size=10),
+            self._entry("huge", target=0, size=9_000),
+            self._entry("mid", target=0, size=500),
+        ]
+
+        selected, _ = plan_reconcile(entries, cap=3)
+
+        assert [e.collection for e in selected] == ["huge", "mid", "small"]
+
+    def test_unmeasured_footprint_sorts_last_without_being_dropped(self) -> None:
+        entries = [
+            self._entry("unmeasured", target=0, size=None),
+            self._entry("measured", target=0, size=5),
+        ]
+
+        selected, remaining = plan_reconcile(entries, cap=5)
+
+        assert [e.collection for e in selected] == ["measured", "unmeasured"]
+        assert remaining == 0
+
+    def test_zero_cap_selects_nothing_and_defers_everything(self) -> None:
+        entries = [self._entry("a", target=0), self._entry("b", target=0)]
+
+        selected, remaining = plan_reconcile(entries, cap=0)
+
+        assert selected == []
+        assert remaining == 2
+
+
+class TestReconcileResultReclaim:
+    """A reclaim figure exists only for a converged measurement."""
+
+    def test_converged_result_reports_the_delta(self) -> None:
+        result = ReconcileResult(
+            "c",
+            "reconciled",
+            segments_before=8,
+            segments_after=1,
+            bytes_before=1_000_000,
+            bytes_after=200_000,
+        )
+
+        assert result.reclaimed_bytes == 800_000
+
+    def test_converging_result_reports_no_reclaim(self) -> None:
+        """Mid-flight sizes are meaningless and must never be reported.
+
+        The optimizer transiently inflates size while restructuring, so a
+        still-converging collection has no honest reclaim figure to give.
+        """
+        result = ReconcileResult(
+            "c",
+            "converging",
+            segments_before=8,
+            bytes_before=1_000_000,
+            reason="convergence_budget_expired",
+        )
+
+        assert result.reclaimed_bytes == 0
+        assert result.bytes_after is None
+
+    def test_apparent_growth_never_reports_a_negative_reclaim(self) -> None:
+        result = ReconcileResult(
+            "c",
+            "reconciled",
+            segments_before=8,
+            segments_after=2,
+            bytes_before=100,
+            bytes_after=500,
+        )
+
         assert result.reclaimed_bytes == 0
