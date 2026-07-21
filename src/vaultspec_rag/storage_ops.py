@@ -273,6 +273,21 @@ def prune_debris(
                 results.append(DeleteResult(name, "would_remove", collections=[name]))
                 reclaimed += size
                 continue
+            # Re-confirm right before the delete: a collection created
+            # between the survey snapshot and this point has a dir on
+            # disk before the server lists it, and must never be
+            # removed as debris.
+            live_now = {c.name for c in client.get_collections().collections}
+            if name in live_now:
+                results.append(
+                    DeleteResult(
+                        name,
+                        "skipped",
+                        collections=[name],
+                        reason="appeared_live",
+                    )
+                )
+                continue
             try:
                 shutil.rmtree(path)
             except OSError as exc:
