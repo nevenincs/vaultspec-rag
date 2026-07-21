@@ -23,6 +23,7 @@ related:
   - '[[2026-07-21-service-job-control-W01-P18-S40]]'
   - '[[2026-07-21-service-job-control-W01-P18-summary]]'
   - '[[2026-07-21-service-job-control-W02-P04-S10]]'
+  - '[[2026-07-21-service-job-control-W02-P04-S11]]'
   - '[[2026-07-21-service-job-control-adr]]'
   - '[[2026-07-21-service-job-control-plan]]'
   - '[[2026-07-21-service-job-control-reference]]'
@@ -30,6 +31,7 @@ related:
   - '[[2026-07-21-service-job-control-s02-config-audit]]'
   - '[[2026-07-21-service-job-control-s03-tests-audit]]'
   - '[[2026-07-21-service-job-control-s10-streaming-audit]]'
+  - '[[2026-07-21-service-job-control-s11-vault-control-audit]]'
   - '[[2026-07-21-service-job-control-s39-persistence-audit]]'
   - '[[2026-07-21-service-job-control-s40-manager-audit]]'
   - '[[2026-07-21-service-job-control-wave-1-audit]]'
@@ -50,6 +52,7 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-21-service-job-control-s02-config-audit` - `service-job-control` audit: `s02 config`
 - `2026-07-21-service-job-control-s03-tests-audit` - `service-job-control` audit: `s03 tests`
 - `2026-07-21-service-job-control-s10-streaming-audit` - `service-job-control` audit: `S10 streaming run control`
+- `2026-07-21-service-job-control-s11-vault-control-audit` - `service-job-control` audit: `S11 vault run control`
 - `2026-07-21-service-job-control-s39-persistence-audit` - `service-job-control` audit: `S39 persistence boundary`
 - `2026-07-21-service-job-control-s40-manager-audit` - `service-job-control` audit: `S40 manager extraction`
 - `2026-07-21-service-job-control-wave-1-audit` - `service-job-control` audit: `Wave 1 state authority`
@@ -73,6 +76,7 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-21-service-job-control-W01-P18-S40` - Extract JobManager ownership and lifecycle orchestration, leave jobs.py as the legacy compatibility and dispatch facade, and verify unchanged public behavior using vaultspec-standard-executor
 - `2026-07-21-service-job-control-W01-P18-summary` - `service-job-control` `W01.P18` summary
 - `2026-07-21-service-job-control-W02-P04-S10` - Thread run control through streaming embedding and check before and after bounded GPU slices outside gpu_lock using vaultspec-high-executor
+- `2026-07-21-service-job-control-W02-P04-S11` - Add checkpoints around vault phases and batches while protecting collection drop through valid publication using vaultspec-high-executor
 
 ### plan
 
