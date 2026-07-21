@@ -31,6 +31,7 @@ from ..jobs import (
     JobMode,
     JobOperation,
     JobOutcome,
+    JobResourceSnapshot,
     JobSource,
     JobSpec,
     JobState,
@@ -505,7 +506,7 @@ class TestManagedJobAdmission:
     """The canonical manager owns admission and replay under real contention."""
 
     def test_concurrent_equivalent_creates_share_one_exact_job(self) -> None:
-        manager = JobManager(max_nonterminal=1)
+        manager = JobManager(max_nonterminal=1, state_path=None)
         spec = JobSpec(
             JobOperation.INDEX,
             JobSource.VAULT,
@@ -542,7 +543,7 @@ class TestManagedJobAdmission:
         assert capacity.code == "job_capacity_exceeded"
 
     def test_idempotency_replays_only_the_original_request(self) -> None:
-        manager = JobManager(max_nonterminal=2)
+        manager = JobManager(max_nonterminal=2, state_path=None)
         spec = JobSpec(
             JobOperation.INDEX,
             JobSource.CODE,
@@ -570,13 +571,104 @@ class TestManagedJobAdmission:
         assert conflict.code == "idempotency_key_conflict"
         assert conflict.job == original.job
 
+    def test_default_storage_is_managed_and_memory_only_is_explicit(self) -> None:
+        from pathlib import Path
+
+        from ..config import get_config
+
+        managed = JobManager(max_nonterminal=1)
+        memory_only = JobManager(max_nonterminal=1, state_path=None)
+
+        assert managed.state_path == (
+            Path(str(get_config().status_dir)) / "jobs-state.json"
+        )
+        assert memory_only.state_path is None
+
+    def test_idempotency_aliases_and_key_length_are_bounded(self) -> None:
+        manager = JobManager(
+            max_nonterminal=1,
+            max_terminal_history=1,
+            state_path=None,
+        )
+        spec = JobSpec(
+            JobOperation.INDEX,
+            JobSource.VAULT,
+            "Y:/project",
+            JobMode.INCREMENTAL,
+        )
+        initiator = JobInitiator("http", "POST /jobs", "Y:/project")
+
+        assert manager.create(spec, initiator, idempotency_key="key-0").code == (
+            "job_created"
+        )
+        assert manager.create(spec, initiator, idempotency_key="key-1").code == (
+            "active_job_exists"
+        )
+        assert manager.create(spec, initiator, idempotency_key="key-2").code == (
+            "active_job_exists"
+        )
+        assert manager.create(spec, initiator, idempotency_key="key-0").code == (
+            "active_job_exists"
+        )
+        assert manager.create(spec, initiator, idempotency_key="x" * 257).code == (
+            "invalid_idempotency_key"
+        )
+
+    def test_invalid_job_kinds_are_not_admitted(self) -> None:
+        manager = JobManager(max_nonterminal=1, state_path=None)
+        maintenance = manager.create(
+            JobSpec(
+                JobOperation.MAINTENANCE,
+                JobSource.MAINTENANCE,
+                None,
+                None,
+            ),
+            JobInitiator("schedule", "storage maintenance", None),
+        )
+        invalid_source = manager.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.MAINTENANCE,
+                None,
+                JobMode.INCREMENTAL,
+            ),
+            JobInitiator("schedule", "invalid index", None),
+        )
+
+        assert maintenance.code == "invalid_job_spec"
+        assert invalid_source.code == "invalid_job_spec"
+        assert manager.active() == []
+
+    def test_equivalent_root_spellings_deduplicate(self, tmp_path: Path) -> None:
+        manager = JobManager(max_nonterminal=2, state_path=None)
+        initiator = JobInitiator("cli", "server job create", str(tmp_path))
+        canonical = JobSpec(
+            JobOperation.INDEX,
+            JobSource.CODE,
+            str(tmp_path),
+            JobMode.INCREMENTAL,
+        )
+        alias = JobSpec(
+            JobOperation.INDEX,
+            JobSource.CODE,
+            str(tmp_path / "uncreated" / ".."),
+            JobMode.INCREMENTAL,
+        )
+
+        created = manager.create(canonical, initiator)
+        deduplicated = manager.create(alias, initiator)
+
+        assert created.code == "job_created"
+        assert deduplicated.code == "active_job_exists"
+        assert deduplicated.job == created.job
+
 
 class TestManagedJobTransitions:
     """Revision and attempt identity make lifecycle races deterministic."""
 
     @pytest.mark.asyncio
     async def test_pause_resume_race_requeues_after_delivered_unwind(self) -> None:
-        manager = JobManager(max_nonterminal=2)
+        manager = JobManager(max_nonterminal=2, state_path=None)
         spec = JobSpec(
             JobOperation.INDEX,
             JobSource.VAULT,
@@ -679,7 +771,7 @@ class TestManagedJobTransitions:
         )
         initiator = JobInitiator("cli", "server job stop", "Y:/project")
 
-        queued_manager = JobManager(max_nonterminal=1)
+        queued_manager = JobManager(max_nonterminal=1, state_path=None)
         queued = queued_manager.create(spec, initiator)
         assert queued.job is not None
         immediate = queued_manager.set_desired_state(
@@ -698,13 +790,27 @@ class TestManagedJobTransitions:
             == "already_satisfied"
         )
 
-        running_manager = JobManager(max_nonterminal=1)
+        running_manager = JobManager(max_nonterminal=1, state_path=None)
         running = running_manager.create(spec, initiator)
         assert running.job is not None
         task = asyncio.create_task(asyncio.Event().wait())
         control = RunControlToken()
         try:
             running_manager.start_attempt(running.job.id, task=task, control=control)
+            assert running_manager.set_worker_active(
+                running.job.id,
+                task=task,
+                active=True,
+            )
+            assert running_manager.set_execution_resources(
+                running.job.id,
+                task=task,
+                resources=JobResourceSnapshot(
+                    started=None,
+                    finished=None,
+                    pipeline_active=True,
+                ),
+            )
             running_manager.set_desired_state(
                 running.job.id,
                 DesiredJobState.PAUSED,
@@ -715,8 +821,27 @@ class TestManagedJobTransitions:
             )
             assert cancelling.job is not None
             assert cancelling.job.state is JobState.CANCELLING
-            assert control.snapshot().desired is not None
-            assert control.snapshot().desired.value == "cancel"
+            control_snapshot = control.snapshot()
+            assert control_snapshot.desired is not None
+            assert control_snapshot.desired.value == "cancel"
+            assert (
+                running_manager.acknowledge_control(
+                    running.job.id,
+                    attempt=1,
+                    task=task,
+                ).code
+                == "resources_still_owned"
+            )
+            assert running_manager.set_worker_active(
+                running.job.id,
+                task=task,
+                active=False,
+            )
+            assert running_manager.set_execution_resources(
+                running.job.id,
+                task=task,
+                resources=JobResourceSnapshot(started=None, finished=None),
+            )
             acknowledged = running_manager.acknowledge_control(
                 running.job.id,
                 attempt=1,
@@ -738,7 +863,11 @@ class TestManagedJobTransitions:
 
     @pytest.mark.asyncio
     async def test_terminal_first_writer_retry_and_delete_contract(self) -> None:
-        manager = JobManager(max_nonterminal=2, max_terminal_history=2)
+        manager = JobManager(
+            max_nonterminal=2,
+            max_terminal_history=2,
+            state_path=None,
+        )
         spec = JobSpec(
             JobOperation.INDEX,
             JobSource.CODE,
