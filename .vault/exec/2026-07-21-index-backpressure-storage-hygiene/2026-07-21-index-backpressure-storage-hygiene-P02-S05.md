@@ -25,8 +25,7 @@ it on the finished log event.
 
 ## Outcome
 
-Committed as `feat(jobs): shared error taxonomy; error_kind stamped on failed
-job records (#242)`; covered by `TestJobErrorKind`.
+Committed as `feat(jobs): shared error taxonomy; error_kind stamped on failed job records (#242)`; covered by `TestJobErrorKind`.
 
 ## Notes
 

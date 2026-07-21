@@ -9,9 +9,6 @@ related:
   - "[[2026-07-21-index-backpressure-storage-hygiene-plan]]"
 ---
 
-
-
-
 # add an autouse suite-level isolation guard that points status and qdrant storage dirs at tmp for every test and fails fast if a test observes the machine-global dirs
 
 ## Scope

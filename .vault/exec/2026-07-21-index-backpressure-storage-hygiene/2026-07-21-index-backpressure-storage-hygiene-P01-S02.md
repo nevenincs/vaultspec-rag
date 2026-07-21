@@ -28,8 +28,7 @@ output.
 
 ## Outcome
 
-Committed as `test(embeddings): pin the floor-bounded CUDA-OOM encode
-ladder (#242)`; `TestOomLadderIsFloorBounded` (3 tests) green.
+Committed as `test(embeddings): pin the floor-bounded CUDA-OOM encode ladder (#242)`; `TestOomLadderIsFloorBounded` (3 tests) green.
 
 ## Notes
 

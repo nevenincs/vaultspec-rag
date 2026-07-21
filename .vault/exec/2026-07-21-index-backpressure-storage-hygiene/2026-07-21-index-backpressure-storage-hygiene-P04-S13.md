@@ -28,7 +28,6 @@ correct (a stamping root is live by definition).
 
 ## Outcome
 
-Committed as `feat(storage): persisted last_indexed activity clock
-stamped by every index run (#242)`; `TestLastIndexedStamping` green.
+Committed as `feat(storage): persisted last_indexed activity clock stamped by every index run (#242)`; `TestLastIndexedStamping` green.
 
 ## Notes

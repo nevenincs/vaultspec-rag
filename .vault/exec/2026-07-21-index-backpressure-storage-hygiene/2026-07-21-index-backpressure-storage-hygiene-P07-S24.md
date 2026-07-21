@@ -9,9 +9,6 @@ related:
   - "[[2026-07-21-index-backpressure-storage-hygiene-plan]]"
 ---
 
-
-
-
 # persist an active-jobs snapshot and mark jobs from a prior daemon life as interrupted at startup so killed jobs never vanish from server jobs
 
 ## Scope

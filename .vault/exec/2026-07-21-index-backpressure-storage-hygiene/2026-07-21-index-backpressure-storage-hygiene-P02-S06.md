@@ -25,8 +25,7 @@ id/error_kind/finished_at.
 
 ## Outcome
 
-Committed as `feat(server): service-domain stalled flag on /jobs and bounded
-jobs rollup on /health (#242)`; covered by `TestJobStallShaping` and
+Committed as `feat(server): service-domain stalled flag on /jobs and bounded jobs rollup on /health (#242)`; covered by `TestJobStallShaping` and
 `TestHealthJobsRollup`.
 
 ## Notes

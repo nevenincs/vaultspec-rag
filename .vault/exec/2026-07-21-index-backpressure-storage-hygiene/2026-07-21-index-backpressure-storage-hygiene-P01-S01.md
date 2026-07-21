@@ -29,8 +29,7 @@ wedged server raises instead of hanging on transport defaults.
 
 ## Outcome
 
-Committed as `feat(store): classified bounded-retry upserts and explicit
-client timeout (#242)`. Unit-verified by `test_store_write_unit.py`
+Committed as `feat(store): classified bounded-retry upserts and explicit client timeout (#242)`. Unit-verified by `test_store_write_unit.py`
 (classification table, no-retry for disk_full/rejected, bounded budget,
 cause chain).
 

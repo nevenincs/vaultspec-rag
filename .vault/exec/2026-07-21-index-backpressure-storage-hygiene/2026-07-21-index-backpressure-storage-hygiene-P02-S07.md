@@ -26,7 +26,6 @@ via the shared helpers.
 
 ## Outcome
 
-Committed as `refactor(cli): render jobs errors and stall from the shared
-service taxonomy (#242)`; existing CLI rendering suites stay green.
+Committed as `refactor(cli): render jobs errors and stall from the shared service taxonomy (#242)`; existing CLI rendering suites stay green.
 
 ## Notes

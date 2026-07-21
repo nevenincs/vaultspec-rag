@@ -8,8 +8,6 @@ related:
   - "[[2026-07-21-index-backpressure-storage-hygiene-plan]]"
 ---
 
-
-
 # `index-backpressure-storage-hygiene` audit: `execution review of the fail-loud write path and storage hygiene feature`
 
 ## Scope

@@ -9,9 +9,6 @@ related:
   - "[[2026-07-21-index-backpressure-storage-hygiene-plan]]"
 ---
 
-
-
-
 # add a lifecycle tripwire refusing stop/terminate of the machine-global service when running under pytest without explicitly isolated status dir
 
 ## Scope

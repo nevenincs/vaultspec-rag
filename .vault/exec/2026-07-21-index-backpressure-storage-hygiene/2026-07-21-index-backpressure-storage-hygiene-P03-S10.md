@@ -26,8 +26,7 @@ or a plain error line in human mode; exit 1 on both.
 
 ## Outcome
 
-Committed as `fix(cli): disk-preflight refusal is a structured envelope,
-not a GPU misdiagnosis (#242)`; `TestDiskPreflightRefusal` (json + human)
+Committed as `fix(cli): disk-preflight refusal is a structured envelope, not a GPU misdiagnosis (#242)`; `TestDiskPreflightRefusal` (json + human)
 green.
 
 ## Notes

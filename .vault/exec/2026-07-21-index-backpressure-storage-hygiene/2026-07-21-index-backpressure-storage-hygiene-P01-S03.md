@@ -27,8 +27,7 @@ EnvVar + `_ENV_OVERRIDE_MAP` + `_RAG_DEFAULTS` idiom:
 
 ## Outcome
 
-Committed as `feat(config): qdrant client timeout and store write retry
-knobs (#242)`; smoke-verified resolution through `get_config()`.
+Committed as `feat(config): qdrant client timeout and store write retry knobs (#242)`; smoke-verified resolution through `get_config()`.
 
 ## Notes
 

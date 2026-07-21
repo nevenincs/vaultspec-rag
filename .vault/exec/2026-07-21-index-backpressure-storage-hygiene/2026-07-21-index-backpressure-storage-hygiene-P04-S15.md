@@ -26,7 +26,6 @@ indexer suites: 192 tests green.
 
 ## Outcome
 
-Committed as `test(storage): ephemeral idle-TTL tier invariants and
-activity-clock stamping (#242)`.
+Committed as `test(storage): ephemeral idle-TTL tier invariants and activity-clock stamping (#242)`.
 
 ## Notes

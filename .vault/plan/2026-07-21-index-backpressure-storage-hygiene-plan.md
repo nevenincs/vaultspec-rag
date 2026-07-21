@@ -10,6 +10,15 @@ related:
   - '[[2026-07-21-index-backpressure-storage-hygiene-research]]'
 ---
 
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
 
 # `index-backpressure-storage-hygiene` plan
 
@@ -37,9 +46,9 @@ Give every adapter a shared error taxonomy and stall signal: error_kind on job r
 
 Refuse bulk indexing into a full disk at the job-submission boundary with a structured, remediating outcome.
 
-- [x] `P03.S09` - adopt the PR 246 disk headroom guards (per-write floor and bulk preflights at the vault, code, and pipeline phases) as the preflight implementation; `verify coverage of every bulk entry; `src/vaultspec_rag/jobs.py`.
+- [x] `P03.S09` - adopt the PR 246 disk headroom guards (per-write floor and bulk preflights at the vault, code, and pipeline phases) as the preflight implementation, verifying coverage of every bulk entry; `src/vaultspec_rag/jobs.py`.
 - [x] `P03.S10` - verify the in-process CLI index path surfaces InsufficientDiskSpaceError as one structured non-zero envelope in --json mode, adding handling only where missing; `src/vaultspec_rag/cli/_index.py`.
-- [x] `P03.S11` - confirm the PR 246 preflight tests cover refusal, pass-through, and remote-storage skip; `extend only where gaps remain; `src/vaultspec_rag/tests/`.
+- [x] `P03.S11` - confirm the PR 246 preflight tests cover refusal, pass-through, and remote-storage skip, extending only where gaps remain; `src/vaultspec_rag/tests/`.
 
 ### Phase `P04` - namespace hygiene
 

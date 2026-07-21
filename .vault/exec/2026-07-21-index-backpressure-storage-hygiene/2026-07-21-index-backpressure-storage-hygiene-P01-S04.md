@@ -27,13 +27,11 @@ preserves the original exception.
 
 ## Outcome
 
-Committed as `test(store): write-error classification and bounded-retry
-contract (#242)`; 10 tests green with zero backoff via env knobs.
+Committed as `test(store): write-error classification and bounded-retry contract (#242)`; 10 tests green with zero backoff via env knobs.
 
 ## Notes
 
-The store shell is built with `object.__new__` because `VaultStore.
-__init__` opens a real backend; the write path only touches
+The store shell is built with `object.__new__` because `VaultStore. __init__` opens a real backend; the write path only touches
 `_server_mode`, `_client`, and the point-lock plumbing.
 
 **Reconciliation 2026-07-21 (post PR 246):** the parallel session's merged PR 246 shipped the same ask (`_store_writes` classification and bounded retry, `_SERVER_REQUEST_TIMEOUT_S` on the client, disk headroom guards). This branch's variant was removed in the origin/main merge; PR 246's shapes are canonical. `test_store_write_unit.py` was deleted; PR 246's `test_store_writes.py` is the canonical coverage.

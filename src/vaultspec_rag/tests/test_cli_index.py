@@ -752,8 +752,11 @@ class TestDiskPreflightRefusal:
             ["--target", str(tmp_path), "index", "--type", "vault", "--json"],
         )
         assert result.exit_code == 1
-        json_start = result.output.index("{")
-        payload = json.loads(result.output[json_start:])
+        # The progress reporter writes terminal control sequences before
+        # the envelope (platform-dependent); strip them and parse from
+        # the envelope's opening brace.
+        cleaned = "".join(ch for ch in result.output if ch >= " " or ch in "\n\t")
+        payload = json.loads(cleaned[cleaned.index("{") :])
         assert payload["ok"] is False
         assert payload["error"] == "disk_preflight_failed"
         assert "disk space" in payload["message"]

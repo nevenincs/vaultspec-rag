@@ -29,8 +29,7 @@ cap. `run_maintenance_cycle` feeds the tier from `load_manifest()`.
 
 ## Outcome
 
-Committed as `feat(storage): ephemeral idle-TTL reclaim tier for live
-temp-rooted namespaces (#242)`; lifecycle-inertness regression suite
+Committed as `feat(storage): ephemeral idle-TTL reclaim tier for live temp-rooted namespaces (#242)`; lifecycle-inertness regression suite
 stays green.
 
 ## Notes

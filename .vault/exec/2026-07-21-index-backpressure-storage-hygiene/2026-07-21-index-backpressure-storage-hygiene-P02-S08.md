@@ -24,7 +24,6 @@ jobs block).
 
 ## Outcome
 
-Committed as `test(jobs): error_kind classification, stall shaping, /health
-jobs rollup (#242)`; 33 registry/route tests + 66 CLI tests green.
+Committed as `test(jobs): error_kind classification, stall shaping, /health jobs rollup (#242)`; 33 registry/route tests + 66 CLI tests green.
 
 ## Notes

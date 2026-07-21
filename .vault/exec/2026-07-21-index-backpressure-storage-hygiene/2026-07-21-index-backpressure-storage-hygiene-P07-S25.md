@@ -9,9 +9,6 @@ related:
   - "[[2026-07-21-index-backpressure-storage-hygiene-plan]]"
 ---
 
-
-
-
 # add tests for the isolation guard, the lifecycle tripwire, and interrupted-job visibility across a simulated daemon restart
 
 ## Scope
