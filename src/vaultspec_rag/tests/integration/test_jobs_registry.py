@@ -15,6 +15,7 @@ Two layers, no mocks/skips/monkeypatch:
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 from typing import TYPE_CHECKING, cast
@@ -24,6 +25,17 @@ import pytest
 import vaultspec_rag.mcp._tools as tools
 
 from ... import server
+from ...job_control import RunControlToken
+from ...jobs import (
+    DesiredJobState,
+    JobInitiator,
+    JobManager,
+    JobMode,
+    JobOperation,
+    JobSource,
+    JobSpec,
+    JobState,
+)
 from ...server import _jobs
 from ...serviceclient import _default_service_port, _try_http_admin
 
@@ -300,6 +312,188 @@ def test_concurrent_writers_do_not_corrupt(_clean_jobs: None) -> None:
         assert entry["phase"] == "done"
         assert entry["result"] == "ok"
         assert isinstance(entry["finished_at"], float)
+
+
+class TestManagedJobPersistence:
+    """Canonical lifecycle state survives real atomic filesystem boundaries."""
+
+    def test_paused_state_and_idempotency_restore_under_the_same_id(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        state_path = tmp_path / "managed-jobs.json"
+        manager = JobManager(max_nonterminal=2, state_path=state_path)
+        spec = JobSpec(
+            JobOperation.INDEX,
+            JobSource.VAULT,
+            str(tmp_path),
+            JobMode.INCREMENTAL,
+        )
+        initiator = JobInitiator("http", "POST /jobs", str(tmp_path))
+
+        created = manager.create(spec, initiator, idempotency_key="persist-1")
+        assert created.job is not None
+        job_id = created.job.id
+        assert state_path.exists()
+        queued_payload = json.loads(state_path.read_text(encoding="utf-8"))
+        assert queued_payload["jobs"][0]["state"] == "queued"
+
+        paused = manager.set_desired_state(job_id, DesiredJobState.PAUSED)
+        assert paused.job is not None
+        assert paused.job.state is JobState.PAUSED
+        paused_payload = json.loads(state_path.read_text(encoding="utf-8"))
+        assert paused_payload["jobs"][0]["state"] == "paused"
+        assert list(tmp_path.glob(".managed-jobs.json.*.tmp")) == []
+
+        restarted = JobManager(max_nonterminal=2, state_path=state_path)
+        restored = restarted.restore_persisted()
+        assert restored.code == "job_state_restored"
+        snapshot = restarted.get(job_id)
+        assert snapshot is not None
+        assert snapshot.state is JobState.PAUSED
+        assert snapshot.revision == paused.job.revision
+        replay = restarted.create(
+            spec,
+            initiator,
+            idempotency_key="persist-1",
+        )
+        assert replay.code == "idempotency_replayed"
+        assert replay.job == snapshot
+
+    @pytest.mark.asyncio
+    async def test_exact_task_ownership_and_interrupted_recovery(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        state_path = tmp_path / "managed-jobs.json"
+        manager = JobManager(max_nonterminal=2, state_path=state_path)
+        spec = JobSpec(
+            JobOperation.INDEX,
+            JobSource.CODE,
+            str(tmp_path),
+            JobMode.REBUILD,
+        )
+        initiator = JobInitiator("cli", "server job create", str(tmp_path))
+        created = manager.create(spec, initiator)
+        assert created.job is not None
+        owner_task = asyncio.create_task(asyncio.Event().wait())
+        stale_task = asyncio.create_task(asyncio.Event().wait())
+        try:
+            started = manager.start_attempt(
+                created.job.id,
+                task=owner_task,
+                control=RunControlToken(),
+            )
+            assert started.job is not None
+            assert started.job.state is JobState.RUNNING
+            assert (
+                manager.release_runtime(
+                    created.job.id,
+                    task=stale_task,
+                )
+                is False
+            )
+            assert (
+                manager.acknowledge_control(
+                    created.job.id,
+                    attempt=1,
+                    task=stale_task,
+                ).code
+                == "stale_attempt_ignored"
+            )
+            runtime = manager.runtime_owner(created.job.id)
+            assert runtime is not None
+            assert runtime.task is owner_task
+
+            restarted = JobManager(max_nonterminal=2, state_path=state_path)
+            assert restarted.restore_persisted().code == "job_state_restored"
+            interrupted = restarted.get(created.job.id)
+            assert interrupted is not None
+            assert interrupted.state is JobState.INTERRUPTED
+            assert interrupted.timestamps.finished_at is not None
+            assert interrupted.runtime.task_active is False
+            assert restarted.runtime_owner(created.job.id) is None
+            assert json.loads(state_path.read_text(encoding="utf-8"))["jobs"] == []
+        finally:
+            owner_task.cancel()
+            stale_task.cancel()
+            for task in (owner_task, stale_task):
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+
+    def test_atomic_replacement_never_exposes_partial_json(
+        self, tmp_path: Path
+    ) -> None:
+        state_path = tmp_path / "managed-jobs.json"
+        manager = JobManager(max_nonterminal=1, state_path=state_path)
+        spec = JobSpec(
+            JobOperation.INDEX,
+            JobSource.VAULT,
+            str(tmp_path),
+            JobMode.INCREMENTAL,
+        )
+        initiator = JobInitiator("watcher", "watcher_vault_index", str(tmp_path))
+        created = manager.create(spec, initiator)
+        assert created.job is not None
+
+        stopped = threading.Event()
+        failures: list[Exception] = []
+        observed_versions: list[int] = []
+
+        def read_state() -> None:
+            while not stopped.is_set():
+                try:
+                    payload = json.loads(state_path.read_text(encoding="utf-8"))
+                    observed_versions.append(cast("int", payload["version"]))
+                    time.sleep(0.0005)
+                except PermissionError:
+                    # Windows can briefly deny a reader while os.replace owns
+                    # the directory entry; that is not a partial-file read.
+                    continue
+                except Exception as exc:
+                    failures.append(exc)
+                    stopped.set()
+
+        reader = threading.Thread(target=read_state)
+        reader.start()
+        try:
+            for _iteration in range(12):
+                assert (
+                    manager.set_desired_state(
+                        created.job.id,
+                        DesiredJobState.PAUSED,
+                    ).status.value
+                    == "ok"
+                )
+                assert (
+                    manager.set_desired_state(
+                        created.job.id,
+                        DesiredJobState.RUNNING,
+                    ).status.value
+                    == "accepted"
+                )
+        finally:
+            stopped.set()
+            reader.join(timeout=5)
+
+        assert not reader.is_alive()
+        assert failures == []
+        assert observed_versions
+        assert set(observed_versions) == {1}
+        assert list(tmp_path.glob(".managed-jobs.json.*.tmp")) == []
+
+    def test_invalid_state_does_not_partially_restore(self, tmp_path: Path) -> None:
+        state_path = tmp_path / "managed-jobs.json"
+        state_path.write_text(
+            '{"schema":"vaultspec.rag.jobs","version":1,"jobs":[',
+            encoding="utf-8",
+        )
+        manager = JobManager(max_nonterminal=1, state_path=state_path)
+
+        outcome = manager.restore_persisted()
+
+        assert outcome.code == "job_state_invalid"
+        assert manager.list_jobs() == []
 
 
 # --------------------------------------------------------------------------- #

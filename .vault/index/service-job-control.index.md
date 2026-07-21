@@ -14,6 +14,7 @@ related:
   - '[[2026-07-21-service-job-control-W01-P02-S06]]'
   - '[[2026-07-21-service-job-control-W01-P02-S07]]'
   - '[[2026-07-21-service-job-control-W01-P03-S08]]'
+  - '[[2026-07-21-service-job-control-W01-P03-S09]]'
   - '[[2026-07-21-service-job-control-adr]]'
   - '[[2026-07-21-service-job-control-plan]]'
   - '[[2026-07-21-service-job-control-reference]]'
@@ -47,6 +48,7 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-21-service-job-control-W01-P02-S06` - Implement revisioned pause, resume, cancellation, retry, terminal deletion, first-terminal-writer-wins, and deterministic races using vaultspec-high-executor
 - `2026-07-21-service-job-control-W01-P02-S07` - Implement atomic durable-before-dispatch persistence and queued, paused, and interrupted restart recovery using vaultspec-high-executor
 - `2026-07-21-service-job-control-W01-P03-S08` - Verify the transition matrix, idempotency, stale revisions, admission, deduplication, retry, deletion, and terminal immutability using vaultspec-standard-executor
+- `2026-07-21-service-job-control-W01-P03-S09` - Verify real-filesystem persistence, exact task ownership, atomic replacement, paused restoration, and interrupted recovery using vaultspec-standard-executor
 
 ### plan
 
