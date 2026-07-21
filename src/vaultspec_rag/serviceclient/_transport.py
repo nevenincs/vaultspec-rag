@@ -315,17 +315,17 @@ def _admin_url_with_root(base: str, args: dict[str, Any]) -> str:
 
 
 def _logs_route_path(args: dict[str, Any]) -> str:
-    """Build the JSON logs route path with optional bounded filters.
+    """Build the grouped JSON logs route with source and bounded filters.
 
-    The daemon's ``/logs/json`` route returns ``{"lines": [...]}`` which the
-    JSON-parsing ``_do_http_call`` can decode; the plaintext ``/logs`` route
-    would fail JSON decoding and silently yield no lines.
+    The daemon's ``/logs/json`` route returns source-tagged groups which the
+    JSON-parsing ``_do_http_call`` can decode. The plaintext ``/logs`` route is
+    for direct human inspection and is not an admin-transport payload.
     """
     path = "/logs/json"
     params = {
         key: value
         for key, value in args.items()
-        if key in {"lines", "job_id", "contains"} and value is not None
+        if key in {"lines", "source", "job_id", "contains"} and value is not None
     }
     if params:
         path += "?" + urllib.parse.urlencode(params)
