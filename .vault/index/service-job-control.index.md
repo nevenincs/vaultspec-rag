@@ -17,6 +17,7 @@ related:
   - '[[2026-07-21-service-job-control-research]]'
   - '[[2026-07-21-service-job-control-s02-config-audit]]'
   - '[[2026-07-21-service-job-control-s03-tests-audit]]'
+  - '[[2026-07-21-service-job-control-s04-canonical-resources-audit]]'
   - '[[2026-07-21-service-job-control-w01-p01-foundation-audit]]'
 ---
 
@@ -34,6 +35,7 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 
 - `2026-07-21-service-job-control-s02-config-audit` - `service-job-control` audit: `s02 config`
 - `2026-07-21-service-job-control-s03-tests-audit` - `service-job-control` audit: `s03 tests`
+- `2026-07-21-service-job-control-s04-canonical-resources-audit` - `service-job-control` audit: `W01.P02.S04 canonical resources`
 - `2026-07-21-service-job-control-w01-p01-foundation-audit` - `service-job-control` audit: `W01.P01 foundation commits`
 
 ### exec
