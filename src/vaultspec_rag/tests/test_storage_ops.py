@@ -360,3 +360,114 @@ class TestGatherStorageSurveyCached:
         payload = _routes._gather_storage_survey(None, 200)
         assert payload["source"] == "fresh"
         assert payload["returned"] == 1
+
+
+def _temp_survey(
+    prefix: str,
+    points: int = 0,
+    footprint: int = 2_100,
+) -> NamespaceSurvey:
+    import pathlib
+    import tempfile
+
+    return NamespaceSurvey(
+        prefix=prefix,
+        root=str(
+            pathlib.Path(tempfile.gettempdir()) / f"vaultspec-livetest-{prefix}"
+        ),
+        status="live",
+        collections=[f"{prefix}vault_docs"],
+        points=points,
+        footprint_bytes=footprint,
+    )
+
+
+class TestEphemeralIdleTier:
+    """Live temp-rooted namespaces reclaim on the persisted idle TTL (#242)."""
+
+    def _decide(
+        self,
+        surveys: list[NamespaceSurvey],
+        last_indexed: dict[str, str] | None,
+        policy: ReclaimPolicy = _POLICY,
+    ):
+        return evaluate_reclaim(
+            surveys, {}, now=_NOW, policy=policy, last_indexed=last_indexed
+        )
+
+    def test_idle_empty_temp_namespace_reclaims(self) -> None:
+        prefix = "raaaaaaaaaaa1_"
+        stamp = (_NOW - timedelta(hours=100)).isoformat()
+        decisions = self._decide([_temp_survey(prefix)], {prefix: stamp})
+        assert [d.action for d in decisions] == ["reclaim_empty"]
+        assert decisions[0].reason == "ephemeral_idle"
+
+    def test_idle_data_temp_namespace_takes_archive_path(self) -> None:
+        prefix = "raaaaaaaaaaa2_"
+        stamp = (_NOW - timedelta(hours=100)).isoformat()
+        decisions = self._decide([_temp_survey(prefix, points=10)], {prefix: stamp})
+        assert [d.action for d in decisions] == ["reclaim_data"]
+        assert decisions[0].tier == "data"
+
+    def test_fresh_activity_is_pending(self) -> None:
+        prefix = "raaaaaaaaaaa3_"
+        stamp = (_NOW - timedelta(hours=1)).isoformat()
+        decisions = self._decide([_temp_survey(prefix)], {prefix: stamp})
+        assert [d.action for d in decisions] == ["pending"]
+        assert decisions[0].reason is not None
+        assert decisions[0].reason.startswith("ephemeral_idle_remaining_h=")
+
+    def test_missing_activity_stamp_is_pending(self) -> None:
+        prefix = "raaaaaaaaaaa4_"
+        decisions = self._decide([_temp_survey(prefix)], {})
+        assert [d.action for d in decisions] == ["pending"]
+        assert decisions[0].reason == "ephemeral_no_activity_stamp"
+
+    def test_non_temp_live_namespace_is_untouched(self) -> None:
+        stamp = (_NOW - timedelta(hours=1000)).isoformat()
+        survey = _survey("raaaaaaaaaaa5_", status="live")
+        decisions = self._decide([survey], {"raaaaaaaaaaa5_": stamp})
+        assert decisions == []
+
+    def test_zero_ttl_disables_the_tier(self) -> None:
+        prefix = "raaaaaaaaaaa6_"
+        stamp = (_NOW - timedelta(hours=1000)).isoformat()
+        policy = ReclaimPolicy(ephemeral_idle_hours=0.0)
+        decisions = self._decide([_temp_survey(prefix)], {prefix: stamp}, policy)
+        assert decisions == []
+
+    def test_absent_last_indexed_mapping_skips_the_tier(self) -> None:
+        decisions = self._decide([_temp_survey("raaaaaaaaaaa7_")], None)
+        assert decisions == []
+
+    def test_orphans_keep_priority_under_the_shared_cap(self) -> None:
+        policy = ReclaimPolicy(grace_hours=24.0, max_per_cycle=1)
+        orphan = _survey("raaaaaaaaaaa8_")
+        ephemeral_prefix = "raaaaaaaaaaa9_"
+        stamps = {"raaaaaaaaaaa8_": (_NOW - timedelta(hours=48)).isoformat()}
+        last_indexed = {
+            ephemeral_prefix: (_NOW - timedelta(hours=1000)).isoformat()
+        }
+        decisions = evaluate_reclaim(
+            [orphan, _temp_survey(ephemeral_prefix)],
+            stamps,
+            now=_NOW,
+            policy=policy,
+            last_indexed=last_indexed,
+        )
+        by_prefix = {d.prefix: d for d in decisions}
+        assert by_prefix["raaaaaaaaaaa8_"].action == "reclaim_empty"
+        assert by_prefix[ephemeral_prefix].action == "deferred"
+        assert by_prefix[ephemeral_prefix].reason == "over_cycle_cap"
+
+
+class TestLastIndexedStamping:
+    """record_root's last_indexed stamp is the ephemeral activity clock."""
+
+    def test_fresh_stamp_overwrites_and_persists(self, tmp_path: Path) -> None:
+        root = tmp_path / "proj"
+        root.mkdir()
+        record_root(root, backend="server")
+        record_root(root, backend="server", last_indexed="2026-07-21T10:00:00+00:00")
+        entry = next(iter(load_manifest().values()))
+        assert entry.last_indexed == "2026-07-21T10:00:00+00:00"
