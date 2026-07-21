@@ -116,7 +116,7 @@ jobs:
 
       - name: Generate checksums
         working-directory: dist
-        run: sha256sum * > SHA256SUMS
+        run: sha256sum ./* > SHA256SUMS
 
       - name: Ensure the GitHub Release exists
         # release-please normally creates the Release before dispatching this
