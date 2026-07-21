@@ -124,6 +124,10 @@ class EnvVar(StrEnum):
     STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS = (
         "VAULTSPEC_RAG_STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS"
     )
+    # Geometry reconcile knobs (non-destructive; see storage-prealloc-reclaim).
+    STORAGE_RECONCILE = "VAULTSPEC_RAG_STORAGE_RECONCILE"
+    STORAGE_RECONCILE_MAX_PER_CYCLE = "VAULTSPEC_RAG_STORAGE_RECONCILE_MAX_PER_CYCLE"
+    STORAGE_RECONCILE_BUDGET_SECONDS = "VAULTSPEC_RAG_STORAGE_RECONCILE_BUDGET_SECONDS"
     # First-class local-backend opt-out. When set truthy it selects the
     # on-disk store regardless of the server-mode default.
     LOCAL_ONLY = "VAULTSPEC_RAG_LOCAL_ONLY"
@@ -228,6 +232,10 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "storage_autoprune_ephemeral_idle_hours": (
         EnvVar.STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS
     ),
+    # Geometry reconcile knobs.
+    "storage_reconcile": EnvVar.STORAGE_RECONCILE,
+    "storage_reconcile_max_per_cycle": EnvVar.STORAGE_RECONCILE_MAX_PER_CYCLE,
+    "storage_reconcile_budget_seconds": EnvVar.STORAGE_RECONCILE_BUDGET_SECONDS,
     # First-class local-backend opt-out knob.
     "local_only": EnvVar.LOCAL_ONLY,
 }
@@ -397,6 +405,20 @@ class VaultSpecConfigWrapper:
         # disappears. Runs through the same empty/data tiers, archive
         # gate, and per-cycle cap as orphan reclamation. 0 disables.
         "storage_autoprune_ephemeral_idle_hours": 72.0,
+        # Geometry reconcile. Collections created before per-collection
+        # preallocation was bounded keep their original segment target
+        # forever, because collection creation is the only place the bound
+        # was applied and it returns early for an existing collection. The
+        # maintenance tick converges them in place: non-destructive, no
+        # point movement, and measured to reclaim 63-84% per collection.
+        # Capped per cycle so a large drifted backend converges over
+        # several ticks instead of saturating disk in one.
+        "storage_reconcile": True,
+        "storage_reconcile_max_per_cycle": 4,
+        # Per-collection convergence budget. A collection that has not
+        # settled by then is reported as still converging and retried on a
+        # later cycle - never as failed, and never with a reclaim figure.
+        "storage_reconcile_budget_seconds": 300.0,
         "data_dir": ".vault/data/search-data",
         "qdrant_dir": "qdrant",
         "index_metadata_file": "index_meta.json",
