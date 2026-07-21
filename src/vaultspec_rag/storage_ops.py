@@ -399,6 +399,13 @@ class ReclaimPolicy:
             deleted by the retention sweep.
         archive_max_bytes: Total-byte cap for the archive dir; the sweep
             evicts oldest archives first until under it.
+        ephemeral_idle_hours: Idle hours (since the persisted
+            ``last_indexed`` stamp) after which a LIVE but temp-rooted
+            namespace is treated as dangling (#242) - the leak signature
+            is a harness temp dir that still exists but is never indexed
+            again. ``0`` (or negative) disables the tier. Destruction
+            still flows through the unchanged empty/data tiers: empty
+            drops, point-bearing archives first.
     """
 
     grace_hours: float = 24.0
@@ -406,6 +413,7 @@ class ReclaimPolicy:
     max_per_cycle: int = 16
     archive_retention_days: float = 30.0
     archive_max_bytes: int = 20 * 1024**3
+    ephemeral_idle_hours: float = 72.0
 
 
 @dataclass(frozen=True)
@@ -460,12 +468,89 @@ def _parse_iso(ts: str) -> datetime | None:
     return parsed
 
 
+def _evaluate_ephemeral(
+    surveys: list[NamespaceSurvey],
+    last_indexed: dict[str, str],
+    *,
+    now: datetime,
+    policy: ReclaimPolicy,
+) -> list[ReclaimDecision]:
+    """Decide, per LIVE temp-rooted namespace, whether the idle TTL expired.
+
+    The #242 leak signature: a harness temp dir still exists, so its
+    namespace classifies ``live`` and survives orphan pruning forever.
+    Ephemerality is derived from the root path (``is_temp_rooted``) and
+    danglingness from the persisted ``last_indexed`` activity clock -
+    stamped by every successful index run, restart-safe, and only ever
+    advanced by real activity, so protection can only extend. A missing
+    or unparsable stamp is ``pending`` (never destroy on absent
+    evidence). ``unknown``/``unverifiable`` namespaces never reach this
+    function (they are not ``live``).
+    """
+    from .storage_survey import is_temp_rooted
+
+    decisions: list[ReclaimDecision] = []
+    if policy.ephemeral_idle_hours <= 0:
+        return decisions
+    candidates = sorted(
+        (
+            s
+            for s in surveys
+            if s.status == "live" and is_temp_rooted(s.root)
+        ),
+        key=lambda s: (s.points > 0, s.prefix),
+    )
+    for survey in candidates:
+        tier = "empty" if survey.points == 0 else "data"
+        stamped = _parse_iso(last_indexed.get(survey.prefix, ""))
+        if stamped is None:
+            decisions.append(
+                ReclaimDecision(
+                    survey.prefix,
+                    "pending",
+                    tier,
+                    reason="ephemeral_no_activity_stamp",
+                    points=survey.points,
+                    footprint_bytes=survey.footprint_bytes,
+                )
+            )
+            continue
+        idle_hours = (now - stamped).total_seconds() / 3600.0
+        if idle_hours < policy.ephemeral_idle_hours:
+            decisions.append(
+                ReclaimDecision(
+                    survey.prefix,
+                    "pending",
+                    tier,
+                    reason=(
+                        "ephemeral_idle_remaining_h="
+                        f"{policy.ephemeral_idle_hours - idle_hours:.1f}"
+                    ),
+                    points=survey.points,
+                    footprint_bytes=survey.footprint_bytes,
+                )
+            )
+            continue
+        decisions.append(
+            ReclaimDecision(
+                survey.prefix,
+                "reclaim_empty" if tier == "empty" else "reclaim_data",
+                tier,
+                reason="ephemeral_idle",
+                points=survey.points,
+                footprint_bytes=survey.footprint_bytes,
+            )
+        )
+    return decisions
+
+
 def evaluate_reclaim(
     surveys: list[NamespaceSurvey],
     stamps: dict[str, str],
     *,
     now: datetime,
     policy: ReclaimPolicy,
+    last_indexed: dict[str, str] | None = None,
 ) -> list[ReclaimDecision]:
     """Decide, per orphaned namespace, whether reclamation may act NOW.
 
@@ -484,9 +569,13 @@ def evaluate_reclaim(
             ``update_orphan_stamps``).
         now: The evaluation clock (timezone-aware).
         policy: The active :class:`ReclaimPolicy`.
+        last_indexed: Prefix to persisted ``last_indexed`` stamp mapping
+            (from the manifest); enables the ephemeral idle-TTL tier for
+            live temp-rooted namespaces (#242). ``None`` skips the tier.
 
     Returns:
-        One :class:`ReclaimDecision` per orphaned namespace.
+        One :class:`ReclaimDecision` per orphaned namespace, plus one per
+        live temp-rooted namespace when *last_indexed* is provided.
     """
     decisions: list[ReclaimDecision] = []
     eligible: list[ReclaimDecision] = []
@@ -547,6 +636,31 @@ def evaluate_reclaim(
                     footprint_bytes=survey.footprint_bytes,
                 )
             )
+    if last_indexed is None:
+        return decisions
+    # Ephemeral idle-TTL tier (#242): live temp-rooted namespaces whose
+    # activity clock expired. Orphans keep priority under the shared
+    # per-cycle cap; an over-cap ephemeral reclaim defers to next cycle.
+    for decision in _evaluate_ephemeral(
+        surveys, last_indexed, now=now, policy=policy
+    ):
+        if decision.action in ("reclaim_empty", "reclaim_data"):
+            if len(eligible) < policy.max_per_cycle:
+                eligible.append(decision)
+                decisions.append(decision)
+            else:
+                decisions.append(
+                    ReclaimDecision(
+                        decision.prefix,
+                        "deferred",
+                        decision.tier,
+                        reason="over_cycle_cap",
+                        points=decision.points,
+                        footprint_bytes=decision.footprint_bytes,
+                    )
+                )
+        else:
+            decisions.append(decision)
     return decisions
 
 
@@ -712,14 +826,23 @@ def run_maintenance_cycle(
     Returns:
         A :class:`MaintenanceResult` for the jobs registry and rollup.
     """
-    from .storage_manifest import update_orphan_stamps
+    from .storage_manifest import load_manifest, update_orphan_stamps
 
     surveys = gather_survey(client, storage_dir)
     stamps = update_orphan_stamps(
         {s.prefix: s.status for s in surveys},
         now_iso=now.isoformat(),
     )
-    decisions = evaluate_reclaim(surveys, stamps, now=now, policy=policy)
+    last_indexed = {
+        prefix: entry.last_indexed for prefix, entry in load_manifest().items()
+    }
+    decisions = evaluate_reclaim(
+        surveys,
+        stamps,
+        now=now,
+        policy=policy,
+        last_indexed=last_indexed,
+    )
     applied: list[ReclaimDecision] = []
     archived: list[Path] = []
     reclaimed = 0

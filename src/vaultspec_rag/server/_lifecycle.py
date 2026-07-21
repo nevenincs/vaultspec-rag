@@ -337,6 +337,7 @@ def _storage_maintenance_tick_sync() -> None:
         max_per_cycle=int(cfg.storage_autoprune_max_per_cycle),
         archive_retention_days=float(cfg.storage_autoprune_archive_retention_days),
         archive_max_bytes=int(float(cfg.storage_autoprune_archive_max_gb) * 1024**3),
+        ephemeral_idle_hours=float(cfg.storage_autoprune_ephemeral_idle_hours),
     )
     from .. import jobs as _jobs_registry
 
