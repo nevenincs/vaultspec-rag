@@ -11,16 +11,6 @@ related:
   - '[[2026-07-21-managed-log-contract-reference]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 # `managed-log-contract` plan
 
 Bound every managed log and give operators one truthful service-plus-Qdrant view both while
@@ -91,7 +81,7 @@ Prove real rollover and operator behavior across supported paths, validate the v
 - [x] `W03.P07.S17` - Run focused unit and integration suites for configuration, writers, routes, transport, and CLI; `src/vaultspec_rag/tests`.
 - [x] `W03.P07.S18` - Run repository formatting, lint, type, and complete test gates required by project configuration; `pyproject.toml`.
 - [x] `W03.P07.S19` - Validate managed-log vault artifacts and feature index integrity; `.vault`.
-- [ ] `W03.P07.S20` - Record formal safety, intent, and quality review findings; `.vault/audit`.
+- [x] `W03.P07.S20` - Record formal safety, intent, and quality review findings; `.vault/audit`.
 
 ## Description
 
