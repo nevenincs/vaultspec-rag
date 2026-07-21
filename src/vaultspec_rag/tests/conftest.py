@@ -57,7 +57,12 @@ def isolated_machine_singleton_dirs(
     import os
 
     from ..config import EnvVar
+    from .integration._helpers import (
+        _mirror_managed_qdrant_binary,
+        _resolve_host_provisioned_qdrant,
+    )
 
+    host_qdrant = _resolve_host_provisioned_qdrant()
     base = tmp_path_factory.mktemp("machine-singleton")
     session_paths = MappingProxyType(
         {
@@ -66,8 +71,10 @@ def isolated_machine_singleton_dirs(
         }
     )
     prior = {var: os.environ.get(var) for var in session_paths}
-    _force_machine_singleton_test_paths(session_paths)
     try:
+        _force_machine_singleton_test_paths(session_paths)
+        if host_qdrant is not None:
+            _mirror_managed_qdrant_binary(base / "status", host_qdrant)
         yield session_paths
     finally:
         for var, value in prior.items():

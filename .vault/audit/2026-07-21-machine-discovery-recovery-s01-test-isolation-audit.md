@@ -55,7 +55,23 @@ consumer cannot alter the values used by later autouse rearming. Focused real di
 heartbeat, identity, and lock coverage completed 24 tests without touching operator-global
 paths.
 
-Status: **PASS**. There are no critical or high findings.
+### isolated-binary-source | medium | Session isolation hid the verified Qdrant install
+
+A later live-fixture run found that overriding the status directory before nested service
+setup also redirected managed-binary resolution to the empty session tree. The nested
+fixture could no longer obtain a verified source to mirror and stopped before exercising
+its job assertions. The corrected session fixture resolves the provisioned binary and
+manifest while the ambient configuration is still active, then copies them into the
+pytest-owned session status tree after isolation. Nested fixtures read only that isolated
+copy, while the production supervisor still re-hashes it against the pinned manifest.
+
+The first correction placed copying before the restoration `try/finally`; independent
+review classified that entry-failure restoration gap as Medium. The final revision moves
+both environment mutation and copying inside the protected block. Re-review found no
+remaining findings. The safe mirror test, Ruff, formatting, ty, BasedPyright, and diff
+checks passed, and host files and service identity remained unchanged.
+
+Status: **PASS** after follow-up. There are no unresolved findings at any severity.
 
 ## Recommendations
 
