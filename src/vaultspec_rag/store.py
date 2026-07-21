@@ -478,6 +478,32 @@ class VaultStore(_VaultSearchMixin):
                 exc_info=True,
             )
 
+    def touch_manifest_last_indexed(self) -> None:
+        """Refresh this root's persisted ``last_indexed`` stamp (server mode).
+
+        The ephemeral idle-TTL reclaim tier (#242) treats a temp-rooted
+        namespace as dangling once this stamp is old enough, so every
+        successful index run must refresh it - the stamp is the persisted
+        activity clock that keeps an actively-used temp root protected.
+        Best-effort like :meth:`_record_manifest`: a manifest failure must
+        never fail the index run.
+        """
+        if not self._server_mode:
+            return
+        import datetime as _dt
+
+        try:
+            from .storage_manifest import record_root
+
+            stamp = _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds")
+            record_root(self.root_dir, backend="server", last_indexed=stamp)
+        except Exception:  # best-effort stamp; must never break indexing
+            logger.debug(
+                "could not stamp last_indexed for %s",
+                self.root_dir,
+                exc_info=True,
+            )
+
     def ensure_table(self) -> None:
         """Create the vault_docs collection if it doesn't exist."""
         from qdrant_client import models

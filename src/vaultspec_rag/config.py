@@ -121,6 +121,9 @@ class EnvVar(StrEnum):
     )
     STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB = "VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB"
     STORAGE_AUTOPRUNE_MAX_PER_CYCLE = "VAULTSPEC_RAG_STORAGE_AUTOPRUNE_MAX_PER_CYCLE"
+    STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS = (
+        "VAULTSPEC_RAG_STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS"
+    )
     # First-class local-backend opt-out. When set truthy it selects the
     # on-disk store regardless of the server-mode default.
     LOCAL_ONLY = "VAULTSPEC_RAG_LOCAL_ONLY"
@@ -203,6 +206,9 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     ),
     "storage_autoprune_archive_max_gb": EnvVar.STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB,
     "storage_autoprune_max_per_cycle": EnvVar.STORAGE_AUTOPRUNE_MAX_PER_CYCLE,
+    "storage_autoprune_ephemeral_idle_hours": (
+        EnvVar.STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS
+    ),
     # First-class local-backend opt-out knob.
     "local_only": EnvVar.LOCAL_ONLY,
 }
@@ -365,6 +371,13 @@ class VaultSpecConfigWrapper:
         "storage_autoprune_archive_retention_days": 30.0,
         "storage_autoprune_archive_max_gb": 20.0,
         "storage_autoprune_max_per_cycle": 16,
+        # Ephemeral idle-TTL tier (#242): a temp-rooted namespace whose
+        # persisted last_indexed stamp is older than this is treated as
+        # dangling even though its root still exists - the leak signature
+        # is a harness temp dir that outlives its usefulness but never
+        # disappears. Runs through the same empty/data tiers, archive
+        # gate, and per-cycle cap as orphan reclamation. 0 disables.
+        "storage_autoprune_ephemeral_idle_hours": 72.0,
         "data_dir": ".vault/data/search-data",
         "qdrant_dir": "qdrant",
         "index_metadata_file": "index_meta.json",

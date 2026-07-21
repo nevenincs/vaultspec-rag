@@ -132,6 +132,7 @@ class VaultIndexer:
             )
             try:
                 result = self._full_index_locked(clean=clean, reporter=reporter)
+                self.store.touch_manifest_last_indexed()
             except Exception as exc:
                 log_event(
                     logger,
@@ -351,6 +352,7 @@ class VaultIndexer:
                     reporter=reporter,
                     changed_paths=changed_paths,
                 )
+                self.store.touch_manifest_last_indexed()
             except Exception as exc:
                 log_event(
                     logger,
