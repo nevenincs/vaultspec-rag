@@ -176,6 +176,83 @@ class TestStartReorderAndGuards:
         assert _existing_service_running() is None
 
     @pytest.mark.usefixtures("_isolated_singleton")
+    def test_a_serving_but_degraded_daemon_is_not_plain_already_running(
+        self,
+    ) -> None:
+        # A daemon that answers /health with a non-ready status (models not
+        # loaded, qdrant down) is still the idempotent success, but the
+        # envelope must carry the health status instead of implying it can
+        # serve (#237). A real HTTP responder stands in for the daemon's
+        # health surface; the recorded pid is this live process.
+        import http.server
+        import threading
+
+        payload = json.dumps(
+            {"status": "degraded", "service_token": "tok-live"}
+        ).encode("utf-8")
+
+        class _HealthHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, format: str, *args: object) -> None:
+                del format, args
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _HealthHandler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            from ..cli._service_status import _status_file, _write_service_status
+
+            _write_service_status(os.getpid(), port)
+            sf = _status_file()
+            doc = json.loads(sf.read_text(encoding="utf-8"))
+            doc["service_token"] = "tok-live"
+            sf.write_text(json.dumps(doc), encoding="utf-8")
+
+            triple = _existing_service_running()
+            assert triple == (os.getpid(), port, "degraded")
+
+            result = runner.invoke(app, ["server", "start", "--json"])
+            assert result.exit_code == 0
+            env = json.loads(result.stdout)
+            assert env["ok"] is True
+            assert env["data"]["status"] == "already_running"
+            assert env["data"]["health"] == "degraded"
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    @pytest.mark.usefixtures("_isolated_singleton")
+    def test_a_warming_daemon_is_already_starting_not_a_fault(self) -> None:
+        # A live owned daemon that stamped ``warming`` (machine lock held,
+        # port not yet serving) is a start already in progress: exit 0 with
+        # ``already_starting`` and the warming phase, never ``machine_owned``
+        # exit 1 and never a plain ``already_running`` (#237). The recorded
+        # pid is this live python process; port 1 is silent.
+        from ..cli._service_status import _status_file, _write_service_status
+
+        _write_service_status(os.getpid(), 1)
+        sf = _status_file()
+        doc = json.loads(sf.read_text(encoding="utf-8"))
+        doc["phase"] = "warming"
+        sf.write_text(json.dumps(doc), encoding="utf-8")
+
+        result = runner.invoke(app, ["server", "start", "--json"])
+        assert result.exit_code == 0
+        env = json.loads(result.stdout)
+        assert env["ok"] is True
+        assert env["data"]["status"] == "already_starting"
+        assert env["data"]["phase"] == "warming"
+        assert env["data"]["pid"] == os.getpid()
+
+    @pytest.mark.usefixtures("_isolated_singleton")
     def test_a_foreign_port_holder_is_port_in_use_json(self) -> None:
         # Bind a real socket so the port-bindable guard trips: no recorded
         # service (idempotent None), the port is taken by something that is NOT
