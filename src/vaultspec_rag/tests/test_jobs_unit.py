@@ -14,14 +14,31 @@ Covers (no GPU required):
 from __future__ import annotations
 
 import ast
+import asyncio
 import inspect
 import logging
 import textwrap
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from ..jobs import record_finish, record_start, reset, snapshot
+from ..job_control import PauseRequested, RunControlToken
+from ..jobs import (
+    DesiredJobState,
+    JobInitiator,
+    JobManager,
+    JobMode,
+    JobOperation,
+    JobOutcome,
+    JobSource,
+    JobSpec,
+    JobState,
+    record_finish,
+    record_start,
+    reset,
+    snapshot,
+)
 from ..service import ServiceRegistry
 
 if TYPE_CHECKING:
@@ -482,3 +499,303 @@ class TestSuiteIsolationGuard:
         assert storage is not None
         assert Path(status).expanduser() != machine_default
         assert not Path(storage).expanduser().is_relative_to(machine_default)
+
+
+class TestManagedJobAdmission:
+    """The canonical manager owns admission and replay under real contention."""
+
+    def test_concurrent_equivalent_creates_share_one_exact_job(self) -> None:
+        manager = JobManager(max_nonterminal=1)
+        spec = JobSpec(
+            JobOperation.INDEX,
+            JobSource.VAULT,
+            "Y:/project",
+            JobMode.INCREMENTAL,
+        )
+        initiator = JobInitiator("cli", "server job create", "Y:/project")
+
+        def submit(_index: int) -> JobOutcome:
+            return manager.create(spec, initiator)
+
+        with ThreadPoolExecutor(max_workers=8) as workers:
+            outcomes = list(workers.map(submit, range(32)))
+
+        created = [outcome for outcome in outcomes if outcome.code == "job_created"]
+        assert len(created) == 1
+        assert created[0].job is not None
+        exact_id = created[0].job.id
+        assert {outcome.job.id for outcome in outcomes if outcome.job is not None} == {
+            exact_id
+        }
+        assert manager.get(exact_id) is not None
+        assert manager.get(exact_id[:8]) is None
+
+        capacity = manager.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.CODE,
+                "Y:/other",
+                JobMode.REBUILD,
+            ),
+            initiator,
+        )
+        assert capacity.code == "job_capacity_exceeded"
+
+    def test_idempotency_replays_only_the_original_request(self) -> None:
+        manager = JobManager(max_nonterminal=2)
+        spec = JobSpec(
+            JobOperation.INDEX,
+            JobSource.CODE,
+            "Y:/project",
+            JobMode.REBUILD,
+        )
+        initiator = JobInitiator("http", "POST /jobs", "Y:/project")
+
+        original = manager.create(spec, initiator, idempotency_key="request-7")
+        replay = manager.create(spec, initiator, idempotency_key="request-7")
+        conflict = manager.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.CODE,
+                "Y:/different",
+                JobMode.REBUILD,
+            ),
+            initiator,
+            idempotency_key="request-7",
+        )
+
+        assert original.code == "job_created"
+        assert replay.code == "idempotency_replayed"
+        assert replay.job == original.job
+        assert conflict.code == "idempotency_key_conflict"
+        assert conflict.job == original.job
+
+
+class TestManagedJobTransitions:
+    """Revision and attempt identity make lifecycle races deterministic."""
+
+    @pytest.mark.asyncio
+    async def test_pause_resume_race_requeues_after_delivered_unwind(self) -> None:
+        manager = JobManager(max_nonterminal=2)
+        spec = JobSpec(
+            JobOperation.INDEX,
+            JobSource.VAULT,
+            "Y:/project",
+            JobMode.INCREMENTAL,
+        )
+        initiator = JobInitiator("cli", "server job create", "Y:/project")
+        created = manager.create(spec, initiator)
+        assert created.job is not None
+        job_id = created.job.id
+
+        stale_change = manager.set_desired_state(
+            job_id,
+            DesiredJobState.PAUSED,
+            expected_revision=0,
+        )
+        assert stale_change.code == "revision_conflict"
+
+        paused = manager.set_desired_state(
+            job_id,
+            DesiredJobState.PAUSED,
+            expected_revision=1,
+        )
+        assert paused.job is not None
+        assert paused.job.state is JobState.PAUSED
+        assert paused.job.revision == 2
+        assert (
+            manager.set_desired_state(
+                job_id,
+                DesiredJobState.PAUSED,
+                expected_revision=1,
+            ).code
+            == "already_satisfied"
+        )
+        assert (
+            manager.set_desired_state(
+                job_id,
+                DesiredJobState.RUNNING,
+                expected_revision=1,
+            ).code
+            == "revision_conflict"
+        )
+
+        resumed = manager.set_desired_state(
+            job_id,
+            DesiredJobState.RUNNING,
+            expected_revision=2,
+        )
+        assert resumed.job is not None
+        assert resumed.job.attempt.number == 2
+        assert resumed.job.state is JobState.QUEUED
+
+        task = asyncio.create_task(asyncio.Event().wait())
+        control = RunControlToken()
+        try:
+            started = manager.start_attempt(job_id, task=task, control=control)
+            assert started.job is not None
+            assert started.job.state is JobState.RUNNING
+            assert (
+                manager.set_desired_state(job_id, DesiredJobState.PAUSED).code
+                == "pause_requested"
+            )
+            with pytest.raises(PauseRequested):
+                control.checkpoint()
+
+            committed_resume = manager.set_desired_state(
+                job_id, DesiredJobState.RUNNING
+            )
+            assert committed_resume.job is not None
+            assert committed_resume.job.state is JobState.PAUSING
+            assert committed_resume.job.desired_state is DesiredJobState.RUNNING
+
+            acknowledged = manager.acknowledge_control(
+                job_id,
+                attempt=2,
+                task=task,
+            )
+            assert acknowledged.code == "resume_requeued"
+            assert acknowledged.job is not None
+            assert acknowledged.job.state is JobState.QUEUED
+            assert acknowledged.job.attempt.number == 3
+            assert (
+                manager.acknowledge_control(job_id, attempt=2, task=task).code
+                == "stale_attempt_ignored"
+            )
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    @pytest.mark.asyncio
+    async def test_cancellation_is_immediate_or_acknowledged_after_unwind(
+        self,
+    ) -> None:
+        spec = JobSpec(
+            JobOperation.INDEX,
+            JobSource.VAULT,
+            "Y:/project",
+            JobMode.INCREMENTAL,
+        )
+        initiator = JobInitiator("cli", "server job stop", "Y:/project")
+
+        queued_manager = JobManager(max_nonterminal=1)
+        queued = queued_manager.create(spec, initiator)
+        assert queued.job is not None
+        immediate = queued_manager.set_desired_state(
+            queued.job.id,
+            DesiredJobState.CANCELLED,
+        )
+        assert immediate.job is not None
+        assert immediate.job.state is JobState.CANCELLED
+        assert immediate.job.timestamps.control_acknowledged_at is not None
+        assert (
+            queued_manager.set_desired_state(
+                queued.job.id,
+                DesiredJobState.CANCELLED,
+                expected_revision=1,
+            ).code
+            == "already_satisfied"
+        )
+
+        running_manager = JobManager(max_nonterminal=1)
+        running = running_manager.create(spec, initiator)
+        assert running.job is not None
+        task = asyncio.create_task(asyncio.Event().wait())
+        control = RunControlToken()
+        try:
+            running_manager.start_attempt(running.job.id, task=task, control=control)
+            running_manager.set_desired_state(
+                running.job.id,
+                DesiredJobState.PAUSED,
+            )
+            cancelling = running_manager.set_desired_state(
+                running.job.id,
+                DesiredJobState.CANCELLED,
+            )
+            assert cancelling.job is not None
+            assert cancelling.job.state is JobState.CANCELLING
+            assert control.snapshot().desired is not None
+            assert control.snapshot().desired.value == "cancel"
+            acknowledged = running_manager.acknowledge_control(
+                running.job.id,
+                attempt=1,
+                task=task,
+            )
+            assert acknowledged.job is not None
+            assert acknowledged.job.state is JobState.CANCELLED
+            assert (
+                running_manager.set_desired_state(
+                    running.job.id,
+                    DesiredJobState.RUNNING,
+                ).code
+                == "invalid_transition"
+            )
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    @pytest.mark.asyncio
+    async def test_terminal_first_writer_retry_and_delete_contract(self) -> None:
+        manager = JobManager(max_nonterminal=2, max_terminal_history=2)
+        spec = JobSpec(
+            JobOperation.INDEX,
+            JobSource.CODE,
+            "Y:/project",
+            JobMode.REBUILD,
+        )
+        initiator = JobInitiator("http", "POST /jobs", "Y:/project")
+        created = manager.create(spec, initiator)
+        assert created.job is not None
+        job_id = created.job.id
+        task = asyncio.create_task(asyncio.Event().wait())
+        control = RunControlToken()
+        try:
+            assert manager.start_attempt(job_id, task=task, control=control).code == (
+                "attempt_started"
+            )
+            failed = manager.finish_attempt(
+                job_id,
+                attempt=1,
+                task=task,
+                state=JobState.FAILED,
+                result="index failed",
+                error_kind="other",
+            )
+            assert failed.job is not None
+            assert failed.job.state is JobState.FAILED
+            assert (
+                manager.finish_attempt(
+                    job_id,
+                    attempt=1,
+                    task=task,
+                    state=JobState.SUCCEEDED,
+                    result="late success",
+                ).job
+                == failed.job
+            )
+            assert (
+                manager.set_desired_state(job_id, DesiredJobState.RUNNING).code
+                == "invalid_transition"
+            )
+            assert (
+                manager.set_desired_state(
+                    job_id,
+                    DesiredJobState.CANCELLED,
+                    mode="force",
+                ).code
+                == "force_termination_unavailable"
+            )
+
+            retried = manager.retry(job_id)
+            assert retried.job is not None
+            assert retried.job.id != job_id
+            assert retried.job.attempt.parent_job_id == job_id
+            assert manager.delete(retried.job.id).code == "job_not_terminal"
+            assert manager.delete(job_id).code == "job_deleted"
+            assert manager.get(job_id) is None
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
