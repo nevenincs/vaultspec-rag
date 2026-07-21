@@ -30,7 +30,7 @@ from .corpus import CorpusManifest, build_synthetic_vault
 @pytest.fixture(scope="session", autouse=True)
 def isolated_machine_singleton_dirs(
     tmp_path_factory: TempPathFactory,
-) -> Generator[None]:
+) -> Generator[dict[str, str]]:
     """Point the machine-singleton dirs at a session temp tree for every test.
 
     The status dir and the qdrant storage dir resolve the machine-global
@@ -58,7 +58,7 @@ def isolated_machine_singleton_dirs(
             os.environ[var] = value
     reset_config()  # pyright: ignore[reportMissingTypeStubs]
     reset_rag_config()
-    yield
+    yield {var: os.environ[var] for var in defaults}
     for var, value in prior.items():
         if value is None:
             os.environ.pop(var, None)
@@ -66,6 +66,30 @@ def isolated_machine_singleton_dirs(
             os.environ[var] = value
     reset_config()  # pyright: ignore[reportMissingTypeStubs]
     reset_rag_config()
+
+
+@pytest.fixture(autouse=True)
+def rearm_machine_singleton_isolation(
+    isolated_machine_singleton_dirs: dict[str, str],
+) -> None:
+    """Re-arm the machine-dir isolation before every test.
+
+    A test that pops the isolation env vars without restoring them would
+    silently expose every later test to the machine-global dirs; this
+    cheap pre-test check restores the session values so the isolation
+    survives leaks instead of depending on every test's cleanup being
+    perfect.
+    """
+    import os
+
+    rearmed = False
+    for var, value in isolated_machine_singleton_dirs.items():
+        if os.environ.get(var) is None:
+            os.environ[var] = value
+            rearmed = True
+    if rearmed:
+        reset_config()  # pyright: ignore[reportMissingTypeStubs]
+        reset_rag_config()
 
 
 class RagComponents(TypedDict):
