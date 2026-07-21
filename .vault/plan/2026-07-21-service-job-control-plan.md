@@ -47,7 +47,7 @@ Replace the evictable record ring and unkeyed task set with exact-addressable li
 
 - [x] `W01.P02.S04` - Define immutable job specifications, canonical states, capabilities, revisions, attempt lineage, and structured outcomes using vaultspec-high-executor; `src/vaultspec_rag/jobs.py`.
 - [x] `W01.P02.S05` - Implement exact-ID active and runtime ownership, bounded terminal history, admission, active-work deduplication, and idempotency keys using vaultspec-high-executor; `src/vaultspec_rag/jobs.py`.
-- [ ] `W01.P02.S06` - Implement revisioned pause, resume, cancellation, retry, terminal deletion, first-terminal-writer-wins, and deterministic races using vaultspec-high-executor; `src/vaultspec_rag/jobs.py`.
+- [x] `W01.P02.S06` - Implement revisioned pause, resume, cancellation, retry, terminal deletion, first-terminal-writer-wins, and deterministic races using vaultspec-high-executor; `src/vaultspec_rag/jobs.py`.
 - [ ] `W01.P02.S07` - Implement atomic durable-before-dispatch persistence and queued, paused, and interrupted restart recovery using vaultspec-high-executor; `src/vaultspec_rag/jobs.py`.
 
 ### Phase `W01.P03` - state authority verification
