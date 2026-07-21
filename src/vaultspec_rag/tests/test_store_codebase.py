@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -13,6 +14,8 @@ if TYPE_CHECKING:
 
 import pytest
 
+from .._job_errors import JobError, JobErrorKind
+from .._store_writes import StoreWritePolicy
 from ..store import CodeChunk, VaultStore
 
 pytestmark = [pytest.mark.integration]
@@ -60,11 +63,38 @@ class TestStoreCodebase:
                 sparse_values=list(sparse.values),
             ),
         ]
-        tmp_vault_store.upsert_code_chunks(chunks)
+        tmp_vault_store.upsert_code_chunks(chunks, write_policy=None)
         assert tmp_vault_store.count_code() == 1
 
         ids = tmp_vault_store.get_all_code_ids()
         assert "src/main.py:1-10" in ids
+
+    def test_upsert_code_chunks_applies_write_policy_before_mutation(
+        self,
+        tmp_vault_store: VaultStore,
+    ) -> None:
+        """The public store path must propagate an expired write policy."""
+        tmp_vault_store.ensure_code_table()
+        deadline = time.monotonic() + 0.25
+        policy = StoreWritePolicy(
+            remaining_seconds=lambda: deadline - time.monotonic(),
+            wait=time.sleep,
+        )
+        chunk = CodeChunk(
+            id="src/deadline.py:1-1",
+            path="src/deadline.py",
+            language="python",
+            content="deadline_guard = True",
+            line_start=1,
+            line_end=1,
+            vector=[0.0] * 1024,
+        )
+
+        with pytest.raises(JobError) as caught:
+            tmp_vault_store.upsert_code_chunks([chunk], write_policy=policy)
+
+        assert caught.value.error_kind is JobErrorKind.NO_PROGRESS_TIMEOUT
+        assert tmp_vault_store.count_code() == 0
 
     def test_build_code_filter(self) -> None:
         """_build_code_filter should build correct Qdrant filter for codebase."""
@@ -138,7 +168,7 @@ class TestStoreCodebase:
                 sparse_values=list(sparse.values),
             ),
         ]
-        tmp_vault_store.upsert_code_chunks(chunks)
+        tmp_vault_store.upsert_code_chunks(chunks, write_policy=None)
         assert tmp_vault_store.count_code() == 1
 
         tmp_vault_store.delete_code_chunks(["test.py:1-5"])

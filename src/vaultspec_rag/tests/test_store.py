@@ -357,6 +357,7 @@ class TestStoreLocalClientSerialization:
                 )
                 for idx in range(6)
             ],
+            write_policy=None,
         )
         store.upsert_code_chunks(
             [
@@ -377,6 +378,7 @@ class TestStoreLocalClientSerialization:
                 )
                 for idx in range(6)
             ],
+            write_policy=None,
         )
 
     def test_parallel_hybrid_searches_complete_without_qdrant_errors(
@@ -629,7 +631,8 @@ class TestDropTable:
                         content="hello world",
                         vector=[0.1, 0.2, 0.3, 0.4],
                     )
-                ]
+                ],
+                write_policy=None,
             )
             assert store.count() == 1
 

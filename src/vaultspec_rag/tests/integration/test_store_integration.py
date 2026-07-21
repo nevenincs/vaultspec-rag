@@ -124,7 +124,7 @@ class TestVaultStore:
                 model.encode_query_sparse(doc.get("content", "")[:200]).values,
             ),
         )
-        store.upsert_documents([reinsert])
+        store.upsert_documents([reinsert], write_policy=None)
 
     def test_hybrid_search_with_sparse_vector(
         self, rag_components: RagComponentsWithManifest
