@@ -704,6 +704,24 @@ def test_has_direct_torch_dep_no_project_file(tmp_path: Path) -> None:
         ("", False),
         ("not a valid PEP 508 string @!", False),  # InvalidRequirement → False
     ],
+    ids=[
+        "bare",
+        "specifier-compact",
+        "specifier-spaced",
+        "extra",
+        "exact-cuda",
+        "marker-linux",
+        "direct-url",
+        "parenthesised",
+        "mixed-case-name",
+        "upper-case-name-specifier",
+        "torchvision-prefix",
+        "torchaudio-prefix",
+        "requests",
+        "numpy",
+        "empty",
+        "invalid",
+    ],
 )
 def test_is_torch_requirement_predicate(entry: str, expected: bool) -> None:
     """``has_direct_torch_dep`` delegates name extraction to

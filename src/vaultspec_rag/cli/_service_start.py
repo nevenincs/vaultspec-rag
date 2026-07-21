@@ -46,10 +46,10 @@ from ._service_lifecycle import (
 )
 from ._service_status import (
     SERVICE_PHASE_WARMING,
+    _delete_service_status,
     _log_file,
     _read_service_status,
     _service_phase,
-    _status_file,
     _update_service_metadata,
     _update_service_token,
     _write_service_status,
@@ -192,7 +192,7 @@ def _existing_service_running() -> tuple[int, int, str] | None:
     # status file only when the recorded PID is confirmed dead; leave it in
     # place on an ambiguous miss against a live PID (issue #204).
     if _should_unlink_discovery_file(_cli._is_pid_alive(existing_pid)):
-        _status_file().unlink(missing_ok=True)
+        _delete_service_status()
     return None
 
 
@@ -712,7 +712,7 @@ def _await_service_ready(
 
                 # Check if process died (port conflict, etc.)
                 if not _cli._is_pid_alive(pid):
-                    _status_file().unlink(missing_ok=True)
+                    _delete_service_status()
                     tail = _tail_daemon_log(log_path)
                     human = [_process_line(pid), _address_line(port)]
                     if tail:

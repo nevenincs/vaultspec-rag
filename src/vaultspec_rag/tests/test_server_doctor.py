@@ -23,6 +23,9 @@ from typer.testing import CliRunner
 from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
     InstallMode,
 )
+from vaultspec_core.core.manifest import (  # pyright: ignore[reportMissingTypeStubs]
+    write_manifest,
+)
 from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
     PackageDeclaration,
     write_package_declaration,
@@ -54,12 +57,13 @@ def _install_rag_workspace(tmp_path: Path, mode: InstallMode) -> Path:
     ws = tmp_path / "ws"
     ws.mkdir()
     (ws / "pyproject.toml").write_text(_PROJECT_WITH_RAG, encoding="utf-8", newline="")
+    write_manifest(ws, {"claude"})
     install_run(
         path=ws,
         mode=mode,
         provision=False,
         configure_torch=False,
-        install_mcp=False,
+        install_mcp=True,
     )
     return ws
 

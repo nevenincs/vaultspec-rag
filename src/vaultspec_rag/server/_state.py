@@ -39,7 +39,9 @@ __all__ = [
     "_SERVICE_TOKEN",
     "SurveySnapshot",
     "_http_mode",
+    "_launch_token",
     "_registry",
+    "_service_port",
     "_shutdown_hooks_installed",
     "_shutdown_recorded",
     "_start_time",
@@ -71,6 +73,8 @@ _watcher_stops: dict[Path, asyncio.Event] = {}
 _watcher_lock = threading.Lock()
 _start_time: float = 0.0
 _http_mode: bool = False  # set once in main() before event loop starts
+_service_port: int = 0  # set by main() before the HTTP lifespan starts
+_launch_token: str = ""  # unique CLI launch-attempt witness, HTTP mode only
 
 # Per-process identity token. Generated once in ``service_lifespan``
 # startup, written into ``service.json`` via the first heartbeat

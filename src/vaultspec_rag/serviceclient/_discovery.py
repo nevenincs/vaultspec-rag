@@ -1,19 +1,25 @@
-"""Import-light service discovery: read ``service.json`` and resolve the port.
+"""Import-light service discovery and atomic ``service.json`` publication.
 
-These read-only helpers let any client (CLI or MCP) locate the running daemon
+The read helpers let any client (CLI or MCP) locate the running daemon
 without loading Torch, the models, or the store. The status directory honors
 ``VAULTSPEC_RAG_STATUS_DIR`` through ``config.get_config`` (a lightweight
-import). The status *writer* helpers (token/metadata update, status write,
-lifecycle log) deliberately stay in ``cli._service_status``; only the
-read/discovery surface lives here.
+import). The shared merge writer serializes the CLI parent and daemon startup
+publications so neither process can erase authoritative fields from the other.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
+import sys
+import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Generator, Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +53,10 @@ __all__ = [
     "SERVICE_PHASE_RUNNING",
     "SERVICE_PHASE_WARMING",
     "_default_service_port",
+    "_delete_service_status",
     "_discovery_timestamp",
     "_machine_service_resolution",
+    "_merge_service_status",
     "_read_service_status",
     "_status_dir",
     "_status_file",
@@ -92,6 +100,193 @@ def _status_file() -> Path:
         Path to ``{status_dir}/service.json``.
     """
     return _status_dir() / "service.json"
+
+
+def _try_lock_fd(fd: int) -> bool:
+    """Take the OS advisory lock on *fd*; True when held, False when unavailable.
+
+    A platform with no advisory-lock primitive (only reachable when the
+    platform string is simulated; every real posix host ships ``fcntl``)
+    reports success unlocked rather than failing the status write.
+    """
+    if sys.platform == "win32":
+        try:
+            import msvcrt
+        except ImportError:
+            logger.debug("no msvcrt; status write proceeds unlocked")
+            return True
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        return True
+    try:
+        import fcntl
+    except ImportError:
+        logger.debug("no fcntl; status write proceeds unlocked")
+        return True
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return True
+
+
+def _unlock_fd(fd: int) -> None:
+    """Release the OS advisory lock taken by :func:`_try_lock_fd`."""
+    if sys.platform == "win32":
+        try:
+            import msvcrt
+        except ImportError:
+            return
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        return
+    try:
+        import fcntl
+    except ImportError:
+        return
+    fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+@contextmanager
+def _status_write_lock(path: Path, *, timeout: float = 1.0) -> Generator[None]:
+    """Serialize cross-process status merges with one bounded OS file lock."""
+    lock_path = path.with_name("service.json.lock")
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    acquired = False
+    deadline = time.monotonic() + timeout
+    try:
+        if os.fstat(fd).st_size == 0:
+            os.write(fd, b"\0")
+        while not acquired:
+            try:
+                acquired = _try_lock_fd(fd)
+            except OSError as exc:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"service status write lock exceeded {timeout:.3f}s"
+                    ) from exc
+                time.sleep(min(0.01, remaining))
+        yield
+    finally:
+        if acquired:
+            try:
+                _unlock_fd(fd)
+            except OSError as exc:
+                logger.warning("service status write lock release failed: %s", exc)
+        os.close(fd)
+
+
+def _apply_status_merge_policy(
+    data: dict[str, object],
+    fields: Mapping[str, object],
+    *,
+    preserve_authoritative_identity: bool,
+) -> dict[str, object]:
+    """Decide the merged status document; pure, no I/O.
+
+    A racing authoritative writer (a daemon that already published a phase on
+    the same port) keeps its pid and first timestamp; a record describing a
+    different pid or port is discarded rather than blended, so two services
+    never fuse into one bogus entry.
+    """
+    merge_fields = dict(fields)
+    incoming_port = merge_fields.get("port")
+    same_port = (
+        incoming_port is not None
+        and data.get("port") is not None
+        and data.get("port") == incoming_port
+    )
+    authoritative_existing = (
+        preserve_authoritative_identity
+        and same_port
+        and data.get("phase") in {SERVICE_PHASE_WARMING, SERVICE_PHASE_RUNNING}
+        and data.get("pid") is not None
+    )
+    if authoritative_existing:
+        merge_fields.pop("pid", None)
+        merge_fields.pop("started_at", None)
+    # A different port means a genuinely different service instance, so the
+    # stored record is dropped rather than blended. A differing pid is NOT
+    # sufficient: the spawning launcher and the daemon it starts legitimately
+    # publish different pids for the same port (a venv launcher on Windows),
+    # and wiping there would destroy the port and discovery fields the
+    # launcher had already written.
+    if (
+        data
+        and incoming_port is not None
+        and data.get("port") is not None
+        and data.get("port") != incoming_port
+    ):
+        data = {}
+    first_started_at = data.get("started_at")
+    data.update(merge_fields)
+    if first_started_at is not None:
+        data["started_at"] = first_started_at
+    return data
+
+
+def _merge_service_status(
+    fields: Mapping[str, object],
+    *,
+    timeout: float = 1.0,
+    preserve_authoritative_identity: bool = False,
+    require_existing: bool = False,
+    path: Path | None = None,
+) -> dict[str, object]:
+    """Atomically merge fields without losing a racing authoritative writer.
+
+    ``preserve_authoritative_identity`` is used by the spawning CLI parent. On
+    Windows its returned process may be a venv launcher whose pid differs from
+    the actual daemon. If that daemon has already published a lifecycle phase
+    on the same port, its pid and first timestamp win over the late parent.
+    """
+    path = path or _status_file()
+    with _status_write_lock(path, timeout=timeout):
+        try:
+            raw: object = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            if require_existing:
+                raise
+            data: dict[str, object] = {}
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"service status read failed at {path}: {exc}") from exc
+        else:
+            data = cast("dict[str, object]", raw) if isinstance(raw, dict) else {}
+
+        data = _apply_status_merge_policy(
+            data,
+            fields,
+            preserve_authoritative_identity=preserve_authoritative_identity,
+        )
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
+        try:
+            tmp.write_text(json.dumps(data), encoding="utf-8")
+            os.replace(str(tmp), str(path))
+        finally:
+            tmp.unlink(missing_ok=True)
+        return data
+
+
+def _delete_service_status(
+    *,
+    path: Path | None = None,
+    timeout: float = 1.0,
+) -> bool:
+    """Serialize status deletion with all merges and heartbeat publications.
+
+    The locked unlink is the deletion tombstone in the status operation order:
+    a merge that completes first is removed, while a ``require_existing`` merge
+    that runs after deletion observes the missing file and cannot recreate it.
+
+    Returns:
+        ``True`` when a file was removed, or ``False`` when it was already
+        absent.
+    """
+    path = path or _status_file()
+    with _status_write_lock(path, timeout=timeout):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return False
+    return True
 
 
 def _read_service_status() -> dict[str, Any] | None:

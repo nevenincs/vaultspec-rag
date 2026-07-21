@@ -5,13 +5,21 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import tempfile
+from contextvars import Context
 from pathlib import Path
 
 from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
     sync_provider,
 )
+from vaultspec_core.core.mcps import (  # pyright: ignore[reportMissingTypeStubs]
+    mcp_uninstall,
+)
 
 from ..builtins import list_builtins
+from ._mcp_extra import reconcile_mcp_extra
+from ._mcp_topology import RequiredMcpTopology, inspect_required_mcp_topology
+from ._mode import resolve_rag_mode
 from ._models import UninstallReport
 from ._torch_flow import _run_torch_config_uninstall
 from ._workspace import _init_core_context, _resolve_target
@@ -19,13 +27,23 @@ from ._workspace import _init_core_context, _resolve_target
 logger = logging.getLogger(__name__)
 
 
-def _remove_candidates(target: Path, dry_run: bool, report: UninstallReport) -> None:
+def _remove_candidates(
+    target: Path,
+    dry_run: bool,
+    report: UninstallReport,
+    *,
+    skip_mcp: bool,
+) -> None:
     # Mirror install symmetrically: remove exactly the files that
     # ``seed_builtins`` would write, derived from the same package tree
     # via ``list_builtins``. A new bundled file is then seeded and
     # removed by one source of truth and can never be orphaned.
     vaultspec_dir = target / ".vaultspec"
-    candidates = [vaultspec_dir / rel for rel in list_builtins()]
+    candidates = [
+        vaultspec_dir / rel
+        for rel in list_builtins()
+        if not (skip_mcp and rel.startswith("mcps/"))
+    ]
     for src_file in candidates:
         if not src_file.exists():
             continue
@@ -113,6 +131,174 @@ def _remove_data_dir(target: Path, dry_run: bool, report: UninstallReport) -> No
                 logger.debug("could not size %s for preview: %s", data_dir, exc)
 
 
+def _run_mcp_cleanup(
+    target: Path,
+    report: UninstallReport,
+    *,
+    dry_run: bool,
+) -> None:
+    """Remove only RAG-owned provider projections through Core's authority."""
+
+    def cleanup() -> object:
+        return mcp_uninstall(
+            target,
+            dry_run=dry_run,
+            provider="all",
+            scope="project",
+            names=frozenset({"vaultspec-rag"}),
+        )
+
+    result = Context().run(cleanup) if dry_run else cleanup()
+    report.sync_results.append(result)
+    report.mcp_sync_results.append(result)
+
+
+def _record_extra_failure(
+    report: UninstallReport,
+    action: str,
+    messages: list[str],
+) -> None:
+    report.mcp_extra_action = action
+    for detail in messages:
+        message = f"MCP extra: {detail}"
+        report.mcp_errors.append(message)
+        report.warnings.append(message)
+
+
+def _reverse_mcp_extra(
+    target: Path,
+    report: UninstallReport,
+    *,
+    dry_run: bool,
+) -> bool:
+    """Preflight and commit owned extra reversal before MCP teardown."""
+    try:
+        resolved_mode = resolve_rag_mode(target, None).mode
+        preview = reconcile_mcp_extra(
+            target / "pyproject.toml",
+            mode=resolved_mode,
+            enabled=False,
+            dry_run=True,
+        )
+    except Exception as exc:
+        logger.debug("MCP-extra reversal inspection failed during uninstall: %s", exc)
+        _record_extra_failure(report, "error", [f"reversal inspection failed: {exc}"])
+        return False
+
+    report.mcp_extra_action = preview.action
+    report.mcp_extra_location = preview.location
+    if preview.conflicts:
+        _record_extra_failure(report, "conflict", preview.conflicts)
+        return False
+    if dry_run:
+        return True
+
+    try:
+        committed = reconcile_mcp_extra(
+            target / "pyproject.toml",
+            mode=resolved_mode,
+            enabled=False,
+            dry_run=False,
+        )
+    except Exception as exc:
+        logger.debug("MCP-extra reversal failed during uninstall: %s", exc)
+        _record_extra_failure(report, "error", [f"reversal failed: {exc}"])
+        return False
+
+    report.mcp_extra_action = committed.action
+    report.mcp_extra_location = committed.location
+    if committed.conflicts:
+        _record_extra_failure(report, "conflict", committed.conflicts)
+        return False
+    return True
+
+
+def _run_core_cleanup(
+    target: Path,
+    report: UninstallReport,
+    *,
+    dry_run: bool,
+    force: bool,
+    skip: set[str],
+) -> None:
+    """Reconcile non-MCP resources and selectively remove RAG MCP entries."""
+    if "core" in skip:
+        return
+
+    if dry_run:
+        report.warnings.append(
+            "dry-run: non-MCP sync_provider not invoked "
+            "(would propagate bundled-source removal to provider dirs)"
+        )
+    else:
+        try:
+            _init_core_context(target)
+        except Exception as exc:
+            logger.error("workspace context bootstrap failed: %s", exc)
+            report.warnings.append(f"workspace bootstrap failed: {exc}")
+        else:
+            try:
+                report.sync_results.extend(
+                    sync_provider(
+                        "all",
+                        dry_run=False,
+                        force=force,
+                        skip={*skip, "mcp"},
+                    )
+                )
+            except Exception as exc:
+                logger.error("sync_provider failed during uninstall: %s", exc)
+                report.warnings.append(f"core sync failed: {exc}")
+
+    if "mcp" not in skip:
+        try:
+            _run_mcp_cleanup(target, report, dry_run=dry_run)
+        except Exception as exc:
+            logger.error("MCP cleanup failed during uninstall: %s", exc)
+            report.mcp_errors.append(f"MCP cleanup failed: {exc}")
+
+
+def _run_mcp_disenrollment_transaction(
+    target: Path,
+    report: UninstallReport,
+    topology: RequiredMcpTopology,
+    *,
+    dry_run: bool,
+    rollback_on_failure: bool = True,
+) -> bool:
+    """Reverse placement and native enrollment as one failure boundary."""
+    if not dry_run:
+        try:
+            topology.materialize()
+        except Exception as exc:
+            message = f"required MCP topology materialization failed: {exc}"
+            report.mcp_errors.append(message)
+            report.warnings.append(message)
+            return False
+    if not _reverse_mcp_extra(target, report, dry_run=dry_run):
+        if not dry_run and rollback_on_failure:
+            _record_topology_errors(report, topology.finish(commit=False))
+        return False
+    try:
+        _run_mcp_cleanup(target, report, dry_run=dry_run)
+    except Exception as exc:
+        logger.error("MCP cleanup failed during uninstall: %s", exc)
+        report.mcp_errors.append(f"MCP cleanup failed: {exc}")
+    if report.mcp_sync_failed:
+        if not dry_run and rollback_on_failure:
+            _record_topology_errors(report, topology.finish(commit=False))
+        return False
+    if not dry_run:
+        _record_topology_errors(report, topology.finish(commit=True))
+    return not report.mcp_sync_failed
+
+
+def _record_topology_errors(report: UninstallReport, errors: list[str]) -> None:
+    for message in errors:
+        report.mcp_errors.append(message)
+        report.warnings.append(message)
+
+
 def uninstall_run(
     path: Path | None = None,
     *,
@@ -125,15 +311,15 @@ def uninstall_run(
     """Remove vaultspec-rag enrollment from a workspace.
 
     Symmetric mirror of :func:`install_run`. Removes rag's bundled
-    source files from ``.vaultspec/rules/``, then invokes core's
-    ``sync_provider`` to propagate the removal to ``.mcp.json`` and
-    provider dirs. Propagation cleanup depends on vaultspec-core
-    0.1.10+'s reconciling ``mcp_sync``.
+    source files from ``.vaultspec/``, then invokes Core's ordinary
+    provider sync for non-MCP resources and its project-scoped
+    ``mcp_uninstall`` for MCP entries. The latter is filtered to
+    ``vaultspec-rag`` so sibling Core and user entries remain untouched.
 
     rag's uninstall NEVER touches core's installation. It removes only
-    files rag owns and lets core's sync handle propagation. ``.vault/``
-    documents are always preserved. The rag index under ``.vault/data/``
-    is preserved unless ``remove_data`` is set.
+    files and provider entries RAG owns. ``.vault/`` documents are always
+    preserved. The rag index under ``.vault/data/`` is preserved unless
+    ``remove_data`` is set.
 
     Args:
         path: Workspace target. Defaults to current working directory.
@@ -174,6 +360,24 @@ def uninstall_run(
     action = "dry_run" if dry_run else "uninstall"
     report = UninstallReport(action=action, target=target)
 
+    topology: RequiredMcpTopology | None = None
+    if "mcp" not in skip:
+        try:
+            topology = inspect_required_mcp_topology(target)
+        except Exception as exc:
+            message = f"required MCP topology preflight failed: {exc}"
+            report.mcp_errors.append(message)
+            report.warnings.append(message)
+            return report
+        if topology.disenrollment_links:
+            message = (
+                "required MCP topology preflight failed: linked required nodes "
+                "cannot be safely removed while preserving exact link topology"
+            )
+            report.mcp_errors.append(message)
+            report.warnings.append(message)
+            return report
+
     if not (target / ".vaultspec").is_dir():
         # No ``.vaultspec/`` means rag was never installed at this
         # target - anything we found in ``pyproject.toml`` belongs to
@@ -187,35 +391,44 @@ def uninstall_run(
         _run_torch_config_uninstall(target=target, report=report, dry_run=True)
         return report
 
-    _remove_candidates(target, dry_run, report)
+    mcp_skipped = "mcp" in skip
+    if not mcp_skipped and not dry_run and topology is not None:
+        with tempfile.TemporaryDirectory(prefix="vaultspec-rag-mcp-replay-") as raw:
+            replay_target = Path(raw) / "workspace"
+            topology.populate_projection(replay_target)
+            replay_topology = inspect_required_mcp_topology(replay_target)
+            replay_report = UninstallReport(action="uninstall", target=replay_target)
+            Context().run(
+                _run_mcp_disenrollment_transaction,
+                replay_target,
+                replay_report,
+                replay_topology,
+                dry_run=False,
+                rollback_on_failure=False,
+            )
+            topology.capture_expected_projection(replay_target)
+    if (
+        not mcp_skipped
+        and topology is not None
+        and not _run_mcp_disenrollment_transaction(
+            target,
+            report,
+            topology,
+            dry_run=dry_run,
+        )
+    ):
+        return report
+
+    _remove_candidates(target, dry_run, report, skip_mcp=mcp_skipped)
     _remove_obsolete_sentinels(target, dry_run, report)
 
-    if dry_run:
-        report.warnings.append(
-            "dry-run: core sync_provider not invoked (would propagate "
-            "removal to .mcp.json and provider dirs)"
-        )
-    elif "core" not in skip:
-        # sync_provider needs core's runtime context. Only bootstrap
-        # it now (after we've confirmed .vaultspec/ exists), so we
-        # never create workspace state during uninstall. Same scoped-
-        # init pattern as install (see COHAB-01).
-        try:
-            _init_core_context(target)
-        except Exception as exc:
-            logger.error("workspace context bootstrap failed: %s", exc)
-            report.warnings.append(f"workspace bootstrap failed: {exc}")
-        else:
-            try:
-                report.sync_results = sync_provider(
-                    "all",
-                    dry_run=False,
-                    force=force,
-                    skip=skip,
-                )
-            except Exception as exc:
-                logger.error("sync_provider failed during uninstall: %s", exc)
-                report.warnings.append(f"core sync failed: {exc}")
+    _run_core_cleanup(
+        target,
+        report,
+        dry_run=dry_run,
+        force=force,
+        skip={*skip, "mcp"},
+    )
 
     _run_torch_config_uninstall(target=target, report=report, dry_run=dry_run)
 

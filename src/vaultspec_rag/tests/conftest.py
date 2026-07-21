@@ -22,6 +22,7 @@ from ..config import VaultSpecConfigWrapper as VaultSpecConfig
 from ..config import get_config
 from ..config import reset_config as reset_rag_config
 from ..progress import NullProgressReporter
+from ._model_setup import ensure_model_snapshots, model_setup_timeout_seconds
 from .corpus import CorpusManifest, build_synthetic_vault
 
 # GPU-only: sentence-transformers + Qwen3-Embedding-0.6B + SPLADE v3. Requires CUDA.
@@ -145,11 +146,19 @@ def _index_corpus(
 def embedding_model() -> EmbeddingModel:
     """Shared EmbeddingModel instance for the entire test session.
 
-    Avoids loading ~900MB of GPU models per fixture.
+    Avoids loading ~900MB of GPU models per fixture. Missing snapshots are
+    downloaded by a killable subprocess under an explicit cold-session
+    deadline; construction then runs cache-only so external metadata retries
+    cannot leave pytest suspended in fixture setup.
     """
     from .. import EmbeddingModel
 
-    return EmbeddingModel()
+    cfg = get_config()
+    ensure_model_snapshots(
+        (str(cfg.embedding_model), str(cfg.sparse_model)),
+        timeout_seconds=model_setup_timeout_seconds(),
+    )
+    return EmbeddingModel(local_files_only=True)
 
 
 @pytest.fixture(scope="session")

@@ -85,6 +85,7 @@ def test_server_start_missing_qdrant_names_local_only_escape_hatch(
         ["server", "start", "--port", str(_closed_port())],
         env={
             EnvVar.STATUS_DIR.value: str(tmp_path),
+            EnvVar.QDRANT_STORAGE_DIR.value: str(tmp_path / "qdrant" / "storage"),
             EnvVar.QDRANT_BINARY.value: str(tmp_path / "missing-qdrant"),
             EnvVar.LOCAL_ONLY.value: "0",
         },

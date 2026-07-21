@@ -16,8 +16,6 @@ by this module.
 
 from __future__ import annotations
 
-import json
-import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -29,7 +27,9 @@ from ..serviceclient._discovery import (
     SERVICE_PHASE_RUNNING,
     SERVICE_PHASE_WARMING,
     _default_service_port,
+    _delete_service_status,
     _discovery_timestamp,
+    _merge_service_status,
     _read_service_status,
     _status_dir,
     _status_file,
@@ -44,6 +44,7 @@ __all__ = [
     "SERVICE_PHASE_WARMING",
     "_append_lifecycle_shutdown_log",
     "_default_service_port",
+    "_delete_service_status",
     "_log_file",
     "_read_service_status",
     "_service_phase",
@@ -112,7 +113,7 @@ def _append_lifecycle_shutdown_log(reason: str, **kv: object) -> None:
         logger.debug("lifecycle log append failed: %s", exc, exc_info=True)
 
 
-def _write_service_status(pid: int, port: int) -> None:
+def _write_service_status(pid: int, port: int, *, timeout: float = 1.0) -> None:
     """Write service status to the global status file.
 
     Args:
@@ -127,10 +128,11 @@ def _write_service_status(pid: int, port: int) -> None:
         "port": port,
         "started_at": _discovery_timestamp(),
     }
-    path = _status_file()
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data), encoding="utf-8")
-    os.replace(str(tmp), str(path))
+    _merge_service_status(
+        data,
+        timeout=timeout,
+        preserve_authoritative_identity=True,
+    )
 
 
 def _update_service_token(token: str) -> None:
@@ -149,19 +151,19 @@ def _update_service_token(token: str) -> None:
     if not sf.exists():
         logger.debug("_update_service_token: service.json absent, skipping")
         return
-    try:
-        data: dict[str, Any] = json.loads(sf.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.debug("_update_service_token: read failed: %s", exc, exc_info=True)
+    current = _read_service_status()
+    if current is not None and current.get("service_token") == token:
+        # Already current: skip the write so an unchanged token never churns
+        # the file's mtime, which discovery consumers read as recency.
+        logger.debug("_update_service_token: token already current, skipping")
         return
-    if data.get("service_token") == token:
-        return
-    data["service_token"] = token
-    tmp = sf.with_suffix(".tmp")
     try:
-        tmp.write_text(json.dumps(data), encoding="utf-8")
-        os.replace(str(tmp), str(sf))
-    except OSError as exc:
+        _merge_service_status(
+            {"service_token": token},
+            path=sf,
+            require_existing=True,
+        )
+    except (OSError, RuntimeError, TimeoutError) as exc:
         logger.debug("_update_service_token: write failed: %s", exc, exc_info=True)
 
 
@@ -171,22 +173,10 @@ def _update_service_metadata(fields: dict[str, object]) -> None:
     if not sf.exists():
         logger.debug("_update_service_metadata: service.json absent, skipping")
         return
-    try:
-        data: dict[str, Any] = json.loads(sf.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.debug("_update_service_metadata: read failed: %s", exc, exc_info=True)
+    retained = {key: value for key, value in fields.items() if value is not None}
+    if not retained:
         return
-    changed = False
-    for key, value in fields.items():
-        if value is None or data.get(key) == value:
-            continue
-        data[key] = value
-        changed = True
-    if not changed:
-        return
-    tmp = sf.with_suffix(".tmp")
     try:
-        tmp.write_text(json.dumps(data), encoding="utf-8")
-        os.replace(str(tmp), str(sf))
-    except OSError as exc:
+        _merge_service_status(retained, path=sf, require_existing=True)
+    except (OSError, RuntimeError, TimeoutError) as exc:
         logger.debug("_update_service_metadata: write failed: %s", exc, exc_info=True)

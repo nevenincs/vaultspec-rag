@@ -19,10 +19,11 @@ import json
 import logging
 import os
 import socket
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Literal, cast
+from typing import Any, Literal, NoReturn, cast
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,10 @@ __all__ = [
 ]
 
 DEFAULT_SEARCH_TIMEOUT_SECONDS = 300.0
-DEFAULT_ADMIN_TIMEOUT_SECONDS = 10.0
+DEFAULT_ADMIN_TIMEOUT_SECONDS = 30.0
+
+type ReindexType = Literal["vault", "codebase"]
+type ReindexInitiator = Literal["cli", "mcp"]
 
 
 def _is_connection_refused(exc: BaseException) -> bool:
@@ -115,6 +119,8 @@ def _fetch_health_token(port: int, timeout: float | None = None) -> str:
         ) as resp:
             data: object = json.loads(resp.read().decode("utf-8"))
     except Exception as exc:
+        if _is_timeout(exc):
+            raise
         logger.debug("health token probe on port %s failed: %s", port, exc)
         return ""
     if isinstance(data, dict):
@@ -175,6 +181,30 @@ def _send_call(
             }
 
 
+def _raise_deadline_exhausted(
+    exc: Exception,
+    *,
+    stage: str,
+    timeout: float | None,
+    started: float,
+    deadline: float | None,
+) -> NoReturn:
+    """Re-raise *exc* as a deadline-exhausted TimeoutError, or propagate it.
+
+    A non-timeout failure, or a call with no deadline, propagates unchanged;
+    otherwise the original is wrapped with the stage and remaining budget so
+    the caller can see which leg of the exchange ran out of time.
+    """
+    if not _is_timeout(exc) or timeout is None:
+        raise exc
+    value = max(0.0, (deadline or started) - time.monotonic())
+    raise TimeoutError(
+        f"whole HTTP call deadline={timeout:.3f}s exhausted "
+        f"during {stage}; elapsed={time.monotonic() - started:.3f}s "
+        f"remaining={value:.3f}s"
+    ) from exc
+
+
 def _do_http_call(
     port: int,
     path: str,
@@ -190,36 +220,75 @@ def _do_http_call(
     against a service started out-of-band (missing status file) or restarted
     (rotated token), without an extra round-trip when the first call succeeds.
     """
+    deadline = time.monotonic() + timeout if timeout is not None else None
+    started = time.monotonic()
+
+    def remaining(stage: str) -> float | None:
+        if deadline is None or timeout is None:
+            return timeout
+        value = deadline - time.monotonic()
+        if value <= 0:
+            raise TimeoutError(
+                f"whole HTTP call deadline={timeout:.3f}s exceeded "
+                f"during {stage}; elapsed={time.monotonic() - started:.3f}s "
+                "remaining=0.000s"
+            )
+        return value
+
+    def send(stage: str, token: str) -> tuple[int, dict[str, object]]:
+        try:
+            return _send_call(
+                _build_call_request(port, path, payload, token),
+                remaining(stage),
+            )
+        except Exception as exc:
+            _raise_deadline_exhausted(
+                exc,
+                stage=stage,
+                timeout=timeout,
+                started=started,
+                deadline=deadline,
+            )
+
     token = _status_file_token()
-    status_code, result = _send_call(
-        _build_call_request(port, path, payload, token), timeout
-    )
+    status_code, result = send("initial request", token)
+    remaining("initial response")
 
     if status_code == 401:
-        fresh = _fetch_health_token(port, timeout)
+        try:
+            fresh = _fetch_health_token(port, remaining("health-token request"))
+        except Exception as exc:
+            _raise_deadline_exhausted(
+                exc,
+                stage="health-token request",
+                timeout=timeout,
+                started=started,
+                deadline=deadline,
+            )
+        remaining("health-token response")
         if fresh and fresh != token:
             logger.debug(
                 "token rejected on port %s; retrying with the /health token", port
             )
-            _, result = _send_call(
-                _build_call_request(port, path, payload, fresh), timeout
-            )
+            _, result = send("authenticated retry", fresh)
+            remaining("authenticated retry response")
     return result
 
 
 def _try_http_reindex(
-    tool_name: str,
+    reindex_type: ReindexType,
     clean: bool,
     port: int,
     project_root: str,
+    *,
+    initiator_kind: ReindexInitiator,
 ) -> dict[str, object] | None:
     try:
-        search_type = "vault" if "vault" in tool_name else "codebase"
         payload: dict[str, object] = {
-            "type": search_type,
+            "type": reindex_type,
             "clean": clean,
             "project_root": project_root,
-            "initiator_kind": "cli",
+            "initiator_kind": initiator_kind,
         }
         res = _do_http_call(port, "/reindex", payload)
         if res is not None:
@@ -387,7 +456,8 @@ def _try_http_admin(
                 "error": "admin_timeout",
                 "message": (
                     f"The service on port {port} did not answer within "
-                    f"{_format_timeout_seconds(resolved_timeout)}."
+                    f"{_format_timeout_seconds(resolved_timeout)}. "
+                    f"Deadline diagnostics: {exc}"
                 ),
             }
         logger.debug(

@@ -92,6 +92,7 @@ class VaultSearcher:
         graph_provider: Callable[[], VaultGraph | None] | None = None,
         gpu_lock: threading.Lock | None = None,
         reranker: CrossEncoder | None = None,
+        local_files_only: bool = False,
     ) -> None:
         """Initialize the searcher.
 
@@ -116,6 +117,9 @@ class VaultSearcher:
                 across searchers (avoids ~560 MB VRAM per instance).
                 When ``None``, the searcher loads its own on first
                 use.
+            local_files_only: Load a lazy reranker from the local Hugging Face
+                cache without remote metadata requests. Normal product
+                construction remains online-capable by default.
         """
         from ..config import get_config
 
@@ -138,6 +142,7 @@ class VaultSearcher:
         self._reranker_model_name: str = cfg.reranker_model
         self._sparse_enabled: bool = cfg.sparse_enabled
         self._reranker = reranker
+        self._local_files_only = local_files_only
         self._reranker_lock = threading.Lock()
 
     def _vault_docs_prefix(self) -> str:
@@ -198,6 +203,7 @@ class VaultSearcher:
                     device="cuda",
                     activation_fn=torch.nn.Sigmoid(),
                     max_length=int(get_config().reranker_max_length),
+                    local_files_only=self._local_files_only,
                 )
             logger.info(
                 "CrossEncoder reranker loaded on %s: %s",

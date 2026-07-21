@@ -10,16 +10,22 @@ cannot tell apart from a genuinely empty result.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import socket
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 
 from ..config import EnvVar
-from ..serviceclient._transport import _try_http_admin
+from ..serviceclient._transport import (
+    DEFAULT_ADMIN_TIMEOUT_SECONDS,
+    _get_admin_timeout,
+    _try_http_admin,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -52,6 +58,45 @@ class _EmptyJSONHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def log_message(self, *_args: object, **_kwargs: object) -> None:
+        """Silence the default stderr request logging."""
+
+
+class _AuthDeadlineHandler(BaseHTTPRequestHandler):
+    """Exercise the real 401, health-token, authenticated-retry sequence."""
+
+    service_token = "live-loopback-token"
+    requests: ClassVar[list[str]] = []
+
+    def do_GET(self) -> None:
+        authorization = self.headers.get("Authorization", "")
+        type(self).requests.append(f"{self.path} {authorization}".rstrip())
+        if self.path == "/health":
+            time.sleep(0.015)
+            self._json(200, {"service_token": self.service_token})
+            return
+        if authorization == f"Bearer {self.service_token}":
+            time.sleep(0.030)
+            self._json(200, {"projects": []})
+            return
+        time.sleep(0.015)
+        self._json(401, {"ok": False, "error": "unauthorized"})
+
+    def _json(self, status: int, payload: dict[str, object]) -> None:
+        import json
+
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        with contextlib.suppress(
+            BrokenPipeError,
+            ConnectionAbortedError,
+            ConnectionResetError,
+        ):
+            self.wfile.write(body)
 
     def log_message(self, *_args: object, **_kwargs: object) -> None:
         """Silence the default stderr request logging."""
@@ -96,6 +141,33 @@ def isolated_status_dir(tmp_path: object) -> Iterator[None]:
             os.environ[key] = previous
 
 
+@pytest.fixture
+def isolated_admin_timeout_env() -> Iterator[None]:
+    """Isolate the admin-timeout environment override for precedence tests."""
+    key = "VAULTSPEC_RAG_ADMIN_TIMEOUT"
+    previous = os.environ.pop(key, None)
+    try:
+        yield
+    finally:
+        if previous is not None:
+            os.environ[key] = previous
+
+
+@pytest.mark.usefixtures("isolated_admin_timeout_env")
+class TestAdminTimeoutResolution:
+    def test_default_allows_real_service_observability_work(self) -> None:
+        assert DEFAULT_ADMIN_TIMEOUT_SECONDS == 30.0
+        assert _get_admin_timeout() == 30.0
+
+    def test_explicit_timeout_wins(self) -> None:
+        os.environ["VAULTSPEC_RAG_ADMIN_TIMEOUT"] = "17"
+        assert _get_admin_timeout(2.5) == 2.5
+
+    def test_environment_override_wins_over_default(self) -> None:
+        os.environ["VAULTSPEC_RAG_ADMIN_TIMEOUT"] = "17"
+        assert _get_admin_timeout() == 17.0
+
+
 @pytest.mark.usefixtures("isolated_status_dir")
 class TestAdminErrorSurfacing:
     def test_malformed_response_returns_http_call_failed_envelope(self) -> None:
@@ -125,3 +197,25 @@ class TestAdminErrorSurfacing:
         # service-down sentinel and must stay None, not an envelope.
         result = _try_http_admin("list_projects", {}, refused_port)
         assert result is None
+
+    def test_auth_recovery_obeys_one_whole_call_deadline(self) -> None:
+        """401, health-token recovery, and retry share one 40ms budget."""
+        _AuthDeadlineHandler.requests = []
+        server, port = _serve(_AuthDeadlineHandler)
+        started = time.monotonic()
+        try:
+            result = _try_http_admin("list_projects", {}, port, timeout=0.040)
+            elapsed = time.monotonic() - started
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        assert result is not None
+        assert result.get("ok") is False
+        assert result.get("error") == "admin_timeout"
+        message = str(result.get("message"))
+        assert "0.04 seconds" in message
+        assert "authenticated retry" in message
+        assert 0.030 <= elapsed < 0.250
+        assert _AuthDeadlineHandler.requests[:2] == ["/projects", "/health"]
+        assert len(_AuthDeadlineHandler.requests) == 3
