@@ -130,7 +130,7 @@ def record_start(
         "started_at": time.time(),
         "finished_at": None,
         "result": None,
-        # Stable failure classification (#242): stamped by record_finish
+        # Stable failure classification: stamped by record_finish
         # from the error text so /jobs consumers and the CLI share one
         # taxonomy instead of per-surface string matching.
         "error_kind": None,

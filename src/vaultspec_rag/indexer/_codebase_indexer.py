@@ -68,7 +68,7 @@ logger = logging.getLogger(__name__)
 _CONSUMER_SHUTDOWN_TIMEOUT_S = 300.0
 
 #: Conservative chunks-per-file factor for the pre-pool disk pre-flight;
-#: the issue-242 incident tree measured ~12 chunks per source file.
+#: a measured large mixed-language tree averaged ~12 chunks per source file.
 _CHUNKS_PER_FILE_ESTIMATE = 12
 
 
@@ -903,7 +903,7 @@ class CodebaseIndexer:
 
         # Chunk counts are unknown before the pool runs, so the pre-flight
         # estimates points from the file count with a conservative
-        # chunks-per-file factor (the issue-242 incident tree averaged ~12);
+        # chunks-per-file factor (a measured large tree averaged ~12);
         # the per-write floor check in the store still guards mid-run
         # exhaustion exactly.
         self.store.disk_headroom_preflight(len(paths) * _CHUNKS_PER_FILE_ESTIMATE)

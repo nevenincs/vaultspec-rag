@@ -60,7 +60,7 @@ class TestHealthSchemaVersion:
 
 
 class TestHealthJobsRollup:
-    """/health carries the bounded jobs-health rollup (#242)."""
+    """/health carries the bounded jobs-health rollup."""
 
     def test_health_reports_running_stalled_and_last_failure(self) -> None:
         from starlette.applications import Starlette

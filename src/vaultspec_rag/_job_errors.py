@@ -1,6 +1,6 @@
-"""Shared job-failure taxonomy and stall threshold (issue #242).
+"""Shared job-failure taxonomy and stall threshold.
 
-The incident behind #242 surfaced two observability gaps: job failure
+The silent index-wedge incident surfaced two observability gaps: job failure
 reasons were free text that only the CLI renderer knew how to interpret
 (a disk-full string match invisible to `/jobs` consumers), and the
 "no progress for N minutes" stall signal existed only in human CLI

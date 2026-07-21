@@ -126,7 +126,7 @@ def _job_is_waiting(record: dict[str, object]) -> bool:
 
 
 def _job_stalled(record: dict[str, object], now: float) -> bool:
-    """Service-domain stall signal (#242): running, working, no progress.
+    """Service-domain stall signal: running, working, no progress.
 
     A running, non-waiting job whose last progress update is older than
     :data:`STALL_THRESHOLD_SECONDS` is flagged so every adapter (CLI,

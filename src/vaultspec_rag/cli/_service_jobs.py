@@ -47,7 +47,7 @@ _RESULT_RE = re.compile(
     r"^\+(?P<added>\d+)\s*/(?P<updated>\d+)\s*-(?P<removed>\d+)"
     r"\s*\((?P<duration_ms>\d+)ms\)(?:\s*~(?P<skipped>\d+))?$"
 )
-# The stall threshold is service-domain (#242): the server computes the
+# The stall threshold is service-domain: the server computes the
 # authoritative ``stalled`` flag; this constant only backs the fallback
 # for snapshots from an older service that lacks the flag.
 _STALE_PROGRESS_SECONDS = STALL_THRESHOLD_SECONDS
@@ -272,7 +272,7 @@ def _human_result(raw: object) -> str:
     result = " ".join(str(raw).split())
     if result == "watcher task cancelled":
         return "automatic update cancelled"
-    # One shared taxonomy (#242): the same classification the service
+    # One shared taxonomy: the same classification the service
     # stamps as ``error_kind`` drives the friendly remediation here, so
     # the CLI never grows its own error-string matching again.
     friendly = remediation(classify_error_text(result))

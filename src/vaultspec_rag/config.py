@@ -371,7 +371,7 @@ class VaultSpecConfigWrapper:
         "storage_autoprune_archive_retention_days": 30.0,
         "storage_autoprune_archive_max_gb": 20.0,
         "storage_autoprune_max_per_cycle": 16,
-        # Ephemeral idle-TTL tier (#242): a temp-rooted namespace whose
+        # Ephemeral idle-TTL tier: a temp-rooted namespace whose
         # persisted last_indexed stamp is older than this is treated as
         # dangling even though its root still exists - the leak signature
         # is a harness temp dir that outlives its usefulness but never

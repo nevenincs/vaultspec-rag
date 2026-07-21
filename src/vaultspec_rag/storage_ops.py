@@ -162,16 +162,110 @@ def collection_footprints(
     return sizes
 
 
+def _dir_bytes(path: Path) -> int:
+    """Total file bytes under *path* (best-effort; unreadable files skip)."""
+    total = 0
+    for dirpath, _, filenames in os.walk(path):
+        for filename in filenames:
+            try:
+                total += (Path(dirpath) / filename).stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def debris_surveys(
+    live_names: list[str],
+    storage_dir: Path | None,
+) -> list[NamespaceSurvey]:
+    """Survey on-disk collection dirs the live server does not list.
+
+    A Qdrant crash mid-create leaves a config-less collection dir that the
+    server logs as "Collection config is not found ... skipping" at every
+    startup and then ignores; because the survey historically enumerated
+    only live collections, that debris was invisible to every operator
+    view and unreclaimable forever. Each unmatched dir surfaces as
+    a ``debris`` namespace entry (grouped by prefix, sized from disk).
+    Report-only here: debris has no manifest attribution and Qdrant cannot
+    snapshot a collection it never loaded, so removal stays an explicit
+    operator action.
+    """
+    if storage_dir is None:
+        return []
+    from collections import defaultdict
+
+    from .storage_survey import _prefix_of
+
+    live = set(live_names)
+    grouped: dict[str, list[Path]] = defaultdict(list)
+    try:
+        children = sorted(p for p in storage_dir.iterdir() if p.is_dir())
+    except OSError:
+        return []
+    for child in children:
+        if child.name in live:
+            continue
+        grouped[_prefix_of(child.name)].append(child)
+    return [
+        NamespaceSurvey(
+            prefix=prefix,
+            root=None,
+            status="debris",
+            collections=sorted(p.name for p in paths),
+            points=0,
+            footprint_bytes=sum(_dir_bytes(p) for p in paths),
+        )
+        for prefix, paths in grouped.items()
+    ]
+
+
+def backend_totals(surveys: list[NamespaceSurvey]) -> dict[str, object]:
+    """Aggregate backend size over a classified survey.
+
+    The incident's 117.9 GB pile was invisible to every metric because
+    ``dangling_bytes`` counts only orphans and nothing summed the whole
+    backend. This rollup makes total size and its per-status composition
+    first-class.
+    """
+    total = 0
+    by_status: dict[str, int] = {}
+    for survey in surveys:
+        total += survey.footprint_bytes
+        by_status[survey.status] = (
+            by_status.get(survey.status, 0) + survey.footprint_bytes
+        )
+    return {
+        "total_bytes": total,
+        "namespaces": len(surveys),
+        "by_status_bytes": by_status,
+    }
+
+
+# View ordering for survey consumers: actionable states first. ``debris``
+# sits with the attention-needing states between unknown and unverifiable.
+_SURVEY_STATUS_RANK = {
+    "orphaned": 0,
+    "unknown": 1,
+    "debris": 2,
+    "unverifiable": 3,
+    "live": 4,
+}
+
+
 def gather_survey(
     client: QdrantClient,
     storage_dir: Path | None = None,
 ) -> list[NamespaceSurvey]:
     """Survey every stored namespace: enumerate, count, size, classify.
 
+    Includes ``debris`` entries for on-disk collection dirs the live
+    server does not list (crash leftovers), so the whole backend is
+    visible from one call.
+
     Args:
         client: Qdrant client for the managed server.
         storage_dir: The server ``collections`` directory for footprints;
-            ``None`` (or unresolved) omits byte sizes.
+            ``None`` (or unresolved) omits byte sizes and debris.
 
     Returns:
         Classified namespace records, actionable states first.
@@ -184,9 +278,12 @@ def gather_survey(
         except (OSError, RuntimeError):
             counts[name] = 0
     footprints = collection_footprints(names, storage_dir)
-    return classify_namespaces(
+    surveys = classify_namespaces(
         names, load_manifest(), point_counts=counts, footprints=footprints
     )
+    surveys.extend(debris_surveys(names, storage_dir))
+    surveys.sort(key=lambda s: (_SURVEY_STATUS_RANK.get(s.status, 5), s.prefix))
+    return surveys
 
 
 def delete_prefix(
@@ -401,7 +498,7 @@ class ReclaimPolicy:
             evicts oldest archives first until under it.
         ephemeral_idle_hours: Idle hours (since the persisted
             ``last_indexed`` stamp) after which a LIVE but temp-rooted
-            namespace is treated as dangling (#242) - the leak signature
+            namespace is treated as dangling - the leak signature
             is a harness temp dir that still exists but is never indexed
             again. ``0`` (or negative) disables the tier. Destruction
             still flows through the unchanged empty/data tiers: empty
@@ -477,7 +574,7 @@ def _evaluate_ephemeral(
 ) -> list[ReclaimDecision]:
     """Decide, per LIVE temp-rooted namespace, whether the idle TTL expired.
 
-    The #242 leak signature: a harness temp dir still exists, so its
+    The shared-backend leak signature: a harness temp dir still exists, so its
     namespace classifies ``live`` and survives orphan pruning forever.
     Ephemerality is derived from the root path (``is_temp_rooted``) and
     danglingness from the persisted ``last_indexed`` activity clock -
@@ -571,7 +668,7 @@ def evaluate_reclaim(
         policy: The active :class:`ReclaimPolicy`.
         last_indexed: Prefix to persisted ``last_indexed`` stamp mapping
             (from the manifest); enables the ephemeral idle-TTL tier for
-            live temp-rooted namespaces (#242). ``None`` skips the tier.
+            live temp-rooted namespaces. ``None`` skips the tier.
 
     Returns:
         One :class:`ReclaimDecision` per orphaned namespace, plus one per
@@ -638,7 +735,7 @@ def evaluate_reclaim(
             )
     if last_indexed is None:
         return decisions
-    # Ephemeral idle-TTL tier (#242): live temp-rooted namespaces whose
+    # Ephemeral idle-TTL tier: live temp-rooted namespaces whose
     # activity clock expired. Orphans keep priority under the shared
     # per-cycle cap; an over-cap ephemeral reclaim defers to next cycle.
     for decision in _evaluate_ephemeral(

@@ -383,7 +383,7 @@ def _temp_survey(
 
 
 class TestEphemeralIdleTier:
-    """Live temp-rooted namespaces reclaim on the persisted idle TTL (#242)."""
+    """Live temp-rooted namespaces reclaim on the persisted idle TTL."""
 
     def _decide(
         self,

@@ -36,7 +36,7 @@ _PREFIX_RE = re.compile(r"^(r[0-9a-f]{12}_)")
 def is_temp_rooted(root: str | None) -> bool:
     """Return whether a namespace root lives under an OS temp directory.
 
-    A live temp-rooted namespace is the issue-242 leak signature: a test or
+    A live temp-rooted namespace is the shared-backend leak signature: a test or
     demo harness indexed a throwaway directory into the shared server backend
     and never tore it down, and because the directory still exists it
     classifies ``live`` and survives pruning forever. The flag is report-only

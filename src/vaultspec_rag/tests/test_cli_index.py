@@ -724,7 +724,7 @@ class TestAutoDelegation:
 
 class TestDiskPreflightRefusal:
     """The in-process index path surfaces a disk-preflight refusal as one
-    structured non-zero envelope - never the GPU-error diagnosis (#242)."""
+    structured non-zero envelope - never the GPU-error diagnosis."""
 
     def test_json_mode_emits_disk_preflight_failed(
         self,

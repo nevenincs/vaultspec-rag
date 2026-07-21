@@ -118,7 +118,7 @@ def _model_shell() -> EmbeddingModel:
 
 
 class TestOomLadderIsFloorBounded:
-    """The CUDA-OOM recovery must terminate - never loop forever (#242).
+    """The CUDA-OOM recovery must terminate - never loop forever.
 
     A persistent allocator failure (e.g. host commit exhaustion on a full
     disk) must abort the run with the real error after the halving ladder

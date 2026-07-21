@@ -415,7 +415,7 @@ async def health_handler(_request: Request) -> object:
     if status == "ready" and qdrant_state.mode == "server" and not qdrant_state.alive:
         status = "degraded"
 
-    # Bounded jobs-health rollup (#242): running/stalled counts and the
+    # Bounded jobs-health rollup: running/stalled counts and the
     # most recent failure's classification, so a broker probing /health
     # sees a wedged or failing index without walking /jobs.
     from .. import jobs as _jobs_registry

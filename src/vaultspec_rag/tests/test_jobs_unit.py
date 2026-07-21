@@ -246,7 +246,7 @@ class TestJobsLifecycle:
 
 
 class TestJobErrorKind:
-    """Failed jobs carry a stable ``error_kind`` classification (#242)."""
+    """Failed jobs carry a stable ``error_kind`` classification."""
 
     def setup_method(self) -> None:
         reset()
@@ -288,7 +288,7 @@ class TestJobErrorKind:
 
 
 class TestJobStallShaping:
-    """The /jobs shaping computes the service-domain ``stalled`` flag (#242)."""
+    """The /jobs shaping computes the service-domain ``stalled`` flag."""
 
     def _running_record(
         self,

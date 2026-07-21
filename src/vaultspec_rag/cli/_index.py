@@ -592,7 +592,7 @@ def _try_in_process_indexing(
         except InsufficientDiskSpaceError as exc:
             # A RuntimeError subclass: without this branch the disk
             # preflight refusal would fall into the GPU-error handler
-            # and be misdiagnosed as a torch problem (#242).
+            # and be misdiagnosed as a torch problem.
             if json_mode:
                 _emit_json_error_and_exit(
                     "index",
