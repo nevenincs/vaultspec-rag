@@ -39,6 +39,7 @@ related:
   - '[[2026-07-21-index-backpressure-storage-hygiene-P07-S25]]'
   - '[[2026-07-21-index-backpressure-storage-hygiene-P07-summary]]'
   - '[[2026-07-21-index-backpressure-storage-hygiene-adr]]'
+  - '[[2026-07-21-index-backpressure-storage-hygiene-audit]]'
   - '[[2026-07-21-index-backpressure-storage-hygiene-plan]]'
   - '[[2026-07-21-index-backpressure-storage-hygiene-research]]'
 ---
@@ -52,6 +53,10 @@ Auto-generated index of all documents tagged with `#index-backpressure-storage-h
 ### adr
 
 - `2026-07-21-index-backpressure-storage-hygiene-adr` - `index-backpressure-storage-hygiene` adr: `fail-loud index write path and ephemeral-namespace hygiene for the shared backend` | (**status:** `accepted`)
+
+### audit
+
+- `2026-07-21-index-backpressure-storage-hygiene-audit` - `index-backpressure-storage-hygiene` audit: `execution review of the fail-loud write path and storage hygiene feature`
 
 ### exec
 
