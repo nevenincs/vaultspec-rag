@@ -55,7 +55,7 @@ Replace the evictable record ring and unkeyed task set with exact-addressable li
 Prove transition races, idempotency, admission, persistence, retry, deletion, and strong task ownership against production behavior.
 
 - [x] `W01.P03.S08` - Verify the transition matrix, idempotency, stale revisions, admission, deduplication, retry, deletion, and terminal immutability using vaultspec-standard-executor; `src/vaultspec_rag/tests/test_jobs_unit.py`.
-- [ ] `W01.P03.S09` - Verify real-filesystem persistence, exact task ownership, atomic replacement, paused restoration, and interrupted recovery using vaultspec-standard-executor; `src/vaultspec_rag/tests/integration/test_jobs_registry.py`.
+- [x] `W01.P03.S09` - Verify real-filesystem persistence, exact task ownership, atomic replacement, paused restoration, and interrupted recovery using vaultspec-standard-executor; `src/vaultspec_rag/tests/integration/test_jobs_registry.py`.
 
 ## Wave `W02` - cooperative indexing execution
 

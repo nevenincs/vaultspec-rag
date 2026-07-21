@@ -409,6 +409,8 @@ Phase = Literal[
 # Bounded ring buffer cap. Generous enough to retain a meaningful recent
 # history without unbounded growth; the oldest record is evicted past this.
 MAX_RECORDS = 256
+_ATOMIC_REPLACE_ATTEMPTS = 8
+_ATOMIC_REPLACE_RETRY_SECONDS = 0.005
 
 
 @dataclass(frozen=True, slots=True)
@@ -1574,7 +1576,7 @@ class JobManager:
                 stream.write("\n")
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, path)
+            _atomic_replace(temporary, path)
         except (OSError, TypeError, ValueError) as exc:
             try:
                 temporary.unlink(missing_ok=True)
@@ -1718,6 +1720,18 @@ def _idempotency_binding_to_dict(
         },
         "start_paused": start_paused,
     }
+
+
+def _atomic_replace(source: Path, destination: Path) -> None:
+    """Replace one state file, tolerating bounded Windows reader contention."""
+    for attempt in range(_ATOMIC_REPLACE_ATTEMPTS):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if attempt + 1 == _ATOMIC_REPLACE_ATTEMPTS:
+                raise
+            time.sleep(_ATOMIC_REPLACE_RETRY_SECONDS * (attempt + 1))
 
 
 def _capabilities_for_state(state: JobState) -> JobCapabilities:
