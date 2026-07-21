@@ -375,3 +375,100 @@ class TestJobsHumanSummarySignpost:
         match = re.search(r'"--json",\s*help=\(([^)]*)\)', source)
         assert match is not None
         assert "scripted waits" in match.group(1)
+
+
+class TestInterruptedJobRestore:
+    """Jobs a dead daemon left running come back as ``interrupted``."""
+
+    @pytest.fixture(autouse=True)
+    def _own_status_dir(
+        self,
+        tmp_path: "Path",  # noqa: F821
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> "typing.Iterator[None]":  # noqa: F821
+        from ..config import reset_config
+
+        monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", str(tmp_path / "status"))
+        reset_config()
+        reset()
+        yield
+        reset()
+        reset_config()
+
+    def test_running_job_survives_a_simulated_daemon_death(self) -> None:
+        from ..jobs import restore_interrupted
+
+        job_id = record_start("code", "tool", command="reindex_codebase")
+        # Simulate the daemon dying: the in-memory ring vanishes, the
+        # persisted snapshot stays.
+        reset()
+        assert snapshot() == []
+        assert restore_interrupted() == 1
+        records = {r["id"]: r for r in snapshot()}
+        record = records[job_id]
+        assert record["phase"] == "interrupted"
+        assert record["result"] == "daemon terminated while this job was running"
+        initiator = record["initiator"]
+        assert isinstance(initiator, dict)
+        assert initiator["command"] == "reindex_codebase"
+
+    def test_finished_jobs_are_not_restored(self) -> None:
+        from ..jobs import restore_interrupted
+
+        job_id = record_start("vault", "tool")
+        record_finish(job_id, result="ok")
+        reset()
+        assert restore_interrupted() == 0
+        assert snapshot() == []
+
+    def test_restore_is_not_repeated_on_second_startup(self) -> None:
+        from ..jobs import restore_interrupted
+
+        record_start("code", "tool")
+        reset()
+        assert restore_interrupted() == 1
+        reset()
+        assert restore_interrupted() == 0
+
+    def test_missing_snapshot_restores_nothing(self) -> None:
+        from ..jobs import restore_interrupted
+
+        assert restore_interrupted() == 0
+
+
+class TestMachineServiceTestGuard:
+    """The terminate path refuses to act from an unisolated test run."""
+
+    def test_unisolated_pytest_env_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from ..cli._service_stop import _refuse_terminate_from_unisolated_test
+
+        monkeypatch.delenv("VAULTSPEC_RAG_STATUS_DIR", raising=False)
+        monkeypatch.delenv("VAULTSPEC_RAG_QDRANT_STORAGE_DIR", raising=False)
+        with pytest.raises(RuntimeError, match="refusing to terminate"):
+            _refuse_terminate_from_unisolated_test()
+
+    def test_isolated_env_passes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from ..cli._service_stop import _refuse_terminate_from_unisolated_test
+
+        monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", "somewhere-isolated")
+        _refuse_terminate_from_unisolated_test()
+
+
+class TestSuiteIsolationGuard:
+    """The session conftest points the machine-singleton dirs at tmp."""
+
+    def test_machine_dirs_are_isolated_for_the_suite(self) -> None:
+        import os
+        from pathlib import Path
+
+        from ..config import EnvVar
+
+        machine_default = Path("~/.vaultspec-rag").expanduser()
+        status = os.environ.get(EnvVar.STATUS_DIR.value)
+        storage = os.environ.get(EnvVar.QDRANT_STORAGE_DIR.value)
+        assert status is not None
+        assert storage is not None
+        assert Path(status).expanduser() != machine_default
+        assert not Path(storage).expanduser().is_relative_to(machine_default)
