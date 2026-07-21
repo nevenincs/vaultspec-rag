@@ -293,6 +293,18 @@ async def _start_components() -> list[asyncio.Task[None]]:
     _m._install_daemon_shutdown_hooks()
     _m._lifecycle_log("startup", pid=os.getpid())
 
+    # Surface jobs a dead prior daemon left running: without this, a
+    # killed daemon silently erased every in-flight job from the
+    # in-memory registry and operators had no record the work died.
+    from .. import jobs as _jobs_module
+
+    interrupted = await _run_in_thread(_jobs_module.restore_interrupted)
+    if interrupted:
+        logger.warning(
+            "restored %d job(s) from a prior daemon life as interrupted",
+            interrupted,
+        )
+
     heartbeat_task = asyncio.create_task(_m._heartbeat_loop())
     # First heartbeat right away so a freshly started service is
     # immediately distinguishable from a stale CLI-only write.
