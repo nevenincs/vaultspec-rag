@@ -80,7 +80,7 @@ Update operator-facing references for the renamed configuration and source-aware
 
 Document the generic retention budget and the unified live/offline log workflow without preserving removed names or flags.
 
-- [ ] `W03.P06.S14` - Document generic managed-log environment variables and aggregate retention semantics; `docs/configuration.md`.
+- [x] `W03.P06.S14` - Document generic managed-log environment variables and aggregate retention semantics; `docs/configuration.md`.
 - [ ] `W03.P06.S15` - Document source selection, grouped output, JSON shape, and removal of the raw flag; `docs/cli.md`.
 - [ ] `W03.P06.S16` - Document live and post-crash service plus Qdrant log inspection; `docs/service-mode.md`.
 
