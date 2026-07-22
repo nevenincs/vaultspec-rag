@@ -395,6 +395,119 @@ def _guard_start_preconditions(port: int, json_mode: bool) -> None:
         )
 
 
+def _attach_existing_service(
+    json_mode: bool,
+    caller_warnings: tuple[str, ...],
+) -> bool:
+    """Attach to an owned serving daemon and emit the idempotent outcome."""
+    existing = _existing_service_running()
+    if existing is None:
+        return False
+    if caller_warnings and not json_mode:
+        _print_lifecycle_lines(*caller_warnings)
+    attach_extra: dict[str, object] = (
+        {"warnings": list(caller_warnings)} if caller_warnings else {}
+    )
+    existing_pid, existing_port, health_status = existing
+    if health_status == "ready":
+        _start_success(
+            json_mode,
+            status="already_running",
+            human_title="Service already running",
+            human_lines=(
+                _process_line(existing_pid),
+                _address_line(existing_port),
+            ),
+            pid=existing_pid,
+            port=existing_port,
+            **attach_extra,
+        )
+        return True
+    _start_success(
+        json_mode,
+        status="already_running",
+        human_title=f"Service already running (health: {health_status})",
+        human_lines=(
+            _process_line(existing_pid),
+            _address_line(existing_port),
+            "The service is serving but not fully ready; searches may "
+            "fail or queue until it recovers.",
+            "Watch: vaultspec-rag server status",
+        ),
+        pid=existing_pid,
+        port=existing_port,
+        health=health_status,
+        **attach_extra,
+    )
+    return True
+
+
+def _attach_warming_service(json_mode: bool) -> bool:
+    """Attach to a live owned daemon that has not bound its port yet."""
+    warming_status = _read_service_status()
+    if warming_status is None or (
+        _service_phase(warming_status) != SERVICE_PHASE_WARMING
+    ):
+        return False
+    warming_pid = int(warming_status["pid"])
+    warming_port = int(warming_status["port"])
+    if not _cli._is_pid_alive(warming_pid) or not _cli._is_our_service(warming_pid):
+        return False
+    _start_success(
+        json_mode,
+        status="already_starting",
+        human_title="Service already starting",
+        human_lines=(
+            _process_line(warming_pid),
+            "Warming up (loading models, not yet serving); it will serve shortly.",
+            "Watch: vaultspec-rag server status",
+        ),
+        pid=warming_pid,
+        port=warming_port,
+        phase="warming",
+    )
+    return True
+
+
+def _spawn_prepared_service(
+    port: int,
+    log_path: Path,
+    *,
+    updates: bool | None,
+    update_delay_ms: int | None,
+    repeat_update_delay_s: float | None,
+    qdrant: bool | None,
+    local_only: bool,
+    preprocess_forward: Literal["off"] | None,
+    json_mode: bool,
+) -> int:
+    """Spawn one prepared daemon or translate breakaway denial."""
+    try:
+        return _spawn_service(
+            port,
+            log_path,
+            watch=updates,
+            watch_debounce_ms=update_delay_ms,
+            watch_cooldown_s=repeat_update_delay_s,
+            qdrant=qdrant,
+            local_only=local_only,
+            preprocess_mode=preprocess_forward,
+        )
+    except DaemonBreakawayError as exc:
+        raise _fail_start(
+            json_mode,
+            error="daemon_breakaway",
+            message="Service start failed",
+            human_lines=(str(exc),),
+            next_actions=(
+                "Start from a plain console (cmd.exe or powershell.exe) outside a "
+                "restricted terminal",
+                "Or run the service under a service manager that permits breakaway",
+            ),
+            detail=str(exc),
+        ) from exc
+
+
 @server_app.command(
     "start",
     help=(
@@ -508,48 +621,7 @@ def service_start(
     # env still walks into the forced-reinstall trap, and `already_running` is
     # the outcome a long-lived daemon returns almost every time.
     caller_warnings = _caller_ephemeral_warning()
-    existing = _existing_service_running()
-    if existing is not None:
-        if caller_warnings and not json_mode:
-            _print_lifecycle_lines(*caller_warnings)
-        attach_extra: dict[str, object] = (
-            {"warnings": list(caller_warnings)} if caller_warnings else {}
-        )
-        existing_pid, existing_port, health_status = existing
-        if health_status == "ready":
-            _start_success(
-                json_mode,
-                status="already_running",
-                human_title="Service already running",
-                human_lines=(
-                    _process_line(existing_pid),
-                    _address_line(existing_port),
-                ),
-                pid=existing_pid,
-                port=existing_port,
-                **attach_extra,
-            )
-        else:
-            # The daemon answers /health but cannot serve yet (models loading,
-            # qdrant down). Still the idempotent success - a second daemon is
-            # impossible - but say so honestly instead of "already running"
-            # for a service that will fail searches (issue #237).
-            _start_success(
-                json_mode,
-                status="already_running",
-                human_title=f"Service already running (health: {health_status})",
-                human_lines=(
-                    _process_line(existing_pid),
-                    _address_line(existing_port),
-                    "The service is serving but not fully ready; searches may "
-                    "fail or queue until it recovers.",
-                    "Watch: vaultspec-rag server status",
-                ),
-                pid=existing_pid,
-                port=existing_port,
-                health=health_status,
-                **attach_extra,
-            )
+    if _attach_existing_service(json_mode, caller_warnings):
         return
 
     # A live owned daemon that stamped ``warming`` holds the machine lock but
@@ -558,28 +630,8 @@ def service_start(
     # attachable success, not the machine_owned fault the guard below would
     # report (issue #237). A reused pid must not resurrect a stale stamp,
     # hence the liveness + identity checks.
-    warming_status = _read_service_status()
-    if warming_status is not None and (
-        _service_phase(warming_status) == SERVICE_PHASE_WARMING
-    ):
-        warming_pid = int(warming_status["pid"])
-        warming_port = int(warming_status["port"])
-        if _cli._is_pid_alive(warming_pid) and _cli._is_our_service(warming_pid):
-            _start_success(
-                json_mode,
-                status="already_starting",
-                human_title="Service already starting",
-                human_lines=(
-                    _process_line(warming_pid),
-                    "Warming up (loading models, not yet serving); it will "
-                    "serve shortly.",
-                    "Watch: vaultspec-rag server status",
-                ),
-                pid=warming_pid,
-                port=warming_port,
-                phase="warming",
-            )
-            return
+    if _attach_warming_service(json_mode):
+        return
 
     _guard_start_preconditions(port, json_mode)
 
@@ -606,34 +658,17 @@ def service_start(
         _print_lifecycle_lines(*env_warnings)
     _preflight_daemon_cuda(interpreter, json_mode=json_mode)
     t0 = time.perf_counter()
-    try:
-        pid = _spawn_service(
-            port,
-            log_path,
-            watch=updates,
-            watch_debounce_ms=update_delay_ms,
-            watch_cooldown_s=repeat_update_delay_s,
-            qdrant=qdrant,
-            local_only=local_only,
-            preprocess_mode=preprocess_forward,
-        )
-    except DaemonBreakawayError as exc:
-        # The launching shell's Job Object denied detachment, so a daemon
-        # started here would die when the shell exits (the issue #204 flapping
-        # symptom). Surface the actionable guidance rather than spawning a
-        # doomed daemon. No status file was written, so nothing to clean up.
-        raise _fail_start(
-            json_mode,
-            error="daemon_breakaway",
-            message="Service start failed",
-            human_lines=(str(exc),),
-            next_actions=(
-                "Start from a plain console (cmd.exe or powershell.exe) outside a "
-                "restricted terminal",
-                "Or run the service under a service manager that permits breakaway",
-            ),
-            detail=str(exc),
-        ) from exc
+    pid = _spawn_prepared_service(
+        port,
+        log_path,
+        updates=updates,
+        update_delay_ms=update_delay_ms,
+        repeat_update_delay_s=repeat_update_delay_s,
+        qdrant=qdrant,
+        local_only=local_only,
+        preprocess_forward=preprocess_forward,
+        json_mode=json_mode,
+    )
     _write_service_status(pid, port)
     _await_service_ready(
         pid,

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, cast
 
 if TYPE_CHECKING:
     import pathlib
 
+    from .._public_index import DocumentScanResult
     from ..api import AllIndexOutcomes
     from ..indexer import IndexResult
+    from ..indexer._codebase_indexer import ContentScanResult
 
 import typer
 
@@ -163,14 +165,30 @@ def _print_index_summary(sources: list[dict[str, object]], *, via: str) -> None:
         )
 
 
-def _handle_dry_run(
+class _DryRunScan(NamedTuple):
+    """Disjoint code and document discovery projected for CLI rendering."""
+
+    code_scan: ContentScanResult | None
+    document_scan: DocumentScanResult | None
+    code_files: list[str]
+    document_files: list[str]
+
+    @property
+    def files(self) -> list[str]:
+        return [*self.code_files, *self.document_files]
+
+    @property
+    def total(self) -> int:
+        document_total = self.document_scan.total_files if self.document_scan else 0
+        return len(self.code_files) + document_total
+
+
+def _validate_dry_run_request(
     index_type: PublicSourceType,
     json_mode: bool,
-    target: pathlib.Path,
-    exclude: list[str] | None,
     dry_run_limit: int,
-    no_preprocess: bool,
 ) -> None:
+    """Reject unsupported source selections and invalid sample bounds."""
     if index_type is PublicSourceType.VAULT:
         message = "Dry run is available for code and document indexing."
         remediation = [
@@ -189,28 +207,36 @@ def _handle_dry_run(
         _cli.console.print("Run:", markup=False, highlight=False)
         _cli.console.print(f"  {remediation[0]}", markup=False, highlight=False)
         raise typer.Exit(code=2)
-    if dry_run_limit < 0:
-        message = "Dry-run file limit must be zero or greater."
-        if json_mode:
-            _emit_json_error_and_exit(
-                "index",
-                "invalid_dry_run_limit",
-                message,
-                2,
-                remediation=["Use --dry-run-limit 0 or a positive number."],
-            )
-        _cli.console.print(message, markup=False, highlight=False)
-        _cli.console.print("Run:", markup=False, highlight=False)
-        _cli.console.print(
-            "  vaultspec-rag index --type code --dry-run --dry-run-limit 50",
-            markup=False,
-            highlight=False,
+    if dry_run_limit >= 0:
+        return
+    message = "Dry-run file limit must be zero or greater."
+    if json_mode:
+        _emit_json_error_and_exit(
+            "index",
+            "invalid_dry_run_limit",
+            message,
+            2,
+            remediation=["Use --dry-run-limit 0 or a positive number."],
         )
-        raise typer.Exit(code=2)
+    _cli.console.print(message, markup=False, highlight=False)
+    _cli.console.print("Run:", markup=False, highlight=False)
+    _cli.console.print(
+        "  vaultspec-rag index --type code --dry-run --dry-run-limit 50",
+        markup=False,
+        highlight=False,
+    )
+    raise typer.Exit(code=2)
+
+
+def _scan_dry_run_sources(
+    index_type: PublicSourceType,
+    target: pathlib.Path,
+    exclude: list[str] | None,
+    dry_run_limit: int,
+) -> _DryRunScan:
+    """Discover the requested sources without opening index storage."""
     from ..api import scan_codebase
 
-    if no_preprocess:
-        _apply_preprocess_off_env()
     code_scan = (
         scan_codebase(target, extra_excludes=exclude)
         if index_type in (PublicSourceType.CODE, PublicSourceType.COMBINED)
@@ -232,87 +258,91 @@ def _handle_dry_run(
         for path in sorted(code_scan.files if code_scan is not None else [])
     ]
     document_files = list(document_scan.sampled_paths) if document_scan else []
-    files = [*code_files, *document_files]
-    total = len(code_files) + (document_scan.total_files if document_scan else 0)
-    if json_mode:
-        _emit_json(
-            True,
-            "index",
-            data={
-                "dry_run": True,
-                "count": total,
-                "files": files,
-                "truncated": bool(document_scan and document_scan.truncated),
-                "sources": {
-                    "code": {"count": len(code_files), "files": code_files},
-                    "document": {
-                        "count": document_scan.total_files if document_scan else 0,
-                        "files": document_files,
-                        "truncated": bool(document_scan and document_scan.truncated),
-                        "membership_fingerprint": (
-                            document_scan.membership_fingerprint
-                            if document_scan
-                            else None
-                        ),
-                        "content_fingerprint": (
-                            document_scan.content_fingerprint if document_scan else None
-                        ),
-                        "policy_snapshot": (
-                            document_scan.policy_snapshot if document_scan else None
-                        ),
-                        "preprocess_rule_count": (
-                            document_scan.preprocess_rule_count if document_scan else 0
-                        ),
-                        "execution_mode": (
-                            document_scan.execution_mode if document_scan else None
-                        ),
-                    },
-                },
-                "admission": {
-                    "policy_fingerprint": (
-                        code_scan.policy_fingerprint if code_scan is not None else None
-                    ),
-                    "counts": [
-                        {
-                            "kind": (
-                                count.kind.value if count.kind is not None else None
-                            ),
-                            "admitted": count.admitted,
-                            "reason": count.reason.value,
-                            "count": count.count,
-                        }
-                        for count in (code_scan.counts if code_scan is not None else [])
-                    ],
-                    "samples": [
-                        {
-                            "path": sample.path,
-                            "kind": (
-                                sample.kind.value if sample.kind is not None else None
-                            ),
-                            "admitted": sample.admitted,
-                            "reason": sample.reason.value,
-                        }
-                        for sample in (
-                            code_scan.samples if code_scan is not None else []
-                        )
-                    ],
-                },
+    return _DryRunScan(code_scan, document_scan, code_files, document_files)
+
+
+def _dry_run_admission(scan: ContentScanResult | None) -> dict[str, object]:
+    """Project code admission evidence into the stable JSON shape."""
+    return {
+        "policy_fingerprint": scan.policy_fingerprint if scan is not None else None,
+        "counts": [
+            {
+                "kind": count.kind.value if count.kind is not None else None,
+                "admitted": count.admitted,
+                "reason": count.reason.value,
+                "count": count.count,
+            }
+            for count in (scan.counts if scan is not None else [])
+        ],
+        "samples": [
+            {
+                "path": sample.path,
+                "kind": sample.kind.value if sample.kind is not None else None,
+                "admitted": sample.admitted,
+                "reason": sample.reason.value,
+            }
+            for sample in (scan.samples if scan is not None else [])
+        ],
+    }
+
+
+def _dry_run_document_source(scan: _DryRunScan) -> dict[str, object]:
+    """Project bounded document discovery into the stable JSON shape."""
+    document_scan = scan.document_scan
+    return {
+        "count": document_scan.total_files if document_scan else 0,
+        "files": scan.document_files,
+        "truncated": bool(document_scan and document_scan.truncated),
+        "membership_fingerprint": (
+            document_scan.membership_fingerprint if document_scan else None
+        ),
+        "content_fingerprint": (
+            document_scan.content_fingerprint if document_scan else None
+        ),
+        "policy_snapshot": document_scan.policy_snapshot if document_scan else None,
+        "preprocess_rule_count": (
+            document_scan.preprocess_rule_count if document_scan else 0
+        ),
+        "execution_mode": document_scan.execution_mode if document_scan else None,
+    }
+
+
+def _emit_dry_run_json(scan: _DryRunScan) -> None:
+    """Emit one structured dry-run outcome."""
+    _emit_json(
+        True,
+        "index",
+        data={
+            "dry_run": True,
+            "count": scan.total,
+            "files": scan.files,
+            "truncated": bool(scan.document_scan and scan.document_scan.truncated),
+            "sources": {
+                "code": {"count": len(scan.code_files), "files": scan.code_files},
+                "document": _dry_run_document_source(scan),
             },
-        )
-        return
-    shown_files = files[:dry_run_limit]
-    noun = "file" if total == 1 else "files"
+            "admission": _dry_run_admission(scan.code_scan),
+        },
+    )
+
+
+def _render_dry_run(
+    scan: _DryRunScan, index_type: PublicSourceType, limit: int
+) -> None:
+    """Render a bounded human-readable dry-run summary."""
+    shown_files = scan.files[:limit]
+    noun = "file" if scan.total == 1 else "files"
     source_description = (
         "source-code" if index_type is PublicSourceType.CODE else index_type.value
     )
     _cli.console.print(
-        f"Dry run: {total} {source_description} {noun} would be indexed.",
+        f"Dry run: {scan.total} {source_description} {noun} would be indexed.",
         markup=False,
         highlight=False,
     )
-    if code_scan is not None and code_scan.counts:
+    if scan.code_scan is not None and scan.code_scan.counts:
         _cli.console.print("Admission summary:", markup=False, highlight=False)
-        for count in code_scan.counts:
+        for count in scan.code_scan.counts:
             kind = count.kind.value if count.kind is not None else "unowned"
             disposition = "admitted" if count.admitted else "rejected"
             _cli.console.print(
@@ -324,23 +354,49 @@ def _handle_dry_run(
         _cli.console.print("Files shown:", markup=False, highlight=False)
         for path in shown_files:
             _cli.console.print(f"  - {path}")
-    elif total:
+    elif scan.total:
         _cli.console.print("Files shown: none.", markup=False, highlight=False)
-    hidden = total - len(shown_files)
-    if hidden > 0:
-        hidden_noun = "file" if hidden == 1 else "files"
-        suffix = (
-            "or --json for the full list."
-            if index_type is PublicSourceType.CODE
-            else "to request a larger bounded sample."
-        )
-        _cli.console.print(
-            f"{hidden} more {hidden_noun} not shown. Use --dry-run-limit {total} "
-            f"{suffix}",
-            markup=False,
-            highlight=False,
-            soft_wrap=True,
-        )
+    _render_hidden_dry_run_files(scan.total - len(shown_files), scan.total, index_type)
+
+
+def _render_hidden_dry_run_files(
+    hidden: int,
+    total: int,
+    index_type: PublicSourceType,
+) -> None:
+    """Explain a bounded human sample when additional files were discovered."""
+    if hidden <= 0:
+        return
+    hidden_noun = "file" if hidden == 1 else "files"
+    suffix = (
+        "or --json for the full list."
+        if index_type is PublicSourceType.CODE
+        else "to request a larger bounded sample."
+    )
+    _cli.console.print(
+        f"{hidden} more {hidden_noun} not shown. Use --dry-run-limit {total} {suffix}",
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
+
+
+def _handle_dry_run(
+    index_type: PublicSourceType,
+    json_mode: bool,
+    target: pathlib.Path,
+    exclude: list[str] | None,
+    dry_run_limit: int,
+    no_preprocess: bool,
+) -> None:
+    _validate_dry_run_request(index_type, json_mode, dry_run_limit)
+    if no_preprocess:
+        _apply_preprocess_off_env()
+    scan = _scan_dry_run_sources(index_type, target, exclude, dry_run_limit)
+    if json_mode:
+        _emit_dry_run_json(scan)
+        return
+    _render_dry_run(scan, index_type, dry_run_limit)
 
 
 def _validate_rebuild(ctx: typer.Context, json_mode: bool) -> None:
@@ -479,8 +535,7 @@ def _print_service_domain_outcomes(raw_domains: object) -> bool:
             )
         else:
             _cli.console.print(
-                f"{label}: failed: {domain.get('error_kind')}: "
-                f"{domain.get('detail')}",
+                f"{label}: failed: {domain.get('error_kind')}: {domain.get('detail')}",
                 markup=False,
                 highlight=False,
             )
