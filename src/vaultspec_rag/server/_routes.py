@@ -60,8 +60,8 @@ from ._routes_storage import (
     _shape_survey_payload,
 )
 from ._search_availability import (
+    SearchResponseClassification,
     classify_search_response,
-    matching_index_jobs,
 )
 from ._utils import (
     ProjectRootRequiredError,
@@ -281,10 +281,10 @@ def _classify_search_result(
     source: Literal["vault", "code"],
     request_id: str,
     port: int | None,
-) -> tuple[dict[str, object], int]:
+) -> SearchResponseClassification:
     """Apply availability classification and stable-empty diagnostics."""
     index_state = cast("dict[str, object]", result.get("index_state", {}))
-    classified, status_code = classify_search_response(
+    classification = classify_search_response(
         result,
         before_snapshot=job_snapshot_before,
         after_snapshot=_canonical_job_snapshot(),
@@ -294,9 +294,12 @@ def _classify_search_result(
         index_state=index_state,
         port=port,
     )
-    if status_code == 200 and not classified["results"]:
-        classified["empty"] = _empty_search_diagnostics(index_state, port=port)
-    return classified, status_code
+    if classification.status_code == 200 and not classification.response["results"]:
+        classification.response["empty"] = _empty_search_diagnostics(
+            index_state,
+            port=port,
+        )
+    return classification
 
 
 def _canonical_job_snapshot() -> list[dict[str, object]]:
@@ -432,11 +435,6 @@ async def search_route(request: Request) -> JSONResponse:
 
     job_snapshot_before = _canonical_job_snapshot()
     search_source = "code" if search_type == "code" else "vault"
-    admission_index_jobs = matching_index_jobs(
-        job_snapshot_before,
-        requested_root=root,
-        source=search_source,
-    )
     notes: dict[str, object] = {}
 
     def _run():
@@ -538,7 +536,7 @@ async def search_route(request: Request) -> JSONResponse:
         timing = result.get("timing")
         if isinstance(timing, dict):
             timing["server_total_seconds"] = total_seconds
-        result, response_status = _classify_search_result(
+        classification = _classify_search_result(
             result,
             job_snapshot_before=job_snapshot_before,
             root=root,
@@ -546,6 +544,8 @@ async def search_route(request: Request) -> JSONResponse:
             request_id=request_id,
             port=request.url.port,
         )
+        result = classification.response
+        response_status = classification.status_code
         _m._ensure_watcher_soon(root)
         hits = result.get("results")
         hit_count = len(cast("list[object]", hits)) if isinstance(hits, list) else 0
@@ -564,9 +564,12 @@ async def search_route(request: Request) -> JSONResponse:
                 "search_type": search_source,
                 "root": root,
                 "results": hit_count,
-                "matching_index_jobs": len(admission_index_jobs.references),
+                "matching_index_jobs": len(classification.matching_jobs),
                 "matching_index_job_ids": ",".join(
-                    job["id"] for job in admission_index_jobs.references
+                    job.id for job in classification.matching_jobs
+                ),
+                "matching_index_jobs_truncated": (
+                    classification.matching_jobs_truncated
                 ),
                 "total_seconds": f"{total_seconds:.3f}",
             },

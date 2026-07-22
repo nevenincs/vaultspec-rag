@@ -22,7 +22,10 @@ from mcp.client.stdio import stdio_client
 from mcp.types import CallToolResult, TextContent
 
 from ...cli._http_search import _do_http_call, _timeout_diagnostics, _try_http_search
+from ...job_manager import JobManager
+from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
 from ..corpus import build_synthetic_vault
+from .conftest import _live_service_context
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -880,6 +883,25 @@ def _assert_stable_missing_index_response(
     assert empty["reason"] == "index_missing", evidence
 
 
+def _assert_matching_nonempty_response(
+    response: RawSearchResponse,
+    *,
+    expected_doc_id: str,
+    evidence: str,
+) -> None:
+    status, _headers, body = response
+    assert status == 200, evidence
+    assert "error" not in body, evidence
+    raw_results = body["results"]
+    assert isinstance(raw_results, list) and raw_results, evidence
+    results = cast("list[object]", raw_results)
+    assert any(
+        isinstance(raw_result, dict)
+        and cast("dict[str, object]", raw_result).get("id") == expected_doc_id
+        for raw_result in results
+    ), evidence
+
+
 def _assert_shared_unavailable_response(
     body: dict[str, object],
     *,
@@ -917,28 +939,13 @@ def _assert_mcp_unavailable_response(
     assert structured is None or "results" not in structured, evidence
 
 
-@pytest.mark.subprocess_gpu
-def test_search_index_unavailable_during_matching_rebuild(
-    live_service: tuple[int, Path],
-    tmp_path: Path,
+def _run_clean_rebuild_availability_phase(
+    port: int,
+    token: str,
+    status_dir: Path,
+    root: Path,
+    unrelated_root: Path,
 ) -> None:
-    port, status_dir = live_service
-    manifest = build_synthetic_vault(
-        tmp_path / "availability-authority-project",
-        n_docs=256,
-        seed=252,
-    )
-    root = manifest.root.resolve()
-    unrelated_root = tmp_path / "availability-unrelated-project"
-    (unrelated_root / ".vault").mkdir(parents=True)
-    unrelated_root = unrelated_root.resolve()
-    assert unrelated_root != root
-
-    health = _do_http_call(port, "/health", None, timeout=5)
-    assert isinstance(health, dict), health
-    token = health.get("service_token")
-    assert isinstance(token, str) and token, health
-
     matching_empty_query = "type:nonexistent availability authority probe"
     search_payload: dict[str, object] = {
         "query": matching_empty_query,
@@ -954,6 +961,7 @@ def test_search_index_unavailable_during_matching_rebuild(
         "project_root": str(root),
         "include_paths": ["__availability_no_match__/**"],
     }
+
     job_id, running_job, probe_responses = _run_probes_during_matching_rebuild(
         port,
         token,
@@ -1079,6 +1087,177 @@ def test_search_index_unavailable_during_matching_rebuild(
     assert isinstance(raw_post_empty, dict), post_evidence
     post_empty = cast("dict[str, object]", raw_post_empty)
     assert post_empty["reason"] == "no_match", post_evidence
+
+
+def _live_service_token(port: int) -> str:
+    health = _do_http_call(port, "/health", None, timeout=5)
+    assert isinstance(health, dict), health
+    token = health.get("service_token")
+    assert isinstance(token, str) and token, health
+    return token
+
+
+def _persist_paused_matching_rebuild(state_path: Path, root: Path) -> str:
+    assert state_path.is_file()
+    manager = JobManager(state_path=state_path)
+    restored = manager.restore_persisted()
+    assert restored.code == "job_state_restored", restored.to_dict()
+    created = manager.create(
+        JobSpec(
+            JobOperation.INDEX,
+            JobSource.VAULT,
+            str(root),
+            JobMode.REBUILD,
+        ),
+        JobInitiator("integration", "paused nonempty search probe", str(root)),
+        start_paused=True,
+    )
+    assert created.job is not None, created.to_dict()
+    assert created.job.state.value == "paused", created.to_dict()
+    assert created.job.runtime.task_active is False, created.to_dict()
+    assert created.job.runtime.worker_active is False, created.to_dict()
+    return created.job.id
+
+
+def _assert_paused_rebuild_snapshot(
+    job: dict[str, object],
+    *,
+    job_id: str,
+    root: Path,
+) -> None:
+    assert job["id"] == job_id, job
+    assert job["state"] == "paused", job
+    assert job["desired_state"] == "paused", job
+    assert job["spec"] == {
+        "operation": "index",
+        "source": "vault",
+        "project_root": str(root),
+        "mode": "rebuild",
+    }, job
+    runtime = cast("dict[str, object]", job["runtime"])
+    assert runtime["task_active"] is False, job
+    assert runtime["worker_active"] is False, job
+    resources = cast("dict[str, object]", job["resources"])
+    assert resources["index_capacity_held"] is False, job
+    assert resources["project_lease_held"] is False, job
+    assert resources["writer_lock_held"] is False, job
+    assert resources["pipeline_active"] is False, job
+
+
+def _wait_for_paused_rebuild_job(
+    port: int,
+    token: str,
+    job_id: str,
+    root: Path,
+) -> dict[str, object]:
+    deadline = time.monotonic() + 10.0
+    last_job: dict[str, object] | None = None
+    while time.monotonic() < deadline:
+        last_job = _exact_job_snapshot(port, job_id)
+        if last_job is not None and last_job.get("state") == "paused":
+            _assert_paused_rebuild_snapshot(last_job, job_id=job_id, root=root)
+            return last_job
+        time.sleep(0.05)
+    pytest.fail(
+        f"job {job_id} did not remain paused after service restart\n"
+        + _bounded_failure_evidence(
+            port,
+            token,
+            job_id,
+            last_job=last_job,
+        )
+    )
+
+
+def _assert_nonempty_search_with_paused_rebuild(
+    port: int,
+    token: str,
+    root: Path,
+    *,
+    job_id: str,
+    known_doc_id: str,
+    known_needle: str,
+) -> None:
+    paused_before = _wait_for_paused_rebuild_job(port, token, job_id, root)
+    payload: dict[str, object] = {
+        "query": known_needle,
+        "type": "vault",
+        "top_k": 5,
+        "project_root": str(root),
+    }
+    response = _search_with_failure_evidence(
+        port,
+        token,
+        job_id,
+        payload,
+        label="matching nonempty search with paused rebuild",
+        last_job=paused_before,
+    )
+    evidence = _bounded_failure_evidence(
+        port,
+        token,
+        job_id,
+        last_job=paused_before,
+        last_response=response,
+    )
+    _assert_matching_nonempty_response(
+        response,
+        expected_doc_id=known_doc_id,
+        evidence=evidence,
+    )
+    request_id = _assert_request_id(response[2])
+    completed_log = _wait_for_search_log_line(port, request_id)
+    assert "service.search event=completed status_code=200" in completed_log, evidence
+    assert f"request_id={request_id}" in completed_log, evidence
+    assert "source=vault" in completed_log, evidence
+    assert "search_type=vault" in completed_log, evidence
+    assert f"root={root}" in completed_log, evidence
+    assert re.search(r"\bresults=[1-9]\d*\b", completed_log), evidence
+    assert "matching_index_jobs=1" in completed_log, evidence
+    assert f"matching_index_job_ids={job_id}" in completed_log, evidence
+    assert "matching_index_jobs_truncated=false" in completed_log, evidence
+    paused_after = _wait_for_paused_rebuild_job(port, token, job_id, root)
+    assert paused_after["revision"] == paused_before["revision"], evidence
+
+
+@pytest.mark.subprocess_gpu
+def test_search_index_unavailable_during_matching_rebuild(tmp_path: Path) -> None:
+    manifest = build_synthetic_vault(
+        tmp_path / "availability-authority-project",
+        n_docs=256,
+        seed=252,
+    )
+    root = manifest.root.resolve()
+    unrelated_root = tmp_path / "availability-unrelated-project"
+    (unrelated_root / ".vault").mkdir(parents=True)
+    unrelated_root = unrelated_root.resolve()
+    assert unrelated_root != root
+
+    with _live_service_context(tmp_path) as (port, status_dir):
+        token = _live_service_token(port)
+        _run_clean_rebuild_availability_phase(
+            port,
+            token,
+            status_dir,
+            root,
+            unrelated_root,
+        )
+
+    paused_job_id = _persist_paused_matching_rebuild(
+        tmp_path / "jobs-state.json",
+        root,
+    )
+    known_doc = manifest.docs[0]
+    with _live_service_context(tmp_path) as (port, _status_dir):
+        token = _live_service_token(port)
+        _assert_nonempty_search_with_paused_rebuild(
+            port,
+            token,
+            root,
+            job_id=paused_job_id,
+            known_doc_id=known_doc.doc_id,
+            known_needle=known_doc.needle,
+        )
 
 
 @pytest.mark.subprocess_gpu

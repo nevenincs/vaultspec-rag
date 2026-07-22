@@ -19,7 +19,6 @@ from ..job_models import (
     JobState,
 )
 from ..server._search_availability import (
-    build_index_unavailable_response,
     classify_search_response,
 )
 
@@ -58,7 +57,12 @@ def _availability_response(
     source: SearchSource = "vault",
 ) -> dict[str, object] | None:
     resolved_root = root.resolve()
-    return build_index_unavailable_response(
+    result: dict[str, object] = {
+        "request_id": "request-1",
+        "results": [],
+    }
+    classification = classify_search_response(
+        result,
         before_snapshot=before,
         after_snapshot=after,
         requested_root=resolved_root,
@@ -73,6 +77,7 @@ def _availability_response(
         },
         port=8766,
     )
+    return classification.response if classification.status_code == 503 else None
 
 
 @pytest.mark.parametrize(
@@ -223,7 +228,7 @@ def test_nonempty_result_remains_available_during_matching_rebuild(
     }
     expected = deepcopy(result)
 
-    body, status_code = classify_search_response(
+    classification = classify_search_response(
         result,
         before_snapshot=before_snapshot,
         after_snapshot=after_snapshot,
@@ -234,9 +239,14 @@ def test_nonempty_result_remains_available_during_matching_rebuild(
         port=8766,
     )
 
-    assert body is result
-    assert body == expected
-    assert status_code == 200
+    assert classification.response is result
+    assert classification.response == expected
+    assert classification.status_code == 200
+    assert [(job.id, job.state, job.mode) for job in classification.matching_jobs] == [
+        ("paused-rebuild", "paused", "rebuild")
+    ]
+    assert classification.matching_jobs_truncated is False
+    assert classification.rebuilding is True
 
 
 def test_matching_jobs_are_bounded_but_hidden_rebuild_still_sets_status(
@@ -266,3 +276,55 @@ def test_matching_jobs_are_bounded_but_hidden_rebuild_still_sets_status(
     ]
     assert index_state["matching_jobs_truncated"] is True
     assert index_state["status"] == "rebuilding"
+
+
+def test_classification_evidence_is_after_first_bounded_and_shared_with_response(
+    tmp_path: Path,
+) -> None:
+    root = (tmp_path / "project").resolve()
+    after = [
+        _canonical_snapshot(root, job_id=f"after-{index}").to_dict()
+        for index in range(2)
+    ]
+    before = [
+        _canonical_snapshot(
+            root,
+            job_id=f"before-{index}",
+            mode=JobMode.REBUILD if index == 7 else JobMode.INCREMENTAL,
+        ).to_dict()
+        for index in range(8)
+    ]
+    index_state: dict[str, object] = {
+        "source": "vault",
+        "indexed_count": 7,
+        "indexed_target_root": str(root),
+        "requested_target_root": str(root),
+        "target_matches": True,
+    }
+
+    classification = classify_search_response(
+        {"request_id": "request-merged", "results": []},
+        before_snapshot=before,
+        after_snapshot=after,
+        requested_root=root,
+        source="vault",
+        request_id="request-merged",
+        index_state=index_state,
+        port=8766,
+    )
+
+    expected_ids = ["after-0", "after-1", *[f"before-{index}" for index in range(6)]]
+    assert classification.status_code == 503
+    assert [job.id for job in classification.matching_jobs] == expected_ids
+    assert classification.matching_jobs_truncated is True
+    assert classification.rebuilding is True
+    response_index_state = cast(
+        "dict[str, object]",
+        classification.response["index_state"],
+    )
+    response_jobs = cast(
+        "list[dict[str, object]]", response_index_state["matching_jobs"]
+    )
+    assert [job["id"] for job in response_jobs] == expected_ids
+    assert response_index_state["matching_jobs_truncated"] is True
+    assert response_index_state["status"] == "rebuilding"
