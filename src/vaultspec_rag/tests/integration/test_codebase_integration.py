@@ -458,8 +458,11 @@ class TestCodebaseIncrementalIndex:
         )
         command = f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} {{path}}"
         (root / ".vaultragpreprocess.toml").write_text(
+            "version = 2\n"
             "[[rule]]\n"
             'pattern = "*.fatal"\n'
+            'target = "code"\n'
+            'extractor_version = "1"\n'
             f"command = '''{command}'''\n"
             'on_error = "fail"\n',
             encoding="utf-8",
