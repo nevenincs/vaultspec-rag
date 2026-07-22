@@ -827,6 +827,22 @@ class TestHealthHandler:
         assert (
             data["backend_capabilities"]["same_project_search_strategy"] == "serialized"
         )
+        profile = cast("dict[str, Any]", data["support_profile"])
+        domains = cast("dict[str, dict[str, int]]", profile["domains"])
+        assert set(domains) == {"code", "document"}
+        expected_limits = {
+            "source_files",
+            "source_bytes",
+            "generated_chunks",
+            "weighted_bytes",
+            "extracted_bytes",
+            "queue_bytes",
+            "rss_bytes",
+            "cuda_bytes",
+        }
+        assert set(domains["code"]) == expected_limits
+        assert set(domains["document"]) == expected_limits
+        assert domains["code"] != domains["document"]
 
     def test_health_status_reflects_model_state(self):
         """Without models loaded, status should not be 'ready'.

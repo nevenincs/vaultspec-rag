@@ -795,8 +795,7 @@ async def health_handler(_request: Request) -> object:
         failed_kind = last_failed.get("error_kind") or "unknown"
         degraded_reasons.append(f"the latest indexing job failed: {failed_kind}")
 
-    from ..config import get_config
-    from ..index_profiles import index_support_profile_status
+    from ..jobs import active_index_support_profiles
 
     if status == "ready" and degraded_reasons:
         status = "degraded"
@@ -819,9 +818,7 @@ async def health_handler(_request: Request) -> object:
             "uptime_s": round(uptime, 2),
             "backend_capabilities": backend_capabilities_dict(),
             "degraded_reasons": degraded_reasons,
-            "support_profile": index_support_profile_status(
-                get_config().index_support_profile
-            ),
+            "support_profile": active_index_support_profiles(),
             # Bare storage-schema version: the cheapest ungated pre-read gate a
             # direct-Qdrant consumer can check before scrolling. The full
             # descriptor lives on /readiness.
