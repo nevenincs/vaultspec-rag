@@ -25,14 +25,14 @@ Sol medium, the standard-tier test executor, proves the false-negative contract 
 
 Create one deterministic subprocess graphics processing unit regression that observes matching index work and the Hypertext Transfer Protocol (HTTP) search outcome without test doubles.
 
-- [ ] `W01.P01.S01` - Add the red real-service regression expecting structured HTTP 503 for an empty search during matching nonterminal index work and record the current HTTP 200 failure using Sol medium; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
+- [x] `W01.P01.S01` - Add the red real-service regression expecting structured HTTP 503 for an empty search during matching nonterminal index work and record the current HTTP 200 failure using Sol medium; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
 
 ### Phase `W01.P05` - availability isolation
 
 Prove the availability decision is scoped to the exact resolved project root and normalized requested source and never suppresses usable nonempty results.
 
-- [ ] `W01.P05.S06` - Add a real-service assertion that same-source work for another resolved project root preserves empty HTTP 200 using Sol medium; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
-- [ ] `W01.P05.S07` - Add a real-service assertion that same-root work for another normalized source preserves empty HTTP 200 using Sol medium; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
+- [x] `W01.P05.S06` - Add a real-service assertion that same-source work for another resolved project root preserves empty HTTP 200 using Sol medium; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
+- [x] `W01.P05.S07` - Add a real-service assertion that same-root work for another normalized source preserves empty HTTP 200 using Sol medium; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
 - [ ] `W01.P05.S08` - Add a real-service assertion that matching nonterminal work preserves usable nonempty HTTP 200 using Sol medium; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
 
 ### Phase `W01.P06` - consumer semantics
