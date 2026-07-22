@@ -154,3 +154,73 @@ remediation is complete in commits `5def952b`, `a1846ff0`, `a4d73d70`, and
 `c5a8ab8e`. The feature as a whole remains open solely on the explicit
 acceptance-floor finding and its real-backend, GPU, full-suite, and policy-gate
 evidence.
+
+## Post-implementation re-review
+
+Re-reviewed commits `54df3b01` through `2c325eb8` against ADR decisions D4,
+D5, D7, and D8, the approved implementation plan, repository GPU and storage
+rules, and the real-behavior test policy. The focused CPU verification passed
+131 tests. A cumulative changed-test scan found no newly added patching,
+monkeypatching, fake or stub classes, skips, xfails, or tautological assertions.
+The behavior-preserving policy, route-validation, CLI-outcome, health-projection,
+and test-phase extractions introduced no additional low-or-higher finding.
+
+### memory-budget-enforcement | high | CUDA ceilings do not govern the forward lifetime
+
+The admitted code budget samples before an encode/store slice and only after
+the synchronous store operation returns. Although the streaming helper already
+has an after-encode callback boundary outside the GPU lock, the code path does
+not use it for `MemoryBudget`. Its reported CUDA high-water is therefore only
+the maximum of sparse point-in-time samples, not the allocator high-water, and
+a transient allocated or reserved breach can disappear before the next sample.
+A persistent allocator OOM at batch size one also propagates as the raw Torch
+exception instead of `cuda_memory_ceiling`. In addition,
+`index_cuda_allocator_fraction` is validated and exposed but is never applied
+to Torch before model loading, so the process-wide headroom decision is not
+enforced. The CUDA regression lowers the ceiling below the already-allocated
+baseline and asserts failure at `before code dispatch`; it does not exercise a
+forward, after-forward measurement, allocator OOM translation, or cleanup after
+a mid-slice ceiling breach.
+
+### document-resilience-parity | high | Document jobs advertise ceilings they do not enforce or measure
+
+Document dispatch publishes profile ceilings before model loading, but
+`DocumentIndexer` does not create the production `MemoryBudget`, does not clamp
+those ceilings with operator configuration, and does not expose a memory-budget
+snapshot. Its separate resource counter compares only against profile bytes,
+classifies RSS or CUDA excess as `corpus_limit_exceeded`, and tracks reserved
+CUDA without allocated CUDA. The canonical projection then emits all document
+RSS and CUDA peaks as null while retaining the advertised ceilings. The adapter
+parity test proves that a manually seeded resilience object survives HTTP,
+health, and CLI transport; it does not prove that document execution produces
+that object. Operators can consequently receive a canonical-looking account
+whose ceilings and typed outcomes are not the policy the document run used.
+
+### document-write-deadline | high | A blocked local document write can outlive the run deadline
+
+The bounded local point-write lock is used only by code upserts. The document
+indexer calls `encode_and_upsert_document_slice` without its checkpoint's
+`StoreWritePolicy`, and document upserts still acquire the ordinary blocking
+collection lock before entering the retry helper. A competing local operation
+can therefore retain the vector-bearing document slice, document writer
+authority, and job attempt beyond the durable no-progress deadline. The new
+real blocked-write regression covers code only, so it cannot demonstrate
+bounded document unwind or truthful cancellation acknowledgement after the
+document lock is contended.
+
+## Post-implementation recommendations
+
+- Apply the configured process allocator fraction before any model load, sample
+  both allocated and reserved CUDA immediately outside every forward boundary,
+  retain authoritative allocator peaks, and translate terminal allocator OOM
+  through the same typed memory-ceiling path.
+- Give code and document runs one admitted memory-budget contract derived from
+  the selected profile and operator configuration, and project only the
+  ceilings, peaks, and typed outcome that execution actually enforced.
+- Pass the document checkpoint's write policy through every managed document
+  mutation and use the same deadline-aware local write lock as code. Prove the
+  behavior with a real contended document collection and resource-release
+  assertions.
+- Keep `acceptance-floor` and the final implementation gates open. The 131-test
+  CPU result verifies focused mechanics only; it is not the required full-scale
+  backend or representative CUDA evidence.
