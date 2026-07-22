@@ -461,3 +461,84 @@ class TestRerank:
         assert len(out) == 1
         # Score unchanged - reranker was not invoked
         assert out[0].score == original_score
+
+    def test_rerank_scores_rerank_text_not_snippet(
+        self, rag_components: _RagComponents
+    ):
+        """The reranker must score ``rerank_text``, never the display ``snippet``.
+
+        The rule (rerankers-score-real-content): a CrossEncoder was once found
+        scoring the 200-char display snippet while the real content sat unused
+        in memory, silently degrading ranking quality with every functional
+        test staying green. ``TestRerank``'s other cases never set
+        ``rerank_text``, so it is always ``None`` and ``_rerank`` always falls
+        through to ``snippet`` - none of them would catch a reversion back to
+        scoring the snippet directly.
+
+        This test sets the two fields to deliberately DISAGREE, so the two
+        scoring choices produce opposite winners:
+
+        - Result A: an irrelevant snippet, but ``rerank_text`` that directly
+          answers the query.
+        - Result B: a snippet that echoes the query's own wording, but
+          ``rerank_text`` that is irrelevant.
+
+        THE MUTATION THIS TEST CATCHES: if ``_rerank`` is ever changed (or
+        reverted) to score ``r.snippet`` instead of ``r.rerank_text``, Result B
+        wins on its query-echoing snippet and this assertion fails. A correct
+        implementation scores the real content, so Result A - whose full
+        content actually answers the question - must win.
+        """
+        from ... import SearchResult
+        from ...search import VaultSearcher
+
+        searcher = VaultSearcher(
+            rag_components["root"],
+            rag_components["model"],
+            rag_components["store"],
+        )
+        searcher._reranker_enabled = True
+
+        query = "What is the capital of France?"
+
+        result_a = SearchResult(
+            id="answers-via-rerank-text",
+            path="a.md",
+            title="A",
+            score=0.0,
+            # Irrelevant snippet - must NOT be what wins this result the rank.
+            snippet=(
+                "Bananas are a good source of potassium and turn yellow as "
+                "they ripen in warm, tropical climates."
+            ),
+            source="vault",
+            # The real content: directly answers the query.
+            rerank_text=(
+                "The capital of France is Paris, a city on the Seine known "
+                "for the Eiffel Tower and the Louvre museum."
+            ),
+        )
+        result_b = SearchResult(
+            id="answers-via-snippet-only",
+            path="b.md",
+            title="B",
+            score=0.0,
+            # Snippet echoes the query's own wording - must NOT win on this.
+            snippet="The capital city of France is Paris.",
+            source="vault",
+            # The real content: irrelevant to the query.
+            rerank_text=(
+                "Bananas are a good source of potassium and turn yellow as "
+                "they ripen in warm, tropical climates."
+            ),
+        )
+
+        out = searcher._rerank(query, [result_b, result_a], 2)
+
+        assert len(out) == 2
+        assert out[0].id == "answers-via-rerank-text", (
+            "The reranker ranked the query-echoing snippet above the "
+            "content that actually answers the query - it is scoring "
+            "snippet instead of rerank_text."
+        )
+        assert out[0].score > out[1].score
