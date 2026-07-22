@@ -119,7 +119,7 @@ Stop dispatch, cooperatively drain workers, persist recoverable intent, and prev
 
 Exercise watcher and service-lifespan behavior to prove freshness, replacement, interruption, and shutdown safety.
 
-- [ ] `W03.P11.S21` - Verify real watcher pause coalescing, cancellation dirtiness, replacement expectations, explicit watcher stop, and cleanup joining using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`.
+- [x] `W03.P11.S21` - Verify real watcher pause coalescing, cancellation dirtiness, replacement expectations, explicit watcher stop, and cleanup joining using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`.
 - [ ] `W03.P11.S22` - Verify real daemon restart and shutdown preserve queued and paused intent, mark interrupted attempts, and close stores only after worker release using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
 
 ## Wave `W04` - operator resource surface
