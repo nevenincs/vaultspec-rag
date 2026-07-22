@@ -343,7 +343,7 @@ def chunk_and_hash_file(
     path: pathlib.Path,
     root_dir: pathlib.Path,
     prep: PreprocessContext | None = None,
-) -> FileChunkResult | None:
+) -> FileChunkResult:
     """Read a file once, returning both its content hash and its chunks.
 
     The full-index path uses this so the tree is read a single time rather than
@@ -358,13 +358,16 @@ def chunk_and_hash_file(
         root_dir: Project root used to compute the relative path.
 
     Returns:
-        A :class:`FileChunkResult`, or ``None`` when the file cannot be read.
+        A :class:`FileChunkResult` for every successfully read file.
+
+    Raises:
+        OSError: If the source file cannot be read.
     """
     try:
         raw = path.read_bytes()
     except OSError as e:
         logger.warning("Cannot read %s: %s", path, e)
-        return None
+        raise
     content_hash = hashlib.blake2b(raw).hexdigest()
     rel_path = str(path.relative_to(root_dir)).replace("\\", "/")
     if prep is not None:
@@ -528,7 +531,7 @@ def _passthrough_batch_member(
         raw = member.path.read_bytes()
     except OSError as e:
         logger.warning("Cannot read %s: %s", member.path, e)
-        return FileChunkResult(member.rel_path, member.content_hash, [])
+        raise
     return _raw_file_result(
         member.path, root_dir, member.rel_path, member.content_hash, raw
     )

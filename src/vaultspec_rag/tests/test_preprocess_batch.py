@@ -237,6 +237,21 @@ _OMIT_FIRST_BODY = """
     ]))
 """
 
+# Deletes the omitted member after the worker's initial read. Passthrough must
+# surface the failed second read instead of publishing a successful omission.
+_DELETE_AND_OMIT_FIRST_BODY = """
+    import json, pathlib, sys
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        paths = [line.rstrip("\\n") for line in fh if line.strip()]
+    pathlib.Path(paths[0]).unlink()
+    print(json.dumps([
+        {"path": p, "schema_version": 1, "preprocessor_id": "batch-echo",
+         "preprocessor_version": "1.0", "source_path": p,
+         "units": [{"text": "body of " + p}]}
+        for p in paths[1:]
+    ]))
+"""
+
 # A malformed envelope: a JSON object, not the required array.
 _NON_ARRAY_BODY = """
     import json
@@ -492,6 +507,21 @@ def test_chunk_batch_files_one_spawn_for_many_files(tmp_path: Path) -> None:
         assert len(res.chunks) == 1
         assert res.chunks[0].content.startswith("unit for ")
         assert res.chunks[0].preprocessor_id == "counting"
+
+
+def test_batch_passthrough_propagates_source_read_failure(tmp_path: Path) -> None:
+    script = _script(tmp_path, _DELETE_AND_OMIT_FIRST_BODY, name="delete-first.py")
+    files = _make_files(tmp_path, 2)
+    rule = _batch_rule(script, on_error="passthrough")
+    ctx = PreprocessContext(
+        config=PreprocessConfig([rule]),
+        cache_root=preprocess_cache_dir(tmp_path),
+        max_emitted_bytes=_CAP,
+        project_root=tmp_path,
+    )
+
+    with pytest.raises(FileNotFoundError):
+        _chunk_worker.chunk_batch_files(files, tmp_path, rule, ctx)
 
 
 def test_chunk_batch_files_second_pass_hits_cache_no_spawn(tmp_path: Path) -> None:

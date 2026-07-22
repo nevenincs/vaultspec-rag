@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import os
+import queue
 import subprocess
 import sys
+import threading
 from itertools import chain
 
 import numpy as np
 import pytest
 
 from vaultspec_rag._store_models import CodeChunk, VaultChunk
+from vaultspec_rag.indexer._codebase_indexer import (
+    _drain_code_chunks,
+    _WeightedCodeSegmentQueue,
+)
 from vaultspec_rag.indexer._streaming import (
     CodeFileSegment,
     WeightedCodeSlice,
@@ -170,6 +176,75 @@ def test_empty_file_stream_has_no_durable_unit() -> None:
         )
         == []
     )
+
+
+def test_file_chunk_drain_preserves_order_and_releases_source_list() -> None:
+    chunks = [_chunk(f"chunk-{index}") for index in range(4)]
+    expected = list(chunks)
+
+    drained = list(_drain_code_chunks(chunks))
+
+    assert drained == expected
+    assert chunks == []
+
+
+def test_weighted_queue_backpressure_releases_on_consumer_transfer() -> None:
+    chunks = [_chunk(f"queued-{index}") for index in range(2)]
+    segments = list(
+        iter_code_file_segments(
+            chunks,
+            max_chunks=1,
+            max_bytes=1_000_000,
+            dense_dimension=4,
+            sparse_enabled=False,
+        )
+    )
+    queue_bytes = max(segment.estimated_bytes for segment in segments)
+    segment_q = _WeightedCodeSegmentQueue(max_chunks=1, max_bytes=queue_bytes)
+    producer_released = threading.Event()
+
+    segment_q.put(segments[0])
+
+    def _put_second_segment() -> None:
+        segment_q.put(segments[1], timeout=1.0)
+        producer_released.set()
+
+    producer = threading.Thread(target=_put_second_segment)
+    producer.start()
+    assert not producer_released.wait(0.05)
+    assert segment_q.queued_chunks == 1
+    assert segment_q.queued_bytes == segments[0].estimated_bytes
+
+    assert segment_q.get(timeout=1.0) is segments[0]
+    assert producer_released.wait(1.0)
+    producer.join(timeout=1.0)
+    assert not producer.is_alive()
+    assert segment_q.get(timeout=1.0) is segments[1]
+    assert segment_q.queued_chunks == 0
+    assert segment_q.queued_bytes == 0
+
+    with pytest.raises(queue.Empty):
+        segment_q.get(block=False)
+
+
+def test_weighted_queue_rejects_a_segment_above_its_byte_budget() -> None:
+    chunk = _chunk("oversized")
+    segment = next(
+        iter_code_file_segments(
+            [chunk],
+            max_chunks=1,
+            max_bytes=1_000_000,
+            dense_dimension=4,
+            sparse_enabled=False,
+        )
+    )
+    segment_q = _WeightedCodeSegmentQueue(
+        max_chunks=1,
+        max_bytes=segment.estimated_bytes - 1,
+    )
+
+    with pytest.raises(ValueError, match="exceeds queue capacity"):
+        segment_q.put(segment)
 
 
 def test_explicit_stream_limits_do_not_resolve_global_configuration() -> None:

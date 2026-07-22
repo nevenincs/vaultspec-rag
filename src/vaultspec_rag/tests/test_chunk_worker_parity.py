@@ -80,6 +80,14 @@ def test_scoped_worker_propagates_source_read_failure(tmp_path: Path) -> None:
         _chunk_worker.chunk_file_with_status(missing, tmp_path)
 
 
+def test_full_worker_propagates_source_read_failure(tmp_path: Path) -> None:
+    """A vanished full-index file must abort before stale-point publication."""
+    missing = tmp_path / "vanished.py"
+
+    with pytest.raises(FileNotFoundError):
+        _chunk_worker.chunk_and_hash_file(missing, tmp_path)
+
+
 def test_scoped_worker_retains_readable_unsupported_encoding_disposition(
     tmp_path: Path,
 ) -> None:
