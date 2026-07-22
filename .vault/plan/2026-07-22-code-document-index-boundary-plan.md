@@ -72,7 +72,7 @@ Define generic content ownership, routing, migration, and fingerprint contracts 
 Make full, scoped, watcher, API, CLI, and service discovery consume the same policy snapshot while preserving the public path-list compatibility projection.
 
 - [x] `W01.P02.S08` - Separate conventional source admission from the parser and chunker capability registry; `src/vaultspec_rag/indexer/_chunking.py, src/vaultspec_rag/indexer/_content_policy.py`.
-- [ ] `W01.P02.S09` - Route full and unscoped discovery through the shared classifier and resolved policy snapshot; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `W01.P02.S09` - Route full and unscoped discovery through the shared classifier and resolved policy snapshot; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [ ] `W01.P02.S10` - Route scoped discovery through the shared classifier and resolved policy snapshot; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [ ] `W01.P02.S11` - Add a bounded structured scan result and retain the public path-list scan as its compatibility projection; `src/vaultspec_rag/api.py, src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [ ] `W01.P02.S12` - Make CLI dry-run apply the same preprocessing mode and return the structured admission summary; `src/vaultspec_rag/cli/_index.py`.
