@@ -2,16 +2,25 @@
 
 from __future__ import annotations
 
+import json
+import re
 import socket
+import threading
 import time
+import urllib.error
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from ...cli._http_search import _do_http_call, _timeout_diagnostics, _try_http_search
+from ..corpus import build_synthetic_vault
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+type RawSearchResponse = tuple[int, dict[str, str], dict[str, object]]
 
 
 def _assert_empty_search_phase_timing(
@@ -48,6 +57,581 @@ def _assert_request_id(result: dict[str, object]) -> str:
     assert isinstance(request_id, str)
     assert len(request_id) == 32
     return request_id
+
+
+def _exact_job_snapshot(port: int, job_id: str) -> dict[str, object] | None:
+    result = _do_http_call(
+        port,
+        f"/jobs?job_id={job_id}&limit=8",
+        None,
+        timeout=5,
+    )
+    if not isinstance(result, dict):
+        return None
+    raw_jobs = result.get("jobs")
+    if not isinstance(raw_jobs, list):
+        return None
+    for raw_job in cast("list[object]", raw_jobs):
+        if isinstance(raw_job, dict):
+            job = cast("dict[str, object]", raw_job)
+            if job.get("id") == job_id:
+                return job
+    return None
+
+
+def _raw_search(
+    port: int,
+    token: str,
+    payload: dict[str, object],
+    *,
+    timeout: float,
+) -> RawSearchResponse:
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/search",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            status = int(response.status)
+            headers = {
+                name.lower(): value.strip() for name, value in response.headers.items()
+            }
+            raw = response.read()
+    except urllib.error.HTTPError as exc:
+        status = int(exc.code)
+        headers = {name.lower(): value.strip() for name, value in exc.headers.items()}
+        raw = exc.read()
+    parsed: object = json.loads(raw.decode("utf-8"))
+    if not isinstance(parsed, dict):
+        msg = f"search response body is not an object: {parsed!r}"
+        raise TypeError(msg)
+    return status, headers, cast("dict[str, object]", parsed)
+
+
+def _bounded_failure_evidence(
+    port: int,
+    token: str,
+    job_id: str,
+    *,
+    last_job: dict[str, object] | None = None,
+    last_response: RawSearchResponse | None = None,
+) -> str:
+    try:
+        health: object = _do_http_call(port, "/health", None, timeout=5)
+        if isinstance(health, dict):
+            health = dict(health)
+            if "service_token" in health:
+                health["service_token"] = "<redacted>"
+    except Exception as exc:  # diagnostics must not mask the primary failure
+        health = f"{exc.__class__.__name__}: {exc}"
+    try:
+        jobs: object = _do_http_call(
+            port,
+            f"/jobs?job_id={job_id}&limit=8",
+            None,
+            timeout=5,
+        )
+    except Exception as exc:  # diagnostics must not mask the primary failure
+        jobs = f"{exc.__class__.__name__}: {exc}"
+    metrics_request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/metrics",
+        headers={"Authorization": f"Bearer {token}"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(metrics_request, timeout=5) as response:
+            metrics: object = {
+                "status": int(response.status),
+                "body": response.read(8192).decode("utf-8", errors="replace"),
+            }
+    except Exception as exc:  # diagnostics must not mask the primary failure
+        metrics = f"{exc.__class__.__name__}: {exc}"
+    rendered = json.dumps(
+        {
+            "health": health,
+            "jobs": jobs,
+            "metrics": metrics,
+            "last_job": last_job,
+            "last_response": last_response,
+        },
+        default=str,
+        indent=2,
+    )
+    return rendered[:24000]
+
+
+def _job_running_handshake(job: dict[str, object]) -> bool:
+    if "spec" in job:
+        resources = job.get("resources")
+        if not isinstance(resources, dict):
+            return False
+        resource_map = cast("dict[str, object]", resources)
+        return (
+            job.get("state") == "running"
+            and resource_map.get("project_lease_held") is True
+        )
+    progress = job.get("progress")
+    if not isinstance(progress, dict):
+        return False
+    progress_map = cast("dict[str, object]", progress)
+    step = progress_map.get("step")
+    return job.get("phase") == "running" and isinstance(step, str) and step != "queued"
+
+
+def _job_terminal_state(job: dict[str, object]) -> str | None:
+    if "spec" in job:
+        state = job.get("state")
+        if state in {"cancelled", "succeeded", "failed", "interrupted"}:
+            return cast("str", state)
+        return None
+    phase = job.get("phase")
+    if phase in {"cancelled", "done", "error", "failed", "interrupted"}:
+        return cast("str", phase)
+    return None
+
+
+def _wait_for_running_job(
+    port: int,
+    token: str,
+    job_id: str,
+) -> dict[str, object]:
+    deadline = time.monotonic() + 10.0
+    last_job: dict[str, object] | None = None
+    while time.monotonic() < deadline:
+        try:
+            last_job = _exact_job_snapshot(port, job_id)
+        except Exception as exc:
+            pytest.fail(
+                f"failed to poll running job {job_id}: {exc}\n"
+                + _bounded_failure_evidence(
+                    port,
+                    token,
+                    job_id,
+                    last_job=last_job,
+                )
+            )
+        if last_job is not None:
+            if _job_running_handshake(last_job):
+                return last_job
+            terminal = _job_terminal_state(last_job)
+            if terminal is not None:
+                pytest.fail(
+                    f"job {job_id} became {terminal} before the running handshake\n"
+                    + _bounded_failure_evidence(
+                        port,
+                        token,
+                        job_id,
+                        last_job=last_job,
+                    )
+                )
+        time.sleep(0.05)
+    pytest.fail(
+        f"job {job_id} did not enter the running handshake within 10 seconds\n"
+        + _bounded_failure_evidence(
+            port,
+            token,
+            job_id,
+            last_job=last_job,
+        )
+    )
+
+
+def _wait_for_succeeded_job(
+    port: int,
+    token: str,
+    job_id: str,
+    *,
+    last_response: RawSearchResponse,
+) -> dict[str, object]:
+    deadline = time.monotonic() + 300.0
+    last_job: dict[str, object] | None = None
+    while time.monotonic() < deadline:
+        try:
+            last_job = _exact_job_snapshot(port, job_id)
+        except Exception as exc:
+            pytest.fail(
+                f"failed to poll terminal job {job_id}: {exc}\n"
+                + _bounded_failure_evidence(
+                    port,
+                    token,
+                    job_id,
+                    last_job=last_job,
+                    last_response=last_response,
+                )
+            )
+        if last_job is not None:
+            terminal = _job_terminal_state(last_job)
+            if terminal in {"succeeded", "done"}:
+                return last_job
+            if terminal is not None:
+                pytest.fail(
+                    f"job {job_id} terminated as {terminal}\n"
+                    + _bounded_failure_evidence(
+                        port,
+                        token,
+                        job_id,
+                        last_job=last_job,
+                        last_response=last_response,
+                    )
+                )
+        time.sleep(0.1)
+    pytest.fail(
+        f"job {job_id} did not succeed within 300 seconds\n"
+        + _bounded_failure_evidence(
+            port,
+            token,
+            job_id,
+            last_job=last_job,
+            last_response=last_response,
+        )
+    )
+
+
+def _search_with_failure_evidence(
+    port: int,
+    token: str,
+    job_id: str,
+    payload: dict[str, object],
+    *,
+    label: str,
+    last_job: dict[str, object],
+    last_response: RawSearchResponse | None = None,
+) -> RawSearchResponse:
+    try:
+        return _raw_search(port, token, payload, timeout=300)
+    except Exception as exc:
+        pytest.fail(
+            f"{label} failed: {exc}\n"
+            + _bounded_failure_evidence(
+                port,
+                token,
+                job_id,
+                last_job=last_job,
+                last_response=last_response,
+            )
+        )
+
+
+def _search_after_concurrent_admission(
+    admission: threading.Barrier,
+    port: int,
+    token: str,
+    job_id: str,
+    payload: dict[str, object],
+    *,
+    label: str,
+    last_job: dict[str, object],
+) -> RawSearchResponse:
+    try:
+        admission.wait(timeout=10)
+    except threading.BrokenBarrierError as exc:
+        pytest.fail(
+            f"{label} did not reach concurrent admission: {exc}\n"
+            + _bounded_failure_evidence(
+                port,
+                token,
+                job_id,
+                last_job=last_job,
+            )
+        )
+    return _search_with_failure_evidence(
+        port,
+        token,
+        job_id,
+        payload,
+        label=label,
+        last_job=last_job,
+    )
+
+
+def _assert_unavailable_search_response(
+    response: RawSearchResponse,
+    *,
+    root: Path,
+    port: int,
+    job_id: str,
+    expected_job_mode: str | None,
+    expected_index_status: str,
+    evidence: str,
+) -> None:
+    status, headers, body = response
+    assert status == 503, evidence
+    assert "retry-after" not in headers, evidence
+    assert set(body) == {
+        "ok",
+        "error",
+        "message",
+        "request_id",
+        "index_state",
+        "remediation",
+    }, evidence
+    assert body["ok"] is False, evidence
+    assert body["error"] == "index_unavailable", evidence
+    assert body["message"] == (
+        f"The vault index for {root} is changing; this empty search cannot "
+        "establish that no matches exist."
+    ), evidence
+    request_id = body["request_id"]
+    assert isinstance(request_id, str), evidence
+    assert re.fullmatch(r"[0-9a-f]{32}", request_id), evidence
+
+    raw_index_state = body["index_state"]
+    assert isinstance(raw_index_state, dict), evidence
+    index_state = cast("dict[str, object]", raw_index_state)
+    assert set(index_state) == {
+        "source",
+        "indexed_count",
+        "indexed_target_root",
+        "requested_target_root",
+        "target_matches",
+        "status",
+        "matching_jobs",
+        "matching_jobs_truncated",
+    }, evidence
+    assert index_state["source"] == "vault", evidence
+    indexed_count = index_state["indexed_count"]
+    assert isinstance(indexed_count, int) and not isinstance(indexed_count, bool), (
+        evidence
+    )
+    assert indexed_count >= 0, evidence
+    assert index_state["indexed_target_root"] == str(root), evidence
+    assert index_state["requested_target_root"] == str(root), evidence
+    assert index_state["target_matches"] is True, evidence
+
+    raw_matching_jobs = index_state["matching_jobs"]
+    assert isinstance(raw_matching_jobs, list), evidence
+    matching_jobs = cast("list[object]", raw_matching_jobs)
+    assert len(matching_jobs) <= 8, evidence
+    assert index_state["matching_jobs_truncated"] is False, evidence
+    submitted_job: dict[str, object] | None = None
+    for raw_job in matching_jobs:
+        assert isinstance(raw_job, dict), evidence
+        job = cast("dict[str, object]", raw_job)
+        assert set(job) == {"id", "state", "mode"}, evidence
+        assert job["state"] in {
+            "queued",
+            "running",
+            "pausing",
+            "paused",
+            "cancelling",
+        }, evidence
+        assert job["mode"] in {None, "incremental", "rebuild"}, evidence
+        if job["id"] == job_id:
+            submitted_job = job
+    assert submitted_job is not None, evidence
+    assert submitted_job["state"] == "running", evidence
+    assert submitted_job["mode"] == expected_job_mode, evidence
+    assert index_state["status"] == expected_index_status, evidence
+    assert body["remediation"] == [
+        f"vaultspec-rag server jobs --state active --index vault --port {port}",
+        "Retry the search after the matching index job reaches a terminal state.",
+    ], evidence
+
+
+def _assert_stable_missing_index_response(
+    response: RawSearchResponse,
+    *,
+    root: Path,
+    source: str,
+    evidence: str,
+) -> None:
+    status, _headers, body = response
+    assert status == 200, evidence
+    assert body.get("ok") is not False, evidence
+    assert "error" not in body, evidence
+    assert body["results"] == [], evidence
+
+    raw_index_state = body["index_state"]
+    assert isinstance(raw_index_state, dict), evidence
+    index_state = cast("dict[str, object]", raw_index_state)
+    assert set(index_state) == {
+        "source",
+        "indexed_count",
+        "indexed_target_root",
+        "requested_target_root",
+        "target_matches",
+        "status",
+    }, evidence
+    assert index_state["source"] == source, evidence
+    assert index_state["indexed_count"] == 0, evidence
+    assert index_state["indexed_target_root"] == str(root), evidence
+    assert index_state["requested_target_root"] == str(root), evidence
+    assert index_state["target_matches"] is True, evidence
+    assert index_state["status"] == "missing", evidence
+
+    raw_empty = body["empty"]
+    assert isinstance(raw_empty, dict), evidence
+    empty = cast("dict[str, object]", raw_empty)
+    assert empty["reason"] == "index_missing", evidence
+
+
+@pytest.mark.subprocess_gpu
+def test_search_index_unavailable_during_matching_rebuild(
+    live_service: tuple[int, Path],
+    tmp_path: Path,
+) -> None:
+    port, _status_dir = live_service
+    manifest = build_synthetic_vault(
+        tmp_path / "availability-authority-project",
+        n_docs=256,
+        seed=252,
+    )
+    root = manifest.root.resolve()
+    unrelated_root = tmp_path / "availability-unrelated-project"
+    (unrelated_root / ".vault").mkdir(parents=True)
+    unrelated_root = unrelated_root.resolve()
+    assert unrelated_root != root
+
+    health = _do_http_call(port, "/health", None, timeout=5)
+    assert isinstance(health, dict), health
+    token = health.get("service_token")
+    assert isinstance(token, str) and token, health
+
+    reindex = _do_http_call(
+        port,
+        "/reindex",
+        {"type": "vault", "clean": True, "project_root": str(root)},
+        timeout=30,
+    )
+    assert isinstance(reindex, dict) and reindex.get("ok") is True, reindex
+    job_id = reindex.get("job_id")
+    assert isinstance(job_id, str) and job_id, reindex
+    running_job = _wait_for_running_job(port, token, job_id)
+    if "spec" in running_job:
+        raw_spec = running_job["spec"]
+        assert isinstance(raw_spec, dict), running_job
+        spec = cast("dict[str, object]", raw_spec)
+        assert spec.get("mode") == "rebuild", running_job
+        expected_job_mode: str | None = "rebuild"
+        expected_index_status = "rebuilding"
+    else:
+        expected_job_mode = None
+        expected_index_status = "updating"
+
+    search_payload: dict[str, object] = {
+        "query": "type:nonexistent availability authority probe",
+        "type": "vault",
+        "top_k": 5,
+        "project_root": str(root),
+    }
+    unrelated_payload = {**search_payload, "project_root": str(unrelated_root)}
+    unrelated_source_payload: dict[str, object] = {
+        "query": "availability authority probe",
+        "type": "code",
+        "top_k": 5,
+        "project_root": str(root),
+        "include_paths": ["__availability_no_match__/**"],
+    }
+    admission = threading.Barrier(3)
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        search_future = executor.submit(
+            _search_after_concurrent_admission,
+            admission,
+            port,
+            token,
+            job_id,
+            search_payload,
+            label="matching empty search request",
+            last_job=running_job,
+        )
+        unrelated_future = executor.submit(
+            _search_after_concurrent_admission,
+            admission,
+            port,
+            token,
+            job_id,
+            unrelated_payload,
+            label="unrelated-root empty search request",
+            last_job=running_job,
+        )
+        unrelated_source_future = executor.submit(
+            _search_after_concurrent_admission,
+            admission,
+            port,
+            token,
+            job_id,
+            unrelated_source_payload,
+            label="unrelated-source empty search request",
+            last_job=running_job,
+        )
+        search_response = search_future.result(timeout=330)
+        unrelated_response = unrelated_future.result(timeout=330)
+        unrelated_source_response = unrelated_source_future.result(timeout=330)
+    evidence = _bounded_failure_evidence(
+        port,
+        token,
+        job_id,
+        last_job=running_job,
+        last_response=search_response,
+    )
+    _assert_unavailable_search_response(
+        search_response,
+        root=root,
+        port=port,
+        job_id=job_id,
+        expected_job_mode=expected_job_mode,
+        expected_index_status=expected_index_status,
+        evidence=evidence,
+    )
+    unrelated_evidence = _bounded_failure_evidence(
+        port,
+        token,
+        job_id,
+        last_job=running_job,
+        last_response=unrelated_response,
+    )
+    _assert_stable_missing_index_response(
+        unrelated_response,
+        root=unrelated_root,
+        source="vault",
+        evidence=unrelated_evidence,
+    )
+    unrelated_source_evidence = _bounded_failure_evidence(
+        port,
+        token,
+        job_id,
+        last_job=running_job,
+        last_response=unrelated_source_response,
+    )
+    _assert_stable_missing_index_response(
+        unrelated_source_response,
+        root=root,
+        source="code",
+        evidence=unrelated_source_evidence,
+    )
+    terminal_job = _wait_for_succeeded_job(
+        port,
+        token,
+        job_id,
+        last_response=search_response,
+    )
+    post_response = _search_with_failure_evidence(
+        port,
+        token,
+        job_id,
+        search_payload,
+        label="post-convergence empty search request",
+        last_job=terminal_job,
+        last_response=search_response,
+    )
+    post_status, _post_headers, post_body = post_response
+    post_evidence = _bounded_failure_evidence(
+        port,
+        token,
+        job_id,
+        last_job=terminal_job,
+        last_response=post_response,
+    )
+    assert post_status == 200, post_evidence
+    assert post_body["results"] == [], post_evidence
+    post_empty = post_body["empty"]
+    assert isinstance(post_empty, dict), post_evidence
+    assert post_empty["reason"] == "no_match", post_evidence
 
 
 @pytest.mark.subprocess_gpu
