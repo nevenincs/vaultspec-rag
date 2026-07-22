@@ -40,7 +40,7 @@ __all__ = [
     "RunTerminalState",
 ]
 
-_SCHEMA_VERSION: Final = 4
+_SCHEMA_VERSION: Final = 6
 _FETCH_BATCH: Final = 256
 _DIGEST_REPR_LENGTH: Final = 128
 _REQUIRED_SCHEMA: Final = {
@@ -57,6 +57,7 @@ _REQUIRED_SCHEMA: Final = {
             "created_at",
             "updated_at",
             "terminal_detail",
+            "parent_generation_id",
         }
     ),
     "commit_units": frozenset(
@@ -85,6 +86,7 @@ _REQUIRED_SCHEMA: Final = {
             "admission_reason",
             "error_kind",
             "detail",
+            "evidence_generation_id",
         }
     ),
 }
@@ -118,7 +120,8 @@ class CommitUnitKind(StrEnum):
     """Idempotent external mutation represented by one ledger unit."""
 
     UPSERT = "upsert"
-    DELETE = "delete"
+    DELETE_PATH = "delete_path"
+    DELETE_STALE = "delete_stale"
 
 
 class FinalizationPhase(StrEnum):
@@ -208,6 +211,16 @@ class RunSignature:
         """Return a stable digest suitable for indexed lookup."""
         return hashlib.blake2b(self.canonical_json.encode("utf-8")).hexdigest()
 
+    @property
+    def content_compatibility_fingerprint(self) -> str:
+        """Return identity for safely carrying a published file manifest."""
+        payload = asdict(self)
+        payload.pop("operation")
+        payload.pop("clean")
+        payload["source_type"] = self.source_type.value
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return hashlib.blake2b(encoded.encode("utf-8")).hexdigest()
+
 
 @dataclass(frozen=True, slots=True)
 class CommitUnit:
@@ -237,7 +250,7 @@ class CommitUnit:
                 raise ValueError("upsert units require a lowercase BLAKE2b-512 digest")
         elif self.source_digest is not None:
             raise ValueError("deletion units must not carry a source digest")
-        if self.kind is CommitUnitKind.DELETE and (
+        if self.kind is not CommitUnitKind.UPSERT and (
             self.segment_ordinal != 0 or not self.is_file_end
         ):
             raise ValueError("a deletion is exactly one commit unit")
@@ -269,6 +282,7 @@ class RunGeneration:
     created_at: float
     updated_at: float
     terminal_detail: str | None = None
+    parent_generation_id: str | None = None
 
     @property
     def complete(self) -> bool:
@@ -352,8 +366,9 @@ class RunLedger:
                     generation_id, source_type, collection_identity,
                     signature_fingerprint,
                     signature_json, finalization_phase, terminal_state,
-                    destructive_intent, created_at, updated_at, terminal_detail
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                    destructive_intent, created_at, updated_at, terminal_detail,
+                    parent_generation_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
                 """,
                 (
                     generation_id,
@@ -368,12 +383,78 @@ class RunLedger:
                     now,
                 ),
             )
+            if (
+                not signature.clean
+                and signature.operation
+                in (RunOperation.INCREMENTAL, RunOperation.SCOPED_INCREMENTAL)
+            ):
+                parent_generation_id = self._carry_published_manifest(
+                    connection,
+                    generation_id,
+                    signature,
+                )
+                if parent_generation_id is not None:
+                    connection.execute(
+                        """
+                        UPDATE generations SET parent_generation_id = ?
+                        WHERE generation_id = ?
+                        """,
+                        (parent_generation_id, generation_id),
+                    )
             row = connection.execute(
                 "SELECT * FROM generations WHERE generation_id = ?",
                 (generation_id,),
             ).fetchone()
             assert row is not None
             return self._generation_from_row(row)
+
+    def _carry_published_manifest(
+        self,
+        connection: sqlite3.Connection,
+        generation_id: str,
+        signature: RunSignature,
+    ) -> str | None:
+        candidates = connection.execute(
+            """
+            SELECT * FROM generations
+            WHERE generation_id != ?
+              AND source_type = ?
+              AND collection_identity = ?
+              AND terminal_state = ?
+            ORDER BY updated_at DESC
+            """,
+            (
+                generation_id,
+                signature.source_type.value,
+                signature.collection_identity,
+                RunTerminalState.SUCCEEDED.value,
+            ),
+        ).fetchall()
+        source_id: str | None = None
+        for candidate in candidates:
+            published = self._generation_from_row(candidate)
+            if (
+                published.signature.content_compatibility_fingerprint
+                == signature.content_compatibility_fingerprint
+            ):
+                source_id = published.generation_id
+                break
+        if source_id is None:
+            return None
+        connection.execute(
+            """
+            INSERT INTO file_states (
+                generation_id, rel_path, state, content_kind, content_hash,
+                admission_reason, error_kind, detail, evidence_generation_id
+            )
+            SELECT ?, rel_path, state, content_kind, content_hash,
+                   admission_reason, error_kind, detail,
+                   evidence_generation_id
+            FROM file_states WHERE generation_id = ?
+            """,
+            (generation_id, source_id),
+        )
+        return source_id
 
     def generation(self, generation_id: str) -> RunGeneration:
         """Return one generation or raise for an unknown identifier."""
@@ -424,6 +505,7 @@ class RunLedger:
                 """
                 SELECT 1 FROM file_states
                 WHERE generation_id = ? AND rel_path = ? AND state = ?
+                  AND evidence_generation_id = generation_id
                 """,
                 (generation_id, unit.rel_path, FileStateKind.INDEXED.value),
             ).fetchone()
@@ -699,15 +781,16 @@ class RunLedger:
                 """
                 INSERT INTO file_states (
                     generation_id, rel_path, state, content_kind, content_hash,
-                    admission_reason, error_kind, detail
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    admission_reason, error_kind, detail, evidence_generation_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(generation_id, rel_path) DO UPDATE SET
                     state = excluded.state,
                     content_kind = excluded.content_kind,
                     content_hash = excluded.content_hash,
                     admission_reason = excluded.admission_reason,
                     error_kind = excluded.error_kind,
-                    detail = excluded.detail
+                    detail = excluded.detail,
+                    evidence_generation_id = excluded.evidence_generation_id
                 """,
                 (
                     generation_id,
@@ -720,7 +803,38 @@ class RunLedger:
                     else None,
                     state.error_kind.value if state.error_kind is not None else None,
                     state.detail,
+                    generation_id,
                 ),
+            )
+
+    def record_path_deleted(self, generation_id: str, rel_path: str) -> None:
+        """Remove carried/current manifest state after confirmed path deletion."""
+        _validate_rel_path(rel_path)
+        with self._transaction() as connection:
+            generation = self._require_mutable_generation(connection, generation_id)
+            if generation["finalization_phase"] != FinalizationPhase.INGESTING.value:
+                raise RunLedgerStateError(
+                    "cannot change file state after finalization begins"
+                )
+            evidence = connection.execute(
+                """
+                SELECT COUNT(*) AS unit_count, SUM(is_file_end) AS end_count
+                FROM commit_units
+                WHERE generation_id = ? AND rel_path = ? AND unit_kind = ?
+                """,
+                (generation_id, rel_path, CommitUnitKind.DELETE_PATH.value),
+            ).fetchone()
+            assert evidence is not None
+            if int(evidence["unit_count"]) != 1 or int(evidence["end_count"]) != 1:
+                raise RunLedgerStateError(
+                    "path deletion requires one storage-confirmed deletion unit"
+                )
+            connection.execute(
+                """
+                DELETE FROM file_states
+                WHERE generation_id = ? AND rel_path = ?
+                """,
+                (generation_id, rel_path),
             )
 
     def iter_file_states(
@@ -787,6 +901,8 @@ class RunLedger:
                 raise RunLedgerStateError(
                     f"cannot advance finalization from {current.value} to {phase.value}"
                 )
+            if current is FinalizationPhase.INGESTING:
+                self._assert_ready_for_finalization(connection, generation_id)
             connection.execute(
                 """
                 UPDATE generations SET finalization_phase = ?, updated_at = ?
@@ -800,6 +916,109 @@ class RunLedger:
             ).fetchone()
             assert updated is not None
             return self._generation_from_row(updated)
+
+    @staticmethod
+    def _assert_ready_for_finalization(
+        connection: sqlite3.Connection,
+        generation_id: str,
+    ) -> None:
+        incomplete = connection.execute(
+            """
+            SELECT rel_path, unit_kind
+            FROM commit_units
+            WHERE generation_id = ?
+            GROUP BY rel_path, unit_kind
+            HAVING MIN(segment_ordinal) != 0
+                OR MAX(segment_ordinal) != COUNT(*) - 1
+                OR SUM(segment_ordinal) != (COUNT(*) * (COUNT(*) - 1)) / 2
+                OR SUM(is_file_end) != 1
+                OR MAX(CASE WHEN is_file_end = 1 THEN segment_ordinal END)
+                    != COUNT(*) - 1
+            LIMIT 1
+            """,
+            (generation_id,),
+        ).fetchone()
+        if incomplete is not None:
+            raise RunLedgerStateError(
+                "cannot finalize an incomplete commit-unit sequence for "
+                f"{incomplete['rel_path']}"
+            )
+        missing_state = connection.execute(
+            """
+            SELECT units.rel_path
+            FROM commit_units AS units
+            LEFT JOIN file_states AS states
+              ON states.generation_id = units.generation_id
+             AND states.rel_path = units.rel_path
+            WHERE units.generation_id = ? AND units.unit_kind = ?
+            GROUP BY units.rel_path, states.state, states.content_hash
+            HAVING states.state IS NULL
+                OR states.state != ?
+                OR MIN(units.source_digest) != states.content_hash
+                OR MAX(units.source_digest) != states.content_hash
+            LIMIT 1
+            """,
+            (
+                generation_id,
+                CommitUnitKind.UPSERT.value,
+                FileStateKind.INDEXED.value,
+            ),
+        ).fetchone()
+        if missing_state is not None:
+            raise RunLedgerStateError(
+                "cannot finalize storage evidence without matching indexed state for "
+                f"{missing_state['rel_path']}"
+            )
+        undeleted_manifest = connection.execute(
+            """
+            SELECT units.rel_path
+            FROM commit_units AS units
+            JOIN file_states AS states
+              ON states.generation_id = units.generation_id
+             AND states.rel_path = units.rel_path
+            WHERE units.generation_id = ? AND units.unit_kind = ?
+            LIMIT 1
+            """,
+            (generation_id, CommitUnitKind.DELETE_PATH.value),
+        ).fetchone()
+        if undeleted_manifest is not None:
+            raise RunLedgerStateError(
+                "cannot finalize a deleted path retained in the manifest: "
+                f"{undeleted_manifest['rel_path']}"
+            )
+        unresolved = connection.execute(
+            """
+            SELECT rel_path FROM file_states
+            WHERE generation_id = ? AND (
+                state NOT IN (?, ?)
+                OR (
+                    state = ? AND (
+                        admission_reason = ?
+                        OR admission_reason IS NULL
+                        OR (
+                            admission_reason IN (?, ?)
+                            AND content_hash IS NULL
+                        )
+                    )
+                )
+            )
+            LIMIT 1
+            """,
+            (
+                generation_id,
+                FileStateKind.INDEXED.value,
+                FileStateKind.POLICY_REJECTED.value,
+                FileStateKind.POLICY_REJECTED.value,
+                AdmissionReason.SOURCE_PROBE_FAILED.value,
+                AdmissionReason.SOURCE_TOO_LARGE.value,
+                AdmissionReason.SOURCE_BINARY.value,
+            ),
+        ).fetchone()
+        if unresolved is not None:
+            raise RunLedgerStateError(
+                "cannot finalize unresolved file state for "
+                f"{unresolved['rel_path']}"
+            )
 
     def finish_generation(
         self,
@@ -938,7 +1157,8 @@ class RunLedger:
                         CHECK(destructive_intent IN (0, 1)),
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL,
-                    terminal_detail TEXT
+                    terminal_detail TEXT,
+                    parent_generation_id TEXT
                 );
                 CREATE INDEX IF NOT EXISTS generations_active
                     ON generations(source_type, terminal_state, created_at DESC);
@@ -982,6 +1202,7 @@ class RunLedger:
                     admission_reason TEXT,
                     error_kind TEXT,
                     detail TEXT,
+                    evidence_generation_id TEXT NOT NULL,
                     PRIMARY KEY(generation_id, rel_path)
                 );
                 CREATE INDEX IF NOT EXISTS file_states_state
@@ -1053,6 +1274,7 @@ class RunLedger:
             created_at = float(row["created_at"])
             updated_at = float(row["updated_at"])
             terminal_detail = row["terminal_detail"]
+            parent_generation_id = row["parent_generation_id"]
         except (KeyError, TypeError, ValueError) as exc:
             raise RunLedgerCorruptionError(
                 "stored generation row is malformed"
@@ -1070,6 +1292,7 @@ class RunLedger:
             created_at=created_at,
             updated_at=updated_at,
             terminal_detail=terminal_detail,
+            parent_generation_id=parent_generation_id,
         )
 
 

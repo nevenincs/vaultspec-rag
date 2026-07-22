@@ -5,11 +5,24 @@ from __future__ import annotations
 import hashlib
 from typing import TYPE_CHECKING
 
+import pytest
+
 from .._store_models import CodeChunk
-from ..indexer._content_policy import RootContentPolicy, SourceProfileVersion
+from ..indexer._content_policy import (
+    ContentKind,
+    RootContentPolicy,
+    SourceProfileVersion,
+)
+from ..indexer._file_state import FileState, FileStateKind
 from ..indexer._resolved_policy import resolve_index_policy
 from ..indexer._run_checkpoint import CodeRunCheckpoint
-from ..indexer._run_ledger import RunOperation, RunTerminalState
+from ..indexer._run_ledger import (
+    FinalizationPhase,
+    RunLedgerCompatibilityError,
+    RunLedgerStateError,
+    RunOperation,
+    RunTerminalState,
+)
 from ..indexer._run_policy import RunPolicy
 from ..indexer._streaming import CodeFileSegment
 
@@ -46,6 +59,7 @@ def _open(
     tmp_path: Path,
     *,
     configuration: Mapping[str, object] | None = None,
+    operation: RunOperation = RunOperation.FULL,
 ) -> CodeRunCheckpoint:
     policy = resolve_index_policy(
         tmp_path,
@@ -56,7 +70,7 @@ def _open(
         root_dir=tmp_path,
         policy=policy,
         run_policy=RunPolicy(no_progress_timeout_seconds=30.0),
-        operation=RunOperation.FULL,
+        operation=operation,
         clean=False,
         model_identity="model-v1",
         dense_dimensions=8,
@@ -68,14 +82,11 @@ def test_checkpoint_resumes_only_unconfirmed_segments(tmp_path: Path) -> None:
     checkpoint = _open(tmp_path)
     segments = _segments("src/example.py")
     digest = _digest("example")
-    assert checkpoint.pending_segments(segments, digest) == segments
+    assert tuple(checkpoint.pending_segments(segments, digest)) == segments
 
     assert (
-        checkpoint.record_confirmed_segments(
-            (segments[0],),
-            {segments[0].path: digest},
-        )
-        == 1
+        checkpoint.record_confirmed_segment(segments[0], digest)
+        is True
     )
     checkpoint.ledger.finish_generation(
         checkpoint.generation_id,
@@ -85,15 +96,12 @@ def test_checkpoint_resumes_only_unconfirmed_segments(tmp_path: Path) -> None:
 
     resumed = _open(tmp_path)
     assert resumed.generation_id == checkpoint.generation_id
-    assert resumed.pending_segments(segments, digest) == (segments[1],)
+    assert tuple(resumed.pending_segments(segments, digest)) == (segments[1],)
     assert (
-        resumed.record_confirmed_segments(
-            (segments[1],),
-            {segments[1].path: digest},
-        )
-        == 1
+        resumed.record_confirmed_segment(segments[1], digest)
+        is True
     )
-    assert resumed.pending_segments(segments, digest) == ()
+    assert tuple(resumed.pending_segments(segments, digest)) == ()
 
     meta_path = tmp_path / ".state" / "code_meta.json"
     assert resumed.publish_metadata(meta_path) == 1
@@ -106,9 +114,35 @@ def test_checkpoint_signature_drift_starts_a_new_generation(tmp_path: Path) -> N
     first = _open(tmp_path)
     first_segment = _segments("src/example.py")[0]
     digest = _digest("example")
-    first.record_confirmed_segments((first_segment,), {first_segment.path: digest})
+    first.record_confirmed_segment(first_segment, digest)
 
     changed = _open(tmp_path, configuration={"segment_chunks": 2, "queue_chunks": 2})
     assert changed.generation_id != first.generation_id
     invalidated = changed.ledger.generation(first.generation_id)
     assert invalidated.terminal_state is RunTerminalState.INVALIDATED
+
+
+def test_checkpoint_metadata_refuses_unresolved_file_state(tmp_path: Path) -> None:
+    checkpoint = _open(tmp_path)
+    checkpoint.ledger.record_file_state(
+        checkpoint.generation_id,
+        FileState.failed(
+            "src/unresolved.py",
+            FileStateKind.CHUNK_FAILED,
+            ContentKind.CODE,
+            "chunking failed",
+            content_hash=_digest("unresolved"),
+        ),
+    )
+
+    meta_path = tmp_path / ".state" / "code_meta.json"
+    with pytest.raises(RunLedgerStateError, match="unresolved"):
+        checkpoint.publish_metadata(meta_path)
+    assert not meta_path.exists()
+    generation = checkpoint.ledger.generation(checkpoint.generation_id)
+    assert generation.finalization_phase is FinalizationPhase.INGESTING
+
+
+def test_first_incremental_requires_a_published_manifest(tmp_path: Path) -> None:
+    with pytest.raises(RunLedgerCompatibilityError, match="full reconciliation"):
+        _open(tmp_path, operation=RunOperation.INCREMENTAL)
