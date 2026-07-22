@@ -14,6 +14,16 @@ related:
   - '[[2026-07-21-index-backpressure-storage-hygiene-plan]]'
 ---
 
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
+
 <!-- RETIRED: S04 -->
 
 # `large-index-resilience` plan
@@ -86,7 +96,7 @@ Persist storage-confirmed generations and integrate resumable full and increment
 
 Create the per-root SQLite generation and commit-unit authority with corruption and compatibility handling.
 
-- [ ] `W02.P05.S20` - Implement the per-root SQLite run generation, signature, commit-unit, finalization, and compaction schema; `src/vaultspec_rag/indexer/_run_ledger.py`.
+- [x] `W02.P05.S20` - Implement the per-root SQLite run generation, signature, commit-unit, finalization, and compaction schema; `src/vaultspec_rag/indexer/_run_ledger.py`.
 - [ ] `W02.P05.S21` - Verify atomic transactions, row-wise iteration, compatibility rejection, corruption handling, and immutable completion; `src/vaultspec_rag/tests/test_index_run_ledger.py`.
 
 ### Phase `W02.P06` - resumable pipeline integration
