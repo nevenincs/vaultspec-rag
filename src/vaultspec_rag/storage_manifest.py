@@ -40,6 +40,8 @@ from .store import root_collection_prefix
 __all__ = [
     "ManifestEntry",
     "ReconcileResult",
+    "SnapshotCollection",
+    "StorageSnapshotManifest",
     "classify_root",
     "load_manifest",
     "manifest_path",
@@ -49,12 +51,15 @@ __all__ = [
     "remove_prefix",
     "remove_root",
     "reverse_map",
+    "snapshot_manifest_path",
     "update_orphan_stamps",
+    "write_snapshot_manifest",
 ]
 
 # Filename of the manifest inside the managed service (``status_dir``)
 # directory. Mirrors the local-only marker convention in ``config.py``.
 _MANIFEST_FILENAME = "storage-manifest.json"
+_SNAPSHOT_MANIFEST_FILENAME = "snapshot-manifest.json"
 
 # Serialises in-process read-modify-write so two indexers recording roots
 # concurrently cannot drop each other's entries. Cross-process writers
@@ -104,6 +109,59 @@ class ManifestEntry:
     first_seen_orphaned: str = ""
     storage_schema_version: int = store_schema.STORAGE_SCHEMA_VERSION
     collections: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SnapshotCollection:
+    """One collection artifact recorded in an archive snapshot."""
+
+    name: str
+    snapshot_file: str
+    points: int
+
+
+@dataclass(frozen=True)
+class StorageSnapshotManifest:
+    """Portable description of one complete namespace archive."""
+
+    prefix: str
+    root: str | None
+    storage_schema_version: int
+    collections: tuple[SnapshotCollection, ...]
+    metadata_files: tuple[str, ...] = ()
+
+
+def snapshot_manifest_path(archive_namespace_dir: Path) -> Path:
+    """Return the manifest path for one archived namespace."""
+    return archive_namespace_dir / _SNAPSHOT_MANIFEST_FILENAME
+
+
+def write_snapshot_manifest(
+    archive_namespace_dir: Path,
+    manifest: StorageSnapshotManifest,
+) -> Path:
+    """Atomically publish a deterministic manifest after an archive completes."""
+    path = snapshot_manifest_path(archive_namespace_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": 1,
+        "prefix": manifest.prefix,
+        "root": manifest.root,
+        "storage_schema_version": manifest.storage_schema_version,
+        "collections": [
+            {
+                "name": item.name,
+                "snapshot_file": item.snapshot_file,
+                "points": item.points,
+            }
+            for item in manifest.collections
+        ],
+        "metadata_files": list(manifest.metadata_files),
+    }
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, path)
+    return path
 
 
 def _declared_collections(prefix: str, backend: str) -> tuple[str, ...]:
