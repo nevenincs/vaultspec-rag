@@ -14,6 +14,16 @@ related:
   - '[[2026-07-21-index-backpressure-storage-hygiene-plan]]'
 ---
 
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
+
 <!-- RETIRED: S04 -->
 
 # `large-index-resilience` plan
@@ -149,10 +159,10 @@ Define honest backend and hardware admission and prove the accepted incident cor
 
 Define managed and local profiles and distinguish host, corpus, and disk refusal outcomes.
 
-- [ ] `W04.P12.S40` - Define named managed-service and embedded-local profiles with benchmark-derived resource and corpus dimensions; `src/vaultspec_rag/index_profiles.py`.
-- [ ] `W04.P12.S41` - Measure source bytes, files, generated chunks, and weighted units without materializing the corpus; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
-- [ ] `W04.P12.S42` - Enforce hardware and backend profile admission at service job submission before GPU work; `src/vaultspec_rag/jobs.py`.
-- [ ] `W04.P12.S43` - Verify profile requirements, corpus limits, disk preflight, checkpoint preservation, and structured refusal; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
+- [x] `W04.P12.S40` - Define named managed-service and embedded-local profiles with benchmark-derived resource and corpus dimensions; `src/vaultspec_rag/index_profiles.py`.
+- [x] `W04.P12.S41` - Measure source bytes, files, generated chunks, and weighted units without materializing the corpus; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `W04.P12.S42` - Enforce hardware and backend profile admission at service job submission before GPU work; `src/vaultspec_rag/jobs.py`.
+- [x] `W04.P12.S43` - Verify profile requirements, corpus limits, disk preflight, checkpoint preservation, and structured refusal; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
 
 ### Phase `W04.P13` - large-corpus and concurrency acceptance
 
