@@ -775,6 +775,46 @@ async def watch_and_reindex(
         log_event(logger, "service.watcher", "stopped", root=root_dir)
 
 
+async def _await_slot_settlement(
+    slot: _WatcherConvergenceSlot,
+    settlement: asyncio.Task[None] | None,
+) -> bool:
+    """Wait out a pending settlement, reporting whether to continue.
+
+    A manager terminal transition is not yet a watcher convergence
+    outcome: the durable retry authority must settle the exact policy
+    generation before the slot may clear its path set or admit a
+    replacement. Returns ``False`` while a settlement is still running.
+    """
+    if settlement is None:
+        return True
+    if not settlement.done():
+        return False
+    await settlement
+    with slot.lock:
+        if slot.settlement_task is settlement:
+            slot.settlement_task = None
+    return True
+
+
+def _observe_slot_owner(
+    slot: _WatcherConvergenceSlot,
+    manager: _jobs.JobManager,
+    job_id: str,
+    *,
+    now: float,
+) -> None:
+    """Fold the canonical job's current state back into the slot."""
+    snapshot = manager.get(job_id)
+    if snapshot is None:
+        _release_missing_job(slot, job_id, now=now)
+        return
+    with slot.lock:
+        watcher_owned = slot.watcher_owned
+    if _observe_managed_job(slot, snapshot, now=now) and watcher_owned:
+        _sync_legacy_snapshot(snapshot, result=None, error=None)
+
+
 async def _reconcile_watcher_slot(
     slot: _WatcherConvergenceSlot,
     *,
@@ -788,26 +828,10 @@ async def _reconcile_watcher_slot(
         job_id = slot.job_id
         settlement = slot.settlement_task
 
-    # A manager terminal transition is not yet a watcher convergence outcome.
-    # The durable retry authority must settle the exact policy generation before
-    # the slot can clear its path set or admit a replacement.
-    if settlement is not None:
-        if not settlement.done():
-            return
-        await settlement
-        with slot.lock:
-            if slot.settlement_task is settlement:
-                slot.settlement_task = None
-
+    if not await _await_slot_settlement(slot, settlement):
+        return
     if job_id is not None:
-        snapshot = manager.get(job_id)
-        if snapshot is None:
-            _release_missing_job(slot, job_id, now=now)
-        else:
-            with slot.lock:
-                watcher_owned = slot.watcher_owned
-            if _observe_managed_job(slot, snapshot, now=now) and watcher_owned:
-                _sync_legacy_snapshot(snapshot, result=None, error=None)
+        _observe_slot_owner(slot, manager, job_id, now=now)
 
     retry_source = WatcherSource(slot.source.value)
     retry_state, refresh_cancelled = await _run_durable_retry_transaction(
@@ -880,6 +904,8 @@ async def _submit_watcher_job(
     secondary_graph_cache: GraphCache | None,
 ) -> None:
     """Admit and bind one manager-owned watcher attempt, or coalesce on dedupe."""
+    if slot.source is JobSource.CODE:
+        _jobs.validate_code_index_policy(slot.root)
     manager = _jobs.get_job_manager()
     generation = retry_decision.attempt_generation
     if generation is None:

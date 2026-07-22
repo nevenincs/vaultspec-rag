@@ -1,8 +1,8 @@
-"""Read-only HTTP routes for the resident service (#142, plan P03).
+"""HTTP resource and control routes for the resident service.
 
-Per the ``service-observability`` ADR these routes are strictly
-read-only - control happens through the same REST surface, not a
-separate protocol. They are registered as Starlette
+Read-only observability and exact job lifecycle control share this
+service-domain REST surface rather than diverging across adapters. The routes are
+registered as Starlette
 :class:`~starlette.routing.Route` objects on the app assembled in
 :mod:`._main` (alongside ``Route("/health")``), never as additional
 ASGI wrappers. The daemon serves native REST only; the MCP stdio
@@ -25,6 +25,7 @@ import logging
 import time
 import uuid
 from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
@@ -34,6 +35,7 @@ from starlette.routing import Route
 import vaultspec_rag.server as _m
 
 from ..concurrency import get_search_limiter
+from ..job_models import JobOutcome
 from ..logging_config import (
     InvalidManagedLogSourceError,
     log_event,
@@ -71,9 +73,10 @@ from ._utils import (
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from starlette.requests import Request
+
+    from ..indexer._codebase_indexer import ContentScanResult
+    from ..job_models import JobInitiator, JobSpec
 
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -309,6 +312,320 @@ def _canonical_job_snapshot() -> list[dict[str, object]]:
     return [snapshot.to_dict() for snapshot in get_job_manager().list_jobs()]
 
 
+def _service_job_snapshot() -> list[dict[str, object]]:
+    """Return canonical jobs plus legacy-only service activity records."""
+    canonical = _canonical_job_snapshot()
+    canonical_ids = {str(record.get("id", "")) for record in canonical}
+    legacy_only = [
+        record
+        for record in _jobs.snapshot()
+        if str(record.get("id", "")) not in canonical_ids
+    ]
+    return [*canonical, *legacy_only]
+
+
+class _InvalidJobRequestError(ValueError):
+    """Stable client-input failure for the canonical jobs resource."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+async def _job_payload(
+    request: Request,
+    *,
+    required: bool,
+) -> dict[str, object]:
+    try:
+        raw = await request.json()
+    except Exception as exc:
+        if not required and not await request.body():
+            return {}
+        raise _InvalidJobRequestError(
+            "invalid_json",
+            "The request body must be a JSON object.",
+        ) from exc
+    if not isinstance(raw, dict):
+        raise _InvalidJobRequestError(
+            "invalid_json",
+            "The request body must be a JSON object.",
+        )
+    return cast("dict[str, object]", raw)
+
+
+def _job_bool(payload: dict[str, object], key: str, *, default: bool) -> bool:
+    value = payload.get(key, default)
+    if type(value) is not bool:
+        raise _InvalidJobRequestError(
+            "invalid_job_spec",
+            f"{key} must be a boolean when provided.",
+        )
+    return bool(value)
+
+
+def _job_string(
+    payload: dict[str, object],
+    key: str,
+    *,
+    default: str | None = None,
+) -> str:
+    value = payload.get(key, default)
+    if not isinstance(value, str) or not value.strip():
+        raise _InvalidJobRequestError(
+            "invalid_job_spec",
+            f"{key} must be a non-empty string.",
+        )
+    return value.strip()
+
+
+def _validated_initiator(
+    payload: dict[str, object],
+    *,
+    root: Path,
+    default_command: str,
+) -> JobInitiator:
+    from ..job_models import JobInitiator
+
+    raw = payload.get("initiator")
+    if raw is None:
+        initiator: dict[str, object] = {}
+    elif isinstance(raw, dict):
+        initiator = cast("dict[str, object]", raw)
+    else:
+        raise _InvalidJobRequestError(
+            "invalid_initiator",
+            "initiator must be a JSON object when provided.",
+        )
+    legacy_kind = payload.get("initiator_kind", "service")
+    kind = initiator.get("kind", legacy_kind)
+    command = initiator.get("command", default_command)
+    if not isinstance(kind, str) or not kind.strip():
+        raise _InvalidJobRequestError(
+            "invalid_initiator",
+            "initiator.kind must be a non-empty string.",
+        )
+    if not isinstance(command, str) or not command.strip():
+        raise _InvalidJobRequestError(
+            "invalid_initiator",
+            "initiator.command must be a non-empty string.",
+        )
+    return JobInitiator(
+        kind=kind.strip(),
+        command=command.strip(),
+        project_root=str(root),
+    )
+
+
+def _validated_idempotency_key(
+    request: Request,
+    payload: dict[str, object],
+) -> str | None:
+    header_key = request.headers.get("Idempotency-Key")
+    body_key = payload.get("idempotency_key")
+    if body_key is not None and not isinstance(body_key, str):
+        raise _InvalidJobRequestError(
+            "invalid_idempotency_key",
+            "idempotency_key must be a string when provided.",
+        )
+    if header_key is not None and body_key is not None and header_key != body_key:
+        raise _InvalidJobRequestError(
+            "idempotency_key_conflict",
+            "The header and body idempotency keys must match.",
+        )
+    return header_key if header_key is not None else body_key
+
+
+async def _validated_index_request(
+    request: Request,
+    payload: dict[str, object],
+) -> tuple[
+    JobSpec,
+    JobInitiator,
+    bool,
+    str | None,
+    ContentScanResult | None,
+]:
+    from ..job_models import JobMode, JobOperation, JobSource, JobSpec
+
+    operation = _job_string(payload, "operation", default="index")
+    source = _job_string(payload, "source")
+    mode = _job_string(payload, "mode", default="incremental")
+    if operation != JobOperation.INDEX.value:
+        raise _InvalidJobRequestError(
+            "invalid_job_spec",
+            "operation must be 'index'.",
+        )
+    if source not in {JobSource.VAULT.value, JobSource.CODE.value}:
+        raise _InvalidJobRequestError(
+            "invalid_job_spec",
+            "source must be 'vault' or 'code'.",
+        )
+    if mode not in {JobMode.INCREMENTAL.value, JobMode.REBUILD.value}:
+        raise _InvalidJobRequestError(
+            "invalid_job_spec",
+            "mode must be 'incremental' or 'rebuild'.",
+        )
+    raw_root = _job_string(payload, "project_root")
+    if not Path(raw_root).expanduser().is_absolute():
+        raise _InvalidJobRequestError(
+            "invalid_job_spec",
+            "project_root must be an absolute path.",
+        )
+    try:
+        root = _resolve_root(raw_root)
+    except (ProjectRootRequiredError, ValueError) as exc:
+        raise _InvalidJobRequestError("invalid_job_spec", str(exc)) from exc
+    start_paused = _job_bool(payload, "start_paused", default=False)
+    spec = JobSpec(
+        operation=JobOperation.INDEX,
+        source=JobSource(source),
+        project_root=str(root),
+        mode=JobMode(mode),
+    )
+    admission = await _validate_code_job_spec(spec)
+    initiator = _validated_initiator(
+        payload,
+        root=root,
+        default_command="http_jobs_create",
+    )
+    return (
+        spec,
+        initiator,
+        start_paused,
+        _validated_idempotency_key(request, payload),
+        admission,
+    )
+
+
+async def _validate_code_job_spec(spec: JobSpec) -> ContentScanResult | None:
+    """Scan code admission before durable job mutation; vault jobs need none."""
+    from ..job_models import JobSource
+    from ..jobs import scan_code_index_preflight
+
+    if spec.source is not JobSource.CODE or spec.project_root is None:
+        return None
+    try:
+        return await _run_in_thread(
+            scan_code_index_preflight,
+            Path(spec.project_root),
+        )
+    except ValueError as exc:
+        raise _InvalidJobRequestError(
+            "invalid_job_spec",
+            str(exc),
+        ) from exc
+
+
+def _admission_preflight(scan: ContentScanResult) -> dict[str, object]:
+    """Project one bounded structured scan onto the HTTP response surface."""
+    return {
+        "count": len(scan.files),
+        "policy_fingerprint": scan.policy_fingerprint,
+        "counts": [
+            {
+                "kind": count.kind.value if count.kind is not None else None,
+                "admitted": count.admitted,
+                "reason": count.reason.value,
+                "count": count.count,
+            }
+            for count in scan.counts
+        ],
+        "samples": [
+            {
+                "path": sample.path,
+                "kind": sample.kind.value if sample.kind is not None else None,
+                "admitted": sample.admitted,
+                "reason": sample.reason.value,
+            }
+            for sample in scan.samples
+        ],
+    }
+
+
+def _job_outcome_status(code: str) -> int:
+    if code.startswith("invalid_") and code != "invalid_transition":
+        return 400
+    if code == "job_not_found":
+        return 404
+    if code == "job_capacity_exceeded":
+        return 429
+    if code.startswith("persistence_") or code in {
+        "dispatch_stopped",
+        "event_loop_required",
+    }:
+        return 503
+    if code in {
+        "active_job_exists",
+        "idempotency_key_conflict",
+        "invalid_transition",
+        "job_id_conflict",
+        "job_not_retryable",
+        "job_not_terminal",
+        "revision_conflict",
+        "force_not_supported",
+        "force_termination_unavailable",
+    }:
+        return 409
+    return 500
+
+
+def _job_error(command: str, code: str, message: str) -> JSONResponse:
+    from ..job_models import JobOutcomeStatus
+
+    return _job_response(
+        JobOutcome(
+            command=command,
+            status=JobOutcomeStatus.ERROR,
+            code=code,
+            message=message,
+        )
+    )
+
+
+def _job_response(
+    outcome: JobOutcome,
+    *,
+    location: bool = False,
+    extra: dict[str, object] | None = None,
+) -> JSONResponse:
+    from ..job_models import JobOutcomeStatus
+
+    payload = outcome.to_dict()
+    payload["ok"] = outcome.status is not JobOutcomeStatus.ERROR
+    if outcome.status is JobOutcomeStatus.ERROR:
+        payload["error"] = outcome.code
+        status_code = _job_outcome_status(outcome.code)
+    else:
+        status_code = 202 if outcome.status is JobOutcomeStatus.ACCEPTED else 200
+    if extra:
+        payload.update(extra)
+    headers: dict[str, str] | None = None
+    if location and outcome.job is not None:
+        headers = {"Location": f"/jobs/{outcome.job.id}"}
+    return JSONResponse(payload, status_code=status_code, headers=headers)
+
+
+def _activate_index_job(outcome: JobOutcome) -> JobOutcome:
+    from ..jobs import activate_index_job
+
+    return activate_index_job(outcome)
+
+
+def _normalise_controllable_filter(raw: str | None) -> bool | None:
+    value = _normalise_filter_value(raw)
+    if value is None:
+        return None
+    if value in {"1", "true", "yes"}:
+        return True
+    if value in {"0", "false", "no"}:
+        return False
+    raise _InvalidJobRequestError(
+        "invalid_filter",
+        "controllable must be true or false when provided.",
+    )
+
+
 async def jobs_route(request: Request) -> JSONResponse:
     """Token-gated read-only ``GET /jobs`` returning the activity snapshot.
 
@@ -327,8 +644,10 @@ async def jobs_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
-    records = _jobs.snapshot()
+    records = _service_job_snapshot()
     phase = _normalise_filter_value(request.query_params.get("phase"))
+    state = _normalise_filter_value(request.query_params.get("state"))
+    desired_state = _normalise_filter_value(request.query_params.get("desired_state"))
     source = _normalise_job_source_filter(request.query_params.get("source"))
     trigger = _normalise_filter_value(request.query_params.get("trigger"))
     query = _normalise_filter_value(request.query_params.get("query"))
@@ -339,6 +658,12 @@ async def jobs_route(request: Request) -> JSONResponse:
         "yes",
     )
     since_seconds = _parse_since_seconds(request.query_params.get("since"))
+    try:
+        controllable = _normalise_controllable_filter(
+            request.query_params.get("controllable")
+        )
+    except _InvalidJobRequestError as exc:
+        return _job_error("list", exc.code, str(exc))
     now = time.time()
     filtered_records = [
         _job_with_liveness(record, now=now)
@@ -353,6 +678,9 @@ async def jobs_route(request: Request) -> JSONResponse:
             job_id=job_id,
             since_seconds=since_seconds,
             now=now,
+            state=state,
+            desired_state=desired_state,
+            controllable=controllable,
         )
     ]
     filtered_records = _prioritise_running_jobs(filtered_records)
@@ -367,6 +695,9 @@ async def jobs_route(request: Request) -> JSONResponse:
             "summary": _job_summary(records, now=now),
             "filters": {
                 "phase": phase,
+                "state": state,
+                "desired_state": desired_state,
+                "controllable": controllable,
                 "source": source,
                 "trigger": trigger,
                 "query": query,
@@ -377,6 +708,167 @@ async def jobs_route(request: Request) -> JSONResponse:
             },
         }
     )
+
+
+async def create_job_route(request: Request) -> JSONResponse:
+    """Admit one validated canonical index job."""
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    try:
+        payload = await _job_payload(request, required=True)
+        (
+            spec,
+            initiator,
+            start_paused,
+            idempotency_key,
+            admission,
+        ) = await _validated_index_request(request, payload)
+    except _InvalidJobRequestError as exc:
+        return _job_error("create", exc.code, str(exc))
+
+    from ..jobs import get_job_manager
+
+    outcome = get_job_manager().create(
+        spec,
+        initiator,
+        start_paused=start_paused,
+        idempotency_key=idempotency_key,
+    )
+    outcome = _activate_index_job(outcome)
+    return _job_response(
+        outcome,
+        location=True,
+        extra=(
+            {"admission": _admission_preflight(admission)}
+            if admission is not None
+            else None
+        ),
+    )
+
+
+async def job_detail_route(request: Request) -> JSONResponse:
+    """Return one full, exact-ID canonical job resource."""
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    from ..jobs import get_job_manager
+
+    job_id = str(request.path_params["job_id"])
+    snapshot = get_job_manager().get(job_id)
+    if snapshot is None:
+        return _job_error("get", "job_not_found", "The job was not found.")
+    return JSONResponse(
+        {
+            "ok": True,
+            "job": _job_with_liveness(snapshot.to_dict(), now=time.time()),
+        }
+    )
+
+
+def _validated_expected_revision(payload: dict[str, object]) -> int | None:
+    raw = payload.get("expected_revision")
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+        raise _InvalidJobRequestError(
+            "invalid_revision",
+            "expected_revision must be a positive integer when provided.",
+        )
+    return raw
+
+
+async def set_job_desired_state_route(request: Request) -> JSONResponse:
+    """Apply one exact, revision-aware desired-state transition."""
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    try:
+        payload = await _job_payload(request, required=True)
+        state = _job_string(payload, "state")
+        mode = _job_string(payload, "mode", default="graceful")
+        if state not in {"running", "paused", "cancelled"}:
+            raise _InvalidJobRequestError(
+                "invalid_desired_state",
+                "state must be 'running', 'paused', or 'cancelled'.",
+            )
+        if mode not in {"graceful", "force"}:
+            raise _InvalidJobRequestError(
+                "invalid_control_mode",
+                "mode must be 'graceful' or 'force'.",
+            )
+        expected_revision = _validated_expected_revision(payload)
+    except _InvalidJobRequestError as exc:
+        return _job_error("set_desired_state", exc.code, str(exc))
+
+    from ..job_models import DesiredJobState
+    from ..jobs import get_job_manager
+
+    outcome = get_job_manager().set_desired_state(
+        str(request.path_params["job_id"]),
+        DesiredJobState(state),
+        expected_revision=expected_revision,
+        mode=cast("Literal['graceful', 'force']", mode),
+    )
+    return _job_response(outcome, location=outcome.job is not None)
+
+
+async def retry_job_route(request: Request) -> JSONResponse:
+    """Create and activate one linked retry from exact terminal history."""
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    try:
+        payload = await _job_payload(request, required=False)
+    except _InvalidJobRequestError as exc:
+        return _job_error("retry", exc.code, str(exc))
+
+    from ..jobs import get_job_manager
+
+    manager = get_job_manager()
+    parent = manager.get(str(request.path_params["job_id"]))
+    admission = None
+    if parent is not None:
+        try:
+            admission = await _validate_code_job_spec(parent.spec)
+        except _InvalidJobRequestError as exc:
+            return _job_error("retry", exc.code, str(exc))
+    initiator = None
+    if parent is not None and ("initiator" in payload or "initiator_kind" in payload):
+        try:
+            root = Path(str(parent.spec.project_root))
+            initiator = _validated_initiator(
+                payload,
+                root=root,
+                default_command="http_job_retry",
+            )
+        except _InvalidJobRequestError as exc:
+            return _job_error("retry", exc.code, str(exc))
+    outcome = manager.retry(
+        str(request.path_params["job_id"]),
+        initiator=initiator,
+    )
+    outcome = _activate_index_job(outcome)
+    return _job_response(
+        outcome,
+        location=True,
+        extra=(
+            {"admission": _admission_preflight(admission)}
+            if admission is not None
+            else None
+        ),
+    )
+
+
+async def delete_job_route(request: Request) -> JSONResponse:
+    """Delete one exact terminal-history resource without cancelling work."""
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    from ..jobs import get_job_manager
+
+    outcome = get_job_manager().delete(str(request.path_params["job_id"]))
+    return _job_response(outcome)
 
 
 async def metrics_route(request: Request) -> PlainTextResponse | JSONResponse:
@@ -577,29 +1069,43 @@ async def search_route(request: Request) -> JSONResponse:
     return JSONResponse(result, status_code=response_status)
 
 
-def _preprocess_preflight(root: Path) -> dict[str, object]:
+def _preprocess_preflight(
+    root: Path,
+    admission: ContentScanResult | None = None,
+) -> dict[str, object]:
     """Report whether *root*'s preprocess hooks will run, before indexing.
 
     The ``/reindex`` route returns ``queued`` before the background job runs,
     so a non-interactive client otherwise has no way to know whether the root's
     document-preprocessing hooks will fire (preprocess-sandbox ADR D9). This
     mirrors the ``server start`` operator notice as JSON: whether the root ships
-    a ``.vaultragpreprocess.toml``, its resolved rule count, the effective mode,
+    a preprocess configuration, its resolved rule count, the effective mode,
     and whether hooks will run under it (``off`` skips; ``default`` runs).
 
-    Torch-free by construction: ``load_preprocess_rules`` is CPU-only, keeping
-    the routes/server layer off the torch import path. Never raises - a missing
-    or malformed config yields ``config_present`` with a zero rule count.
+    Code jobs project rule count, mode, and execution state from the same
+    structured scan used for admission. The file-presence field is retained as
+    non-authoritative compatibility metadata. Vault jobs do not run this code
+    admission scan, so their legacy informational response keeps its bounded,
+    CPU-only configuration read.
     """
+    from ..indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
+
+    config_present = (root / PREPROCESS_CONFIG_FILENAME).is_file()
+    if admission is not None:
+        return {
+            "config_present": config_present,
+            "rule_count": admission.preprocess_rule_count,
+            "mode": admission.preprocess_mode,
+            "hooks_will_run": admission.hooks_will_run,
+        }
+
     from ..config import get_config
     from ..indexer._preprocess_config import (
-        PREPROCESS_CONFIG_FILENAME,
         PreprocessConfigError,
         load_preprocess_rules,
     )
 
     mode = get_config().preprocess_mode
-    config_present = (root / PREPROCESS_CONFIG_FILENAME).is_file()
     rule_count = 0
     if config_present:
         try:
@@ -619,39 +1125,79 @@ def _preprocess_preflight(root: Path) -> dict[str, object]:
 
 
 async def reindex_route(request: Request) -> JSONResponse:
+    """Validated compatibility adapter over canonical ``POST /jobs`` creation."""
     denied = require_token(request)
     if denied is not None:
         return denied
-
-    payload = await request.json()
-    reindex_type = payload.get("type", "vault")
-    clean = payload.get("clean", False)
-    project_root = payload.get("project_root")
-    raw_initiator = payload.get("initiator_kind", "service")
-    initiator_kind = (
-        str(raw_initiator)
-        if raw_initiator in ("cli", "mcp", "service", "watcher")
-        else "service"
-    )
-
     try:
-        root = _resolve_root(project_root)
-    except ProjectRootRequiredError:
-        return _BAD_REQUEST_MISSING_ROOT
-    from ..jobs import start_reindex_codebase, start_reindex_vault
+        payload = await _job_payload(request, required=True)
+        reindex_type = payload.get("type", "vault")
+        if not isinstance(reindex_type, str) or reindex_type not in {
+            "vault",
+            "code",
+            "codebase",
+        }:
+            raise _InvalidJobRequestError(
+                "invalid_job_spec",
+                "type must be 'vault', 'code', or 'codebase'.",
+            )
+        clean = payload.get("clean", False)
+        if type(clean) is not bool:
+            raise _InvalidJobRequestError(
+                "invalid_job_spec",
+                "clean must be a boolean when provided.",
+            )
+        canonical_payload = dict(payload)
+        canonical_payload.update(
+            {
+                "operation": "index",
+                "source": "vault" if reindex_type == "vault" else "code",
+                "mode": "rebuild" if clean else "incremental",
+                "start_paused": False,
+            }
+        )
+        (
+            spec,
+            initiator,
+            start_paused,
+            idempotency_key,
+            admission,
+        ) = await _validated_index_request(request, canonical_payload)
+    except _InvalidJobRequestError as exc:
+        return _job_error("create", exc.code, str(exc))
 
-    if reindex_type == "vault":
-        job_id = start_reindex_vault(root, clean, initiator_kind=initiator_kind)
-    else:
-        job_id = start_reindex_codebase(root, clean, initiator_kind=initiator_kind)
+    from ..job_models import JobOutcomeStatus
+    from ..jobs import get_job_manager
+
+    outcome = get_job_manager().create(
+        spec,
+        initiator,
+        start_paused=start_paused,
+        idempotency_key=idempotency_key,
+    )
+    outcome = _activate_index_job(outcome)
+    if outcome.status is JobOutcomeStatus.ERROR:
+        status_code = _job_outcome_status(outcome.code)
+        error_payload = outcome.to_dict()
+        error_payload.update({"ok": False, "error": outcome.code})
+        return JSONResponse(error_payload, status_code=status_code)
+
+    assert outcome.job is not None
+    root = Path(str(outcome.job.spec.project_root))
 
     _m._ensure_watcher_soon(root)
     return JSONResponse(
         {
             "ok": True,
-            "job_id": job_id,
+            "job_id": outcome.job.id,
             "status": "queued",
-            "preprocess": _preprocess_preflight(root),
+            "preprocess": _preprocess_preflight(root, admission),
+            **(
+                {"admission": _admission_preflight(admission)}
+                if admission is not None
+                else {}
+            ),
+            "outcome": outcome.to_dict(),
         }
     )
 
@@ -1064,6 +1610,15 @@ ROUTES: list[Route] = [
     Route("/logs", logs_route, methods=["GET"]),
     Route("/logs/json", logs_json_route, methods=["GET"]),
     Route("/jobs", jobs_route, methods=["GET"]),
+    Route("/jobs", create_job_route, methods=["POST"]),
+    Route("/jobs/{job_id}", job_detail_route, methods=["GET"]),
+    Route(
+        "/jobs/{job_id}/desired-state",
+        set_job_desired_state_route,
+        methods=["PUT"],
+    ),
+    Route("/jobs/{job_id}/retry", retry_job_route, methods=["POST"]),
+    Route("/jobs/{job_id}", delete_job_route, methods=["DELETE"]),
     Route("/metrics", metrics_route, methods=["GET"]),
     Route("/readiness", get_readiness_route, methods=["GET"]),
     Route("/search", search_route, methods=["POST"]),

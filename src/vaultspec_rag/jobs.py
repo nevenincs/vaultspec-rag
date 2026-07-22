@@ -14,6 +14,8 @@ import threading
 import time
 import uuid
 from collections import deque
+from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from ._job_errors import classify_error_text
@@ -48,8 +50,8 @@ from .registry import get_registry
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
+    from .indexer._codebase_indexer import ContentScanResult
     from .service import ServiceRegistry
 
 logger = logging.getLogger(__name__)
@@ -78,6 +80,7 @@ __all__ = [
     "JobTimestamps",
     "ProcessResourceSnapshot",
     "ResumeStrategy",
+    "activate_index_job",
     "get_job_manager",
     "record_finish",
     "record_progress",
@@ -87,9 +90,11 @@ __all__ = [
     "resource_snapshot",
     "restore_interrupted",
     "restore_managed_jobs",
+    "scan_code_index_preflight",
     "snapshot",
     "start_reindex_codebase",
     "start_reindex_vault",
+    "validate_code_index_policy",
 ]
 
 
@@ -656,6 +661,24 @@ def _admit_index_job(
     return manager, job_id, created
 
 
+def validate_code_index_policy(root: Path) -> None:
+    """Resolve the default code policy before a job can mutate durable state."""
+    from .indexer._content_policy import RootContentPolicy, SourceProfileVersion
+    from .indexer._resolved_policy import resolve_index_policy
+
+    resolve_index_policy(
+        root.resolve(),
+        content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1),
+    )
+
+
+def scan_code_index_preflight(root: Path) -> ContentScanResult:
+    """Return bounded admission from the production structured scanner."""
+    from .api import scan_codebase
+
+    return scan_codebase(root)
+
+
 def _sync_legacy_started(snapshot: JobSnapshot) -> None:
     with _lock:
         for record in reversed(_records):
@@ -732,6 +755,63 @@ def _bind_index_dispatch(
     )
 
 
+def activate_index_job(
+    outcome: JobOutcome,
+    *,
+    registry: ServiceRegistry | None = None,
+) -> JobOutcome:
+    """Bind and dispatch one newly admitted canonical indexing job.
+
+    Replayed or deduplicated creation outcomes already refer to an activated
+    resource and are returned unchanged. Newly created paused jobs are bound
+    but remain inert until their desired state changes to ``running``.
+    """
+    snapshot = outcome.job
+    if (
+        outcome.status is JobOutcomeStatus.ERROR
+        or snapshot is None
+        or outcome.code not in {"job_created", "job_retry_created"}
+    ):
+        return outcome
+
+    root = Path(snapshot.spec.project_root) if snapshot.spec.project_root else None
+    if snapshot.spec.source is JobSource.CODE and root is not None:
+        validate_code_index_policy(root)
+    manager = get_job_manager()
+    source = "vault" if snapshot.spec.source is JobSource.VAULT else "code"
+    trigger: Trigger = (
+        cast("Trigger", snapshot.initiator.kind)
+        if snapshot.initiator.kind in {"watcher", "schedule"}
+        else "tool"
+    )
+    record_start(
+        source,
+        trigger,
+        project_root=root,
+        command=snapshot.initiator.command,
+        initiator_kind=snapshot.initiator.kind,
+        _record_id=snapshot.id,
+    )
+    record_progress(snapshot.id, snapshot.state.value)
+
+    bound = _bind_index_dispatch(manager, snapshot.id, registry=registry)
+    if bound.status is JobOutcomeStatus.ERROR:
+        manager.fail_unstarted(snapshot.id, result=bound.message)
+        record_finish(snapshot.id, error=bound.message)
+        return bound
+    if snapshot.desired_state is DesiredJobState.PAUSED:
+        return outcome
+
+    dispatched = manager.dispatch(snapshot.id)
+    if dispatched.status is not JobOutcomeStatus.ERROR:
+        return replace(outcome, job=dispatched.job)
+    if dispatched.code == "dispatch_stopped":
+        return outcome
+    manager.fail_unstarted(snapshot.id, result=dispatched.message)
+    record_finish(snapshot.id, error=dispatched.message)
+    return dispatched
+
+
 def restore_managed_jobs(*, registry: ServiceRegistry) -> tuple[int, int]:
     """Rebind durable indexing jobs and dispatch only runnable queued work.
 
@@ -741,6 +821,11 @@ def restore_managed_jobs(*, registry: ServiceRegistry) -> tuple[int, int]:
     manager = get_job_manager()
     restored = manager.active()
     for snapshot in restored:
+        if (
+            snapshot.spec.source is JobSource.CODE
+            and snapshot.spec.project_root is not None
+        ):
+            validate_code_index_policy(Path(snapshot.spec.project_root))
         bound = _bind_index_dispatch(manager, snapshot.id, registry=registry)
         if bound.status is JobOutcomeStatus.ERROR:
             raise RuntimeError(bound.message)
@@ -792,6 +877,7 @@ def start_reindex_codebase(
     initiator_kind: str = "service",
 ) -> str:
     """Start a background codebase reindexing task and return the job_id."""
+    validate_code_index_policy(root)
     manager, job_id, created = _admit_index_job(
         root,
         source=JobSource.CODE,
