@@ -282,7 +282,7 @@ class MemoryBudget:
         """
         self._raise_if_latched()
         measured_rss = _measure_rss_mb()
-        measured_cuda = _measure_cuda_mb()
+        measured_cuda = _measure_cuda_mb() if self.cuda_ceiling_mb is not None else None
         return self._record(
             label=label,
             rss_mb=measured_rss if measured_rss is not None else 0.0,

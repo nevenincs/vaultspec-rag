@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import multiprocessing
+import threading
 from dataclasses import asdict
 from typing import TYPE_CHECKING
 
@@ -27,6 +29,82 @@ if TYPE_CHECKING:
 
 
 pytestmark = [pytest.mark.integration]
+
+
+def _configure_cpu_code_index(
+    dimension: int,
+    **overrides: object,
+) -> None:
+    """Select a tiny real CPU encoder while retaining production indexing."""
+    from ...config import get_config
+
+    values: dict[str, object] = {
+        "data_dir": ".index-memory-test",
+        "embedding_batch_size": 1,
+        "embedding_dimension": dimension,
+        "embedding_encode_batch_size": 1,
+        "embedding_code_encode_batch_size": 1,
+        "index_chunk_workers": 1,
+        "index_segment_max_chunks": 1,
+        "index_queue_max_chunks": 1,
+        "qdrant_url": None,
+        "sparse_enabled": False,
+    }
+    values.update(overrides)
+    get_config(values)
+
+
+@pytest.fixture
+def cpu_code_embedding_model(clean_config: None) -> EmbeddingModel:
+    """Build the production embedding API around a real CPU BoW encoder."""
+    del clean_config
+    from sentence_transformers.sentence_transformer import SentenceTransformer
+    from sentence_transformers.sentence_transformer.modules import BoW
+
+    from ...embeddings import EmbeddingModel, QueryEmbeddingCache
+
+    backend = SentenceTransformer(
+        modules=[BoW(["alpha", "beta", "gamma", "index", "memory"])],
+        device="cpu",
+    )
+    dimension = backend.get_embedding_dimension()
+    assert dimension is not None
+    _configure_cpu_code_index(dimension)
+
+    model = EmbeddingModel.__new__(EmbeddingModel)
+    model._dense_model = backend
+    model._device = "cpu"
+    model.dimension = dimension
+    model.query_cache = QueryEmbeddingCache()
+    return model
+
+
+def _write_code_memory_corpus(root: Path, count: int = 4) -> None:
+    """Write a small real source corpus with independent chunk identities."""
+    source = root / "src"
+    source.mkdir(parents=True, exist_ok=True)
+    for ordinal in range(count):
+        (source / f"memory_{ordinal:03d}.py").write_text(
+            f"def memory_{ordinal:03d}() -> str:\n"
+            f'    return "alpha beta gamma index memory {ordinal:03d}"\n',
+            encoding="utf-8",
+        )
+
+
+def _assert_code_pipeline_released(indexer: object) -> None:
+    """Assert physical consumer, worker, and writer ownership is released."""
+    from ...indexer import CodebaseIndexer
+
+    assert isinstance(indexer, CodebaseIndexer)
+    assert not [
+        thread
+        for thread in threading.enumerate()
+        if thread.name == "codebase-indexer-consumer"
+    ]
+    assert not multiprocessing.active_children()
+    assert indexer._writer_lock.acquire(blocking=False)
+    indexer._writer_lock.release()
+
 
 # ---- Indexer Tests ----
 
@@ -206,6 +284,94 @@ class TestLargeCodeIndexHighWater:
         for resources in (n_resources, two_n_resources):
             assert resources.peak_rss_mb * mib <= limits.rss_bytes
             assert resources.peak_cuda_reserved_mb * mib <= limits.cuda_bytes
+
+
+class TestCodeIndexMemoryCeilings:
+    """Production code indexing terminates cleanly at admitted memory limits."""
+
+    @pytest.mark.timeout(30)
+    def test_low_rss_ceiling_returns_typed_outcome_and_releases_pipeline(
+        self,
+        cpu_code_embedding_model: EmbeddingModel,
+        tmp_path: Path,
+    ) -> None:
+        from ... import CodebaseIndexer, VaultStore
+        from ..._job_errors import JobError, JobErrorKind
+
+        _configure_cpu_code_index(
+            cpu_code_embedding_model.dimension,
+            index_rss_ceiling_mb=1.0,
+        )
+        _write_code_memory_corpus(tmp_path)
+
+        with VaultStore(
+            tmp_path,
+            embedding_dim=cpu_code_embedding_model.dimension,
+        ) as store:
+            indexer = CodebaseIndexer(tmp_path, cpu_code_embedding_model, store)
+            with pytest.raises(JobError) as stopped:
+                indexer.full_index(
+                    reporter=NullProgressReporter(),
+                    preflight=indexer.preflight_content(),
+                )
+
+            assert stopped.value.error_kind is JobErrorKind.RSS_MEMORY_CEILING
+            snapshot = indexer.memory_budget_snapshot
+            assert snapshot is not None
+            assert snapshot.label == "before code dispatch"
+            assert snapshot.rss_available
+            rss_ceiling_mb = snapshot.rss_ceiling_mb
+            assert rss_ceiling_mb is not None
+            assert rss_ceiling_mb == 1.0
+            assert snapshot.peak_rss_mb > rss_ceiling_mb
+            assert store.count_code() == 0
+            _assert_code_pipeline_released(indexer)
+
+    @pytest.mark.cuda
+    @pytest.mark.timeout(60)
+    def test_low_cuda_ceiling_returns_typed_outcome_and_releases_pipeline(
+        self,
+        clean_config: None,
+        embedding_model: EmbeddingModel,
+        tmp_path: Path,
+    ) -> None:
+        del clean_config
+        from ... import CodebaseIndexer, VaultStore
+        from ..._job_errors import JobError, JobErrorKind
+        from ...config import get_config
+        from ...memory_probe import current_cuda_mb, current_rss_mb
+
+        allocated_mb, reserved_mb = current_cuda_mb()
+        measured_cuda_mb = max(allocated_mb, reserved_mb)
+        assert measured_cuda_mb > 0.0
+        ceiling_mb = max(0.001, measured_cuda_mb / 2.0)
+        get_config(
+            {
+                "index_cuda_ceiling_mb": ceiling_mb,
+                "index_rss_ceiling_mb": current_rss_mb() + 1024.0,
+            }
+        )
+        _write_code_memory_corpus(tmp_path)
+
+        with VaultStore(tmp_path, embedding_dim=embedding_model.dimension) as store:
+            indexer = CodebaseIndexer(tmp_path, embedding_model, store)
+            with pytest.raises(JobError) as stopped:
+                indexer.full_index(
+                    reporter=NullProgressReporter(),
+                    preflight=indexer.preflight_content(),
+                )
+
+            assert stopped.value.error_kind is JobErrorKind.CUDA_MEMORY_CEILING
+            snapshot = indexer.memory_budget_snapshot
+            assert snapshot is not None
+            assert snapshot.label == "before code dispatch"
+            assert snapshot.cuda_available
+            cuda_ceiling_mb = snapshot.cuda_ceiling_mb
+            assert cuda_ceiling_mb is not None
+            assert cuda_ceiling_mb == ceiling_mb
+            assert snapshot.peak_cuda_reserved_mb > cuda_ceiling_mb
+            assert store.count_code() == 0
+            _assert_code_pipeline_released(indexer)
 
 
 # ---- Document Preparation Tests ----
