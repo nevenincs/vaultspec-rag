@@ -82,7 +82,7 @@ Make full, scoped, watcher, API, CLI, and service discovery consume the same pol
 - [x] `W01.P02.S91` - Verify an on-disk configuration edit during real extraction cannot change the active operation fingerprint or publication identity; `src/vaultspec_rag/tests/integration/test_policy_snapshot.py`.
 - [x] `W01.P02.S92` - Route ordinary added and modified watcher paths through the shared disposition and active policy snapshot; `src/vaultspec_rag/watcher.py`.
 - [x] `W01.P02.S93` - Verify watcher classification matches full and scoped discovery for ordinary real file events; `src/vaultspec_rag/tests/integration/test_watcher_content_admission.py`.
-- [ ] `W01.P02.S94` - Retain resolved routing when preprocessing execution is disabled and mark affected work stale without deletion or reclassification; `src/vaultspec_rag/indexer/_preprocess_config.py, src/vaultspec_rag/indexer/_preprocess_glue.py, src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `W01.P02.S94` - Retain resolved routing when preprocessing execution is disabled and mark affected work stale without deletion or reclassification; `src/vaultspec_rag/indexer/_preprocess_config.py, src/vaultspec_rag/indexer/_preprocess_glue.py, src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [ ] `W01.P02.S95` - Verify the preprocessing kill switch suppresses real extractor execution while preserving ownership and stored points; `src/vaultspec_rag/tests/integration/test_preprocess_integration.py`.
 
 ## Wave `W02` - document storage and ingestion isolation

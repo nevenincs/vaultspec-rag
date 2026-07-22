@@ -308,4 +308,4 @@ print(runtime_count, strict_count)
         env=environment,
     )
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.strip() == "0 1"
+    assert completed.stdout.strip() == "1 1"
