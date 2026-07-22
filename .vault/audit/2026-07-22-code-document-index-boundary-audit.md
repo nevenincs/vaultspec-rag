@@ -93,3 +93,34 @@ For the Python facade, parse `clean_type` through the closed source-type authori
 before closing registry state or opening storage, map the combined selection
 explicitly, and add direct in-process tests for canonical values, permitted
 compatibility aliases if intended, and structured rejection of unknown values.
+
+## Resolution evidence
+
+All three findings were resolved after the audit baseline in `760222c4`.
+
+The migration replay fix in `a4d73d70` requires the exact destination generation,
+kind, path, file-completion evidence, and retained point identities to remain
+present before any origin deletion. Destination identities are retrieved in
+bounded 256-point batches with run-policy checkpoints, and evidence is cached once
+per generation, kind, and path during a reconciliation pass. A real-store
+regression confirms that dropping and recreating the destination after journal
+confirmation leaves the last origin intact and the cleanup obligation pending.
+
+The same commit makes deleted-path recovery select the newest indexed same-kind
+ownership evidence across generations. Rejected and failed states cannot mask an
+older stored owner. A real-ledger watcher regression starts a newer incomplete
+clean generation with a not-routed state and confirms that deletion still
+schedules the prior code owner.
+
+The Python cleanup fix in `8c6a43ae` parses the closed source type before root,
+registry, or storage mutation. A direct in-process regression confirms that an
+unsupported value raises the structured source-type error and creates no storage
+state.
+
+The final CPU-only verification completed with 33 focused source-type, API,
+ledger, watcher, and real-store tests passing. The post-review migration matrix
+completed with 19 tests passing and one model-backed test deselected to preserve
+the separately owned GPU run. Ruff formatting, Ruff lint, and `ty` checks passed
+for every changed production and test file. Independent re-review reported no
+remaining low-or-higher finding, and the committed-tree identifier sweep was
+clean.
