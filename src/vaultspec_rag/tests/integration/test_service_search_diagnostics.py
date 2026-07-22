@@ -470,6 +470,25 @@ def _assert_stable_missing_index_response(
     assert empty["reason"] == "index_missing", evidence
 
 
+def _assert_matching_nonempty_response(
+    response: RawSearchResponse,
+    *,
+    expected_doc_id: str,
+    evidence: str,
+) -> None:
+    status, _headers, body = response
+    assert status == 200, evidence
+    assert "error" not in body, evidence
+    raw_results = body["results"]
+    assert isinstance(raw_results, list) and raw_results, evidence
+    results = cast("list[object]", raw_results)
+    assert any(
+        isinstance(raw_result, dict)
+        and cast("dict[str, object]", raw_result).get("id") == expected_doc_id
+        for raw_result in results
+    ), evidence
+
+
 @pytest.mark.subprocess_gpu
 def test_search_index_unavailable_during_matching_rebuild(
     live_service: tuple[int, Path],
@@ -527,8 +546,15 @@ def test_search_index_unavailable_during_matching_rebuild(
         "project_root": str(root),
         "include_paths": ["__availability_no_match__/**"],
     }
-    admission = threading.Barrier(3)
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    known_doc = manifest.docs[0]
+    matching_nonempty_payload: dict[str, object] = {
+        "query": known_doc.needle,
+        "type": "vault",
+        "top_k": 5,
+        "project_root": str(root),
+    }
+    admission = threading.Barrier(4)
+    with ThreadPoolExecutor(max_workers=4) as executor:
         search_future = executor.submit(
             _search_after_concurrent_admission,
             admission,
@@ -559,9 +585,20 @@ def test_search_index_unavailable_during_matching_rebuild(
             label="unrelated-source empty search request",
             last_job=running_job,
         )
+        matching_nonempty_future = executor.submit(
+            _search_after_concurrent_admission,
+            admission,
+            port,
+            token,
+            job_id,
+            matching_nonempty_payload,
+            label="matching nonempty search request",
+            last_job=running_job,
+        )
         search_response = search_future.result(timeout=330)
         unrelated_response = unrelated_future.result(timeout=330)
         unrelated_source_response = unrelated_source_future.result(timeout=330)
+        matching_nonempty_response = matching_nonempty_future.result(timeout=330)
     evidence = _bounded_failure_evidence(
         port,
         token,
@@ -603,6 +640,18 @@ def test_search_index_unavailable_during_matching_rebuild(
         root=root,
         source="code",
         evidence=unrelated_source_evidence,
+    )
+    matching_nonempty_evidence = _bounded_failure_evidence(
+        port,
+        token,
+        job_id,
+        last_job=running_job,
+        last_response=matching_nonempty_response,
+    )
+    _assert_matching_nonempty_response(
+        matching_nonempty_response,
+        expected_doc_id=known_doc.doc_id,
+        evidence=matching_nonempty_evidence,
     )
     terminal_job = _wait_for_succeeded_job(
         port,
