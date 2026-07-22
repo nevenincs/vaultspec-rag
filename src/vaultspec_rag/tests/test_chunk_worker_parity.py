@@ -72,6 +72,27 @@ def helper_{i}(a: int, b: int) -> int:
 '''
 
 
+def test_scoped_worker_propagates_source_read_failure(tmp_path: Path) -> None:
+    """A vanished changed file is an operational failure, not an empty result."""
+    missing = tmp_path / "vanished.py"
+
+    with pytest.raises(FileNotFoundError):
+        _chunk_worker.chunk_file_with_status(missing, tmp_path)
+
+
+def test_scoped_worker_retains_readable_unsupported_encoding_disposition(
+    tmp_path: Path,
+) -> None:
+    """Readable non-UTF-8 content remains a successful zero-chunk disposition."""
+    source = tmp_path / "encoded.py"
+    source.write_bytes(b"\xff\xfe\x00\x01")
+
+    result = _chunk_worker.chunk_file_with_status(source, tmp_path)
+
+    assert result.chunks == []
+    assert result.preprocess_status is None
+
+
 def _chunk_only_indexer(root: Path) -> CodebaseIndexer:
     """Build a CodebaseIndexer for chunk-only use without a model or store.
 

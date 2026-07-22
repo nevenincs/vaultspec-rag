@@ -812,13 +812,15 @@ class CodebaseIndexer:
             raise
         except Exception:
             logger.warning("Worker failed to chunk %s", path, exc_info=True)
+            raise
         else:
             # Only worker execution belongs to the per-file recovery boundary.
             # Coordinator publication failures abort the run so metadata cannot
             # describe chunks that were never retained.
             self._record_scoped_preprocess(path, res)
             all_chunks.extend(res.chunks)
-        reporter.advance()
+        finally:
+            reporter.advance()
 
     def _chunk_paths_serial(
         self,
@@ -864,10 +866,12 @@ class CodebaseIndexer:
                 raise
             except Exception:
                 logger.warning("Failed to chunk %s", p, exc_info=True)
+                raise
             else:
                 self._record_scoped_preprocess(p, res)
                 all_chunks.extend(res.chunks)
-            reporter.advance()
+            finally:
+                reporter.advance()
         return all_chunks
 
     def _run_serial_chunk_and_embed(
@@ -1684,29 +1688,27 @@ class CodebaseIndexer:
         prev_meta = self._load_meta()
 
         reporter.phase_start("scan codebase", None)
-        current_paths = self._scan_codebase(inputs)
-        current_files: dict[str, pathlib.Path] = {
-            str(p.relative_to(self.root_dir)).replace("\\", "/"): p
-            for p in current_paths
-        }
-        reporter.phase_end()
+        try:
+            current_paths = self._scan_codebase(inputs)
+            current_files: dict[str, pathlib.Path] = {
+                str(p.relative_to(self.root_dir)).replace("\\", "/"): p
+                for p in current_paths
+            }
+        finally:
+            reporter.phase_end()
 
         reporter.phase_start("hash files", len(current_files))
         current_hashes: dict[str, str] = {}
-        for rel, path in current_files.items():
-            try:
+        try:
+            for rel, path in current_files.items():
                 with open(path, "rb") as f:
                     current_hashes[rel] = hashlib.file_digest(
                         f,
                         "blake2b",
                     ).hexdigest()
-            except OSError:
-                logger.warning("Cannot hash file, skipping: %s", rel)
-            reporter.advance()
-        reporter.phase_end()
-
-        for rel in set(current_files) - set(current_hashes):
-            del current_files[rel]
+                reporter.advance()
+        finally:
+            reporter.phase_end()
 
         prev_files = set(prev_meta.keys())
         curr_files = set(current_hashes.keys())
@@ -1720,37 +1722,27 @@ class CodebaseIndexer:
         all_new_chunks: list[CodeChunk] = []
 
         reporter.phase_start("chunk files", len(to_index))
-        if to_index:
-            paths_to_index = [current_files[f] for f in to_index]
-            all_new_chunks = self._chunk_paths(paths_to_index, reporter=reporter)
-        reporter.phase_end()
-
-        files_to_remove = modified_files | deleted_files
-        reporter.phase_start("delete removed", len(files_to_remove))
-        if files_to_remove:
-            old_chunk_ids = self._get_chunk_ids_for_files(files_to_remove)
-            if old_chunk_ids:
-                self.store.delete_code_chunks(old_chunk_ids)
-            reporter.advance(len(files_to_remove))
-        reporter.phase_end()
-
-        if all_new_chunks:
-            _stream_encode_and_upsert_codebase(
-                chunks=all_new_chunks,
-                slice_size=slice_size,
-                model=self.model,
-                store=self.store,
-                gpu_lock=self._gpu_lock,
-                reporter=reporter,
-            )
-        else:
-            reporter.phase_start("embed + upsert chunks", 0)
+        try:
+            if to_index:
+                paths_to_index = [current_files[f] for f in sorted(to_index)]
+                all_new_chunks = self._chunk_paths(paths_to_index, reporter=reporter)
+        finally:
             reporter.phase_end()
 
+        attempted_paths = to_index | deleted_files
+        self._publish_incremental_chunks(
+            chunks=all_new_chunks,
+            attempted_paths=attempted_paths,
+            slice_size=slice_size,
+            reporter=reporter,
+        )
+
         reporter.phase_start("write metadata", 1)
-        self._write_meta(current_hashes)
-        reporter.advance(1)
-        reporter.phase_end()
+        try:
+            self._write_meta(current_hashes)
+            reporter.advance(1)
+        finally:
+            reporter.phase_end()
 
         total = self.store.count_code()
         duration_ms = int((time.time() - start) * 1000)
@@ -1767,10 +1759,100 @@ class CodebaseIndexer:
             preprocess_failures=list(self._prep_skips),
         )
 
+    def _publish_incremental_chunks(
+        self,
+        *,
+        chunks: list[CodeChunk],
+        attempted_paths: set[str],
+        slice_size: int,
+        reporter: ProgressReporter,
+    ) -> None:
+        """Publish replacements before removing obsolete chunk identities.
+
+        Existing identities are captured before the first upsert. A modified
+        file can retain some deterministic chunk IDs, so the post-publish
+        purge removes only identities absent from the successfully published
+        result. Encoding or storage failure exits before any old identity is
+        deleted; metadata publication remains the caller's final step.
+        """
+        existing_ids: set[str] = (
+            set(self._get_chunk_ids_for_files(attempted_paths))
+            if attempted_paths
+            else set()
+        )
+
+        if chunks:
+            try:
+                _stream_encode_and_upsert_codebase(
+                    chunks=chunks,
+                    slice_size=slice_size,
+                    model=self.model,
+                    store=self.store,
+                    gpu_lock=self._gpu_lock,
+                    reporter=reporter,
+                )
+            except BaseException:
+                self._discard_failed_incremental_additions(
+                    attempted_paths=attempted_paths,
+                    existing_ids=existing_ids,
+                )
+                raise
+        else:
+            reporter.phase_start("embed + upsert chunks", 0)
+            reporter.phase_end()
+
+        published_ids = {chunk.id for chunk in chunks}
+        self._delete_obsolete_incremental_chunks(
+            existing_ids=existing_ids,
+            published_ids=published_ids,
+            files_count=len(attempted_paths),
+            reporter=reporter,
+        )
+
+    def _discard_failed_incremental_additions(
+        self,
+        *,
+        attempted_paths: set[str],
+        existing_ids: set[str],
+    ) -> None:
+        """Best-effort rollback of identities introduced by a failed publish."""
+        if not attempted_paths:
+            return
+        try:
+            current_ids = set(self._get_chunk_ids_for_files(attempted_paths))
+            introduced_ids = sorted(current_ids - existing_ids)
+            if introduced_ids:
+                self.store.delete_code_chunks(introduced_ids)
+        except Exception:
+            # Preserve the publication exception. A later attempt snapshots
+            # every attempted path and converges; crash recovery belongs to
+            # the accepted durable run ledger.
+            logger.error(
+                "Failed to clean partial incremental code publication",
+                exc_info=True,
+            )
+
+    def _delete_obsolete_incremental_chunks(
+        self,
+        *,
+        existing_ids: set[str],
+        published_ids: set[str],
+        files_count: int,
+        reporter: ProgressReporter,
+    ) -> None:
+        """Delete snapshotted IDs that the completed publication did not retain."""
+        obsolete_ids = sorted(existing_ids - published_ids)
+        reporter.phase_start("delete removed", files_count)
+        try:
+            if obsolete_ids:
+                self.store.delete_code_chunks(obsolete_ids)
+            reporter.advance(files_count)
+        finally:
+            reporter.phase_end()
+
     def _scan_changed_paths(
         self,
         changed_paths: Iterable[pathlib.Path],
-        prev_meta: dict[str, str],
         reporter: ProgressReporter,
         inputs: _ScanInputs | None = None,
     ) -> tuple[dict[str, pathlib.Path], set[str]]:
@@ -1787,17 +1869,16 @@ class CodebaseIndexer:
         reporter.phase_start("scan changed", None)
         to_hash: dict[str, pathlib.Path] = {}
         delete_files: set[str] = set()
-        for path in changed_paths:
-            self._process_changed_path(
-                path, prev_meta, _is_excluded, to_hash, delete_files
-            )
-        reporter.phase_end()
+        try:
+            for path in changed_paths:
+                self._process_changed_path(path, _is_excluded, to_hash, delete_files)
+        finally:
+            reporter.phase_end()
         return to_hash, delete_files
 
     def _process_changed_path(
         self,
         path: pathlib.Path,
-        prev_meta: dict[str, str],
         _is_excluded: Callable[[str], bool],
         to_hash: dict[str, pathlib.Path],
         delete_files: set[str],
@@ -1819,13 +1900,11 @@ class CodebaseIndexer:
                 except OSError:
                     return
                 if too_big or _is_binary(path):
-                    if rel in prev_meta:
-                        delete_files.add(rel)
+                    delete_files.add(rel)
                     return
                 to_hash[rel] = path
                 return
-        if rel in prev_meta:
-            delete_files.add(rel)
+        delete_files.add(rel)
 
     def _hash_changed_paths(
         self,
@@ -1834,17 +1913,16 @@ class CodebaseIndexer:
     ) -> dict[str, str]:
         reporter.phase_start("hash files", len(to_hash))
         changed_hashes: dict[str, str] = {}
-        for rel, path in to_hash.items():
-            try:
+        try:
+            for rel, path in to_hash.items():
                 with open(path, "rb") as f:
                     changed_hashes[rel] = hashlib.file_digest(
                         f,
                         "blake2b",
                     ).hexdigest()
-            except OSError:
-                logger.warning("Cannot hash file, skipping: %s", rel)
-            reporter.advance()
-        reporter.phase_end()
+                reporter.advance()
+        finally:
+            reporter.phase_end()
         return changed_hashes
 
     def _scoped_incremental_locked(
@@ -1878,12 +1956,9 @@ class CodebaseIndexer:
         prev_meta = self._load_meta()
 
         to_hash, delete_files = self._scan_changed_paths(
-            changed_paths, prev_meta, reporter, inputs
+            changed_paths, reporter, inputs
         )
         changed_hashes = self._hash_changed_paths(to_hash, reporter)
-
-        for rel in set(to_hash) - set(changed_hashes):
-            to_hash.pop(rel, None)
 
         new_files = {r for r in changed_hashes if r not in prev_meta}
         modified_files = {
@@ -1895,44 +1970,31 @@ class CodebaseIndexer:
 
         all_new_chunks: list[CodeChunk] = []
         reporter.phase_start("chunk files", len(to_index))
-        if to_index:
-            paths_to_index = [to_hash[r] for r in to_index]
-            all_new_chunks = self._chunk_paths(paths_to_index, reporter=reporter)
-        reporter.phase_end()
-
-        # Modified files have their old chunks dropped before re-upsert
-        # (chunk ids embed line ranges + content hash, so stale chunks
-        # would otherwise linger); vanished files are dropped outright.
-        files_to_remove = modified_files | delete_files
-        reporter.phase_start("delete removed", len(files_to_remove))
-        if files_to_remove:
-            old_chunk_ids = self._get_chunk_ids_for_files(files_to_remove)
-            if old_chunk_ids:
-                self.store.delete_code_chunks(old_chunk_ids)
-            reporter.advance(len(files_to_remove))
-        reporter.phase_end()
-
-        if all_new_chunks:
-            _stream_encode_and_upsert_codebase(
-                chunks=all_new_chunks,
-                slice_size=slice_size,
-                model=self.model,
-                store=self.store,
-                gpu_lock=self._gpu_lock,
-                reporter=reporter,
-            )
-        else:
-            reporter.phase_start("embed + upsert chunks", 0)
+        try:
+            if to_index:
+                paths_to_index = [to_hash[r] for r in sorted(to_index)]
+                all_new_chunks = self._chunk_paths(paths_to_index, reporter=reporter)
+        finally:
             reporter.phase_end()
+
+        attempted_paths = to_index | delete_files
+        self._publish_incremental_chunks(
+            chunks=all_new_chunks,
+            attempted_paths=attempted_paths,
+            slice_size=slice_size,
+            reporter=reporter,
+        )
 
         new_meta = dict(prev_meta)
         new_meta.update(changed_hashes)
         for rel in delete_files:
             new_meta.pop(rel, None)
         reporter.phase_start("write metadata", 1)
-        self._write_meta(new_meta)
-        reporter.advance(1)
-        reporter.phase_end()
+        try:
+            self._write_meta(new_meta)
+            reporter.advance(1)
+        finally:
+            reporter.phase_end()
 
         total = self.store.count_code()
         duration_ms = int((time.time() - start) * 1000)
@@ -1940,7 +2002,7 @@ class CodebaseIndexer:
             total=total,
             added=len(new_files),
             updated=len(modified_files),
-            removed=len(delete_files),
+            removed=len(delete_files & set(prev_meta)),
             duration_ms=duration_ms,
             device=self.model.device,
             files=len(to_index),
