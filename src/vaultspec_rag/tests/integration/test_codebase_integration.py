@@ -257,6 +257,83 @@ class TestIncrementalPublicationRecovery:
         )
 
     @pytest.mark.timeout(180)
+    def test_clean_resume_does_not_drop_confirmed_segments_again(
+        self,
+        code_project: _CodeProject,
+    ) -> None:
+        """A rebuild-incomplete generation resumes its confirmed collection."""
+        from ...indexer import _chunk_worker
+        from ...indexer._run_ledger import RunOperation, RunTerminalState
+        from ...indexer._streaming import CodeFileSegment, iter_code_file_segments
+        from ...job_control import RunControlToken
+
+        indexer = code_project["code_indexer"]
+        store = code_project["store"]
+        root = code_project["root"]
+        source = code_project["src_dir"] / "sample.py"
+        preflight = indexer.preflight_content()
+        policy = preflight.policy
+        limits = indexer._resolve_code_pipeline_limits()  # pyright: ignore[reportPrivateUsage]
+        checkpoint = indexer._open_run_checkpoint(  # pyright: ignore[reportPrivateUsage]
+            policy=policy,
+            operation=RunOperation.FULL,
+            clean=True,
+            limits=limits,
+            run_control=RunControlToken(),
+        )
+
+        store.drop_code_table()
+        store.ensure_code_table()
+        chunked = _chunk_worker.chunk_and_hash_file(source, root)
+        segments = tuple(
+            iter_code_file_segments(
+                chunked.chunks,
+                max_chunks=limits.segment_max_chunks,
+                max_bytes=limits.segment_max_bytes,
+                dense_dimension=limits.dense_dimension,
+                sparse_enabled=limits.sparse_enabled,
+                sparse_dimension=limits.sparse_dimension,
+            )
+        )
+        expected_ids: set[str] = set()
+        for segment in segments:
+            stored_chunks = tuple(
+                _stored_partial_chunk(segment.path, chunk.id)
+                for chunk in segment.chunks
+            )
+            store.upsert_code_chunks(list(stored_chunks), write_policy=None)
+            stored_segment = CodeFileSegment(
+                path=segment.path,
+                ordinal=segment.ordinal,
+                chunks=stored_chunks,
+                estimated_bytes=segment.estimated_bytes,
+                is_file_end=segment.is_file_end,
+            )
+            checkpoint.record_confirmed_segment(
+                stored_segment,
+                chunked.content_hash,
+            )
+            expected_ids.update(chunk.id for chunk in stored_chunks)
+
+        with (
+            pytest.raises(RuntimeError, match="interrupted clean attempt"),
+            checkpoint.preserve_incomplete_generation(),
+        ):
+            raise RuntimeError("interrupted clean attempt")
+        incomplete = checkpoint.ledger.generation(checkpoint.generation_id)
+        assert incomplete.terminal_state is RunTerminalState.REBUILD_INCOMPLETE
+
+        indexer.full_index(
+            clean=True,
+            reporter=NullProgressReporter(),
+            preflight=preflight,
+        )
+
+        assert set(store.get_all_code_ids()) == expected_ids
+        resumed = checkpoint.ledger.generation(checkpoint.generation_id)
+        assert resumed.complete
+
+    @pytest.mark.timeout(180)
     def test_scoped_untracked_disappearance_removes_prior_partial_ids(
         self,
         code_project: _CodeProject,
