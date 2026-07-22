@@ -31,6 +31,11 @@ Resolved. Startup and shutdown now live inside an outer guaranteed-cleanup
 boundary. Job state, token, status environment, and configuration caches are
 restored before the server-stopped assertion can fail.
 
+### s28-client-real-server-transport | medium | context manager used a deprecated return annotation
+
+Resolved. The real-server fixture now declares its generator return directly,
+so Python 3.13-aware BasedPyright validation passes without suppressions.
+
 ## Recommendations
 
 Accept S28. Keep the single real-server lifecycle as the transport contract for

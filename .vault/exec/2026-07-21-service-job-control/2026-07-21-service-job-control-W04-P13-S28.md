@@ -43,3 +43,5 @@ coverage and cleanup assertions outside the guaranteed restoration boundary;
 both were corrected and the focused real-server test passed again. One
 intermediate collection attempt coincided with an unrelated shared-main edit
 to search availability; no shared change was reverted or overwritten.
+Final BasedPyright review also replaced the fixture's deprecated iterator
+annotation with its explicit generator type.
