@@ -705,10 +705,10 @@ def _job_response(
     return JSONResponse(payload, status_code=status_code, headers=headers)
 
 
-def _activate_index_job(outcome: JobOutcome) -> JobOutcome:
+async def _activate_index_job(outcome: JobOutcome) -> JobOutcome:
     from ..jobs import activate_index_job
 
-    return activate_index_job(outcome)
+    return await activate_index_job(outcome)
 
 
 def _normalise_controllable_filter(raw: str | None) -> bool | None:
@@ -828,13 +828,17 @@ async def create_job_route(request: Request) -> JSONResponse:
 
     from ..jobs import get_job_manager
 
-    outcome = get_job_manager().create(
-        spec,
-        initiator,
-        start_paused=start_paused,
-        idempotency_key=idempotency_key,
+    manager = get_job_manager()
+    outcome = await _run_in_thread(
+        partial(
+            manager.create,
+            spec,
+            initiator,
+            start_paused=start_paused,
+            idempotency_key=idempotency_key,
+        )
     )
-    outcome = _activate_index_job(outcome)
+    outcome = await _activate_index_job(outcome)
     return _job_response(
         outcome,
         location=True,
@@ -903,7 +907,7 @@ async def set_job_desired_state_route(request: Request) -> JSONResponse:
     from ..job_models import DesiredJobState
     from ..jobs import get_job_manager
 
-    outcome = get_job_manager().set_desired_state(
+    outcome = await get_job_manager().set_desired_state_async(
         str(request.path_params["job_id"]),
         DesiredJobState(state),
         expected_revision=expected_revision,
@@ -943,11 +947,14 @@ async def retry_job_route(request: Request) -> JSONResponse:
             )
         except _InvalidJobRequestError as exc:
             return _job_error("retry", exc.code, str(exc))
-    outcome = manager.retry(
-        str(request.path_params["job_id"]),
-        initiator=initiator,
+    outcome = await _run_in_thread(
+        partial(
+            manager.retry,
+            str(request.path_params["job_id"]),
+            initiator=initiator,
+        )
     )
-    outcome = _activate_index_job(outcome)
+    outcome = await _activate_index_job(outcome)
     return _job_response(
         outcome,
         location=True,
@@ -966,7 +973,10 @@ async def delete_job_route(request: Request) -> JSONResponse:
         return denied
     from ..jobs import get_job_manager
 
-    outcome = get_job_manager().delete(str(request.path_params["job_id"]))
+    outcome = await _run_in_thread(
+        get_job_manager().delete,
+        str(request.path_params["job_id"]),
+    )
     return _job_response(outcome)
 
 
@@ -1253,13 +1263,17 @@ async def reindex_route(request: Request) -> JSONResponse:
     from ..job_models import JobOutcomeStatus
     from ..jobs import get_job_manager
 
-    outcome = get_job_manager().create(
-        spec,
-        initiator,
-        start_paused=start_paused,
-        idempotency_key=idempotency_key,
+    manager = get_job_manager()
+    outcome = await _run_in_thread(
+        partial(
+            manager.create,
+            spec,
+            initiator,
+            start_paused=start_paused,
+            idempotency_key=idempotency_key,
+        )
     )
-    outcome = _activate_index_job(outcome)
+    outcome = await _activate_index_job(outcome)
     if outcome.status is JobOutcomeStatus.ERROR:
         status_code = _job_outcome_status(outcome.code)
         error_payload = outcome.to_dict()
