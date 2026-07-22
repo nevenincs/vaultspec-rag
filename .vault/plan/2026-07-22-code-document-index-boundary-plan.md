@@ -102,7 +102,7 @@ Create document-native identity, payload, collection, metadata, lock, lifecycle,
 - [x] `W02.P03.S21` - Add the document collection to storage manifest recording and schema compatibility; `src/vaultspec_rag/storage_manifest.py, src/vaultspec_rag/store_schema.py`.
 - [ ] `W02.P03.S22` - Verify document identities, schema, locks, and lifecycle against real local and server Qdrant stores; `src/vaultspec_rag/tests/integration/test_document_store.py`.
 - [x] `W02.P03.S96` - Include document collections and bounded counts in storage survey output; `src/vaultspec_rag/storage_survey.py`.
-- [ ] `W02.P03.S97` - Include document collections and metadata in snapshot manifests; `src/vaultspec_rag/storage_manifest.py, src/vaultspec_rag/storage_ops.py`.
+- [x] `W02.P03.S97` - Include document collections and metadata in snapshot manifests; `src/vaultspec_rag/storage_manifest.py, src/vaultspec_rag/storage_ops.py`.
 - [ ] `W02.P03.S98` - Migrate document collections idempotently between local and resident-service storage; `src/vaultspec_rag/cli/_service_storage.py`.
 - [ ] `W02.P03.S99` - Include document collections in prefix pruning, debris classification, and storage maintenance routes; `src/vaultspec_rag/storage_ops.py, src/vaultspec_rag/server/_routes_storage.py`.
 - [ ] `W02.P03.S100` - Verify older and newer storage descriptors fail or migrate according to the direct-consumer compatibility contract; `src/vaultspec_rag/tests/integration/test_document_store.py`.
