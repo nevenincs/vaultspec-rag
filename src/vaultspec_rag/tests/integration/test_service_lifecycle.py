@@ -250,27 +250,11 @@ def _signal_service_shutdown(pid: int) -> None:
         os.kill(pid, signal.SIGTERM)
 
 
-def _mirror_host_qdrant(status_dir: Path) -> None:
-    """Bridge suite-wide status isolation to the pinned host install."""
-    from pathlib import Path
-
-    from ...qdrant_runtime._constants import MANIFEST_FILENAME, QDRANT_SERVER_VERSION
-    from ...qdrant_runtime._resolve import binary_filename
-    from ._helpers import _mirror_managed_qdrant_binary
-
-    source_dir = (
-        Path.home() / ".vaultspec-rag" / "bin" / "qdrant" / QDRANT_SERVER_VERSION
-    )
-    source = source_dir / binary_filename()
-    manifest = source_dir / MANIFEST_FILENAME
-    assert source.is_file() and manifest.is_file(), (
-        f"pinned Qdrant install is incomplete at {source_dir}"
-    )
-    _mirror_managed_qdrant_binary(status_dir, (source, manifest))
-
-
 @contextmanager
-def _signalable_live_service(tmp_path: Path) -> Generator[tuple[int, int]]:
+def _signalable_live_service(
+    tmp_path: Path,
+    qdrant_source: tuple[Path, Path],
+) -> Generator[tuple[int, int]]:
     """Run the real daemon in a Windows-signalable process group."""
     from ...cli import _write_service_status
     from ...cli._process import _service_child_env
@@ -280,7 +264,11 @@ def _signalable_live_service(tmp_path: Path) -> Generator[tuple[int, int]]:
         EnvVar.HF_HUB_OFFLINE.value: "1",
         EnvVar.TRANSFORMERS_OFFLINE.value: "1",
     }
-    with _service_env(tmp_path, env_overrides=offline_env):
+    with _service_env(
+        tmp_path,
+        env_overrides=offline_env,
+        qdrant_source=qdrant_source,
+    ):
         port = _get_ephemeral_port()
         log_path = tmp_path / "service.log"
         command = [
@@ -1220,6 +1208,7 @@ def test_start_health_stop(request: pytest.FixtureRequest, tmp_path: Path) -> No
 @pytest.mark.timeout(600)
 def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
     tmp_path: Path,
+    required_host_provisioned_qdrant_source: tuple[Path, Path],
 ) -> None:
     """Two real daemon lives retain exact durable queued and paused intent."""
     from ...job_manager import JobManager
@@ -1236,7 +1225,6 @@ def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
 
     queued_root = tmp_path / "queued-vault"
     paused_root = tmp_path / "paused-vault"
-    _mirror_host_qdrant(tmp_path)
     build_synthetic_vault(queued_root, n_docs=24, seed=2201)
     paused_root.mkdir()
     state_path = tmp_path / "jobs-state.json"
@@ -1265,7 +1253,7 @@ def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
     queued_id = queued.job.id
     paused_id = paused.job.id
 
-    with _signalable_live_service(tmp_path):
+    with _signalable_live_service(tmp_path, required_host_provisioned_qdrant_source):
         completed = _wait_for_persisted_job(
             state_path,
             queued_id,
@@ -1293,7 +1281,7 @@ def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
     )
     assert stopped_paused.desired_state is DesiredJobState.PAUSED
 
-    with _signalable_live_service(tmp_path):
+    with _signalable_live_service(tmp_path, required_host_provisioned_qdrant_source):
         restored_paused = _wait_for_persisted_job(
             state_path,
             paused_id,
@@ -1327,6 +1315,7 @@ def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
 @pytest.mark.timeout(600)
 def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
     tmp_path: Path,
+    required_host_provisioned_qdrant_source: tuple[Path, Path],
 ) -> None:
     """Graceful daemon stop releases every owner before store teardown."""
     import httpx
@@ -1334,7 +1323,6 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
     from ...job_models import JobState
 
     root = tmp_path / "live-code"
-    _mirror_host_qdrant(tmp_path)
     source_dir = root / "src"
     source_dir.mkdir(parents=True)
     (root / ".vault").mkdir()
@@ -1346,7 +1334,10 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
         )
 
     state_path = tmp_path / "jobs-state.json"
-    with _signalable_live_service(tmp_path) as (port, shutdown_pid):
+    with _signalable_live_service(
+        tmp_path,
+        required_host_provisioned_qdrant_source,
+    ) as (port, shutdown_pid):
         health = _poll_health(port)
         service_pid = int(health["pid"])
         status = _read_service_status()
@@ -1393,7 +1384,10 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
     output = (tmp_path / "service.log").read_text(encoding="utf-8", errors="replace")
     _assert_shutdown_log_order(output, job_id=job_id, qdrant_pid=qdrant_pid)
 
-    with _signalable_live_service(tmp_path) as (restart_port, _shutdown_pid):
+    with _signalable_live_service(
+        tmp_path,
+        required_host_provisioned_qdrant_source,
+    ) as (restart_port, _shutdown_pid):
         restarted_health = _poll_health(restart_port)
         restarted_status = _read_service_status()
         assert restarted_status is not None

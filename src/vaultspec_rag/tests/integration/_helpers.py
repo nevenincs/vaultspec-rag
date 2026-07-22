@@ -145,6 +145,8 @@ def _wait_for_exit(pid: int, timeout: float = 15.0) -> bool:
 def _service_env(
     tmp_path: Path,
     env_overrides: Mapping[str, str | None] | None = None,
+    *,
+    qdrant_source: tuple[Path, Path] | None = None,
 ) -> Generator[None]:
     """Isolate service state files to *tmp_path*.
 
@@ -159,12 +161,14 @@ def _service_env(
     If the host has a provisioned managed qdrant binary, it is mirrored (with
     its manifest) into the isolated status dir so a server-mode daemon resolves
     a binary - the pinned-digest verification still runs against the real
-    committed digest. Without a host install the mirror is skipped and the
-    daemon falls back to its normal local-only path.
+    committed digest. Pytest callers can pass the pre-isolation captured source
+    explicitly; without one the ambient source is resolved before the narrower
+    override, and the daemon otherwise follows its normal local-only path.
     """
-    # Resolve the host's provisioned binary BEFORE the status-dir override, so
-    # the source is the real managed install, not the (empty) isolated dir.
-    host_qdrant = _resolve_host_provisioned_qdrant()
+    # Callers that run under pytest pass the source captured before repository
+    # bootstrap redirects the status dir. Other callers can still resolve the
+    # ambient managed install before this narrower override.
+    host_qdrant = qdrant_source or _resolve_host_provisioned_qdrant()
 
     overrides = dict(env_overrides or {})
     env_key = "VAULTSPEC_RAG_STATUS_DIR"

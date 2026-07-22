@@ -54,6 +54,51 @@ def _load_dotenv_if_available() -> None:
 _load_dotenv_if_available()
 
 
+def _capture_host_provisioned_qdrant() -> tuple[Path, Path] | None:
+    """Capture the real managed Qdrant install before pytest redirects it.
+
+    ``pytest_configure`` replaces the status directory before session fixtures
+    run. Resolve the production-managed install now, while the ambient config
+    still names it, and retain only its binary and manifest paths. The binary
+    is still re-verified from the copied manifest before execution.
+    """
+    from vaultspec_rag.qdrant_runtime._constants import (
+        MANIFEST_FILENAME,
+        QDRANT_SERVER_VERSION,
+    )
+    from vaultspec_rag.qdrant_runtime._resolve import resolve_binary
+
+    resolved = resolve_binary(QDRANT_SERVER_VERSION)
+    if resolved is None or resolved.source != "provisioned":
+        return None
+    manifest = resolved.path.parent / MANIFEST_FILENAME
+    if not manifest.is_file():
+        return None
+    return resolved.path, manifest
+
+
+_HOST_PROVISIONED_QDRANT = _capture_host_provisioned_qdrant()
+
+
+@pytest.fixture(scope="session")
+def host_provisioned_qdrant_source() -> tuple[Path, Path] | None:
+    """Return the manifest-backed host install captured before isolation."""
+    return _HOST_PROVISIONED_QDRANT
+
+
+@pytest.fixture(scope="session")
+def required_host_provisioned_qdrant_source(
+    host_provisioned_qdrant_source: tuple[Path, Path] | None,
+) -> tuple[Path, Path]:
+    """Require the captured managed install for real daemon tests."""
+    if host_provisioned_qdrant_source is None:
+        pytest.fail(
+            "No provisioned qdrant binary on the host; run "
+            "'vaultspec-rag server qdrant install' before this lifecycle test."
+        )
+    return host_provisioned_qdrant_source
+
+
 def _reset_singleton_config_caches() -> None:
     """Make early environment containment visible to both config layers."""
     from vaultspec_core.config import reset_config
