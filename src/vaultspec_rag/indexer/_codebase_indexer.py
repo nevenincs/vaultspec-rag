@@ -54,6 +54,7 @@ from ._content_policy import (
 )
 from ._file_state import FileStateKind
 from ._preprocess_runner import PreprocessAbortError
+from ._route_migration import reconcile_generation_storage
 from ._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
 from ._run_ledger import (
     CommitUnitKind,
@@ -1883,53 +1884,53 @@ class CodebaseIndexer:
                         max_bytes=limits.slice_max_bytes,
                         run_control=run_control,
                     ):
-                        for segment in weighted_slice.segments:
-                            run_control.checkpoint()
-                            slice_chunks = sorted(
-                                segment.chunks,
-                                key=lambda chunk: -len(chunk.content),
-                            )
-                            try:
-                                probe.checkpoint(f"slice-{slice_index}-before-encode")
-                                slice_index += 1
+                        run_control.checkpoint()
+                        slice_chunks = sorted(
+                            weighted_slice.chunks,
+                            key=lambda chunk: -len(chunk.content),
+                        )
+                        try:
+                            probe.checkpoint(f"slice-{slice_index}-before-encode")
+                            slice_index += 1
 
-                                def _record_storage_confirmed(
-                                    confirmed: CodeFileSegment = segment,
-                                ) -> None:
-                                    assert checkpoint is not None
+                            def _record_storage_confirmed(
+                                confirmed_segments: tuple[CodeFileSegment, ...] = (
+                                    weighted_slice.segments
+                                ),
+                            ) -> None:
+                                assert checkpoint is not None
+                                for confirmed in confirmed_segments:
                                     checkpoint.record_confirmed_segment(
                                         confirmed,
                                         metadata[confirmed.path],
                                     )
 
-                                encode_and_upsert_code_slice(
-                                    slice_chunks,
-                                    model=self.model,
-                                    store=self.store,
-                                    gpu_lock=self._gpu_lock,
-                                    release_cache=(
-                                        slice_index % limits.flush_slices == 0
-                                    ),
-                                    encode_batch_size=limits.encode_batch_size,
-                                    write_policy=(
-                                        checkpoint.run_policy.store_write_policy
-                                        if checkpoint is not None
-                                        else None
-                                    ),
-                                    on_storage_confirmed=(
-                                        _record_storage_confirmed
-                                        if checkpoint is not None
-                                        else None
-                                    ),
-                                    run_control=run_control,
-                                )
-                                run_control.checkpoint()
-                                new_ids.update(chunk.id for chunk in slice_chunks)
-                                total[0] += len(slice_chunks)
-                                probe.checkpoint(f"slice-{slice_index}-after-store")
-                                _sample_support_resources()
-                            finally:
-                                del slice_chunks
+                            encode_and_upsert_code_slice(
+                                slice_chunks,
+                                model=self.model,
+                                store=self.store,
+                                gpu_lock=self._gpu_lock,
+                                release_cache=(slice_index % limits.flush_slices == 0),
+                                encode_batch_size=limits.encode_batch_size,
+                                write_policy=(
+                                    checkpoint.run_policy.store_write_policy
+                                    if checkpoint is not None
+                                    else None
+                                ),
+                                on_storage_confirmed=(
+                                    _record_storage_confirmed
+                                    if checkpoint is not None
+                                    else None
+                                ),
+                                run_control=run_control,
+                            )
+                            run_control.checkpoint()
+                            new_ids.update(chunk.id for chunk in slice_chunks)
+                            total[0] += len(slice_chunks)
+                            probe.checkpoint(f"slice-{slice_index}-after-store")
+                            _sample_support_resources()
+                        finally:
+                            del slice_chunks
             except BaseException as exc:
                 consumer_exceptions.append(exc)
             finally:
@@ -1950,12 +1951,40 @@ class CodebaseIndexer:
         consumer.start()
         return consumer
 
-    def _shutdown_consumer(
+    @staticmethod
+    def _drain_consumer(
+        consumer: threading.Thread,
+        segment_queue: _WeightedCodeSegmentQueue,
+        run_policy: RunPolicy,
+    ) -> None:
+        """Finish normal work under the durable no-progress authority."""
+        sentinel_delivered = False
+        while consumer.is_alive() and not sentinel_delivered:
+            run_policy.checkpoint("code consumer drain sentinel")
+            timeout = min(
+                _CONTROL_POLL_SECONDS,
+                run_policy.remaining_seconds(),
+            )
+            try:
+                segment_queue.put(None, timeout=timeout)
+            except queue.Full:
+                continue
+            sentinel_delivered = True
+        while consumer.is_alive():
+            run_policy.checkpoint("code consumer drain")
+            consumer.join(
+                timeout=min(
+                    _CONTROL_POLL_SECONDS,
+                    run_policy.remaining_seconds(),
+                )
+            )
+
+    def _cleanup_consumer(
         self,
         consumer: threading.Thread,
         segment_queue: _WeightedCodeSegmentQueue,
     ) -> bool:
-        """Send the sentinel and join within the shutdown bound."""
+        """Bound cleanup after a producer, control, or liveness failure."""
         deadline = time.monotonic() + _CONSUMER_SHUTDOWN_TIMEOUT_S
         while consumer.is_alive():
             try:
@@ -2051,6 +2080,12 @@ class CodebaseIndexer:
             return None
         reporter.phase_start("resume publication", 1)
         try:
+            reconcile_generation_storage(
+                self.store,
+                checkpoint,
+                checkpoint.policy,
+                ContentKind.CODE,
+            )
             checkpoint.publish_metadata(self._meta_path)
             checkpoint.publish_generation()
             reporter.advance(1)
@@ -2225,20 +2260,36 @@ class CodebaseIndexer:
         segment_queue: _WeightedCodeSegmentQueue,
         consumer_exceptions: list[BaseException],
         producer_exception: BaseException | None,
+        checkpoint: CodeRunCheckpoint,
     ) -> None:
         """Stop the consumer and preserve cleanup/error precedence."""
-        if self._shutdown_consumer(consumer, segment_queue):
+        drain_failure: BaseException | None = None
+        if producer_exception is None:
+            try:
+                self._drain_consumer(
+                    consumer,
+                    segment_queue,
+                    checkpoint.run_policy,
+                )
+            except BaseException as exc:
+                drain_failure = exc
+        cleanup_required = producer_exception is not None or drain_failure is not None
+        if cleanup_required and self._cleanup_consumer(consumer, segment_queue):
             logger.error(
-                "GPU consumer thread did not terminate within %.0fs; "
-                "aborting (a CUDA or Qdrant call may be wedged)",
+                "GPU consumer cleanup did not terminate within %.0fs after "
+                "failure; aborting (a CUDA or Qdrant call may be wedged)",
                 _CONSUMER_SHUTDOWN_TIMEOUT_S,
             )
             error = _UnsettledCodeConsumerError(
                 "codebase index GPU consumer thread did not terminate"
             )
+            if drain_failure is not None:
+                raise error from drain_failure
             if producer_exception is not None:
                 raise error from producer_exception
             raise error
+        if drain_failure is not None:
+            raise drain_failure
         consumer_failure = next(
             (
                 exc
@@ -2341,6 +2392,7 @@ class CodebaseIndexer:
                     segment_queue,
                     consumer_exceptions,
                     producer_exception,
+                    checkpoint,
                 )
         finally:
             reporter.phase_end()
@@ -2558,6 +2610,12 @@ class CodebaseIndexer:
                     if checkpoint is None:
                         self._write_meta(metadata, policy=policy)
                     else:
+                        reconcile_generation_storage(
+                            self.store,
+                            checkpoint,
+                            policy,
+                            ContentKind.CODE,
+                        )
                         checkpoint.publish_metadata(self._meta_path)
                         checkpoint.publish_generation()
                     reporter.advance(1)
@@ -2905,6 +2963,12 @@ class CodebaseIndexer:
 
             reporter.phase_start("write metadata", 1)
             try:
+                reconcile_generation_storage(
+                    self.store,
+                    checkpoint,
+                    policy,
+                    ContentKind.CODE,
+                )
                 checkpoint.publish_metadata(self._meta_path)
                 checkpoint.publish_generation()
                 reporter.advance(1)

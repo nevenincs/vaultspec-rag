@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 import pytest
 
 from ...progress import NullProgressReporter
+from ..benchmarks.bench_large_index_resilience import (
+    CorpusSpec,
+    ResourceHighWater,
+    measure_full_index,
+    prepare_corpus,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -57,6 +64,91 @@ class TestVaultIndexer:
         assert result.removed == 0
         # Total should match the full index
         assert result.total == rag_components_full["index_result"].total
+
+
+class TestLargeCodeIndexHighWater:
+    """Real-CUDA N/two-N evidence for bounded production retention."""
+
+    @pytest.mark.timeout(180)
+    def test_small_file_segments_share_one_real_encode_and_store_slice(
+        self,
+        embedding_model: EmbeddingModel,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from ... import CodebaseIndexer, VaultStore
+
+        spec = CorpusSpec(files=2, chunks_per_file=3)
+        prepare_corpus(tmp_path, spec)
+        store = VaultStore(tmp_path)
+        try:
+            indexer = CodebaseIndexer(tmp_path, embedding_model, store)
+            with caplog.at_level(logging.INFO, logger="vaultspec_rag.store"):
+                result = indexer.full_index(
+                    reporter=NullProgressReporter(),
+                    preflight=indexer.preflight_content(),
+                )
+            assert result.total == spec.expected_chunks
+            assert any(
+                record.getMessage()
+                == f"Upserted {spec.expected_chunks} codebase chunk(s)"
+                for record in caplog.records
+            )
+        finally:
+            store.close()
+
+    @pytest.mark.performance
+    @pytest.mark.timeout(900)
+    def test_rss_and_cuda_high_water_remain_bounded_as_corpus_doubles(
+        self,
+        embedding_model: EmbeddingModel,
+        tmp_path_factory: TempPathFactory,
+    ) -> None:
+        from ... import CodebaseIndexer, VaultStore
+        from ...config import get_config
+        from ...index_profiles import get_index_support_profile
+
+        def _run(files: int) -> tuple[ResourceHighWater, int]:
+            root = tmp_path_factory.mktemp(f"large-code-{files}")
+            spec = CorpusSpec(files=files, chunks_per_file=3)
+            prepare_corpus(root, spec)
+            store = VaultStore(root)
+            try:
+                indexer = CodebaseIndexer(root, embedding_model, store)
+                measured = measure_full_index(
+                    indexer,
+                    indexer.preflight_content(),
+                    clean=True,
+                )
+                assert measured.result.total == spec.expected_chunks
+                assert indexer.support_measurement.generated_chunks == (
+                    spec.expected_chunks
+                )
+                return measured.resources, measured.result.total
+            finally:
+                store.close()
+
+        n_resources, n_chunks = _run(192)
+        two_n_resources, two_n_chunks = _run(384)
+        assert two_n_chunks == n_chunks * 2
+
+        # The active queue and GPU slice are bounded independently of corpus
+        # cardinality. Doubling past the 512-chunk slice boundary may move the
+        # allocator to its next block, but cannot retain corpus-proportional
+        # process or device memory.
+        assert two_n_resources.rss_growth_mb <= n_resources.rss_growth_mb + 512.0
+        assert two_n_resources.cuda_allocated_growth_mb <= (
+            n_resources.cuda_allocated_growth_mb + 256.0
+        )
+        assert two_n_resources.cuda_reserved_growth_mb <= (
+            n_resources.cuda_reserved_growth_mb + 512.0
+        )
+
+        limits = get_index_support_profile(get_config().index_support_profile).code
+        mib = 1024**2
+        for resources in (n_resources, two_n_resources):
+            assert resources.peak_rss_mb * mib <= limits.rss_bytes
+            assert resources.peak_cuda_reserved_mb * mib <= limits.cuda_bytes
 
 
 # ---- Document Preparation Tests ----
