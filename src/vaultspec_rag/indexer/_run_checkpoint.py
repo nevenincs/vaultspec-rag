@@ -1,0 +1,223 @@
+"""Bridge bounded code segments to storage-confirmed run-ledger evidence."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Final
+
+from .. import store_schema
+from ._code_meta import CODE_EMBED_SCHEMA, publish_meta_from_file_states
+from ._content_policy import ContentKind
+from ._file_state import FileState
+from ._run_ledger import (
+    CommitUnit,
+    CommitUnitKind,
+    FinalizationPhase,
+    RunGeneration,
+    RunLedger,
+    RunOperation,
+    RunSignature,
+    RunTerminalState,
+)
+from ._run_policy import DurableProgressKind, RunPolicy
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
+    from pathlib import Path
+
+    from ._resolved_policy import ResolvedIndexPolicy
+    from ._streaming import CodeFileSegment
+
+__all__ = ["CODE_RUN_LEDGER_FILENAME", "CodeRunCheckpoint"]
+
+CODE_RUN_LEDGER_FILENAME: Final = "code_index_runs.sqlite3"
+
+
+@dataclass(slots=True)
+class CodeRunCheckpoint:
+    """One code generation's durable segment and publication authority."""
+
+    ledger: RunLedger
+    generation: RunGeneration
+    policy: ResolvedIndexPolicy
+    run_policy: RunPolicy
+
+    @classmethod
+    def open(
+        cls,
+        *,
+        data_root: Path,
+        root_dir: Path,
+        policy: ResolvedIndexPolicy,
+        run_policy: RunPolicy,
+        operation: RunOperation,
+        clean: bool,
+        model_identity: str,
+        dense_dimensions: int,
+        configuration: Mapping[str, object],
+    ) -> CodeRunCheckpoint:
+        """Open or resume the compatible code generation for one attempt."""
+        kind_fingerprints = policy.fingerprints_for(ContentKind.CODE)
+        signature = RunSignature(
+            root_identity=str(root_dir.resolve()),
+            collection_identity=store_schema.CODE_COLLECTION,
+            source_type=ContentKind.CODE,
+            operation=operation,
+            clean=clean,
+            model_identity=model_identity,
+            dense_dimensions=dense_dimensions,
+            embedding_schema=int(CODE_EMBED_SCHEMA),
+            payload_schema=store_schema.STORAGE_SCHEMA_VERSION,
+            content_epoch=kind_fingerprints.content,
+            membership_epoch=kind_fingerprints.membership,
+            preprocessing_identity=policy.fingerprints.execution,
+            configuration_fingerprint=_configuration_fingerprint(configuration),
+            policy_fingerprint=policy.fingerprints.snapshot,
+        )
+        ledger = RunLedger(data_root / CODE_RUN_LEDGER_FILENAME)
+        return cls(
+            ledger=ledger,
+            generation=ledger.start_generation(signature),
+            policy=policy,
+            run_policy=run_policy,
+        )
+
+    @property
+    def generation_id(self) -> str:
+        """Return the stable active generation identifier."""
+        return self.generation.generation_id
+
+    def unit_for(self, segment: CodeFileSegment, source_digest: str) -> CommitUnit:
+        """Project one deterministic streaming segment into ledger evidence."""
+        return CommitUnit(
+            rel_path=segment.path,
+            kind=CommitUnitKind.UPSERT,
+            source_digest=source_digest,
+            segment_ordinal=segment.ordinal,
+            is_file_end=segment.is_file_end,
+            point_ids=tuple(chunk.id for chunk in segment.chunks),
+        )
+
+    def pending_segments(
+        self,
+        segments: Iterable[CodeFileSegment],
+        source_digest: str,
+    ) -> tuple[CodeFileSegment, ...]:
+        """Return only units not already confirmed by a compatible attempt."""
+        pending: list[CodeFileSegment] = []
+        for segment in segments:
+            unit = self.unit_for(segment, source_digest)
+            if self.ledger.unit_committed(self.generation_id, unit):
+                if segment.is_file_end:
+                    self._record_indexed_file(segment.path, source_digest)
+                continue
+            pending.append(segment)
+        return tuple(pending)
+
+    def record_confirmed_segments(
+        self,
+        segments: Iterable[CodeFileSegment],
+        source_digests: Mapping[str, str],
+    ) -> int:
+        """Checkpoint each segment after their shared store mutation returns."""
+        committed = 0
+        for segment in segments:
+            source_digest = source_digests[segment.path]
+            unit = self.unit_for(segment, source_digest)
+            if self.ledger.record_storage_confirmed_unit(self.generation_id, unit):
+                committed += 1
+                self.run_policy.record_durable_progress(
+                    kind=DurableProgressKind.LEDGER_UNIT_COMMITTED,
+                    label=f"code segment {segment.path}#{segment.ordinal}",
+                )
+            if segment.is_file_end:
+                self._record_indexed_file(segment.path, source_digest)
+        return committed
+
+    def record_confirmed_deletion(
+        self,
+        rel_path: str,
+        point_ids: tuple[str, ...],
+    ) -> bool:
+        """Checkpoint one idempotent path deletion after storage confirmation."""
+        unit = CommitUnit(
+            rel_path=rel_path,
+            kind=CommitUnitKind.DELETE,
+            source_digest=None,
+            segment_ordinal=0,
+            is_file_end=True,
+            point_ids=point_ids,
+        )
+        inserted = self.ledger.record_storage_confirmed_unit(
+            self.generation_id,
+            unit,
+        )
+        if inserted:
+            self.run_policy.record_durable_progress(
+                kind=DurableProgressKind.LEDGER_UNIT_COMMITTED,
+                label=f"code deletion {rel_path}",
+            )
+        return inserted
+
+    def publish_metadata(self, meta_path: Path) -> int:
+        """Publish exact converged ledger rows and advance the durable phase."""
+        self.generation = self.ledger.advance_finalization(
+            self.generation_id,
+            FinalizationPhase.STALE_RECONCILED,
+        )
+        fingerprints = self.policy.fingerprints_for(ContentKind.CODE)
+        count = publish_meta_from_file_states(
+            meta_path,
+            self.ledger.iter_file_states(
+                self.generation_id,
+                converged_only=True,
+            ),
+            generation_id=self.generation_id,
+            membership_epoch=fingerprints.membership,
+            content_epoch=fingerprints.content,
+        )
+        self.generation = self.ledger.advance_finalization(
+            self.generation_id,
+            FinalizationPhase.METADATA_PUBLISHED,
+        )
+        self.run_policy.record_durable_progress(
+            kind=DurableProgressKind.FINALIZATION_PHASE_COMMITTED,
+            label="code metadata publication",
+        )
+        return count
+
+    def publish_generation(self) -> RunGeneration:
+        """Certify generation publication and compact prior compatible rows."""
+        self.generation = self.ledger.advance_finalization(
+            self.generation_id,
+            FinalizationPhase.GENERATION_PUBLISHED,
+        )
+        self.generation = self.ledger.finish_generation(
+            self.generation_id,
+            RunTerminalState.SUCCEEDED,
+        )
+        self.ledger.compact(self.generation_id)
+        self.generation = self.ledger.generation(self.generation_id)
+        self.run_policy.record_durable_progress(
+            kind=DurableProgressKind.FINALIZATION_PHASE_COMMITTED,
+            label="code generation publication",
+        )
+        return self.generation
+
+    def _record_indexed_file(self, rel_path: str, source_digest: str) -> None:
+        self.ledger.record_file_state(
+            self.generation_id,
+            FileState.indexed(rel_path, ContentKind.CODE, source_digest),
+        )
+
+
+def _configuration_fingerprint(configuration: Mapping[str, object]) -> str:
+    payload = json.dumps(
+        dict(configuration),
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.blake2b(payload.encode("utf-8")).hexdigest()
