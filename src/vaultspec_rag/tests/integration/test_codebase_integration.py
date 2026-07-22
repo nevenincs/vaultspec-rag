@@ -122,7 +122,10 @@ class TestIncrementalPublicationRecovery:
         root = code_project["root"]
         store = code_project["store"]
         indexer = code_project["code_indexer"]
-        indexer.full_index(reporter=NullProgressReporter())
+        indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
         rel_path = "src/new_partial.py"
         source = root / rel_path
         source.write_text("def current_value():\n    return 42\n", encoding="utf-8")
@@ -137,6 +140,7 @@ class TestIncrementalPublicationRecovery:
         indexer.incremental_index(
             reporter=reporter,
             changed_paths=[source],
+            preflight=indexer.preflight_changed_paths([source]),
         )
 
         ids = set(store.get_code_ids_by_paths({rel_path}))
@@ -159,7 +163,10 @@ class TestIncrementalPublicationRecovery:
         root = code_project["root"]
         store = code_project["store"]
         indexer = code_project["code_indexer"]
-        indexer.full_index(reporter=NullProgressReporter())
+        indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
         rel_path = "src/unscoped_partial.py"
         source = root / rel_path
         source.write_text("unscoped_value = 'current'\n", encoding="utf-8")
@@ -171,7 +178,10 @@ class TestIncrementalPublicationRecovery:
         )
 
         reporter = CountingProgressReporter()
-        indexer.incremental_index(reporter=reporter)
+        indexer.incremental_index(
+            reporter=reporter,
+            preflight=indexer.preflight_content(),
+        )
 
         ids = set(store.get_code_ids_by_paths({rel_path}))
         assert ids == {chunk.id for chunk in expected.chunks}
@@ -192,7 +202,10 @@ class TestIncrementalPublicationRecovery:
         root = code_project["root"]
         store = code_project["store"]
         indexer = code_project["code_indexer"]
-        indexer.full_index(reporter=NullProgressReporter())
+        indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
         rel_path = "src/disappeared_partial.py"
         missing = root / rel_path
         stale_id = f"{rel_path}:stale-attempt"
@@ -205,6 +218,7 @@ class TestIncrementalPublicationRecovery:
         result = indexer.incremental_index(
             reporter=reporter,
             changed_paths=[missing],
+            preflight=indexer.preflight_changed_paths([missing]),
         )
 
         assert store.get_code_ids_by_paths({rel_path}) == []
@@ -227,7 +241,10 @@ class TestCodeEmbedFormatRebuild:
 
         indexer = code_project["code_indexer"]
         store = code_project["store"]
-        indexer.full_index(reporter=NullProgressReporter())
+        indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
         chunk_total = store.count_code()
         assert chunk_total > 0
 
@@ -237,7 +254,10 @@ class TestCodeEmbedFormatRebuild:
         meta.pop("__code_embed_schema__")
         meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
-        result = indexer.incremental_index(reporter=NullProgressReporter())
+        result = indexer.incremental_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
         # A rebuild re-embeds everything instead of a no-op pass.
         assert result.added == chunk_total
         stamped = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -250,7 +270,8 @@ class TestCodebaseFullIndex:
     @pytest.mark.timeout(120)
     def test_full_index_produces_chunks(self, code_project: _CodeProject) -> None:
         result = code_project["code_indexer"].full_index(
-            reporter=NullProgressReporter()
+            reporter=NullProgressReporter(),
+            preflight=code_project["code_indexer"].preflight_content(),
         )
         assert result.added > 0
         assert result.total > 0
@@ -258,7 +279,10 @@ class TestCodebaseFullIndex:
 
     @pytest.mark.timeout(120)
     def test_full_index_chunks_in_store(self, code_project: _CodeProject) -> None:
-        code_project["code_indexer"].full_index(reporter=NullProgressReporter())
+        code_project["code_indexer"].full_index(
+            reporter=NullProgressReporter(),
+            preflight=code_project["code_indexer"].preflight_content(),
+        )
         store = code_project["store"]
         assert store.count_code() > 0
 
@@ -267,10 +291,16 @@ class TestCodebaseFullIndex:
         indexer = code_project["code_indexer"]
         store = code_project["store"]
 
-        indexer.full_index(reporter=NullProgressReporter())
+        indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
         first_count = store.count_code()
 
-        indexer.full_index(reporter=NullProgressReporter())
+        indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
         second_count = store.count_code()
 
         assert first_count == second_count
@@ -294,7 +324,10 @@ class TestCodebaseFullIndex:
         root = code_project["root"]
 
         # Seed both collections.
-        code_project["code_indexer"].full_index(reporter=NullProgressReporter())
+        code_project["code_indexer"].full_index(
+            reporter=NullProgressReporter(),
+            preflight=code_project["code_indexer"].preflight_content(),
+        )
         code_count_before = store.count_code()
         assert code_count_before > 0, "test prelude must produce code chunks"
 
@@ -322,9 +355,15 @@ class TestCodebaseIncrementalIndex:
         self, code_project: _CodeProject
     ) -> None:
         indexer = code_project["code_indexer"]
-        indexer.full_index(reporter=NullProgressReporter())
+        indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
 
-        result = indexer.incremental_index(reporter=NullProgressReporter())
+        result = indexer.incremental_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
         assert result.added == 0
         assert result.removed == 0
 
@@ -334,11 +373,17 @@ class TestCodebaseIncrementalIndex:
         store = code_project["store"]
         src_dir = code_project["src_dir"]
 
-        indexer.full_index(reporter=NullProgressReporter())
+        indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
         count_before = store.count_code()
 
         (src_dir / "extra.py").write_text(SAMPLE_PYTHON_2, encoding="utf-8")
-        result = indexer.incremental_index(reporter=NullProgressReporter())
+        result = indexer.incremental_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
 
         assert result.added > 0
         assert store.count_code() > count_before
@@ -358,7 +403,10 @@ class TestCodebaseIncrementalIndex:
         store = code_project["store"]
         root = code_project["root"]
         source = code_project["src_dir"] / "many_units.py"
-        indexer.full_index(reporter=NullProgressReporter())
+        indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
         source.write_text(
             "\n\n".join(
                 (
@@ -388,6 +436,11 @@ class TestCodebaseIncrementalIndex:
             result = indexer.incremental_index(
                 reporter=reporter,
                 changed_paths=[source] if scoped else None,
+                preflight=(
+                    indexer.preflight_changed_paths([source])
+                    if scoped
+                    else indexer.preflight_content()
+                ),
             )
         finally:
             for key, value in previous.items():
@@ -467,7 +520,10 @@ class TestCodebaseIncrementalIndex:
             'on_error = "fail"\n',
             encoding="utf-8",
         )
-        indexer.full_index(reporter=NullProgressReporter())
+        indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
         metadata_before = indexer._load_meta()  # pyright: ignore[reportPrivateUsage]
 
         good = src_dir / "a_good.py"
@@ -492,6 +548,11 @@ class TestCodebaseIncrementalIndex:
                 indexer.incremental_index(
                     reporter=failure_reporter,
                     changed_paths=[good, failing] if scoped else None,
+                    preflight=(
+                        indexer.preflight_changed_paths([good, failing])
+                        if scoped
+                        else indexer.preflight_content()
+                    ),
                 )
 
             _assert_phase_balanced(failure_reporter.events)
@@ -507,6 +568,11 @@ class TestCodebaseIncrementalIndex:
             result = indexer.incremental_index(
                 reporter=retry_reporter,
                 changed_paths=[good, failing] if scoped else None,
+                preflight=(
+                    indexer.preflight_changed_paths([good, failing])
+                    if scoped
+                    else indexer.preflight_content()
+                ),
             )
             _assert_phase_balanced(retry_reporter.events)
         finally:
@@ -539,7 +605,10 @@ class TestCodebaseSearch:
     def test_search_codebase_returns_results(self, code_project: _CodeProject) -> None:
         from ... import VaultSearcher
 
-        code_project["code_indexer"].full_index(reporter=NullProgressReporter())
+        code_project["code_indexer"].full_index(
+            reporter=NullProgressReporter(),
+            preflight=code_project["code_indexer"].preflight_content(),
+        )
         model = code_project["model"]
         store = code_project["store"]
         root = code_project["root"]
@@ -562,7 +631,10 @@ class TestCodebaseSearch:
         tests_dir = code_project["src_dir"].parent / "tests"
         tests_dir.mkdir()
         (tests_dir / "test_sample.py").write_text(SAMPLE_PYTHON, encoding="utf-8")
-        code_project["code_indexer"].full_index(reporter=NullProgressReporter())
+        code_project["code_indexer"].full_index(
+            reporter=NullProgressReporter(),
+            preflight=code_project["code_indexer"].preflight_content(),
+        )
 
         searcher = VaultSearcher(
             code_project["root"],
@@ -598,7 +670,10 @@ class TestCodebaseSearch:
         tests_dir = code_project["src_dir"].parent / "tests"
         tests_dir.mkdir()
         (tests_dir / "test_sample.py").write_text(SAMPLE_PYTHON, encoding="utf-8")
-        code_project["code_indexer"].full_index(reporter=NullProgressReporter())
+        code_project["code_indexer"].full_index(
+            reporter=NullProgressReporter(),
+            preflight=code_project["code_indexer"].preflight_content(),
+        )
 
         searcher = VaultSearcher(
             code_project["root"],
@@ -624,7 +699,10 @@ class TestCodebaseSearch:
     ) -> None:
         from ... import VaultSearcher
 
-        code_project["code_indexer"].full_index(reporter=NullProgressReporter())
+        code_project["code_indexer"].full_index(
+            reporter=NullProgressReporter(),
+            preflight=code_project["code_indexer"].preflight_content(),
+        )
         model = code_project["model"]
         store = code_project["store"]
         root = code_project["root"]
@@ -647,7 +725,10 @@ class TestCodebaseSearch:
         """Search for 'calculator' returns results with Calculator class content."""
         from ... import VaultSearcher
 
-        code_project["code_indexer"].full_index(reporter=NullProgressReporter())
+        code_project["code_indexer"].full_index(
+            reporter=NullProgressReporter(),
+            preflight=code_project["code_indexer"].preflight_content(),
+        )
         searcher = VaultSearcher(
             code_project["root"],
             code_project["model"],
@@ -668,7 +749,10 @@ class TestCodebaseSearch:
         """Codebase search results must include line_start metadata."""
         from ... import VaultSearcher
 
-        code_project["code_indexer"].full_index(reporter=NullProgressReporter())
+        code_project["code_indexer"].full_index(
+            reporter=NullProgressReporter(),
+            preflight=code_project["code_indexer"].preflight_content(),
+        )
         searcher = VaultSearcher(
             code_project["root"],
             code_project["model"],
@@ -688,7 +772,10 @@ class TestCodebaseSearch:
         """Snippets should contain actual source code, not empty strings."""
         from ... import VaultSearcher
 
-        code_project["code_indexer"].full_index(reporter=NullProgressReporter())
+        code_project["code_indexer"].full_index(
+            reporter=NullProgressReporter(),
+            preflight=code_project["code_indexer"].preflight_content(),
+        )
         searcher = VaultSearcher(
             code_project["root"],
             code_project["model"],
@@ -714,7 +801,10 @@ class TestCodebaseIncrementalModifyDelete:
         src_dir = code_project["src_dir"]
         sample = src_dir / "sample.py"
 
-        indexer.full_index(reporter=NullProgressReporter())
+        indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
         original = sample.read_text(encoding="utf-8")
 
         try:
@@ -722,7 +812,10 @@ class TestCodebaseIncrementalModifyDelete:
                 original + "\n\ndef new_function():\n    return 42\n",
                 encoding="utf-8",
             )
-            result = indexer.incremental_index(reporter=NullProgressReporter())
+            result = indexer.incremental_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+            )
             assert result.updated >= 1 or result.added >= 1, (
                 f"Expected updated/added >= 1 after modify, got "
                 f"updated={result.updated}, added={result.added}"
@@ -740,13 +833,19 @@ class TestCodebaseIncrementalModifyDelete:
         # Add a second file then index
         extra = src_dir / "extra.py"
         extra.write_text(SAMPLE_PYTHON_2, encoding="utf-8")
-        indexer.full_index(reporter=NullProgressReporter())
+        indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
         count_before = store.count_code()
         assert count_before > 0
 
         # Delete the extra file and re-index incrementally
         extra.unlink()
-        result = indexer.incremental_index(reporter=NullProgressReporter())
+        result = indexer.incremental_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
         assert result.removed >= 1, f"Expected removed >= 1, got {result.removed}"
         assert store.count_code() < count_before
 
@@ -789,7 +888,10 @@ class TestVaultragignore:
         store = VaultStore(tmp_path)
         try:
             indexer = CodebaseIndexer(tmp_path, model, store)
-            result = indexer.full_index(reporter=NullProgressReporter())
+            result = indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+            )
 
             # vendor.py excluded - only app.py chunks should exist
             assert result.added > 0
@@ -820,7 +922,10 @@ class TestVaultragignore:
         store = VaultStore(tmp_path)
         try:
             indexer = CodebaseIndexer(tmp_path, model, store)
-            indexer.full_index(reporter=NullProgressReporter())
+            indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+            )
             ids_before = store.get_all_code_ids()
             paths_before = {cid.split(":")[0] for cid in ids_before}
             assert "src/vendor.py" not in paths_before
@@ -828,7 +933,11 @@ class TestVaultragignore:
             # Remove .vaultragignore and re-index
             ignore_file.unlink()
             indexer2 = CodebaseIndexer(tmp_path, model, store)
-            indexer2.full_index(clean=True, reporter=NullProgressReporter())
+            indexer2.full_index(
+                clean=True,
+                reporter=NullProgressReporter(),
+                preflight=indexer2.preflight_content(),
+            )
             ids_after = store.get_all_code_ids()
             paths_after = {cid.split(":")[0] for cid in ids_after}
             assert "src/vendor.py" in paths_after
@@ -856,7 +965,10 @@ class TestVaultragignore:
         store = VaultStore(tmp_path)
         try:
             indexer = CodebaseIndexer(tmp_path, model, store)
-            indexer.full_index(reporter=NullProgressReporter())
+            indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+            )
             all_ids = store.get_all_code_ids()
             paths_indexed = {cid.split(":")[0] for cid in all_ids}
             assert "public.py" in paths_indexed
@@ -885,7 +997,10 @@ class TestVaultragignore:
             indexer = CodebaseIndexer(
                 tmp_path, model, store, extra_excludes=["src/temp.py"]
             )
-            indexer.full_index(reporter=NullProgressReporter())
+            indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+            )
             all_ids = store.get_all_code_ids()
             paths_indexed = {cid.split(":")[0] for cid in all_ids}
             assert "src/app.py" in paths_indexed

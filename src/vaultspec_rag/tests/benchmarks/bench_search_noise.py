@@ -156,8 +156,10 @@ def noise_searcher(
     root = tmp_path_factory.mktemp("noise-corpus")
     _build_corpus(root)
     store = VaultStore(root)
-    CodebaseIndexer(root, embedding_model, store).full_index(
-        reporter=NullProgressReporter()
+    code_indexer = CodebaseIndexer(root, embedding_model, store)
+    code_indexer.full_index(
+        reporter=NullProgressReporter(),
+        preflight=code_indexer.preflight_content(),
     )
     searcher = VaultSearcher(root, embedding_model, store)
     yield searcher, root

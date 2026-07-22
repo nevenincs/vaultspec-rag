@@ -204,7 +204,9 @@ def test_config_edit_during_extraction_cannot_change_active_snapshot(
                 (ContentRoute("z_markup.html", ContentKind.CODE),),
             ),
         )
-        entry_policy = indexer._resolve_operation_policy()
+        changed_paths = [paths.source, paths.html]
+        preflight = indexer.preflight_changed_paths(changed_paths)
+        entry_policy = preflight.policy
         entry_code = entry_policy.fingerprints_for(ContentKind.CODE)
         entry_rule = entry_policy.preprocess_rules[0].materialize()
         assert entry_policy.html_strip
@@ -214,7 +216,8 @@ def test_config_edit_during_extraction_cannot_change_active_snapshot(
                 future = pool.submit(
                     indexer.incremental_index,
                     reporter=NullProgressReporter(),
-                    changed_paths=[paths.source, paths.html],
+                    changed_paths=preflight.changed_paths,
+                    preflight=preflight,
                 )
                 result = _cross_mutation_barrier(future, paths, html_key)
 

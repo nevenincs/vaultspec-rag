@@ -9,30 +9,9 @@ related:
   - "[[2026-07-21-service-job-control-plan]]"
 ---
 
-<!-- FRONTMATTER RULES:
-     tags: one directory tag (hardcoded #audit) and one feature tag.
-     Replace service-job-control with a kebab-case feature tag, e.g. #foo-bar.
-     Additional tags may be appended below the required pair.
-
-     Related: use wiki-links as '[[yyyy-mm-dd-foo-bar]]'.
-
-     modified: CLI-maintained last-modified stamp; set at scaffold time,
-     refreshed by mutating CLI verbs and vault check fix; never hand-edit.
-
-     DO NOT add fields beyond those scaffolded; metadata lives
-     only in the frontmatter. -->
-
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the related: field above.
-     - NEVER use [[wiki-links]] or markdown links in the document body.
-     - NEVER reference file paths in the body. If you must name a source file,
-       class, or function, use inline backtick code: `src/module.py`. -->
-
 # `service-job-control` audit: `S18 watcher convergence`
 
 ## Scope
-
-<!-- What was audited and why -->
 
 Reviewed the complete S18 change in `src/vaultspec_rag/watcher.py` against the
 accepted service-job-control plan, ADR, research, the audit template, and the
@@ -47,15 +26,6 @@ failure fallback, persistence boundaries, and watcher-stop ownership.
 
 ## Findings
 
-<!-- A rolling log of findings: append one subsection per finding, grouped or ordered by
-     severity, using the heading form
-
-       ### S18 watcher convergence | {level} | {summary}
-
-     followed by a paragraph carrying the detail. S18 watcher convergence is a concise kebab-case slug,
-     {level} is the severity (critical, high, medium, low), and {summary} is a one-line
-     statement. Append continuously as findings surface; do not rewrite settled entries. -->
-
 ### S18 watcher convergence | medium | Legacy projection leaves paused watcher work reported as running
 
 `_sync_legacy_snapshot` projects canonical `paused` and `queued` snapshots only by
@@ -68,8 +38,6 @@ an S18 execution-safety blocker. It is nevertheless an operator-truth mismatch u
 the `W04.P12.S23` canonical route-shaping step replaces or corrects the compatibility projection.
 
 ## Recommendations
-
-<!-- Actionable recommendations -->
 
 Project `queued` and `paused` into a truthful non-running compatibility phase, or make
 the operator view consume the canonical manager snapshot before paused watcher control

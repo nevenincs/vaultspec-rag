@@ -155,7 +155,10 @@ def rag_components_with_code(
     components = _index_corpus(root, embedding_model)
 
     code_indexer = components["code_indexer"]
-    code_indexer.full_index(reporter=NullProgressReporter())
+    code_indexer.full_index(
+        reporter=NullProgressReporter(),
+        preflight=code_indexer.preflight_content(),
+    )
 
     yield cast(
         "RagComponentsWithManifest",

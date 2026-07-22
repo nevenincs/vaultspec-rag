@@ -169,7 +169,8 @@ class TestPreprocessEndToEnd:
         from ... import VaultSearcher
 
         result = preproc_project["code_indexer"].full_index(
-            reporter=NullProgressReporter()
+            reporter=NullProgressReporter(),
+            preflight=preproc_project["code_indexer"].preflight_content(),
         )
         assert result.preprocess_ok == 1
         assert result.preprocess_skipped == 0
@@ -200,7 +201,8 @@ class TestPreprocessEndToEnd:
         from ... import VaultSearcher
 
         result = preproc_project["code_indexer"].full_index(
-            reporter=NullProgressReporter()
+            reporter=NullProgressReporter(),
+            preflight=preproc_project["code_indexer"].preflight_content(),
         )
         assert result.preprocess_ok == 1
         assert result.preprocess_skipped == 0
@@ -335,14 +337,19 @@ class TestPreprocessEndToEnd:
     ) -> None:
         indexer = preproc_project["code_indexer"]
         store = preproc_project["store"]
-        indexer.full_index(reporter=NullProgressReporter())
+        indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
         before = store.count_code()
 
         new_pdf = preproc_project["root"] / "appendix.pdf"
         new_pdf.write_bytes(b"\x00\x01 another binary")
         # The scoped path is exactly what the watcher invokes on a change.
         result = indexer.incremental_index(
-            reporter=NullProgressReporter(), changed_paths=[new_pdf]
+            reporter=NullProgressReporter(),
+            changed_paths=[new_pdf],
+            preflight=indexer.preflight_changed_paths([new_pdf]),
         )
         assert result.preprocess_ok == 1
         assert result.added > 0
@@ -367,7 +374,10 @@ class TestPreprocessEndToEnd:
         store = VaultStore(tmp_path)
         try:
             indexer = CodebaseIndexer(tmp_path, model, store)
-            result = indexer.full_index(reporter=NullProgressReporter())
+            result = indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+            )
             assert result.preprocess_ok == 0
             assert result.preprocess_skipped == 1
             assert any("broken.pdf" in f for f in result.preprocess_failures)
@@ -396,7 +406,10 @@ class TestPreprocessEndToEnd:
         store = VaultStore(tmp_path)
         try:
             indexer = CodebaseIndexer(tmp_path, model, store)
-            indexer.full_index(reporter=NullProgressReporter())
+            indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+            )
             assert store.get_code_ids_by_paths({"drop.py"}), (
                 "precondition: drop.py must be indexed before the ignore edit"
             )
@@ -404,7 +417,9 @@ class TestPreprocessEndToEnd:
             ignore = tmp_path / ".vaultragignore"
             ignore.write_text("drop.py\n", encoding="utf-8")
             result = indexer.incremental_index(
-                reporter=NullProgressReporter(), changed_paths=[ignore]
+                reporter=NullProgressReporter(),
+                changed_paths=[ignore],
+                preflight=indexer.preflight_changed_paths([ignore]),
             )
             assert result.removed >= 1
             assert not store.get_code_ids_by_paths({"drop.py"}), (
@@ -441,7 +456,10 @@ class TestPreprocessEndToEnd:
         store = VaultStore(tmp_path)
         try:
             indexer = CodebaseIndexer(tmp_path, model, store)
-            indexer.full_index(reporter=NullProgressReporter())
+            indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+            )
             searcher = VaultSearcher(tmp_path, model, store)
             results = searcher.search_codebase(
                 "passthrough sentinel logistics", top_k=5
@@ -483,7 +501,10 @@ class TestPreprocessEndToEnd:
         try:
             _write_config(tmp_path, _config(_command(_emit("alpha"))))
             indexer = CodebaseIndexer(tmp_path, model, store)
-            indexer.full_index(reporter=NullProgressReporter())
+            indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+            )
             searcher = VaultSearcher(tmp_path, model, store)
             assert any(
                 "alpha" in r.snippet
@@ -492,7 +513,11 @@ class TestPreprocessEndToEnd:
 
             # Bump the command -> new cache key -> re-extract on clean rebuild.
             _write_config(tmp_path, _config(_command(_emit("beta"))))
-            indexer.full_index(clean=True, reporter=NullProgressReporter())
+            indexer.full_index(
+                clean=True,
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+            )
             beta = searcher.search_codebase("unique token beta", top_k=5)
             assert any("beta" in r.snippet for r in beta)
         finally:
@@ -521,7 +546,9 @@ class TestPreprocessEndToEnd:
         try:
             indexer = CodebaseIndexer(tmp_path, model, store)
             result = indexer.incremental_index(
-                reporter=NullProgressReporter(), changed_paths=[broken]
+                reporter=NullProgressReporter(),
+                changed_paths=[broken],
+                preflight=indexer.preflight_changed_paths([broken]),
             )
             assert result.preprocess_ok == 0
             assert result.preprocess_skipped == 1

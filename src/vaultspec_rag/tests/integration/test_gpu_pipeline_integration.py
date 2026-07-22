@@ -93,11 +93,13 @@ class TestPipelineParity:
                 s_res = serial_ix.full_index(
                     clean=True,
                     reporter=NullProgressReporter(),
+                    preflight=serial_ix.preflight_content(),
                 )
             with _Workers(4):  # explicit -> parallel consumer-thread pipeline
                 p_res = parallel_ix.full_index(
                     clean=True,
                     reporter=NullProgressReporter(),
+                    preflight=parallel_ix.preflight_content(),
                 )
 
             assert p_res.added == s_res.added
@@ -135,7 +137,11 @@ class TestConsumerFailurePropagates:
         try:
             ix = CodebaseIndexer(root, embedding_model, bad_store)
             with _Workers(4), pytest.raises(Exception) as excinfo:
-                ix.full_index(clean=True, reporter=NullProgressReporter())
+                ix.full_index(
+                    clean=True,
+                    reporter=NullProgressReporter(),
+                    preflight=ix.preflight_content(),
+                )
             # Guard against passing for the wrong reason (a test-code bug):
             # the failure must be a genuine runtime/upsert error, not an
             # AssertionError / NameError / TypeError from the test itself.
