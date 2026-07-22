@@ -24,15 +24,19 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Literal, NoReturn, cast
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, cast
 
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
+
+if TYPE_CHECKING:
+    from ._discovery import MachineResolution
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "DEFAULT_SEARCH_TIMEOUT_SECONDS",
     "MAX_SERVICE_RESPONSE_BYTES",
+    "ServiceUnavailableError",
     "_do_http_call",
     "_get_search_timeout",
     "_is_connection_refused",
@@ -49,6 +53,7 @@ __all__ = [
     "_try_http_search",
     "_try_http_set_job_desired_state",
     "_try_http_vault_document",
+    "resolve_service_port",
 ]
 
 DEFAULT_SEARCH_TIMEOUT_SECONDS = 300.0
@@ -63,6 +68,52 @@ type JobSource = Literal["vault", "code"]
 type JobMode = Literal["incremental", "rebuild"]
 type DesiredJobState = Literal["running", "paused", "cancelled"]
 type JobControlMode = Literal["graceful", "force"]
+
+
+class ServiceUnavailableError(RuntimeError):
+    """No usable service address, carrying the discovery evidence behind it.
+
+    Raised instead of returning a bare "service down": a live singleton holder
+    whose published address cannot be trusted is a different operator problem
+    from a machine with nothing running, and the caller cannot tell them apart
+    from an absent port alone.
+    """
+
+    def __init__(self, resolution: MachineResolution) -> None:
+        self.resolution = resolution
+        super().__init__(resolution.evidence())
+
+    @property
+    def is_degraded(self) -> bool:
+        """Whether a live holder exists whose publication was refused."""
+        return self.resolution.is_degraded
+
+    @property
+    def reason(self) -> str | None:
+        """The named refusal reason, when the resolution was degraded."""
+        return self.resolution.reason
+
+    @property
+    def holder_pid(self) -> int:
+        """The live singleton holder, or zero when none is held."""
+        return self.resolution.holder_pid
+
+
+def resolve_service_port() -> int:
+    """Return the live service port, or raise with the discovery evidence.
+
+    There is deliberately no compatibility fallback here: when a holder owns
+    the singleton but its pointer is untrustworthy, guessing an address would
+    send the caller to a service the owner never advertised. Failing fast with
+    the holder and pointer evidence is what lets a caller report the actual
+    condition instead of an opaque connection failure.
+    """
+    from ._discovery import resolve_machine_service
+
+    resolution = resolve_machine_service()
+    if resolution.is_ready and resolution.port is not None:
+        return resolution.port
+    raise ServiceUnavailableError(resolution)
 
 
 class ServiceResponseTooLargeError(ValueError):

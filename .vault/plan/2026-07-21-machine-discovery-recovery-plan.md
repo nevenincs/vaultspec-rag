@@ -87,8 +87,8 @@ Move status derivation into the shared client domain and make CLI status and doc
 
 Carry degraded discovery reasons through service-dependent transport errors without fallback or guessed addresses.
 
-- [ ] `W02.P07.S17` - Propagate typed degraded discovery through service-dependent transport errors without compatibility fallback; `src/vaultspec_rag/serviceclient/_transport.py`.
-- [ ] `W02.P07.S18` - Verify service clients fail fast with holder and pointer evidence for every degraded resolution; `src/vaultspec_rag/tests/test_http_admin_errors.py`.
+- [x] `W02.P07.S17` - Propagate typed degraded discovery through service-dependent transport errors without compatibility fallback; `src/vaultspec_rag/serviceclient/_transport.py`.
+- [x] `W02.P07.S18` - Verify service clients fail fast with holder and pointer evidence for every degraded resolution; `src/vaultspec_rag/tests/test_http_admin_errors.py`.
 
 ## Wave `W03` - bounded reconcile and public contract
 
