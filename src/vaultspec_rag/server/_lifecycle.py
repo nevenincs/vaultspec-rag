@@ -15,10 +15,13 @@ import json
 import logging
 import os
 import sys
+import threading
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
+    from .._machine_lock import MachineLockLease
     from ..storage_ops import (
         MaintenanceResult,
         ReclaimPolicy,
@@ -27,6 +30,8 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
+    "_DiscoveryPublisher",
+    "_daemon_discovery_snapshot",
     "_heartbeat_loop",
     "_heartbeat_tick_sync",
     "_install_daemon_shutdown_hooks",
@@ -48,6 +53,7 @@ from ..logging_config import log_event
 from ..serviceclient._discovery import (
     SERVICE_DISCOVERY_SCHEMA,
     SERVICE_DISCOVERY_VERSION,
+    SERVICE_PHASE_WARMING,
     _discovery_timestamp,
     _merge_service_status,
 )
@@ -87,6 +93,188 @@ def _status_file_path() -> Path:
 
     cfg = get_config()
     return Path(cfg.status_dir).expanduser() / "service.json"
+
+
+def _qdrant_discovery_fields() -> dict[str, object]:
+    """Return daemon-observed Qdrant identity fields for one snapshot."""
+    from .. import qdrant_runtime as _qr
+
+    supervisor = _qr.active_supervisor()
+    if supervisor is None:
+        return {}
+    from ..qdrant_runtime._resolve import read_qdrant_identity
+
+    identity = read_qdrant_identity()
+    supervised_pid = supervisor.pid
+    if (
+        supervised_pid is None
+        and identity is not None
+        and identity.http_port == supervisor.http_port
+    ):
+        supervised_pid = identity.qdrant_pid
+    fields: dict[str, object] = {
+        "qdrant_alive": supervisor.is_alive(),
+        "qdrant_port": supervisor.http_port,
+    }
+    if supervised_pid is not None:
+        fields["qdrant_pid"] = supervised_pid
+    if (
+        identity is not None
+        and identity.qdrant_pid == supervised_pid
+        and identity.http_port == supervisor.http_port
+    ):
+        fields.update(
+            {
+                "qdrant_version": identity.version,
+                "qdrant_start_time": identity.qdrant_start_time,
+                "qdrant_identity": {
+                    "pid": identity.qdrant_pid,
+                    "start_time": identity.qdrant_start_time,
+                    "port": identity.http_port,
+                    "version": identity.version,
+                    "storage_path": identity.storage_path,
+                },
+            }
+        )
+    return fields
+
+
+def _daemon_discovery_snapshot(
+    *,
+    phase: str,
+    started_at: str,
+) -> dict[str, object]:
+    """Build one complete discovery view from daemon-owned live state."""
+    from ..serviceclient._discovery import (
+        SERVICE_PHASE_RUNNING,
+        SERVICE_PHASE_WARMING,
+    )
+
+    if phase not in {SERVICE_PHASE_WARMING, SERVICE_PHASE_RUNNING}:
+        msg = f"unsupported daemon discovery phase: {phase!r}"
+        raise ValueError(msg)
+    if _m._service_port <= 0:
+        raise RuntimeError("service port is unavailable for discovery publication")
+    if not _m._SERVICE_TOKEN:
+        raise RuntimeError(
+            "service identity token is unavailable for discovery publication"
+        )
+    fields: dict[str, object] = {
+        "schema": SERVICE_DISCOVERY_SCHEMA,
+        "version": SERVICE_DISCOVERY_VERSION,
+        "pid": os.getpid(),
+        "parent_pid": os.getppid(),
+        "port": _m._service_port,
+        "phase": phase,
+        "started_at": started_at,
+        "last_heartbeat": _discovery_timestamp(),
+        "heartbeat_interval_s": _HEARTBEAT_INTERVAL_SECONDS,
+        "stale_after_s": _HEARTBEAT_STALENESS_SECONDS,
+        "service_token": _m._SERVICE_TOKEN,
+        "executable": sys.executable,
+        "prefix": sys.prefix,
+        "base_prefix": sys.base_prefix,
+        "virtual_env": os.environ.get("VIRTUAL_ENV"),
+        "python_version": sys.version.split()[0],
+    }
+    if _m._launch_token:
+        fields["launch_token"] = _m._launch_token
+    fields.update(_qdrant_discovery_fields())
+    return fields
+
+
+@dataclass(slots=True)
+class _DiscoveryPublisher:
+    """Serialize owner-authenticated heartbeat publication and shutdown."""
+
+    lease: MachineLockLease
+    started_at: str = field(default_factory=_discovery_timestamp)
+    phase: str = SERVICE_PHASE_WARMING
+    _guard: threading.RLock = field(
+        default_factory=threading.RLock,
+        init=False,
+        repr=False,
+    )
+    _stopping: bool = field(default=False, init=False, repr=False)
+
+    def publish_phase(self, phase: str) -> dict[str, object] | None:
+        """Set *phase* and publish it unless shutdown has begun."""
+        with self._guard:
+            if self._stopping:
+                return None
+            self.phase = phase
+            return self._publish_locked()
+
+    def heartbeat(self) -> dict[str, object] | None:
+        """Publish one heartbeat unless quiescence has begun."""
+        with self._guard:
+            if self._stopping:
+                return None
+            return self._publish_locked()
+
+    def quiesce(self) -> None:
+        """Prevent new publication and join any in-flight synchronous tick."""
+        with self._guard:
+            self._stopping = True
+
+    def cleanup(self) -> None:
+        """Delete both views under the retained owner lease."""
+        from .._machine_lock import delete_machine_discovery
+        from ..serviceclient._discovery import _delete_service_status
+
+        status_path = _m._status_file_path()
+        with self._guard:
+            self._stopping = True
+            try:
+                _delete_service_status(path=status_path)
+            except (OSError, RuntimeError, TimeoutError) as exc:
+                log_event(
+                    logger,
+                    "service.lifecycle",
+                    "cleanup_failed",
+                    severity=logging.WARNING,
+                    path=status_path,
+                    error=exc,
+                )
+            try:
+                delete_machine_discovery(self.lease)
+            except (OSError, PermissionError) as exc:
+                log_event(
+                    logger,
+                    "service.lifecycle",
+                    "cleanup_failed",
+                    severity=logging.WARNING,
+                    path=self.lease.path.parent / "service.json",
+                    error=exc,
+                )
+
+    def _publish_locked(self) -> dict[str, object]:
+        """Publish each view independently while holding the lifecycle gate."""
+        from .._machine_lock import publish_machine_discovery
+        from ..serviceclient._discovery import _replace_service_status
+
+        snapshot = _daemon_discovery_snapshot(
+            phase=self.phase,
+            started_at=self.started_at,
+        )
+        status_path = _m._status_file_path()
+        try:
+            _replace_service_status(snapshot, path=status_path)
+        except (OSError, RuntimeError, TimeoutError) as exc:
+            logger.debug(
+                "service status snapshot publication skipped: %s",
+                exc,
+                exc_info=True,
+            )
+        try:
+            publish_machine_discovery(self.lease, snapshot)
+        except (OSError, PermissionError, TypeError, ValueError) as exc:
+            logger.debug(
+                "machine discovery pointer publication skipped: %s",
+                exc,
+                exc_info=True,
+            )
+        return snapshot
 
 
 def _lifecycle_log(event: str, **kv: object) -> None:
