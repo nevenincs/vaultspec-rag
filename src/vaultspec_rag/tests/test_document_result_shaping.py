@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from ..search._result_shaping import map_document_results
+from ..search._models import DocumentSearchResult, SearchResult
+from ..search._result_shaping import map_document_results, select_combined_results
 
 pytestmark = pytest.mark.unit
 
@@ -53,3 +54,10 @@ def test_invalid_document_metadata_does_not_escape_as_mis_shaped_hit() -> None:
             }
         ]
     ) == []
+
+
+def test_combined_selection_is_stable_across_equal_domain_scores() -> None:
+    vault = SearchResult("v", "z.md", "Vault", 0.5, "v", "vault")
+    code = SearchResult("c", "a.py", "Code", 0.5, "c", "codebase")
+    document = DocumentSearchResult("d", "a.bin", "Document", 0.8, "d")
+    assert select_combined_results([code, vault, document], 2) == [document, vault]

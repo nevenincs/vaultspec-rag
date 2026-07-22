@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     from .._store_models import DocumentLocatorKind
     from ._models import DocumentSearchResult, ParsedQuery, SearchResult
 
+    type CombinedSearchResult = SearchResult | DocumentSearchResult
+
 
 def format_locator(payload: dict[str, object]) -> str | None:
     """Render a preprocess result's split locator into a readable string (#185).
@@ -276,6 +278,23 @@ def _document_locator(row: dict[str, object]) -> DocumentLocator | None:
     if isinstance(end, bool) or not isinstance(end, (int, str)) or end == "":
         end = None
     return DocumentLocator(cast("DocumentLocatorKind", kind), value, end)
+
+
+def select_combined_results(
+    candidates: list[CombinedSearchResult],
+    top_k: int,
+) -> list[CombinedSearchResult]:
+    """Apply the stable cross-domain tie-break and final top-k boundary."""
+    source_order = {"vault": 0, "codebase": 1, "document": 2}
+    return sorted(
+        candidates,
+        key=lambda result: (
+            -result.score,
+            source_order[result.source],
+            result.path,
+            result.id,
+        ),
+    )[: max(0, top_k)]
 
 
 def apply_prefer_nudge(results: list[SearchResult], prefer: str | None) -> None:
