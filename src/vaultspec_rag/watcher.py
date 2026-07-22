@@ -261,6 +261,102 @@ async def _await_retry_transaction[T](
     return await asyncio.wait_for(asyncio.shield(transaction), timeout=remaining)
 
 
+@dataclass
+class _DurableRetryState:
+    """Mutable bookkeeping shared across one durable-retry loop.
+
+    Held as an object so the attempt helper can arm the cancellation
+    deadline and throttle logging without threading four in/out values
+    through its signature.
+    """
+
+    delay: float = 0.01
+    next_log_at: float = 0.0
+    cancellation_requested: bool = False
+    cancellation_deadline: float | None = None
+
+    def request_cancellation(self) -> None:
+        """Record a cancellation and arm the durability deadline once.
+
+        The first request starts the clock; later ones keep it, so
+        repeated cancellation can never extend the window.
+        """
+        self.cancellation_requested = True
+        if self.cancellation_deadline is None:
+            self.cancellation_deadline = (
+                time.monotonic() + _CANCELLATION_DURABILITY_SECONDS
+            )
+
+    def expired(self) -> bool:
+        """Whether the durability window has closed."""
+        return (
+            self.cancellation_deadline is not None
+            and time.monotonic() >= self.cancellation_deadline
+        )
+
+    def sleep_seconds(self) -> float:
+        """Backoff delay, clamped to whatever durability budget remains."""
+        if self.cancellation_deadline is None:
+            return self.delay
+        remaining = max(0.0, self.cancellation_deadline - time.monotonic())
+        return min(self.delay, remaining)
+
+
+async def _attempt_durable_transaction[T](
+    operation: Callable[[], T],
+    *,
+    source: WatcherSource,
+    root_dir: Path,
+    action: str,
+    cancellation_fallback: Callable[[], object] | None,
+    state: _DurableRetryState,
+) -> tuple[T, bool] | None:
+    """Drive one transaction to a durable outcome.
+
+    Returns the result when it commits, or ``None`` when the caller
+    should back off and start a fresh transaction. Raises
+    ``CancelledError`` once the durability window closes.
+    """
+    transaction = asyncio.create_task(_run_retry_transaction(operation))
+    while True:
+        try:
+            result = await _await_retry_transaction(
+                transaction,
+                state.cancellation_deadline,
+            )
+        except asyncio.CancelledError:
+            state.request_cancellation()
+            continue
+        except TimeoutError:
+            transaction.cancel()
+            transaction.add_done_callback(_consume_background_result)
+            await _complete_cancellation_handoff(
+                cancellation_fallback,
+                source=source,
+                root_dir=root_dir,
+                action=action,
+            )
+            raise asyncio.CancelledError from None
+        except WatcherRetryUnavailableError as exc:
+            now = time.monotonic()
+            if now >= state.next_log_at:
+                log_event(
+                    logger,
+                    "service.watcher",
+                    "state_transaction_retry",
+                    severity=logging.WARNING,
+                    root=root_dir,
+                    source=source,
+                    action=action,
+                    retry_delay_seconds=f"{state.delay:.3f}",
+                    error=exc,
+                )
+                state.next_log_at = now + 5.0
+            return None
+        else:
+            return result, state.cancellation_requested
+
+
 async def _run_durable_retry_transaction[T](
     operation: Callable[[], T],
     *,
@@ -270,15 +366,9 @@ async def _run_durable_retry_transaction[T](
     cancellation_fallback: Callable[[], object] | None = None,
 ) -> tuple[T, bool]:
     """Retry transient state I/O and defer cancellation until it is durable."""
-    delay = 0.01
-    next_log_at = 0.0
-    cancellation_requested = False
-    cancellation_deadline: float | None = None
+    state = _DurableRetryState()
     while True:
-        if (
-            cancellation_deadline is not None
-            and time.monotonic() >= cancellation_deadline
-        ):
+        if state.expired():
             await _complete_cancellation_handoff(
                 cancellation_fallback,
                 source=source,
@@ -286,62 +376,21 @@ async def _run_durable_retry_transaction[T](
                 action=action,
             )
             raise asyncio.CancelledError
-        transaction = asyncio.create_task(_run_retry_transaction(operation))
-        while True:
-            try:
-                result = await _await_retry_transaction(
-                    transaction,
-                    cancellation_deadline,
-                )
-            except asyncio.CancelledError:
-                cancellation_requested = True
-                if cancellation_deadline is None:
-                    cancellation_deadline = (
-                        time.monotonic() + _CANCELLATION_DURABILITY_SECONDS
-                    )
-                continue
-            except TimeoutError:
-                transaction.cancel()
-                transaction.add_done_callback(_consume_background_result)
-                await _complete_cancellation_handoff(
-                    cancellation_fallback,
-                    source=source,
-                    root_dir=root_dir,
-                    action=action,
-                )
-                raise asyncio.CancelledError from None
-            except WatcherRetryUnavailableError as exc:
-                now = time.monotonic()
-                if now >= next_log_at:
-                    log_event(
-                        logger,
-                        "service.watcher",
-                        "state_transaction_retry",
-                        severity=logging.WARNING,
-                        root=root_dir,
-                        source=source,
-                        action=action,
-                        retry_delay_seconds=f"{delay:.3f}",
-                        error=exc,
-                    )
-                    next_log_at = now + 5.0
-                break
-            else:
-                return result, cancellation_requested
+        outcome = await _attempt_durable_transaction(
+            operation,
+            source=source,
+            root_dir=root_dir,
+            action=action,
+            cancellation_fallback=cancellation_fallback,
+            state=state,
+        )
+        if outcome is not None:
+            return outcome
         try:
-            remaining = (
-                None
-                if cancellation_deadline is None
-                else max(0.0, cancellation_deadline - time.monotonic())
-            )
-            await asyncio.sleep(delay if remaining is None else min(delay, remaining))
+            await asyncio.sleep(state.sleep_seconds())
         except asyncio.CancelledError:
-            cancellation_requested = True
-            if cancellation_deadline is None:
-                cancellation_deadline = (
-                    time.monotonic() + _CANCELLATION_DURABILITY_SECONDS
-                )
-        delay = min(1.0, delay * 2.0)
+            state.request_cancellation()
+        state.delay = min(1.0, state.delay * 2.0)
 
 
 async def _complete_cancellation_handoff(
@@ -374,6 +423,42 @@ def _consume_background_result[T](task: asyncio.Task[T]) -> None:
         task.result()
 
 
+def _abandon_fallback(task: asyncio.Task[object]) -> None:
+    """Detach a fallback whose deadline passed, without losing its result."""
+    task.cancel()
+    task.add_done_callback(_consume_background_result)
+
+
+async def _attempt_fallback_transaction(
+    operation: Callable[[], object], *, deadline: float
+) -> bool | None:
+    """Drive one handoff attempt.
+
+    Returns ``True`` on success, ``False`` when the deadline closed, or
+    ``None`` when the caller should back off and try again.
+    """
+    remaining = deadline - time.monotonic()
+    task = asyncio.create_task(_run_fallback_transaction(operation))
+    while True:
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=remaining)
+        except asyncio.CancelledError:
+            if task.cancelled():
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                _abandon_fallback(task)
+                return False
+            continue
+        except TimeoutError:
+            _abandon_fallback(task)
+            return False
+        except WatcherRetryUnavailableError:
+            return None
+        else:
+            return True
+
+
 async def _run_cancellation_fallback(operation: Callable[[], object]) -> bool:
     """Retry transient handoff I/O within one cancellation-owned deadline."""
     deadline = time.monotonic() + _CANCELLATION_FALLBACK_SECONDS
@@ -382,27 +467,9 @@ async def _run_cancellation_fallback(operation: Callable[[], object]) -> bool:
         remaining = deadline - time.monotonic()
         if remaining <= 0.0:
             return False
-        task = asyncio.create_task(_run_fallback_transaction(operation))
-        while True:
-            try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=remaining)
-            except asyncio.CancelledError:
-                if task.cancelled():
-                    raise
-                remaining = deadline - time.monotonic()
-                if remaining <= 0.0:
-                    task.cancel()
-                    task.add_done_callback(_consume_background_result)
-                    return False
-                continue
-            except TimeoutError:
-                task.cancel()
-                task.add_done_callback(_consume_background_result)
-                return False
-            except WatcherRetryUnavailableError:
-                break
-            else:
-                return True
+        outcome = await _attempt_fallback_transaction(operation, deadline=deadline)
+        if outcome is not None:
+            return outcome
         remaining = deadline - time.monotonic()
         if remaining <= 0.0:
             return False
