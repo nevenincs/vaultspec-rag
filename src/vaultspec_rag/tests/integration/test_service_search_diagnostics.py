@@ -345,19 +345,18 @@ def _wait_for_succeeded_job(
     )
 
 
-def _submit_vault_index(
+def _submit_clean_vault_rebuild(
     port: int,
     token: str,
     root: Path,
     *,
-    clean: bool,
     label: str,
 ) -> str:
     try:
         response = _do_http_call(
             port,
             "/reindex",
-            {"type": "vault", "clean": clean, "project_root": str(root)},
+            {"type": "vault", "clean": True, "project_root": str(root)},
             timeout=30,
         )
     except Exception as exc:
@@ -702,11 +701,10 @@ def _run_probes_during_matching_rebuild(
             matching_empty_query,
         )
         _wait_for_mcp_initialization(initialized, mcp_future, port, token)
-        job_id = _submit_vault_index(
+        job_id = _submit_clean_vault_rebuild(
             port,
             token,
             root,
-            clean=True,
             label="matching-rebuild",
         )
         running_job = _wait_for_running_job(port, token, job_id)
@@ -882,25 +880,6 @@ def _assert_stable_missing_index_response(
     assert empty["reason"] == "index_missing", evidence
 
 
-def _assert_matching_nonempty_response(
-    response: RawSearchResponse,
-    *,
-    expected_doc_id: str,
-    evidence: str,
-) -> None:
-    status, _headers, body = response
-    assert status == 200, evidence
-    assert "error" not in body, evidence
-    raw_results = body["results"]
-    assert isinstance(raw_results, list) and raw_results, evidence
-    results = cast("list[object]", raw_results)
-    assert any(
-        isinstance(raw_result, dict)
-        and cast("dict[str, object]", raw_result).get("id") == expected_doc_id
-        for raw_result in results
-    ), evidence
-
-
 def _assert_shared_unavailable_response(
     body: dict[str, object],
     *,
@@ -960,15 +939,6 @@ def test_search_index_unavailable_during_matching_rebuild(
     token = health.get("service_token")
     assert isinstance(token, str) and token, health
 
-    baseline_job_id = _submit_vault_index(
-        port,
-        token,
-        root,
-        clean=True,
-        label="baseline-index",
-    )
-    _wait_for_succeeded_job(port, token, baseline_job_id)
-
     matching_empty_query = "type:nonexistent availability authority probe"
     search_payload: dict[str, object] = {
         "query": matching_empty_query,
@@ -984,52 +954,6 @@ def test_search_index_unavailable_during_matching_rebuild(
         "project_root": str(root),
         "include_paths": ["__availability_no_match__/**"],
     }
-    known_doc = manifest.docs[0]
-    matching_nonempty_payload: dict[str, object] = {
-        "query": known_doc.needle,
-        "type": "vault",
-        "top_k": 5,
-        "project_root": str(root),
-    }
-    incremental_job_id = _submit_vault_index(
-        port,
-        token,
-        root,
-        clean=False,
-        label="matching-incremental-index",
-    )
-    incremental_running_job = _wait_for_running_job(
-        port,
-        token,
-        incremental_job_id,
-    )
-    matching_nonempty_response = _search_with_failure_evidence(
-        port,
-        token,
-        incremental_job_id,
-        matching_nonempty_payload,
-        label="matching nonempty search request",
-        last_job=incremental_running_job,
-    )
-    matching_nonempty_evidence = _bounded_failure_evidence(
-        port,
-        token,
-        incremental_job_id,
-        last_job=incremental_running_job,
-        last_response=matching_nonempty_response,
-    )
-    _assert_matching_nonempty_response(
-        matching_nonempty_response,
-        expected_doc_id=known_doc.doc_id,
-        evidence=matching_nonempty_evidence,
-    )
-    _wait_for_succeeded_job(
-        port,
-        token,
-        incremental_job_id,
-        last_response=matching_nonempty_response,
-    )
-
     job_id, running_job, probe_responses = _run_probes_during_matching_rebuild(
         port,
         token,

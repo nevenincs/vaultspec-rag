@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import replace
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -17,7 +18,10 @@ from ..job_models import (
     JobSpec,
     JobState,
 )
-from ..server._search_availability import build_index_unavailable_response
+from ..server._search_availability import (
+    build_index_unavailable_response,
+    classify_search_response,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -178,6 +182,61 @@ def test_second_observation_wins_when_job_ids_overlap(tmp_path: Path) -> None:
     ]
     assert index_state["matching_jobs_truncated"] is False
     assert index_state["status"] == "updating"
+
+
+def test_nonempty_result_remains_available_during_matching_rebuild(
+    tmp_path: Path,
+) -> None:
+    root = (tmp_path / "project").resolve()
+    manager = JobManager(max_nonterminal=1, state_path=None)
+    created = manager.create(
+        JobSpec(
+            JobOperation.INDEX,
+            JobSource.VAULT,
+            str(root),
+            JobMode.REBUILD,
+        ),
+        JobInitiator("test", "search availability", str(root)),
+        job_id="paused-rebuild",
+        start_paused=True,
+    )
+    assert created.job is not None
+    assert created.job.state is JobState.PAUSED
+    before_snapshot = [job.to_dict() for job in manager.list_jobs()]
+    after_snapshot = [job.to_dict() for job in manager.list_jobs()]
+    index_state: dict[str, object] = {
+        "source": "vault",
+        "indexed_count": 7,
+        "indexed_target_root": str(root),
+        "requested_target_root": str(root),
+        "target_matches": True,
+        "status": "available",
+    }
+    result: dict[str, object] = {
+        "request_id": "request-nonempty",
+        "results": [{"opaque_result": {"rank": 1, "tokens": ["kept", 7]}}],
+        "index_state": index_state,
+        "opaque_envelope": {
+            "nested": ["unchanged", {"sentinel": True}],
+            "nullable": None,
+        },
+    }
+    expected = deepcopy(result)
+
+    body, status_code = classify_search_response(
+        result,
+        before_snapshot=before_snapshot,
+        after_snapshot=after_snapshot,
+        requested_root=root,
+        source="vault",
+        request_id="request-nonempty",
+        index_state=index_state,
+        port=8766,
+    )
+
+    assert body is result
+    assert body == expected
+    assert status_code == 200
 
 
 def test_matching_jobs_are_bounded_but_hidden_rebuild_still_sets_status(

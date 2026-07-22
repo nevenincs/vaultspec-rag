@@ -59,7 +59,10 @@ from ._routes_storage import (
     _fetch_surveys,
     _shape_survey_payload,
 )
-from ._search_availability import build_index_unavailable_response
+from ._search_availability import (
+    classify_search_response,
+    matching_index_jobs,
+)
 from ._utils import (
     ProjectRootRequiredError,
     _clamp_top_k,
@@ -270,35 +273,6 @@ def _empty_search_diagnostics(
     }
 
 
-def _empty_search_response(
-    result: dict[str, object],
-    *,
-    job_snapshot_before: list[dict[str, object]],
-    root: Path,
-    search_type: object,
-    request_id: str,
-    port: int | None,
-) -> tuple[dict[str, object], int]:
-    index_state = cast(
-        "dict[str, object]",
-        result.get("index_state", {}),
-    )
-    source = "code" if search_type in ("code", "codebase") else "vault"
-    unavailable = build_index_unavailable_response(
-        before_snapshot=job_snapshot_before,
-        after_snapshot=_canonical_job_snapshot(),
-        requested_root=root,
-        source=source,
-        request_id=request_id,
-        index_state=index_state,
-        port=port,
-    )
-    if unavailable is not None:
-        return unavailable, 503
-    result["empty"] = _empty_search_diagnostics(index_state, port=port)
-    return result, 200
-
-
 def _canonical_job_snapshot() -> list[dict[str, object]]:
     """Return the canonical manager's copied, JSON-ready job view."""
     from ..jobs import get_job_manager
@@ -431,6 +405,12 @@ async def search_route(request: Request) -> JSONResponse:
         return _bad_request_invalid_root(exc)
 
     job_snapshot_before = _canonical_job_snapshot()
+    search_source = "code" if search_type == "code" else "vault"
+    admission_index_jobs = matching_index_jobs(
+        job_snapshot_before,
+        requested_root=root,
+        source=search_source,
+    )
     notes: dict[str, object] = {}
 
     def _run():
@@ -532,19 +512,25 @@ async def search_route(request: Request) -> JSONResponse:
         timing = result.get("timing")
         if isinstance(timing, dict):
             timing["server_total_seconds"] = total_seconds
-        if not result["results"]:
-            result, response_status = _empty_search_response(
-                result,
-                job_snapshot_before=job_snapshot_before,
-                root=root,
-                search_type=search_type,
-                request_id=request_id,
+        index_state = cast("dict[str, object]", result.get("index_state", {}))
+        result, response_status = classify_search_response(
+            result,
+            before_snapshot=job_snapshot_before,
+            after_snapshot=_canonical_job_snapshot(),
+            requested_root=root,
+            source=search_source,
+            request_id=request_id,
+            index_state=index_state,
+            port=request.url.port,
+        )
+        if response_status == 200 and not result["results"]:
+            result["empty"] = _empty_search_diagnostics(
+                index_state,
                 port=request.url.port,
             )
         _m._ensure_watcher_soon(root)
         hits = result.get("results")
         hit_count = len(cast("list[object]", hits)) if isinstance(hits, list) else 0
-        search_source = "code" if search_type in ("code", "codebase") else "vault"
         unavailable = (
             response_status == 503 and result.get("error") == "index_unavailable"
         )
@@ -560,6 +546,10 @@ async def search_route(request: Request) -> JSONResponse:
                 "search_type": search_source,
                 "root": root,
                 "results": hit_count,
+                "matching_index_jobs": len(admission_index_jobs.references),
+                "matching_index_job_ids": ",".join(
+                    job["id"] for job in admission_index_jobs.references
+                ),
                 "total_seconds": f"{total_seconds:.3f}",
             },
         )
