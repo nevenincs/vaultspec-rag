@@ -41,6 +41,7 @@ class JobSource(StrEnum):
 
     VAULT = "vault"
     CODE = "code"
+    DOCUMENT = "document"
     MAINTENANCE = "maintenance"
 
 
@@ -355,8 +356,8 @@ def job_spec_error(spec: JobSpec) -> str | None:
     """Return the canonical validation error for a submitted specification."""
     if spec.operation is not JobOperation.INDEX:
         return "Only indexing operations are managed by the controllable job runtime."
-    if spec.source not in {JobSource.VAULT, JobSource.CODE}:
-        return "Indexing jobs require a vault or code source."
+    if spec.source not in {JobSource.VAULT, JobSource.CODE, JobSource.DOCUMENT}:
+        return "Indexing jobs require a vault, code, or document source."
     if spec.mode is None:
         return "Indexing jobs require an incremental or rebuild mode."
     if spec.project_root is None or not spec.project_root.strip():

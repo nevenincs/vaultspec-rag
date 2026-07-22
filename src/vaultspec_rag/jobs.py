@@ -53,12 +53,19 @@ from .registry import get_registry
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from .api import AllIndexOutcomes
     from .indexer import CodebaseIndexer
     from .indexer._codebase_indexer import (
         CodeIndexPreflight,
         CodeScopedPreflight,
         ContentScanResult,
     )
+    from .indexer._content_policy import RootContentPolicy
+    from .indexer._document_indexer import (
+        DocumentIndexPreflight,
+        DocumentScopedPreflight,
+    )
+    from .progress import ProgressReporter
     from .service import ServiceRegistry
 
 logger = logging.getLogger(__name__)
@@ -89,6 +96,7 @@ __all__ = [
     "ResumeStrategy",
     "activate_index_job",
     "get_job_manager",
+    "index_all_domains",
     "record_finish",
     "record_progress",
     "record_start",
@@ -102,13 +110,40 @@ __all__ = [
     "start_reindex_codebase",
     "start_reindex_vault",
     "validate_code_index_policy",
+    "validate_document_index_policy",
+    "validate_document_support_profile",
     "validate_scoped_code_index_policy",
+    "validate_scoped_document_index_policy",
 ]
+
+
+def index_all_domains(
+    root: Path,
+    *,
+    full: bool = False,
+    clean: bool = False,
+    reporter: ProgressReporter | None = None,
+    model_name: str | None = None,
+    extra_excludes: list[str] | None = None,
+    content_policy: RootContentPolicy | None = None,
+) -> AllIndexOutcomes:
+    """Run all indexing domains without collapsing a partial failure."""
+    from .api import index_all
+
+    return index_all(
+        root,
+        full=full,
+        clean=clean,
+        reporter=reporter,
+        model_name=model_name,
+        extra_excludes=extra_excludes,
+        content_policy=content_policy,
+    )
 
 
 # Source of an activity: the documentation vault, the source codebase, or
 # the service's own scheduled storage maintenance.
-Source = Literal["vault", "code", "maintenance"]
+Source = Literal["vault", "code", "document", "maintenance"]
 # What initiated the activity: a reindex tool call, the filesystem watcher,
 # or the daemon's periodic schedule.
 Trigger = Literal["tool", "watcher", "schedule"]
@@ -694,6 +729,68 @@ def validate_code_index_policy(root: Path) -> CodeIndexPreflight:
     return _code_policy_indexer(root).preflight_content()
 
 
+def _document_policy_indexer(root: Path):
+    """Build a model-free document indexer used only for policy preflight."""
+    from .indexer import DocumentIndexer
+
+    return DocumentIndexer(
+        root.resolve(),
+        model=cast("Any", None),
+        store=cast("Any", None),
+    )
+
+
+def validate_document_index_policy(root: Path) -> DocumentIndexPreflight:
+    """Resolve and discover document work before durable mutation."""
+    return _document_policy_indexer(root).preflight_content()
+
+
+def validate_scoped_document_index_policy(
+    root: Path,
+    changed_paths: tuple[Path, ...] | frozenset[Path],
+) -> DocumentScopedPreflight:
+    """Validate one exact document watcher scope without full discovery."""
+    return _document_policy_indexer(root).preflight_changed_paths(changed_paths)
+
+
+def validate_document_support_profile(
+    root: Path,
+    preflight: DocumentIndexPreflight | DocumentScopedPreflight,
+) -> None:
+    """Enforce the named document profile before any model or mutable resource."""
+    import shutil
+
+    import psutil
+
+    from .config import get_config
+    from .index_profiles import (
+        IndexDomain,
+        SupportMeasurement,
+        validate_profile_admission,
+    )
+    from .indexer._document_indexer import DocumentIndexPreflight
+
+    paths = (
+        preflight.files
+        if isinstance(preflight, DocumentIndexPreflight)
+        else preflight.changed_paths
+    )
+    existing = tuple(path for path in paths if path.is_file())
+    measurement = SupportMeasurement(
+        source_files=len(existing),
+        source_bytes=sum(path.stat().st_size for path in existing),
+    )
+    cfg = get_config()
+    validate_profile_admission(
+        cfg.index_support_profile,
+        IndexDomain.DOCUMENT,
+        measurement,
+        backend="server" if cfg.effective_server_mode() else "local",
+        available_ram_bytes=int(psutil.virtual_memory().total),
+        free_disk_bytes=int(shutil.disk_usage(root).free),
+    )
+
+
 def scan_code_index_preflight(root: Path) -> ContentScanResult:
     """Return bounded admission from the production structured scanner."""
     return validate_code_index_policy(root).scan
@@ -785,7 +882,7 @@ def _prepare_index_job_activation(
 ) -> JobOutcome:
     """Publish legacy observability and bind execution outside the event loop."""
     root = Path(snapshot.spec.project_root) if snapshot.spec.project_root else None
-    source = "vault" if snapshot.spec.source is JobSource.VAULT else "code"
+    source = snapshot.spec.source.value
     trigger: Trigger = (
         cast("Trigger", snapshot.initiator.kind)
         if snapshot.initiator.kind in {"watcher", "schedule"}

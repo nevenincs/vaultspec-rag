@@ -51,13 +51,15 @@ from .watcher_retry import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
     from .graph_cache import GraphCache
     from .indexer import CodebaseIndexer, DocumentIndexer, VaultIndexer
     from .indexer._codebase_indexer import CodeExecutionPreflight
+    from .indexer._document_indexer import DocumentExecutionPreflight
     from .indexer._resolved_policy import ResolvedIndexPolicy
-    from .service import ServiceRegistry
+    from .indexer._vault_prep import IndexResult
+    from .service import ProjectSlot, ServiceRegistry
 
 logger = logging.getLogger(__name__)
 _CANCELLATION_DURABILITY_SECONDS = 3.0
@@ -229,6 +231,30 @@ def _is_code_change(
         return False
     disposition = policy.classify(str(rel).replace("\\", "/")).disposition
     return disposition.admitted and disposition.kind is ContentKind.CODE
+
+
+def _is_document_change(
+    path: Path,
+    root_dir: Path,
+    vault_dir: Path,
+    policy: ResolvedIndexPolicy | None,
+) -> bool:
+    """Return whether one watcher path is document-owned in this snapshot."""
+    try:
+        path.relative_to(vault_dir)
+        return False
+    except ValueError:
+        pass
+    try:
+        rel = path.relative_to(root_dir)
+    except ValueError:
+        return False
+    if path.name in _CONFIG_FILENAMES:
+        return True
+    if policy is None:
+        return False
+    disposition = policy.classify(rel.as_posix()).disposition
+    return disposition.admitted and disposition.kind is ContentKind.DOCUMENT
 
 
 def _refresh_watcher_policy(
@@ -538,13 +564,15 @@ async def _persist_convergence_pending(
     return cancellation_requested
 
 
-async def _persist_observed_sources(
+async def _persist_observed_sources(  # noqa: PLR0912 - durable source settlement
     *,
     vault_events_observed: bool,
     code_events_observed: bool,
     vault_retry: WatcherRetryPolicy,
     code_retry: WatcherRetryPolicy,
     root_dir: Path,
+    document_events_observed: bool = False,
+    document_retry: WatcherRetryPolicy | None = None,
 ) -> bool:
     """Settle every source in one accepted batch before delivering cancellation."""
     cancellation_requested = False
@@ -553,6 +581,10 @@ async def _persist_observed_sources(
         (vault_events_observed, WatcherSource.VAULT, vault_retry),
         (code_events_observed, WatcherSource.CODE, code_retry),
     ]
+    if document_retry is not None:
+        operations.append(
+            (document_events_observed, WatcherSource.DOCUMENT, document_retry)
+        )
     tasks = [
         asyncio.create_task(
             _persist_convergence_pending(
@@ -626,6 +658,90 @@ def _raise_if_cancellation_requested(requested: bool) -> None:
         raise asyncio.CancelledError
 
 
+async def _initialize_retry_policies(
+    root_dir: Path,
+    *,
+    document_enabled: bool,
+) -> tuple[WatcherRetryPolicy, WatcherRetryPolicy, WatcherRetryPolicy | None]:
+    """Open one durable retry authority per enabled indexing domain."""
+    initialized: list[tuple[WatcherRetryPolicy, bool]] = []
+    for source in (WatcherSource.VAULT, WatcherSource.CODE):
+        initialized.append(
+            await _run_durable_retry_transaction(
+                lambda selected=source: WatcherRetryPolicy.for_root(root_dir, selected),
+                source=source,
+                root_dir=root_dir,
+                action="initialize",
+            )
+        )
+    document: tuple[WatcherRetryPolicy, bool] | None = None
+    if document_enabled:
+        document = await _run_durable_retry_transaction(
+            lambda: WatcherRetryPolicy.for_root(root_dir, WatcherSource.DOCUMENT),
+            source=WatcherSource.DOCUMENT,
+            root_dir=root_dir,
+            action="initialize",
+        )
+    _raise_if_cancellation_requested(
+        any(cancelled for _policy, cancelled in initialized)
+        or (document is not None and document[1])
+    )
+    return initialized[0][0], initialized[1][0], document[0] if document else None
+
+
+def _record_watcher_changes(
+    changes: Iterable[tuple[Change, str]],
+    *,
+    root_dir: Path,
+    vault_dir: Path,
+    policy: ResolvedIndexPolicy | None,
+    vault_slot: _WatcherConvergenceSlot,
+    code_slot: _WatcherConvergenceSlot,
+    document_slot: _WatcherConvergenceSlot | None,
+) -> tuple[bool, bool, bool]:
+    """Classify one intake batch once and record each domain's dirty paths."""
+    observed = [False, False, False]
+    accepted_changes = {Change.added, Change.modified, Change.deleted}
+    for change_type, path_str in changes:
+        if change_type not in accepted_changes:
+            continue
+        path = Path(path_str)
+        if _is_vault_change(path, vault_dir):
+            vault_slot.add_dirty(path)
+            observed[0] = True
+            continue
+        if _is_code_change(path, root_dir, vault_dir, policy):
+            code_slot.add_dirty(path)
+            observed[1] = True
+        if document_slot is not None and _is_document_change(
+            path, root_dir, vault_dir, policy
+        ):
+            document_slot.add_dirty(path)
+            observed[2] = True
+    return observed[0], observed[1], observed[2]
+
+
+async def _reconcile_watcher_slots(
+    vault_slot: _WatcherConvergenceSlot,
+    code_slot: _WatcherConvergenceSlot,
+    document_slot: _WatcherConvergenceSlot | None,
+    *,
+    cooldown: float,
+    now: float,
+    graph_cache: GraphCache,
+) -> None:
+    """Give each domain an independent convergence opportunity."""
+    await _reconcile_watcher_slot(
+        vault_slot,
+        cooldown=cooldown,
+        now=now,
+        secondary_graph_cache=graph_cache,
+    )
+    await _reconcile_watcher_slot(code_slot, cooldown=cooldown, now=now)
+    if document_slot is not None:
+        await _reconcile_watcher_slot(document_slot, cooldown=cooldown, now=now)
+
+
 async def watch_and_reindex(
     root_dir: Path,
     vault_dir: Path,
@@ -672,19 +788,10 @@ async def watch_and_reindex(
         Indexing errors are caught and logged via ``logger.exception``.
     """
     try:
-        vault_retry, vault_start_cancelled = await _run_durable_retry_transaction(
-            lambda: WatcherRetryPolicy.for_root(root_dir, WatcherSource.VAULT),
-            source=WatcherSource.VAULT,
-            root_dir=root_dir,
-            action="initialize",
+        vault_retry, code_retry, document_retry = await _initialize_retry_policies(
+            root_dir,
+            document_enabled=document_indexer is not None,
         )
-        code_retry, code_start_cancelled = await _run_durable_retry_transaction(
-            lambda: WatcherRetryPolicy.for_root(root_dir, WatcherSource.CODE),
-            source=WatcherSource.CODE,
-            root_dir=root_dir,
-            action="initialize",
-        )
-        _raise_if_cancellation_requested(vault_start_cancelled or code_start_cancelled)
     except Exception as exc:
         log_event(
             logger,
@@ -709,6 +816,14 @@ async def watch_and_reindex(
         vault_next_retry_at=f"{vault_retry.state.next_retry_at:.3f}",
         code_circuit_state=code_retry.state.circuit_state,
         code_next_retry_at=f"{code_retry.state.next_retry_at:.3f}",
+        document_circuit_state=(
+            document_retry.state.circuit_state if document_retry is not None else None
+        ),
+        document_next_retry_at=(
+            f"{document_retry.state.next_retry_at:.3f}"
+            if document_retry is not None
+            else None
+        ),
     )
     resolved_root = root_dir.resolve()
     if (
@@ -737,6 +852,16 @@ async def watch_and_reindex(
         owner_registry,
         code_retry,
     )
+    document_slot = (
+        _WatcherConvergenceSlot(
+            JobSource.DOCUMENT,
+            resolved_root,
+            owner_registry,
+            document_retry,
+        )
+        if document_retry is not None
+        else None
+    )
     # One immutable snapshot governs ordinary watcher intake until an
     # index-shaping control event advances the watcher generation. The list is
     # a closure cell shared with ``watch_filter``; invalid policy edits retain
@@ -756,14 +881,13 @@ async def watch_and_reindex(
             watch_filter=lambda _change, path: (
                 _is_vault_change(Path(path), vault_dir)
                 or _is_code_change(Path(path), root_dir, vault_dir, code_policy[0])
+                or _is_document_change(Path(path), root_dir, vault_dir, code_policy[0])
             ),
         ):
             # ``changes`` is empty on an idle tick (yield_on_timeout): the loop
             # body below still runs, re-checking the cooldown and flushing any
             # carried-forward pending set, so a change suppressed during a
             # cooldown window is reconciled even when no further change arrives.
-            vault_events_observed = False
-            code_events_observed = False
             policy_changed = any(
                 Path(path_str).name in _CONFIG_FILENAMES
                 for _change_type, path_str in changes
@@ -774,26 +898,27 @@ async def watch_and_reindex(
                     root_dir,
                     code_policy[0],
                 )
-            for change_type, path_str in changes:
-                path = Path(path_str)
-                if change_type in (Change.added, Change.modified, Change.deleted):
-                    if _is_vault_change(path, vault_dir):
-                        vault_slot.add_dirty(path)
-                        vault_events_observed = True
-                    elif _is_code_change(
-                        path,
-                        root_dir,
-                        vault_dir,
-                        code_policy[0],
-                    ):
-                        code_slot.add_dirty(path)
-                        code_events_observed = True
+            (
+                vault_events_observed,
+                code_events_observed,
+                document_events_observed,
+            ) = _record_watcher_changes(
+                changes,
+                root_dir=root_dir,
+                vault_dir=vault_dir,
+                policy=code_policy[0],
+                vault_slot=vault_slot,
+                code_slot=code_slot,
+                document_slot=document_slot,
+            )
 
             cancellation_requested = await _persist_observed_sources(
                 vault_events_observed=vault_events_observed,
                 code_events_observed=code_events_observed,
+                document_events_observed=document_events_observed,
                 vault_retry=vault_retry,
                 code_retry=code_retry,
+                document_retry=document_retry,
                 root_dir=root_dir,
             )
             _raise_if_cancellation_requested(cancellation_requested)
@@ -802,16 +927,13 @@ async def watch_and_reindex(
 
             now = time.monotonic()
 
-            await _reconcile_watcher_slot(
+            await _reconcile_watcher_slots(
                 vault_slot,
-                cooldown=cooldown,
-                now=now,
-                secondary_graph_cache=graph_cache,
-            )
-            await _reconcile_watcher_slot(
                 code_slot,
+                document_slot,
                 cooldown=cooldown,
                 now=now,
+                graph_cache=graph_cache,
             )
     except Exception as exc:
         log_event(
@@ -961,6 +1083,7 @@ async def _submit_watcher_job(
     """Admit and bind one manager-owned watcher attempt, or coalesce on dedupe."""
     candidate_paths = slot.dirty_paths()
     code_preflight = None
+    document_preflight = None
     if slot.source is JobSource.CODE:
         policy_resolver = (
             _jobs.validate_code_index_policy
@@ -973,6 +1096,21 @@ async def _submit_watcher_job(
         code_preflight = await _run_in_thread(
             policy_resolver,
             slot.root,
+        )
+    elif slot.source is JobSource.DOCUMENT:
+        policy_resolver = (
+            _jobs.validate_document_index_policy
+            if retry_decision.requires_unscoped
+            else partial(
+                _jobs.validate_scoped_document_index_policy,
+                changed_paths=candidate_paths,
+            )
+        )
+        document_preflight = await _run_in_thread(policy_resolver, slot.root)
+        await _run_in_thread(
+            _jobs.validate_document_support_profile,
+            slot.root,
+            document_preflight,
         )
     manager = _jobs.get_job_manager()
     generation = retry_decision.attempt_generation
@@ -1068,6 +1206,7 @@ async def _submit_watcher_job(
             initial_attempt=snapshot.attempt.number,
             initial_paths=captured_paths,
             initial_code_preflight=code_preflight,
+            initial_document_preflight=document_preflight,
             secondary_graph_cache=secondary_graph_cache,
         )
 
@@ -1419,6 +1558,105 @@ def _log_retry_settlement_result(
         )
 
 
+def _resolve_attempt_scope(
+    slot: _WatcherConvergenceSlot,
+    context: JobAttemptContext,
+    *,
+    initial_attempt: int,
+    initial_paths: frozenset[Path],
+) -> tuple[frozenset[Path] | None, frozenset[Path], bool]:
+    """Resolve and verify the exact watcher scope owned by this attempt."""
+    _generation, requires_unscoped = _retry_generation_for_attempt(
+        slot, context.attempt
+    )
+    captured = slot.captured_attempt(context.attempt)
+    if captured is None:
+        captured = slot.capture_attempt(context.attempt)
+    if context.attempt == initial_attempt and captured != initial_paths:
+        raise WatcherRetryStateError(
+            "managed watcher scope differs from its validated admission"
+        )
+    return (None if requires_unscoped else captured), captured, requires_unscoped
+
+
+def _resolve_attempt_preflights(
+    slot: _WatcherConvergenceSlot,
+    context: JobAttemptContext,
+    *,
+    captured_paths: frozenset[Path],
+    requires_unscoped: bool,
+    code_preflight: CodeExecutionPreflight | None,
+    document_preflight: DocumentExecutionPreflight | None,
+) -> tuple[CodeExecutionPreflight | None, DocumentExecutionPreflight | None]:
+    """Refresh admission authority for retries before model acquisition."""
+    if slot.source is JobSource.CODE and code_preflight is None:
+        context.control.checkpoint()
+        code_preflight = (
+            _jobs.validate_code_index_policy(slot.root)
+            if requires_unscoped
+            else _jobs.validate_scoped_code_index_policy(slot.root, captured_paths)
+        )
+        context.control.checkpoint()
+    if slot.source is JobSource.DOCUMENT and document_preflight is None:
+        context.control.checkpoint()
+        document_preflight = (
+            _jobs.validate_document_index_policy(slot.root)
+            if requires_unscoped
+            else _jobs.validate_scoped_document_index_policy(slot.root, captured_paths)
+        )
+        context.control.checkpoint()
+    if slot.source is JobSource.DOCUMENT:
+        if document_preflight is None:
+            raise RuntimeError("document watcher attempt has no admission preflight")
+        _jobs.validate_document_support_profile(slot.root, document_preflight)
+        context.control.checkpoint()
+    return code_preflight, document_preflight
+
+
+def _execute_project_incremental(
+    project: ProjectSlot,
+    slot: _WatcherConvergenceSlot,
+    context: JobAttemptContext,
+    *,
+    paths: frozenset[Path] | None,
+    code_preflight: CodeExecutionPreflight | None,
+    document_preflight: DocumentExecutionPreflight | None,
+    secondary_graph_cache: GraphCache | None,
+) -> IndexResult:
+    """Dispatch one exhaustively typed domain under an acquired project lease."""
+    reporter = _jobs.JobProgressReporter(context.job_id, context=context)
+    if slot.source is JobSource.VAULT:
+        result = project.vault_indexer.incremental_index(
+            reporter=reporter,
+            changed_paths=paths,
+            run_control=context.control,
+        )
+        project.graph_cache.invalidate()
+        if (
+            secondary_graph_cache is not None
+            and secondary_graph_cache is not project.graph_cache
+        ):
+            secondary_graph_cache.invalidate()
+        return result
+    if slot.source is JobSource.CODE:
+        if code_preflight is None:
+            raise RuntimeError("code watcher attempt has no execution preflight")
+        return project.code_indexer.incremental_index(
+            reporter=reporter,
+            changed_paths=paths,
+            preflight=code_preflight,
+            run_control=context.control,
+        )
+    if document_preflight is None:
+        raise RuntimeError("document watcher attempt has no execution preflight")
+    return project.document_indexer.incremental_index(
+        reporter=reporter,
+        changed_paths=paths,
+        preflight=document_preflight,
+        run_control=context.control,
+    )
+
+
 def _run_managed_index_attempt(
     slot: _WatcherConvergenceSlot,
     context: JobAttemptContext,
@@ -1426,36 +1664,31 @@ def _run_managed_index_attempt(
     initial_attempt: int,
     initial_paths: frozenset[Path],
     initial_code_preflight: CodeExecutionPreflight | None,
-    secondary_graph_cache: GraphCache | None,
+    initial_document_preflight: DocumentExecutionPreflight | None = None,
+    secondary_graph_cache: GraphCache | None = None,
 ) -> JobExecutionResult:
     """Run one watcher generation under manager and registry ownership."""
-    _generation, requires_unscoped = _retry_generation_for_attempt(
+    paths, captured_paths, requires_unscoped = _resolve_attempt_scope(
         slot,
-        context.attempt,
+        context,
+        initial_attempt=initial_attempt,
+        initial_paths=initial_paths,
     )
-    captured_paths = slot.captured_attempt(context.attempt)
-    if captured_paths is None:
-        captured_paths = slot.capture_attempt(context.attempt)
-    if context.attempt == initial_attempt and captured_paths != initial_paths:
-        raise WatcherRetryStateError(
-            "managed watcher scope differs from its validated admission"
-        )
-    paths = None if requires_unscoped else captured_paths
     code_preflight = (
         initial_code_preflight if context.attempt == initial_attempt else None
     )
-    if slot.source is JobSource.CODE and code_preflight is None:
-        context.control.checkpoint()
-        code_preflight = (
-            _jobs.validate_code_index_policy(slot.root)
-            if requires_unscoped
-            else _jobs.validate_scoped_code_index_policy(
-                slot.root,
-                captured_paths,
-            )
-        )
-        context.control.checkpoint()
-    pipeline_active = slot.source is JobSource.CODE
+    document_preflight = (
+        initial_document_preflight if context.attempt == initial_attempt else None
+    )
+    code_preflight, document_preflight = _resolve_attempt_preflights(
+        slot,
+        context,
+        captured_paths=captured_paths,
+        requires_unscoped=requires_unscoped,
+        code_preflight=code_preflight,
+        document_preflight=document_preflight,
+    )
+    pipeline_active = slot.source in {JobSource.CODE, JobSource.DOCUMENT}
     registry = slot.registry
     registry.load_model()
     try:
@@ -1466,33 +1699,15 @@ def _run_managed_index_attempt(
                     writer_lock_held=True,
                     pipeline_active=pipeline_active,
                 )
-                reporter = _jobs.JobProgressReporter(
-                    context.job_id,
-                    context=context,
+                result = _execute_project_incremental(
+                    project,
+                    slot,
+                    context,
+                    paths=paths,
+                    code_preflight=code_preflight,
+                    document_preflight=document_preflight,
+                    secondary_graph_cache=secondary_graph_cache,
                 )
-                if slot.source is JobSource.VAULT:
-                    result = project.vault_indexer.incremental_index(
-                        reporter=reporter,
-                        changed_paths=paths,
-                        run_control=context.control,
-                    )
-                    project.graph_cache.invalidate()
-                    if (
-                        secondary_graph_cache is not None
-                        and secondary_graph_cache is not project.graph_cache
-                    ):
-                        secondary_graph_cache.invalidate()
-                else:
-                    if code_preflight is None:
-                        raise RuntimeError(
-                            "code watcher attempt has no execution preflight"
-                        )
-                    result = project.code_indexer.incremental_index(
-                        reporter=reporter,
-                        changed_paths=paths,
-                        preflight=code_preflight,
-                        run_control=context.control,
-                    )
             finally:
                 context.set_resources(
                     writer_lock_held=False,

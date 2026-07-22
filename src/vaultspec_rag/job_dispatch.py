@@ -41,7 +41,7 @@ def bind_index_job(
     spec = snapshot.spec
     if (
         spec.operation is not JobOperation.INDEX
-        or spec.source not in {JobSource.VAULT, JobSource.CODE}
+        or spec.source not in {JobSource.VAULT, JobSource.CODE, JobSource.DOCUMENT}
         or spec.project_root is None
         or spec.mode is None
     ):
@@ -57,9 +57,18 @@ def bind_index_job(
             clean=clean,
             registry=registry,
         )
-    else:
+    elif spec.source is JobSource.CODE:
         runner = partial(
             _run_code_attempt,
+            manager=manager,
+            job_id=job_id,
+            root=root,
+            clean=clean,
+            registry=registry,
+        )
+    else:
+        runner = partial(
+            _run_document_attempt,
             manager=manager,
             job_id=job_id,
             root=root,
@@ -85,6 +94,7 @@ def _run_vault_attempt(
 ) -> JobExecutionResult:
     """Run one vault attempt through the exact service registry."""
     from .jobs import JobProgressReporter
+
     registry.load_model()
     try:
         with registry.lease(root) as slot:
@@ -169,6 +179,67 @@ def _run_code_attempt(
                     writer_lock_held=False,
                     pipeline_active=False,
                 )
+    finally:
+        context.set_resources(project_lease_held=False)
+    skipped_suffix = (
+        f" ~{result.preprocess_skipped}" if result.preprocess_skipped else ""
+    )
+    return JobExecutionResult(
+        summary=(
+            f"+{result.added} /{result.updated} "
+            f"-{result.removed} ({result.duration_ms}ms){skipped_suffix}"
+        ),
+        preprocess_ok=result.preprocess_ok,
+        preprocess_skipped=result.preprocess_skipped,
+        preprocess_failures=tuple(result.preprocess_failures),
+    )
+
+
+def _run_document_attempt(
+    context: JobAttemptContext,
+    *,
+    manager: JobManager,
+    job_id: str,
+    root: Path,
+    clean: bool,
+    registry: ServiceRegistry,
+) -> JobExecutionResult:
+    """Run one document attempt with independent policy and storage state."""
+    from .jobs import (
+        JobProgressReporter,
+        validate_document_index_policy,
+        validate_document_support_profile,
+    )
+
+    preflight = validate_document_index_policy(root)
+    validate_document_support_profile(root, preflight)
+    registry.load_model()
+    try:
+        with registry.lease(root) as slot:
+            context.set_resources(project_lease_held=True)
+            try:
+                context.set_resources(writer_lock_held=True, pipeline_active=True)
+                reporter = JobProgressReporter(job_id, context=context)
+                snapshot = manager.get(job_id)
+                resumed = (
+                    snapshot is not None
+                    and snapshot.attempt.resumed_from_attempt is not None
+                )
+                if clean:
+                    result = slot.document_indexer.full_index(
+                        clean=not resumed,
+                        reporter=reporter,
+                        preflight=preflight,
+                        run_control=context.control,
+                    )
+                else:
+                    result = slot.document_indexer.incremental_index(
+                        reporter=reporter,
+                        preflight=preflight,
+                        run_control=context.control,
+                    )
+            finally:
+                context.set_resources(writer_lock_held=False, pipeline_active=False)
     finally:
         context.set_resources(project_lease_held=False)
     skipped_suffix = (
