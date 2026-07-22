@@ -18,16 +18,17 @@ related:
 ## Description
 
 - Select the first generated manifest document and use its unique needle in a matching-root vault search.
-- Admit the nonempty request through the same four-party barrier as the existing empty probes.
+- Publish the real baseline, restart with a matching rebuild persisted in `paused` state, and
+  issue the nonempty request against the unchanged storage.
 - Assert HTTP 200 and require a real result with the selected manifest document identity.
 
 ## Outcome
 
-The real-daemon regression now preserves useful search results while matching index work is
-nonterminal. A known indexed document remains observable as an ordinary HTTP success rather
-than being converted to the structured unavailable envelope.
+The real-daemon regression preserves useful search results while matching index work is
+nonterminal. A known indexed document remains an ordinary HTTP 200, the completed log names the
+exact paused job, and the job revision remains unchanged.
 
 ## Notes
 
-Formatting, lint, and strict BasedPyright checks passed. The graphics processing unit run
-remains held for the review gate and the plan's dedicated acceptance phase.
+Final immutable acceptance passed Ruff, strict BasedPyright, 33 focused tests, 116 adjacent
+tests, and the local graphics processing unit regression with one passed and seven deselected.

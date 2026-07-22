@@ -19,11 +19,14 @@ related:
   - '[[2026-07-21-search-index-availability-W03-P03-S23]]'
   - '[[2026-07-21-search-index-availability-W03-P03-S24]]'
   - '[[2026-07-21-search-index-availability-W03-P04-S25]]'
+  - '[[2026-07-21-search-index-availability-W03-P04-S26]]'
+  - '[[2026-07-21-search-index-availability-W03-P04-S27]]'
   - '[[2026-07-21-search-index-availability-adr]]'
   - '[[2026-07-21-search-index-availability-code-review-audit]]'
   - '[[2026-07-21-search-index-availability-plan]]'
   - '[[2026-07-21-search-index-availability-reference]]'
   - '[[2026-07-21-search-index-availability-research]]'
+  - '[[2026-07-22-search-index-availability-final-code-review-audit]]'
   - '[[2026-07-22-search-index-availability-nonempty-contract-audit]]'
 ---
 
@@ -40,6 +43,7 @@ Auto-generated index of all documents tagged with `#search-index-availability`.
 ### audit
 
 - `2026-07-21-search-index-availability-code-review-audit` - `search-index-availability` audit: `search-index-availability code review`
+- `2026-07-22-search-index-availability-final-code-review-audit` - `search-index-availability` audit: `final code review`
 - `2026-07-22-search-index-availability-nonempty-contract-audit` - `search-index-availability` audit: `nonempty-result availability follow-up`
 
 ### exec
@@ -57,6 +61,8 @@ Auto-generated index of all documents tagged with `#search-index-availability`.
 - `2026-07-21-search-index-availability-W03-P03-S23` - Run formatting lint typing unit integration client CLI and MCP checks under supervisor observation
 - `2026-07-21-search-index-availability-W03-P03-S24` - Validate research ADR plan and execution records with canonical vault checks
 - `2026-07-21-search-index-availability-W03-P04-S25` - Audit ADR conformance response safety campaign compatibility and test integrity and route required corrections to Terra xhigh
+- `2026-07-21-search-index-availability-W03-P04-S26` - Convert a matching rebuild collection-disappearance race into the canonical structured HTTP 503 response using Terra xhigh
+- `2026-07-21-search-index-availability-W03-P04-S27` - Perform final formal code review of the collection-disappearance fix and acceptance evidence under root supervision
 
 ### plan
 

@@ -17,9 +17,9 @@ related:
 
 # `search-index-availability` reference: `HTTP route, job state, transport, and regression seams`
 
-This reference maps issue 252 to production code at commit
-`a5881646a61b41daef989d4c5dd7010fe32f643b`. Coding starts only after the related ADR and plan
-are accepted. General setup and search usage remain in `README.md`,
+This reference maps issue 252 to implemented authority at commits
+`94b4600fdec57c6ba6ece013755fbe05b8cdfd63` and
+`fe1e007b0abcbb92feeaa31bb9672978dc1e5bb3`. General setup and search usage remain in `README.md`,
 `docs/getting-started.md`, `docs/search-and-index.md`, and `docs/service-mode.md`.
 
 Here, HTTP means Hypertext Transfer Protocol, MCP means Model Context Protocol, ADR means
@@ -32,15 +32,15 @@ project root and normalized `vault` or `code` source. A canonical snapshot is th
 
 ### Controlling production behavior
 
-- `src/vaultspec_rag/server/_routes.py:349-494` owns `POST /search`. It retrieves first,
-  obtains the selected-source count from `phase_timing["indexed_count"]`, builds an ordinary
-  success dictionary, and returns `JSONResponse(result)` with the default HTTP 200.
-- `src/vaultspec_rag/server/_routes.py:210-226` maps only zero count to `missing` and positive
-  count to `available`. `src/vaultspec_rag/server/_routes.py:229-251` maps empty results only
-  to `index_missing` or `no_match`.
-- `src/vaultspec_rag/server/_models.py:78` does not control the REST response. The route already
-  emits fields outside that Pydantic model.
-- `src/vaultspec_rag/server/_routes.py:254-321` exposes copied job snapshots through `/jobs`.
+- `src/vaultspec_rag/server/_routes.py` owns `POST /search`, captures a canonical job snapshot
+  before retrieval, and classifies the response against a second snapshot before emission.
+- `src/vaultspec_rag/server/_search_availability.py` owns exact root/source/state matching,
+  after-first deduplication, the eight-reference exposure bound, and the canonical HTTP 503
+  body. One frozen classification drives body, status, watcher scheduling, and log evidence.
+- The same helper recognizes a structured Qdrant collection-missing HTTP 404. The route converts
+  it only with exact matching nonterminal evidence and re-raises every declined failure.
+- `src/vaultspec_rag/server/_routes.py` retains the selected-source count and ordinary
+  `index_missing` or `no_match` diagnostics for authoritative HTTP 200 empty results.
 
 ### Canonical job fields
 
@@ -88,6 +88,8 @@ mode is `incremental` or `rebuild`. The complete example and message template ar
 accepted feature ADR. The body omits `results`, `summary`, `empty`, and `timing`. Direct HTTP
 clients observe 503. The shared client preserves the body, and the command-line interface
 (CLI) takes its existing structured-failure path because `results` is absent.
+`availability_cause` is internal correlation metadata written only to `service.search` logs;
+it is not a response member.
 
 The MCP adapter guards the response before `SearchResults.model_validate`. It accepts only a
 dictionary success envelope containing a `results` list. For every structured daemon search
@@ -101,50 +103,47 @@ Successful nonempty responses and stable empty responses retain their existing H
 shape. No response performs an implicit reindex. No `Retry-After` header is emitted without a
 credible estimate.
 
-### Narrow insertion seam
+### Implemented insertion seam
 
-A central-processing-unit-only helper in the server domain can normalize copied job
-snapshots and identify exact root-and-source work. `search_route` can capture matching work
-before retrieval and recheck before emitting an empty success. The first observation closes
-work already nonterminal at admission. The second closes work that begins during retrieval.
-A nonempty result stays successful.
+The central-processing-unit-only server helper normalizes copied snapshots and identifies exact
+root-and-source work. `search_route` captures work before retrieval and rechecks at response
+time. The second observation is ordered first so its state wins on duplicate IDs. Classification
+uses the complete unique match set before exposing at most eight references and records explicit
+truncation.
 
-This helper belongs beside the existing search diagnostics in
-`src/vaultspec_rag/server/_routes.py` or in a narrowly named server leaf module. It must not
-edit `src/vaultspec_rag/jobs.py`, add a registry, acquire GPU locks, or recompute future
-generation policy.
+The route also catches only Qdrant `UnexpectedResponse`. A structured collection-missing 404 is
+fed through the same classifier with an instantaneous zero count. If exact matching evidence is
+absent, or the response is not the recognized collection-missing shape, a bare re-raise preserves
+the original backend failure. No path edits `jobs.py`, creates another registry, acquires a GPU
+lock, or recomputes generation policy.
 
 ### Regression test contract
 
-`src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py:52-122` already owns
-real-service empty-index diagnostics. The regression uses the existing synthetic corpus
-builder with 256 documents and seed 252, a real clean vault reindex, and the returned exact
-job ID. It polls authenticated `/jobs` every 50 milliseconds for at most 10 seconds until the
-submitted job is running. It then admits the concurrent probes and sends raw `POST /search`
-with the query
-`type:nonexistent availability authority probe` and a 300-second deadline. It asserts:
+`src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py` owns the real-service
+contract. It builds 256 documents with seed 252, initializes the official MCP session, submits
+a real clean vault rebuild, and polls authenticated `/jobs` until the exact job is running. A
+five-party barrier then admits:
 
-- an exact matching nonterminal convergence job plus an empty outcome returns HTTP 503;
-- the body equals the ADR-defined contract, reports the exact job ID, and omits `results`;
-- unrelated root or source work does not cause 503;
-- after matching work converges, the same guaranteed non-match returns HTTP 200 with the
-  ordinary empty diagnostic;
-- the shared HTTP search client preserves the structured error instead of manufacturing an
-  empty success;
-- the real MCP stdio result has `isError: true` before `SearchResults` can add an empty list.
+- a raw matching-root vault request for the guaranteed no-match query;
+- raw unrelated-root and unrelated-source controls;
+- the production shared HTTP client for the matching query; and
+- the official MCP stdio client for the matching query.
 
-The primary root contains the generated corpus. The unrelated-root request uses a second
-empty project. The unrelated-source request searches code in the primary root with
-`include_paths: ["__availability_no_match__/**"]`. The nonempty request searches the primary
-vault with the first manifest needle. Shared-client and MCP requests use the primary root and
-guaranteed no-match query. One primary clean job is sufficient because every probe is admitted
-concurrently after that job owns the primary project lease.
+The matching raw request returns the exact HTTP 503 body with no `results`; unrelated controls
+remain HTTP 200; the shared client preserves the failure envelope; and MCP returns
+`CallToolResult.isError: true` with no structured results. After the exact job succeeds, the
+matching query returns HTTP 200 with `empty.reason: no_match`.
 
-The test polls the exact job every 100 milliseconds for at most 300 seconds until it succeeds.
-Other terminal outcomes fail with exact job evidence. Timeout diagnostics include `/health`,
-the exact `/jobs` response, `/metrics`, and the last search response. All invariants are staged
-into one real service-and-job lifecycle so the local graphics processing unit (GPU) model is
-loaded once, but each plan Step remains a separate commit.
+A second lifecycle stops the daemon, writes a real matching rebuild in `paused` state to the
+canonical persistence file, and restarts against the same Qdrant storage. A known published
+document remains a nonempty HTTP 200. The completed log reports the exact paused job and bounded
+evidence, while the job revision and inactive resource state remain unchanged.
+
+Timeout diagnostics read the live token from `/health` and include exact `/jobs`, `/metrics`,
+and response evidence. The green GPU lifecycle proves the public behavior but is not timed to
+force the collection-disappearance branch. The preserved real red trace plus focused tests with
+real `UnexpectedResponse` and `JobManager` objects prove that narrow conversion and its decline
+guards.
 
 The test imports production code and uses real files, Qdrant, and GPU models. It introduces no
 fake, stub, mock, monkeypatch, skip, expected failure, or mirrored policy.
@@ -153,13 +152,9 @@ fake, stub, mock, monkeypatch, skip, expected failure, or mirrored policy.
 
 Before/after job snapshots narrow but do not eliminate a generation that starts and finishes
 between observations. They also cannot identify a failed clean generation after its job
-terminates. The accepted resilience ledger closes both gaps by publishing generation identity
-and `rebuild_incomplete` state for destructive generations. This fix must consume that state
-for otherwise-empty responses when it becomes available. It does not block useful nonempty
-responses; changing that policy requires another ADR.
+terminates. Collection disappearance during a matching nonterminal job is handled immediately;
+durable generation and publication authority remains owned by large-index resilience. Useful
+nonempty results remain available, and changing that policy requires another ADR.
 
-`src/vaultspec_rag/jobs.py` and `src/vaultspec_rag/memory_probe.py` are already modified by
-other campaigns. The service-job-control plan also reserves later edits to
-`src/vaultspec_rag/server/_routes.py`, `src/vaultspec_rag/server/_routes_jobs.py`, and
-`src/vaultspec_rag/serviceclient/_transport.py`. Keep the current change narrow and coordinate
-the route edit rather than overwriting concurrent work.
+The implementation commits changed only their declared search-specific files. Later shared-main
+job-control and index-policy commits do not supersede the reviewed search path.

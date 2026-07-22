@@ -29,3 +29,5 @@ finding. All required corrections were committed and verified before the audit c
 ## Notes
 
 The detailed finding history and disposition are retained in the associated code-review audit.
+That approval predates the later collection-disappearance correction. The independent S27 review
+of both final authority commits also found no unresolved critical, high, or medium issue.

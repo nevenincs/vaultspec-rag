@@ -28,5 +28,6 @@ index form one linked feature corpus. Canonical plan and feature checks pass aft
 
 ## Notes
 
-The feature-scoped fixer was used only for vault metadata, index regeneration, and canonical
-formatting. No source code or unrelated campaign artifact was included.
+The final feature-scoped fixer removed scaffold annotations, normalized markdown and metadata,
+and regenerated the feature index. The subsequent read-only plan and full feature checks reported
+no findings. No source code or unrelated campaign artifact was included.

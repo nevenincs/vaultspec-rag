@@ -76,3 +76,22 @@ coverage, and retain every empty-result, client, and Model Context Protocol asse
    classifier unit. Use a real job mode that preserves an already published result.
 1. Re-run the targeted subprocess-GPU regression, adjacent search suites, Ruff, BasedPyright,
    and feature-specific Vaultspec checks before accepting the stack.
+
+## Resolution
+
+The historical revision-required verdict above is retained as review evidence. Commit
+`94b4600fdec57c6ba6ece013755fbe05b8cdfd63` resolves both findings. One frozen
+`SearchResponseClassification` now drives the response body, HTTP status, watcher, and bounded
+`service.search` evidence. Response-boundary matches are ordered first, duplicate IDs use that
+newer state, exposure is capped at eight with explicit truncation, and rebuild status is computed
+from the complete pre-cap match set.
+
+The real-service nonempty contract now runs as a separate restart phase. After a real clean index
+is published, the daemon stops, a matching rebuild is persisted in `paused` state, and the daemon
+restarts against the same storage. A known document remains a nonempty HTTP 200; the completed log
+names the exact paused job; and the job revision is unchanged.
+
+Final immutable acceptance at `fe1e007b0abcbb92feeaa31bb9672978dc1e5bb3` passed Ruff,
+BasedPyright with zero errors, warnings, or notes, 33 focused tests, 116 adjacent tests, and the
+local real-Qdrant/GPU regression with one passed and seven deselected in 59.90 seconds. No finding
+in this historical audit remains unresolved.
