@@ -1,7 +1,7 @@
 {
   "port": 8766,
   "roots": [
-    "Y:\\code\\aeat-worktrees\\chore-476-restructure-execution"
+    "Y:\\code\\sample-project\\main"
   ],
   "requests": 6,
   "concurrency": 3,
