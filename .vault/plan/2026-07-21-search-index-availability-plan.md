@@ -50,7 +50,7 @@ Prove the availability decision is scoped to the exact resolved project root and
 Lock the shared service client and downstream consumer boundary to structured unavailable data without a results key.
 
 - [x] `W01.P06.S09` - Prove the shared service client preserves the structured unavailable error without manufacturing results using Sol medium; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
-- [ ] `W01.P06.S18` - Add a real MCP stdio call proving unavailable search yields CallToolResult isError true and never structured empty results using Sol medium; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
+- [x] `W01.P06.S18` - Add a real MCP stdio call proving unavailable search yields CallToolResult isError true and never structured empty results using Sol medium; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
 
 ## Wave `W02` - service availability contract
 
