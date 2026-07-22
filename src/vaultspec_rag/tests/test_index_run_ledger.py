@@ -63,7 +63,7 @@ def _unit(
         kind=CommitUnitKind.UPSERT,
         source_digest=digest or _digest(path),
         segment_ordinal=ordinal,
-        segment_count=count,
+        is_file_end=ordinal == count - 1,
         point_ids=(f"{path}:{ordinal}:0", f"{path}:{ordinal}:1"),
     )
 
@@ -100,8 +100,8 @@ def test_commit_units_are_atomic_idempotent_and_row_streamed(tmp_path: Path) -> 
     assert ledger.file_complete(generation.generation_id, "src/large.py")
     assert list(ledger.iter_units(generation.generation_id, batch_size=1)) == units
 
-    conflicting = _unit("src/large.py", 0, 4, digest=digest)
-    with pytest.raises(RunLedgerStateError, match="segments for one path"):
+    conflicting = _unit("src/large.py", 0, 3, digest=_digest("different"))
+    with pytest.raises(RunLedgerStateError, match="source digest"):
         ledger.record_storage_confirmed_unit(generation.generation_id, conflicting)
     assert list(ledger.iter_units(generation.generation_id)) == units
 
@@ -109,7 +109,7 @@ def test_commit_units_are_atomic_idempotent_and_row_streamed(tmp_path: Path) -> 
         rel_path="src/removed.py",
         kind=CommitUnitKind.DELETE,
         segment_ordinal=0,
-        segment_count=1,
+        is_file_end=True,
         point_ids=("removed-point",),
     )
     assert ledger.record_storage_confirmed_unit(generation.generation_id, deletion)
@@ -159,6 +159,9 @@ def test_file_outcomes_and_finalization_are_immutable(tmp_path: Path) -> None:
     ):
         advanced = ledger.advance_finalization(generation.generation_id, phase)
         assert advanced.finalization_phase is phase
+        if phase is FinalizationPhase.STALE_RECONCILED:
+            with pytest.raises(RunLedgerStateError, match="finalization begins"):
+                ledger.record_file_state(generation.generation_id, failed)
 
     completed = ledger.finish_generation(
         generation.generation_id,
