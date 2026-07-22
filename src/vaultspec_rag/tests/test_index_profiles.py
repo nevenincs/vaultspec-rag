@@ -1,5 +1,7 @@
 """Closed support-profile admission over real typed measurements."""
 
+from typing import cast
+
 import pytest
 
 from .._job_errors import JobError, JobErrorKind
@@ -7,6 +9,7 @@ from ..index_profiles import (
     IndexDomain,
     SupportMeasurement,
     get_index_support_profile,
+    index_support_profile_status,
     validate_profile_admission,
 )
 
@@ -29,6 +32,10 @@ def test_document_profile_admits_within_every_declared_bound() -> None:
             source_bytes=limits.source_bytes,
             generated_chunks=limits.generated_chunks,
             weighted_bytes=limits.weighted_bytes,
+            extracted_bytes=limits.extracted_bytes,
+            queue_bytes=limits.queue_bytes,
+            rss_bytes=limits.rss_bytes,
+            cuda_bytes=limits.cuda_bytes,
         ),
         backend="server",
         available_ram_bytes=profile.minimum_ram_bytes,
@@ -42,6 +49,22 @@ def test_document_profile_admits_within_every_declared_bound() -> None:
     [
         (SupportMeasurement(500_001, 1), JobErrorKind.CORPUS_LIMIT_EXCEEDED),
         (SupportMeasurement(1, 1, 5_000_001), JobErrorKind.CORPUS_LIMIT_EXCEEDED),
+        (
+            SupportMeasurement(1, 1, extracted_bytes=128 * 1024**3 + 1),
+            JobErrorKind.CORPUS_LIMIT_EXCEEDED,
+        ),
+        (
+            SupportMeasurement(1, 1, queue_bytes=512 * 1024**2 + 1),
+            JobErrorKind.CORPUS_LIMIT_EXCEEDED,
+        ),
+        (
+            SupportMeasurement(1, 1, rss_bytes=16 * 1024**3 + 1),
+            JobErrorKind.CORPUS_LIMIT_EXCEEDED,
+        ),
+        (
+            SupportMeasurement(1, 1, cuda_bytes=12 * 1024**3 + 1),
+            JobErrorKind.CORPUS_LIMIT_EXCEEDED,
+        ),
     ],
 )
 def test_profile_rejects_corpus_dimensions_structurally(
@@ -85,3 +108,20 @@ def test_profile_rejects_backend_host_and_disk_before_corpus() -> None:
                 free_disk_bytes=disk,
             )
         assert raised.value.error_kind is kind
+
+
+def test_profile_status_keeps_all_resource_dimensions_per_domain() -> None:
+    status = index_support_profile_status("managed-service")
+    domains = cast("dict[str, dict[str, int]]", status["domains"])
+    expected = {
+        "source_files",
+        "source_bytes",
+        "generated_chunks",
+        "weighted_bytes",
+        "extracted_bytes",
+        "queue_bytes",
+        "rss_bytes",
+        "cuda_bytes",
+    }
+    assert set(domains["code"]) == expected
+    assert set(domains["document"]) == expected

@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from .api import AllIndexOutcomes
+    from .index_profiles import SupportMeasurement
     from .indexer import CodebaseIndexer
     from .indexer._codebase_indexer import (
         CodeIndexPreflight,
@@ -840,7 +841,7 @@ def validate_code_index_policy(root: Path) -> CodeIndexPreflight:
 def validate_code_support_profile(
     root: Path,
     preflight: CodeIndexPreflight | CodeScopedPreflight,
-) -> None:
+) -> SupportMeasurement:
     """Enforce the named code profile before any model or mutable resource."""
     import shutil
 
@@ -850,12 +851,17 @@ def validate_code_support_profile(
     from .index_profiles import IndexDomain, validate_profile_admission
     from .indexer._codebase_indexer import CodeIndexPreflight
 
-    measurement = (
+    discovered = (
         preflight.scan.measurement
         if isinstance(preflight, CodeIndexPreflight)
         else preflight.measurement
     )
     cfg = get_config()
+    measurement = replace(
+        discovered,
+        queue_bytes=int(cfg.index_queue_max_bytes),
+        rss_bytes=int(psutil.Process(os.getpid()).memory_info().rss),
+    )
     validate_profile_admission(
         cfg.index_support_profile,
         IndexDomain.CODE,
@@ -864,13 +870,17 @@ def validate_code_support_profile(
         available_ram_bytes=int(psutil.virtual_memory().total),
         free_disk_bytes=int(shutil.disk_usage(root).free),
     )
+    return measurement
 
 
 def validate_code_job_admission(root: Path) -> CodeIndexPreflight:
     """Return code authority only after policy and profile admission."""
     preflight = validate_code_index_policy(root)
-    validate_code_support_profile(root, preflight)
-    return preflight
+    measurement = validate_code_support_profile(root, preflight)
+    return replace(
+        preflight,
+        scan=replace(preflight.scan, measurement=measurement),
+    )
 
 
 def _document_policy_indexer(root: Path):
@@ -920,11 +930,13 @@ def validate_document_support_profile(
         else preflight.changed_paths
     )
     existing = tuple(path for path in paths if path.is_file())
+    cfg = get_config()
     measurement = SupportMeasurement(
         source_files=len(existing),
         source_bytes=sum(path.stat().st_size for path in existing),
+        queue_bytes=int(cfg.index_queue_max_bytes),
+        rss_bytes=int(psutil.Process(os.getpid()).memory_info().rss),
     )
-    cfg = get_config()
     validate_profile_admission(
         cfg.index_support_profile,
         IndexDomain.DOCUMENT,

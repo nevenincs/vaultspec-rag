@@ -4,7 +4,8 @@ Real GPU + real Qdrant + a real subprocess preprocessor. A binary ``.pdf``
 (outside ``SUPPORTED_EXTENSIONS``) is extracted by a project-supplied command
 rule, indexed first-class, and found by hybrid search with its deep-link anchor;
 the scoped/incremental path routes a changed binary through the preprocessor;
-and a failing preprocessor surfaces a skip count rather than a silent gap.
+and a failing preprocessor remains unresolved and retryable rather than
+publishing a silently converged gap.
 
 Hooks run BY DEFAULT for any root - there is no trust step and no OS containment
 (preprocess-sandbox-removal ADR): a root's preprocess config is repo-authored
@@ -218,10 +219,10 @@ def test_real_extractor_source_redirection_is_rejected(tmp_path: Path) -> None:
     extractor = tmp_path / "redirecting_extractor.py"
     extractor.write_text(
         "import json\n"
-        "print(json.dumps({\"schema_version\": 1, "
-        "\"preprocessor_id\": \"redirect\", "
-        "\"preprocessor_version\": \"1\", "
-        "\"source_path\": \"another.bin\", \"text\": \"redirected\"}))\n",
+        'print(json.dumps({"schema_version": 1, '
+        '"preprocessor_id": "redirect", '
+        '"preprocessor_version": "1", '
+        '"source_path": "another.bin", "text": "redirected"}))\n',
         encoding="utf-8",
     )
     _write_config(
@@ -610,10 +611,19 @@ class TestPreprocessEndToEnd:
         assert store.count_code() > before
 
     @pytest.mark.timeout(600)
-    def test_failing_preprocessor_surfaces_skip_count(
+    def test_failing_preprocessor_never_converges_unchanged_source_hash(
         self, rag_components: RagComponentsWithManifest, tmp_path: Path
     ) -> None:
         from ... import CodebaseIndexer, VaultStore
+        from ..._job_errors import JobError, JobErrorKind
+        from ...config import get_config
+        from ...indexer._content_policy import ContentKind
+        from ...indexer._file_state import FileStateKind
+        from ...indexer._run_ledger import (
+            RunLedger,
+            RunTerminalState,
+            index_run_ledger_path,
+        )
 
         model = rag_components["model"]
         script = tmp_path / "boom.py"
@@ -631,13 +641,32 @@ class TestPreprocessEndToEnd:
         store = VaultStore(tmp_path)
         try:
             indexer = CodebaseIndexer(tmp_path, model, store)
-            result = indexer.full_index(
-                reporter=NullProgressReporter(),
-                preflight=indexer.preflight_content(),
-            )
-            assert result.preprocess_ok == 0
-            assert result.preprocess_skipped == 1
-            assert any("broken.pdf" in f for f in result.preprocess_failures)
+            generation_id = None
+            for _attempt in range(2):
+                with pytest.raises(JobError) as raised:
+                    indexer.full_index(
+                        reporter=NullProgressReporter(),
+                        preflight=indexer.preflight_content(),
+                    )
+                assert raised.value.error_kind is JobErrorKind.EXTRACTION_RETRYABLE
+                assert "broken.pdf" not in indexer._load_meta()
+                assert store.get_code_ids_by_paths({"broken.pdf"}) == []
+
+                ledger = RunLedger(
+                    index_run_ledger_path(tmp_path / get_config().data_dir)
+                )
+                generation = ledger.latest_generation(ContentKind.CODE)
+                assert generation is not None
+                assert generation.terminal_state is RunTerminalState.FAILED
+                generation_id = generation_id or generation.generation_id
+                assert generation.generation_id == generation_id
+                state = next(
+                    item
+                    for item in ledger.iter_file_states(generation.generation_id)
+                    if item.rel_path == "broken.pdf"
+                )
+                assert state.state is FileStateKind.EXTRACT_RETRYABLE
+                assert not state.converged
         finally:
             store.close()
 
@@ -789,12 +818,13 @@ class TestPreprocessEndToEnd:
             store.close()
 
     @pytest.mark.timeout(600)
-    def test_incremental_surfaces_skip_count(
+    def test_incremental_skip_remains_a_retryable_obligation(
         self, rag_components: RagComponentsWithManifest, tmp_path: Path
     ) -> None:
         # Regression for review VIS-001: the scoped/incremental path (used by
-        # the watcher) must surface preprocess skip counts, not just full index.
+        # the watcher) must retain preprocessing failures as retryable work.
         from ... import CodebaseIndexer, VaultStore
+        from ..._job_errors import JobError, JobErrorKind
 
         model = rag_components["model"]
         script = tmp_path / "boom.py"
@@ -813,13 +843,13 @@ class TestPreprocessEndToEnd:
         store = VaultStore(tmp_path)
         try:
             indexer = CodebaseIndexer(tmp_path, model, store)
-            result = indexer.incremental_index(
-                reporter=NullProgressReporter(),
-                changed_paths=[broken],
-                preflight=indexer.preflight_changed_paths([broken]),
-            )
-            assert result.preprocess_ok == 0
-            assert result.preprocess_skipped == 1
-            assert any("broken.pdf" in f for f in result.preprocess_failures)
+            with pytest.raises(JobError) as raised:
+                indexer.incremental_index(
+                    reporter=NullProgressReporter(),
+                    changed_paths=[broken],
+                    preflight=indexer.preflight_changed_paths([broken]),
+                )
+            assert raised.value.error_kind is JobErrorKind.EXTRACTION_RETRYABLE
+            assert any("broken.pdf" in failure for failure in indexer._prep_skips)
         finally:
             store.close()

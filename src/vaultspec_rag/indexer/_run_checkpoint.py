@@ -6,13 +6,14 @@ import hashlib
 import json
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING
 
 from .. import store_schema
 from ._code_meta import CODE_EMBED_SCHEMA, publish_meta_from_file_states
 from ._content_policy import ContentKind
-from ._file_state import FileState
+from ._file_state import FileState, FileStateKind
 from ._run_ledger import (
+    INDEX_RUN_LEDGER_FILENAME,
     CommitUnit,
     CommitUnitKind,
     FinalizationPhase,
@@ -23,6 +24,7 @@ from ._run_ledger import (
     RunOperation,
     RunSignature,
     RunTerminalState,
+    index_run_ledger_path,
 )
 from ._run_policy import DurableProgressKind, RunPolicy
 
@@ -39,7 +41,7 @@ __all__ = [
     "CodeRunConfiguration",
 ]
 
-CODE_RUN_LEDGER_FILENAME: Final = "code_index_runs.sqlite3"
+CODE_RUN_LEDGER_FILENAME = INDEX_RUN_LEDGER_FILENAME
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,7 +119,7 @@ class CodeRunCheckpoint:
             configuration_fingerprint=_configuration_fingerprint(configuration),
             policy_fingerprint=policy.fingerprints.snapshot,
         )
-        ledger = RunLedger(data_root / CODE_RUN_LEDGER_FILENAME)
+        ledger = RunLedger(index_run_ledger_path(data_root))
         generation = ledger.start_generation(signature)
         if (
             operation in (RunOperation.INCREMENTAL, RunOperation.SCOPED_INCREMENTAL)
@@ -259,6 +261,26 @@ class CodeRunCheckpoint:
                 label=f"stale code deletion {rel_path}",
             )
         return inserted
+
+    def record_processing_failure(
+        self,
+        rel_path: str,
+        state: FileStateKind,
+        detail: str,
+        *,
+        content_hash: str | None = None,
+    ) -> None:
+        """Replace carried convergence with one explicit unresolved outcome."""
+        self.ledger.record_file_state(
+            self.generation_id,
+            FileState.failed(
+                rel_path,
+                state,
+                ContentKind.CODE,
+                detail,
+                content_hash=content_hash,
+            ),
+        )
 
     def publish_metadata(self, meta_path: Path) -> int:
         """Publish exact converged ledger rows and advance the durable phase."""

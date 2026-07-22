@@ -21,6 +21,7 @@ from ..indexer._code_meta import (
 from ..indexer._content_policy import AdmissionDisposition, AdmissionReason, ContentKind
 from ..indexer._file_state import FileState, FileStateKind
 from ..indexer._run_ledger import (
+    INDEX_RUN_LEDGER_FILENAME,
     CommitUnit,
     CommitUnitKind,
     FinalizationPhase,
@@ -31,6 +32,7 @@ from ..indexer._run_ledger import (
     RunOperation,
     RunSignature,
     RunTerminalState,
+    index_run_ledger_path,
 )
 
 if TYPE_CHECKING:
@@ -121,6 +123,36 @@ def test_generation_transactions_resume_and_invalidate_drift(tmp_path: Path) -> 
     resumed_clean = ledger.start_generation(clean_signature)
     assert resumed_clean.generation_id == clean.generation_id
     assert resumed_clean.destructive_intent
+
+
+def test_shared_path_and_latest_generation_are_independent_per_kind(
+    tmp_path: Path,
+) -> None:
+    data_root = tmp_path / "data"
+    assert index_run_ledger_path(data_root) == data_root / INDEX_RUN_LEDGER_FILENAME
+    ledger = RunLedger(index_run_ledger_path(data_root))
+    code = ledger.start_generation(_signature(tmp_path))
+    document = ledger.start_generation(
+        replace(
+            _signature(tmp_path),
+            source_type=ContentKind.DOCUMENT,
+            collection_identity="document-v1",
+        )
+    )
+
+    assert ledger.latest_generation(ContentKind.CODE) == code
+    assert (
+        ledger.latest_generation(
+            ContentKind.DOCUMENT,
+            collection_identity="document-v1",
+        )
+        == document
+    )
+
+    legacy_root = tmp_path / "legacy"
+    legacy_path = legacy_root / "code_index_runs.sqlite3"
+    RunLedger(legacy_path)
+    assert index_run_ledger_path(legacy_root) == legacy_path
 
 
 def test_commit_units_are_atomic_idempotent_and_row_streamed(tmp_path: Path) -> None:
@@ -399,8 +431,7 @@ def test_incremental_manifest_carries_forward_and_deletes_exact_paths(
     incremental = ledger.start_generation(incremental_signature)
     assert incremental.parent_generation_id == full.generation_id
     assert [
-        state.rel_path
-        for state in ledger.iter_file_states(incremental.generation_id)
+        state.rel_path for state in ledger.iter_file_states(incremental.generation_id)
     ] == ["src/a.py", "src/b.py"]
 
     deletion = CommitUnit(
@@ -418,8 +449,7 @@ def test_incremental_manifest_carries_forward_and_deletes_exact_paths(
         )
     ledger.record_path_deleted(incremental.generation_id, "src/a.py")
     assert [
-        state.rel_path
-        for state in ledger.iter_file_states(incremental.generation_id)
+        state.rel_path for state in ledger.iter_file_states(incremental.generation_id)
     ] == ["src/b.py"]
 
     replacement_hash = _digest("new-b")
@@ -562,8 +592,7 @@ def test_overlapping_metadata_publications_are_each_atomic(tmp_path: Path) -> No
             errors.append(exc)
 
     threads = [
-        threading.Thread(target=publish, args=(prefix,))
-        for prefix in ("left", "right")
+        threading.Thread(target=publish, args=(prefix,)) for prefix in ("left", "right")
     ]
     for thread in threads:
         thread.start()
