@@ -23,8 +23,13 @@ from ._transport import (
     _timeout_diagnostics,
     _try_http_admin,
     _try_http_code_file,
+    _try_http_create_job,
+    _try_http_delete_job,
+    _try_http_get_job,
     _try_http_reindex,
+    _try_http_retry_job,
     _try_http_search,
+    _try_http_set_job_desired_state,
     _try_http_vault_document,
 )
 
@@ -40,7 +45,12 @@ __all__ = [
     "_timeout_diagnostics",
     "_try_http_admin",
     "_try_http_code_file",
+    "_try_http_create_job",
+    "_try_http_delete_job",
+    "_try_http_get_job",
     "_try_http_reindex",
+    "_try_http_retry_job",
     "_try_http_search",
+    "_try_http_set_job_desired_state",
     "_try_http_vault_document",
 ]

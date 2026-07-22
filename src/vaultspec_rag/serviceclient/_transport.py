@@ -38,8 +38,13 @@ __all__ = [
     "_timeout_diagnostics",
     "_try_http_admin",
     "_try_http_code_file",
+    "_try_http_create_job",
+    "_try_http_delete_job",
+    "_try_http_get_job",
     "_try_http_reindex",
+    "_try_http_retry_job",
     "_try_http_search",
+    "_try_http_set_job_desired_state",
     "_try_http_vault_document",
 ]
 
@@ -49,6 +54,11 @@ MAX_SERVICE_RESPONSE_BYTES = 8 * 1024 * 1024
 
 type ReindexType = Literal["vault", "codebase"]
 type ReindexInitiator = Literal["cli", "mcp"]
+type HTTPMethod = Literal["GET", "POST", "PUT", "DELETE"]
+type JobSource = Literal["vault", "code"]
+type JobMode = Literal["incremental", "rebuild"]
+type DesiredJobState = Literal["running", "paused", "cancelled"]
+type JobControlMode = Literal["graceful", "force"]
 
 
 class ServiceResponseTooLargeError(ValueError):
@@ -156,16 +166,25 @@ def _build_call_request(
     path: str,
     payload: dict[str, object] | None,
     token: str,
+    *,
+    method: HTTPMethod | None = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> urllib.request.Request:
     url = f"http://127.0.0.1:{port}{path}"
-    headers: dict[str, str] = {}
+    headers = dict(extra_headers or {})
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    resolved_method: HTTPMethod = method or ("POST" if payload is not None else "GET")
     if payload is not None:
         headers["Content-Type"] = "application/json"
         data = json.dumps(payload).encode("utf-8")
-        return urllib.request.Request(url, data=data, headers=headers, method="POST")
-    return urllib.request.Request(url, headers=headers, method="GET")
+        return urllib.request.Request(
+            url,
+            data=data,
+            headers=headers,
+            method=resolved_method,
+        )
+    return urllib.request.Request(url, headers=headers, method=resolved_method)
 
 
 def _send_call(
@@ -234,6 +253,9 @@ def _do_http_call(
     path: str,
     payload: dict[str, object] | None,
     timeout: float | None = None,
+    *,
+    method: HTTPMethod | None = None,
+    headers: dict[str, str] | None = None,
 ) -> dict[str, object] | None:
     """Call a service route, recovering the auth token on a 401.
 
@@ -262,7 +284,14 @@ def _do_http_call(
     def send(stage: str, token: str) -> tuple[int, dict[str, object]]:
         try:
             return _send_call(
-                _build_call_request(port, path, payload, token),
+                _build_call_request(
+                    port,
+                    path,
+                    payload,
+                    token,
+                    method=method,
+                    extra_headers=headers,
+                ),
                 remaining(stage),
             )
         except Exception as exc:
@@ -330,6 +359,153 @@ def _try_http_reindex(
         }
 
 
+def _job_path(job_id: str, suffix: str = "") -> str:
+    return f"/jobs/{urllib.parse.quote(job_id, safe='')}{suffix}"
+
+
+def _try_http_job_call(
+    port: int | None,
+    path: str,
+    method: HTTPMethod,
+    *,
+    payload: dict[str, object] | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: float | None = None,
+) -> dict[str, object] | None:
+    if port is None:
+        return None
+    resolved_timeout = _get_admin_timeout(timeout)
+    try:
+        result = _do_http_call(
+            port,
+            path,
+            payload,
+            timeout=resolved_timeout,
+            method=method,
+            headers=headers,
+        )
+        return result if result is not None else {}
+    except Exception as exc:
+        if _is_connection_refused(exc):
+            logger.debug("HTTP job call on port %s: connection refused (%s)", port, exc)
+            return None
+        if _is_timeout(exc):
+            return {
+                "ok": False,
+                "error": "admin_timeout",
+                "message": (
+                    f"The service on port {port} did not answer within "
+                    f"{_format_timeout_seconds(resolved_timeout)}. "
+                    f"Deadline diagnostics: {exc}"
+                ),
+            }
+        cls = exc.__class__.__name__
+        return {
+            "ok": False,
+            "error": "http_call_failed",
+            "message": f"HTTP job call on port {port} failed: {cls}: {exc}",
+        }
+
+
+def _try_http_create_job(
+    source: JobSource,
+    project_root: str,
+    port: int | None,
+    *,
+    mode: JobMode = "incremental",
+    start_paused: bool = False,
+    initiator_kind: str = "cli",
+    command: str = "server_job_create",
+    idempotency_key: str | None = None,
+    timeout: float | None = None,
+) -> dict[str, object] | None:
+    payload: dict[str, object] = {
+        "operation": "index",
+        "source": source,
+        "project_root": project_root,
+        "mode": mode,
+        "start_paused": start_paused,
+        "initiator": {"kind": initiator_kind, "command": command},
+    }
+    headers = (
+        {"Idempotency-Key": idempotency_key} if idempotency_key is not None else None
+    )
+    return _try_http_job_call(
+        port,
+        "/jobs",
+        "POST",
+        payload=payload,
+        headers=headers,
+        timeout=timeout,
+    )
+
+
+def _try_http_get_job(
+    job_id: str,
+    port: int | None,
+    *,
+    timeout: float | None = None,
+) -> dict[str, object] | None:
+    return _try_http_job_call(
+        port,
+        _job_path(job_id),
+        "GET",
+        timeout=timeout,
+    )
+
+
+def _try_http_set_job_desired_state(
+    job_id: str,
+    state: DesiredJobState,
+    port: int | None,
+    *,
+    expected_revision: int | None = None,
+    mode: JobControlMode = "graceful",
+    timeout: float | None = None,
+) -> dict[str, object] | None:
+    payload: dict[str, object] = {"state": state, "mode": mode}
+    if expected_revision is not None:
+        payload["expected_revision"] = expected_revision
+    return _try_http_job_call(
+        port,
+        _job_path(job_id, "/desired-state"),
+        "PUT",
+        payload=payload,
+        timeout=timeout,
+    )
+
+
+def _try_http_retry_job(
+    job_id: str,
+    port: int | None,
+    *,
+    initiator_kind: str = "cli",
+    command: str = "server_job_retry",
+    timeout: float | None = None,
+) -> dict[str, object] | None:
+    return _try_http_job_call(
+        port,
+        _job_path(job_id, "/retry"),
+        "POST",
+        payload={"initiator": {"kind": initiator_kind, "command": command}},
+        timeout=timeout,
+    )
+
+
+def _try_http_delete_job(
+    job_id: str,
+    port: int | None,
+    *,
+    timeout: float | None = None,
+) -> dict[str, object] | None:
+    return _try_http_job_call(
+        port,
+        _job_path(job_id),
+        "DELETE",
+        timeout=timeout,
+    )
+
+
 def _admin_url_with_root(base: str, args: dict[str, Any]) -> str:
     """Append ?project_root=... to base when args contains it."""
     project_root = args.get("project_root")
@@ -371,6 +547,8 @@ _POST_BODY_ROUTES: dict[str, str] = {
 }
 
 _JOBS_PARAMS = {
+    "controllable",
+    "desired_state",
     "limit",
     "phase",
     "source",
@@ -379,6 +557,7 @@ _JOBS_PARAMS = {
     "failed",
     "job_id",
     "since",
+    "state",
 }
 
 
