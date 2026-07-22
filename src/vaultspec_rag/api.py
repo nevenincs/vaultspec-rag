@@ -15,6 +15,9 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from ._public_index import DocumentScanResult, scan_documents
 from ._public_search import (
+    CodeCombinedSearchFilters,
+    DocumentCombinedSearchFilters,
+    VaultCombinedSearchFilters,
     search_combined,
     search_combined_timed,
     search_documents,
@@ -41,9 +44,12 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "AllIndexOutcomes",
+    "CodeCombinedSearchFilters",
+    "DocumentCombinedSearchFilters",
     "DocumentScanResult",
     "DomainIndexOutcome",
     "GraphCache",
+    "VaultCombinedSearchFilters",
     "clean",
     "get_readiness",
     "get_related",

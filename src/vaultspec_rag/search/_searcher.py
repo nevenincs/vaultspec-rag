@@ -1063,10 +1063,9 @@ class VaultSearcher:
         results = self._rerank(query_text, results, top_k, timings=timings)
         _record_seconds(timings, "rerank_seconds", phase_started)
         if timings is not None:
-            timings["postprocess_seconds"] = (
-                timings.get("result_mapping_seconds", 0.0)
-                + timings.get("rerank_seconds", 0.0)
-            )
+            timings["postprocess_seconds"] = timings.get(
+                "result_mapping_seconds", 0.0
+            ) + timings.get("rerank_seconds", 0.0)
         return results
 
     def search_document_timed(
@@ -1106,15 +1105,83 @@ class VaultSearcher:
         self,
         raw_query: str,
         top_k: int = 5,
+        *,
+        doc_type: str | None = None,
+        feature: str | None = None,
+        date: str | None = None,
+        tag: str | None = None,
+        intent: str | None = None,
+        language: str | None = None,
+        path: str | None = None,
+        node_type: str | None = None,
+        function_name: str | None = None,
+        class_name: str | None = None,
+        include_paths: list[str] | None = None,
+        exclude_paths: list[str] | None = None,
+        dedup_locales: bool | None = None,
+        prefer: str | None = None,
+        exclude_domains: list[str] | None = None,
+        only_domains: list[str] | None = None,
+        include_domains: list[str] | None = None,
+        source_path: str | None = None,
+        extractor_id: str | None = None,
+        extractor_version: str | None = None,
+        locator_kind: str | None = None,
     ) -> list[SearchResult | DocumentSearchResult]:
         """Search all three domains with explicit equal candidate allocation."""
-        results, _timings = self.search_combined_timed(raw_query, top_k=top_k)
+        results, _timings = self.search_combined_timed(
+            raw_query,
+            top_k=top_k,
+            doc_type=doc_type,
+            feature=feature,
+            date=date,
+            tag=tag,
+            intent=intent,
+            language=language,
+            path=path,
+            node_type=node_type,
+            function_name=function_name,
+            class_name=class_name,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            dedup_locales=dedup_locales,
+            prefer=prefer,
+            exclude_domains=exclude_domains,
+            only_domains=only_domains,
+            include_domains=include_domains,
+            source_path=source_path,
+            extractor_id=extractor_id,
+            extractor_version=extractor_version,
+            locator_kind=locator_kind,
+        )
         return results
 
     def search_combined_timed(
         self,
         raw_query: str,
         top_k: int = 5,
+        *,
+        doc_type: str | None = None,
+        feature: str | None = None,
+        date: str | None = None,
+        tag: str | None = None,
+        intent: str | None = None,
+        language: str | None = None,
+        path: str | None = None,
+        node_type: str | None = None,
+        function_name: str | None = None,
+        class_name: str | None = None,
+        include_paths: list[str] | None = None,
+        exclude_paths: list[str] | None = None,
+        dedup_locales: bool | None = None,
+        prefer: str | None = None,
+        exclude_domains: list[str] | None = None,
+        only_domains: list[str] | None = None,
+        include_domains: list[str] | None = None,
+        source_path: str | None = None,
+        extractor_id: str | None = None,
+        extractor_version: str | None = None,
+        locator_kind: str | None = None,
     ) -> tuple[list[SearchResult | DocumentSearchResult], dict[str, float]]:
         """Search all domains from one encoding and deterministically select top-k."""
         timings: dict[str, float] = {}
@@ -1136,6 +1203,11 @@ class VaultSearcher:
             parsed,
             query_text,
             allocation,
+            doc_type=doc_type,
+            feature=feature,
+            date=date,
+            tag=tag,
+            intent=intent,
             timings=vault_timings,
         )
         code = self._search_codebase_encoded(
@@ -1144,6 +1216,18 @@ class VaultSearcher:
             parsed,
             query_text,
             allocation,
+            language=language,
+            path=path,
+            node_type=node_type,
+            function_name=function_name,
+            class_name=class_name,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            dedup_locales=dedup_locales,
+            prefer=prefer,
+            exclude_domains=exclude_domains,
+            only_domains=only_domains,
+            include_domains=include_domains,
             timings=code_timings,
         )
         documents = self._search_document_encoded(
@@ -1152,6 +1236,10 @@ class VaultSearcher:
             parsed,
             query_text,
             allocation,
+            source_path=source_path,
+            extractor_id=extractor_id,
+            extractor_version=extractor_version,
+            locator_kind=locator_kind,
             timings=document_timings,
         )
         candidates: list[SearchResult | DocumentSearchResult] = [
@@ -1167,9 +1255,7 @@ class VaultSearcher:
             timings=timings,
         )
         selected = _select_combined_results(candidates, top_k)
-        timings["combined_selection_seconds"] = (
-            time.perf_counter() - phase_started
-        )
+        timings["combined_selection_seconds"] = time.perf_counter() - phase_started
         for domain, values in (
             ("vault", vault_timings),
             ("code", code_timings),

@@ -58,6 +58,13 @@ def _handle_service_results(
     target: pathlib.Path | None = None,
 ) -> None:
     if isinstance(service_results, dict):
+        if service_results.get("ok") is False:
+            _display_service_error(
+                service_results,
+                json_mode=json_mode,
+                command="search",
+            )
+            raise typer.Exit(code=1)
         if "results" in service_results:
             _handle_service_success(
                 service_results,
@@ -139,7 +146,7 @@ def _handle_service_success(
 
 def _render_partial_domain_failures(payload: dict[str, object]) -> None:
     """Render visible failures from a canonical combined-search envelope."""
-    if payload.get("partial") is not True:
+    if payload.get("partial") is not True and payload.get("ok") is not False:
         return
     raw_domains = payload.get("domains")
     if not isinstance(raw_domains, dict):
@@ -330,6 +337,11 @@ def _try_in_process_search(
 ) -> list[SearchResult | DocumentSearchResult] | CombinedSearchOutcome:
     import vaultspec_rag
 
+    from .._public_search import (
+        CodeCombinedSearchFilters,
+        DocumentCombinedSearchFilters,
+        VaultCombinedSearchFilters,
+    )
     from ..registry import get_registry
 
     # An empty or unbuilt index has nothing to search, so skip the
@@ -393,6 +405,29 @@ def _try_in_process_search(
                     target,
                     query,
                     top_k=max_results,
+                    vault_filters=VaultCombinedSearchFilters(
+                        doc_type=doc_type,
+                        feature=feature,
+                        date=date,
+                        tag=tag,
+                    ),
+                    code_filters=CodeCombinedSearchFilters(
+                        language=language,
+                        path=path,
+                        node_type=node_type,
+                        function_name=function_name,
+                        class_name=class_name,
+                        include_paths=tuple(include_paths or ()),
+                        exclude_paths=tuple(exclude_paths or ()),
+                        dedup_locales=dedup_locales,
+                        prefer=prefer,
+                    ),
+                    document_filters=DocumentCombinedSearchFilters(
+                        source_path=source_path,
+                        extractor_id=extractor_id,
+                        extractor_version=extractor_version,
+                        locator_kind=locator_kind,
+                    ),
                 )
         return cast(
             "list[SearchResult | DocumentSearchResult] | CombinedSearchOutcome",
@@ -507,9 +542,7 @@ def _search_prefer_filter(prefer: str | None, *, json_mode: bool = False) -> str
     raise typer.Exit(code=2)
 
 
-def _validate_search_type(
-    search_type: str, *, json_mode: bool
-) -> PublicSourceType:
+def _validate_search_type(search_type: str, *, json_mode: bool) -> PublicSourceType:
     try:
         return parse_source_type(search_type, allow_aliases=True)
     except SourceTypeParseError as exc:
@@ -551,6 +584,24 @@ def _render_in_process_results(
                 (PublicSourceType.DOCUMENT, outcome.document),
             )
         }
+        if not outcome.ok:
+            failure_payload: dict[str, object] = {
+                "ok": False,
+                "error": "combined_search_failed",
+                "message": "Every combined-search domain failed.",
+                "partial": False,
+                "domains": domains,
+            }
+            if json_mode:
+                _emit_json_error_and_exit(
+                    "search",
+                    "combined_search_failed",
+                    "Every combined-search domain failed.",
+                    1,
+                    domains=domains,
+                )
+            _render_partial_domain_failures(failure_payload)
+            raise typer.Exit(code=1)
     else:
         result_items = cast("list[SearchResult | DocumentSearchResult]", results)
         domains = None
