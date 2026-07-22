@@ -24,8 +24,10 @@ related:
 - Nest the isolated managed storage one level below the session temp root so the
   machine pointer and the status view resolve to distinct paths, as they do in
   production.
-- Fund a real graceful drain window on the operator stop path so the daemon completes
-  its own owner-authenticated cleanup before any forced-kill escalation.
+- Fund a graceful drain window on the operator stop path only where the termination
+  signal can actually be delivered, and keep the short escalation everywhere else.
+- Reclaim the freed machine singleton after the holder is confirmed gone and delete the
+  discovery pointer it left behind, under a genuinely held lease.
 
 ## Outcome
 
@@ -38,14 +40,23 @@ operator stop path no longer strands a machine pointer advertising a dead proces
 The integration environment previously pointed the status directory and the managed
 storage parent at the same temp directory, so both discovery views collapsed onto one
 file. Every independent-repair and independent-cleanup assertion was vacuous under that
-layout, and it masked a real defect: only the daemon holds the machine-lock lease that
-authorises deleting the machine pointer, but the stop path escalated to a forced kill
-about two seconds after signalling, well before a daemon carrying GPU stores and a
-managed Qdrant child can drain. Every stop therefore removed the status view through the
-CLI while orphaning the pointer. Separating the two paths surfaced the defect
-immediately; the stop path now funds a drain window and falls back to the forced kill
-only once that window expires.
+layout, and it masked a real defect: only the daemon holds the lease that authorises
+deleting the machine pointer, so every stop removed the status view through the CLI while
+orphaning the pointer.
 
-Verification of the two new regressions contended with a concurrently running GPU
-integration suite in the shared worktree; the focused run was repeated once the device
-was free rather than treated as a flake.
+The first fix attempt was wrong and the regression caught it. Funding a long drain before
+the forced kill assumed the daemon could act on the termination signal; it cannot on
+Windows, because the daemon is spawned console-detached and a console control event only
+reaches processes sharing the sender's console. The drain bought latency and nothing else,
+and the regression still failed. The drain is therefore now spent only on platforms that
+deliver the signal, where the daemon really does clean up after itself.
+
+The general fix inverts the ownership problem instead of waiting on it: once the holder is
+confirmed dead the operating system has released the singleton, so the stop path acquires
+it and deletes the stranded pointer as the momentary owner. That satisfies the
+owner-authenticated deletion contract rather than bypassing it, and a failure to acquire
+means a successor already owns the singleton, whose pointer must not be touched.
+
+Verification contended with a concurrently running GPU integration suite in the shared
+worktree; the focused run was repeated once the device was free rather than treated as a
+flake.
