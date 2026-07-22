@@ -610,18 +610,24 @@ async def _validate_index_job_spec(
     spec: JobSpec,
 ) -> CodeIndexPreflight | DocumentIndexPreflight | None:
     """Resolve domain admission before durable job mutation."""
+    from .._job_errors import JobError
     from ..job_models import JobSource
-    from ..jobs import validate_code_index_policy, validate_document_job_admission
+    from ..jobs import validate_code_job_admission, validate_document_job_admission
 
     if spec.project_root is None or spec.source is JobSource.VAULT:
         return None
     try:
         validator = (
-            validate_code_index_policy
+            validate_code_job_admission
             if spec.source is JobSource.CODE
             else validate_document_job_admission
         )
         return await _run_in_thread(validator, Path(spec.project_root))
+    except JobError as exc:
+        raise _InvalidJobRequestError(
+            exc.error_kind.value,
+            str(exc),
+        ) from exc
     except ValueError as exc:
         raise _InvalidJobRequestError(
             "invalid_job_spec",
@@ -635,6 +641,12 @@ def _admission_preflight(preflight: CodeIndexPreflight) -> dict[str, object]:
     return {
         "count": len(scan.files),
         "policy_fingerprint": scan.policy_fingerprint,
+        "measurement": {
+            "source_files": scan.measurement.source_files,
+            "source_bytes": scan.measurement.source_bytes,
+            "generated_chunks": scan.measurement.generated_chunks,
+            "weighted_bytes": scan.measurement.weighted_bytes,
+        },
         "counts": [
             {
                 "kind": count.kind.value if count.kind is not None else None,
@@ -682,6 +694,13 @@ def _job_outcome_status(code: str) -> int:
         return 404
     if code == "job_capacity_exceeded":
         return 429
+    if code in {
+        "corpus_limit_exceeded",
+        "profile_requirements_not_met",
+    }:
+        return 422
+    if code == "disk_preflight_failed":
+        return 507
     if code.startswith("persistence_") or code in {
         "dispatch_stopped",
         "event_loop_required",
