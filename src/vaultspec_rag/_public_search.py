@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from ._source_types import PublicSourceType
 from .registry import get_registry
+from .search import validate_search_filters
 from .search._outcomes import CombinedSearchOutcome, SearchDomainOutcome
 
 if TYPE_CHECKING:
@@ -57,6 +58,13 @@ def search_documents_timed(
     locator_kind: str | None = None,
 ) -> tuple[list[DocumentSearchResult], dict[str, float]]:
     """Search documents and return canonical service timing fields."""
+    validate_search_filters(
+        PublicSourceType.DOCUMENT,
+        source_path=source_path,
+        extractor_id=extractor_id,
+        extractor_version=extractor_version,
+        locator_kind=locator_kind,
+    )
     root = pathlib.Path(root_dir).resolve()
     registry = get_registry()
     indexed_count = registry.document_chunk_count(root)
@@ -108,6 +116,7 @@ def search_combined_timed(
     top_k: int = 5,
 ) -> tuple[CombinedSearchOutcome, dict[str, float]]:
     """Search all domains under one lease with explicit partial outcomes."""
+    validate_search_filters(PublicSourceType.COMBINED)
     root = pathlib.Path(root_dir).resolve()
     registry = get_registry()
     counts = {
