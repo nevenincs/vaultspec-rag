@@ -2189,11 +2189,8 @@ class CodebaseIndexer:
         reporter: ProgressReporter,
         inputs: _ScanInputs | None = None,
         *,
-        prev_meta: dict[str, str] | None = None,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> tuple[dict[str, pathlib.Path], set[str]]:
-        if prev_meta is None:
-            prev_meta = self._load_meta()
         if inputs is None:
             inputs = self._resolve_scan_inputs()
         git_spec = inputs.git_spec
@@ -2213,7 +2210,6 @@ class CodebaseIndexer:
                 run_control.checkpoint()
                 self._process_changed_path(
                     path,
-                    prev_meta,
                     _is_excluded,
                     to_hash,
                     delete_files,
@@ -2228,7 +2224,6 @@ class CodebaseIndexer:
     def _process_changed_path(
         self,
         path: pathlib.Path,
-        prev_meta: dict[str, str],
         _is_excluded: Callable[[str], bool],
         to_hash: dict[str, pathlib.Path],
         delete_files: set[str],
@@ -2306,7 +2301,6 @@ class CodebaseIndexer:
             changed_paths,
             reporter,
             inputs,
-            prev_meta=previous_metadata,
             run_control=run_control,
         )
         changed_hashes = self._hash_changed_paths(
