@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -36,6 +37,7 @@ from ..benchmarks.bench_large_index_resilience import (
     CorpusSpec,
     measure_full_index,
     prepare_corpus,
+    retain_benchmark_evidence,
 )
 
 if TYPE_CHECKING:
@@ -630,6 +632,29 @@ class TestLargeIndexSearchHeadroom:
             required_headroom_mb = total_cuda_mb * (1.0 - configured_fraction)
             observed_headroom_mb = (
                 total_cuda_mb - measured.resources.peak_cuda_reserved_mb
+            )
+            retained_headroom = observed_headroom_mb >= required_headroom_mb - 128.0
+            retain_benchmark_evidence(
+                "concurrent-search-headroom",
+                {
+                    "files": spec.files,
+                    "chunks": measured.result.total,
+                    "wall_seconds": measured.wall_seconds,
+                    "resources": asdict(measured.resources),
+                    "searches": len(search_outcomes),
+                    "nonempty_searches": sum(
+                        count > 0 for count, _finished in search_outcomes
+                    ),
+                    "searches_completed_before_index": sum(
+                        not finished for _count, finished in search_outcomes
+                    ),
+                    "total_cuda_mb": total_cuda_mb,
+                    "configured_allocator_fraction": configured_fraction,
+                    "required_headroom_mb": required_headroom_mb,
+                    "observed_headroom_mb": observed_headroom_mb,
+                    "headroom_tolerance_mb": 128.0,
+                    "checks": {"retained_reserved_headroom": retained_headroom},
+                },
             )
             assert observed_headroom_mb >= required_headroom_mb - 128.0
         finally:
