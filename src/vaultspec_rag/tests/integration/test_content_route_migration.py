@@ -32,6 +32,7 @@ from ...indexer._route_migration import (
     RouteMigrationJournal,
     iter_stored_route_pages,
     purge_unpublished_rows,
+    reconcile_checkpoint_routes,
     reconcile_origin_after_destination,
     resume_pending_migrations,
 )
@@ -297,6 +298,86 @@ def test_origin_cleanup_journals_bounded_batches(
                 )
             ]
         assert [len(batch) for batch in batches] == [256, 1]
+    finally:
+        store.close()
+
+
+def test_generation_route_cleanup_uses_bounded_store_and_ledger_pages(
+    clean_config: None,
+    tmp_path: Path,
+) -> None:
+    del clean_config
+    destinations = [
+        _document_chunk("guide.txt", "first destination"),
+        _document_chunk("appendix.txt", "second destination"),
+    ]
+    origins = [
+        _code_chunk("legacy-guide", "guide.txt"),
+        _code_chunk("legacy-appendix", "appendix.txt"),
+        _code_chunk("retained-code", "module.py"),
+    ]
+    policy = resolve_index_policy(
+        tmp_path,
+        content_policy=RootContentPolicy(
+            SourceProfileVersion.EXPLICIT_ONLY_V1,
+            (
+                ContentRoute("guide.txt", ContentKind.DOCUMENT),
+                ContentRoute("appendix.txt", ContentKind.DOCUMENT),
+                ContentRoute("module.py", ContentKind.CODE),
+            ),
+        ),
+    )
+    checkpoint = DocumentRunCheckpoint.open(
+        data_root=tmp_path / get_config().data_dir,
+        root_dir=tmp_path,
+        policy=policy,
+        run_policy=RunPolicy(no_progress_timeout_seconds=60.0),
+        operation=RunOperation.FULL,
+        clean=False,
+        model_identity="route-migration-page-test",
+        dense_dimensions=4,
+        configuration=DocumentRunConfiguration(
+            slice_max_chunks=1,
+            source_bytes=2,
+            generated_chunks=2,
+            weighted_bytes=2,
+            sparse_enabled=False,
+            sparse_dimension=1,
+            encode_batch_size=1,
+        ),
+    )
+    for destination in destinations:
+        rel_path = destination.payload.source_path
+        digest = hashlib.blake2b(rel_path.encode("utf-8")).hexdigest()
+        checkpoint.record_confirmed_slice(
+            checkpoint.unit_for(
+                rel_path,
+                digest,
+                0,
+                is_file_end=True,
+                point_ids=(destination.id,),
+            )
+        )
+
+    store = VaultStore(tmp_path, embedding_dim=4)
+    try:
+        store.upsert_code_chunks(origins, write_policy=None)
+        store.upsert_document_content_chunks(destinations, write_policy=None)
+
+        removed = reconcile_checkpoint_routes(
+            store,
+            checkpoint,
+            policy,
+            ContentKind.DOCUMENT,
+            page_size=1,
+        )
+
+        assert removed == 2
+        assert store.get_all_code_ids() == {"retained-code"}
+        assert store.get_all_document_content_ids() == {
+            destination.id for destination in destinations
+        }
+        assert checkpoint.run_policy.snapshot().expired is False
     finally:
         store.close()
 
