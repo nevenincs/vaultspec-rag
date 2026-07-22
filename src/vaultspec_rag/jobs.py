@@ -50,6 +50,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from .service import ServiceRegistry
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -84,6 +86,7 @@ __all__ = [
     "reset",
     "resource_snapshot",
     "restore_interrupted",
+    "restore_managed_jobs",
     "snapshot",
     "start_reindex_codebase",
     "start_reindex_vault",
@@ -711,6 +714,49 @@ def _sync_legacy_finished(
             logger.exception("Error in job complete callback")
 
 
+def _bind_index_dispatch(
+    manager: JobManager,
+    job_id: str,
+    *,
+    registry: ServiceRegistry | None = None,
+) -> JobOutcome:
+    """Attach one logical job to the production indexing implementation."""
+    from .job_dispatch import bind_index_job
+
+    return bind_index_job(
+        manager,
+        job_id,
+        registry=get_registry() if registry is None else registry,
+        on_started=_sync_legacy_started,
+        on_finished=_sync_legacy_finished,
+    )
+
+
+def restore_managed_jobs(*, registry: ServiceRegistry) -> tuple[int, int]:
+    """Rebind durable indexing jobs and dispatch only runnable queued work.
+
+    Returns:
+        ``(bound, dispatched)`` counts for lifecycle diagnostics.
+    """
+    manager = get_job_manager()
+    restored = manager.active()
+    for snapshot in restored:
+        bound = _bind_index_dispatch(manager, snapshot.id, registry=registry)
+        if bound.status is JobOutcomeStatus.ERROR:
+            raise RuntimeError(bound.message)
+    dispatched = 0
+    for snapshot in restored:
+        if (
+            snapshot.state is JobState.QUEUED
+            and snapshot.desired_state is DesiredJobState.RUNNING
+        ):
+            outcome = manager.dispatch(snapshot.id)
+            if outcome.status is JobOutcomeStatus.ERROR:
+                raise RuntimeError(outcome.message)
+            dispatched += 1
+    return len(restored), dispatched
+
+
 def start_reindex_vault(
     root: Path, clean: bool, *, initiator_kind: str = "service"
 ) -> str:
@@ -724,54 +770,15 @@ def start_reindex_vault(
     if not created:
         return job_id
 
-    def _bg_run(context: JobAttemptContext) -> JobExecutionResult:
-        get_registry().load_model()
-        try:
-            with get_registry().lease(root) as slot:
-                context.set_resources(project_lease_held=True)
-                try:
-                    context.set_resources(writer_lock_held=True)
-                    reporter = JobProgressReporter(job_id, context=context)
-                    snapshot = manager.get(job_id)
-                    resumed = (
-                        snapshot is not None
-                        and snapshot.attempt.resumed_from_attempt is not None
-                    )
-                    if clean:
-                        result = slot.vault_indexer.full_index(
-                            clean=not resumed,
-                            reporter=reporter,
-                            run_control=context.control,
-                        )
-                    else:
-                        result = slot.vault_indexer.incremental_index(
-                            reporter=reporter,
-                            run_control=context.control,
-                        )
-                finally:
-                    context.set_resources(writer_lock_held=False)
-                slot.graph_cache.invalidate()
-        finally:
-            context.set_resources(project_lease_held=False)
-        return JobExecutionResult(
-            summary=(
-                f"+{result.added} /{result.updated} "
-                f"-{result.removed} ({result.duration_ms}ms)"
-            )
-        )
-
-    bound = manager.bind_dispatch(
-        job_id,
-        _bg_run,
-        on_started=_sync_legacy_started,
-        on_finished=_sync_legacy_finished,
-    )
+    bound = _bind_index_dispatch(manager, job_id)
     if bound.status is JobOutcomeStatus.ERROR:
         manager.fail_unstarted(job_id, result=bound.message)
         record_finish(job_id, error=bound.message)
         raise RuntimeError(bound.message)
     dispatched = manager.dispatch(job_id)
     if dispatched.status is JobOutcomeStatus.ERROR:
+        if dispatched.code == "dispatch_stopped":
+            return job_id
         manager.fail_unstarted(job_id, result=dispatched.message)
         record_finish(job_id, error=dispatched.message)
         raise RuntimeError(dispatched.message)
@@ -794,65 +801,15 @@ def start_reindex_codebase(
     if not created:
         return job_id
 
-    def _bg_run(context: JobAttemptContext) -> JobExecutionResult:
-        get_registry().load_model()
-        try:
-            with get_registry().lease(root) as slot:
-                context.set_resources(project_lease_held=True)
-                try:
-                    context.set_resources(
-                        writer_lock_held=True,
-                        pipeline_active=True,
-                    )
-                    reporter = JobProgressReporter(job_id, context=context)
-                    snapshot = manager.get(job_id)
-                    resumed = (
-                        snapshot is not None
-                        and snapshot.attempt.resumed_from_attempt is not None
-                    )
-                    if clean:
-                        result = slot.code_indexer.full_index(
-                            clean=not resumed,
-                            reporter=reporter,
-                            run_control=context.control,
-                        )
-                    else:
-                        result = slot.code_indexer.incremental_index(
-                            reporter=reporter,
-                            run_control=context.control,
-                        )
-                finally:
-                    context.set_resources(
-                        writer_lock_held=False,
-                        pipeline_active=False,
-                    )
-        finally:
-            context.set_resources(project_lease_held=False)
-        skipped_suffix = (
-            f" ~{result.preprocess_skipped}" if result.preprocess_skipped else ""
-        )
-        return JobExecutionResult(
-            summary=(
-                f"+{result.added} /{result.updated} "
-                f"-{result.removed} ({result.duration_ms}ms){skipped_suffix}"
-            ),
-            preprocess_ok=result.preprocess_ok,
-            preprocess_skipped=result.preprocess_skipped,
-            preprocess_failures=tuple(result.preprocess_failures),
-        )
-
-    bound = manager.bind_dispatch(
-        job_id,
-        _bg_run,
-        on_started=_sync_legacy_started,
-        on_finished=_sync_legacy_finished,
-    )
+    bound = _bind_index_dispatch(manager, job_id)
     if bound.status is JobOutcomeStatus.ERROR:
         manager.fail_unstarted(job_id, result=bound.message)
         record_finish(job_id, error=bound.message)
         raise RuntimeError(bound.message)
     dispatched = manager.dispatch(job_id)
     if dispatched.status is JobOutcomeStatus.ERROR:
+        if dispatched.code == "dispatch_stopped":
+            return job_id
         manager.fail_unstarted(job_id, result=dispatched.message)
         record_finish(job_id, error=dispatched.message)
         raise RuntimeError(dispatched.message)

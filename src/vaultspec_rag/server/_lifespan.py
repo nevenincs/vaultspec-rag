@@ -33,9 +33,14 @@ if TYPE_CHECKING:
     from starlette.applications import Starlette
     from starlette.requests import Request
 
+    from ..job_manager import JobManager, JobShutdownResult
     from ..qdrant_runtime import QdrantSupervisor
 
 logger = logging.getLogger("vaultspec_rag.server")
+
+
+class _CanonicalJobRestoreError(RuntimeError):
+    """A fresh canonical manager could not restore its durable generation."""
 
 
 def _claim_machine_singleton() -> None:
@@ -251,16 +256,33 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     # supported embedded-reuse contract requires the lock be freed the moment
     # startup fails, so a subsequent in-process acquire succeeds.
     periodic_tasks: list[asyncio.Task[None]] = []
+    manager: JobManager | None = None
     cleanup_started = False
+    startup_started = time.perf_counter()
     try:
         _stamp_service_phase(SERVICE_PHASE_WARMING)
         periodic_tasks = await _start_components()
+        from .. import jobs as _jobs_module
+
+        manager = _jobs_module.get_job_manager()
+        try:
+            await _start_job_manager(manager)
+        except _CanonicalJobRestoreError:
+            # ``abort_startup`` restored the untouched singleton to ``new``.
+            # Do not pass it through normal shutdown, which would incorrectly
+            # advance it to ``stopped`` and skip restore on in-process retry.
+            manager = None
+            raise
+        logger.info(
+            "Service startup complete in %.2fs",
+            time.perf_counter() - startup_started,
+        )
         _stamp_service_phase(SERVICE_PHASE_RUNNING)
         try:
             yield
         finally:
             cleanup_started = True
-            await _shutdown_components(periodic_tasks)
+            await _shutdown_components(periodic_tasks, manager)
     except BaseException:
         # The post-yield ``finally`` releases the lock on a clean run; this
         # branch covers the pre-yield startup failure (and a cancelled startup)
@@ -270,7 +292,7 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
         # guarantee. Release exactly once after the child is gone.
         if not cleanup_started:
             cleanup_started = True
-            await _shutdown_components(periodic_tasks)
+            await _shutdown_components(periodic_tasks, manager)
         raise
 
 
@@ -287,13 +309,16 @@ async def _start_components() -> list[asyncio.Task[None]]:
         scheduled), handed back so the post-yield shutdown can cancel and
         await them.
     """
-    t_total = time.perf_counter()
-
     # HF cache status
     from ..config import EnvVar, get_config
 
     hf_home = os.environ.get(EnvVar.HF_HOME, "~/.cache/huggingface")
     logger.info("HF cache: %s", hf_home)
+
+    # The package-level registry is intentionally stable across supported
+    # in-process lifespan reuse. Reopen it only after its prior close_all()
+    # completed and proved that no model, slot, or root lock remains.
+    _m._registry.prepare_startup()
 
     # Qdrant server mode is the default backend: spawn the supervised
     # child BEFORE model load so a missing/broken binary fails startup
@@ -371,8 +396,6 @@ async def _start_components() -> list[asyncio.Task[None]]:
         await _run_in_thread(_m._registry.get_reranker)
     logger.info("All models loaded in %.2fs", time.perf_counter() - t0)
 
-    logger.info("Service startup complete in %.2fs", time.perf_counter() - t_total)
-
     # Daemon now owns end-of-life cleanup. The CLI parent created
     # service.json; the daemon's hooks remove it on exit so a stale
     # file never misleads ``service status``.
@@ -423,34 +446,240 @@ async def _start_components() -> list[asyncio.Task[None]]:
     return tasks
 
 
-async def _shutdown_components(tasks: list[asyncio.Task[None]]) -> None:
+async def _start_job_manager(manager: JobManager) -> None:
+    """Restore, rebind, and dispatch the one canonical service job manager."""
+    from .. import jobs as _jobs_module
+    from ..job_models import JobOutcomeStatus, JobState
+
+    restore_required = manager.prepare_startup()
+    if restore_required:
+        outcome = await _run_in_thread(manager.restore_persisted)
+        if outcome.status is JobOutcomeStatus.ERROR:
+            detail = (
+                f"canonical job state restore failed ({outcome.code}): "
+                f"{outcome.message}"
+            )
+            if manager.abort_startup():
+                raise _CanonicalJobRestoreError(detail)
+            # A post-publication persistence error can retain the restored
+            # generation in memory. Mark it complete so bounded shutdown can
+            # flush it and a clean in-process retry rebinds rather than trying
+            # to restore into a nonempty singleton.
+            manager.complete_startup()
+            raise RuntimeError(
+                f"{detail}; retained restored state requires bounded cleanup"
+            )
+    manager.complete_startup()
+    bound, dispatched = _jobs_module.restore_managed_jobs(registry=_m._registry)
+    interrupted = sum(
+        snapshot.state is JobState.INTERRUPTED for snapshot in manager.terminal()
+    )
+    logger.info(
+        "Canonical job manager ready: bound=%d dispatched=%d interrupted=%d",
+        bound,
+        dispatched,
+        interrupted,
+    )
+
+
+async def _drain_managed_work(
+    manager: JobManager | None,
+    requested: tuple[str, ...],
+    initial_reasons: list[str],
+    *,
+    watcher_stop_ok: bool,
+) -> tuple[bool, bool, tuple[str, ...], str]:
+    """Boundedly join watcher and manager ownership after intake stops."""
+    from ..config import get_config
+
+    timeout = float(get_config().job_shutdown_timeout_seconds)
+    watcher_result, raw_manager_result = await _await_shutdown_results(
+        manager,
+        requested,
+        timeout=timeout,
+    )
+    watchers_released, reasons = _watcher_shutdown_status(
+        watcher_result,
+        stop_ok=watcher_stop_ok,
+        timeout=timeout,
+    )
+    reasons[:0] = initial_reasons
+    manager_resources_released, manager_result, manager_reasons = (
+        _manager_shutdown_status(manager, requested, raw_manager_result)
+    )
+    reasons.extend(manager_reasons)
+    survivors = (
+        manager_result.surviving_job_ids if manager_result is not None else requested
+    )
+    resources_released = watchers_released and manager_resources_released
+    return resources_released, not reasons, survivors, "; ".join(reasons)
+
+
+async def _await_shutdown_results(
+    manager: JobManager | None,
+    requested: tuple[str, ...],
+    *,
+    timeout: float,
+) -> tuple[bool | BaseException, JobShutdownResult | BaseException | None]:
+    """Await watcher and manager drains concurrently under one time bound."""
+    watcher_wait = asyncio.create_task(
+        _m._wait_for_watcher_cleanup(timeout_seconds=timeout),
+        name="vaultspec-watcher-shutdown-wait",
+    )
+    if manager is not None:
+        manager_wait = asyncio.create_task(
+            manager.wait_for_shutdown(requested, timeout_seconds=timeout),
+            name="vaultspec-job-manager-shutdown-wait",
+        )
+        watcher_result, raw_manager_result = await asyncio.gather(
+            watcher_wait,
+            manager_wait,
+            return_exceptions=True,
+        )
+        return watcher_result, raw_manager_result
+    watcher_results = await asyncio.gather(watcher_wait, return_exceptions=True)
+    return watcher_results[0], None
+
+
+def _watcher_shutdown_status(
+    result: bool | BaseException,
+    *,
+    stop_ok: bool,
+    timeout: float,
+) -> tuple[bool, list[str]]:
+    """Classify watcher cleanup separately from intake-stop errors."""
+    reasons: list[str] = []
+    released = stop_ok and result is True
+    if isinstance(result, BaseException):
+        reasons.append(f"watcher cleanup failed: {result}")
+    elif result is not True:
+        reasons.append(f"watcher cleanup exceeded {timeout:g} seconds")
+    return released, reasons
+
+
+def _manager_shutdown_status(
+    manager: JobManager | None,
+    requested: tuple[str, ...],
+    result: JobShutdownResult | BaseException | None,
+) -> tuple[bool, JobShutdownResult | None, list[str]]:
+    """Classify manager ownership and close its service-life state."""
+    if manager is None:
+        return True, None, []
+    manager_result: JobShutdownResult | None = None
+    reasons: list[str] = []
+    resources_released = False
+    if isinstance(result, BaseException):
+        reasons.append(f"manager drain failed: {result}")
+    elif result is None:
+        reasons.append(
+            "manager drain returned no result for requested jobs " + ",".join(requested)
+        )
+    else:
+        manager_result = result
+        resources_released = result.resources_released
+        if not resources_released:
+            reasons.append("manager workers or resource owners survived")
+        if not result.persistence_ok:
+            reasons.append(
+                f"manager shutdown state was not durable ({result.persistence_code})"
+            )
+    try:
+        manager.complete_shutdown(resources_released=resources_released)
+    except BaseException as exc:
+        resources_released = False
+        reasons.append(f"manager shutdown completion failed: {exc}")
+    return resources_released, manager_result, reasons
+
+
+def _begin_managed_shutdown(
+    manager: JobManager | None,
+) -> tuple[tuple[str, ...], list[str], bool]:
+    """Synchronously stop manager dispatch and watcher intake first."""
+    requested: tuple[str, ...] = ()
+    reasons: list[str] = []
+    watcher_stop_ok = True
+    if manager is not None:
+        try:
+            requested = manager.begin_shutdown()
+        except BaseException as exc:
+            reasons.append(f"manager shutdown signal failed: {exc}")
+    try:
+        _m._stop_all_watchers()
+    except BaseException as exc:
+        watcher_stop_ok = False
+        reasons.append(f"watcher stop failed: {exc}")
+    return requested, reasons, watcher_stop_ok
+
+
+async def _shutdown_components(
+    tasks: list[asyncio.Task[None]],
+    manager: JobManager | None,
+) -> None:
     """Tear down the daemon's data components and release the machine lock.
 
-    Mirrors :func:`_start_components`: cancels the periodic tasks (heartbeat
-    and, when scheduled, storage maintenance), stops watchers before stores
-    and stores before the qdrant child, then releases the machine singleton
-    last so the slot is free for the next service only after this one has
-    fully torn down its GPU and Qdrant.
+    Mirrors :func:`_start_components`: stops dispatch and watcher intake,
+    cancels periodic tasks (heartbeat and, when scheduled, storage maintenance),
+    drains execution owners before stores and stores before the qdrant child,
+    then releases the machine singleton last.
     """
+    requested, initial_reasons, watcher_stop_ok = _begin_managed_shutdown(manager)
     for task in tasks:
         task.cancel()
     for task in tasks:
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await task
-    # Shutdown ordering: watchers BEFORE stores (so no
-    # incremental_index() runs against a closed store), stores
-    # BEFORE the qdrant child (so clients release their server
-    # connections), the qdrant child LAST among data components.
+    resources_released, clean, survivors, reason = await _drain_managed_work(
+        manager,
+        requested,
+        initial_reasons,
+        watcher_stop_ok=watcher_stop_ok,
+    )
+    if not resources_released:
+        log_event(
+            logger,
+            "service.lifecycle",
+            "shutdown_unclean",
+            severity=logging.ERROR,
+            reason=reason,
+            surviving_job_ids=survivors,
+        )
+        _m._record_shutdown(
+            "unclean",
+            detail=reason,
+            surviving_job_ids=",".join(survivors),
+        )
+        return
+
+    # Shutdown ordering: released watchers and manager workers BEFORE stores,
+    # stores BEFORE the qdrant child, and the machine singleton last.
     try:
-        _m._stop_all_watchers()
-        _m._registry.close_all()
-    finally:
-        _stop_active_qdrant()
-        # Release the machine singleton last, so the slot is free for the next
-        # service only after this one has fully torn down its GPU and Qdrant.
-        release_machine_lock()
-    logger.info("Service shutdown complete")
-    _m._record_shutdown("clean")
+        try:
+            _m._registry.close_all()
+        finally:
+            _stop_active_qdrant()
+            # Release the machine singleton last, so the slot is free for the
+            # next service only after GPU and Qdrant are fully torn down.
+            release_machine_lock()
+    except BaseException as exc:
+        _m._record_shutdown("unclean", detail=f"component teardown failed: {exc}")
+        raise
+    if clean:
+        logger.info("Service shutdown complete")
+        _m._record_shutdown("clean")
+    else:
+        log_event(
+            logger,
+            "service.lifecycle",
+            "shutdown_unclean",
+            severity=logging.ERROR,
+            reason=reason,
+            surviving_job_ids=survivors,
+        )
+        _m._record_shutdown(
+            "unclean",
+            detail=reason,
+            surviving_job_ids=",".join(survivors),
+        )
 
 
 async def health_handler(_request: Request) -> object:

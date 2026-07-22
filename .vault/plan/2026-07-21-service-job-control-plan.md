@@ -113,7 +113,7 @@ Route automatic indexing through the manager, coalesce later dirtiness into paus
 
 Stop dispatch, cooperatively drain workers, persist recoverable intent, and prevent stores from closing beneath live indexing threads.
 
-- [ ] `W03.P10.S20` - Restore the single manager, resume durable queues, preserve pauses, drain workers before store closure, and report unclean shutdown truthfully using vaultspec-high-executor; `src/vaultspec_rag/server/_lifespan.py`.
+- [x] `W03.P10.S20` - Restore the single manager, resume durable queues, preserve pauses, drain workers before store closure, and report unclean shutdown truthfully using vaultspec-high-executor; `src/vaultspec_rag/server/_lifespan.py`.
 
 ### Phase `W03.P11` - orchestration verification
 
