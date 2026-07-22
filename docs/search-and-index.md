@@ -183,29 +183,29 @@ uv run vaultspec-rag search "encode batch" --type code --prefer production
 
 ## Filter flag summary
 
-| Flag                                        | Applies to | What it does                                                        |
-| ------------------------------------------- | ---------- | ------------------------------------------------------------------- |
-| `--type vault\|code\|document\|combined`    | all        | Chooses one domain or all three; defaults to vault                  |
-| `--max-results` / `--limit`                 | all        | Sets how many results return; defaults to 10                        |
-| `--scores`                                  | all        | Shows numeric relevance scores beside each record                   |
-| `--include-path`                            | code       | Keeps only files matching a glob; repeatable                        |
-| `--exclude-path`                            | code       | Drops files matching a glob; repeatable                             |
-| `--language`                                | code       | Keeps results in one programming language                           |
-| `--structure`                               | code       | Keeps results matching one parse-tree node type                     |
-| `--function-name`                           | code       | Keeps results in a function of this name                            |
-| `--class-name`                              | code       | Keeps results in a class of this name                               |
-| `--path`                                    | code       | Keeps results from one exact project-relative path                  |
-| `--dedup-locales` / `--no-dedup-locales`    | code       | Forces locale-duplicate collapse on or off (on by default)          |
-| `--prefer production\|tests\|documentation` | code       | Biases results toward one kind of file                              |
-| `exclude:<domains>` (query token)           | code       | Hides one or more noise domains for this search                     |
-| `only:<domains>` (query token)              | code       | Restricts results to the named domains                              |
-| `include:<domains>` (query token)           | code       | Re-admits a domain the profile hides or demotes by default          |
-| `--doc-type`                                | vault      | Keeps documents of one type                                         |
-| `--feature`                                 | vault      | Keeps documents tagged with one feature                             |
-| `--date`                                    | vault      | Keeps documents from one `yyyy-mm-dd` date                          |
-| `--tag`                                     | vault      | Keeps documents carrying one tag (no leading `#`)                   |
-| `--preprocessor-id`                         | document   | Keeps output from one extractor identity                            |
-| `--extractor-version`                       | document   | Keeps output from one extractor version                             |
+| Flag                                        | Applies to | What it does                                               |
+| ------------------------------------------- | ---------- | ---------------------------------------------------------- |
+| `--type vault\|code\|document\|combined`    | all        | Chooses one domain or all three; defaults to vault         |
+| `--max-results` / `--limit`                 | all        | Sets how many results return; defaults to 10               |
+| `--scores`                                  | all        | Shows numeric relevance scores beside each record          |
+| `--include-path`                            | code       | Keeps only files matching a glob; repeatable               |
+| `--exclude-path`                            | code       | Drops files matching a glob; repeatable                    |
+| `--language`                                | code       | Keeps results in one programming language                  |
+| `--structure`                               | code       | Keeps results matching one parse-tree node type            |
+| `--function-name`                           | code       | Keeps results in a function of this name                   |
+| `--class-name`                              | code       | Keeps results in a class of this name                      |
+| `--path`                                    | code       | Keeps results from one exact project-relative path         |
+| `--dedup-locales` / `--no-dedup-locales`    | code       | Forces locale-duplicate collapse on or off (on by default) |
+| `--prefer production\|tests\|documentation` | code       | Biases results toward one kind of file                     |
+| `exclude:<domains>` (query token)           | code       | Hides one or more noise domains for this search            |
+| `only:<domains>` (query token)              | code       | Restricts results to the named domains                     |
+| `include:<domains>` (query token)           | code       | Re-admits a domain the profile hides or demotes by default |
+| `--doc-type`                                | vault      | Keeps documents of one type                                |
+| `--feature`                                 | vault      | Keeps documents tagged with one feature                    |
+| `--date`                                    | vault      | Keeps documents from one `yyyy-mm-dd` date                 |
+| `--tag`                                     | vault      | Keeps documents carrying one tag (no leading `#`)          |
+| `--preprocessor-id`                         | document   | Keeps output from one extractor identity                   |
+| `--extractor-version`                       | document   | Keeps output from one extractor version                    |
 
 ## Use the service and MCP surfaces
 

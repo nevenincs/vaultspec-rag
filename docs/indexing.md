@@ -177,9 +177,9 @@ enters the independent document pipeline only after versioned output validation.
 
 The policy names its source-admission behavior so upgrades cannot silently widen a scan:
 
-| Source profile     | Admission without an explicit route                              |
-| ------------------ | ---------------------------------------------------------------- |
-| `conventional-v1`  | Known conventional source extensions enter the `code` domain      |
+| Source profile     | Admission without an explicit route                                |
+| ------------------ | ------------------------------------------------------------------ |
+| `conventional-v1`  | Known conventional source extensions enter the `code` domain       |
 | `explicit-only-v1` | Nothing enters code or document unless the caller assigns an owner |
 
 `conventional-v1` is the compatibility default. The selected profile, ordered routes,
