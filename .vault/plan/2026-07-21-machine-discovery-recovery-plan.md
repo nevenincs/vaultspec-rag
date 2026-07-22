@@ -98,10 +98,10 @@ Expose non-destructive owner-driven reconciliation and update the consumer-facin
 
 Poll boundedly for owner heartbeat convergence and expose an idempotent non-destructive operator command.
 
-- [ ] `W03.P08.S19` - Implement bounded owner-driven reconcile over repeated typed resolution and identity-confirmed health; `src/vaultspec_rag/serviceclient/_status.py`.
-- [ ] `W03.P08.S20` - Expose an idempotent non-destructive server reconcile command with structured outcomes; `src/vaultspec_rag/cli/_service_reconcile.py`.
-- [ ] `W03.P08.S21` - Register the reconcile adapter without changing existing lifecycle command contracts; `src/vaultspec_rag/cli/__init__.py`.
-- [ ] `W03.P08.S22` - Verify real-daemon recovery from deleted, stale, and foreign pointers without PID change or process termination; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
+- [x] `W03.P08.S19` - Implement bounded owner-driven reconcile over repeated typed resolution and identity-confirmed health; `src/vaultspec_rag/serviceclient/_status.py`.
+- [x] `W03.P08.S20` - Expose an idempotent non-destructive server reconcile command with structured outcomes; `src/vaultspec_rag/cli/_service_reconcile.py`.
+- [x] `W03.P08.S21` - Register the reconcile adapter without changing existing lifecycle command contracts; `src/vaultspec_rag/cli/__init__.py`.
+- [x] `W03.P08.S22` - Verify real-daemon recovery from deleted, stale, and foreign pointers without PID change or process termination; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
 
 ### Phase `W03.P09` - discovery contract documentation
 

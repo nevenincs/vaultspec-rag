@@ -117,6 +117,7 @@ from ._service_qdrant import (
     qdrant_install,
     qdrant_status,
 )
+from ._service_reconcile import service_reconcile
 from ._service_status import (
     _append_lifecycle_shutdown_log,
     _default_service_port,
@@ -206,6 +207,7 @@ __all__ = [
     "service_logs",
     "service_projects_list",
     "service_projects_unload",
+    "service_reconcile",
     "service_start",
     "service_status",
     "service_stop",

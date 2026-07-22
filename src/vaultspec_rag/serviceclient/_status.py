@@ -22,6 +22,7 @@ from ._discovery import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from typing import Any
 
 #: Canonical operator states. ``running`` and ``warming`` are healthy live
@@ -50,6 +51,11 @@ __all__ = [
     "EXIT_RUNNING",
     "EXIT_STOPPED",
     "EXIT_WARMING",
+    "RECONCILE_ALREADY",
+    "RECONCILE_CONVERGED",
+    "RECONCILE_INTERVAL_SECONDS",
+    "RECONCILE_TIMEOUT_SECONDS",
+    "RECONCILE_UNRESOLVED",
     "STATUS_CRASHED",
     "STATUS_DEGRADED",
     "STATUS_RUNNING",
@@ -57,7 +63,9 @@ __all__ = [
     "STATUS_WARMING",
     "DiscoveryStatus",
     "LivenessSignals",
+    "ReconcileOutcome",
     "compose_discovery_status",
+    "reconcile_discovery",
 ]
 
 
@@ -256,3 +264,144 @@ def compose_discovery_status(
         signals=facts,
         health=health,
     )
+
+
+#: Reconcile outcomes. ``already_converged`` means discovery agreed on the
+#: first look; ``converged`` means the owner's own heartbeat repaired it inside
+#: the bound; ``unresolved`` means it did not, which is a report, never a
+#: repair attempt of our own.
+RECONCILE_ALREADY = "already_converged"
+RECONCILE_CONVERGED = "converged"
+RECONCILE_UNRESOLVED = "unresolved"
+
+#: Bounded by default so an operator command cannot hang on a daemon that will
+#: never converge. One heartbeat interval is 15s, so the default spans two.
+RECONCILE_TIMEOUT_SECONDS = 35.0
+RECONCILE_INTERVAL_SECONDS = 1.0
+
+
+@dataclass(frozen=True, slots=True)
+class ReconcileOutcome:
+    """The result of waiting for owner-published discovery to converge."""
+
+    status: str
+    attempts: int
+    elapsed_s: float
+    final: DiscoveryStatus
+    detail: str
+
+    @property
+    def converged(self) -> bool:
+        """Whether discovery ended in an agreeing, identity-confirmed state."""
+        return self.status in {RECONCILE_ALREADY, RECONCILE_CONVERGED}
+
+    def as_dict(self) -> dict[str, Any]:
+        """Render the structured outcome an operator adapter emits."""
+        return {
+            "status": self.status,
+            "converged": self.converged,
+            "attempts": self.attempts,
+            "elapsed_seconds": round(self.elapsed_s, 3),
+            "detail": self.detail,
+            "service": self.final.as_dict(),
+        }
+
+
+def _identity_confirmed(
+    verdict: DiscoveryStatus, health: dict[str, Any] | None
+) -> bool:
+    """Whether the serving daemon is the one the pointer advertises.
+
+    Convergence requires agreement across every axis the pointer claims, not
+    merely a reachable port: a live service answering on the advertised address
+    is only the *right* service when its own identity token and process match
+    what the owner published.
+    """
+    if health is None:
+        return False
+    served_token = health.get("service_token")
+    expected = verdict.resolution.service_token
+    token_claimed = isinstance(expected, str) and bool(expected)
+    if token_claimed and (
+        not isinstance(served_token, str) or served_token != expected
+    ):
+        return False
+    served_pid = health.get("pid")
+    pointer_pid = verdict.resolution.pointer_pid
+    pid_comparable = (
+        isinstance(served_pid, int)
+        and not isinstance(served_pid, bool)
+        and pointer_pid is not None
+    )
+    return not (pid_comparable and served_pid != pointer_pid)
+
+
+def reconcile_discovery(
+    resolve: Callable[[], MachineResolution],
+    probe_liveness: Callable[[MachineResolution], LivenessSignals],
+    probe_health: Callable[[int], dict[str, Any] | None],
+    *,
+    timeout_s: float = RECONCILE_TIMEOUT_SECONDS,
+    interval_s: float = RECONCILE_INTERVAL_SECONDS,
+    sleep: Callable[[float], None] | None = None,
+    monotonic: Callable[[], float] | None = None,
+) -> ReconcileOutcome:
+    """Wait boundedly for the owner's own heartbeat to republish discovery.
+
+    Deliberately non-destructive: the singleton owner is the only process that
+    may publish or delete its pointer, so the only correct repair is the
+    owner's next heartbeat. This polls for that convergence and reports what it
+    saw; it never writes, deletes, restarts, or terminates anything, which is
+    what makes it safe to run against a healthy machine.
+    """
+    import time as _time
+
+    clock = monotonic or _time.monotonic
+    wait = sleep or _time.sleep
+
+    started = clock()
+    deadline = started + max(0.0, timeout_s)
+    attempts = 0
+    verdict: DiscoveryStatus | None = None
+
+    while True:
+        attempts += 1
+        resolution = resolve()
+        signals = probe_liveness(resolution)
+        health = (
+            probe_health(resolution.port)
+            if resolution.port is not None and signals.port_listening
+            else None
+        )
+        verdict = compose_discovery_status(resolution, signals, health=health)
+
+        if verdict.state == STATUS_RUNNING and _identity_confirmed(verdict, health):
+            status = RECONCILE_ALREADY if attempts == 1 else RECONCILE_CONVERGED
+            return ReconcileOutcome(
+                status=status,
+                attempts=attempts,
+                elapsed_s=clock() - started,
+                final=verdict,
+                detail=verdict.label,
+            )
+        # Nothing holds the singleton: there is no owner to wait for, so
+        # further polling cannot change the answer.
+        if verdict.state == STATUS_STOPPED:
+            return ReconcileOutcome(
+                status=RECONCILE_UNRESOLVED,
+                attempts=attempts,
+                elapsed_s=clock() - started,
+                final=verdict,
+                detail="no service holds the machine singleton",
+            )
+        if clock() >= deadline:
+            return ReconcileOutcome(
+                status=RECONCILE_UNRESOLVED,
+                attempts=attempts,
+                elapsed_s=clock() - started,
+                final=verdict,
+                detail=(
+                    f"{verdict.label}; discovery did not converge within {timeout_s:g}s"
+                ),
+            )
+        wait(min(interval_s, max(0.0, deadline - clock())))
