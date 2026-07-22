@@ -299,6 +299,7 @@ class TestCodeIndexMemoryCeilings:
     ) -> None:
         from ... import CodebaseIndexer, VaultStore
         from ..._job_errors import JobError, JobErrorKind
+        from ...job_dispatch import _code_resilience
 
         _configure_cpu_code_index(
             cpu_code_embedding_model.dimension,
@@ -326,6 +327,9 @@ class TestCodeIndexMemoryCeilings:
             assert rss_ceiling_mb is not None
             assert rss_ceiling_mb == 1.0
             assert snapshot.peak_rss_mb > rss_ceiling_mb
+            resilience = _code_resilience(indexer)
+            assert resilience.rss_ceiling_mb == rss_ceiling_mb
+            assert resilience.peak_rss_mb == snapshot.peak_rss_mb
             assert store.count_code() == 0
             _assert_code_pipeline_released(indexer)
 
@@ -341,6 +345,7 @@ class TestCodeIndexMemoryCeilings:
         from ... import CodebaseIndexer, VaultStore
         from ..._job_errors import JobError, JobErrorKind
         from ...config import get_config
+        from ...job_dispatch import _code_resilience
         from ...memory_probe import current_cuda_mb, current_rss_mb
 
         allocated_mb, reserved_mb = current_cuda_mb()
@@ -372,6 +377,10 @@ class TestCodeIndexMemoryCeilings:
             assert cuda_ceiling_mb is not None
             assert cuda_ceiling_mb == ceiling_mb
             assert snapshot.peak_cuda_reserved_mb > cuda_ceiling_mb
+            resilience = _code_resilience(indexer)
+            assert resilience.cuda_ceiling_mb == cuda_ceiling_mb
+            assert resilience.peak_cuda_allocated_mb == snapshot.peak_cuda_allocated_mb
+            assert resilience.peak_cuda_reserved_mb == snapshot.peak_cuda_reserved_mb
             assert store.count_code() == 0
             _assert_code_pipeline_released(indexer)
 
