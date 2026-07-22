@@ -1807,27 +1807,49 @@ def test_jobs_route_200_with_query_token(
     assert len(response.json()["jobs"]) == 1
 
 
-def test_jobs_route_canonical_control_retry_and_delete(
-    _routes_app: tuple[TestClient, str],
-    tmp_path: Path,
-) -> None:
-    (tmp_path / ".vault").mkdir()
-    client, token = _routes_app
-    headers = {"Authorization": f"Bearer {token}"}
-    created = cast(
+def _create_route_job(
+    client: TestClient,
+    headers: dict[str, str],
+    project_root: Path,
+    *,
+    idempotency_key: str | None = None,
+    include_initiator: bool = False,
+) -> httpx.Response:
+    """Create one paused route job through the real ASGI client."""
+    request_headers = dict(headers)
+    if idempotency_key is not None:
+        request_headers["Idempotency-Key"] = idempotency_key
+    payload: dict[str, object] = {
+        "operation": "index",
+        "source": "vault",
+        "project_root": str(project_root),
+        "mode": "incremental",
+        "start_paused": True,
+    }
+    if include_initiator:
+        payload["initiator"] = {"kind": "cli", "command": "test_create"}
+    return cast(
         "httpx.Response",
         client.post(  # pyright: ignore[reportUnknownMemberType]
             "/jobs",
-            headers={**headers, "Idempotency-Key": "route-lifecycle"},
-            json={
-                "operation": "index",
-                "source": "vault",
-                "project_root": str(tmp_path),
-                "mode": "incremental",
-                "start_paused": True,
-                "initiator": {"kind": "cli", "command": "test_create"},
-            },
+            headers=request_headers,
+            json=payload,
         ),
+    )
+
+
+def _assert_route_creation_contract(
+    client: TestClient,
+    headers: dict[str, str],
+    project_root: Path,
+) -> str:
+    """Assert create, idempotent replay, key conflict, and active deduplication."""
+    created = _create_route_job(
+        client,
+        headers,
+        project_root,
+        idempotency_key="route-lifecycle",
+        include_initiator=True,
     )
     assert created.status_code == 202, created.text
     created_payload: dict[str, Any] = created.json()
@@ -1836,81 +1858,61 @@ def test_jobs_route_canonical_control_retry_and_delete(
     assert created.headers["location"] == f"/jobs/{job_id}"
     assert job["state"] == "paused"
     assert job["desired_state"] == "paused"
-
-    replay = cast(
-        "httpx.Response",
-        client.post(  # pyright: ignore[reportUnknownMemberType]
-            "/jobs",
-            headers={**headers, "Idempotency-Key": "route-lifecycle"},
-            json={
-                "operation": "index",
-                "source": "vault",
-                "project_root": str(tmp_path),
-                "mode": "incremental",
-                "start_paused": True,
-                "initiator": {"kind": "cli", "command": "test_create"},
-            },
-        ),
+    replay = _create_route_job(
+        client,
+        headers,
+        project_root,
+        idempotency_key="route-lifecycle",
+        include_initiator=True,
     )
     assert replay.status_code == 200
     assert replay.json()["code"] == "idempotency_replayed"
     assert replay.json()["job"]["id"] == job_id
     assert replay.headers["location"] == f"/jobs/{job_id}"
-
-    other_root = tmp_path / "other"
+    other_root = project_root / "other"
     (other_root / ".vault").mkdir(parents=True)
-    key_conflict = cast(
-        "httpx.Response",
-        client.post(  # pyright: ignore[reportUnknownMemberType]
-            "/jobs",
-            headers={**headers, "Idempotency-Key": "route-lifecycle"},
-            json={
-                "operation": "index",
-                "source": "vault",
-                "project_root": str(other_root),
-                "mode": "incremental",
-                "start_paused": True,
-            },
-        ),
+    key_conflict = _create_route_job(
+        client,
+        headers,
+        other_root,
+        idempotency_key="route-lifecycle",
     )
     assert key_conflict.status_code == 409
     assert key_conflict.json()["code"] == "idempotency_key_conflict"
-
-    deduplicated = cast(
-        "httpx.Response",
-        client.post(  # pyright: ignore[reportUnknownMemberType]
-            "/jobs",
-            headers=headers,
-            json={
-                "operation": "index",
-                "source": "vault",
-                "project_root": str(tmp_path),
-                "mode": "incremental",
-                "start_paused": True,
-                "initiator": {"kind": "cli", "command": "test_create"},
-            },
-        ),
+    deduplicated = _create_route_job(
+        client,
+        headers,
+        project_root,
+        include_initiator=True,
     )
     assert deduplicated.status_code == 200
     assert deduplicated.json()["code"] == "active_job_exists"
     assert deduplicated.json()["job"]["id"] == job_id
+    return job_id
 
+
+def _assert_route_exact_id_contract(
+    client: TestClient,
+    headers: dict[str, str],
+    job_id: str,
+) -> None:
+    """Assert detail and every mutating route require the exact ID."""
     detail = cast(
         "httpx.Response",
         client.get(f"/jobs/{job_id}", headers=headers),  # pyright: ignore[reportUnknownMemberType]
     )
     assert detail.status_code == 200
     assert detail.json()["job"]["state"] == "paused"
-
+    prefix = job_id[:8]
     prefix_detail = cast(
         "httpx.Response",
-        client.get(f"/jobs/{job_id[:8]}", headers=headers),  # pyright: ignore[reportUnknownMemberType]
+        client.get(f"/jobs/{prefix}", headers=headers),  # pyright: ignore[reportUnknownMemberType]
     )
     assert prefix_detail.status_code == 404
     prefix_desired = cast(
         "httpx.Response",
         client.put(  # pyright: ignore[reportUnknownMemberType]
-            f"/jobs/{job_id[:8]}/desired-state",
+            f"/jobs/{prefix}/desired-state",
             headers=headers,
             json={"state": "paused"},
         ),
@@ -1918,15 +1920,22 @@ def test_jobs_route_canonical_control_retry_and_delete(
     assert prefix_desired.status_code == 404
     prefix_retry = cast(
         "httpx.Response",
-        client.post(f"/jobs/{job_id[:8]}/retry", headers=headers),  # pyright: ignore[reportUnknownMemberType]
+        client.post(f"/jobs/{prefix}/retry", headers=headers),  # pyright: ignore[reportUnknownMemberType]
     )
     assert prefix_retry.status_code == 404
     prefix_delete = cast(
         "httpx.Response",
-        client.delete(f"/jobs/{job_id[:8]}", headers=headers),  # pyright: ignore[reportUnknownMemberType]
+        client.delete(f"/jobs/{prefix}", headers=headers),  # pyright: ignore[reportUnknownMemberType]
     )
     assert prefix_delete.status_code == 404
 
+
+def _assert_route_paused_filter(
+    client: TestClient,
+    headers: dict[str, str],
+    job_id: str,
+) -> None:
+    """Assert the canonical job appears in the controllable paused filter."""
     filtered = cast(
         "httpx.Response",
         client.get(  # pyright: ignore[reportUnknownMemberType]
@@ -1943,33 +1952,24 @@ def test_jobs_route_canonical_control_retry_and_delete(
     assert [entry["id"] for entry in filtered.json()["jobs"]] == [job_id]
 
 
-def test_jobs_route_control_retry_and_terminal_delete(
+def test_jobs_route_canonical_control_retry_and_delete(
     _routes_app: tuple[TestClient, str],
     tmp_path: Path,
 ) -> None:
-    from ...jobs import get_job_manager
-
     (tmp_path / ".vault").mkdir()
     client, token = _routes_app
     headers = {"Authorization": f"Bearer {token}"}
-    created = cast(
-        "httpx.Response",
-        client.post(  # pyright: ignore[reportUnknownMemberType]
-            "/jobs",
-            headers=headers,
-            json={
-                "operation": "index",
-                "source": "vault",
-                "project_root": str(tmp_path),
-                "mode": "incremental",
-                "start_paused": True,
-            },
-        ),
-    )
-    assert created.status_code == 202
-    job = created.json()["job"]
-    job_id = str(job["id"])
+    job_id = _assert_route_creation_contract(client, headers, tmp_path)
+    _assert_route_exact_id_contract(client, headers, job_id)
+    _assert_route_paused_filter(client, headers, job_id)
 
+
+def _assert_route_control_conflicts(
+    client: TestClient,
+    headers: dict[str, str],
+    job_id: str,
+) -> None:
+    """Assert force, stale revision, and active deletion conflicts."""
     stale_force = cast(
         "httpx.Response",
         client.put(  # pyright: ignore[reportUnknownMemberType]
@@ -1980,7 +1980,6 @@ def test_jobs_route_control_retry_and_terminal_delete(
     )
     assert stale_force.status_code == 409, stale_force.text
     assert stale_force.json()["code"] == "force_termination_unavailable"
-
     stale_revision = cast(
         "httpx.Response",
         client.put(  # pyright: ignore[reportUnknownMemberType]
@@ -1991,7 +1990,6 @@ def test_jobs_route_control_retry_and_terminal_delete(
     )
     assert stale_revision.status_code == 409
     assert stale_revision.json()["code"] == "revision_conflict"
-
     active_delete = cast(
         "httpx.Response",
         client.delete(f"/jobs/{job_id}", headers=headers),  # pyright: ignore[reportUnknownMemberType]
@@ -1999,15 +1997,20 @@ def test_jobs_route_control_retry_and_terminal_delete(
     assert active_delete.status_code == 409
     assert active_delete.json()["code"] == "job_not_terminal"
 
+
+def _cancel_route_job(
+    client: TestClient,
+    headers: dict[str, str],
+    job_id: str,
+    revision: int,
+) -> None:
+    """Cancel a route job and assert stale replay is idempotent."""
     cancelled = cast(
         "httpx.Response",
         client.put(  # pyright: ignore[reportUnknownMemberType]
             f"/jobs/{job_id}/desired-state",
             headers=headers,
-            json={
-                "state": "cancelled",
-                "expected_revision": job["revision"],
-            },
+            json={"state": "cancelled", "expected_revision": revision},
         ),
     )
     assert cancelled.status_code == 200
@@ -2018,10 +2021,7 @@ def test_jobs_route_control_retry_and_terminal_delete(
         client.put(  # pyright: ignore[reportUnknownMemberType]
             f"/jobs/{job_id}/desired-state",
             headers=headers,
-            json={
-                "state": "cancelled",
-                "expected_revision": job["revision"],
-            },
+            json={"state": "cancelled", "expected_revision": revision},
         ),
     )
     assert replayed_cancel.status_code == 200
@@ -2029,6 +2029,15 @@ def test_jobs_route_control_retry_and_terminal_delete(
     assert replayed_cancel.json()["job"]["id"] == job_id
     assert replayed_cancel.json()["job"]["revision"] == cancelled_job["revision"]
     assert replayed_cancel.json()["job"]["state"] == "cancelled"
+
+
+def _retry_delete_route_job(
+    client: TestClient,
+    headers: dict[str, str],
+    job_id: str,
+) -> None:
+    """Retry a terminal job, delete its parent, and assert absence."""
+    from ...jobs import get_job_manager
 
     get_job_manager().begin_shutdown()
     retried = cast(
@@ -2038,7 +2047,6 @@ def test_jobs_route_control_retry_and_terminal_delete(
     assert retried.status_code == 202
     assert retried.json()["job"]["parent_job_id"] == job_id
     assert retried.headers["location"].startswith("/jobs/")
-
     deleted = cast(
         "httpx.Response",
         client.delete(f"/jobs/{job_id}", headers=headers),  # pyright: ignore[reportUnknownMemberType]
@@ -2050,6 +2058,22 @@ def test_jobs_route_control_retry_and_terminal_delete(
         client.get(f"/jobs/{job_id}", headers=headers),  # pyright: ignore[reportUnknownMemberType]
     )
     assert missing.status_code == 404
+
+
+def test_jobs_route_control_retry_and_terminal_delete(
+    _routes_app: tuple[TestClient, str],
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".vault").mkdir()
+    client, token = _routes_app
+    headers = {"Authorization": f"Bearer {token}"}
+    created = _create_route_job(client, headers, tmp_path)
+    assert created.status_code == 202
+    job = created.json()["job"]
+    job_id = str(job["id"])
+    _assert_route_control_conflicts(client, headers, job_id)
+    _cancel_route_job(client, headers, job_id, int(job["revision"]))
+    _retry_delete_route_job(client, headers, job_id)
 
 
 def test_jobs_route_enforces_nonterminal_capacity(
@@ -2500,9 +2524,7 @@ async def _seed_terminal_resilience_job(
             no_progress_timeout_seconds=300.0,
             no_progress_remaining_seconds=17.5,
             circuit_state=(
-                "open"
-                if error_kind is JobErrorKind.WATCHER_CIRCUIT_OPEN
-                else "closed"
+                "open" if error_kind is JobErrorKind.WATCHER_CIRCUIT_OPEN else "closed"
             ),
             next_retry_at=1_722_000_060.0,
             peak_rss_mb=512.0,
@@ -2526,6 +2548,129 @@ async def _seed_terminal_resilience_job(
             owner_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await owner_task
+
+
+def _resilience_http_views(
+    port: int,
+    token: str,
+    job_id: str,
+) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+    """Fetch and validate the collection, detail, and health HTTP surfaces."""
+    import httpx
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with httpx.Client(base_url=f"http://127.0.0.1:{port}") as client:
+        collection_response = client.get("/jobs", headers=headers)
+        detail_response = client.get(f"/jobs/{job_id}", headers=headers)
+        health_response = client.get("/health")
+    assert collection_response.status_code == 200
+    assert detail_response.status_code == 200
+    assert health_response.status_code == 200
+    collection_job = cast("dict[str, object]", collection_response.json()["jobs"][0])
+    detail_job = cast("dict[str, object]", detail_response.json()["job"])
+    health_jobs = cast("dict[str, object]", health_response.json()["jobs"])
+    return collection_job, detail_job, health_jobs
+
+
+def _assert_resilience_job_parity(
+    canonical: dict[str, object],
+    collection_job: dict[str, object],
+    detail_job: dict[str, object],
+    *,
+    job_id: str,
+    expected_state: JobState,
+    expected_error_kind: str | None,
+) -> str:
+    """Assert canonical collection and detail payload parity."""
+    assert collection_job["id"] == detail_job["id"] == job_id
+    assert collection_job["state"] == detail_job["state"] == canonical["state"]
+    assert detail_job["state"] == expected_state.value
+    assert (
+        collection_job["error_kind"] == detail_job["error_kind"] == expected_error_kind
+    )
+    assert collection_job["resilience"] == detail_job["resilience"]
+    expected_terminal_outcome = (
+        expected_error_kind
+        if expected_error_kind is not None
+        else JobState.CANCELLED.value
+    )
+    detail_resilience = cast("dict[str, object]", detail_job["resilience"])
+    assert detail_resilience["terminal_outcome"] == expected_terminal_outcome
+    return expected_terminal_outcome
+
+
+def _assert_resilience_health(
+    health_jobs: dict[str, object],
+    detail_job: dict[str, object],
+    *,
+    job_id: str,
+    outcome_name: str,
+    error_kind: JobErrorKind | None,
+) -> None:
+    """Assert health carries the same bounded resilience and failure evidence."""
+    health_resilience = cast("dict[str, object]", health_jobs["resilience"]).copy()
+    assert health_resilience.pop("job_id") == job_id
+    assert health_resilience.pop("source") == "code"
+    assert health_resilience == detail_job["resilience"]
+    if error_kind is None or outcome_name == "interrupted":
+        assert health_jobs["last_failed"] is None
+        return
+    last_failed = cast("dict[str, object]", health_jobs["last_failed"])
+    assert last_failed["id"] == job_id
+    assert last_failed["error_kind"] == error_kind.value
+
+
+def _assert_resilience_cli_json(
+    port: int,
+    job_id: str,
+    detail_job: dict[str, object],
+) -> None:
+    """Assert the JSON CLI retains detail-route resilience fields."""
+    cli_json = runner.invoke(
+        app,
+        [
+            "server",
+            "jobs",
+            "--port",
+            str(port),
+            "--job-id",
+            job_id,
+            "--json",
+        ],
+    )
+    assert cli_json.exit_code == 0, cli_json.output
+    cli_job = cast("dict[str, object]", json.loads(cli_json.output)["data"]["jobs"][0])
+    assert cli_job["error_kind"] == detail_job["error_kind"]
+    assert cli_job["resilience"] == detail_job["resilience"]
+
+
+def _assert_resilience_cli_human(
+    port: int,
+    job_id: str,
+    outcome_name: str,
+    expected_terminal_outcome: str,
+) -> None:
+    """Assert the human CLI renders every bounded resilience field."""
+    cli_human = runner.invoke(
+        app,
+        ["server", "jobs", "--port", str(port), "--job-id", job_id],
+    )
+    assert cli_human.exit_code == 0, cli_human.output
+    expected_lines = (
+        "Index profile: embedded-local",
+        f"Checkpoint generation: generation-{outcome_name}",
+        "Checkpoint compatible: yes",
+        "Checkpoint units: 41 committed, 3 resumed",
+        "No-progress budget remaining: 17 seconds",
+        "Retry circuit: " + ("open" if outcome_name == "circuit-open" else "closed"),
+        "Next retry: 2024-07-26 13:21:00 UTC",
+        "RSS high-water / ceiling: 512.0 MB / 2048.0 MB",
+        "CUDA allocated high-water: 768.0 MB",
+        "CUDA reserved high-water / ceiling: 896.0 MB / 4096.0 MB",
+        f"Index outcome: {expected_terminal_outcome}",
+    )
+    for line in expected_lines:
+        assert line in cli_human.output
 
 
 @pytest.mark.parametrize(
@@ -2566,8 +2711,6 @@ async def test_canonical_resilience_snapshot_has_http_health_and_cli_parity(
     expected_state: JobState,
     expected_error_kind: str | None,
 ) -> None:
-    import httpx
-
     project_root = tmp_path / outcome_name
     project_root.mkdir()
     with _canonical_resilience_server(tmp_path) as (port, token):
@@ -2577,87 +2720,30 @@ async def test_canonical_resilience_snapshot_has_http_health_and_cli_parity(
             error_kind=error_kind,
         )
         job_id = cast("str", canonical["id"])
-        headers = {"Authorization": f"Bearer {token}"}
-        with httpx.Client(base_url=f"http://127.0.0.1:{port}") as client:
-            collection_response = client.get("/jobs", headers=headers)
-            detail_response = client.get(f"/jobs/{job_id}", headers=headers)
-            health_response = client.get("/health")
-
-        assert collection_response.status_code == 200
-        assert detail_response.status_code == 200
-        assert health_response.status_code == 200
-        collection_job = cast(
-            "dict[str, object]", collection_response.json()["jobs"][0]
+        collection_job, detail_job, health_jobs = _resilience_http_views(
+            port,
+            token,
+            job_id,
         )
-        detail_job = cast("dict[str, object]", detail_response.json()["job"])
-        assert collection_job["id"] == detail_job["id"] == job_id
-        assert collection_job["state"] == detail_job["state"] == canonical["state"]
-        assert detail_job["state"] == expected_state.value
-        assert (
-            collection_job["error_kind"]
-            == detail_job["error_kind"]
-            == expected_error_kind
+        expected_terminal_outcome = _assert_resilience_job_parity(
+            canonical,
+            collection_job,
+            detail_job,
+            job_id=job_id,
+            expected_state=expected_state,
+            expected_error_kind=expected_error_kind,
         )
-        assert collection_job["resilience"] == detail_job["resilience"]
-        expected_terminal_outcome = (
-            expected_error_kind
-            if expected_error_kind is not None
-            else JobState.CANCELLED.value
+        _assert_resilience_health(
+            health_jobs,
+            detail_job,
+            job_id=job_id,
+            outcome_name=outcome_name,
+            error_kind=error_kind,
         )
-        detail_resilience = cast("dict[str, object]", detail_job["resilience"])
-        assert detail_resilience["terminal_outcome"] == expected_terminal_outcome
-
-        health_jobs = cast("dict[str, object]", health_response.json()["jobs"])
-        health_resilience = cast(
-            "dict[str, object]", health_jobs["resilience"]
-        ).copy()
-        assert health_resilience.pop("job_id") == job_id
-        assert health_resilience.pop("source") == "code"
-        assert health_resilience == detail_job["resilience"]
-        if error_kind is None or outcome_name == "interrupted":
-            assert health_jobs["last_failed"] is None
-        else:
-            last_failed = cast("dict[str, object]", health_jobs["last_failed"])
-            assert last_failed["id"] == job_id
-            assert last_failed["error_kind"] == error_kind.value
-
-        cli_json = runner.invoke(
-            app,
-            [
-                "server",
-                "jobs",
-                "--port",
-                str(port),
-                "--job-id",
-                job_id,
-                "--json",
-            ],
+        _assert_resilience_cli_json(port, job_id, detail_job)
+        _assert_resilience_cli_human(
+            port,
+            job_id,
+            outcome_name,
+            expected_terminal_outcome,
         )
-        assert cli_json.exit_code == 0, cli_json.output
-        cli_job = cast(
-            "dict[str, object]", json.loads(cli_json.output)["data"]["jobs"][0]
-        )
-        assert cli_job["error_kind"] == detail_job["error_kind"]
-        assert cli_job["resilience"] == detail_job["resilience"]
-
-        cli_human = runner.invoke(
-            app,
-            ["server", "jobs", "--port", str(port), "--job-id", job_id],
-        )
-        assert cli_human.exit_code == 0, cli_human.output
-        expected_lines = (
-            "Index profile: embedded-local",
-            f"Checkpoint generation: generation-{outcome_name}",
-            "Checkpoint compatible: yes",
-            "Checkpoint units: 41 committed, 3 resumed",
-            "No-progress budget remaining: 17 seconds",
-            "Retry circuit: "
-            + ("open" if outcome_name == "circuit-open" else "closed"),
-            "Next retry: 2024-07-26 13:21:00 UTC",
-            "RSS high-water / ceiling: 512.0 MB / 2048.0 MB",
-            "CUDA allocated high-water: 768.0 MB",
-            "CUDA reserved high-water / ceiling: 896.0 MB / 4096.0 MB",
-            f"Index outcome: {expected_terminal_outcome}",
-        )
-        for line in expected_lines:
-            assert line in cli_human.output
