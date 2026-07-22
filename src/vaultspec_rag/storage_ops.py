@@ -294,6 +294,10 @@ def backend_totals(surveys: list[NamespaceSurvey]) -> dict[str, object]:
     return {
         "total_bytes": total,
         "namespaces": len(surveys),
+        "points": sum(survey.points for survey in surveys),
+        "vault_points": sum(survey.vault_points for survey in surveys),
+        "code_points": sum(survey.code_points for survey in surveys),
+        "document_points": sum(survey.document_points for survey in surveys),
         "by_status_bytes": by_status,
     }
 
@@ -918,11 +922,11 @@ def delete_prefix(
     if not _CANONICAL_PREFIX_RE.match(prefix):
         return DeleteResult(prefix, "skipped", reason="invalid_prefix")
     manifest = load_manifest()
-    targets = [
+    targets = sorted(
         c.name
         for c in client.get_collections().collections
         if c.name.startswith(prefix)
-    ]
+    )
     if not targets:
         return DeleteResult(prefix, "skipped", reason="no_such_namespace")
     if prefix not in manifest and not allow_unknown:
@@ -1390,11 +1394,11 @@ def archive_prefix(
     Returns:
         The archived snapshot paths.
     """
-    targets = [
+    targets = sorted(
         c.name
         for c in client.get_collections().collections
         if c.name.startswith(prefix)
-    ]
+    )
     dest_dir = archive_dir / prefix.rstrip("_")
     dest_dir.mkdir(parents=True, exist_ok=True)
     archived: list[Path] = []
