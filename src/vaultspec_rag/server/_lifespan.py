@@ -723,23 +723,42 @@ async def health_handler(_request: Request) -> object:
     if status == "ready" and qdrant_state.mode == "server" and not qdrant_state.alive:
         status = "degraded"
 
-    # Bounded jobs-health rollup: running/stalled counts and the
-    # most recent failure's classification, so a broker probing /health
-    # sees a wedged or failing index without walking /jobs.
+    # Bounded jobs-health rollup: canonical lifecycle counts and the most
+    # recent failure's classification, so a broker probing /health sees
+    # paused, transitional, wedged, or failing work without walking /jobs.
     from .. import jobs as _jobs_registry
-    from ._routes_jobs import _job_stalled
+    from ._routes_jobs import _job_summary, job_state, job_updated_timestamp
 
     now = time.time()
-    job_records = _jobs_registry.snapshot()
-    running_jobs = sum(1 for r in job_records if r.get("phase") == "running")
-    stalled_jobs = sum(1 for r in job_records if _job_stalled(r, now))
-    last_failed = next(
-        (r for r in job_records if str(r.get("phase", "")) in ("error", "failed")),
-        None,
+    canonical_records = [
+        snapshot.to_dict() for snapshot in _jobs_registry.get_job_manager().list_jobs()
+    ]
+    canonical_ids = {str(record.get("id", "")) for record in canonical_records}
+    legacy_only = [
+        record
+        for record in _jobs_registry.snapshot()
+        if str(record.get("id", "")) not in canonical_ids
+    ]
+    job_records = [*canonical_records, *legacy_only]
+    summary = _job_summary(job_records, now=now)
+    failed_records = [record for record in job_records if job_state(record) == "failed"]
+    last_failed = (
+        max(
+            failed_records,
+            key=lambda record: job_updated_timestamp(record) or float("-inf"),
+        )
+        if failed_records
+        else None
     )
     jobs_health: dict[str, object] = {
-        "running": running_jobs,
-        "stalled": stalled_jobs,
+        "running": summary["running"],
+        "queued": summary["queued"],
+        "paused": summary["paused"],
+        "transitional": summary["transitional"],
+        "active": summary["active"],
+        "stalled": summary["stalled"],
+        "control_pending": summary["control_pending"],
+        "states": summary["states"],
         "last_failed": (
             {
                 "id": last_failed.get("id"),
