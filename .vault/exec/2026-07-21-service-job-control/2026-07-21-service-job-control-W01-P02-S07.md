@@ -4,7 +4,7 @@ tags:
   - '#service-job-control'
 date: '2026-07-21'
 modified: '2026-07-21'
-step_id: 'S05'
+step_id: 'S07'
 related:
   - "[[2026-07-21-service-job-control-plan]]"
 ---
@@ -18,7 +18,7 @@ related:
      refreshed by mutating CLI verbs and vault check fix; never hand-edit.
 
      step_id is the originating Step's canonical identifier, e.g. S01.
-     The S05 and 2026-07-21-service-job-control-plan placeholders are machine-filled by
+     The S07 and 2026-07-21-service-job-control-plan placeholders are machine-filled by
      `vaultspec-core vault add exec`; do not fill them by hand.
 
      Related: use wiki-links as '[[yyyy-mm-dd-foo-bar-plan]]' and link the
@@ -36,13 +36,13 @@ related:
 <!-- STEP RECORD:
      This file represents one Step from the originating plan. Identified
      by its canonical leaf identifier (S##) and ancestor display path.
-     The Implement exact-ID active and runtime ownership, bounded terminal history, admission, active-work deduplication, and idempotency keys using vaultspec-high-executor and ## Scope
+     The Implement atomic durable-before-dispatch persistence and queued, paused, and interrupted restart recovery using vaultspec-high-executor and ## Scope
 
 - `src/vaultspec_rag/jobs.py` placeholders below are machine-filled
      by `vaultspec-core vault add exec` from the originating Step row;
      do not fill them by hand. -->
 
-# Implement exact-ID active and runtime ownership, bounded terminal history, admission, active-work deduplication, and idempotency keys using vaultspec-high-executor
+# Implement atomic durable-before-dispatch persistence and queued, paused, and interrupted restart recovery using vaultspec-high-executor
 
 ## Scope
 
@@ -50,21 +50,22 @@ related:
 
 ## Description
 
-- Add one thread-safe `JobManager` with independent active and terminal ownership.
-- Keep nonterminal jobs exact-addressable and refuse admission at the configured bound.
-- Replay idempotent creates, reject key reuse with changed input, and deduplicate equivalent active work before capacity checks.
-- Retain task and cooperative-control references by exact job ID and release them only when the owning task identity matches.
-- Bound terminal history independently and expire its associated idempotency bindings on eviction.
+- Add an injectable manager state path so real tests and managed service storage remain isolated.
+- Serialize canonical active resources and active idempotency bindings through one versioned schema.
+- Flush and atomically replace the state file before admitting, dispatching, or applying lifecycle changes.
+- Roll back in-memory mutations when durable state cannot be committed.
+- Restore queued and paused resources under the same IDs and convert prior live attempts to immutable interrupted history.
+- Reject corrupt, incompatible, duplicate, or over-capacity persisted state without partial application.
 
 ## Outcome
 
-The service domain now owns canonical job resources through an admission-safe manager.
-Controllable work cannot be evicted by history growth, repeated submissions resolve to
-the same logical resource, and stale attempt cleanup cannot detach a newer runtime.
+Managed jobs now have one crash-safe persistence boundary. Accepted queued work is durable
+before it can run, paused intent survives restart, and unacknowledged live work returns as
+truthful interrupted history instead of disappearing or being mislabeled cancelled.
 
 ## Notes
 
-Ruff and `ty` passed, as did a real concurrent submission probe covering exact-ID
-lookup and active-work deduplication. The existing focused suites passed 56 tests; two
-live-service fixture setups were unavailable because this worktree has no provisioned
-Qdrant server binary, before either job-registry test body ran.
+Ruff, formatting, `ty`, strict BasedPyright, and all 49 focused unit tests passed. Real
+temporary-directory probes verified atomic replacement, queued/paused/live recovery,
+idempotency replay, corrupt-file isolation, absence of orphan temp files, and rollback when
+the persistence parent cannot be created.

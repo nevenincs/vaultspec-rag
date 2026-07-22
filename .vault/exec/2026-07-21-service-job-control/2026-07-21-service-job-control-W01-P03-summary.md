@@ -35,22 +35,22 @@ related:
      them, lists modified / created files across the Phase, and
      reports verification status. -->
 
-# `service-job-control` `W01.P01` summary
+# `service-job-control` `W01.P03` summary
 
-The cooperative run-control contract and its bounded service configuration are complete and
-verified against imported production behavior.
+The state authority is covered by real-behavior unit, concurrency, and filesystem integration
+tests, including the audit remediations required before controlled dispatch.
 
-- Created: `src/vaultspec_rag/job_control.py`
-- Modified: `src/vaultspec_rag/config.py`
-- Created: `src/vaultspec_rag/tests/test_job_control_unit.py`
+- Modified: `src/vaultspec_rag/tests/test_jobs_unit.py`
+- Modified: `src/vaultspec_rag/tests/integration/test_jobs_registry.py`
 
 ## Description
 
-`RunControlToken` now provides thread-safe pause, resume, cancellation, checkpoints, and
-protected spans with explicit delivered-signal semantics. `NullRunControl` keeps existing
-callers compatible. The service exposes validated bounds for nonterminal admission and
-cooperative shutdown timing, including both environment and public override resolution.
+Tests import the production manager and exercise admission, deduplication, revisions,
+idempotency, transition races, exact task ownership, retry, deletion, and terminal
+immutability. Real temporary files and threads verify atomic replacement, persistence
+failure rollback, paused restoration, interrupted recovery, invalid-generation rejection,
+and capacity changes without mocks, patches, or shadow implementations.
 
-Focused real-thread tests cover protected work, reversible pending pauses, absorbing
-cancellation, signal delivery, exception preservation, and invalid configuration values.
-Ruff, ty, BasedPyright, and the phase unit suite pass.
+Final remediation verification reports 61 focused unit tests and 18 non-GPU integration
+tests passing, with Ruff, ty, and BasedPyright clean. The two GPU subprocess cases require a
+provisioned, verified Qdrant binary and were not run in this environment.

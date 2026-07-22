@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#service-job-control'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-22'
 tier: L3
 related:
   - '[[2026-07-21-service-job-control-adr]]'
@@ -48,14 +48,23 @@ Replace the evictable record ring and unkeyed task set with exact-addressable li
 - [x] `W01.P02.S04` - Define immutable job specifications, canonical states, capabilities, revisions, attempt lineage, and structured outcomes using vaultspec-high-executor; `src/vaultspec_rag/jobs.py`.
 - [x] `W01.P02.S05` - Implement exact-ID active and runtime ownership, bounded terminal history, admission, active-work deduplication, and idempotency keys using vaultspec-high-executor; `src/vaultspec_rag/jobs.py`.
 - [x] `W01.P02.S06` - Implement revisioned pause, resume, cancellation, retry, terminal deletion, first-terminal-writer-wins, and deterministic races using vaultspec-high-executor; `src/vaultspec_rag/jobs.py`.
-- [ ] `W01.P02.S07` - Implement atomic durable-before-dispatch persistence and queued, paused, and interrupted restart recovery using vaultspec-high-executor; `src/vaultspec_rag/jobs.py`.
+- [x] `W01.P02.S07` - Implement atomic durable-before-dispatch persistence and queued, paused, and interrupted restart recovery using vaultspec-high-executor; `src/vaultspec_rag/jobs.py`.
 
 ### Phase `W01.P03` - state authority verification
 
 Prove transition races, idempotency, admission, persistence, retry, deletion, and strong task ownership against production behavior.
 
-- [ ] `W01.P03.S08` - Verify the transition matrix, idempotency, stale revisions, admission, deduplication, retry, deletion, and terminal immutability using vaultspec-standard-executor; `src/vaultspec_rag/tests/test_jobs_unit.py`.
-- [ ] `W01.P03.S09` - Verify real-filesystem persistence, exact task ownership, atomic replacement, paused restoration, and interrupted recovery using vaultspec-standard-executor; `src/vaultspec_rag/tests/integration/test_jobs_registry.py`.
+- [x] `W01.P03.S08` - Verify the transition matrix, idempotency, stale revisions, admission, deduplication, retry, deletion, and terminal immutability using vaultspec-standard-executor; `src/vaultspec_rag/tests/test_jobs_unit.py`.
+- [x] `W01.P03.S09` - Verify real-filesystem persistence, exact task ownership, atomic replacement, paused restoration, and interrupted recovery using vaultspec-standard-executor; `src/vaultspec_rag/tests/integration/test_jobs_registry.py`.
+
+### Phase `W01.P18` - job domain modularization
+
+Split the canonical job domain out of the legacy compatibility module before cooperative
+indexing and adapters add more behavior to the boundary.
+
+- [x] `W01.P18.S38` - Extract canonical enums, immutable resources, outcomes, and serialization into a focused model module while preserving public imports using vaultspec-standard-executor; `src/vaultspec_rag/job_models.py, src/vaultspec_rag/jobs.py`.
+- [x] `W01.P18.S39` - Extract the versioned state codec and atomic filesystem store into a focused persistence module using vaultspec-standard-executor; `src/vaultspec_rag/job_persistence.py, src/vaultspec_rag/jobs.py`.
+- [x] `W01.P18.S40` - Extract JobManager ownership and lifecycle orchestration, leave jobs.py as the legacy compatibility and dispatch facade, and verify unchanged public behavior using vaultspec-standard-executor; `src/vaultspec_rag/job_manager.py, src/vaultspec_rag/jobs.py, src/vaultspec_rag/tests/test_jobs_unit.py, src/vaultspec_rag/tests/integration/test_jobs_registry.py`.
 
 ## Wave `W02` - cooperative indexing execution
 
@@ -65,29 +74,29 @@ Thread the accepted control contract through vault and code indexing so attempts
 
 Place control checks at vault phase, batch, and GPU-slice boundaries while protecting clean rebuild publication.
 
-- [ ] `W02.P04.S10` - Thread run control through streaming embedding and check before and after bounded GPU slices outside gpu_lock using vaultspec-high-executor; `src/vaultspec_rag/indexer/_streaming.py`.
-- [ ] `W02.P04.S11` - Add checkpoints around vault phases and batches while protecting collection drop through valid publication using vaultspec-high-executor; `src/vaultspec_rag/indexer/_vault_indexer.py`.
-- [ ] `W02.P04.S12` - Verify real streaming and vault indexing observe control between slices without exposing partial rebuilds using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_index_job_control.py`.
+- [x] `W02.P04.S10` - Thread run control through streaming embedding and check before and after bounded GPU slices outside gpu_lock using vaultspec-high-executor; `src/vaultspec_rag/indexer/_streaming.py`.
+- [x] `W02.P04.S11` - Add checkpoints around vault phases and batches while protecting collection drop through valid publication using vaultspec-high-executor; `src/vaultspec_rag/indexer/_vault_indexer.py`.
+- [x] `W02.P04.S12` - Verify real streaming and vault indexing observe control between slices without exposing partial rebuilds using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_index_job_control.py`.
 
 ### Phase `W02.P05` - code pipeline checkpoints
 
 Place control checks around code scanning, process-pool work, producer-consumer flow, GPU slices, and file replacement spans.
 
-- [ ] `W02.P05.S13` - Propagate run control through code producers, process-pool work, the single GPU consumer, bounded queues, and consumer shutdown using vaultspec-high-executor; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
-- [ ] `W02.P05.S14` - Protect code clean rebuild and per-file replacement spans from cooperative interruption until published state is valid using vaultspec-high-executor; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
-- [ ] `W02.P05.S15` - Verify real code indexing unwinds producer-consumer resources, preserves mutation safety, and converges after resume using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_index_job_control.py`.
+- [x] `W02.P05.S13` - Propagate run control through code producers, process-pool work, the single GPU consumer, bounded queues, and consumer shutdown using vaultspec-high-executor; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `W02.P05.S14` - Protect code clean rebuild and per-file replacement spans from cooperative interruption until published state is valid using vaultspec-high-executor; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `W02.P05.S15` - Verify real code indexing unwinds producer-consumer resources, preserves mutation safety, and converges after resume using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_index_job_control.py`.
 
 ### Phase `W02.P06` - attempt dispatch and reconciliation
 
 Make manager-owned attempts translate cooperative unwind into truthful pause, cancel, resume, failure, and resource-release outcomes.
 
-- [ ] `W02.P06.S16` - Implement manager-owned dispatch, token propagation, reconciliation attempts, truthful acknowledgement, completion callbacks, and bounded joins using vaultspec-high-executor; `src/vaultspec_rag/jobs.py`.
+- [x] `W02.P06.S16` - Implement manager-owned dispatch, token propagation, reconciliation attempts, truthful acknowledgement, completion callbacks, and bounded joins using vaultspec-high-executor; `src/vaultspec_rag/jobs.py, src/vaultspec_rag/job_manager.py`.
 
 ### Phase `W02.P07` - cooperative execution verification
 
 Exercise real vault and code indexing attempts to prove safe unwind, convergence on resume, and absence of post-acknowledgement writes.
 
-- [ ] `W02.P07.S17` - Verify paused attempts release limiter, lease, writer ownership, thread, and pipeline resources and cancelled attempts make no later writes using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_index_job_control.py`.
+- [x] `W02.P07.S17` - Verify paused attempts release limiter, lease, writer ownership, thread, and pipeline resources and cancelled attempts make no later writes using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_index_job_control.py`.
 
 ## Wave `W03` - automatic orchestration and shutdown
 
@@ -97,20 +106,20 @@ Move watcher convergence and daemon shutdown onto the manager lifecycle after co
 
 Route automatic indexing through the manager, coalesce later dirtiness into paused work, and retain replacement intent after cancellation.
 
-- [ ] `W03.P08.S18` - Submit watcher indexing through JobManager, retain paused convergence slots, coalesce later dirtiness, and schedule cancelled replacements with bounded backoff using vaultspec-high-executor; `src/vaultspec_rag/watcher.py`.
-- [ ] `W03.P08.S19` - Keep watcher enablement separate from job cancellation and wait for manager-owned cleanup on watcher stop using vaultspec-high-executor; `src/vaultspec_rag/server/_watcher.py`.
+- [x] `W03.P08.S18` - Submit watcher indexing through JobManager, retain paused convergence slots, coalesce later dirtiness, and schedule cancelled replacements with bounded backoff using vaultspec-high-executor; `src/vaultspec_rag/watcher.py`.
+- [x] `W03.P08.S19` - Keep watcher enablement separate from job cancellation and wait for manager-owned cleanup on watcher stop using vaultspec-high-executor; `src/vaultspec_rag/server/_watcher.py`.
 
 ### Phase `W03.P10` - shutdown resource ordering
 
 Stop dispatch, cooperatively drain workers, persist recoverable intent, and prevent stores from closing beneath live indexing threads.
 
-- [ ] `W03.P10.S20` - Restore the single manager, resume durable queues, preserve pauses, drain workers before store closure, and report unclean shutdown truthfully using vaultspec-high-executor; `src/vaultspec_rag/server/_lifespan.py`.
+- [x] `W03.P10.S20` - Restore the single manager, resume durable queues, preserve pauses, drain workers before store closure, and report unclean shutdown truthfully using vaultspec-high-executor; `src/vaultspec_rag/server/_lifespan.py`.
 
 ### Phase `W03.P11` - orchestration verification
 
 Exercise watcher and service-lifespan behavior to prove freshness, replacement, interruption, and shutdown safety.
 
-- [ ] `W03.P11.S21` - Verify real watcher pause coalescing, cancellation dirtiness, replacement expectations, explicit watcher stop, and cleanup joining using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`.
+- [x] `W03.P11.S21` - Verify real watcher pause coalescing, cancellation dirtiness, replacement expectations, explicit watcher stop, and cleanup joining using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`.
 - [ ] `W03.P11.S22` - Verify real daemon restart and shutdown preserve queued and paused intent, mark interrupted attempts, and close stores only after worker release using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
 
 ## Wave `W04` - operator resource surface

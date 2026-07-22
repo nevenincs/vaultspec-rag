@@ -35,22 +35,22 @@ related:
      them, lists modified / created files across the Phase, and
      reports verification status. -->
 
-# `service-job-control` `W01.P01` summary
+# `service-job-control` `W01.P02` summary
 
-The cooperative run-control contract and its bounded service configuration are complete and
-verified against imported production behavior.
+The canonical job model, exact-ID manager, lifecycle protocol, and durable recovery authority
+are implemented as one service-domain contract.
 
-- Created: `src/vaultspec_rag/job_control.py`
-- Modified: `src/vaultspec_rag/config.py`
-- Created: `src/vaultspec_rag/tests/test_job_control_unit.py`
+- Modified: `src/vaultspec_rag/jobs.py`
 
 ## Description
 
-`RunControlToken` now provides thread-safe pause, resume, cancellation, checkpoints, and
-protected spans with explicit delivered-signal semantics. `NullRunControl` keeps existing
-callers compatible. The service exposes validated bounds for nonterminal admission and
-cooperative shutdown timing, including both environment and public override resolution.
+Immutable job specifications, resource and progress snapshots, revisioned views, structured
+outcomes, capabilities, attempts, and canonical states now describe every managed job.
+`JobManager` enforces bounded admission, normalized-root active-work deduplication, bounded
+idempotency retention, exact task ownership, and bounded terminal history.
 
-Focused real-thread tests cover protected work, reversible pending pauses, absorbing
-cancellation, signal delivery, exception preservation, and invalid configuration values.
-Ruff, ty, BasedPyright, and the phase unit suite pass.
+Pause, resume, cancellation, retry, deletion, acknowledgement, and first-terminal-writer-wins
+transitions use optimistic revisions and deterministic ownership checks. Versioned persistence
+uses atomic replacement and complete-generation validation; queued and paused work restores,
+while crashed live attempts become retained `interrupted` history. The post-phase audit also
+closed durability rollback, capability, resource acknowledgement, and restore-validation gaps.
