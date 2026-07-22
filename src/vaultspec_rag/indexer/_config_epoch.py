@@ -26,15 +26,17 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from ..config import PreprocessMode
-    from ._content_policy import RootContentPolicy
+    from ._content_policy import ContentKind, RootContentPolicy
     from ._preprocess_config import PreprocessRule
     from ._resolved_policy import ResolvedPreprocessRule
 
 __all__ = [
+    "ContentKindFingerprints",
     "NormalizedPolicyFingerprints",
+    "PerKindPolicyFingerprints",
     "code_content_epoch",
     "code_membership_epoch",
     "resolved_policy_fingerprints",
@@ -46,14 +48,47 @@ PARSER_CAPABILITY_VERSION = 1
 
 
 @dataclass(frozen=True, slots=True)
+class ContentKindFingerprints:
+    """Membership and byte-semantics identities for one content kind."""
+
+    persistent_membership: str
+    operation_membership: str
+    content: str
+
+    @property
+    def membership(self) -> str:
+        """Return the exact operation membership identity."""
+        return self.operation_membership
+
+
+@dataclass(frozen=True, slots=True)
+class PerKindPolicyFingerprints:
+    """Closed per-kind fingerprint projection."""
+
+    code: ContentKindFingerprints
+    document: ContentKindFingerprints
+
+    def for_kind(self, kind: ContentKind) -> ContentKindFingerprints:
+        """Return fingerprints for a closed content-kind token."""
+        from ._content_policy import ContentKind
+
+        if not isinstance(kind, ContentKind):
+            raise TypeError("kind must be a ContentKind")
+        if kind is ContentKind.CODE:
+            return self.code
+        return self.document
+
+
+@dataclass(frozen=True, slots=True)
 class NormalizedPolicyFingerprints:
-    """Stable persistent, operation, content, execution, and snapshot IDs."""
+    """Stable aggregate and per-kind policy identities."""
 
     persistent_membership: str
     operation_membership: str
     content: str
     execution: str
     snapshot: str
+    per_kind: PerKindPolicyFingerprints
 
     @property
     def membership(self) -> str:
@@ -165,12 +200,29 @@ def resolved_policy_fingerprints(
     execution = _digest(
         {"version": policy_schema_version, "preprocess_mode": execution_mode}
     )
+    per_kind = _per_kind_fingerprints(
+        policy_schema_version=policy_schema_version,
+        persistent_membership_payload=persistent_membership_payload,
+        operation_membership_payload=operation_membership_payload,
+        content_payload=content_payload,
+        preprocess_rules=preprocess_rules,
+    )
     snapshot = _digest(
         {
             "version": policy_schema_version,
             "operation_membership": operation_membership,
             "content": content,
             "execution": execution,
+            "per_kind": {
+                "code": {
+                    "membership": per_kind.code.operation_membership,
+                    "content": per_kind.code.content,
+                },
+                "document": {
+                    "membership": per_kind.document.operation_membership,
+                    "content": per_kind.document.content,
+                },
+            },
         }
     )
     return NormalizedPolicyFingerprints(
@@ -179,6 +231,68 @@ def resolved_policy_fingerprints(
         content=content,
         execution=execution,
         snapshot=snapshot,
+        per_kind=per_kind,
+    )
+
+
+def _per_kind_fingerprints(
+    *,
+    policy_schema_version: int,
+    persistent_membership_payload: Mapping[str, object],
+    operation_membership_payload: Mapping[str, object],
+    content_payload: Mapping[str, object],
+    preprocess_rules: Sequence[ResolvedPreprocessRule],
+) -> PerKindPolicyFingerprints:
+    """Derive independent kind identities from canonical aggregate payloads."""
+    from ._content_policy import ContentKind
+
+    by_kind: dict[ContentKind, ContentKindFingerprints] = {}
+    for kind in ContentKind:
+        persistent_payload = {
+            **persistent_membership_payload,
+            "kind": kind.value,
+        }
+        operation_payload = {
+            **operation_membership_payload,
+            "kind": kind.value,
+        }
+        rules = [rule for rule in preprocess_rules if rule.target is kind]
+        kind_content_payload = {
+            **content_payload,
+            "kind": kind.value,
+            "max_emitted_bytes": (
+                content_payload["max_emitted_bytes"] if rules else None
+            ),
+            "preprocess": [
+                {
+                    "pattern": rule.pattern,
+                    "command": rule.command,
+                    "entry_point": rule.entry_point,
+                    "target": rule.target.value,
+                    "extractor_version": rule.extractor_version,
+                    "on_error": rule.on_error,
+                    "timeout_s": rule.timeout_s,
+                    "options": rule.options,
+                    "priority": rule.priority,
+                    "order": rule.order,
+                    "batch": rule.batch,
+                }
+                for rule in rules
+            ],
+        }
+        by_kind[kind] = ContentKindFingerprints(
+            persistent_membership=_digest(persistent_payload),
+            operation_membership=_digest(operation_payload),
+            content=_digest(
+                {
+                    "version": policy_schema_version,
+                    **kind_content_payload,
+                }
+            ),
+        )
+    return PerKindPolicyFingerprints(
+        code=by_kind[ContentKind.CODE],
+        document=by_kind[ContentKind.DOCUMENT],
     )
 
 
