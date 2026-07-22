@@ -1618,6 +1618,7 @@ def test_jobs_cli_mcp_parity() -> None:
 @pytest.fixture
 def _routes_app(  # pyright: ignore[reportUnusedFunction]
     _clean_jobs: None,
+    tmp_path: Path,
 ) -> Iterator[tuple[TestClient, str]]:
     """Build a real Starlette app from the read-only ROUTES.
 
@@ -1625,6 +1626,14 @@ def _routes_app(  # pyright: ignore[reportUnusedFunction]
     ``require_token`` reads it through the alias) and seeds one finished
     record. Restores the token on teardown so the suite stays isolated.
     """
+    import os
+
+    from ...config import EnvVar, reset_config
+
+    prior_status_dir = os.environ.get(EnvVar.STATUS_DIR)
+    os.environ[EnvVar.STATUS_DIR] = str(tmp_path / "route-status")
+    reset_config()
+    _jobs.reset()
     job_id = _jobs.record_start("vault", "tool")
     _jobs.record_finish(job_id, result="+1 /0 -0 (5ms)")
 
@@ -1636,7 +1645,13 @@ def _routes_app(  # pyright: ignore[reportUnusedFunction]
     try:
         yield client, "test-token-jobs"
     finally:
+        _jobs.reset()
         _m._SERVICE_TOKEN = prev_token
+        if prior_status_dir is None:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+        else:
+            os.environ[EnvVar.STATUS_DIR] = prior_status_dir
+        reset_config()
 
 
 def test_jobs_route_401_without_token(
@@ -1688,6 +1703,334 @@ def test_jobs_route_200_with_query_token(
     response = cast("httpx.Response", client.get("/jobs", params={"token": token}))  # pyright: ignore[reportUnknownMemberType]
     assert response.status_code == 200
     assert len(response.json()["jobs"]) == 1
+
+
+def test_jobs_route_canonical_control_retry_and_delete(
+    _routes_app: tuple[TestClient, str],
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".vault").mkdir()
+    client, token = _routes_app
+    headers = {"Authorization": f"Bearer {token}"}
+    created = cast(
+        "httpx.Response",
+        client.post(  # pyright: ignore[reportUnknownMemberType]
+            "/jobs",
+            headers={**headers, "Idempotency-Key": "route-lifecycle"},
+            json={
+                "operation": "index",
+                "source": "vault",
+                "project_root": str(tmp_path),
+                "mode": "incremental",
+                "start_paused": True,
+                "initiator": {"kind": "cli", "command": "test_create"},
+            },
+        ),
+    )
+    assert created.status_code == 202, created.text
+    created_payload: dict[str, Any] = created.json()
+    job = cast("dict[str, Any]", created_payload["job"])
+    job_id = str(job["id"])
+    assert created.headers["location"] == f"/jobs/{job_id}"
+    assert job["state"] == "paused"
+    assert job["desired_state"] == "paused"
+
+    replay = cast(
+        "httpx.Response",
+        client.post(  # pyright: ignore[reportUnknownMemberType]
+            "/jobs",
+            headers={**headers, "Idempotency-Key": "route-lifecycle"},
+            json={
+                "operation": "index",
+                "source": "vault",
+                "project_root": str(tmp_path),
+                "mode": "incremental",
+                "start_paused": True,
+                "initiator": {"kind": "cli", "command": "test_create"},
+            },
+        ),
+    )
+    assert replay.status_code == 200
+    assert replay.json()["code"] == "idempotency_replayed"
+    assert replay.json()["job"]["id"] == job_id
+    assert replay.headers["location"] == f"/jobs/{job_id}"
+
+    other_root = tmp_path / "other"
+    (other_root / ".vault").mkdir(parents=True)
+    key_conflict = cast(
+        "httpx.Response",
+        client.post(  # pyright: ignore[reportUnknownMemberType]
+            "/jobs",
+            headers={**headers, "Idempotency-Key": "route-lifecycle"},
+            json={
+                "operation": "index",
+                "source": "vault",
+                "project_root": str(other_root),
+                "mode": "incremental",
+                "start_paused": True,
+            },
+        ),
+    )
+    assert key_conflict.status_code == 409
+    assert key_conflict.json()["code"] == "idempotency_key_conflict"
+
+    deduplicated = cast(
+        "httpx.Response",
+        client.post(  # pyright: ignore[reportUnknownMemberType]
+            "/jobs",
+            headers=headers,
+            json={
+                "operation": "index",
+                "source": "vault",
+                "project_root": str(tmp_path),
+                "mode": "incremental",
+                "start_paused": True,
+                "initiator": {"kind": "cli", "command": "test_create"},
+            },
+        ),
+    )
+    assert deduplicated.status_code == 200
+    assert deduplicated.json()["code"] == "active_job_exists"
+    assert deduplicated.json()["job"]["id"] == job_id
+
+    detail = cast(
+        "httpx.Response",
+        client.get(f"/jobs/{job_id}", headers=headers),  # pyright: ignore[reportUnknownMemberType]
+    )
+    assert detail.status_code == 200
+    assert detail.json()["job"]["state"] == "paused"
+
+    prefix_detail = cast(
+        "httpx.Response",
+        client.get(f"/jobs/{job_id[:8]}", headers=headers),  # pyright: ignore[reportUnknownMemberType]
+    )
+    assert prefix_detail.status_code == 404
+    prefix_desired = cast(
+        "httpx.Response",
+        client.put(  # pyright: ignore[reportUnknownMemberType]
+            f"/jobs/{job_id[:8]}/desired-state",
+            headers=headers,
+            json={"state": "paused"},
+        ),
+    )
+    assert prefix_desired.status_code == 404
+    prefix_retry = cast(
+        "httpx.Response",
+        client.post(f"/jobs/{job_id[:8]}/retry", headers=headers),  # pyright: ignore[reportUnknownMemberType]
+    )
+    assert prefix_retry.status_code == 404
+    prefix_delete = cast(
+        "httpx.Response",
+        client.delete(f"/jobs/{job_id[:8]}", headers=headers),  # pyright: ignore[reportUnknownMemberType]
+    )
+    assert prefix_delete.status_code == 404
+
+    filtered = cast(
+        "httpx.Response",
+        client.get(  # pyright: ignore[reportUnknownMemberType]
+            "/jobs",
+            headers=headers,
+            params={
+                "state": "paused",
+                "desired_state": "paused",
+                "controllable": "true",
+            },
+        ),
+    )
+    assert filtered.status_code == 200
+    assert [entry["id"] for entry in filtered.json()["jobs"]] == [job_id]
+
+
+def test_jobs_route_control_retry_and_terminal_delete(
+    _routes_app: tuple[TestClient, str],
+    tmp_path: Path,
+) -> None:
+    from ...jobs import get_job_manager
+
+    (tmp_path / ".vault").mkdir()
+    client, token = _routes_app
+    headers = {"Authorization": f"Bearer {token}"}
+    created = cast(
+        "httpx.Response",
+        client.post(  # pyright: ignore[reportUnknownMemberType]
+            "/jobs",
+            headers=headers,
+            json={
+                "operation": "index",
+                "source": "vault",
+                "project_root": str(tmp_path),
+                "mode": "incremental",
+                "start_paused": True,
+            },
+        ),
+    )
+    assert created.status_code == 202
+    job = created.json()["job"]
+    job_id = str(job["id"])
+
+    stale_force = cast(
+        "httpx.Response",
+        client.put(  # pyright: ignore[reportUnknownMemberType]
+            f"/jobs/{job_id}/desired-state",
+            headers=headers,
+            json={"state": "running", "mode": "force"},
+        ),
+    )
+    assert stale_force.status_code == 409, stale_force.text
+    assert stale_force.json()["code"] == "force_termination_unavailable"
+
+    stale_revision = cast(
+        "httpx.Response",
+        client.put(  # pyright: ignore[reportUnknownMemberType]
+            f"/jobs/{job_id}/desired-state",
+            headers=headers,
+            json={"state": "cancelled", "expected_revision": 999},
+        ),
+    )
+    assert stale_revision.status_code == 409
+    assert stale_revision.json()["code"] == "revision_conflict"
+
+    active_delete = cast(
+        "httpx.Response",
+        client.delete(f"/jobs/{job_id}", headers=headers),  # pyright: ignore[reportUnknownMemberType]
+    )
+    assert active_delete.status_code == 409
+    assert active_delete.json()["code"] == "job_not_terminal"
+
+    cancelled = cast(
+        "httpx.Response",
+        client.put(  # pyright: ignore[reportUnknownMemberType]
+            f"/jobs/{job_id}/desired-state",
+            headers=headers,
+            json={
+                "state": "cancelled",
+                "expected_revision": job["revision"],
+            },
+        ),
+    )
+    assert cancelled.status_code == 200
+    cancelled_job = cancelled.json()["job"]
+    assert cancelled_job["state"] == "cancelled"
+    replayed_cancel = cast(
+        "httpx.Response",
+        client.put(  # pyright: ignore[reportUnknownMemberType]
+            f"/jobs/{job_id}/desired-state",
+            headers=headers,
+            json={
+                "state": "cancelled",
+                "expected_revision": job["revision"],
+            },
+        ),
+    )
+    assert replayed_cancel.status_code == 200
+    assert replayed_cancel.json()["code"] == "already_satisfied"
+    assert replayed_cancel.json()["job"]["id"] == job_id
+    assert replayed_cancel.json()["job"]["revision"] == cancelled_job["revision"]
+    assert replayed_cancel.json()["job"]["state"] == "cancelled"
+
+    get_job_manager().begin_shutdown()
+    retried = cast(
+        "httpx.Response",
+        client.post(f"/jobs/{job_id}/retry", headers=headers),  # pyright: ignore[reportUnknownMemberType]
+    )
+    assert retried.status_code == 202
+    assert retried.json()["job"]["parent_job_id"] == job_id
+    assert retried.headers["location"].startswith("/jobs/")
+
+    deleted = cast(
+        "httpx.Response",
+        client.delete(f"/jobs/{job_id}", headers=headers),  # pyright: ignore[reportUnknownMemberType]
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["code"] == "job_deleted"
+    missing = cast(
+        "httpx.Response",
+        client.get(f"/jobs/{job_id}", headers=headers),  # pyright: ignore[reportUnknownMemberType]
+    )
+    assert missing.status_code == 404
+
+
+def test_jobs_route_enforces_nonterminal_capacity(
+    _routes_app: tuple[TestClient, str],
+    tmp_path: Path,
+) -> None:
+    import os
+
+    from ...config import EnvVar, reset_config
+    from ...jobs import reset
+
+    client, token = _routes_app
+    headers = {"Authorization": f"Bearer {token}"}
+    roots = (tmp_path / "one", tmp_path / "two")
+    for root in roots:
+        (root / ".vault").mkdir(parents=True)
+    prior = {
+        EnvVar.STATUS_DIR: os.environ.get(EnvVar.STATUS_DIR),
+        EnvVar.JOB_MAX_NONTERMINAL: os.environ.get(EnvVar.JOB_MAX_NONTERMINAL),
+    }
+    os.environ[EnvVar.STATUS_DIR] = str(tmp_path / "status")
+    os.environ[EnvVar.JOB_MAX_NONTERMINAL] = "1"
+    reset_config()
+    reset()
+    try:
+        first = cast(
+            "httpx.Response",
+            client.post(  # pyright: ignore[reportUnknownMemberType]
+                "/jobs",
+                headers=headers,
+                json={
+                    "operation": "index",
+                    "source": "vault",
+                    "project_root": str(roots[0]),
+                    "mode": "incremental",
+                    "start_paused": True,
+                },
+            ),
+        )
+        assert first.status_code == 202
+        second = cast(
+            "httpx.Response",
+            client.post(  # pyright: ignore[reportUnknownMemberType]
+                "/jobs",
+                headers=headers,
+                json={
+                    "operation": "index",
+                    "source": "vault",
+                    "project_root": str(roots[1]),
+                    "mode": "incremental",
+                    "start_paused": True,
+                },
+            ),
+        )
+        assert second.status_code == 429
+        assert second.json()["code"] == "job_capacity_exceeded"
+    finally:
+        reset()
+        for key, value in prior.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        reset_config()
+
+
+def test_reindex_route_rejects_unknown_type(
+    _routes_app: tuple[TestClient, str],
+    tmp_path: Path,
+) -> None:
+    client, token = _routes_app
+    invalid_types: tuple[object, ...] = ("database", [])
+    for invalid_type in invalid_types:
+        response = cast(
+            "httpx.Response",
+            client.post(  # pyright: ignore[reportUnknownMemberType]
+                "/reindex",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"type": invalid_type, "project_root": str(tmp_path)},
+            ),
+        )
+        assert response.status_code == 400
+        assert response.json()["code"] == "invalid_job_spec"
 
 
 async def test_job_mutations_keep_real_asgi_loop_responsive(

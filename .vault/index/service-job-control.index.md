@@ -45,6 +45,8 @@ related:
   - '[[2026-07-21-service-job-control-W04-P12-S23]]'
   - '[[2026-07-21-service-job-control-W04-P12-S24]]'
   - '[[2026-07-21-service-job-control-W04-P12-S25]]'
+  - '[[2026-07-21-service-job-control-W04-P12-S26]]'
+  - '[[2026-07-21-service-job-control-W04-P12-summary]]'
   - '[[2026-07-21-service-job-control-adr]]'
   - '[[2026-07-21-service-job-control-plan]]'
   - '[[2026-07-21-service-job-control-reference]]'
@@ -74,6 +76,7 @@ related:
   - '[[2026-07-22-service-job-control-s23-http-job-shaping-audit]]'
   - '[[2026-07-22-service-job-control-s24-http-job-routes-audit]]'
   - '[[2026-07-22-service-job-control-s25-health-rollups-audit]]'
+  - '[[2026-07-22-service-job-control-s26-http-job-crud-tests-audit]]'
 ---
 
 # `service-job-control` feature index
@@ -113,6 +116,7 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-22-service-job-control-s23-http-job-shaping-audit` - `service-job-control` audit: `S23 HTTP job shaping`
 - `2026-07-22-service-job-control-s24-http-job-routes-audit` - `service-job-control` audit: `s24 http job routes`
 - `2026-07-22-service-job-control-s25-health-rollups-audit` - `service-job-control` audit: `s25 health rollups`
+- `2026-07-22-service-job-control-s26-http-job-crud-tests-audit` - `service-job-control` audit: `s26 http job crud tests`
 
 ### exec
 
@@ -155,6 +159,8 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-21-service-job-control-W04-P12-S23` - Extend job shaping, filtering, ordering, stall classification, control age, capabilities, and canonical state summaries using vaultspec-standard-executor
 - `2026-07-21-service-job-control-W04-P12-S24` - Add create, exact detail, desired-state update, retry, and terminal deletion routes and retain reindex as a validated compatibility adapter using vaultspec-standard-executor
 - `2026-07-21-service-job-control-W04-P12-S25` - Update service health rollups so paused and transitional jobs remain visible without false stall signals using vaultspec-standard-executor
+- `2026-07-21-service-job-control-W04-P12-S26` - Verify authenticated real-ASGI job CRUD, exact mutations, revisions, idempotency, capacity, force rejection, retry linkage, deletion conflicts, and Location headers using vaultspec-standard-executor
+- `2026-07-21-service-job-control-W04-P12-summary` - `service-job-control` `W04.P12` summary
 
 ### plan
 
