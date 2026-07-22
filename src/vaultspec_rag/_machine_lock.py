@@ -30,18 +30,26 @@ import json
 import logging
 import os
 import sys
+import tempfile
+import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "MachineLockLease",
     "acquire_machine_lock",
+    "acquire_machine_lock_lease",
+    "delete_machine_discovery",
     "machine_discovery_path",
     "machine_lock_live_holder",
     "machine_lock_path",
+    "publish_machine_discovery",
     "read_machine_discovery",
     "release_machine_lock",
+    "release_machine_lock_lease",
 ]
 
 _MACHINE_LOCK_FILENAME = "service.lock"
@@ -61,10 +69,27 @@ _MACHINE_DISCOVERY_FILENAME = "service.json"
 # offset entirely.
 _LOCK_OFFSET = 1 << 20
 
-# Open fds for locks this process currently holds, keyed by lock path. Keeping
-# the fd open is what keeps the OS lock held for the process lifetime; closing
-# it (or the process dying) releases the lock.
-_held_fds: dict[str, int] = {}
+
+@dataclass(frozen=True, slots=True, eq=False)
+class MachineLockLease:
+    """Process-local proof that this process owns one machine lock.
+
+    A lease is valid only while it is the exact object retained in this
+    module's active-lease registry.  Reconstructing the same path, PID, and
+    descriptor therefore cannot manufacture publication authority.
+    """
+
+    path: Path
+    pid: int
+    descriptor: int
+
+
+# Keeping the descriptor reachable through the retained lease is what keeps
+# the OS lock held.  Pointer mutation and release are serialized with this
+# registry so a lease cannot be released between its authority check and the
+# filesystem operation it authorizes.
+_held_leases: dict[str, MachineLockLease] = {}
+_lease_guard = threading.RLock()
 
 
 def machine_lock_path() -> Path:
@@ -101,6 +126,90 @@ def read_machine_discovery() -> dict[str, object] | None:
     except (OSError, ValueError):
         return None
     return cast("dict[str, object]", parsed) if isinstance(parsed, dict) else None
+
+
+def _lease_discovery_path(lease: MachineLockLease) -> Path:
+    """Return the discovery pointer governed by *lease*."""
+    return lease.path.parent / _MACHINE_DISCOVERY_FILENAME
+
+
+def _require_active_lease(
+    lease: MachineLockLease,
+    *,
+    operation: str,
+) -> None:
+    """Reject pointer mutation without the exact retained live lease."""
+    active = _held_leases.get(str(lease.path))
+    if active is not lease or lease.pid != os.getpid():
+        msg = f"cannot {operation} without the active machine-lock lease"
+        raise PermissionError(msg)
+    try:
+        os.fstat(lease.descriptor)
+    except OSError as exc:
+        msg = f"cannot {operation} after the machine-lock lease was closed"
+        raise PermissionError(msg) from exc
+
+
+def publish_machine_discovery(
+    lease: MachineLockLease,
+    payload: dict[str, object],
+) -> None:
+    """Atomically publish *payload* while *lease* proves owner authority.
+
+    The payload must name the lease-owning PID.  Serialization happens before
+    filesystem mutation, and replacement uses a unique temporary file in the
+    pointer directory so concurrent or interrupted writes cannot expose a
+    partial document or collide on a shared temporary name.
+    """
+    payload_pid = payload.get("pid")
+    if type(payload_pid) is not int or payload_pid != lease.pid:
+        msg = "machine discovery payload PID must match the machine-lock lease"
+        raise ValueError(msg)
+    encoded = json.dumps(payload, indent=2)
+    pointer = _lease_discovery_path(lease)
+    from ._test_isolation import enforce_pytest_managed_singleton_containment
+
+    enforce_pytest_managed_singleton_containment(
+        operation="publish the machine service discovery pointer",
+        targets=(lease.path, pointer),
+    )
+    with _lease_guard:
+        _require_active_lease(lease, operation="publish machine discovery")
+        pointer.parent.mkdir(parents=True, exist_ok=True)
+        temporary: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=pointer.parent,
+                prefix=f".{pointer.name}.{lease.pid}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                temporary = Path(handle.name)
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, pointer)
+            temporary = None
+        finally:
+            if temporary is not None:
+                with contextlib.suppress(OSError):
+                    temporary.unlink()
+
+
+def delete_machine_discovery(lease: MachineLockLease) -> None:
+    """Delete the machine pointer only while *lease* remains authoritative."""
+    pointer = _lease_discovery_path(lease)
+    from ._test_isolation import enforce_pytest_managed_singleton_containment
+
+    enforce_pytest_managed_singleton_containment(
+        operation="delete the machine service discovery pointer",
+        targets=(lease.path, pointer),
+    )
+    with _lease_guard:
+        _require_active_lease(lease, operation="delete machine discovery")
+        pointer.unlink(missing_ok=True)
 
 
 def _machine_lock_holder(path: Path) -> int:
@@ -150,12 +259,11 @@ def _unlock(fd: int) -> None:
             fcntl.flock(fd, fcntl.LOCK_UN)
 
 
-def acquire_machine_lock() -> tuple[bool, int]:
-    """Acquire the machine-scoped service lock; report success and the holder.
+def acquire_machine_lock_lease() -> tuple[MachineLockLease | None, int]:
+    """Acquire and retain the machine lock; return its owner capability.
 
-    Takes a non-blocking exclusive OS lock. Returns ``(True, our_pid)`` on
-    success (the fd is held open for the process lifetime), or
-    ``(False, holder_pid)`` when another live process holds the lock - where
+    Takes a non-blocking exclusive OS lock. Returns ``(lease, our_pid)`` on
+    success or ``(None, holder_pid)`` when another process holds the lock, where
     ``holder_pid`` is the recorded pid for the refusal message (0 if
     unreadable). Crash-safe: a dead holder's lock is released by the OS, so a
     later acquire simply succeeds with no stale-file reclaim.
@@ -168,11 +276,16 @@ def acquire_machine_lock() -> tuple[bool, int]:
         targets=(path,),
     )
     path.parent.mkdir(parents=True, exist_ok=True)
+    with _lease_guard:
+        retained = _held_leases.get(str(path))
+        if retained is not None:
+            _require_active_lease(retained, operation="reuse the machine lock")
+            return (retained, retained.pid)
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
     if not _try_lock_exclusive(fd):
         holder = _machine_lock_holder(path)
         os.close(fd)
-        return (False, holder)
+        return (None, holder)
     # We hold the lock. Record our pid for the refusal message a future
     # contender will read; the lock itself is the authority.
     with contextlib.suppress(OSError):
@@ -180,8 +293,33 @@ def acquire_machine_lock() -> tuple[bool, int]:
         os.lseek(fd, 0, os.SEEK_SET)
         os.write(fd, json.dumps({"pid": os.getpid()}).encode("utf-8"))
         os.fsync(fd)
-    _held_fds[str(path)] = fd
-    return (True, os.getpid())
+    lease = MachineLockLease(path=path, pid=os.getpid(), descriptor=fd)
+    with _lease_guard:
+        _held_leases[str(path)] = lease
+    return (lease, lease.pid)
+
+
+def acquire_machine_lock() -> tuple[bool, int]:
+    """Acquire the machine lock for callers not yet carrying the lease object."""
+    lease, holder = acquire_machine_lock_lease()
+    return (lease is not None, holder)
+
+
+def release_machine_lock_lease(lease: MachineLockLease) -> None:
+    """Release *lease* if it is the exact capability currently retained."""
+    from ._test_isolation import enforce_pytest_managed_singleton_containment
+
+    enforce_pytest_managed_singleton_containment(
+        operation="release the machine service lock",
+        targets=(lease.path,),
+    )
+    with _lease_guard:
+        if _held_leases.get(str(lease.path)) is not lease:
+            return
+        _held_leases.pop(str(lease.path))
+        _unlock(lease.descriptor)
+        with contextlib.suppress(OSError):
+            os.close(lease.descriptor)
 
 
 def release_machine_lock() -> None:
@@ -202,12 +340,11 @@ def release_machine_lock() -> None:
         operation="release the machine service lock",
         targets=(path,),
     )
-    fd = _held_fds.pop(str(path), None)
-    if fd is None:
+    with _lease_guard:
+        lease = _held_leases.get(str(path))
+    if lease is None:
         return
-    _unlock(fd)
-    with contextlib.suppress(OSError):
-        os.close(fd)
+    release_machine_lock_lease(lease)
 
 
 def machine_lock_live_holder() -> int:
@@ -225,9 +362,11 @@ def machine_lock_live_holder() -> int:
         operation="probe the machine service lock",
         targets=(path,),
     )
-    if str(path) in _held_fds:
-        # We already hold it in this process.
-        return os.getpid()
+    with _lease_guard:
+        retained = _held_leases.get(str(path))
+        if retained is not None:
+            _require_active_lease(retained, operation="probe the machine lock")
+            return retained.pid
     if not path.exists():
         return 0
     try:
