@@ -9,7 +9,7 @@ by both :class:`~vaultspec_rag.indexer._ast_chunker.ASTChunker` and
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     import pathlib
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "CONVENTIONAL_SOURCE_EXTENSIONS",
     "LANGUAGE_MAP",
     "SUPPORTED_EXTENSIONS",
     "_CLASS_LIKE_NODES",
@@ -24,8 +25,10 @@ __all__ = [
     "_FUNCTION_LIKE_NODES",
     "_MAX_FILE_SIZE",
     "_TOP_LEVEL_NODES",
+    "ParserSelection",
     "TextSplitter",
     "_is_binary",
+    "select_parser",
 ]
 
 
@@ -191,6 +194,51 @@ LANGUAGE_MAP: dict[str, tuple[str, str | None]] = {
 }
 
 SUPPORTED_EXTENSIONS: set[str] = set(LANGUAGE_MAP.keys())
+
+# Path-agnostic source admission is intentionally narrower than parser
+# capability. Document, schema, and general configuration formats remain
+# available to explicitly routed content without becoming code by default.
+CONVENTIONAL_SOURCE_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".bash",
+        ".c",
+        ".cc",
+        ".cpp",
+        ".cs",
+        ".css",
+        ".go",
+        ".h",
+        ".hpp",
+        ".java",
+        ".js",
+        ".jsx",
+        ".kt",
+        ".py",
+        ".rb",
+        ".rs",
+        ".sh",
+        ".ts",
+        ".tsx",
+    }
+)
+
+
+class ParserSelection(NamedTuple):
+    """Parser capability selected only after content admission."""
+
+    language: str
+    grammar: str | None
+
+
+def select_parser(suffix: str) -> ParserSelection:
+    """Return parser capability for an admitted suffix.
+
+    Explicitly routed decodable text may use the generic splitter even when
+    its extension is not in the capability registry.
+    """
+    language, grammar = LANGUAGE_MAP.get(suffix.lower(), ("text", None))
+    return ParserSelection(language, grammar)
+
 
 #: AST node types that define top-level chunk boundaries per language.
 _TOP_LEVEL_NODES: dict[str, set[str]] = {
