@@ -1938,3 +1938,97 @@ def test_shutdown_cleanup_cannot_be_resurrected_by_a_late_heartbeat(
         # Hold past one full heartbeat interval so a surviving periodic task
         # would have to republish inside the window.
         _assert_discovery_absent((status_path, pointer_path), held_for=20.0)
+
+
+@pytest.mark.subprocess_gpu
+def test_reconcile_recovers_discovery_without_touching_the_daemon(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+) -> None:
+    """Reconcile repairs every corrupted pointer shape non-destructively.
+
+    The singleton owner is the only process permitted to publish its pointer,
+    so reconcile waits for that owner's own heartbeat rather than writing
+    anything itself. The daemon must therefore survive every round untouched:
+    same process, same identity, never restarted.
+    """
+    import json as _json
+    from datetime import UTC, datetime, timedelta
+
+    from ..._machine_lock import machine_discovery_path
+
+    with _service_env(tmp_path):
+        port = _get_ephemeral_port()
+        log_path = tmp_path / "service.log"
+
+        pid = _spawn_service(port, log_path)
+        request.addfinalizer(lambda: _terminate_pid(pid))
+        health = _poll_health(port)
+        serving_pid = int(health["pid"])
+        _write_service_status(pid, port)
+
+        pointer_path = machine_discovery_path()
+        original = _wait_for_discovery_repair(pointer_path, timeout=50.0)
+        assert original["pid"] == serving_pid
+
+        def corrupt_deleted() -> None:
+            pointer_path.unlink()
+
+        def corrupt_stale() -> None:
+            stale = dict(original)
+            stale["last_heartbeat"] = (
+                datetime.now(UTC) - timedelta(hours=2)
+            ).isoformat(timespec="seconds")
+            pointer_path.write_text(_json.dumps(stale), encoding="utf-8")
+
+        def corrupt_foreign() -> None:
+            foreign = dict(original)
+            foreign["pid"] = 2_000_000_000
+            pointer_path.write_text(_json.dumps(foreign), encoding="utf-8")
+
+        for label, corrupt in (
+            ("deleted", corrupt_deleted),
+            ("stale", corrupt_stale),
+            ("foreign", corrupt_foreign),
+        ):
+            corrupt()
+            result = runner.invoke(
+                app,
+                ["server", "reconcile", "--json", "--timeout", "60"],
+                env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
+            )
+            assert result.exit_code == 0, (
+                f"reconcile did not converge after a {label} pointer: {result.stdout!r}"
+            )
+            payload = json.loads(result.stdout)
+            assert payload["ok"] is True
+            data = payload["data"]
+            assert data["converged"] is True
+            assert data["status"] in {"already_converged", "converged"}
+
+            # The owner republished its own pointer, and it names the same
+            # live daemon as before.
+            repaired = _wait_for_discovery_repair(pointer_path, timeout=50.0)
+            assert repaired["pid"] == serving_pid, (
+                f"pointer named a different process after the {label} round"
+            )
+            assert repaired["port"] == port
+
+            # Reconcile is non-destructive: same process, still serving.
+            assert _is_pid_alive(serving_pid), (
+                f"daemon died during the {label} reconcile round"
+            )
+            live = _poll_health(port)
+            assert int(live["pid"]) == serving_pid, (
+                f"daemon was restarted during the {label} reconcile round"
+            )
+
+        # Idempotent: a reconcile against an already-agreeing machine is a
+        # success, not a no-op failure a caller has to special-case.
+        again = runner.invoke(
+            app,
+            ["server", "reconcile", "--json"],
+            env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
+        )
+        assert again.exit_code == 0
+        assert json.loads(again.stdout)["data"]["status"] == "already_converged"
