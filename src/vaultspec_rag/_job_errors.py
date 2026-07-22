@@ -59,6 +59,10 @@ class JobErrorKind(StrEnum):
     JOB_CAPACITY_EXCEEDED = "job_capacity_exceeded"
     MIGRATION_REQUIRED = "migration_required"
     ADMISSION_CONFIG_INVALID = "admission_config_invalid"
+    EXTRACTION_RETRYABLE = "extract_retryable"
+    EXTRACTION_TERMINAL = "extract_terminal"
+    DECODE_FAILED = "decode_failed"
+    CHUNK_FAILED = "chunk_failed"
 
 
 _REMEDIATION: Final = MappingProxyType(
@@ -109,6 +113,22 @@ _REMEDIATION: Final = MappingProxyType(
         JobErrorKind.ADMISSION_CONFIG_INVALID: (
             "the root policy has invalid or conflicting content ownership; correct "
             "the reported routes before retrying"
+        ),
+        JobErrorKind.EXTRACTION_RETRYABLE: (
+            "the extractor failed transiently; retain the file as pending work and "
+            "retry under the service backoff policy"
+        ),
+        JobErrorKind.EXTRACTION_TERMINAL: (
+            "the extractor rejected this input terminally; correct the source, rule, "
+            "or extractor version before retrying"
+        ),
+        JobErrorKind.DECODE_FAILED: (
+            "the admitted raw content did not satisfy its strict decoder policy; "
+            "correct the content or caller-authored route before retrying"
+        ),
+        JobErrorKind.CHUNK_FAILED: (
+            "the admitted content could not be chunked; inspect the parser failure "
+            "and retry after correcting the content or parser support"
         ),
     }
 )
