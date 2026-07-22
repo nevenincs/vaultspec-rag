@@ -250,3 +250,11 @@ class HealthResponse(BaseModel):
             "detect PID-reuse / unrelated-server collisions."
         ),
     )
+    degraded_reasons: list[str] = Field(
+        default_factory=list,
+        description="Bounded reasons the service is not fully ready",
+    )
+    support_profile: dict[str, object] = Field(
+        default_factory=dict,
+        description="Active index profile and independent domain ceilings",
+    )

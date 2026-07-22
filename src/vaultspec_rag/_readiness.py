@@ -152,11 +152,23 @@ class ReadinessReport:
         no-GPU readiness contract.
         """
         from . import store_schema
+        from .config import get_config
+        from .index_profiles import index_support_profile_status
+
+        degraded_reasons = [
+            dep.detail
+            for dep in self.dependencies
+            if dep.status is not ReadinessStatus.READY and dep.detail
+        ]
 
         return {
             "ready": self.ready,
             "server_mode": self.server_mode,
             "dependencies": [dep.to_dict() for dep in self.dependencies],
+            "degraded_reasons": degraded_reasons,
+            "support_profile": index_support_profile_status(
+                get_config().index_support_profile
+            ),
             "schema": store_schema.describe_storage_schema(),
         }
 

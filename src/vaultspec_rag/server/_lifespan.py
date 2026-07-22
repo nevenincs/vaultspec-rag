@@ -737,6 +737,12 @@ async def health_handler(_request: Request) -> object:
     if status == "ready" and qdrant_state.mode == "server" and not qdrant_state.alive:
         status = "degraded"
 
+    degraded_reasons: list[str] = []
+    if not reg_health["model_loaded"]:
+        degraded_reasons.append("embedding models are not loaded")
+    if qdrant_state.mode == "server" and not qdrant_state.alive:
+        degraded_reasons.append("the configured vector service is not live")
+
     # Bounded jobs-health rollup: canonical lifecycle counts and the most
     # recent failure's classification, so a broker probing /health sees
     # paused, transitional, wedged, or failing work without walking /jobs.
@@ -783,6 +789,17 @@ async def health_handler(_request: Request) -> object:
             else None
         ),
     }
+    if summary["stalled"]:
+        degraded_reasons.append(f"{summary['stalled']} indexing job(s) are stalled")
+    if last_failed is not None:
+        failed_kind = last_failed.get("error_kind") or "unknown"
+        degraded_reasons.append(f"the latest indexing job failed: {failed_kind}")
+
+    from ..config import get_config
+    from ..index_profiles import index_support_profile_status
+
+    if status == "ready" and degraded_reasons:
+        status = "degraded"
 
     return JSONResponse(
         {
@@ -801,6 +818,10 @@ async def health_handler(_request: Request) -> object:
             "project_count": reg_health["project_count"],
             "uptime_s": round(uptime, 2),
             "backend_capabilities": backend_capabilities_dict(),
+            "degraded_reasons": degraded_reasons,
+            "support_profile": index_support_profile_status(
+                get_config().index_support_profile
+            ),
             # Bare storage-schema version: the cheapest ungated pre-read gate a
             # direct-Qdrant consumer can check before scrolling. The full
             # descriptor lives on /readiness.
