@@ -413,34 +413,59 @@ class CodebaseIndexer:
         sample_limit: int = _DEFAULT_SCAN_SAMPLE_LIMIT,
     ) -> CodeIndexPreflight:
         """Resolve and discover once before any mutable index resource."""
-        authority = self.preflight_policy()
-        scan = self._scan_content(authority.policy, sample_limit=sample_limit)
+        policy = self.resolve_policy_snapshot()
+        scan = self._scan_content(policy, sample_limit=sample_limit)
         return CodeIndexPreflight(
-            root_dir=authority.root_dir,
-            policy=authority.policy,
+            root_dir=self.root_dir.resolve(),
+            policy=policy,
             scan=scan,
         )
 
-    def preflight_policy(self) -> CodePolicyPreflight:
-        """Resolve policy without scanning when scoped work is already known."""
-        return CodePolicyPreflight(
+    def preflight_changed_paths(
+        self,
+        changed_paths: Iterable[pathlib.Path],
+    ) -> CodeScopedPreflight:
+        """Resolve policy and classify one exact normalized changed-path scope."""
+        policy = self.resolve_policy_snapshot()
+        normalized = self._normalize_changed_paths(changed_paths)
+        for path in normalized:
+            rel = path.relative_to(self.root_dir).as_posix()
+            policy.classify(rel)
+            if path.is_file():
+                self._classify_file(path, rel, policy)
+        return CodeScopedPreflight(
             root_dir=self.root_dir.resolve(),
-            policy=self.resolve_policy_snapshot(),
+            policy=policy,
+            changed_paths=normalized,
         )
+
+    def _normalize_changed_paths(
+        self,
+        changed_paths: Iterable[pathlib.Path],
+    ) -> tuple[pathlib.Path, ...]:
+        """Return deterministic canonical paths wholly contained by this root."""
+        root = self.root_dir.resolve()
+        normalized = {path.resolve() for path in changed_paths}
+        if any(not path.is_relative_to(root) for path in normalized):
+            raise ValueError("code index scope contains a path outside its root")
+        return tuple(sorted(normalized, key=lambda path: path.as_posix()))
 
     def _accept_preflight(
         self,
-        preflight: CodePolicyPreflight | None,
+        preflight: CodeExecutionPreflight,
+        *,
+        changed_paths: Iterable[pathlib.Path] | None,
     ) -> tuple[ResolvedIndexPolicy, tuple[pathlib.Path, ...] | None]:
-        """Return exact caller authority or resolve policy once locally."""
-        if preflight is None:
-            return self.resolve_policy_snapshot(), None
+        """Verify and return one exact caller-owned execution authority."""
         if preflight.root_dir != self.root_dir.resolve():
             raise ValueError(
                 "code index preflight root does not match the indexer root"
             )
-        discovered_paths = None
+        if preflight.policy.root_dir != preflight.root_dir:
+            raise ValueError("code index preflight policy belongs to another root")
         if isinstance(preflight, CodeIndexPreflight):
+            if changed_paths is not None:
+                raise ValueError("full code preflight cannot authorize scoped work")
             if (
                 preflight.scan.policy_fingerprint
                 != preflight.policy.fingerprints.snapshot
@@ -455,8 +480,26 @@ class CodebaseIndexer:
                 raise ValueError(
                     "code index preflight contains a path outside its root"
                 )
-            discovered_paths = preflight.scan.files
-        return preflight.policy, discovered_paths
+            for path in preflight.scan.files:
+                rel = path.relative_to(root).as_posix()
+                disposition = preflight.policy.classify(rel).disposition
+                if not (
+                    disposition.admitted
+                    and disposition.kind is ContentKind.CODE
+                ):
+                    raise ValueError(
+                        "code index preflight contains a path not admitted as code"
+                    )
+            return preflight.policy, preflight.scan.files
+        if changed_paths is None:
+            raise ValueError("scoped code preflight requires changed paths")
+        normalized = self._normalize_changed_paths(changed_paths)
+        if normalized != preflight.changed_paths:
+            raise ValueError("code index scope does not match its validated preflight")
+        for path in normalized:
+            rel = path.relative_to(preflight.root_dir).as_posix()
+            preflight.policy.classify(rel)
+        return preflight.policy, None
 
     def _collect_gitignore_patterns(self) -> list[str]:
         """Collect the hardcoded and ``.gitignore``-sourced exclusion patterns.
@@ -2141,7 +2184,7 @@ class CodebaseIndexer:
         clean: bool = False,
         *,
         reporter: ProgressReporter,
-        preflight: CodePolicyPreflight | None = None,
+        preflight: CodeIndexPreflight,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Full codebase re-index serialized through the writer lock.
@@ -2152,7 +2195,10 @@ class CodebaseIndexer:
         F6.6).
         """
         run_control.checkpoint()
-        resolved_policy, discovered_paths = self._accept_preflight(preflight)
+        resolved_policy, discovered_paths = self._accept_preflight(
+            preflight,
+            changed_paths=None,
+        )
         run_control.checkpoint()
         with self._writer_lock:
             self._resolved_policy = resolved_policy
@@ -2376,7 +2422,7 @@ class CodebaseIndexer:
         *,
         reporter: ProgressReporter,
         changed_paths: Iterable[pathlib.Path] | None = None,
-        preflight: CodePolicyPreflight | None = None,
+        preflight: CodeExecutionPreflight,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Incremental codebase re-index serialized through the writer lock.
@@ -2393,7 +2439,10 @@ class CodebaseIndexer:
                 When ``None`` the full ``.gitignore``-aware scan runs.
         """
         run_control.checkpoint()
-        resolved_policy, discovered_paths = self._accept_preflight(preflight)
+        resolved_policy, discovered_paths = self._accept_preflight(
+            preflight,
+            changed_paths=changed_paths,
+        )
         run_control.checkpoint()
         with self._writer_lock:
             self._resolved_policy = resolved_policy
