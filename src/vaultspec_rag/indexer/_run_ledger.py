@@ -40,7 +40,7 @@ __all__ = [
     "RunTerminalState",
 ]
 
-_SCHEMA_VERSION: Final = 2
+_SCHEMA_VERSION: Final = 4
 _FETCH_BATCH: Final = 256
 _DIGEST_REPR_LENGTH: Final = 128
 
@@ -98,6 +98,14 @@ class RunTerminalState(StrEnum):
     CANCELLED = "cancelled"
     INVALIDATED = "invalidated"
     REBUILD_INCOMPLETE = "rebuild_incomplete"
+
+
+_RESUMABLE_STATES: Final = (
+    RunTerminalState.RUNNING,
+    RunTerminalState.FAILED,
+    RunTerminalState.CANCELLED,
+    RunTerminalState.REBUILD_INCOMPLETE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,15 +253,37 @@ class RunLedger:
             active = connection.execute(
                 """
                 SELECT * FROM generations
-                WHERE source_type = ? AND terminal_state = ?
+                WHERE source_type = ?
+                  AND terminal_state IN (?, ?, ?, ?)
                 ORDER BY created_at DESC LIMIT 1
                 """,
-                (signature.source_type.value, RunTerminalState.RUNNING.value),
+                (
+                    signature.source_type.value,
+                    *(state.value for state in _RESUMABLE_STATES),
+                ),
             ).fetchone()
             if (
                 active is not None
                 and active["signature_fingerprint"] == signature.fingerprint
             ):
+                if active["terminal_state"] != RunTerminalState.RUNNING.value:
+                    connection.execute(
+                        """
+                        UPDATE generations
+                        SET terminal_state = ?, terminal_detail = NULL, updated_at = ?
+                        WHERE generation_id = ?
+                        """,
+                        (
+                            RunTerminalState.RUNNING.value,
+                            now,
+                            active["generation_id"],
+                        ),
+                    )
+                    active = connection.execute(
+                        "SELECT * FROM generations WHERE generation_id = ?",
+                        (active["generation_id"],),
+                    ).fetchone()
+                    assert active is not None
                 return self._generation_from_row(active)
             if active is not None:
                 connection.execute(
@@ -273,14 +303,16 @@ class RunLedger:
             connection.execute(
                 """
                 INSERT INTO generations (
-                    generation_id, source_type, signature_fingerprint,
+                    generation_id, source_type, collection_identity,
+                    signature_fingerprint,
                     signature_json, finalization_phase, terminal_state,
                     destructive_intent, created_at, updated_at, terminal_detail
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
                 """,
                 (
                     generation_id,
                     signature.source_type.value,
+                    signature.collection_identity,
                     signature.fingerprint,
                     signature.canonical_json,
                     FinalizationPhase.INGESTING.value,
@@ -356,6 +388,18 @@ class RunLedger:
                 raise RunLedgerStateError(
                     "segments for one path must share one source digest"
                 )
+            for point_id in unit.point_ids:
+                owner = connection.execute(
+                    """
+                    SELECT unit_id FROM commit_point_ids
+                    WHERE generation_id = ? AND point_id = ?
+                    """,
+                    (generation_id, point_id),
+                ).fetchone()
+                if owner is not None:
+                    raise RunLedgerStateError(
+                        f"point identity {point_id!r} belongs to another commit unit"
+                    )
             connection.execute(
                 """
                 INSERT INTO commit_units (
@@ -374,6 +418,17 @@ class RunLedger:
                     int(unit.is_file_end),
                     point_ids_json,
                     now,
+                ),
+            )
+            connection.executemany(
+                """
+                INSERT INTO commit_point_ids (
+                    generation_id, unit_id, point_ordinal, point_id
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    (generation_id, unit.identity, ordinal, point_id)
+                    for ordinal, point_id in enumerate(unit.point_ids)
                 ),
             )
             connection.execute(
@@ -398,15 +453,27 @@ class RunLedger:
         """Return whether every segment (or the deletion unit) is committed."""
         _validate_rel_path(rel_path)
         with self._connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT unit_kind, segment_ordinal, is_file_end
-                FROM commit_units
-                WHERE generation_id = ? AND rel_path = ?
-                ORDER BY segment_ordinal
-                """,
-                (generation_id, rel_path),
-            ).fetchall()
+            return self._file_complete_in_connection(
+                connection,
+                generation_id,
+                rel_path,
+            )
+
+    @staticmethod
+    def _file_complete_in_connection(
+        connection: sqlite3.Connection,
+        generation_id: str,
+        rel_path: str,
+    ) -> bool:
+        rows = connection.execute(
+            """
+            SELECT unit_kind, segment_ordinal, is_file_end
+            FROM commit_units
+            WHERE generation_id = ? AND rel_path = ?
+            ORDER BY segment_ordinal
+            """,
+            (generation_id, rel_path),
+        ).fetchall()
         if not rows:
             return False
         kinds = {row["unit_kind"] for row in rows}
@@ -452,6 +519,33 @@ class RunLedger:
                         point_ids=tuple(json.loads(row["point_ids_json"])),
                     )
 
+    def iter_point_ids(
+        self,
+        generation_id: str,
+        *,
+        batch_size: int = _FETCH_BATCH,
+    ) -> Iterator[str]:
+        """Yield deterministic committed point identities row by row."""
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                SELECT points.point_id
+                FROM commit_point_ids AS points
+                JOIN commit_units AS units
+                  ON units.generation_id = points.generation_id
+                 AND units.unit_id = points.unit_id
+                WHERE points.generation_id = ?
+                ORDER BY units.rel_path, units.unit_kind,
+                         units.segment_ordinal, points.point_ordinal
+                """,
+                (generation_id,),
+            )
+            while rows := cursor.fetchmany(batch_size):
+                for row in rows:
+                    yield str(row["point_id"])
+
     def record_file_state(self, generation_id: str, state: FileState) -> None:
         """Upsert the latest explicit per-file convergence outcome."""
         with self._transaction() as connection:
@@ -459,6 +553,17 @@ class RunLedger:
             if generation["finalization_phase"] != FinalizationPhase.INGESTING.value:
                 raise RunLedgerStateError(
                     "cannot change file state after finalization begins"
+                )
+            if (
+                state.state is FileStateKind.INDEXED
+                and not self._file_complete_in_connection(
+                    connection,
+                    generation_id,
+                    state.rel_path,
+                )
+            ):
+                raise RunLedgerStateError(
+                    "indexed file state requires every storage-confirmed segment"
                 )
             connection.execute(
                 """
@@ -620,9 +725,18 @@ class RunLedger:
             result = connection.execute(
                 """
                 DELETE FROM generations
-                WHERE generation_id != ? AND terminal_state != ?
+                WHERE generation_id != ?
+                  AND source_type = ?
+                  AND collection_identity = ?
+                  AND terminal_state IN (?, ?)
                 """,
-                (keep_generation_id, RunTerminalState.RUNNING.value),
+                (
+                    keep_generation_id,
+                    keep["source_type"],
+                    keep["collection_identity"],
+                    RunTerminalState.SUCCEEDED.value,
+                    RunTerminalState.INVALIDATED.value,
+                ),
             )
             connection.execute(
                 """
@@ -666,6 +780,7 @@ class RunLedger:
                 CREATE TABLE IF NOT EXISTS generations (
                     generation_id TEXT PRIMARY KEY,
                     source_type TEXT NOT NULL,
+                    collection_identity TEXT NOT NULL,
                     signature_fingerprint TEXT NOT NULL,
                     signature_json TEXT NOT NULL,
                     finalization_phase TEXT NOT NULL,
@@ -695,6 +810,18 @@ class RunLedger:
                 );
                 CREATE INDEX IF NOT EXISTS commit_units_path
                     ON commit_units(generation_id, rel_path, segment_ordinal);
+
+                CREATE TABLE IF NOT EXISTS commit_point_ids (
+                    generation_id TEXT NOT NULL,
+                    unit_id TEXT NOT NULL,
+                    point_ordinal INTEGER NOT NULL,
+                    point_id TEXT NOT NULL,
+                    PRIMARY KEY(generation_id, unit_id, point_ordinal),
+                    UNIQUE(generation_id, point_id),
+                    FOREIGN KEY(generation_id, unit_id)
+                        REFERENCES commit_units(generation_id, unit_id)
+                        ON DELETE CASCADE
+                );
 
                 CREATE TABLE IF NOT EXISTS file_states (
                     generation_id TEXT NOT NULL REFERENCES generations(generation_id)
