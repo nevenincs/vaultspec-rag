@@ -59,6 +59,7 @@ from ._routes_storage import (
     _fetch_surveys,
     _shape_survey_payload,
 )
+from ._search_availability import build_index_unavailable_response
 from ._utils import (
     ProjectRootRequiredError,
     _clamp_top_k,
@@ -251,6 +252,35 @@ def _empty_search_diagnostics(
     }
 
 
+def _empty_search_response(
+    result: dict[str, object],
+    *,
+    job_snapshot_before: list[dict[str, object]],
+    root: Path,
+    search_type: object,
+    request_id: str,
+    port: int | None,
+) -> tuple[dict[str, object], int]:
+    index_state = cast(
+        "dict[str, object]",
+        result.get("index_state", {}),
+    )
+    source = "code" if search_type in ("code", "codebase") else "vault"
+    unavailable = build_index_unavailable_response(
+        before_snapshot=job_snapshot_before,
+        after_snapshot=_jobs.snapshot(),
+        requested_root=root,
+        source=source,
+        request_id=request_id,
+        index_state=index_state,
+        port=port,
+    )
+    if unavailable is not None:
+        return unavailable, 503
+    result["empty"] = _empty_search_diagnostics(index_state, port=port)
+    return result, 200
+
+
 async def jobs_route(request: Request) -> JSONResponse:
     """Token-gated read-only ``GET /jobs`` returning the activity snapshot.
 
@@ -373,6 +403,7 @@ async def search_route(request: Request) -> JSONResponse:
     except ValueError as exc:
         return _bad_request_invalid_root(exc)
 
+    job_snapshot_before = _jobs.snapshot()
     notes: dict[str, object] = {}
 
     def _run():
@@ -468,14 +499,19 @@ async def search_route(request: Request) -> JSONResponse:
     total_seconds = time.perf_counter() - started
     _m.incr("search_total")
     _m.observe("search_last_duration_seconds", total_seconds)
+    response_status = 200
     if "results" in result:
         result["request_id"] = request_id
         timing = result.get("timing")
         if isinstance(timing, dict):
             timing["server_total_seconds"] = total_seconds
         if not result["results"]:
-            result["empty"] = _empty_search_diagnostics(
-                cast("dict[str, object]", result.get("index_state", {})),
+            result, response_status = _empty_search_response(
+                result,
+                job_snapshot_before=job_snapshot_before,
+                root=root,
+                search_type=search_type,
+                request_id=request_id,
                 port=request.url.port,
             )
         _m._ensure_watcher_soon(root)
@@ -491,7 +527,7 @@ async def search_route(request: Request) -> JSONResponse:
             results=hit_count,
             total_seconds=f"{total_seconds:.3f}",
         )
-    return JSONResponse(result)
+    return JSONResponse(result, status_code=response_status)
 
 
 def _preprocess_preflight(root: Path) -> dict[str, object]:

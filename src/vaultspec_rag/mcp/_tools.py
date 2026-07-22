@@ -14,7 +14,7 @@ search/index tools on the shared :data:`mcp` instance.
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict
@@ -83,6 +83,34 @@ def _as_envelope(result: dict[str, Any] | list[dict[str, Any]]) -> dict[str, Any
     if isinstance(result, list):
         return {"results": result}
     return result
+
+
+def _search_envelope_or_raise(
+    result: dict[str, Any] | list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Return a successful search envelope or raise the daemon's failure."""
+    envelope = _as_envelope(result)
+    if envelope.get("ok") is not False:
+        return envelope
+
+    error_code = str(envelope.get("error") or "search_failed")
+    message = str(envelope.get("message") or "The search request failed.")
+    raw_remediation = envelope.get("remediation")
+    if isinstance(raw_remediation, list):
+        remediation = [
+            step.strip()
+            for step in cast("list[object]", raw_remediation)
+            if isinstance(step, str) and step.strip()
+        ]
+    elif isinstance(raw_remediation, str) and raw_remediation.strip():
+        remediation = [raw_remediation.strip()]
+    else:
+        remediation = []
+
+    detail = f"{error_code}: {message}"
+    if remediation:
+        detail = f"{detail} Remediation: {' | '.join(remediation)}"
+    raise RuntimeError(detail)
 
 
 def _with_domain_tokens(
@@ -190,7 +218,7 @@ async def search_vault(
             unlike_ids=unlike_ids,
         )
     )
-    return SearchResults.model_validate(_as_envelope(result))
+    return SearchResults.model_validate(_search_envelope_or_raise(result))
 
 
 @mcp.tool(title="Search codebase", annotations=_READ_ONLY)
@@ -250,7 +278,7 @@ async def search_codebase(
             unlike_ids=unlike_ids,
         )
     )
-    return SearchResults.model_validate(_as_envelope(result))
+    return SearchResults.model_validate(_search_envelope_or_raise(result))
 
 
 @mcp.tool(title="Get code file", annotations=_READ_ONLY)
