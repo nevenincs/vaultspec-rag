@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import os
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, ClassVar, Literal, cast
@@ -32,6 +33,39 @@ _VALID_PREPROCESS_MODES: frozenset[str] = frozenset({"default", "off"})
 _VALID_INDEX_SUPPORT_PROFILES: frozenset[str] = frozenset(
     {"managed-service", "embedded-local"}
 )
+
+
+@dataclass(frozen=True, slots=True)
+class ContentRouteConfig:
+    """One caller-authored project-relative pattern and raw target token.
+
+    Unknown targets remain representable at this boundary so policy
+    compilation can reject them as structured configuration errors instead of
+    silently dropping a route. Rule priority is the enclosing tuple's order.
+    """
+
+    pattern: str
+    target: str
+
+    def __post_init__(self) -> None:
+        if not self.pattern.strip():
+            raise ValueError("content route pattern must not be empty")
+        if "\0" in self.pattern:
+            raise ValueError("content route pattern must not contain NUL")
+        if not self.target.strip():
+            raise ValueError("content route target must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
+class RootContentPolicyConfig:
+    """Raw root policy whose route tuple preserves caller precedence."""
+
+    source_profile: str
+    routes: tuple[ContentRouteConfig, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.source_profile.strip():
+            raise ValueError("source profile must not be empty")
 
 
 class EnvVar(StrEnum):
