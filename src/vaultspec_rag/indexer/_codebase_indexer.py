@@ -1916,6 +1916,21 @@ class CodebaseIndexer:
             preprocess_failures=list(self._prep_skips),
         )
 
+    def _unchanged_incremental_result(self, *, started_at: float) -> IndexResult:
+        """Return a mutation-free incremental result without publishing metadata."""
+        return IndexResult(
+            total=self.store.count_code(),
+            added=0,
+            updated=0,
+            removed=0,
+            duration_ms=int((time.time() - started_at) * 1000),
+            device=self.model.device,
+            files=0,
+            preprocess_ok=self._prep_ok,
+            preprocess_skipped=len(self._prep_skips),
+            preprocess_failures=list(self._prep_skips),
+        )
+
     def _enqueue_code_result(
         self,
         result: FileChunkResult,
@@ -2891,6 +2906,8 @@ class CodebaseIndexer:
         to_index = new_files | modified_files
         paths_to_index = [current_files[rel] for rel in sorted(to_index)]
         attempted_paths = to_index | deleted_files
+        if not attempted_paths:
+            return self._unchanged_incremental_result(started_at=start)
         limits = self._resolve_code_pipeline_limits()
         try:
             checkpoint = self._open_run_checkpoint(
@@ -3087,6 +3104,8 @@ class CodebaseIndexer:
         to_index = new_files | modified_files
         paths_to_index = [to_hash[rel] for rel in sorted(to_index)]
         attempted_paths = to_index | delete_files
+        if not attempted_paths:
+            return self._unchanged_incremental_result(started_at=start)
         limits = self._resolve_code_pipeline_limits()
         try:
             checkpoint = self._open_run_checkpoint(
