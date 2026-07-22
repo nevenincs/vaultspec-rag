@@ -394,6 +394,7 @@ def test_incremental_manifest_carries_forward_and_deletes_exact_paths(
     incremental_signature = replace(
         full.signature,
         operation=RunOperation.INCREMENTAL,
+        configuration_fingerprint="configuration-v2",
     )
     incremental = ledger.start_generation(incremental_signature)
     assert incremental.parent_generation_id == full.generation_id
@@ -436,6 +437,17 @@ def test_incremental_manifest_carries_forward_and_deletes_exact_paths(
     ledger.record_file_state(
         incremental.generation_id,
         FileState.indexed("src/b.py", ContentKind.CODE, replacement_hash),
+    )
+    stale_deletion = CommitUnit(
+        rel_path="src/b.py",
+        kind=CommitUnitKind.DELETE_STALE,
+        segment_ordinal=0,
+        is_file_end=True,
+        point_ids=("superseded-b",),
+    )
+    assert ledger.record_storage_confirmed_unit(
+        incremental.generation_id,
+        stale_deletion,
     )
     assert [
         state.content_hash

@@ -217,6 +217,11 @@ class RunSignature:
         payload = asdict(self)
         payload.pop("operation")
         payload.pop("clean")
+        # Pipeline sizing shapes resumable commit-unit boundaries, so it must
+        # remain part of the exact generation fingerprint.  It does not shape
+        # deterministic chunk identities or published file content, however,
+        # and must not prevent a new attempt from carrying a completed manifest.
+        payload.pop("configuration_fingerprint")
         payload["source_type"] = self.source_type.value
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.blake2b(encoded.encode("utf-8")).hexdigest()
@@ -509,9 +514,9 @@ class RunLedger:
                 """,
                 (generation_id, unit.rel_path, FileStateKind.INDEXED.value),
             ).fetchone()
-            if indexed is not None:
+            if indexed is not None and unit.kind is CommitUnitKind.UPSERT:
                 raise RunLedgerStateError(
-                    "cannot add commit units after a path is indexed"
+                    "cannot add upsert commit units after a path is indexed"
                 )
             sibling = connection.execute(
                 """
