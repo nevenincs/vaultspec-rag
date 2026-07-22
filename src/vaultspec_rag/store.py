@@ -56,6 +56,7 @@ __all__ = [
 
 
 EMBEDDING_DIM = store_schema.DEFAULT_DENSE_DIM  # Qwen3-Embedding-0.6B default
+_WRITE_LOCK_POLL_SECONDS = 0.1
 
 
 @contextmanager
@@ -307,6 +308,31 @@ class VaultStore(_VaultSearchMixin):
         if self._server_mode:
             return nullcontext()
         return self._collection_locks[collection]
+
+    @contextmanager
+    def _point_write_lock(
+        self,
+        collection: str,
+        policy: StoreWritePolicy | None,
+    ) -> Generator[None]:
+        """Acquire a local write lock within the caller's liveness budget."""
+        if self._server_mode or policy is None:
+            with self._point_lock(collection):
+                yield
+            return
+
+        lock = self._collection_locks[collection]
+        acquired = False
+        try:
+            while not acquired:
+                remaining = policy.remaining_seconds()
+                acquired = lock.acquire(
+                    timeout=min(_WRITE_LOCK_POLL_SECONDS, remaining)
+                )
+            yield
+        finally:
+            if acquired:
+                lock.release()
 
     def close(self) -> None:
         """Release the Qdrant client and set it to ``None``.
@@ -794,7 +820,7 @@ class VaultStore(_VaultSearchMixin):
             )
 
         self.ensure_code_table()
-        with self._point_lock(self.CODE_TABLE_NAME):
+        with self._point_write_lock(self.CODE_TABLE_NAME, write_policy):
             self._guarded_upsert(
                 self.CODE_TABLE_NAME,
                 points,

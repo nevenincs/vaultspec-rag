@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import multiprocessing
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from typing import TYPE_CHECKING
 
@@ -372,6 +374,81 @@ class TestCodeIndexMemoryCeilings:
             assert snapshot.peak_cuda_reserved_mb > cuda_ceiling_mb
             assert store.count_code() == 0
             _assert_code_pipeline_released(indexer)
+
+
+class TestCodeIndexBlockedStoreDeadline:
+    """A blocked real local write cannot retain the index writer authority."""
+
+    @pytest.mark.timeout(30)
+    def test_blocked_store_consumer_releases_queue_and_writer_at_deadline(
+        self,
+        cpu_code_embedding_model: EmbeddingModel,
+        tmp_path: Path,
+    ) -> None:
+        from ... import CodebaseIndexer, VaultStore
+        from ..._job_errors import JobError, JobErrorKind
+
+        _configure_cpu_code_index(
+            cpu_code_embedding_model.dimension,
+            index_no_progress_timeout_seconds=2.0,
+        )
+        _write_code_memory_corpus(tmp_path, count=8)
+        gpu_gate = threading.Lock()
+
+        with VaultStore(
+            tmp_path,
+            embedding_dim=cpu_code_embedding_model.dimension,
+        ) as store:
+            store.ensure_code_table()
+            indexer = CodebaseIndexer(
+                tmp_path,
+                cpu_code_embedding_model,
+                store,
+                gpu_lock=gpu_gate,
+            )
+            point_lock = store._collection_locks[store.CODE_TABLE_NAME]
+            gpu_gate.acquire()
+            point_lock_held = False
+            try:
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    indexing = executor.submit(
+                        indexer.full_index,
+                        reporter=NullProgressReporter(),
+                        preflight=indexer.preflight_content(),
+                    )
+                    wait_deadline = time.monotonic() + 5.0
+                    while time.monotonic() < wait_deadline:
+                        if (
+                            indexer.support_measurement.generated_chunks >= 3
+                            and indexer._writer_lock.locked()
+                        ):
+                            break
+                        time.sleep(0.01)
+                    else:
+                        raise AssertionError(
+                            "producer did not fill the bounded queue before deadline"
+                        )
+
+                    point_lock.acquire()
+                    point_lock_held = True
+                    released_at = time.monotonic()
+                    gpu_gate.release()
+
+                    with pytest.raises(JobError) as stopped:
+                        indexing.result(timeout=5.0)
+                    elapsed = time.monotonic() - released_at
+
+                    assert stopped.value.error_kind is JobErrorKind.NO_PROGRESS_TIMEOUT
+                    assert elapsed < 4.0
+                    assert store.count_code() == 0
+                    _assert_code_pipeline_released(indexer)
+            finally:
+                if gpu_gate.locked():
+                    gpu_gate.release()
+                if point_lock_held:
+                    point_lock.release()
+
+        _assert_code_pipeline_released(indexer)
 
 
 # ---- Document Preparation Tests ----
