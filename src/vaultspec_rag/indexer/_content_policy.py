@@ -15,6 +15,8 @@ __all__ = [
     "AdmissionDisposition",
     "AdmissionReason",
     "ContentKind",
+    "ContentRoute",
+    "RootContentPolicy",
     "SourceProfileVersion",
 ]
 
@@ -44,6 +46,32 @@ class SourceProfileVersion(StrEnum):
 
     CONVENTIONAL_V1 = "conventional-v1"
     EXPLICIT_ONLY_V1 = "explicit-only-v1"
+
+
+@dataclass(frozen=True, slots=True)
+class ContentRoute:
+    """One compiled caller route; tuple position defines its precedence."""
+
+    pattern: str
+    kind: ContentKind
+
+    def __post_init__(self) -> None:
+        if not self.pattern.strip():
+            raise ValueError("content route pattern must not be empty")
+        if "\0" in self.pattern:
+            raise ValueError("content route pattern must not contain NUL")
+
+
+@dataclass(frozen=True, slots=True)
+class RootContentPolicy:
+    """Immutable root routing and source-admission selection.
+
+    Routes are evaluated in their declared tuple order. This contract owns
+    content membership only; optional transforms are resolved independently.
+    """
+
+    source_profile: SourceProfileVersion
+    routes: tuple[ContentRoute, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

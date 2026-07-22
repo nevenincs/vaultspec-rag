@@ -12,16 +12,6 @@ related:
   - '[[2026-07-21-large-index-resilience-plan]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 # `code-document-index-boundary` plan
 
 ## Description
@@ -56,7 +46,7 @@ Establish one caller-configured content policy and one immutable operation snaps
 Define generic content ownership, routing, migration, and fingerprint contracts without deriving membership from parser capability or repository layout.
 
 - [x] `W01.P01.S01` - Define closed content-kind, admission-disposition, stable-reason, and source-profile-version types; `src/vaultspec_rag/indexer/_content_policy.py`.
-- [ ] `W01.P01.S02` - Define ordered root routing rules independently from optional preprocessing transforms; `src/vaultspec_rag/config.py, src/vaultspec_rag/indexer/_content_policy.py`.
+- [x] `W01.P01.S02` - Define ordered root routing rules independently from optional preprocessing transforms; `src/vaultspec_rag/config.py, src/vaultspec_rag/indexer/_content_policy.py`.
 - [ ] `W01.P01.S03` - Upgrade preprocessing configuration to require a target and explicit extractor version under a versioned schema; `src/vaultspec_rag/indexer/_preprocess_config.py`.
 - [ ] `W01.P01.S04` - Reject legacy targetless, unknown-target, and conflicting routing policies before mutable index resources are opened; `src/vaultspec_rag/indexer/_preprocess_config.py, src/vaultspec_rag/indexer/_content_policy.py, src/vaultspec_rag/_job_errors.py`.
 - [ ] `W01.P01.S05` - Compile ignore precedence, explicit ownership, source-profile admission, and parser selection into one deterministic classifier; `src/vaultspec_rag/indexer/_content_policy.py, src/vaultspec_rag/indexer/_ignore_specs.py, src/vaultspec_rag/indexer/_chunking.py`.
