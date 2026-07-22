@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from .. import store_schema
 from ._content_policy import ContentKind
@@ -233,6 +233,54 @@ class StoredRouteRow:
     admitted: bool
 
 
+def _scroll_stored_route_page(
+    store: VaultStore,
+    stored_kind: ContentKind,
+    *,
+    page_size: int,
+    offset: object | None,
+) -> tuple[list[dict[str, Any]], object | None, str, str]:
+    """Read one bounded collection page with its payload field names."""
+    if stored_kind is ContentKind.CODE:
+        rows, next_offset = store.scroll_code_content(
+            limit=page_size,
+            offset=offset,
+        )
+        return rows, next_offset, "path", "chunk_id"
+    rows, next_offset = store.scroll_document_content(
+        limit=page_size,
+        offset=offset,
+    )
+    return rows, next_offset, "source_path", "document_id"
+
+
+def _classify_stored_route_rows(
+    rows: list[dict[str, Any]],
+    policy: ResolvedIndexPolicy,
+    stored_kind: ContentKind,
+    *,
+    path_key: str,
+    id_key: str,
+) -> tuple[StoredRouteRow, ...]:
+    """Freshly classify the usable source paths from one stored page."""
+    page: list[StoredRouteRow] = []
+    for row in rows:
+        raw_path = row["payload"].get(path_key)
+        if not isinstance(raw_path, str) or not raw_path:
+            continue
+        disposition = policy.classify(raw_path).disposition
+        page.append(
+            StoredRouteRow(
+                point_id=str(row["payload"].get(id_key) or row["id"]),
+                source_path=raw_path,
+                stored_kind=stored_kind,
+                current_kind=disposition.kind,
+                admitted=disposition.admitted,
+            )
+        )
+    return tuple(page)
+
+
 def iter_stored_route_pages(
     store: VaultStore,
     policy: ResolvedIndexPolicy,
@@ -248,37 +296,21 @@ def iter_stored_route_pages(
     while True:
         if run_policy is not None:
             run_policy.checkpoint(f"{stored_kind.value} route page before scroll")
-        if stored_kind is ContentKind.CODE:
-            rows, next_offset = store.scroll_code_content(
-                limit=page_size,
-                offset=offset,
-            )
-            path_key = "path"
-            id_key = "chunk_id"
-        else:
-            rows, next_offset = store.scroll_document_content(
-                limit=page_size,
-                offset=offset,
-            )
-            path_key = "source_path"
-            id_key = "document_id"
-        page: list[StoredRouteRow] = []
-        for row in rows:
-            raw_path = row["payload"].get(path_key)
-            if not isinstance(raw_path, str) or not raw_path:
-                continue
-            disposition = policy.classify(raw_path).disposition
-            page.append(
-                StoredRouteRow(
-                    point_id=str(row["payload"].get(id_key) or row["id"]),
-                    source_path=raw_path,
-                    stored_kind=stored_kind,
-                    current_kind=disposition.kind,
-                    admitted=disposition.admitted,
-                )
-            )
+        rows, next_offset, path_key, id_key = _scroll_stored_route_page(
+            store,
+            stored_kind,
+            page_size=page_size,
+            offset=offset,
+        )
+        page = _classify_stored_route_rows(
+            rows,
+            policy,
+            stored_kind,
+            path_key=path_key,
+            id_key=id_key,
+        )
         if page:
-            yield tuple(page)
+            yield page
         if run_policy is not None:
             run_policy.checkpoint(f"{stored_kind.value} route page after scroll")
         if next_offset is None:
