@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     import threading
     from collections.abc import Callable, Iterable, Iterator, Sequence
 
+    from .._store_writes import StoreWritePolicy
     from ..embeddings import EmbeddingModel
     from ..job_control import RunControl
     from ..memory_probe import MemoryProbe
@@ -801,6 +802,8 @@ def encode_and_upsert_code_slice(
     gpu_lock: threading.Lock | None,
     release_cache: bool = True,
     encode_batch_size: int | None = None,
+    write_policy: StoreWritePolicy | None = None,
+    on_storage_confirmed: Callable[[], None] | None = None,
     run_control: RunControl = NO_RUN_CONTROL,
 ) -> None:
     """Encode dense + sparse vectors for one slice of code chunks and upsert it.
@@ -844,7 +847,9 @@ def encode_and_upsert_code_slice(
             encode_batch_size=encode_batch_size,
         )
         run_control.checkpoint()
-        store.upsert_code_chunks(slice_chunks, write_policy=None)
+        store.upsert_code_chunks(slice_chunks, write_policy=write_policy)
+        if on_storage_confirmed is not None:
+            on_storage_confirmed()
     finally:
         # A successful synchronous upsert is the durable boundary. Failed or
         # cancelled slices also discard partial vector fields so retained file
