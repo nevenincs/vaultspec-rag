@@ -10,6 +10,7 @@ import sys
 import threading
 import typing
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -17,7 +18,6 @@ import pytest
 if TYPE_CHECKING:
     import logging
     from collections.abc import Coroutine, Iterator
-    from pathlib import Path
 
     import httpx
     from starlette.applications import Starlette
@@ -1467,30 +1467,41 @@ class TestReindexPreprocessPreflight:
     response now carries a ``preprocess`` pre-flight object mirroring the
     ``server start`` operator notice.
 
-    The GPU-backed job subsystem (``start_reindex_codebase``) and the watcher
-    nudge are external to the response-shaping logic under test and are
-    exercised elsewhere; they are isolated here so the assertion runs with no
-    GPU, no Qdrant, and no model load. The pre-flight itself resolves a real
-    ``.vaultragpreprocess.toml`` - it is not stubbed.
+    Each request runs in a child process with its own production configuration
+    and a stopped dispatch manager. This exercises the real ASGI route and
+    admission scan without mutating the pytest process or loading a model.
     """
 
-    _TOKEN = "test-token-s13"
+    _CHILD_ROUTE = """
+import json
+import sys
 
-    def _make_app(self) -> Starlette:
-        from contextlib import asynccontextmanager
+from starlette.applications import Starlette
+from starlette.testclient import TestClient
 
-        from starlette.applications import Starlette
+import vaultspec_rag.jobs as jobs
+import vaultspec_rag.server as server
+from vaultspec_rag.server._routes import ROUTES
 
-        from ..server._routes import ROUTES
-
-        @asynccontextmanager
-        async def _lifespan(_app: object) -> typing.AsyncGenerator[None]:
-            yield
-
-        return Starlette(routes=ROUTES, lifespan=_lifespan)
-
-    def _auth_headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self._TOKEN}"}
+token = "isolated-preflight-token"
+jobs.reset()
+jobs.get_job_manager().begin_shutdown()
+server._http_mode = True
+server._SERVICE_TOKEN = token
+try:
+    with TestClient(Starlette(routes=ROUTES)) as client:
+        response = client.post(
+            "/reindex",
+            json={"type": "code", "project_root": sys.argv[1]},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    print(
+        "REINDEX_PREFLIGHT_RESULT="
+        + json.dumps({"status_code": response.status_code, "body": response.json()})
+    )
+finally:
+    jobs.reset()
+"""
 
     @staticmethod
     def _write_config(root: Path) -> None:
@@ -1506,53 +1517,43 @@ class TestReindexPreprocessPreflight:
         )
 
     def _post_reindex(
-        self,
-        root: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        self, root: Path, *, preprocess_mode: str | None
     ) -> dict[str, Any]:
-        from starlette.testclient import TestClient
-
-        import vaultspec_rag.jobs as jobs_mod
-        import vaultspec_rag.server as mod
-
-        def _fake_start(*_a: object, **_k: object) -> str:
-            return "job-abc"
-
-        def _fake_watch(_root: object) -> None:
-            return None
-
-        monkeypatch.setattr(jobs_mod, "start_reindex_codebase", _fake_start)
-        monkeypatch.setattr(mod, "_ensure_watcher_soon", _fake_watch)
-        orig_mode = mod._http_mode
-        orig_token = mod._SERVICE_TOKEN
-        mod._http_mode = True
-        mod._SERVICE_TOKEN = self._TOKEN
-        try:
-            client: httpx.Client = cast("httpx.Client", TestClient(self._make_app()))
-            resp: httpx.Response = client.post(
-                "/reindex",
-                json={"type": "code", "project_root": str(root)},
-                headers=self._auth_headers(),
-            )
-            assert resp.status_code == 200
-            return cast("dict[str, Any]", resp.json())
-        finally:
-            mod._http_mode = orig_mode
-            mod._SERVICE_TOKEN = orig_token
+        env = os.environ.copy()
+        env[EnvVar.STATUS_DIR.value] = str(root.parent / "status")
+        env[EnvVar.QDRANT_STORAGE_DIR.value] = str(root.parent / "qdrant" / "storage")
+        env[EnvVar.INDEX_SUPPORT_PROFILE.value] = "embedded-local"
+        env[EnvVar.WATCH_ENABLED.value] = "false"
+        if preprocess_mode is None:
+            env.pop(EnvVar.PREPROCESS.value, None)
+        else:
+            env[EnvVar.PREPROCESS.value] = preprocess_mode
+        completed = subprocess.run(
+            [sys.executable, "-c", self._CHILD_ROUTE, str(root)],
+            cwd=Path(__file__).resolve().parents[3],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+        prefix = "REINDEX_PREFLIGHT_RESULT="
+        rendered = next(
+            line.removeprefix(prefix)
+            for line in completed.stdout.splitlines()
+            if line.startswith(prefix)
+        )
+        result = cast("dict[str, Any]", json.loads(rendered))
+        assert result["status_code"] == 200
+        return cast("dict[str, Any]", result["body"])
 
     def test_reindex_reports_hooks_will_run_under_default_mode(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path
     ) -> None:
         root = tmp_path / "proj"
         self._write_config(root)
-        monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(tmp_path / "status"))
-        monkeypatch.setenv(EnvVar.INDEX_SUPPORT_PROFILE.value, "embedded-local")
-        monkeypatch.delenv(EnvVar.PREPROCESS.value, raising=False)
-        reset_config()
-        try:
-            data = self._post_reindex(root, monkeypatch)
-        finally:
-            reset_config()
+        data = self._post_reindex(root, preprocess_mode=None)
         assert data["status"] == "queued"
         pre = cast("dict[str, Any]", data["preprocess"])
         assert pre["config_present"] is True
@@ -1560,19 +1561,10 @@ class TestReindexPreprocessPreflight:
         assert pre["mode"] == "default"
         assert pre["hooks_will_run"] is True
 
-    def test_reindex_reports_hooks_skipped_when_mode_off(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_reindex_reports_hooks_skipped_when_mode_off(self, tmp_path: Path) -> None:
         root = tmp_path / "proj"
         self._write_config(root)
-        monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(tmp_path / "status"))
-        monkeypatch.setenv(EnvVar.INDEX_SUPPORT_PROFILE.value, "embedded-local")
-        monkeypatch.setenv(EnvVar.PREPROCESS.value, "off")
-        reset_config()
-        try:
-            data = self._post_reindex(root, monkeypatch)
-        finally:
-            reset_config()
+        data = self._post_reindex(root, preprocess_mode="off")
         pre = cast("dict[str, Any]", data["preprocess"])
         # The count is still reported (the config's own), but the kill switch
         # means hooks will not run.
@@ -1581,19 +1573,10 @@ class TestReindexPreprocessPreflight:
         assert pre["mode"] == "off"
         assert pre["hooks_will_run"] is False
 
-    def test_reindex_reports_no_config_present(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_reindex_reports_no_config_present(self, tmp_path: Path) -> None:
         root = tmp_path / "proj"
         (root / ".vault").mkdir(parents=True)
-        monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(tmp_path / "status"))
-        monkeypatch.setenv(EnvVar.INDEX_SUPPORT_PROFILE.value, "embedded-local")
-        monkeypatch.delenv(EnvVar.PREPROCESS.value, raising=False)
-        reset_config()
-        try:
-            data = self._post_reindex(root, monkeypatch)
-        finally:
-            reset_config()
+        data = self._post_reindex(root, preprocess_mode=None)
         pre = cast("dict[str, Any]", data["preprocess"])
         assert pre["config_present"] is False
         assert pre["rule_count"] == 0

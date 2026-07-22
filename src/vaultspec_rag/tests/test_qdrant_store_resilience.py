@@ -142,13 +142,6 @@ sys.stdout.flush()
 sys.exit(1)
 """
 
-# Fake binary that stays alive but never answers /readyz - the readiness-timeout
-# case on a healthy-but-slow store. The child is alive, so recovery must NOT run.
-_FAKE_HANGS = """
-import time
-time.sleep(120)
-"""
-
 
 def _free_loopback_ports() -> tuple[int, int]:
     with (
@@ -173,15 +166,6 @@ def _fake_binary(tmp_path: Path, source: str, name: str = "fake_qdrant") -> Path
         f'#!/bin/sh\nexec "{sys.executable}" "{script}"\n', encoding="utf-8"
     )
     launcher.chmod(0o755)
-    return launcher
-
-
-def _non_ready_binary(tmp_path: Path) -> Path:
-    """Create one directly terminable child that never serves readiness."""
-    if sys.platform != "win32":
-        return _fake_binary(tmp_path, _FAKE_HANGS, name="hangs")
-    launcher = tmp_path / "hangs.bat"
-    launcher.write_text("@echo off\r\n:hang\r\ngoto hang\r\n", encoding="utf-8")
     return launcher
 
 
@@ -237,12 +221,14 @@ class TestBoundedRetry:
         assert _list_on_disk_collections(storage) == {"r0000_vault_docs"}
 
     def test_readiness_timeout_with_a_live_child_quarantines_nothing(
-        self, tmp_path: Path
+        self,
+        tmp_path: Path,
+        required_host_provisioned_qdrant_source: tuple[Path, Path],
     ) -> None:
         """A healthy-but-slow child that times out must not be read as corrupt (QR4)."""
         storage = tmp_path / "qdrant-server" / "storage"
         _make_collection(storage, "r0000_vault_docs")
-        binary = _non_ready_binary(tmp_path)
+        binary, _manifest = required_host_provisioned_qdrant_source
         http_port, grpc_port = _free_loopback_ports()
         sup = QdrantSupervisor(
             binary,
@@ -252,10 +238,10 @@ class TestBoundedRetry:
             log_path=tmp_path / "qdrant.log",
         )
         try:
-            # The child stays alive and never answers; readiness times out, but
-            # because the child is alive the store is left untouched.
+            # A zero readiness budget makes the real child hit the timeout path
+            # while it is still alive, before startup can report readiness.
             with pytest.raises(RuntimeError, match="failed to become ready"):
-                sup.start(timeout=2.0)
+                sup.start(timeout=0.0)
         finally:
             sup.stop()
         assert not (storage / "quarantine").exists()
