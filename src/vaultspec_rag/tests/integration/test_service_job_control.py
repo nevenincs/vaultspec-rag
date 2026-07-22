@@ -28,8 +28,9 @@ from ...serviceclient import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
     from pathlib import Path
+
 
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -38,7 +39,7 @@ def _free_port() -> int:
 
 
 @contextmanager
-def _real_job_control_server(tmp_path: Path) -> Iterator[int]:
+def _real_job_control_server(tmp_path: Path) -> Generator[int]:
     """Run the production route table over a real loopback HTTP socket."""
     status_dir = tmp_path / "status"
     port = _free_port()
@@ -102,6 +103,8 @@ def _real_job_control_server(tmp_path: Path) -> Iterator[int]:
             os.environ[EnvVar.WATCH_ENABLED] = prior_watch_enabled
         reset_config()
         assert stopped
+
+
 def test_typed_job_control_transport_uses_real_http_methods_and_conflicts(
     tmp_path: Path,
 ) -> None:
@@ -181,4 +184,3 @@ def test_typed_job_control_transport_uses_real_http_methods_and_conflicts(
         assert missing is not None
         assert missing["ok"] is False
         assert missing["error"] == "job_not_found"
-
