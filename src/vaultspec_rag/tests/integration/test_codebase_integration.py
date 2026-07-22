@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
     from ...embeddings import EmbeddingModel
     from ...indexer import CodebaseIndexer
-    from ...store import VaultStore
+    from ...store import CodeChunk, VaultStore
     from ..conftest import RagComponentsWithManifest
 
 pytestmark = [pytest.mark.integration]
@@ -89,6 +89,102 @@ def code_project(
     )
 
     store.close()
+
+
+def _stored_partial_chunk(path: str, chunk_id: str) -> CodeChunk:
+    """Return one real-store-valid remnant of an interrupted publication."""
+    from ...config import get_config
+    from ...store import CodeChunk
+
+    return CodeChunk(
+        id=chunk_id,
+        path=path,
+        language="python",
+        content="interrupted_publication = True",
+        line_start=1,
+        line_end=1,
+        vector=[0.0] * int(get_config().embedding_dimension),
+    )
+
+
+class TestIncrementalPublicationRecovery:
+    """Production incrementals converge remnants left before metadata commit."""
+
+    @pytest.mark.timeout(180)
+    def test_scoped_new_file_replaces_prior_partial_ids(
+        self,
+        code_project: _CodeProject,
+    ) -> None:
+        root = code_project["root"]
+        store = code_project["store"]
+        indexer = code_project["code_indexer"]
+        rel_path = "src/new_partial.py"
+        source = root / rel_path
+        source.write_text("def current_value():\n    return 42\n", encoding="utf-8")
+        stale_id = f"{rel_path}:stale-attempt"
+        store.upsert_code_chunks(
+            [_stored_partial_chunk(rel_path, stale_id)],
+            write_policy=None,
+        )
+
+        indexer.incremental_index(
+            reporter=NullProgressReporter(),
+            changed_paths=[source],
+        )
+
+        ids = set(store.get_code_ids_by_paths({rel_path}))
+        assert ids
+        assert stale_id not in ids
+        assert rel_path in indexer._load_meta()  # pyright: ignore[reportPrivateUsage]
+
+    @pytest.mark.timeout(180)
+    def test_unscoped_new_file_replaces_prior_partial_ids(
+        self,
+        code_project: _CodeProject,
+    ) -> None:
+        root = code_project["root"]
+        store = code_project["store"]
+        indexer = code_project["code_indexer"]
+        rel_path = "src/unscoped_partial.py"
+        source = root / rel_path
+        source.write_text("unscoped_value = 'current'\n", encoding="utf-8")
+        stale_id = f"{rel_path}:stale-attempt"
+        store.upsert_code_chunks(
+            [_stored_partial_chunk(rel_path, stale_id)],
+            write_policy=None,
+        )
+
+        indexer.incremental_index(reporter=NullProgressReporter())
+
+        ids = set(store.get_code_ids_by_paths({rel_path}))
+        assert ids
+        assert stale_id not in ids
+        assert rel_path in indexer._load_meta()  # pyright: ignore[reportPrivateUsage]
+
+    @pytest.mark.timeout(180)
+    def test_scoped_untracked_disappearance_removes_prior_partial_ids(
+        self,
+        code_project: _CodeProject,
+    ) -> None:
+        root = code_project["root"]
+        store = code_project["store"]
+        indexer = code_project["code_indexer"]
+        rel_path = "src/disappeared_partial.py"
+        missing = root / rel_path
+        stale_id = f"{rel_path}:stale-attempt"
+        store.upsert_code_chunks(
+            [_stored_partial_chunk(rel_path, stale_id)],
+            write_policy=None,
+        )
+
+        result = indexer.incremental_index(
+            reporter=NullProgressReporter(),
+            changed_paths=[missing],
+        )
+
+        assert store.get_code_ids_by_paths({rel_path}) == []
+        assert rel_path not in indexer._load_meta()  # pyright: ignore[reportPrivateUsage]
+        assert result.removed == 0
 
 
 class TestCodeEmbedFormatRebuild:

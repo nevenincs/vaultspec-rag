@@ -310,7 +310,7 @@ def chunk_file_with_status(
         raw = path.read_bytes()
     except OSError as e:
         logger.warning("Cannot read %s: %s", path, e)
-        return ScopedChunkResult([])
+        raise
     if prep is not None:
         content_hash = hashlib.blake2b(raw).hexdigest()
         outcome = preprocess_file(content_hash, path, root_dir, prep)
@@ -397,20 +397,14 @@ def _raw_file_result(
 ) -> FileChunkResult:
     """Chunk already-read raw bytes into a hash-carrying :class:`FileChunkResult`.
 
-    The hash is already computed, so a decode or chunk failure still returns a
-    result (with no chunks) rather than raising: that keeps the file present in
-    the index metadata, matching the pre-rework behaviour where hashing was an
-    independent pass. Dropping it would make every later incremental run
-    re-chunk the file.
+    An unsupported source encoding remains a valid zero-chunk result. Ordinary
+    chunking failures propagate so callers cannot publish a hash for vectors
+    that were never produced.
     """
     content = _decode_source(raw, path)
     if content is None:
         return FileChunkResult(rel_path, content_hash, [])
-    try:
-        chunks = _chunk_decoded(content, path, root_dir, _resolve_html_strip())
-    except Exception:
-        logger.warning("Chunking failed for %s; indexing hash only", rel_path)
-        return FileChunkResult(rel_path, content_hash, [])
+    chunks = _chunk_decoded(content, path, root_dir, _resolve_html_strip())
     return FileChunkResult(rel_path, content_hash, chunks)
 
 
@@ -452,7 +446,7 @@ def chunk_batch_files(
             raw = path.read_bytes()
         except OSError as e:
             logger.warning("Cannot read %s: %s", path, e)
-            continue
+            raise
         content_hash = hashlib.blake2b(raw).hexdigest()
         rel_path = str(path.relative_to(root_dir)).replace("\\", "/")
         cached = read_cached_output(prep.cache_root, content_hash, cache_token)
