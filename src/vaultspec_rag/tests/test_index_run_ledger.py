@@ -441,6 +441,18 @@ def test_incremental_manifest_carries_forward_and_deletes_exact_paths(
         state.content_hash
         for state in ledger.iter_file_states(incremental.generation_id)
     ] == [replacement_hash]
+    assert list(
+        ledger.iter_retained_point_ids(incremental.generation_id, batch_size=1)
+    ) == [
+        point_id
+        for ordinal in range(2)
+        for point_id in _unit(
+            "src/b.py",
+            ordinal,
+            2,
+            digest=replacement_hash,
+        ).point_ids
+    ]
 
 
 def test_metadata_publication_streams_only_converged_ledger_rows(
