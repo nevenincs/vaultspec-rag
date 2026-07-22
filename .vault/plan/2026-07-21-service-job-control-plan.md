@@ -90,7 +90,7 @@ Place control checks around code scanning, process-pool work, producer-consumer 
 
 Make manager-owned attempts translate cooperative unwind into truthful pause, cancel, resume, failure, and resource-release outcomes.
 
-- [ ] `W02.P06.S16` - Implement manager-owned dispatch, token propagation, reconciliation attempts, truthful acknowledgement, completion callbacks, and bounded joins using vaultspec-high-executor; `src/vaultspec_rag/jobs.py, src/vaultspec_rag/job_manager.py`.
+- [x] `W02.P06.S16` - Implement manager-owned dispatch, token propagation, reconciliation attempts, truthful acknowledgement, completion callbacks, and bounded joins using vaultspec-high-executor; `src/vaultspec_rag/jobs.py, src/vaultspec_rag/job_manager.py`.
 
 ### Phase `W02.P07` - cooperative execution verification
 

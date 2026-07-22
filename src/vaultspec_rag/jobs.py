@@ -6,7 +6,6 @@ along with async task execution helpers for background reindexing.
 
 from __future__ import annotations
 
-import asyncio
 import getpass
 import logging
 import os
@@ -15,13 +14,15 @@ import threading
 import time
 import uuid
 from collections import deque
-from typing import TYPE_CHECKING, Any, Literal, cast
-
-from anyio.to_thread import run_sync as _run_in_thread
+from typing import TYPE_CHECKING, Literal, cast
 
 from ._job_errors import classify_error_text
-from .concurrency import get_index_limiter
-from .job_manager import MAX_RECORDS, JobManager
+from .job_manager import (
+    MAX_RECORDS,
+    JobAttemptContext,
+    JobExecutionResult,
+    JobManager,
+)
 from .job_models import (
     DesiredJobState,
     JobAttempt,
@@ -55,7 +56,9 @@ __all__ = [
     "MAX_RECORDS",
     "DesiredJobState",
     "JobAttempt",
+    "JobAttemptContext",
     "JobCapabilities",
+    "JobExecutionResult",
     "JobInitiator",
     "JobManager",
     "JobMode",
@@ -73,6 +76,7 @@ __all__ = [
     "JobTimestamps",
     "ProcessResourceSnapshot",
     "ResumeStrategy",
+    "get_job_manager",
     "record_finish",
     "record_progress",
     "record_start",
@@ -109,14 +113,28 @@ Phase = Literal[
 
 _lock = threading.Lock()
 _records: deque[dict[str, object]] = deque(maxlen=MAX_RECORDS)
-_background_tasks: set[asyncio.Task[Any]] = set()
 _on_job_complete_callbacks: list[Callable[[float], None]] = []
+_manager_lock = threading.Lock()
+_job_manager: JobManager | None = None
 
 
 # Persisted active-jobs snapshot, under the managed status dir. Written on
 # every job start/finish and step change; read once at daemon startup to
 # re-register jobs a dead daemon left running as ``interrupted``.
 _ACTIVE_SNAPSHOT_FILENAME = "jobs-active.json"
+
+
+def get_job_manager() -> JobManager:
+    """Return the lazily configured process-wide canonical job manager."""
+    global _job_manager
+    manager = _job_manager
+    if manager is None:
+        with _manager_lock:
+            manager = _job_manager
+            if manager is None:
+                manager = JobManager()
+                _job_manager = manager
+    return manager
 
 
 def _active_snapshot_path() -> object:
@@ -270,6 +288,7 @@ def record_start(
     project_root: Path | None = None,
     command: str | None = None,
     initiator_kind: str | None = None,
+    _record_id: str | None = None,
 ) -> str:
     """Append a new ``running`` activity record and return its stable id.
 
@@ -287,7 +306,7 @@ def record_start(
         The record's stable ``id`` (a uuid4 hex string) to pass to
         :func:`record_finish`.
     """
-    record_id = uuid.uuid4().hex
+    record_id = _record_id or uuid.uuid4().hex
     record: dict[str, object] = {
         "id": record_id,
         "source": source,
@@ -540,15 +559,24 @@ def reset() -> None:
     can simulate a daemon death (records gone, snapshot intact) and then
     exercise :func:`restore_interrupted`.
     """
+    global _job_manager
     with _lock:
         _records.clear()
+    with _manager_lock:
+        _job_manager = None
 
 
 class JobProgressReporter:
     """ProgressReporter that updates a specific in-flight job's progress."""
 
-    def __init__(self, record_id: str) -> None:
+    def __init__(
+        self,
+        record_id: str,
+        *,
+        context: JobAttemptContext | None = None,
+    ) -> None:
         self.record_id = record_id
+        self._context = context
         self._step_name: str | None = None
         self._completed: int = 0
         self._total: int | None = None
@@ -557,14 +585,13 @@ class JobProgressReporter:
         self._step_name = name
         self._total = total
         self._completed = 0
-        record_progress(self.record_id, step=name, completed=0, total=total)
+        self._publish(name, completed=0, total=total)
 
     def advance(self, n: int = 1) -> None:
         self._completed += n
         if self._step_name:
-            record_progress(
-                self.record_id,
-                step=self._step_name,
+            self._publish(
+                self._step_name,
                 completed=self._completed,
                 total=self._total,
             )
@@ -575,62 +602,179 @@ class JobProgressReporter:
     def log(self, message: str) -> None:
         pass
 
+    def _publish(self, step: str, *, completed: int, total: int | None) -> None:
+        context = self._context
+        if context is not None:
+            outcome = context.update_progress(step, completed=completed, total=total)
+            if outcome.code == "stale_attempt_ignored":
+                return
+        record_progress(self.record_id, step=step, completed=completed, total=total)
+
+
+def _admit_index_job(
+    root: Path,
+    *,
+    source: JobSource,
+    clean: bool,
+    initiator_kind: str,
+) -> tuple[JobManager, str, bool]:
+    manager = get_job_manager()
+    resolved_root = root.resolve()
+    command = "reindex_vault" if source is JobSource.VAULT else "reindex_codebase"
+    requested_id = uuid.uuid4().hex
+    outcome = manager.create(
+        JobSpec(
+            operation=JobOperation.INDEX,
+            source=source,
+            project_root=str(resolved_root),
+            mode=JobMode.REBUILD if clean else JobMode.INCREMENTAL,
+        ),
+        JobInitiator(
+            kind=initiator_kind,
+            command=command,
+            project_root=str(resolved_root),
+        ),
+        job_id=requested_id,
+    )
+    if outcome.status is JobOutcomeStatus.ERROR or outcome.job is None:
+        raise RuntimeError(outcome.message)
+    job_id = outcome.job.id
+    created = outcome.code == "job_created"
+    if created:
+        record_start(
+            "vault" if source is JobSource.VAULT else "code",
+            "tool",
+            project_root=resolved_root,
+            command=command,
+            initiator_kind=initiator_kind,
+            _record_id=job_id,
+        )
+        record_progress(job_id, "queued")
+    return manager, job_id, created
+
+
+def _sync_legacy_started(snapshot: JobSnapshot) -> None:
+    with _lock:
+        for record in reversed(_records):
+            if record.get("id") != snapshot.id:
+                continue
+            record["phase"] = "running"
+            record["started_at"] = snapshot.timestamps.started_at
+            record["finished_at"] = None
+            record["result"] = None
+            record["error_kind"] = None
+            break
+    record_progress(snapshot.id, "queued")
+
+
+def _sync_legacy_finished(
+    snapshot: JobSnapshot,
+    duration_seconds: float,
+    result: JobExecutionResult | None,
+    error: BaseException | None,
+) -> None:
+    if snapshot.state is JobState.SUCCEEDED:
+        record_finish(
+            snapshot.id,
+            result=snapshot.result,
+            preprocess_ok=result.preprocess_ok if result is not None else 0,
+            preprocess_skipped=(result.preprocess_skipped if result is not None else 0),
+            preprocess_failures=(
+                list(result.preprocess_failures) if result is not None else None
+            ),
+        )
+    elif snapshot.state is JobState.FAILED:
+        record_finish(snapshot.id, error=snapshot.result or str(error or "job failed"))
+    elif snapshot.state is JobState.INTERRUPTED:
+        record_finish(
+            snapshot.id,
+            result=snapshot.result,
+            phase="interrupted",
+        )
+    elif snapshot.state is JobState.CANCELLED:
+        record_finish(snapshot.id, result=snapshot.result, phase="cancelled")
+    else:
+        with _lock:
+            for record in reversed(_records):
+                if record.get("id") != snapshot.id:
+                    continue
+                record["phase"] = snapshot.state.value
+                record["finished_at"] = None
+                record["result"] = snapshot.result
+                break
+        _persist_active_snapshot()
+
+    for callback in tuple(_on_job_complete_callbacks):
+        try:
+            callback(duration_seconds)
+        except Exception:
+            logger.exception("Error in job complete callback")
+
 
 def start_reindex_vault(
     root: Path, clean: bool, *, initiator_kind: str = "service"
 ) -> str:
     """Start a background vault reindexing task and return the job_id."""
-    job_id = record_start(
-        "vault",
-        "tool",
-        project_root=root,
-        command="reindex_vault",
+    manager, job_id, created = _admit_index_job(
+        root,
+        source=JobSource.VAULT,
+        clean=clean,
         initiator_kind=initiator_kind,
     )
-    record_progress(job_id, "queued")
+    if not created:
+        return job_id
 
-    async def run_indexing_bg() -> None:
+    def _bg_run(context: JobAttemptContext) -> JobExecutionResult:
+        get_registry().load_model()
         try:
-            started = time.perf_counter()
-
-            def _bg_run() -> None:
+            with get_registry().lease(root) as slot:
+                context.set_resources(project_lease_held=True)
                 try:
-                    get_registry().load_model()
-                    with get_registry().lease(root) as slot:
-                        if clean:
-                            result = slot.vault_indexer.full_index(
-                                clean=True,
-                                reporter=JobProgressReporter(job_id),
-                            )
-                        else:
-                            result = slot.vault_indexer.incremental_index(
-                                reporter=JobProgressReporter(job_id)
-                            )
-                        record_finish(
-                            job_id,
-                            result=(
-                                f"+{result.added} /{result.updated} "
-                                f"-{result.removed} ({result.duration_ms}ms)"
-                            ),
+                    context.set_resources(writer_lock_held=True)
+                    reporter = JobProgressReporter(job_id, context=context)
+                    snapshot = manager.get(job_id)
+                    resumed = (
+                        snapshot is not None
+                        and snapshot.attempt.resumed_from_attempt is not None
+                    )
+                    if clean:
+                        result = slot.vault_indexer.full_index(
+                            clean=not resumed,
+                            reporter=reporter,
+                            run_control=context.control,
                         )
-                        slot.graph_cache.invalidate()
-                except Exception as exc:
-                    record_finish(job_id, error=str(exc))
-                    logger.exception("Background vault re-indexing failed")
+                    else:
+                        result = slot.vault_indexer.incremental_index(
+                            reporter=reporter,
+                            run_control=context.control,
+                        )
+                finally:
+                    context.set_resources(writer_lock_held=False)
+                slot.graph_cache.invalidate()
+        finally:
+            context.set_resources(project_lease_held=False)
+        return JobExecutionResult(
+            summary=(
+                f"+{result.added} /{result.updated} "
+                f"-{result.removed} ({result.duration_ms}ms)"
+            )
+        )
 
-            await _run_in_thread(_bg_run, limiter=get_index_limiter())
-            duration = time.perf_counter() - started
-            for cb in _on_job_complete_callbacks:
-                try:
-                    cb(duration)
-                except Exception as e:
-                    logger.exception("Error in job complete callback: %s", e)
-        except Exception:
-            logger.exception("Failed to launch background vault re-indexing task")
-
-    task = asyncio.create_task(run_indexing_bg())
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    bound = manager.bind_dispatch(
+        job_id,
+        _bg_run,
+        on_started=_sync_legacy_started,
+        on_finished=_sync_legacy_finished,
+    )
+    if bound.status is JobOutcomeStatus.ERROR:
+        manager.fail_unstarted(job_id, result=bound.message)
+        record_finish(job_id, error=bound.message)
+        raise RuntimeError(bound.message)
+    dispatched = manager.dispatch(job_id)
+    if dispatched.status is JobOutcomeStatus.ERROR:
+        manager.fail_unstarted(job_id, result=dispatched.message)
+        record_finish(job_id, error=dispatched.message)
+        raise RuntimeError(dispatched.message)
     return job_id
 
 
@@ -641,63 +785,75 @@ def start_reindex_codebase(
     initiator_kind: str = "service",
 ) -> str:
     """Start a background codebase reindexing task and return the job_id."""
-    job_id = record_start(
-        "code",
-        "tool",
-        project_root=root,
-        command="reindex_codebase",
+    manager, job_id, created = _admit_index_job(
+        root,
+        source=JobSource.CODE,
+        clean=clean,
         initiator_kind=initiator_kind,
     )
-    record_progress(job_id, "queued")
+    if not created:
+        return job_id
 
-    async def run_indexing_bg() -> None:
+    def _bg_run(context: JobAttemptContext) -> JobExecutionResult:
+        get_registry().load_model()
         try:
-            started = time.perf_counter()
-
-            def _bg_run() -> None:
+            with get_registry().lease(root) as slot:
+                context.set_resources(project_lease_held=True)
                 try:
-                    get_registry().load_model()
-                    with get_registry().lease(root) as slot:
-                        if clean:
-                            result = slot.code_indexer.full_index(
-                                clean=True,
-                                reporter=JobProgressReporter(job_id),
-                            )
-                        else:
-                            result = slot.code_indexer.incremental_index(
-                                reporter=JobProgressReporter(job_id)
-                            )
-                        skipped_suffix = (
-                            f" ~{result.preprocess_skipped}"
-                            if result.preprocess_skipped
-                            else ""
+                    context.set_resources(
+                        writer_lock_held=True,
+                        pipeline_active=True,
+                    )
+                    reporter = JobProgressReporter(job_id, context=context)
+                    snapshot = manager.get(job_id)
+                    resumed = (
+                        snapshot is not None
+                        and snapshot.attempt.resumed_from_attempt is not None
+                    )
+                    if clean:
+                        result = slot.code_indexer.full_index(
+                            clean=not resumed,
+                            reporter=reporter,
+                            run_control=context.control,
                         )
-                        record_finish(
-                            job_id,
-                            result=(
-                                f"+{result.added} /{result.updated} "
-                                f"-{result.removed} ({result.duration_ms}ms)"
-                                f"{skipped_suffix}"
-                            ),
-                            preprocess_ok=result.preprocess_ok,
-                            preprocess_skipped=result.preprocess_skipped,
-                            preprocess_failures=result.preprocess_failures,
+                    else:
+                        result = slot.code_indexer.incremental_index(
+                            reporter=reporter,
+                            run_control=context.control,
                         )
-                except Exception as exc:
-                    record_finish(job_id, error=str(exc))
-                    logger.exception("Background codebase re-indexing failed")
+                finally:
+                    context.set_resources(
+                        writer_lock_held=False,
+                        pipeline_active=False,
+                    )
+        finally:
+            context.set_resources(project_lease_held=False)
+        skipped_suffix = (
+            f" ~{result.preprocess_skipped}" if result.preprocess_skipped else ""
+        )
+        return JobExecutionResult(
+            summary=(
+                f"+{result.added} /{result.updated} "
+                f"-{result.removed} ({result.duration_ms}ms){skipped_suffix}"
+            ),
+            preprocess_ok=result.preprocess_ok,
+            preprocess_skipped=result.preprocess_skipped,
+            preprocess_failures=tuple(result.preprocess_failures),
+        )
 
-            await _run_in_thread(_bg_run, limiter=get_index_limiter())
-            duration = time.perf_counter() - started
-            for cb in _on_job_complete_callbacks:
-                try:
-                    cb(duration)
-                except Exception as e:
-                    logger.exception("Error in job complete callback: %s", e)
-        except Exception:
-            logger.exception("Failed to launch background codebase re-indexing task")
-
-    task = asyncio.create_task(run_indexing_bg())
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    bound = manager.bind_dispatch(
+        job_id,
+        _bg_run,
+        on_started=_sync_legacy_started,
+        on_finished=_sync_legacy_finished,
+    )
+    if bound.status is JobOutcomeStatus.ERROR:
+        manager.fail_unstarted(job_id, result=bound.message)
+        record_finish(job_id, error=bound.message)
+        raise RuntimeError(bound.message)
+    dispatched = manager.dispatch(job_id)
+    if dispatched.status is JobOutcomeStatus.ERROR:
+        manager.fail_unstarted(job_id, result=dispatched.message)
+        record_finish(job_id, error=dispatched.message)
+        raise RuntimeError(dispatched.message)
     return job_id

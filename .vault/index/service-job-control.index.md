@@ -28,6 +28,10 @@ related:
   - '[[2026-07-21-service-job-control-W02-P04-summary]]'
   - '[[2026-07-21-service-job-control-W02-P05-S13]]'
   - '[[2026-07-21-service-job-control-W02-P05-S14]]'
+  - '[[2026-07-21-service-job-control-W02-P05-S15]]'
+  - '[[2026-07-21-service-job-control-W02-P05-summary]]'
+  - '[[2026-07-21-service-job-control-W02-P06-S16]]'
+  - '[[2026-07-21-service-job-control-W02-P06-summary]]'
   - '[[2026-07-21-service-job-control-adr]]'
   - '[[2026-07-21-service-job-control-plan]]'
   - '[[2026-07-21-service-job-control-reference]]'
@@ -42,6 +46,8 @@ related:
   - '[[2026-07-21-service-job-control-wave-1-audit]]'
   - '[[2026-07-22-service-job-control-s13-code-pipeline-control-audit]]'
   - '[[2026-07-22-service-job-control-s14-code-publication-protection-audit]]'
+  - '[[2026-07-22-service-job-control-s15-code-index-control-audit]]'
+  - '[[2026-07-22-service-job-control-s16-dispatch-audit]]'
 ---
 
 # `service-job-control` feature index
@@ -66,6 +72,8 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-21-service-job-control-wave-1-audit` - `service-job-control` audit: `Wave 1 state authority`
 - `2026-07-22-service-job-control-s13-code-pipeline-control-audit` - `service-job-control` audit: `s13 code pipeline control`
 - `2026-07-22-service-job-control-s14-code-publication-protection-audit` - `service-job-control` audit: `s14 code publication protection`
+- `2026-07-22-service-job-control-s15-code-index-control-audit` - `service-job-control` audit: `S15 code indexing job control review`
+- `2026-07-22-service-job-control-s16-dispatch-audit` - `service-job-control` audit: `Manager-owned dispatch`
 
 ### exec
 
@@ -91,6 +99,10 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-21-service-job-control-W02-P04-summary` - `service-job-control` `W02.P04` summary
 - `2026-07-21-service-job-control-W02-P05-S13` - Propagate run control through code producers, process-pool work, the single GPU consumer, bounded queues, and consumer shutdown using vaultspec-high-executor
 - `2026-07-21-service-job-control-W02-P05-S14` - Protect code clean rebuild and per-file replacement spans from cooperative interruption until published state is valid using vaultspec-high-executor
+- `2026-07-21-service-job-control-W02-P05-S15` - Verify real code indexing unwinds producer-consumer resources, preserves mutation safety, and converges after resume using vaultspec-high-executor
+- `2026-07-21-service-job-control-W02-P05-summary` - `service-job-control` `W02.P05` summary
+- `2026-07-21-service-job-control-W02-P06-S16` - Implement manager-owned dispatch, token propagation, reconciliation attempts, truthful acknowledgement, completion callbacks, and bounded joins using vaultspec-high-executor
+- `2026-07-21-service-job-control-W02-P06-summary` - `service-job-control` `W02.P06` summary
 
 ### plan
 
