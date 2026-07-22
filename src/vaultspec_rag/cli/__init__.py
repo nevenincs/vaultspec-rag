@@ -9,7 +9,7 @@ code review, and documentation discovery.
 This module was split into a package (``cli/``) per the
 ``2026-06-01-module-split-adr``. The verbatim public surface - the Typer
 ``app`` plus the ``_``-prefixed helpers that tests import or monkeypatch
-directly (``_spawn_service``, ``_health_probe``, ``_try_http_search``,
+directly (``_spawn_service``, ``_try_http_search``,
 ``console`` …) - is re-exported here unchanged through an explicit
 ``__all__``.
 
@@ -23,7 +23,7 @@ Import order matters and is load-bearing:
    register against the already-nested apps).
 
 Several submodules reference test-monkeypatchable names (``console``,
-``_is_pid_alive``, ``_health_probe``, ``_log_file``, ``_terminate_pid``,
+``_is_pid_alive``, ``_log_file``, ``_terminate_pid``,
 ``_is_our_service``) through ``import vaultspec_rag.cli as _cli`` at call
 time, so ``monkeypatch.setattr(cli, name, …)`` is observed by the consumers
 exactly as it was in the pre-split monolith.
@@ -76,7 +76,6 @@ from ._preprocess import (
     handle_preprocess_run_one,
 )
 from ._process import (
-    _health_probe,
     _heartbeat_age_seconds,
     _is_our_service,
     _is_pid_alive,
@@ -154,7 +153,6 @@ __all__ = [
     "_emit_json_error_and_exit",
     "_global_target",
     "_handle_gpu_error",
-    "_health_probe",
     "_heartbeat_age_seconds",
     "_is_connection_refused",
     "_is_our_service",

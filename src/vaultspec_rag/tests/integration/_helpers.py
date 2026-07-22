@@ -19,7 +19,8 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
     reset_config,
 )
 
-from ...cli import _health_probe, _is_pid_alive
+from ...cli import _is_pid_alive
+from ...serviceclient._transport import _try_http_health
 from ...config import reset_config as reset_rag_config
 
 if TYPE_CHECKING:
@@ -119,7 +120,7 @@ def _poll_health(port: int, timeout: float = 90.0) -> dict[str, Any]:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
-        health = _health_probe(port, timeout=min(5.0, remaining))
+        health = _try_http_health(port, timeout=min(5.0, remaining))
         remaining = deadline - time.monotonic()
         if remaining > 0 and health is not None and health.get("status") == "ready":
             return health

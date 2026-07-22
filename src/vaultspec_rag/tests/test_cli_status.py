@@ -360,6 +360,7 @@ class TestServiceTokenIdentity:
 
     def test_token_match_returns_true(self, monkeypatch: pytest.MonkeyPatch):
         from .. import cli
+        from ..cli import _process
 
         def _probe_abc(_port: int) -> dict[str, object]:
             return {"service_token": "abc"}
@@ -367,12 +368,13 @@ class TestServiceTokenIdentity:
         def _alive(_pid: int) -> bool:
             return True
 
-        monkeypatch.setattr(cli, "_health_probe", _probe_abc)
+        monkeypatch.setattr(_process, "_try_http_health", _probe_abc)
         monkeypatch.setattr(cli, "_is_pid_alive", _alive)
         assert cli._is_our_service(123, port=8766, expected_token="abc")
 
     def test_token_mismatch_returns_false(self, monkeypatch: pytest.MonkeyPatch):
         from .. import cli
+        from ..cli import _process
 
         def _probe_abc(_port: int) -> dict[str, object]:
             return {"service_token": "abc"}
@@ -380,7 +382,7 @@ class TestServiceTokenIdentity:
         def _alive(_pid: int) -> bool:
             return True
 
-        monkeypatch.setattr(cli, "_health_probe", _probe_abc)
+        monkeypatch.setattr(_process, "_try_http_health", _probe_abc)
         monkeypatch.setattr(cli, "_is_pid_alive", _alive)
         # Token mismatch is authoritative - return False regardless of
         # whether the executable-name check would have passed.
@@ -391,6 +393,7 @@ class TestServiceTokenIdentity:
     ):
         """Pre-upgrade daemon (no token in response) → exe-name fallback."""
         from .. import cli
+        from ..cli import _process
 
         def _probe_empty(_port: int) -> dict[str, object]:
             return {}
@@ -398,7 +401,7 @@ class TestServiceTokenIdentity:
         def _alive(_pid: int) -> bool:
             return True
 
-        monkeypatch.setattr(cli, "_health_probe", _probe_empty)
+        monkeypatch.setattr(_process, "_try_http_health", _probe_empty)
         monkeypatch.setattr(cli, "_is_pid_alive", _alive)
         # On Windows the exe-name check inspects the running pytest
         # process (always "python") so this hits the True branch.
@@ -424,6 +427,7 @@ class TestServiceTokenIdentity:
     ) -> None:
         """No expected_token (pre-upgrade service.json) → exe-name only."""
         from .. import cli
+        from ..cli import _process
 
         probe_called: dict[str, int] = {"n": 0}
 
@@ -434,7 +438,7 @@ class TestServiceTokenIdentity:
         def _alive_stub(_pid: int) -> bool:
             return True
 
-        monkeypatch.setattr(cli, "_health_probe", _probe)
+        monkeypatch.setattr(_process, "_try_http_health", _probe)
         monkeypatch.setattr(cli, "_is_pid_alive", _alive_stub)
         # No expected_token → don't probe.
         cli._is_our_service(os.getpid(), port=8766, expected_token=None)
@@ -445,6 +449,7 @@ class TestServiceTokenIdentity:
     ) -> None:
         """Network failure on /health → exe-name fallback, no exception."""
         from .. import cli
+        from ..cli import _process
 
         def _probe_none(_port: int) -> None:
             return None
@@ -452,7 +457,7 @@ class TestServiceTokenIdentity:
         def _alive_stub2(_pid: int) -> bool:
             return True
 
-        monkeypatch.setattr(cli, "_health_probe", _probe_none)
+        monkeypatch.setattr(_process, "_try_http_health", _probe_none)
         monkeypatch.setattr(cli, "_is_pid_alive", _alive_stub2)
         # Should fall back without raising.
         result = cli._is_our_service(

@@ -25,10 +25,9 @@ from ..serviceclient._status import (
     compose_discovery_status,
 )
 from ._app import server_app
-from ._http_search import _try_http_admin
+from ._http_search import _try_http_admin, _try_http_health
 from ._process import (
     _HEARTBEAT_STALENESS_SECONDS,
-    _health_probe,
     _heartbeat_age_seconds,
     _port_is_listening,
 )
@@ -85,7 +84,7 @@ def _compute_token_match(
 ) -> bool | None:
     if expected_token is None or not pid_alive:
         return None
-    probe_for_token = _health_probe(port) if port_listening else None
+    probe_for_token = _try_http_health(port) if port_listening else None
     if probe_for_token is not None and isinstance(
         probe_for_token.get("service_token"),
         str,
@@ -137,7 +136,7 @@ def _render_discovery_verdict(
     machine singleton is the only evidence available.
     """
     port = verdict.port or 0
-    health = _health_probe(port) if verdict.signals.port_listening else None
+    health = _try_http_health(port) if verdict.signals.port_listening else None
     if json_mode:
         payload = verdict.as_dict()
         payload["service_json_present"] = False
@@ -685,7 +684,7 @@ def _render_port_only_status(
     verbose: bool = False,
 ) -> None:
     port_listening = _port_is_listening(port)
-    health = _health_probe(port) if port_listening else None
+    health = _try_http_health(port) if port_listening else None
     state = (
         "running"
         if isinstance(health, dict) and health.get("status") == "ready"
@@ -809,7 +808,7 @@ def _render_explicit_port_status(
     )
     heartbeat_age = _heartbeat_age_seconds(status)
     port_listening = _port_is_listening(target_port)
-    health = _health_probe(target_port) if port_listening else None
+    health = _try_http_health(target_port) if port_listening else None
     state, state_label, exit_code, heartbeat_stale = _explicit_port_state(
         port_listening,
         health,
@@ -1013,7 +1012,7 @@ def service_status(
     ) = _evaluate_service_signals(status)
 
     target_port = status_file_port
-    health = _health_probe(target_port) if port_listening else None
+    health = _try_http_health(target_port) if port_listening else None
     operational = _status_operational_summary(
         state,
         target_port,

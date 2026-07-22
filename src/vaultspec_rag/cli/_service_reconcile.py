@@ -22,7 +22,7 @@ from ..serviceclient._status import (
     reconcile_discovery,
 )
 from ._app import server_app
-from ._process import _health_probe
+from ._http_search import _try_http_health
 from ._render import _emit_json
 from ._service_lifecycle import (
     _print_lifecycle_lines,
@@ -71,7 +71,7 @@ def service_reconcile(
     outcome = reconcile_discovery(
         resolve_machine_service,
         _liveness_from_resolution,
-        _health_probe,
+        _try_http_health,
         timeout_s=max(0.0, timeout),
         interval_s=RECONCILE_INTERVAL_SECONDS,
     )

@@ -1,11 +1,25 @@
 """Import-light HTTP wire client for the resident RAG service.
 
-Both the CLI and the MCP consume this one transport: every call funnels
-through :func:`_do_http_call`, which reads ``service.json`` for the port and
-bearer token and returns the decoded daemon JSON. The ``_try_http_*`` helpers
-discriminate "service unreachable" (connection refused -> ``None``) from "live
-but broken" (a structured ``ok=False`` error dict); :func:`_is_connection_refused`
-walks the exception chain to make that call.
+Both the CLI and the MCP consume this one transport. It exposes two entry
+points with deliberately different failure contracts, and a caller must know
+which one it is using:
+
+- :func:`_do_http_call` is the general path. It reads ``service.json`` for the
+  bearer token, returns the decoded daemon JSON, and RAISES on a
+  connection-level failure. The ``_try_http_*`` wrappers around it discriminate
+  "service unreachable" (connection refused -> ``None``) from "live but broken"
+  (a structured ``ok=False`` error dict); :func:`_is_connection_refused` walks
+  the exception chain to make that call.
+- :func:`_try_http_health` is the health probe, and it NEVER RAISES. It returns
+  the parsed body, a structured error carrying the HTTP code when the service
+  answers unhealthily, or ``None`` when it cannot be reached. Its callers sit in
+  lifecycle verbs that must emit exactly one structured outcome on every exit
+  path, so an escaping exception there would become a second one.
+
+Every request from either entry point goes through one redirect-refusing opener:
+this transport addresses only loopback, no service route emits a 3xx, and the
+standard library would otherwise copy the bearer credential onto whatever host a
+redirect named.
 
 This module imports only stdlib plus the lightweight filter validator from
 ``..search._validation`` (which itself imports nothing heavy). It loads no
@@ -34,6 +48,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "DEFAULT_HEALTH_TIMEOUT_SECONDS",
     "DEFAULT_SEARCH_TIMEOUT_SECONDS",
     "MAX_SERVICE_RESPONSE_BYTES",
     "ServiceUnavailableError",
@@ -48,6 +63,7 @@ __all__ = [
     "_try_http_create_job",
     "_try_http_delete_job",
     "_try_http_get_job",
+    "_try_http_health",
     "_try_http_reindex",
     "_try_http_retry_job",
     "_try_http_search",
@@ -58,6 +74,9 @@ __all__ = [
 
 DEFAULT_SEARCH_TIMEOUT_SECONDS = 300.0
 DEFAULT_ADMIN_TIMEOUT_SECONDS = 30.0
+#: Bound for the health probe. Matches the command-line probe it replaces, so
+#: repointed call sites wait exactly as long as they did before.
+DEFAULT_HEALTH_TIMEOUT_SECONDS = 5.0
 MAX_SERVICE_RESPONSE_BYTES = 8 * 1024 * 1024
 
 type ReindexType = PublicSourceType | str
@@ -215,6 +234,53 @@ def _status_file_token() -> str:
         return ""
     token = status.get("service_token", status.get("token", ""))
     return token if isinstance(token, str) else ""
+
+
+def _try_http_health(
+    port: int, timeout: float = DEFAULT_HEALTH_TIMEOUT_SECONDS
+) -> dict[str, Any] | None:
+    """Probe the ungated ``/health`` route, distinguishing down from unhealthy.
+
+    This is the single owner of the health call. It deliberately does not share
+    the general entry point's contract: callers here branch on a sentinel rather
+    than catch an exception, because several of them sit inside lifecycle verbs
+    that must emit exactly one structured outcome on every exit path, and an
+    escaping exception would become a second one.
+
+    ``/health`` is ungated, so no credential is sent and no token-recovery retry
+    is needed; the request goes through the same redirect-refusing opener as
+    every other call this module makes.
+
+    Args:
+        port: TCP port to probe on ``127.0.0.1``.
+        timeout: Bounded maximum wait. There is no unbounded option.
+
+    Returns:
+        The parsed body when the service answers; a structured mapping carrying
+        ``status`` ``"error"`` and the ``http_code`` when it answers unhealthily
+        (the service is up, so this is not the same as unreachable); or ``None``
+        when it cannot be reached at all. Never raises.
+    """
+    url = f"http://127.0.0.1:{port}/health"
+    try:
+        with _OPENER.open(url, timeout=timeout) as resp:
+            return cast(
+                "dict[str, Any]",
+                json.loads(_read_service_response(resp).decode("utf-8")),
+            )
+    except urllib.error.HTTPError as exc:
+        # The service answered, so report the code rather than "unreachable" -
+        # a caller must be able to tell a sick daemon from an absent one.
+        return {"status": "error", "http_code": exc.code}
+    except Exception as exc:
+        # Connection refused, timeout, a refused redirect, or a body that is not
+        # JSON all mean "no usable answer". The breadth is deliberate because
+        # urllib raises many distinct classes here; the debug log keeps the
+        # swallow observable rather than silent.
+        logger.debug(
+            "health probe failed for port=%d: %s", port, exc, exc_info=True
+        )
+        return None
 
 
 def _fetch_health_token(port: int, timeout: float | None = None) -> str:

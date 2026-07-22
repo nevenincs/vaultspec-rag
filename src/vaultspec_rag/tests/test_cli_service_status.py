@@ -8,12 +8,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..serviceclient._transport import _try_http_health
 from ._cli_helpers import (
     EnvVar,
     _assert_default_status_summary,
     _assert_verbose_status_summary,
     _find_free_port,
-    _health_probe,
     _is_our_service,
     _is_pid_alive,
     _label_values,
@@ -189,7 +189,7 @@ class TestServiceDaemonHelpers:
 
     def test_health_probe_nonlistening_port(self):
         """Health probe on a port with no listener should return None."""
-        assert _health_probe(1) is None
+        assert _try_http_health(1) is None
 
     def test_health_probe_non_json_response(self):
         """Health probe returns None when server sends non-JSON."""
@@ -211,7 +211,7 @@ class TestServiceDaemonHelpers:
         t = threading.Thread(target=server.handle_request, daemon=True)
         t.start()
         try:
-            result = _health_probe(port)
+            result = _try_http_health(port)
             assert result is None
         finally:
             server.server_close()
@@ -806,3 +806,62 @@ class TestServiceDaemonHelpers:
             server.server_close()
             os.environ.pop(EnvVar.STATUS_DIR, None)
             thread.join(timeout=5)
+
+
+class TestUnreachableStaysASentinelNotAnEscape:
+    """Repointing the health call must not turn unreachability into an exception.
+
+    The health owner returns a sentinel rather than raising precisely because
+    these two verbs are broker-facing: each must emit exactly one structured
+    outcome on every exit path. If an exception escaped the probe, a supervising
+    caller would see a crash instead of an envelope, so this asserts the
+    property at the verb rather than at the function.
+    """
+
+    def _one_envelope(self, output: str) -> dict[str, object]:
+        payloads = [
+            json.loads(line)
+            for line in output.splitlines()
+            if line.strip().startswith("{")
+        ]
+        assert len(payloads) == 1, f"expected exactly one envelope, got {payloads}"
+        return payloads[0]
+
+    def test_stop_against_a_dead_port_emits_one_success_envelope(
+        self, tmp_path: Path
+    ) -> None:
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            port = _find_free_port()
+            result = runner.invoke(
+                app, ["server", "stop", "--port", str(port), "--json"]
+            )
+            envelope = self._one_envelope(result.output)
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+
+        # Nothing was listening, so the probe returned its sentinel and the verb
+        # treated it as an ordinary branch: an idempotent success, exit 0.
+        assert result.exit_code == 0
+        assert envelope["ok"] is True
+        data = envelope["data"]
+        assert isinstance(data, dict)
+        assert data["status"] == "already_stopped"
+
+    def test_status_against_a_dead_port_emits_one_envelope(
+        self, tmp_path: Path
+    ) -> None:
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            port = _find_free_port()
+            result = runner.invoke(
+                app, ["server", "status", "--port", str(port), "--json"]
+            )
+            envelope = self._one_envelope(result.output)
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+
+        # Whatever the verdict, it is a rendered envelope rather than a
+        # traceback: the unreachable probe did not escape as an exception.
+        assert isinstance(envelope, dict)
+        assert "Traceback" not in result.output
