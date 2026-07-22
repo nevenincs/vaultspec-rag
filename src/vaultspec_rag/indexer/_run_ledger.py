@@ -1115,27 +1115,33 @@ class RunLedger:
         unique_ids = tuple(dict.fromkeys(point_ids))
         placeholders = ", ".join("?" for _point_id in unique_ids)
         with self._connect() as connection:
+            # Candidate IDs are the bounded input, so keep them as the outer
+            # loop.  A regular JOIN lets SQLite start from every indexed file
+            # state and probe the candidate set, making each store page scale
+            # with the entire generation during finalization.
             rows = connection.execute(
                 f"""
                 SELECT points.point_id
-                FROM file_states AS states
-                JOIN commit_units AS units
-                  ON units.generation_id = states.evidence_generation_id
-                 AND units.rel_path = states.rel_path
-                 AND units.unit_kind = ?
-                 AND units.source_digest = states.content_hash
-                JOIN commit_point_ids AS points
-                  ON points.generation_id = units.generation_id
-                 AND points.unit_id = units.unit_id
-                WHERE states.generation_id = ?
-                  AND states.state = ?
+                FROM commit_point_ids AS points
+                CROSS JOIN commit_units AS units
+                  ON units.generation_id = points.generation_id
+                 AND units.unit_id = points.unit_id
+                CROSS JOIN file_states AS states
+                  ON states.evidence_generation_id = units.generation_id
+                 AND states.rel_path = units.rel_path
+                WHERE points.generation_id = ?
                   AND points.point_id IN ({placeholders})
+                  AND units.unit_kind = ?
+                  AND units.source_digest = states.content_hash
+                  AND states.generation_id = ?
+                  AND states.state = ?
                 """,
                 (
+                    generation_id,
+                    *unique_ids,
                     CommitUnitKind.UPSERT.value,
                     generation_id,
                     FileStateKind.INDEXED.value,
-                    *unique_ids,
                 ),
             ).fetchall()
         return frozenset(str(row["point_id"]) for row in rows)

@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import threading
+import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -38,6 +40,7 @@ from ...indexer._route_migration import (
 )
 from ...indexer._run_ledger import RunOperation
 from ...indexer._run_policy import RunPolicy
+from ...job_control import CancelRequested, RunControlToken
 from ...store import VaultStore
 
 if TYPE_CHECKING:
@@ -95,13 +98,19 @@ def _code_chunk(point_id: str, path: str) -> CodeChunk:
     )
 
 
-def _document_checkpoint(root: Path, rel_path: str, point_id: str):
+def _document_checkpoint(
+    root: Path,
+    rel_path: str,
+    point_id: str,
+    *,
+    run_policy: RunPolicy | None = None,
+):
     policy = _resolved_policy(root)
     checkpoint = DocumentRunCheckpoint.open(
         data_root=root / get_config().data_dir,
         root_dir=root,
         policy=policy,
-        run_policy=RunPolicy(no_progress_timeout_seconds=60.0),
+        run_policy=run_policy or RunPolicy(no_progress_timeout_seconds=60.0),
         operation=RunOperation.FULL,
         clean=False,
         model_identity="route-migration-test",
@@ -304,6 +313,82 @@ def test_missing_sidecar_recovery_retains_ledger_confirmed_points(
 
         assert removed == 2
         assert store.get_all_document_content_ids() == {retained.id, opposite.id}
+    finally:
+        store.close()
+
+
+def test_same_kind_cleanup_resumes_after_a_real_page_boundary_interruption(
+    clean_config: None,
+    tmp_path: Path,
+) -> None:
+    del clean_config
+    retained = _document_chunk("guide.txt", "confirmed destination")
+    stale = [
+        _document_chunk(f"unrouted-{ordinal:03d}.bin", f"stale {ordinal}")
+        for ordinal in range(32)
+    ]
+    token = RunControlToken()
+    interrupted = _document_checkpoint(
+        tmp_path,
+        "guide.txt",
+        retained.id,
+        run_policy=RunPolicy(
+            no_progress_timeout_seconds=60.0,
+            run_control=token,
+        ),
+    )
+    store = VaultStore(tmp_path, embedding_dim=4)
+    caught: list[BaseException] = []
+
+    def _purge_until_cancelled() -> None:
+        try:
+            purge_unpublished_rows(
+                store,
+                interrupted,
+                _resolved_policy(tmp_path),
+                ContentKind.DOCUMENT,
+                page_size=1,
+            )
+        except BaseException as exc:
+            caught.append(exc)
+
+    try:
+        store.upsert_document_content_chunks(
+            [retained, *stale],
+            write_policy=None,
+        )
+        worker = threading.Thread(
+            target=_purge_until_cancelled,
+            name="same-kind-cleanup-interruption",
+        )
+        worker.start()
+        deadline = time.monotonic() + 10.0
+        initial_count = len(stale) + 1
+        while worker.is_alive() and time.monotonic() < deadline:
+            current_count = store.count_document()
+            if 1 < current_count < initial_count:
+                assert token.request_cancel()
+                break
+            time.sleep(0.01)
+        worker.join(timeout=10.0)
+
+        assert not worker.is_alive()
+        assert len(caught) == 1 and isinstance(caught[0], CancelRequested)
+        assert 1 < store.count_document() < initial_count
+
+        resumed = _document_checkpoint(tmp_path, "guide.txt", retained.id)
+        assert resumed.generation_id == interrupted.generation_id
+        assert (
+            purge_unpublished_rows(
+                store,
+                resumed,
+                _resolved_policy(tmp_path),
+                ContentKind.DOCUMENT,
+                page_size=1,
+            )
+            > 0
+        )
+        assert store.get_all_document_content_ids() == {retained.id}
     finally:
         store.close()
 

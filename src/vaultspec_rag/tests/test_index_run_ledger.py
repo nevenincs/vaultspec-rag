@@ -231,6 +231,16 @@ def test_file_outcomes_and_finalization_are_immutable(tmp_path: Path) -> None:
         ledger.record_file_state(generation.generation_id, wrong_hash)
     for state in (indexed, rejected, failed):
         ledger.record_file_state(generation.generation_id, state)
+    good_point_ids = _unit(
+        "src/good.py",
+        0,
+        1,
+        digest=indexed.content_hash,
+    ).point_ids
+    assert ledger.retained_point_ids_for_candidates(
+        generation.generation_id,
+        (*good_point_ids, "not-in-the-generation"),
+    ) == frozenset(good_point_ids)
     with pytest.raises(RunLedgerStateError, match="path is indexed"):
         ledger.record_storage_confirmed_unit(
             generation.generation_id,
