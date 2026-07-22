@@ -13,6 +13,7 @@ Marked ``performance`` so it is excluded from the default unit run; invoke with
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from typing import TYPE_CHECKING
@@ -20,7 +21,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ... import CodebaseIndexer
-from ...config import EnvVar, reset_config
+from ...config import EnvVar, get_config, reset_config
 from ...progress import NullProgressReporter
 
 if TYPE_CHECKING:
@@ -103,10 +104,12 @@ _REPEATS_PER_FILE = 6
 
 
 def _chunk_only_indexer(root: Path) -> CodebaseIndexer:
-    """Build a CodebaseIndexer for chunk-only benchmarking (no model/store)."""
+    """Build a valid chunk-stage indexer without loading model or store."""
     indexer = CodebaseIndexer.__new__(CodebaseIndexer)
     indexer.root_dir = root
     indexer._extra_excludes = []
+    indexer._data_root = root / get_config().data_dir
+    indexer._begin_preprocess_run()
     return indexer
 
 
@@ -141,7 +144,10 @@ def _chunk_with_workers(
 
 
 @pytest.mark.performance
-def test_parallel_chunking_beats_serial(tmp_path_factory: TempPathFactory) -> None:
+def test_parallel_chunking_beats_serial(
+    tmp_path_factory: TempPathFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     n_files = 2000
     root: Path = tmp_path_factory.mktemp("bench-chunk")
     _build_code_tree(root, n_files)
@@ -158,6 +164,11 @@ def test_parallel_chunking_beats_serial(tmp_path_factory: TempPathFactory) -> No
 
     # Correctness gate: parallelism must not change the output.
     assert {c.id for c in serial_chunks} == {c.id for c in parallel_chunks}
+    assert not any(
+        record.levelno >= logging.WARNING
+        and "failed to chunk" in record.getMessage().lower()
+        for record in caplog.records
+    ), "the benchmark must not hide coordinator failures as worker failures"
 
     speedup = serial_s / parallel_s if parallel_s > 0 else float("inf")
     print(

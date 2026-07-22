@@ -604,22 +604,21 @@ def chunk_with_splitter(
 
     chunks: list[CodeChunk] = []
     search_offset = 0
+    line_cursor_offset = 0
+    line_cursor = 1
     for text in text_chunks:
         idx = content.find(text, search_offset)
         if idx != -1:
-            line_start = content.count("\n", 0, idx) + 1
+            chunk_offset = idx
             search_offset = idx + len(text)
         else:
-            # Chunk not found verbatim - happens when TextSplitter overlap
-            # is > 0 and prepended tail text shifts the chunk boundary.
-            logger.debug(
-                "Chunk not found verbatim in %s at offset %d; "
-                "line_start is approximate (chunk_overlap > 0?)",
-                rel_path,
-                search_offset,
+            raise RuntimeError(
+                "zero-overlap TextSplitter returned a chunk absent from "
+                f"{rel_path} at or after offset {search_offset}"
             )
-            line_start = content.count("\n", 0, search_offset) + 1
-            search_offset += len(text)
+        line_cursor += content.count("\n", line_cursor_offset, chunk_offset)
+        line_cursor_offset = chunk_offset
+        line_start = line_cursor
         line_end = line_start + text.count("\n")
 
         chunk_hash = hashlib.blake2b(

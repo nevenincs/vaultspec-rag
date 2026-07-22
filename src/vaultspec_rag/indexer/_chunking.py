@@ -309,7 +309,8 @@ _CONTAINER_NODES: set[str] = {
 def _is_binary(path: pathlib.Path, sample_size: int = 8192) -> bool:
     """Return True if the file appears to be binary (contains null bytes)."""
     try:
-        chunk = path.read_bytes()[:sample_size]
+        with path.open("rb") as stream:
+            chunk = stream.read(sample_size)
     except OSError as exc:
         logger.debug("binary probe read failed for %s: %s", path, exc)
         return True
