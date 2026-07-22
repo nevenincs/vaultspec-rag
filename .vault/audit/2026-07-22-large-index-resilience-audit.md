@@ -90,3 +90,67 @@ and the newly activated finalization path are therefore not acceptance-proven.
 - Keep the feature open until the default real-backend harness completes the
   declared floor, N/two-N and concurrent-search CUDA evidence is retained, and
   focused, full-suite, lint, type, and policy gates pass.
+
+## Resolution review
+
+### replay-granularity | resolved | Store mutation and ledger recovery now share one atomic boundary
+
+Commit `a1846ff0` records every segment unit covered by one bounded weighted
+upsert in a single SQLite transaction and advances durable progress once for
+that store mutation. The interruption regression exercises rollback at the
+post-store checkpoint boundary against the production ledger and confirms that
+recovery observes either the complete bounded mutation or none of it. The
+focused checkpoint and ledger verification passed 18 CPU tests.
+
+### resilience-projection | resolved | Canonical snapshots now own one persisted resilience account
+
+Commit `c5a8ab8e` adds the service-owned resilience value to `JobSnapshot`,
+persists and restores it, and restricts live updates to the exact task-owned
+attempt. Terminal watcher settlement may update only the exact retained
+attempt, so durable retry and circuit truth cannot be attached to stale work.
+Code and document dispatch publish admission ceilings and profile before model
+loading, then publish generation, commit, replay, no-progress, memory, and
+terminal evidence from the actual checkpoint. Watcher-owned jobs merge the
+same checkpoint account with persistent circuit and retry state. Job routes,
+domain status, health, and CLI consume the canonical nested object without
+recomputing policy; the CLI renders checkpoint compatibility, replay, deadline,
+retry, circuit, RSS and CUDA high-water and ceilings, profile, and outcome.
+
+The focused real-manager test proves exact task ownership, terminal-attempt
+ownership, atomic filesystem persistence and restore, identical status and CLI
+input, circuit settlement, and value validation without substitutes. Ruff,
+formatting, and Ty passed for all 14 changed source and test files; the focused
+CPU run passed 3 tests.
+
+### finalization-liveness | resolved | Reconciliation is paged, indexed, and deadline-aware
+
+Commit `5def952b` replaces repeated file-state rescans with indexed batch
+lookups, replaces per-file opposite-collection queries with one paged scan, and
+threads `RunPolicy` checkpoints through scanning, journaling, deletion, and
+replay. Commit `a4d73d70` retains the last confirmed route owner while rejecting
+newer incomplete or not-routed observations, caches bounded destination
+evidence, and checkpoints each bounded retrieval page. The real-store route
+verification passed 5 CPU tests with the GPU-only case deselected. Independent
+re-review found no remaining low-or-higher correctness or liveness issue in the
+finalization path.
+
+### acceptance-floor | open | Full-scale backend and GPU evidence is still required
+
+The code remediations above do not satisfy the declared acceptance floor.
+There is still no retained successful default 83,624-file and 250,872-chunk
+production run, representative real-CUDA N/two-N report, or sustained
+concurrent-search headroom report. The attempted repository commit gate passed
+Ruff, formatting, and Ty but failed the repository-wide complexity baseline on
+existing blocks, so the complete policy gate is also not green. This high
+finding remains open together with plan steps S44 through S51; it must not be
+closed from reduced CPU evidence.
+
+## Final review outcome
+
+Independent review against ADR decisions D3 through D8 and the four original
+findings found no remaining low-or-higher issue in replay granularity,
+finalization liveness, or canonical resilience projection. The implementation
+remediation is complete in commits `5def952b`, `a1846ff0`, `a4d73d70`, and
+`c5a8ab8e`. The feature as a whole remains open solely on the explicit
+acceptance-floor finding and its real-backend, GPU, full-suite, and policy-gate
+evidence.
