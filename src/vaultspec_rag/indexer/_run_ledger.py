@@ -510,6 +510,37 @@ class RunLedger:
             ).fetchone()
         return self._generation_from_row(row) if row is not None else None
 
+    def latest_file_state(
+        self,
+        source_type: ContentKind,
+        *,
+        collection_identity: str,
+        rel_path: str,
+    ) -> FileState | None:
+        """Return the newest durable state for a path across generations.
+
+        A newer incomplete clean generation carries no prior manifest. Looking
+        only at that generation would therefore hide points still certified by
+        an older generation and still present in storage.
+        """
+        _validate_rel_path(rel_path)
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT states.* FROM file_states AS states
+                JOIN generations AS generations
+                  ON generations.generation_id = states.generation_id
+                WHERE generations.source_type = ?
+                  AND generations.collection_identity = ?
+                  AND states.rel_path = ?
+                ORDER BY generations.updated_at DESC,
+                         generations.created_at DESC
+                LIMIT 1
+                """,
+                (source_type.value, collection_identity, rel_path),
+            ).fetchone()
+        return _file_state_from_row(row) if row is not None else None
+
     def record_storage_confirmed_unit(
         self,
         generation_id: str,
@@ -520,113 +551,146 @@ class RunLedger:
         Returns ``True`` for the first record and ``False`` for exact replay.
         A reused identity with different evidence is rejected.
         """
+        return self.record_storage_confirmed_units(generation_id, (unit,)) == 1
+
+    def record_storage_confirmed_units(
+        self,
+        generation_id: str,
+        units: tuple[CommitUnit, ...],
+    ) -> int:
+        """Atomically record one confirmed bounded store mutation's units.
+
+        Every unit is validated and inserted in the same SQLite transaction.
+        The transaction therefore exposes either the complete synchronous
+        store mutation or none of it to compatible recovery.
+        """
+        if not units:
+            raise ValueError("a confirmed storage mutation must contain units")
         now = time.time()
-        point_ids_json = json.dumps(unit.point_ids, separators=(",", ":"))
         with self._transaction() as connection:
             generation = self._require_mutable_generation(connection, generation_id)
             if generation["finalization_phase"] != FinalizationPhase.INGESTING.value:
                 raise RunLedgerStateError("cannot add units after finalization begins")
-            existing = connection.execute(
-                """
-                SELECT * FROM commit_units
-                WHERE generation_id = ? AND unit_id = ?
-                """,
-                (generation_id, unit.identity),
-            ).fetchone()
-            if existing is not None:
-                if (
-                    existing["rel_path"] != unit.rel_path
-                    or existing["unit_kind"] != unit.kind.value
-                    or existing["segment_ordinal"] != unit.segment_ordinal
-                    or bool(existing["is_file_end"]) is not unit.is_file_end
-                    or existing["source_digest"] != unit.source_digest
-                    or existing["point_ids_json"] != point_ids_json
-                ):
-                    raise RunLedgerStateError("commit-unit identity collision")
-                return False
-            indexed = connection.execute(
-                """
-                SELECT 1 FROM file_states
-                WHERE generation_id = ? AND rel_path = ? AND state = ?
-                  AND evidence_generation_id = generation_id
-                """,
-                (generation_id, unit.rel_path, FileStateKind.INDEXED.value),
-            ).fetchone()
-            if indexed is not None and unit.kind is CommitUnitKind.UPSERT:
-                raise RunLedgerStateError(
-                    "cannot add upsert commit units after a path is indexed"
-                )
-            sibling = connection.execute(
-                """
-                SELECT source_digest, MAX(segment_ordinal) AS last_ordinal,
-                       MAX(is_file_end) AS has_file_end, COUNT(*) AS unit_count
-                FROM commit_units
-                WHERE generation_id = ? AND rel_path = ? AND unit_kind = ?
-                """,
-                (generation_id, unit.rel_path, unit.kind.value),
-            ).fetchone()
-            assert sibling is not None
-            sibling_count = int(sibling["unit_count"])
-            if sibling_count and sibling["source_digest"] != unit.source_digest:
-                raise RunLedgerStateError(
-                    "segments for one path must share one source digest"
-                )
-            if sibling_count and bool(sibling["has_file_end"]):
-                raise RunLedgerStateError(
-                    "cannot add a segment after the file-end commit unit"
-                )
-            if unit.segment_ordinal != sibling_count:
-                raise RunLedgerStateError(
-                    "commit-unit segment ordinals must be contiguous"
-                )
-            for point_id in unit.point_ids:
-                owner = connection.execute(
-                    """
-                    SELECT unit_id FROM commit_point_ids
-                    WHERE generation_id = ? AND point_id = ?
-                    """,
-                    (generation_id, point_id),
-                ).fetchone()
-                if owner is not None:
-                    raise RunLedgerStateError(
-                        f"point identity {point_id!r} belongs to another commit unit"
-                    )
-            connection.execute(
-                """
-                INSERT INTO commit_units (
-                    generation_id, unit_id, rel_path, unit_kind,
-                    source_digest, segment_ordinal, is_file_end,
-                    point_ids_json, committed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
+            inserted = sum(
+                self._record_storage_confirmed_unit(
+                    connection,
                     generation_id,
-                    unit.identity,
-                    unit.rel_path,
-                    unit.kind.value,
-                    unit.source_digest,
-                    unit.segment_ordinal,
-                    int(unit.is_file_end),
-                    point_ids_json,
-                    now,
-                ),
+                    unit,
+                    now=now,
+                )
+                for unit in units
             )
-            connection.executemany(
+            if inserted:
+                connection.execute(
+                    "UPDATE generations SET updated_at = ? WHERE generation_id = ?",
+                    (now, generation_id),
+                )
+            return inserted
+
+    def _record_storage_confirmed_unit(
+        self,
+        connection: sqlite3.Connection,
+        generation_id: str,
+        unit: CommitUnit,
+        *,
+        now: float,
+    ) -> int:
+        point_ids_json = json.dumps(unit.point_ids, separators=(",", ":"))
+        existing = connection.execute(
+            """
+            SELECT * FROM commit_units
+            WHERE generation_id = ? AND unit_id = ?
+            """,
+            (generation_id, unit.identity),
+        ).fetchone()
+        if existing is not None:
+            if (
+                existing["rel_path"] != unit.rel_path
+                or existing["unit_kind"] != unit.kind.value
+                or existing["segment_ordinal"] != unit.segment_ordinal
+                or bool(existing["is_file_end"]) is not unit.is_file_end
+                or existing["source_digest"] != unit.source_digest
+                or existing["point_ids_json"] != point_ids_json
+            ):
+                raise RunLedgerStateError("commit-unit identity collision")
+            return 0
+        indexed = connection.execute(
+            """
+            SELECT 1 FROM file_states
+            WHERE generation_id = ? AND rel_path = ? AND state = ?
+              AND evidence_generation_id = generation_id
+            """,
+            (generation_id, unit.rel_path, FileStateKind.INDEXED.value),
+        ).fetchone()
+        if indexed is not None and unit.kind is CommitUnitKind.UPSERT:
+            raise RunLedgerStateError(
+                "cannot add upsert commit units after a path is indexed"
+            )
+        sibling = connection.execute(
+            """
+            SELECT source_digest, MAX(segment_ordinal) AS last_ordinal,
+                   MAX(is_file_end) AS has_file_end, COUNT(*) AS unit_count
+            FROM commit_units
+            WHERE generation_id = ? AND rel_path = ? AND unit_kind = ?
+            """,
+            (generation_id, unit.rel_path, unit.kind.value),
+        ).fetchone()
+        assert sibling is not None
+        sibling_count = int(sibling["unit_count"])
+        if sibling_count and sibling["source_digest"] != unit.source_digest:
+            raise RunLedgerStateError(
+                "segments for one path must share one source digest"
+            )
+        if sibling_count and bool(sibling["has_file_end"]):
+            raise RunLedgerStateError(
+                "cannot add a segment after the file-end commit unit"
+            )
+        if unit.segment_ordinal != sibling_count:
+            raise RunLedgerStateError("commit-unit segment ordinals must be contiguous")
+        for point_id in unit.point_ids:
+            owner = connection.execute(
                 """
-                INSERT INTO commit_point_ids (
-                    generation_id, unit_id, point_ordinal, point_id
-                ) VALUES (?, ?, ?, ?)
+                SELECT unit_id FROM commit_point_ids
+                WHERE generation_id = ? AND point_id = ?
                 """,
-                (
-                    (generation_id, unit.identity, ordinal, point_id)
-                    for ordinal, point_id in enumerate(unit.point_ids)
-                ),
-            )
-            connection.execute(
-                "UPDATE generations SET updated_at = ? WHERE generation_id = ?",
-                (now, generation_id),
-            )
-            return True
+                (generation_id, point_id),
+            ).fetchone()
+            if owner is not None:
+                raise RunLedgerStateError(
+                    f"point identity {point_id!r} belongs to another commit unit"
+                )
+        connection.execute(
+            """
+            INSERT INTO commit_units (
+                generation_id, unit_id, rel_path, unit_kind,
+                source_digest, segment_ordinal, is_file_end,
+                point_ids_json, committed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                generation_id,
+                unit.identity,
+                unit.rel_path,
+                unit.kind.value,
+                unit.source_digest,
+                unit.segment_ordinal,
+                int(unit.is_file_end),
+                point_ids_json,
+                now,
+            ),
+        )
+        connection.executemany(
+            """
+            INSERT INTO commit_point_ids (
+                generation_id, unit_id, point_ordinal, point_id
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (
+                (generation_id, unit.identity, ordinal, point_id)
+                for ordinal, point_id in enumerate(unit.point_ids)
+            ),
+        )
+        return 1
 
     def unit_committed(self, generation_id: str, unit: CommitUnit) -> bool:
         """Return whether an exact storage-confirmed unit is durable."""

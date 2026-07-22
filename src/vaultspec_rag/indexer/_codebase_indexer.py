@@ -1899,11 +1899,10 @@ class CodebaseIndexer:
                                 ),
                             ) -> None:
                                 assert checkpoint is not None
-                                for confirmed in confirmed_segments:
-                                    checkpoint.record_confirmed_segment(
-                                        confirmed,
-                                        metadata[confirmed.path],
-                                    )
+                                checkpoint.record_confirmed_segments(
+                                    confirmed_segments,
+                                    metadata,
+                                )
 
                             encode_and_upsert_code_slice(
                                 slice_chunks,

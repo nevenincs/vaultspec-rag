@@ -99,10 +99,7 @@ def test_checkpoint_resumes_only_unconfirmed_segments(tmp_path: Path) -> None:
     digest = _digest("example")
     assert tuple(checkpoint.pending_segments(segments, digest)) == segments
 
-    assert (
-        checkpoint.record_confirmed_segment(segments[0], digest)
-        is True
-    )
+    assert checkpoint.record_confirmed_segment(segments[0], digest) is True
     checkpoint.ledger.finish_generation(
         checkpoint.generation_id,
         RunTerminalState.CANCELLED,
@@ -112,10 +109,7 @@ def test_checkpoint_resumes_only_unconfirmed_segments(tmp_path: Path) -> None:
     resumed = _open(tmp_path)
     assert resumed.generation_id == checkpoint.generation_id
     assert tuple(resumed.pending_segments(segments, digest)) == (segments[1],)
-    assert (
-        resumed.record_confirmed_segment(segments[1], digest)
-        is True
-    )
+    assert resumed.record_confirmed_segment(segments[1], digest) is True
     assert tuple(resumed.pending_segments(segments, digest)) == ()
 
     meta_path = tmp_path / ".state" / "code_meta.json"
@@ -123,6 +117,49 @@ def test_checkpoint_resumes_only_unconfirmed_segments(tmp_path: Path) -> None:
     published = resumed.publish_generation()
     assert published.complete
     assert meta_path.exists()
+
+
+def test_confirmed_weighted_slice_records_all_segments_atomically(
+    tmp_path: Path,
+) -> None:
+    checkpoint = _open(tmp_path)
+    first = CodeFileSegment(
+        "src/first.py",
+        0,
+        (_chunk("src/first.py", "first_file"),),
+        128,
+        True,
+    )
+    invalid_second = CodeFileSegment(
+        "src/second.py",
+        1,
+        (_chunk("src/second.py", "second_file"),),
+        128,
+        True,
+    )
+    digests = {
+        "src/first.py": _digest("first source"),
+        "src/second.py": _digest("second source"),
+    }
+
+    with pytest.raises(RunLedgerStateError, match="ordinals must be contiguous"):
+        checkpoint.record_confirmed_segments(
+            (first, invalid_second),
+            digests,
+        )
+
+    assert tuple(checkpoint.pending_segments((first,), digests[first.path])) == (first,)
+    second = CodeFileSegment(
+        "src/second.py",
+        0,
+        invalid_second.chunks,
+        invalid_second.estimated_bytes,
+        True,
+    )
+    assert checkpoint.record_confirmed_segments((first, second), digests) == 2
+    assert tuple(checkpoint.pending_segments((first,), digests[first.path])) == ()
+    assert tuple(checkpoint.pending_segments((second,), digests[second.path])) == ()
+    assert checkpoint.run_policy.snapshot().durable_progress_count == 1
 
 
 def test_checkpoint_signature_drift_starts_a_new_generation(tmp_path: Path) -> None:
