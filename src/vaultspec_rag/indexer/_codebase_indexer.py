@@ -2383,6 +2383,52 @@ class CodebaseIndexer:
             del current_files[rel]
         return current_files, current_hashes
 
+    def _reconcile_full_stale_ids(
+        self,
+        *,
+        checkpoint: CodeRunCheckpoint,
+        previous_metadata: dict[str, str],
+        metadata: dict[str, str],
+        existing_ids: set[str],
+        retained_ids: set[str],
+        reporter: ProgressReporter,
+    ) -> list[str]:
+        """Delete stale full-run identities and checkpoint removed paths."""
+        stale_ids = sorted(existing_ids - retained_ids)
+        removed_paths = set(previous_metadata) - set(metadata)
+        removed_ids_by_path = self._checkpoint_ids_by_path(
+            checkpoint,
+            removed_paths,
+            retained=True,
+        )
+        reporter.phase_start("purge stale chunks", len(stale_ids))
+        try:
+            if not stale_ids:
+                return stale_ids
+            try:
+                path_removed_ids: set[str] = set()
+                for rel in sorted(removed_paths):
+                    point_ids = tuple(sorted(removed_ids_by_path[rel]))
+                    if not point_ids:
+                        continue
+                    self.store.delete_code_chunks(list(point_ids))
+                    checkpoint.record_confirmed_deletion(rel, point_ids)
+                    path_removed_ids.update(point_ids)
+                remaining_stale_ids = sorted(set(stale_ids) - path_removed_ids)
+                if remaining_stale_ids:
+                    self.store.delete_code_chunks(remaining_stale_ids)
+            except OSError:
+                logger.error(
+                    "Failed to purge stale code chunks after successful rebuild - "
+                    "collection still contains valid new chunks plus %d stale rows",
+                    len(stale_ids),
+                )
+                raise
+            reporter.advance(len(stale_ids))
+            return stale_ids
+        finally:
+            reporter.phase_end()
+
     def full_index(
         self,
         clean: bool = False,
@@ -2590,42 +2636,15 @@ class CodebaseIndexer:
             )
             meta.update(preserved_metadata)
 
-            stale_ids = sorted(existing_ids_before - new_ids)
-            removed_paths = set(previous_metadata) - set(meta)
-            removed_ids_by_path = self._checkpoint_ids_by_path(
-                checkpoint,
-                removed_paths,
-                retained=True,
-            )
             run_control.checkpoint()
-            reporter.phase_start("purge stale chunks", len(stale_ids))
-            try:
-                if stale_ids:
-                    try:
-                        path_removed_ids: set[str] = set()
-                        for rel in sorted(removed_paths):
-                            point_ids = tuple(sorted(removed_ids_by_path[rel]))
-                            if not point_ids:
-                                continue
-                            self.store.delete_code_chunks(list(point_ids))
-                            checkpoint.record_confirmed_deletion(rel, point_ids)
-                            path_removed_ids.update(point_ids)
-                        remaining_stale_ids = sorted(
-                            set(stale_ids) - path_removed_ids
-                        )
-                        if remaining_stale_ids:
-                            self.store.delete_code_chunks(remaining_stale_ids)
-                    except OSError:
-                        logger.error(
-                            "Failed to purge stale code chunks after "
-                            "successful rebuild - collection still "
-                            "contains valid new chunks plus %d stale rows",
-                            len(stale_ids),
-                        )
-                        raise
-                    reporter.advance(len(stale_ids))
-            finally:
-                reporter.phase_end()
+            stale_ids = self._reconcile_full_stale_ids(
+                checkpoint=checkpoint,
+                previous_metadata=previous_metadata,
+                metadata=meta,
+                existing_ids=existing_ids_before,
+                retained_ids=new_ids,
+                reporter=reporter,
+            )
 
             reporter.phase_start("write metadata", 1)
             try:
