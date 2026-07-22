@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from typing import TYPE_CHECKING, TypedDict
 
@@ -191,6 +192,69 @@ class TestIncrementalPublicationRecovery:
         )
         assert "chunk + embed" in reporter.phase_names()
         assert "prepare collection" not in reporter.phase_names()
+
+    @pytest.mark.timeout(180)
+    def test_control_preserves_storage_confirmed_generation_points(
+        self,
+        code_project: _CodeProject,
+    ) -> None:
+        """Control before finalization leaves checkpointed storage intact."""
+        from ...indexer._run_ledger import RunOperation
+        from ...indexer._streaming import CodeFileSegment
+        from ...job_control import CancelRequested, RunControlToken
+
+        indexer = code_project["code_indexer"]
+        store = code_project["store"]
+        indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
+
+        rel_path = "src/confirmed_before_control.py"
+        point_id = f"{rel_path}:confirmed"
+        chunk = _stored_partial_chunk(rel_path, point_id)
+        store.upsert_code_chunks([chunk], write_policy=None)
+        policy = indexer.resolve_policy_snapshot()
+        limits = indexer._resolve_code_pipeline_limits()  # pyright: ignore[reportPrivateUsage]
+        checkpoint = indexer._open_run_checkpoint(  # pyright: ignore[reportPrivateUsage]
+            policy=policy,
+            operation=RunOperation.INCREMENTAL,
+            clean=False,
+            limits=limits,
+            run_control=RunControlToken(),
+        )
+        digest = hashlib.blake2b(chunk.content.encode("utf-8")).hexdigest()
+        segment = CodeFileSegment(
+            path=rel_path,
+            ordinal=0,
+            chunks=(chunk,),
+            estimated_bytes=max(1, len(chunk.content.encode("utf-8"))),
+            is_file_end=True,
+        )
+        checkpoint.record_confirmed_segment(segment, digest)
+
+        token = RunControlToken()
+        assert token.request_cancel()
+        with pytest.raises(CancelRequested):
+            indexer._commit_incremental_replacement(  # pyright: ignore[reportPrivateUsage]
+                policy=policy,
+                existing_ids=set(),
+                published_ids={point_id},
+                prior_ids_by_path={rel_path: set()},
+                deleted_paths=set(),
+                checkpoint=checkpoint,
+                metadata={rel_path: digest},
+                files_count=1,
+                protect_replacement=False,
+                reporter=NullProgressReporter(),
+                run_control=token,
+            )
+
+        assert store.get_code_ids_by_paths({rel_path}) == [point_id]
+        assert checkpoint.ledger.unit_committed(
+            checkpoint.generation_id,
+            checkpoint.unit_for(segment, digest),
+        )
 
     @pytest.mark.timeout(180)
     def test_scoped_untracked_disappearance_removes_prior_partial_ids(

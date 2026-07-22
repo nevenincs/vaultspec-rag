@@ -2320,7 +2320,7 @@ class CodebaseIndexer:
                 finally:
                     reporter.phase_end()
         except RunControlSignal:
-            if not commit_started:
+            if not commit_started and checkpoint is None:
                 introduced_ids = sorted(published_ids - existing_ids)
                 try:
                     if introduced_ids:
