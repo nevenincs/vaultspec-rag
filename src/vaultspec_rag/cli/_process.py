@@ -256,6 +256,12 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 # lockstep if the contract changes.
 _HEARTBEAT_STALENESS_SECONDS = 60
 
+# Post-signal drain bound before a forced kill. The short default serves
+# callers that only need the process gone; an operator stop overrides it so the
+# daemon can finish owner-authenticated discovery cleanup, which no other
+# process is authorized to perform.
+_DEFAULT_GRACEFUL_DRAIN_SECONDS = 2.0
+
 
 def _port_is_listening(port: int) -> bool:
     """Return True when ``127.0.0.1:port`` accepts a TCP connection.
@@ -819,7 +825,12 @@ def _spawn_windows(
         ) from detached_exc
 
 
-def _terminate_pid(pid: int, timeout: float = 4.0) -> None:
+def _terminate_pid(
+    pid: int,
+    timeout: float = 4.0,
+    *,
+    graceful_drain: float = _DEFAULT_GRACEFUL_DRAIN_SECONDS,
+) -> None:
     """Send a termination signal to a process.
 
     On Windows sends ``CTRL_BREAK_EVENT`` for graceful uvicorn
@@ -835,6 +846,13 @@ def _terminate_pid(pid: int, timeout: float = 4.0) -> None:
         pid: Process ID to terminate.
         timeout: Whole termination budget, including child validation,
             graceful service drain, escalation, and owned-Qdrant reap.
+        graceful_drain: Upper bound on the post-signal wait before escalating
+            to a forced kill. Only the daemon itself holds the machine-lock
+            lease that authorizes deleting the machine discovery pointer, so a
+            forced kill necessarily orphans that view. An operator-driven stop
+            therefore passes a drain budget large enough for the lifespan
+            ``finally`` to complete its owner cleanup; callers that only need
+            the process gone keep the short default.
 
     """
     from .._test_isolation import enforce_pytest_managed_singleton_containment
@@ -854,7 +872,7 @@ def _terminate_pid(pid: int, timeout: float = 4.0) -> None:
     # the daemon's parent, so reap an exited child promptly instead of treating
     # its zombie record as a live process that still needs SIGKILL.
     remaining = max(0.0, deadline - time.monotonic())
-    graceful_wait = min(2.0, remaining / 2.0)
+    graceful_wait = min(graceful_drain, remaining / 2.0)
     if _wait_for_child_exit(pid, timeout=graceful_wait):
         _reap_owned_qdrant(qdrant_identity, deadline=deadline)
         return

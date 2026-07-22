@@ -178,7 +178,13 @@ def _service_env(
         env_key: str(tmp_path),
     }
     if storage_key not in overrides:
-        updates[storage_key] = str(tmp_path / "qdrant-storage")
+        # Production nests the managed storage one level below the machine dir
+        # (``<managed>/qdrant-server/storage``), which is what keeps the machine
+        # discovery pointer (``<storage>/../service.json``) a distinct file from
+        # the status view (``<status dir>/service.json``). A single-level
+        # isolated storage dir collapses both views onto one path and silently
+        # hides every independent-repair and independent-cleanup contract.
+        updates[storage_key] = str(tmp_path / "qdrant-server" / "storage")
     if qdrant_port_key not in overrides:
         updates[qdrant_port_key] = str(_get_ephemeral_qdrant_port())
     updates.update(overrides)

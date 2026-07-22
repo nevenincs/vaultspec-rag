@@ -8,6 +8,10 @@ import typing
 
 import pytest
 
+from ..cli._service_stop import (
+    _STOP_GRACEFUL_DRAIN_SECONDS,
+    _STOP_TERMINATION_BUDGET_SECONDS,
+)
 from ._cli_helpers import (
     _ANSI_RE,
     EnvVar,
@@ -789,7 +793,15 @@ class TestWinShutdownLog:
             def _stub_is_our_service(*_a: object, **_kw: object) -> bool:
                 return True
 
-            def _stub_terminate_pid(_pid: int) -> None: ...
+            budgets: list[tuple[float, float]] = []
+
+            def _stub_terminate_pid(
+                _pid: int,
+                timeout: float = 4.0,
+                *,
+                graceful_drain: float = 2.0,
+            ) -> None:
+                budgets.append((timeout, graceful_drain))
 
             def _stub_is_pid_alive(_pid: int) -> bool:
                 return False
@@ -805,6 +817,14 @@ class TestWinShutdownLog:
             assert result.exit_code == 0, result.output
             assert f"Process ID: {os.getpid()}" in result.output
             assert "PID:" not in result.output
+            # Only the daemon holds the lease authorising machine-pointer
+            # deletion, so the stop path must fund a drain long enough for its
+            # own cleanup rather than escalating to a forced kill immediately.
+            assert budgets == [
+                (_STOP_TERMINATION_BUDGET_SECONDS, _STOP_GRACEFUL_DRAIN_SECONDS)
+            ]
+            assert _STOP_GRACEFUL_DRAIN_SECONDS >= 10.0
+            assert _STOP_TERMINATION_BUDGET_SECONDS > _STOP_GRACEFUL_DRAIN_SECONDS
             assert log_path.exists(), (
                 f"Expected CLI to create {log_path}; result: {result.output}"
             )
@@ -836,7 +856,13 @@ class TestWinShutdownLog:
             def _stub_is_our_service(*_a: object, **_kw: object) -> bool:
                 return True
 
-            def _stub_terminate_pid(_pid: int) -> None: ...
+            def _stub_terminate_pid(
+                _pid: int,
+                timeout: float = 4.0,
+                *,
+                graceful_drain: float = 2.0,
+            ) -> None:
+                assert timeout > graceful_drain
 
             def _stub_is_pid_alive(_pid: int) -> bool:
                 return False
