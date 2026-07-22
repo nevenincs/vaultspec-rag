@@ -12,6 +12,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from .._store_models import DocumentLocator, DocumentMetadata
+
+__all__ = ["DocumentSearchResult", "ParsedQuery", "SearchResult"]
+
 
 @dataclass
 class ParsedQuery:
@@ -107,3 +111,23 @@ class SearchResult:
     anchor: str | None = None
     locator: str | None = None
     rerank_text: str | None = None
+
+
+@dataclass
+class DocumentSearchResult:
+    """A ranked hit from the independently owned document collection."""
+
+    id: str
+    path: str
+    title: str
+    score: float
+    snippet: str
+    section: str | None = None
+    anchor: str | None = None
+    locator: DocumentLocator | None = None
+    document_metadata: DocumentMetadata = field(default_factory=DocumentMetadata)
+    unit_metadata: DocumentMetadata = field(default_factory=DocumentMetadata)
+    extractor_id: str | None = None
+    extractor_version: str | None = None
+    rerank_text: str | None = None
+    source: Literal["document"] = "document"

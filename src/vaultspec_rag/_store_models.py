@@ -10,8 +10,9 @@ torch) so spawn workers can import ``CodeChunk`` without pulling heavy deps.
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from ._domain import classify_domain
 
@@ -22,6 +23,10 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CodeChunk",
+    "DocumentChunk",
+    "DocumentLocator",
+    "DocumentMetadata",
+    "DocumentPayload",
     "VaultChunk",
     "VaultDocument",
     "_code_chunk_payload",
@@ -29,6 +34,107 @@ __all__ = [
     "_vault_doc_payload",
     "root_collection_prefix",
 ]
+
+type DocumentLocatorKind = Literal["byte", "page", "sheet", "line", "char", "none"]
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentLocator:
+    """Native address of one extracted unit inside its source document."""
+
+    kind: DocumentLocatorKind
+    value: int | str
+    end: int | str | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.value, bool) or not isinstance(self.value, (int, str)):
+            raise TypeError("document locator value must be an integer or string")
+        if isinstance(self.end, bool) or (
+            self.end is not None and not isinstance(self.end, (int, str))
+        ):
+            raise TypeError("document locator end must be an integer, string, or None")
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentMetadata:
+    """Canonical immutable metadata emitted at document and unit scope."""
+
+    canonical_json: str = "{}"
+
+    def __post_init__(self) -> None:
+        decoded = json.loads(self.canonical_json)
+        if not isinstance(decoded, dict):
+            raise TypeError("document metadata must encode a JSON object")
+        canonical = json.dumps(
+            decoded,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+        if canonical != self.canonical_json:
+            raise ValueError("document metadata is not canonically encoded")
+
+    @classmethod
+    def from_mapping(cls, values: dict[str, object]) -> DocumentMetadata:
+        """Copy caller JSON metadata into sorted immutable storage."""
+        try:
+            canonical = json.dumps(
+                values,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            )
+        except (TypeError, ValueError) as exc:
+            raise TypeError("document metadata must be JSON-compatible") from exc
+        return cls(canonical)
+
+    def materialize(self) -> dict[str, object]:
+        """Return a fresh JSON-compatible mapping for storage or transport."""
+        thawed = json.loads(self.canonical_json)
+        if not isinstance(thawed, dict):
+            raise TypeError("invalid canonical document metadata")
+        return {str(key): value for key, value in thawed.items()}
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentPayload:
+    """Document-native payload fields independent from vector-store syntax."""
+
+    source_path: str
+    unit_ordinal: int
+    content_fingerprint: str
+    content: str
+    title: str | None = None
+    section: str | None = None
+    anchor: str | None = None
+    locator: DocumentLocator | None = None
+    document_metadata: DocumentMetadata = DocumentMetadata()
+    unit_metadata: DocumentMetadata = DocumentMetadata()
+    extractor_id: str | None = None
+    extractor_version: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.source_path:
+            raise ValueError("document source_path must not be empty")
+        if self.unit_ordinal < 0:
+            raise ValueError("document unit_ordinal must be non-negative")
+        if not self.content_fingerprint:
+            raise ValueError("document content_fingerprint must not be empty")
+        if not self.content:
+            raise ValueError("document content must not be empty")
+
+
+@dataclass(slots=True)
+class DocumentChunk:
+    """One independently owned document chunk destined for document storage."""
+
+    id: str
+    payload: DocumentPayload
+    vector: list[float] = field(default_factory=list)
+    sparse_indices: list[int] = field(default_factory=list)
+    sparse_values: list[float] = field(default_factory=list)
 
 
 def root_collection_prefix(root_dir: pathlib.Path | str) -> str:

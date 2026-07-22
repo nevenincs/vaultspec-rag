@@ -93,7 +93,7 @@ Introduce independently owned document models, storage, lifecycle, and ingestion
 
 Create document-native identity, payload, collection, metadata, lock, lifecycle, and administration contracts while preserving existing source point identities.
 
-- [ ] `W02.P03.S15` - Define document chunk, locator, metadata, payload, and result models distinct from source chunks; `src/vaultspec_rag/_store_models.py, src/vaultspec_rag/search/_models.py`.
+- [x] `W02.P03.S15` - Define document chunk, locator, metadata, payload, and result models distinct from source chunks; `src/vaultspec_rag/_store_models.py, src/vaultspec_rag/search/_models.py`.
 - [ ] `W02.P03.S16` - Implement collection-local document point identities from normalized source, native locator or unit ordinal, and content fingerprint; `src/vaultspec_rag/indexer/_document_identity.py`.
 - [ ] `W02.P03.S17` - Add the document collection, payload indexes, schema-version contract, descriptor entry, and direct-consumer compatibility behavior; `src/vaultspec_rag/store_schema.py`.
 - [ ] `W02.P03.S18` - Add document collection locks, upsert, delete, scroll, and count operations; `src/vaultspec_rag/store.py, src/vaultspec_rag/_store_locks.py`.
