@@ -32,6 +32,8 @@ related:
   - '[[2026-07-21-service-job-control-W02-P05-summary]]'
   - '[[2026-07-21-service-job-control-W02-P06-S16]]'
   - '[[2026-07-21-service-job-control-W02-P06-summary]]'
+  - '[[2026-07-21-service-job-control-W02-P07-S17]]'
+  - '[[2026-07-21-service-job-control-W02-P07-summary]]'
   - '[[2026-07-21-service-job-control-adr]]'
   - '[[2026-07-21-service-job-control-plan]]'
   - '[[2026-07-21-service-job-control-reference]]'
@@ -48,6 +50,7 @@ related:
   - '[[2026-07-22-service-job-control-s14-code-publication-protection-audit]]'
   - '[[2026-07-22-service-job-control-s15-code-index-control-audit]]'
   - '[[2026-07-22-service-job-control-s16-dispatch-audit]]'
+  - '[[2026-07-22-service-job-control-s17-execution-audit]]'
 ---
 
 # `service-job-control` feature index
@@ -74,6 +77,7 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-22-service-job-control-s14-code-publication-protection-audit` - `service-job-control` audit: `s14 code publication protection`
 - `2026-07-22-service-job-control-s15-code-index-control-audit` - `service-job-control` audit: `S15 code indexing job control review`
 - `2026-07-22-service-job-control-s16-dispatch-audit` - `service-job-control` audit: `Manager-owned dispatch`
+- `2026-07-22-service-job-control-s17-execution-audit` - `service-job-control` audit: `s17 execution`
 
 ### exec
 
@@ -103,6 +107,8 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-21-service-job-control-W02-P05-summary` - `service-job-control` `W02.P05` summary
 - `2026-07-21-service-job-control-W02-P06-S16` - Implement manager-owned dispatch, token propagation, reconciliation attempts, truthful acknowledgement, completion callbacks, and bounded joins using vaultspec-high-executor
 - `2026-07-21-service-job-control-W02-P06-summary` - `service-job-control` `W02.P06` summary
+- `2026-07-21-service-job-control-W02-P07-S17` - Verify paused attempts release limiter, lease, writer ownership, thread, and pipeline resources and cancelled attempts make no later writes using vaultspec-high-executor
+- `2026-07-21-service-job-control-W02-P07-summary` - `service-job-control` `W02.P07` summary
 
 ### plan
 
