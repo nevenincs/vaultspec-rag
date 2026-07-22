@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 
-from ._job_errors import classify_error_text
+from ._job_errors import STALL_THRESHOLD_SECONDS, classify_error_text
 from .job_manager import (
     MAX_RECORDS,
     JobAttemptContext,
@@ -97,6 +97,7 @@ __all__ = [
     "activate_index_job",
     "get_job_manager",
     "index_all_domains",
+    "index_job_status",
     "record_finish",
     "record_progress",
     "record_start",
@@ -111,6 +112,7 @@ __all__ = [
     "start_reindex_vault",
     "validate_code_index_policy",
     "validate_document_index_policy",
+    "validate_document_job_admission",
     "validate_document_support_profile",
     "validate_scoped_code_index_policy",
     "validate_scoped_document_index_policy",
@@ -603,6 +605,110 @@ def snapshot() -> list[dict[str, object]]:
         return copied
 
 
+def _job_snapshot_stalled(job: JobSnapshot, *, now: float) -> bool:
+    """Classify a canonical job with the shared service stall threshold."""
+    timestamps = job.timestamps
+    if job.state in {JobState.PAUSING, JobState.CANCELLING}:
+        requested = timestamps.control_requested_at
+        acknowledged = timestamps.control_acknowledged_at
+        return (
+            requested is not None
+            and (acknowledged is None or acknowledged < requested)
+            and now - requested >= STALL_THRESHOLD_SECONDS
+        )
+    progress = job.progress
+    return (
+        job.state is JobState.RUNNING
+        and progress is not None
+        and progress.step != JobState.QUEUED.value
+        and now - progress.last_updated >= STALL_THRESHOLD_SECONDS
+    )
+
+
+def _domain_job_snapshot(job: JobSnapshot, *, now: float) -> dict[str, object]:
+    """Project one immutable canonical job onto the read-only status surface."""
+    raw = job.to_dict()
+    return {
+        "generation": job.attempt.number,
+        "job_id": job.id,
+        "state": job.state.value,
+        "desired_state": job.desired_state.value,
+        "attempt": {
+            "number": job.attempt.number,
+            "parent_job_id": raw["parent_job_id"],
+            "resumed_from_attempt": raw["resumed_from_attempt"],
+            "resume_strategy": raw["resume_strategy"],
+        },
+        "error_kind": job.error_kind,
+        "progress": raw["progress"],
+        "timestamps": {
+            key: raw[key]
+            for key in (
+                "created_at",
+                "state_changed_at",
+                "started_at",
+                "finished_at",
+                "control_requested_at",
+                "control_acknowledged_at",
+            )
+        },
+        "stalled": _job_snapshot_stalled(job, now=now),
+    }
+
+
+def index_job_status(
+    root: Path,
+    *,
+    manager: JobManager | None = None,
+    now: float | None = None,
+) -> dict[str, object]:
+    """Return the latest canonical indexing generation for each public domain."""
+    canonical_root = os.path.normcase(str(root.resolve()))
+    observed_at = time.time() if now is None else now
+    owner = get_job_manager() if manager is None else manager
+    domains = (JobSource.VAULT, JobSource.CODE, JobSource.DOCUMENT)
+    latest: dict[JobSource, JobSnapshot] = {}
+    for job in owner.list_jobs():
+        project_root = job.spec.project_root
+        if job.spec.operation is not JobOperation.INDEX or project_root is None:
+            continue
+        if os.path.normcase(str(Path(project_root).resolve())) != canonical_root:
+            continue
+        current = latest.get(job.spec.source)
+        if current is None or job.timestamps.created_at > current.timestamps.created_at:
+            latest[job.spec.source] = job
+
+    sources: dict[str, object] = {}
+    degraded: list[dict[str, object]] = []
+    for source in domains:
+        job = latest.get(source)
+        if job is None:
+            sources[source.value] = None
+            continue
+        projected = _domain_job_snapshot(job, now=observed_at)
+        sources[source.value] = projected
+        reason = _job_degraded_reason(job, stalled=projected["stalled"] is True)
+        if reason is not None:
+            degraded.append(
+                {
+                    "source": source.value,
+                    "job_id": job.id,
+                    "reason": reason,
+                    "error_kind": job.error_kind,
+                }
+            )
+    return {"sources": sources, "degraded_reasons": degraded}
+
+
+def _job_degraded_reason(job: JobSnapshot, *, stalled: bool) -> str | None:
+    """Return the stable degradation reason for one latest domain job."""
+    if stalled:
+        return "stalled"
+    if job.state in {JobState.FAILED, JobState.INTERRUPTED}:
+        return job.state.value
+    return None
+
+
 def reset() -> None:
     """Clear all recorded in-memory activity (test-only).
 
@@ -791,6 +897,13 @@ def validate_document_support_profile(
     )
 
 
+def validate_document_job_admission(root: Path) -> DocumentIndexPreflight:
+    """Return document authority only after policy and profile admission."""
+    preflight = validate_document_index_policy(root)
+    validate_document_support_profile(root, preflight)
+    return preflight
+
+
 def scan_code_index_preflight(root: Path) -> ContentScanResult:
     """Return bounded admission from the production structured scanner."""
     return validate_code_index_policy(root).scan
@@ -859,6 +972,7 @@ def _bind_index_dispatch(
     job_id: str,
     *,
     code_preflight: CodeIndexPreflight | None,
+    document_preflight: DocumentIndexPreflight | None,
     registry: ServiceRegistry | None = None,
 ) -> JobOutcome:
     """Attach one logical job to the production indexing implementation."""
@@ -869,6 +983,7 @@ def _bind_index_dispatch(
         job_id,
         registry=get_registry() if registry is None else registry,
         code_preflight=code_preflight,
+        document_preflight=document_preflight,
         on_started=_sync_legacy_started,
         on_finished=_sync_legacy_finished,
     )
@@ -878,6 +993,7 @@ def _prepare_index_job_activation(
     manager: JobManager,
     snapshot: JobSnapshot,
     code_preflight: CodeIndexPreflight | None,
+    document_preflight: DocumentIndexPreflight | None,
     registry: ServiceRegistry | None,
 ) -> JobOutcome:
     """Publish legacy observability and bind execution outside the event loop."""
@@ -901,6 +1017,7 @@ def _prepare_index_job_activation(
         manager,
         snapshot.id,
         code_preflight=code_preflight,
+        document_preflight=document_preflight,
         registry=registry,
     )
 
@@ -919,6 +1036,7 @@ async def activate_index_job(
     outcome: JobOutcome,
     *,
     code_preflight: CodeIndexPreflight | None,
+    document_preflight: DocumentIndexPreflight | None = None,
     registry: ServiceRegistry | None = None,
 ) -> JobOutcome:
     """Bind and dispatch one newly admitted job without blocking its event loop.
@@ -926,8 +1044,9 @@ async def activate_index_job(
     Replayed or deduplicated creation outcomes already refer to an activated
     resource and are returned unchanged. Newly created paused jobs are bound
     but remain inert until their desired state changes to ``running``. Code
-    admission must be validated before durable creation, and the binding keeps
-    that exact discovery authority through the runnable attempt.
+    admission must be validated before durable creation. Activation accepts the
+    exact domain authority that admitted the resource; runnable attempts then
+    rediscover so paused, retried, and restored work cannot use stale scope.
     """
     snapshot = outcome.job
     if (
@@ -939,12 +1058,15 @@ async def activate_index_job(
 
     if snapshot.spec.source is JobSource.CODE and code_preflight is None:
         raise RuntimeError("code job activation requires its validated preflight")
+    if snapshot.spec.source is JobSource.DOCUMENT and document_preflight is None:
+        raise RuntimeError("document job activation requires its validated preflight")
     manager = get_job_manager()
     bound = await _run_in_thread(
         _prepare_index_job_activation,
         manager,
         snapshot,
         code_preflight,
+        document_preflight,
         registry,
     )
     if bound.status is JobOutcomeStatus.ERROR:
@@ -986,6 +1108,7 @@ def restore_managed_jobs(*, registry: ServiceRegistry) -> tuple[int, int]:
             manager,
             snapshot.id,
             code_preflight=code_preflight,
+            document_preflight=None,
             registry=registry,
         )
         if bound.status is JobOutcomeStatus.ERROR:
@@ -1016,7 +1139,12 @@ def start_reindex_vault(
     if not created:
         return job_id
 
-    bound = _bind_index_dispatch(manager, job_id, code_preflight=None)
+    bound = _bind_index_dispatch(
+        manager,
+        job_id,
+        code_preflight=None,
+        document_preflight=None,
+    )
     if bound.status is JobOutcomeStatus.ERROR:
         manager.fail_unstarted(job_id, result=bound.message)
         record_finish(job_id, error=bound.message)
@@ -1052,6 +1180,7 @@ def start_reindex_codebase(
         manager,
         job_id,
         code_preflight=code_preflight,
+        document_preflight=None,
     )
     if bound.status is JobOutcomeStatus.ERROR:
         manager.fail_unstarted(job_id, result=bound.message)

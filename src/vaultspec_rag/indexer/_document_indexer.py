@@ -91,6 +91,16 @@ class _DocumentResourceBudget:
         self.weighted_bytes = next_weight
 
 
+@dataclass(slots=True)
+class _DocumentRunCounts:
+    """Mutable counters local to one serialized document reconciliation."""
+
+    added: int = 0
+    updated: int = 0
+    removed: int = 0
+    preprocess_ok: int = 0
+
+
 class DocumentIndexer:
     """Index only paths explicitly admitted to the document domain."""
 
@@ -357,7 +367,172 @@ class DocumentIndexer:
             preprocess_failures=failures,
         )
 
-    def full_index(  # noqa: PLR0912 - explicit reconciliation dispositions
+    def _publish_full_paths(
+        self,
+        paths: tuple[pathlib.Path, ...],
+        *,
+        policy: ResolvedIndexPolicy,
+        prep: PreprocessContext | None,
+        budget: _DocumentResourceBudget,
+        previous_files: dict[str, DocumentFileMetadata],
+        reporter: ProgressReporter,
+        run_control: RunControl,
+    ) -> tuple[list[DocumentFileMetadata], _DocumentRunCounts, list[str]]:
+        """Publish a full discovered set while retaining failed prior points."""
+        published: list[DocumentFileMetadata] = []
+        counts = _DocumentRunCounts()
+        failures: list[str] = []
+        for path in paths:
+            rel = path.relative_to(self.root_dir).as_posix()
+            if policy.execution_mode == "off" and policy.match_preprocess(rel):
+                retained = previous_files.get(rel)
+                if retained is not None:
+                    published.append(retained)
+                failures.append(
+                    f"{rel}: preprocessing disabled; retained work as stale"
+                )
+                continue
+            metadata, chunk_count, failure = self._publish_file(
+                path,
+                policy=policy,
+                prep=prep,
+                budget=budget,
+                reporter=reporter,
+                run_control=run_control,
+            )
+            if failure is not None:
+                failures.append(failure)
+                retained = previous_files.get(rel)
+                if retained is not None:
+                    published.append(retained)
+                continue
+            assert metadata is not None
+            published.append(metadata)
+            if rel in previous_files:
+                counts.updated += chunk_count
+            else:
+                counts.added += chunk_count
+            if policy.match_preprocess(rel) is not None:
+                counts.preprocess_ok += 1
+        return published, counts, failures
+
+    @staticmethod
+    def _stale_point_ids(
+        previous_files: dict[str, DocumentFileMetadata],
+        published: Iterable[DocumentFileMetadata],
+    ) -> list[str]:
+        """Return prior point IDs absent from the new per-path publication."""
+        published_by_path = {item.source_path: item for item in published}
+        stale_ids: list[str] = []
+        for rel, old in previous_files.items():
+            current = published_by_path.get(rel)
+            if current is None:
+                stale_ids.extend(old.point_ids)
+            else:
+                stale_ids.extend(set(old.point_ids) - set(current.point_ids))
+        return stale_ids
+
+    def _select_incremental_paths(
+        self,
+        authorized_paths: tuple[pathlib.Path, ...],
+        previous_files: dict[str, DocumentFileMetadata],
+        *,
+        scoped: bool,
+    ) -> set[str]:
+        """Select changed/deleted paths without conflating scoped discovery."""
+        discovered = {
+            path.relative_to(self.root_dir).as_posix(): path
+            for path in authorized_paths
+        }
+        if scoped:
+            return set(discovered)
+        selected = {
+            rel
+            for rel, path in discovered.items()
+            if rel not in previous_files
+            or self._hash_path(path) != previous_files[rel].content_fingerprint
+        }
+        selected.update(set(previous_files) - set(discovered))
+        return selected
+
+    def _reconcile_incremental_paths(
+        self,
+        selected: set[str],
+        *,
+        policy: ResolvedIndexPolicy,
+        prep: PreprocessContext | None,
+        budget: _DocumentResourceBudget,
+        previous_files: dict[str, DocumentFileMetadata],
+        reporter: ProgressReporter,
+        run_control: RunControl,
+    ) -> tuple[dict[str, DocumentFileMetadata], _DocumentRunCounts, list[str]]:
+        """Apply one selected incremental set under the document writer lock."""
+        current = dict(previous_files)
+        counts = _DocumentRunCounts()
+        failures: list[str] = []
+        for rel in sorted(selected):
+            path = self.root_dir / pathlib.PurePosixPath(rel)
+            disposition = policy.classify(rel).disposition
+            admitted = disposition.admitted and disposition.kind is ContentKind.DOCUMENT
+            if not path.is_file() or not admitted:
+                old = current.pop(rel, None)
+                if old is not None:
+                    self.store.delete_document_content_chunks(list(old.point_ids))
+                    counts.removed += len(old.point_ids)
+                continue
+            if policy.execution_mode == "off" and policy.match_preprocess(rel):
+                failures.append(
+                    f"{rel}: preprocessing disabled; retained work as stale"
+                )
+                continue
+            old = current.get(rel)
+            metadata, chunk_count, failure = self._publish_file(
+                path,
+                policy=policy,
+                prep=prep,
+                budget=budget,
+                reporter=reporter,
+                run_control=run_control,
+            )
+            if failure is not None:
+                failures.append(failure)
+                continue
+            assert metadata is not None
+            current[rel] = metadata
+            self._replace_incremental_metadata(
+                current,
+                rel=rel,
+                old=old,
+                metadata=metadata,
+                chunk_count=chunk_count,
+                counts=counts,
+            )
+            if policy.match_preprocess(rel) is not None:
+                counts.preprocess_ok += 1
+        return current, counts, failures
+
+    def _replace_incremental_metadata(
+        self,
+        current: dict[str, DocumentFileMetadata],
+        *,
+        rel: str,
+        old: DocumentFileMetadata | None,
+        metadata: DocumentFileMetadata,
+        chunk_count: int,
+        counts: _DocumentRunCounts,
+    ) -> None:
+        """Replace one file generation and account for obsolete points."""
+        current[rel] = metadata
+        obsolete = set(old.point_ids if old else ()) - set(metadata.point_ids)
+        if obsolete:
+            self.store.delete_document_content_chunks(sorted(obsolete))
+            counts.removed += len(obsolete)
+        if old is None:
+            counts.added += chunk_count
+        else:
+            counts.updated += chunk_count
+
+    def full_index(
         self,
         *,
         clean: bool = False,
@@ -385,53 +560,16 @@ class DocumentIndexer:
                 self.store.drop_document_table()
                 previous_files = {}
             self.store.ensure_document_table()
-            published: list[DocumentFileMetadata] = []
-            added = updated = preprocess_ok = 0
-            failures: list[str] = []
-            for path in paths:
-                rel = path.relative_to(self.root_dir).as_posix()
-                if (
-                    policy.execution_mode == "off"
-                    and policy.match_preprocess(rel) is not None
-                ):
-                    retained = previous_files.get(rel)
-                    if retained is not None:
-                        published.append(retained)
-                    failures.append(
-                        f"{rel}: preprocessing disabled; retained work as stale"
-                    )
-                    continue
-                metadata, chunk_count, failure = self._publish_file(
-                    path,
-                    policy=policy,
-                    prep=prep,
-                    budget=budget,
-                    reporter=reporter,
-                    run_control=run_control,
-                )
-                if failure is not None:
-                    failures.append(failure)
-                    retained = previous_files.get(rel)
-                    if retained is not None:
-                        published.append(retained)
-                    continue
-                assert metadata is not None
-                published.append(metadata)
-                if rel in previous_files:
-                    updated += chunk_count
-                else:
-                    added += chunk_count
-                if policy.match_preprocess(rel) is not None:
-                    preprocess_ok += 1
-
-            published_by_path = {item.source_path: item for item in published}
-            stale_ids: list[str] = []
-            for rel, old in previous_files.items():
-                current = published_by_path.get(rel)
-                if current is None:
-                    stale_ids.extend(old.point_ids)
-                else:
-                    stale_ids.extend(set(old.point_ids) - set(current.point_ids))
+            published, counts, failures = self._publish_full_paths(
+                paths,
+                policy=policy,
+                prep=prep,
+                budget=budget,
+                previous_files=previous_files,
+                reporter=reporter,
+                run_control=run_control,
+            )
+            stale_ids = self._stale_point_ids(previous_files, published)
             if stale_ids:
                 self.store.delete_document_content_chunks(sorted(stale_ids))
             write_document_meta(
@@ -440,15 +578,15 @@ class DocumentIndexer:
             )
             return self._finish_result(
                 started=started,
-                added=added,
-                updated=updated,
+                added=counts.added,
+                updated=counts.updated,
                 removed=len(stale_ids),
                 files=len(paths),
-                preprocess_ok=preprocess_ok,
+                preprocess_ok=counts.preprocess_ok,
                 failures=failures,
             )
 
-    def incremental_index(  # noqa: PLR0912 - explicit reconciliation dispositions
+    def incremental_index(
         self,
         *,
         reporter: ProgressReporter,
@@ -486,80 +624,32 @@ class DocumentIndexer:
             )
 
         previous_files = {item.source_path: item for item in previous.files}
-        if changed_paths is None:
-            discovered_by_path = {
-                path.relative_to(self.root_dir).as_posix(): path
-                for path in authorized_paths
-            }
-            selected = {
-                rel
-                for rel, path in discovered_by_path.items()
-                if rel not in previous_files
-                or self._hash_path(path) != previous_files[rel].content_fingerprint
-            }
-            selected.update(set(previous_files) - set(discovered_by_path))
-        else:
-            selected = {
-                path.relative_to(self.root_dir).as_posix() for path in authorized_paths
-            }
+        selected = self._select_incremental_paths(
+            authorized_paths,
+            previous_files,
+            scoped=changed_paths is not None,
+        )
 
         with self._writer_lock:
-            current = dict(previous_files)
-            added = updated = removed = preprocess_ok = 0
-            failures: list[str] = []
-            for rel in sorted(selected):
-                path = self.root_dir / pathlib.PurePosixPath(rel)
-                disposition = policy.classify(rel).disposition
-                if not path.is_file() or not (
-                    disposition.admitted and disposition.kind is ContentKind.DOCUMENT
-                ):
-                    old = current.pop(rel, None)
-                    if old is not None:
-                        self.store.delete_document_content_chunks(list(old.point_ids))
-                        removed += len(old.point_ids)
-                    continue
-                if (
-                    policy.execution_mode == "off"
-                    and policy.match_preprocess(rel) is not None
-                ):
-                    failures.append(
-                        f"{rel}: preprocessing disabled; retained work as stale"
-                    )
-                    continue
-                old = current.get(rel)
-                metadata, chunk_count, failure = self._publish_file(
-                    path,
-                    policy=policy,
-                    prep=prep,
-                    budget=budget,
-                    reporter=reporter,
-                    run_control=run_control,
-                )
-                if failure is not None:
-                    failures.append(failure)
-                    continue
-                assert metadata is not None
-                current[rel] = metadata
-                obsolete = set(old.point_ids if old else ()) - set(metadata.point_ids)
-                if obsolete:
-                    self.store.delete_document_content_chunks(sorted(obsolete))
-                    removed += len(obsolete)
-                if old is None:
-                    added += chunk_count
-                else:
-                    updated += chunk_count
-                if policy.match_preprocess(rel) is not None:
-                    preprocess_ok += 1
+            current, counts, failures = self._reconcile_incremental_paths(
+                selected,
+                policy=policy,
+                prep=prep,
+                budget=budget,
+                previous_files=previous_files,
+                reporter=reporter,
+                run_control=run_control,
+            )
             write_document_meta(
                 self._meta_path,
                 self._metadata(policy, current.values(), complete=not failures),
             )
             return self._finish_result(
                 started=started,
-                added=added,
-                updated=updated,
-                removed=removed,
+                added=counts.added,
+                updated=counts.updated,
+                removed=counts.removed,
                 files=len(selected),
-                preprocess_ok=preprocess_ok,
+                preprocess_ok=counts.preprocess_ok,
                 failures=failures,
             )
