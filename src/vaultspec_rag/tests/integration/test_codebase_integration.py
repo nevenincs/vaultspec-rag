@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, TypedDict
 
 import pytest
@@ -315,6 +316,178 @@ class TestCodebaseIncrementalIndex:
 
         assert result.added > 0
         assert store.count_code() > count_before
+
+    @pytest.mark.timeout(180)
+    def test_unscoped_incremental_uses_weighted_segments(
+        self,
+        code_project: _CodeProject,
+    ) -> None:
+        from ...config import EnvVar, reset_config
+        from ...indexer import _chunk_worker
+        from .test_indexer_progress_integration import CountingProgressReporter
+
+        indexer = code_project["code_indexer"]
+        store = code_project["store"]
+        root = code_project["root"]
+        source = code_project["src_dir"] / "many_units.py"
+        indexer.full_index(reporter=NullProgressReporter())
+        source.write_text(
+            "\n\n".join(
+                (
+                    f"def unit_{index}() -> str:\n"
+                    f'    payload = "{str(index) * 900}"\n'
+                    "    return payload"
+                )
+                for index in range(6)
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        expected = _chunk_worker.chunk_and_hash_file(source, root)
+        expected_ids = {chunk.id for chunk in expected.chunks}
+        assert len(expected_ids) > 2
+
+        overrides = {
+            EnvVar.INDEX_SEGMENT_MAX_CHUNKS.value: "1",
+            EnvVar.INDEX_QUEUE_MAX_CHUNKS.value: "2",
+            EnvVar.INDEX_CHUNK_WORKERS.value: "1",
+        }
+        previous = {key: os.environ.get(key) for key in overrides}
+        try:
+            os.environ.update(overrides)
+            reset_config()
+            reporter = CountingProgressReporter()
+            result = indexer.incremental_index(reporter=reporter)
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            reset_config()
+
+        rel_path = "src/many_units.py"
+        assert result.added == 1
+        assert set(store.get_code_ids_by_paths({rel_path})) == expected_ids
+        assert (
+            indexer._load_meta()[rel_path]  # pyright: ignore[reportPrivateUsage]
+            == expected.content_hash
+        )
+        assert "chunk + embed" in reporter.phase_names()
+        assert "chunk files" not in reporter.phase_names()
+        assert "embed + upsert chunks" not in reporter.phase_names()
+
+    @pytest.mark.timeout(240)
+    def test_unscoped_incremental_rolls_back_then_retries_real_failure(
+        self,
+        code_project: _CodeProject,
+    ) -> None:
+        import hashlib
+        import shlex
+        import sys
+        import textwrap
+
+        from ...config import EnvVar, reset_config
+        from ...indexer._preprocess_runner import PreprocessAbortError
+        from .test_indexer_progress_integration import (
+            CountingProgressReporter,
+            _assert_phase_balanced,
+        )
+
+        indexer = code_project["code_indexer"]
+        store = code_project["store"]
+        root = code_project["root"]
+        src_dir = code_project["src_dir"]
+        script = root / "conditional_preprocessor.py"
+        script.write_text(
+            textwrap.dedent(
+                """
+                import json
+                import pathlib
+                import sys
+                import time
+
+                source = pathlib.Path(sys.argv[1])
+                content = source.read_text(encoding="utf-8")
+                if "FAIL" in content:
+                    time.sleep(1.0)
+                    sys.exit(7)
+                print(json.dumps({
+                    "schema_version": 1,
+                    "preprocessor_id": "conditional",
+                    "preprocessor_version": "1",
+                    "source_path": str(source),
+                    "text": "successful conditional extraction",
+                }))
+                """
+            ),
+            encoding="utf-8",
+        )
+        command = f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} {{path}}"
+        (root / ".vaultragpreprocess.toml").write_text(
+            "[[rule]]\n"
+            'pattern = "*.fatal"\n'
+            f"command = '''{command}'''\n"
+            'on_error = "fail"\n',
+            encoding="utf-8",
+        )
+        indexer.full_index(reporter=NullProgressReporter())
+        metadata_before = indexer._load_meta()  # pyright: ignore[reportPrivateUsage]
+
+        good = src_dir / "a_good.py"
+        failing = src_dir / "z_fail.fatal"
+        good.write_text(
+            "def stored_before_failure():\n    return True\n", encoding="utf-8"
+        )
+        failing.write_text("FAIL\n", encoding="utf-8")
+        attempted = {"src/a_good.py", "src/z_fail.fatal"}
+
+        overrides = {
+            EnvVar.INDEX_SEGMENT_MAX_CHUNKS.value: "1",
+            EnvVar.INDEX_QUEUE_MAX_CHUNKS.value: "2",
+            EnvVar.INDEX_CHUNK_WORKERS.value: "1",
+        }
+        previous = {key: os.environ.get(key) for key in overrides}
+        try:
+            os.environ.update(overrides)
+            reset_config()
+            failure_reporter = CountingProgressReporter()
+            with pytest.raises(PreprocessAbortError):
+                indexer.incremental_index(reporter=failure_reporter)
+
+            _assert_phase_balanced(failure_reporter.events)
+            assert "chunk + embed" in failure_reporter.phase_names()
+            assert store.get_code_ids_by_paths(attempted) == []
+            assert (
+                indexer._load_meta()  # pyright: ignore[reportPrivateUsage]
+                == metadata_before
+            )
+
+            failing.write_text("SUCCEED\n", encoding="utf-8")
+            retry_reporter = CountingProgressReporter()
+            result = indexer.incremental_index(reporter=retry_reporter)
+            _assert_phase_balanced(retry_reporter.events)
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            reset_config()
+
+        assert result.added == 2
+        assert store.get_code_ids_by_paths(attempted)
+        metadata_after = indexer._load_meta()  # pyright: ignore[reportPrivateUsage]
+        assert (
+            metadata_after["src/a_good.py"]
+            == hashlib.blake2b(good.read_bytes()).hexdigest()
+        )
+        assert (
+            metadata_after["src/z_fail.fatal"]
+            == hashlib.blake2b(failing.read_bytes()).hexdigest()
+        )
+        assert "delete removed" in retry_reporter.phase_names()
+        assert "write metadata" in retry_reporter.phase_names()
 
 
 class TestCodebaseSearch:
