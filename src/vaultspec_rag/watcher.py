@@ -26,7 +26,7 @@ from watchfiles import (
 )
 
 from . import jobs as _jobs
-from .indexer._chunking import SUPPORTED_EXTENSIONS
+from .indexer._content_policy import ContentKind
 from .indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
 from .job_manager import JobAttemptContext, JobExecutionResult
 from .job_models import (
@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 
     from .graph_cache import GraphCache
     from .indexer import CodebaseIndexer, VaultIndexer
-    from .indexer._preprocess_config import PreprocessConfig
+    from .indexer._resolved_policy import ResolvedIndexPolicy
     from .service import ServiceRegistry
 
 logger = logging.getLogger(__name__)
@@ -68,10 +68,6 @@ _RETRY_SETTLEMENTS: dict[Path, set[asyncio.Task[None]]] = {}
 
 # Extensions recognized as vault documentation
 _VAULT_EXTENSIONS = frozenset({".md"})
-
-# One CPU-only source of truth with CodebaseIndexer. Non-vault markdown remains
-# code-indexable because vault classification wins before this predicate.
-_CODE_EXTENSIONS = frozenset(SUPPORTED_EXTENSIONS)
 
 # Index-shaping control files. An edit to one of these changes index
 # membership without changing any indexed file's bytes, so it must reach the
@@ -175,24 +171,22 @@ def _is_code_change(
     path: Path,
     root_dir: Path,
     vault_dir: Path,
-    preprocess_config: PreprocessConfig | None = None,
+    policy: ResolvedIndexPolicy | None,
 ) -> bool:
-    """Return True if path is a source file outside the vault directory.
+    """Return whether one watcher path is code-owned in this snapshot.
 
-    A file whose extension is in ``_CODE_EXTENSIONS`` qualifies, and so does a
-    file matched by a preprocess rule even when its extension is unsupported
-    (#185, D8) - otherwise a watched ``.pdf`` change would never trigger a
-    reindex. Ignore filtering still happens downstream in the indexer scan.
+    Control files always schedule reconciliation because they can change the
+    next generation's policy. Ordinary paths use exactly the shared
+    classifier; parser support and directory layout never establish ownership.
 
     Args:
         path: The changed file path.
         root_dir: Project root directory.
         vault_dir: Vault directory to exclude.
-        preprocess_config: Resolved preprocess rules for the root, if any.
+        policy: Immutable watcher-generation policy snapshot.
 
     Returns:
-        True if path is an indexable source or preprocessable file outside
-        vault_dir and inside root_dir, False otherwise.
+        True for a control file or admitted code-owned path outside the vault.
     """
     try:
         path.relative_to(vault_dir)
@@ -208,12 +202,38 @@ def _is_code_change(
         return False
     if path.name in _CONFIG_FILENAMES:
         return True
-    if path.suffix.lower() in _CODE_EXTENSIONS:
-        return True
-    if preprocess_config is not None:
-        rel_posix = str(rel).replace("\\", "/")
-        return preprocess_config.match(rel_posix) is not None
-    return False
+    if policy is None:
+        return False
+    disposition = policy.classify(str(rel).replace("\\", "/")).disposition
+    return disposition.admitted and disposition.kind is ContentKind.CODE
+
+
+def _refresh_watcher_policy(
+    code_indexer: CodebaseIndexer,
+    root_dir: Path,
+    previous: ResolvedIndexPolicy | None,
+) -> ResolvedIndexPolicy | None:
+    """Advance watcher classification authority or retain fail-closed state."""
+    try:
+        policy = code_indexer.resolve_policy_snapshot()
+    except (OSError, ValueError) as exc:
+        log_event(
+            logger,
+            "service.watcher",
+            "policy_snapshot_rejected",
+            severity=logging.ERROR,
+            root=root_dir,
+            error=exc,
+        )
+        return previous
+    log_event(
+        logger,
+        "service.watcher",
+        "policy_snapshot_advanced",
+        root=root_dir,
+        policy_fingerprint=policy.fingerprints.snapshot,
+    )
+    return policy
 
 
 async def _run_retry_transaction[T](operation: Callable[[], T]) -> T:
@@ -686,13 +706,14 @@ async def watch_and_reindex(
         owner_registry,
         code_retry,
     )
-    # Resolved at watcher start so a watched change to a preprocessable file
-    # (e.g. a .pdf) routes through the same debounce/cooldown machinery, and
-    # re-resolved whenever the root preprocess config itself changes so a rule
-    # added mid-session admits its target files without a restart. Held in a
-    # single-slot list because the change filter closes over it and must see
-    # the refreshed config after a reload.
-    prep_config: list[PreprocessConfig] = [code_indexer.preprocess_config()]
+    # One immutable snapshot governs ordinary watcher intake until an
+    # index-shaping control event advances the watcher generation. The list is
+    # a closure cell shared with ``watch_filter``; invalid policy edits retain
+    # the prior intake snapshot while the unconditional control-file event is
+    # still sent to the indexer, whose entry gate then fails closed.
+    code_policy: list[ResolvedIndexPolicy | None] = [
+        _refresh_watcher_policy(code_indexer, root_dir, None)
+    ]
 
     try:
         async for changes in awatch(
@@ -703,7 +724,7 @@ async def watch_and_reindex(
             stop_event=stop_event,
             watch_filter=lambda _change, path: (
                 _is_vault_change(Path(path), vault_dir)
-                or _is_code_change(Path(path), root_dir, vault_dir, prep_config[0])
+                or _is_code_change(Path(path), root_dir, vault_dir, code_policy[0])
             ),
         ):
             # ``changes`` is empty on an idle tick (yield_on_timeout): the loop
@@ -712,25 +733,28 @@ async def watch_and_reindex(
             # cooldown window is reconciled even when no further change arrives.
             vault_events_observed = False
             code_events_observed = False
+            policy_changed = any(
+                Path(path_str).name in _CONFIG_FILENAMES
+                for _change_type, path_str in changes
+            )
+            if policy_changed:
+                code_policy[0] = _refresh_watcher_policy(
+                    code_indexer,
+                    root_dir,
+                    code_policy[0],
+                )
             for change_type, path_str in changes:
                 path = Path(path_str)
                 if change_type in (Change.added, Change.modified, Change.deleted):
-                    if (
-                        path.name == PREPROCESS_CONFIG_FILENAME
-                        and path.parent == root_dir
-                    ):
-                        prep_config[0] = code_indexer.preprocess_config()
-                        log_event(
-                            logger,
-                            "service.watcher",
-                            "preprocess_config_reloaded",
-                            root=root_dir,
-                            rules=len(prep_config[0].rules),
-                        )
                     if _is_vault_change(path, vault_dir):
                         vault_slot.add_dirty(path)
                         vault_events_observed = True
-                    elif _is_code_change(path, root_dir, vault_dir, prep_config[0]):
+                    elif _is_code_change(
+                        path,
+                        root_dir,
+                        vault_dir,
+                        code_policy[0],
+                    ):
                         code_slot.add_dirty(path)
                         code_events_observed = True
 

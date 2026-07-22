@@ -140,6 +140,15 @@ class ContentScanResult:
     hooks_will_run: bool
 
 
+@dataclass(frozen=True, slots=True)
+class CodeIndexPreflight:
+    """Read-only policy and discovery authority for one code operation."""
+
+    root_dir: pathlib.Path
+    policy: ResolvedIndexPolicy
+    scan: ContentScanResult
+
+
 class _UnsettledCodeConsumerError(RuntimeError):
     """The code consumer remained live after its bounded shutdown wait."""
 
@@ -379,6 +388,47 @@ class CodebaseIndexer:
             content_policy=content_policy,
             extra_excludes=getattr(self, "_extra_excludes", ()),
         )
+
+    def resolve_policy_snapshot(self) -> ResolvedIndexPolicy:
+        """Resolve immutable watcher/preflight authority without mutation."""
+        return self._resolve_operation_policy()
+
+    def preflight_content(
+        self,
+        *,
+        sample_limit: int = _DEFAULT_SCAN_SAMPLE_LIMIT,
+    ) -> CodeIndexPreflight:
+        """Resolve and discover once before any mutable index resource."""
+        policy = self.resolve_policy_snapshot()
+        scan = self._scan_content(policy, sample_limit=sample_limit)
+        return CodeIndexPreflight(
+            root_dir=self.root_dir.resolve(),
+            policy=policy,
+            scan=scan,
+        )
+
+    def _accept_preflight(
+        self,
+        preflight: CodeIndexPreflight | None,
+    ) -> tuple[ResolvedIndexPolicy, tuple[pathlib.Path, ...] | None]:
+        """Return exact caller authority or resolve policy once locally."""
+        if preflight is None:
+            return self.resolve_policy_snapshot(), None
+        if preflight.root_dir != self.root_dir.resolve():
+            raise ValueError(
+                "code index preflight root does not match the indexer root"
+            )
+        if (
+            preflight.scan.policy_fingerprint
+            != preflight.policy.fingerprints.snapshot
+        ):
+            raise ValueError("code index preflight policy fingerprint is inconsistent")
+        root = preflight.root_dir
+        if any(
+            not path.resolve().is_relative_to(root) for path in preflight.scan.files
+        ):
+            raise ValueError("code index preflight contains a path outside its root")
+        return preflight.policy, preflight.scan.files
 
     def _collect_gitignore_patterns(self) -> list[str]:
         """Collect the hardcoded and ``.gitignore``-sourced exclusion patterns.
@@ -727,8 +777,7 @@ class CodebaseIndexer:
         sample_limit: int = _DEFAULT_SCAN_SAMPLE_LIMIT,
     ) -> ContentScanResult:
         """Return structured admission from one freshly resolved snapshot."""
-        policy = self._resolve_operation_policy()
-        return self._scan_content(policy, sample_limit=sample_limit)
+        return self.preflight_content(sample_limit=sample_limit).scan
 
     def scan_files(self) -> list[pathlib.Path]:
         """Return the list of files that would be indexed.
@@ -1803,6 +1852,7 @@ class CodebaseIndexer:
         policy: ResolvedIndexPolicy,
         reporter: ProgressReporter,
         *,
+        discovered_paths: tuple[pathlib.Path, ...] | None = None,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> list[pathlib.Path]:
         """Resolve full-run inputs and scan with bounded control checkpoints."""
@@ -1813,7 +1863,11 @@ class CodebaseIndexer:
 
         reporter.phase_start("scan codebase", None)
         try:
-            paths = self._scan_codebase(policy, run_control=run_control)
+            paths = (
+                self._scan_codebase(policy, run_control=run_control)
+                if discovered_paths is None
+                else list(discovered_paths)
+            )
         finally:
             reporter.phase_end()
         run_control.checkpoint()
@@ -1921,12 +1975,17 @@ class CodebaseIndexer:
         policy: ResolvedIndexPolicy,
         reporter: ProgressReporter,
         *,
+        discovered_paths: tuple[pathlib.Path, ...] | None = None,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> tuple[dict[str, pathlib.Path], dict[str, str]]:
         """Scan and hash one unscoped incremental corpus cooperatively."""
         reporter.phase_start("scan codebase", None)
         try:
-            current_paths = self._scan_codebase(policy, run_control=run_control)
+            current_paths = (
+                self._scan_codebase(policy, run_control=run_control)
+                if discovered_paths is None
+                else list(discovered_paths)
+            )
             current_files: dict[str, pathlib.Path] = {}
             for path in current_paths:
                 run_control.checkpoint()
@@ -1966,6 +2025,7 @@ class CodebaseIndexer:
         clean: bool = False,
         *,
         reporter: ProgressReporter,
+        preflight: CodeIndexPreflight | None = None,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Full codebase re-index serialized through the writer lock.
@@ -1976,7 +2036,7 @@ class CodebaseIndexer:
         F6.6).
         """
         run_control.checkpoint()
-        resolved_policy = self._resolve_operation_policy()
+        resolved_policy, discovered_paths = self._accept_preflight(preflight)
         run_control.checkpoint()
         with self._writer_lock:
             self._resolved_policy = resolved_policy
@@ -2001,6 +2061,7 @@ class CodebaseIndexer:
                 result = self._full_index_locked(
                     clean=clean,
                     policy=resolved_policy,
+                    discovered_paths=discovered_paths,
                     reporter=reporter,
                     run_control=run_control,
                 )
@@ -2046,6 +2107,7 @@ class CodebaseIndexer:
         clean: bool = False,
         *,
         policy: ResolvedIndexPolicy,
+        discovered_paths: tuple[pathlib.Path, ...] | None = None,
         reporter: ProgressReporter,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
@@ -2077,6 +2139,7 @@ class CodebaseIndexer:
         paths = self._prepare_full_paths(
             policy,
             reporter,
+            discovered_paths=discovered_paths,
             run_control=run_control,
         )
 
@@ -2185,6 +2248,7 @@ class CodebaseIndexer:
         *,
         reporter: ProgressReporter,
         changed_paths: Iterable[pathlib.Path] | None = None,
+        preflight: CodeIndexPreflight | None = None,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Incremental codebase re-index serialized through the writer lock.
@@ -2201,7 +2265,7 @@ class CodebaseIndexer:
                 When ``None`` the full ``.gitignore``-aware scan runs.
         """
         run_control.checkpoint()
-        resolved_policy = self._resolve_operation_policy()
+        resolved_policy, discovered_paths = self._accept_preflight(preflight)
         run_control.checkpoint()
         with self._writer_lock:
             self._resolved_policy = resolved_policy
@@ -2228,6 +2292,9 @@ class CodebaseIndexer:
                     policy=resolved_policy,
                     reporter=reporter,
                     changed_paths=changed_paths,
+                    discovered_paths=(
+                        discovered_paths if changed_paths is None else None
+                    ),
                     run_control=run_control,
                 )
                 run_control.checkpoint()
@@ -2273,6 +2340,7 @@ class CodebaseIndexer:
         policy: ResolvedIndexPolicy,
         reporter: ProgressReporter,
         changed_paths: Iterable[pathlib.Path] | None = None,
+        discovered_paths: tuple[pathlib.Path, ...] | None = None,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Locked implementation of cooperative incremental indexing."""
@@ -2287,6 +2355,7 @@ class CodebaseIndexer:
             return self._full_index_locked(
                 clean=True,
                 policy=policy,
+                discovered_paths=discovered_paths,
                 reporter=reporter,
                 run_control=run_control,
             )
@@ -2303,6 +2372,7 @@ class CodebaseIndexer:
             return self._full_index_locked(
                 clean=True,
                 policy=policy,
+                discovered_paths=discovered_paths,
                 reporter=reporter,
                 run_control=run_control,
             )
@@ -2322,6 +2392,7 @@ class CodebaseIndexer:
         current_files, current_hashes = self._scan_and_hash_incremental_inputs(
             policy,
             reporter,
+            discovered_paths=discovered_paths,
             run_control=run_control,
         )
         previous_files = set(previous_metadata)
@@ -2590,10 +2661,8 @@ class CodebaseIndexer:
         self._meta_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = self._meta_path.with_suffix(".tmp")
         stamped = {**meta, EMBED_SCHEMA_KEY: CODE_EMBED_SCHEMA}
-        if membership is not None:
-            stamped[MEMBERSHIP_EPOCH_KEY] = membership
-        if content is not None:
-            stamped[CONTENT_EPOCH_KEY] = content
+        stamped[MEMBERSHIP_EPOCH_KEY] = membership
+        stamped[CONTENT_EPOCH_KEY] = content
         tmp_path.write_text(json.dumps(stamped, indent=2), encoding="utf-8")
         os.replace(tmp_path, self._meta_path)
 
