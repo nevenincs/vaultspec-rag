@@ -122,7 +122,7 @@ Interrupt real work and prove one-unit replay, exact final state, and safe signa
 
 - [x] `W02.P08.S29` - Interrupt and restart a real multi-segment index and prove replay is limited to the last unrecorded unit; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
 - [x] `W02.P08.S30` - Invalidate incompatible checkpoints on model, schema, content, membership, preprocessing, and configuration drift; `src/vaultspec_rag/tests/test_config_epoch.py`.
-- [ ] `W02.P08.S31` - Interrupt each finalization phase and prove restart converges to exact point IDs and metadata; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
+- [x] `W02.P08.S31` - Interrupt each finalization phase and prove restart converges to exact point IDs and metadata; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
 
 ## Wave `W03` - service operability and control integration
 
@@ -142,7 +142,7 @@ Publish generation, checkpoint, retry, circuit, memory, profile, and terminal st
 
 Bind the accepted job-control execution waves to ledger safe points without duplicating their runtime or API ownership.
 
-- [ ] `W03.P10.S37` - Expose ledger commit units, protected spans, and typed safety signals through the run-policy safe-point contract; `src/vaultspec_rag/indexer/_run_policy.py`.
+- [x] `W03.P10.S37` - Expose ledger commit units, protected spans, and typed safety signals through the run-policy safe-point contract; `src/vaultspec_rag/indexer/_run_policy.py`.
 - [ ] `W03.P10.S38` - Verify service-job-control cooperative indexing phases use ledger safe points and preserve one-unit replay; `src/vaultspec_rag/tests/integration/test_index_job_control.py`.
 
 ### Phase `W03.P11` - operator visibility verification

@@ -98,6 +98,27 @@ def test_interruptible_wait_delivers_real_cross_thread_control() -> None:
     assert isinstance(outcomes[0], CancelRequested)
 
 
+def test_protected_span_defers_control_until_its_durable_exit() -> None:
+    control = RunControlToken()
+    policy = RunPolicy(
+        no_progress_timeout_seconds=5.0,
+        run_control=control,
+    )
+
+    with (
+        pytest.raises(CancelRequested),
+        policy.protected("storage-confirmed replacement"),
+    ):
+        assert control.request_cancel()
+        snapshot = control.snapshot()
+        assert snapshot.delivered is None
+        assert snapshot.protected_depth == 1
+
+    final = control.snapshot()
+    assert final.delivered is not None
+    assert final.protected_depth == 0
+
+
 def test_full_queue_put_expires_without_hanging() -> None:
     target: queue.Queue[str] = queue.Queue(maxsize=1)
     target.put_nowait("occupied")
