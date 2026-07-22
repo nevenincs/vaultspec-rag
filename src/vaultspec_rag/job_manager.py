@@ -31,6 +31,7 @@ from .job_control import (
 )
 from .job_models import (
     DesiredJobState,
+    IndexResilienceSnapshot,
     JobAttempt,
     JobCapabilities,
     JobInitiator,
@@ -152,6 +153,14 @@ class JobAttemptContext:
             project_lease_held=project_lease_held,
             writer_lock_held=writer_lock_held,
             pipeline_active=pipeline_active,
+        )
+
+    def set_resilience(self, resilience: IndexResilienceSnapshot) -> bool:
+        """Publish canonical resilience state for this exact attempt."""
+        return self.manager.update_resilience(
+            self.job_id,
+            task=self.task,
+            resilience=resilience,
         )
 
 
@@ -1489,6 +1498,58 @@ class JobManager:
                         else pipeline_active
                     ),
                 ),
+            )
+            persistence_error = self._persist_locked()
+            if persistence_error is not None:
+                if not persistence_error.published:
+                    self._restore_state_locked(backup)
+                return False
+            return True
+
+    def update_resilience(
+        self,
+        job_id: str,
+        *,
+        task: asyncio.Task[Any],
+        resilience: IndexResilienceSnapshot,
+    ) -> bool:
+        """Publish resilience state only for the currently attached attempt."""
+        with self._lock:
+            backup = self._capture_state_locked()
+            managed = self._active.get(job_id)
+            if managed is None or managed.runtime.task is not task:
+                return False
+            managed.snapshot = replace(
+                managed.snapshot,
+                resilience=resilience,
+            )
+            persistence_error = self._persist_locked()
+            if persistence_error is not None:
+                if not persistence_error.published:
+                    self._restore_state_locked(backup)
+                return False
+            return True
+
+    def update_terminal_resilience(
+        self,
+        job_id: str,
+        *,
+        attempt: int,
+        resilience: IndexResilienceSnapshot,
+    ) -> bool:
+        """Publish settled retry truth for one exact terminal attempt."""
+        with self._lock:
+            backup = self._capture_state_locked()
+            managed = self._get_terminal_locked(job_id)
+            if (
+                managed is None
+                or not managed.snapshot.state.is_terminal
+                or managed.snapshot.attempt.number != attempt
+            ):
+                return False
+            managed.snapshot = replace(
+                managed.snapshot,
+                resilience=resilience,
             )
             persistence_error = self._persist_locked()
             if persistence_error is not None:

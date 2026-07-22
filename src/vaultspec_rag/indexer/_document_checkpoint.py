@@ -75,6 +75,7 @@ class DocumentRunCheckpoint:
     generation: RunGeneration
     policy: ResolvedIndexPolicy
     run_policy: RunPolicy
+    resumed_units: int = 0
 
     @classmethod
     def open(
@@ -172,6 +173,8 @@ class DocumentRunCheckpoint:
     def slice_committed(self, unit: CommitUnit) -> bool:
         """Return whether an exact destination slice is already confirmed."""
         committed = self.ledger.unit_committed(self.generation_id, unit)
+        if committed:
+            self.resumed_units += 1
         if committed and unit.is_file_end:
             assert unit.source_digest is not None
             self._record_indexed_file(unit.rel_path, unit.source_digest)

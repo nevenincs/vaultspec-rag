@@ -407,11 +407,17 @@ class CodebaseIndexer:
         self._support_measurement = SupportMeasurement(0, 0)
         self._support_limits: SupportProfileLimits | None = None
         self._support_profile_name: str | None = None
+        self._last_checkpoint: CodeRunCheckpoint | None = None
 
     @property
     def support_measurement(self) -> SupportMeasurement:
         """Return the latest immutable code workload measurement snapshot."""
         return getattr(self, "_support_measurement", SupportMeasurement(0, 0))
+
+    @property
+    def last_checkpoint(self) -> CodeRunCheckpoint | None:
+        """Return the latest run authority for service-domain projection."""
+        return getattr(self, "_last_checkpoint", None)
 
     def _begin_support_measurement(
         self,
@@ -2055,7 +2061,7 @@ class CodebaseIndexer:
             encode_batch_size=limits.encode_batch_size,
             flush_slices=limits.flush_slices,
         )
-        return CodeRunCheckpoint.open(
+        checkpoint = CodeRunCheckpoint.open(
             data_root=self._data_root,
             root_dir=self.root_dir,
             policy=policy,
@@ -2066,6 +2072,8 @@ class CodebaseIndexer:
             dense_dimensions=limits.dense_dimension,
             configuration=checkpoint_configuration,
         )
+        self._last_checkpoint = checkpoint
+        return checkpoint
 
     def _resume_pending_finalization(
         self,

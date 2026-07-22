@@ -86,6 +86,7 @@ class CodeRunCheckpoint:
     generation: RunGeneration
     policy: ResolvedIndexPolicy
     run_policy: RunPolicy
+    resumed_units: int = 0
 
     @classmethod
     def open(
@@ -186,6 +187,7 @@ class CodeRunCheckpoint:
         for segment in segments:
             unit = self.unit_for(segment, source_digest)
             if self.ledger.unit_committed(self.generation_id, unit):
+                self.resumed_units += 1
                 if segment.is_file_end:
                     self._record_indexed_file(segment.path, source_digest)
                 continue
