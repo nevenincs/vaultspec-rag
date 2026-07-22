@@ -48,7 +48,13 @@ _EXTRACTOR = """
 """
 
 
-def _context(tmp_path: Path, pattern: str = "*.pdf") -> PreprocessContext:
+def _context(
+    tmp_path: Path,
+    pattern: str = "*.pdf",
+    target: ContentKind = ContentKind.DOCUMENT,
+    *,
+    batch: bool = False,
+) -> PreprocessContext:
     script = tmp_path / "extractor.py"
     script.write_text(textwrap.dedent(_EXTRACTOR), encoding="utf-8")
     command = f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} {{path}}"
@@ -57,12 +63,13 @@ def _context(tmp_path: Path, pattern: str = "*.pdf") -> PreprocessContext:
         command=command,
         entry_point=None,
         priority=100,
-        target=ContentKind.DOCUMENT,
+        target=target,
         extractor_version="1.0.0",
         on_error="skip",
         timeout_s=30.0,
         options={},
         order=0,
+        batch=batch,
     )
     return PreprocessContext(
         config=PreprocessConfig([rule]),
@@ -113,6 +120,38 @@ def test_code_worker_refuses_a_document_targeted_rule(tmp_path: Path) -> None:
         _chunk_worker.chunk_file(source, tmp_path, prep)
     with pytest.raises(ValueError, match="non-code extraction rule"):
         _chunk_worker.chunk_and_hash_file(source, tmp_path, prep)
+
+
+def test_document_worker_refuses_a_code_targeted_rule(tmp_path: Path) -> None:
+    # Mirror of the case above, guarding the opposite direction. Catches a
+    # mutation that relaxes the document entry point's guard - for instance
+    # dropping its check on the assumption that only code workers can be handed
+    # the wrong kind, which would let code-targeted extraction output be stored
+    # as document content.
+    source = tmp_path / "module.pdf"
+    source.write_bytes(b"\x00\x01binary")
+    prep = _context(tmp_path, target=ContentKind.CODE)
+    with pytest.raises(ValueError, match="non-document extraction rule"):
+        _chunk_worker.chunk_document_and_hash_file(source, tmp_path, prep)
+
+
+def test_batch_code_worker_refuses_a_document_targeted_rule(tmp_path: Path) -> None:
+    # This test defends a PARAMETER, not just a behaviour, which is why it
+    # matches the batch-specific wording rather than the shared suffix.
+    #
+    # The guard renders "code batch worker ..." only when the batch entry point
+    # passes ``batch=True``. If a refactor dropped that argument as vestigial,
+    # the branch would still reject the rule but would render "code worker ...",
+    # and an assertion matching only "non-code extraction rule" would stay
+    # green. Matching the prefix is what makes the dropped parameter fail here.
+    source = tmp_path / "report.pdf"
+    source.write_bytes(b"\x00\x01binary")
+    prep = _context(tmp_path, batch=True)
+    rule = prep.config.rules[0]
+    with pytest.raises(
+        ValueError, match="code batch worker received a non-code extraction rule"
+    ):
+        _chunk_worker.chunk_batch_files([source], tmp_path, rule, prep)
 
 
 def test_cache_hit_skips_second_invocation(tmp_path: Path) -> None:
