@@ -39,14 +39,20 @@ class FileLock:
     def __init__(self, path: pathlib.Path) -> None:
         self.path = path
         self.fd = None
+        self.last_error: OSError | None = None
+        self.last_error_stage: str | None = None
 
     def acquire(self) -> bool:
         import os
         import sys
 
+        self.last_error = None
+        self.last_error_stage = None
         try:
             self.fd = os.open(str(self.path), os.O_CREAT | os.O_WRONLY)
-        except OSError:
+        except OSError as exc:
+            self.last_error = exc
+            self.last_error_stage = "open"
             return False
 
         if sys.platform == "win32":
@@ -55,7 +61,9 @@ class FileLock:
             try:
                 msvcrt.locking(self.fd, msvcrt.LK_NBLCK, 1)
                 return True
-            except OSError:
+            except OSError as exc:
+                self.last_error = exc
+                self.last_error_stage = "lock"
                 self.close()
                 return False
         else:
@@ -64,7 +72,9 @@ class FileLock:
             try:
                 fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 return True
-            except OSError:
+            except OSError as exc:
+                self.last_error = exc
+                self.last_error_stage = "lock"
                 self.close()
                 return False
 

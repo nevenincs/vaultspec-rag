@@ -67,9 +67,9 @@ Add a durable-progress deadline and persistent watcher circuit above existing op
 - [x] `W01.P03.S12` - Construct the server-mode store client from explicit operation timeout configuration; `src/vaultspec_rag/store.py`.
 - [x] `W01.P03.S13` - Clamp bounded write retry and sleep to the remaining durable no-progress budget; `src/vaultspec_rag/_store_writes.py`.
 - [x] `W01.P03.S14` - Implement durable-progress deadlines and interruptible queue, retry, and shutdown polling; `src/vaultspec_rag/indexer/_run_policy.py`.
-- [ ] `W01.P03.S15` - Persist per-root watcher failure count, classification, retry time, circuit state, and convergence intent; `src/vaultspec_rag/watcher_retry.py`.
-- [ ] `W01.P03.S16` - Gate idle-tick dispatch through persistent closed, open, and half-open watcher transitions; `src/vaultspec_rag/watcher.py`.
-- [ ] `W01.P03.S17` - Verify real Qdrant failure, coalescing, backoff, circuit opening, half-open recovery, and reset; `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`.
+- [x] `W01.P03.S15` - Persist per-root watcher failure count, classification, retry time, circuit state, and convergence intent; `src/vaultspec_rag/watcher_retry.py`.
+- [x] `W01.P03.S16` - Gate idle-tick dispatch through persistent closed, open, and half-open watcher transitions; `src/vaultspec_rag/watcher.py`.
+- [x] `W01.P03.S17` - Verify real Qdrant failure, coalescing, backoff, circuit opening, half-open recovery, and reset; `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`.
 
 ### Phase `W01.P04` - safety-gate verification
 
