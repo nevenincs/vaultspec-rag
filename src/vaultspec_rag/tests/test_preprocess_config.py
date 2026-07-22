@@ -20,11 +20,14 @@ from pathlib import Path
 
 import pytest
 
+from .._job_errors import JobErrorKind
 from ..config import EnvVar, reset_config
 from ..indexer._preprocess_config import (
     PREPROCESS_CONFIG_FILENAME,
+    SUPPORTED_CONFIG_VERSION,
     PreprocessConfig,
     PreprocessConfigError,
+    PreprocessPolicyError,
     load_preprocess_rules,
 )
 
@@ -54,6 +57,16 @@ def _isolate_status_dir_and_default_mode(  # pyright: ignore[reportUnusedFunctio
 
 
 def _write_config(root: Path, body: str) -> None:
+    """Write a rule config, supplying the schema version when the body omits it.
+
+    Most fixtures here exercise rule semantics, not schema versioning, so they
+    declare only rules and let the helper stamp the current supported version.
+    A body that sets its own ``version`` (the version-handling fixtures) is left
+    untouched. Sourcing the default from ``SUPPORTED_CONFIG_VERSION`` keeps these
+    fixtures from going stale the next time the schema is bumped.
+    """
+    if "version" not in body.split("[[rule]]")[0]:
+        body = f"version = {SUPPORTED_CONFIG_VERSION}\n{body}"
     (root / PREPROCESS_CONFIG_FILENAME).write_text(body, encoding="utf-8")
 
 
@@ -73,9 +86,11 @@ def test_single_command_rule_loads_and_matches(tmp_path: Path) -> None:
     _write_config(
         tmp_path,
         """
-        version = 1
+        version = 2
 
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         command = "extract {path}"
         on_error = "skip"
@@ -97,9 +112,11 @@ def test_omitted_timeout_defaults_to_bounded_ceiling(tmp_path: Path) -> None:
     _write_config(
         tmp_path,
         """
-        version = 1
+        version = 2
 
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         command = "extract {path}"
         """,
@@ -115,11 +132,15 @@ def test_priority_then_file_order_is_deterministic(tmp_path: Path) -> None:
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         command = "low-priority {path}"
         priority = 50
 
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         command = "high-priority {path}"
         priority = 10
@@ -141,10 +162,14 @@ def test_equal_priority_breaks_on_file_order(tmp_path: Path) -> None:
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "data/*"
         command = "first {path}"
 
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "data/*"
         command = "second {path}"
         """,
@@ -160,6 +185,8 @@ def test_options_table_is_carried(tmp_path: Path) -> None:
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.xlsx"
         command = "xlsx {path}"
 
@@ -179,6 +206,8 @@ def test_entry_point_rule_loads(tmp_path: Path) -> None:
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.rst"
         entry_point = "myproj.pre:rst"
         """,
@@ -195,6 +224,8 @@ def test_malformed_entry_point_is_dropped(tmp_path: Path) -> None:
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.rst"
         entry_point = "no-colon"
         """,
@@ -207,6 +238,8 @@ def test_rule_with_both_command_and_entry_point_is_dropped(tmp_path: Path) -> No
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         command = "c {path}"
         entry_point = "m:f"
@@ -220,11 +253,15 @@ def test_invalid_on_error_is_dropped_but_valid_rule_survives(tmp_path: Path) -> 
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.bad"
         command = "c {path}"
         on_error = "explode"
 
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.good"
         command = "c {path}"
         """,
@@ -252,6 +289,8 @@ def test_strict_mode_raises_on_invalid_rule(tmp_path: Path) -> None:
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         on_error = "skip"
         """,
@@ -265,6 +304,8 @@ def test_negative_timeout_is_rejected(tmp_path: Path) -> None:
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         command = "c {path}"
         timeout_s = -5
@@ -273,25 +314,33 @@ def test_negative_timeout_is_rejected(tmp_path: Path) -> None:
     assert load_preprocess_rules(tmp_path).rules == []
 
 
-def test_newer_config_version_degrades(tmp_path: Path) -> None:
+def test_newer_config_version_is_a_hard_policy_error(tmp_path: Path) -> None:
     _write_config(
         tmp_path,
         """
         version = 99
 
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         command = "c {path}"
         """,
     )
-    # A future config-schema version is not silently half-read (CONFIG-001).
-    assert load_preprocess_rules(tmp_path).rules == []
+    # A future config-schema version is a hard, typed policy error even in the
+    # non-strict default: it is a version-contract mismatch, not the malformed
+    # content that the degrade path silently drops. Silently half-reading a
+    # newer schema (CONFIG-001) would be the worse failure.
+    with pytest.raises(PreprocessPolicyError) as excinfo:
+        load_preprocess_rules(tmp_path)
+    assert excinfo.value.error_kind is JobErrorKind.ADMISSION_CONFIG_INVALID
 
 
 def test_newer_config_version_strict_raises(tmp_path: Path) -> None:
     _write_config(tmp_path, "version = 99\n")
-    with pytest.raises(PreprocessConfigError):
+    with pytest.raises(PreprocessPolicyError) as excinfo:
         load_preprocess_rules(tmp_path, strict=True)
+    assert excinfo.value.error_kind is JobErrorKind.ADMISSION_CONFIG_INVALID
 
 
 def test_resolved_rule_is_picklable(tmp_path: Path) -> None:
@@ -301,6 +350,8 @@ def test_resolved_rule_is_picklable(tmp_path: Path) -> None:
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         command = "c {path}"
         """,
@@ -322,6 +373,8 @@ def test_rules_resolve_for_any_root_with_no_trust(tmp_path: Path) -> None:
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         command = "extract {path}"
         """,
@@ -341,6 +394,8 @@ def test_off_mode_yields_empty_with_debug_log(
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         command = "extract {path}"
         """,
@@ -361,6 +416,8 @@ def test_strict_bypasses_off_kill_switch(
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         command = "extract {path}"
         """,

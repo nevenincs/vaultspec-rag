@@ -20,6 +20,7 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  
 from ..config import reset_config as reset_rag_config
 from ..indexer import CodebaseIndexer
 from ..indexer import _config_epoch as ce
+from ..indexer._content_policy import ContentKind
 from ..indexer._preprocess_config import OnError, PreprocessConfig, PreprocessRule
 from ..progress import NullProgressReporter
 
@@ -55,6 +56,8 @@ def _rule(
         command=command,
         entry_point=entry_point,
         priority=priority,
+        target=ContentKind.DOCUMENT,
+        extractor_version="1.0.0",
         on_error=on_error,
         timeout_s=timeout_s,
         options=options or {},
