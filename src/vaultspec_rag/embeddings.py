@@ -624,6 +624,11 @@ class EmbeddingModel:
             "source code snippets that implement or relate to it"
             "\nQuery: "
         ),
+        "document": (
+            "Instruct: Given a document search query, retrieve relevant "
+            "passages from explicitly indexed source documents"
+            "\nQuery: "
+        ),
     }
 
     def encode_query(self, query: str, *, surface: str | None = None) -> np.ndarray:
@@ -635,7 +640,8 @@ class EmbeddingModel:
 
         Args:
             query: Natural language query string.
-            surface: Target corpus kind (``"vault"`` or ``"code"``),
+            surface: Target corpus kind (``"vault"``, ``"code"``, or
+                ``"document"``),
                 or ``None`` for the generic prompt.
 
         Returns:
