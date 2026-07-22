@@ -209,21 +209,25 @@ def _get_chunker() -> ASTChunker:
     return _CHUNKER
 
 
-def _resolve_html_strip() -> bool:
-    """Resolve the ``html_strip`` knob (#185 adjacent ask).
+@dataclass(frozen=True, slots=True)
+class ChunkExecutionPolicy:
+    """Picklable byte-decoding and raw-chunk semantics for one operation."""
 
-    Read from config rather than threaded: it is an env-or-default boolean with
-    no CLI override, so a spawn worker (which inherits the parent's environment)
-    resolves the same value the parent would. ``config`` is torch-free, so this
-    import does not violate ``index-workers-stay-cpu-only``.
-    """
-    from ..config import get_config
-
-    return bool(get_config().html_strip)
+    encoding: str = "utf-8"
+    errors: str = "strict"
+    normalize_newlines: bool = True
+    html_strip: bool = True
 
 
-def _decode_source(raw: bytes, path: pathlib.Path) -> str | None:
-    """Decode raw file bytes as UTF-8 with universal-newline translation.
+_DEFAULT_EXECUTION_POLICY = ChunkExecutionPolicy()
+
+
+def _decode_source(
+    raw: bytes,
+    path: pathlib.Path,
+    execution_policy: ChunkExecutionPolicy,
+) -> str | None:
+    """Decode raw bytes using the operation's immutable decoder semantics.
 
     Replicates :meth:`pathlib.Path.read_text` semantics (``\\r\\n`` and lone
     ``\\r`` collapse to ``\\n``) so chunk text, line numbers, and chunk ids are
@@ -231,11 +235,13 @@ def _decode_source(raw: bytes, path: pathlib.Path) -> str | None:
     bytes are not valid UTF-8.
     """
     try:
-        text = raw.decode("utf-8")
+        text = raw.decode(execution_policy.encoding, execution_policy.errors)
     except UnicodeDecodeError as e:
         logger.warning("Cannot decode %s: %s", path, e)
         return None
-    return text.replace("\r\n", "\n").replace("\r", "\n")
+    if execution_policy.normalize_newlines:
+        return text.replace("\r\n", "\n").replace("\r", "\n")
+    return text
 
 
 def _chunk_decoded(
@@ -284,6 +290,7 @@ def chunk_file_with_status(
     path: pathlib.Path,
     root_dir: pathlib.Path,
     prep: PreprocessContext | None = None,
+    execution_policy: ChunkExecutionPolicy = _DEFAULT_EXECUTION_POLICY,
 ) -> ScopedChunkResult:
     """Chunk one file (scoped path), carrying back the preprocess disposition.
 
@@ -319,10 +326,10 @@ def chunk_file_with_status(
         if outcome.status == "skipped":
             return ScopedChunkResult([], "skipped", outcome.reason)
         # "passthrough" / "none" fall through to ordinary chunking below.
-    content = _decode_source(raw, path)
+    content = _decode_source(raw, path, execution_policy)
     if content is None:
         return ScopedChunkResult([])
-    chunks = _chunk_decoded(content, path, root_dir, _resolve_html_strip())
+    chunks = _chunk_decoded(content, path, root_dir, execution_policy.html_strip)
     return ScopedChunkResult(chunks)
 
 
@@ -330,19 +337,21 @@ def chunk_file(
     path: pathlib.Path,
     root_dir: pathlib.Path,
     prep: PreprocessContext | None = None,
+    execution_policy: ChunkExecutionPolicy = _DEFAULT_EXECUTION_POLICY,
 ) -> list[CodeChunk]:
     """Chunk one file and return just its chunks (thin wrapper over status form).
 
     Retained for callers and tests that only need the chunk list; the
     chunk-identity logic lives in :func:`chunk_file_with_status`.
     """
-    return chunk_file_with_status(path, root_dir, prep).chunks
+    return chunk_file_with_status(path, root_dir, prep, execution_policy).chunks
 
 
 def chunk_and_hash_file(
     path: pathlib.Path,
     root_dir: pathlib.Path,
     prep: PreprocessContext | None = None,
+    execution_policy: ChunkExecutionPolicy = _DEFAULT_EXECUTION_POLICY,
 ) -> FileChunkResult:
     """Read a file once, returning both its content hash and its chunks.
 
@@ -387,7 +396,14 @@ def chunk_and_hash_file(
                 preprocess_reason=outcome.reason,
             )
         # "passthrough" / "none" fall through to ordinary chunking below.
-    return _raw_file_result(path, root_dir, rel_path, content_hash, raw)
+    return _raw_file_result(
+        path,
+        root_dir,
+        rel_path,
+        content_hash,
+        raw,
+        execution_policy,
+    )
 
 
 def _raw_file_result(
@@ -396,6 +412,7 @@ def _raw_file_result(
     rel_path: str,
     content_hash: str,
     raw: bytes,
+    execution_policy: ChunkExecutionPolicy,
 ) -> FileChunkResult:
     """Chunk already-read raw bytes into a hash-carrying :class:`FileChunkResult`.
 
@@ -403,10 +420,10 @@ def _raw_file_result(
     chunking failures propagate so callers cannot publish a hash for vectors
     that were never produced.
     """
-    content = _decode_source(raw, path)
+    content = _decode_source(raw, path, execution_policy)
     if content is None:
         return FileChunkResult(rel_path, content_hash, [])
-    chunks = _chunk_decoded(content, path, root_dir, _resolve_html_strip())
+    chunks = _chunk_decoded(content, path, root_dir, execution_policy.html_strip)
     return FileChunkResult(rel_path, content_hash, chunks)
 
 
@@ -425,6 +442,7 @@ def chunk_batch_files(
     root_dir: pathlib.Path,
     rule: PreprocessRule,
     prep: PreprocessContext,
+    execution_policy: ChunkExecutionPolicy = _DEFAULT_EXECUTION_POLICY,
 ) -> list[FileChunkResult]:
     """Preprocess a group of files with one batch spawn, then chunk each (#241).
 
@@ -482,7 +500,14 @@ def chunk_batch_files(
 
     results: list[FileChunkResult] = []
     for member in members:
-        results.append(_batch_member_result(member, root_dir, batch_results))
+        results.append(
+            _batch_member_result(
+                member,
+                root_dir,
+                batch_results,
+                execution_policy,
+            )
+        )
     return results
 
 
@@ -490,13 +515,14 @@ def _batch_member_result(
     member: _BatchMember,
     root_dir: pathlib.Path,
     batch_results: dict[str, PreprocessResult],
+    execution_policy: ChunkExecutionPolicy,
 ) -> FileChunkResult:
     """Turn one batch member's disposition into a :class:`FileChunkResult`."""
     output = member.cached
     if output is None:
         result = batch_results.get(str(member.path))
         if result is not None and result.status == "passthrough":
-            return _passthrough_batch_member(member, root_dir)
+            return _passthrough_batch_member(member, root_dir, execution_policy)
         if result is None or result.status != "ok" or result.output is None:
             reason = result.reason if result is not None else None
             return FileChunkResult(
@@ -518,6 +544,7 @@ def _batch_member_result(
 def _passthrough_batch_member(
     member: _BatchMember,
     root_dir: pathlib.Path,
+    execution_policy: ChunkExecutionPolicy = _DEFAULT_EXECUTION_POLICY,
 ) -> FileChunkResult:
     """Chunk a passthrough batch member's raw source, mirroring the per-file path.
 
@@ -537,6 +564,7 @@ def _passthrough_batch_member(
         member.rel_path,
         hashlib.blake2b(raw).hexdigest(),
         raw,
+        execution_policy,
     )
 
 

@@ -4,6 +4,7 @@ import hashlib
 import tracemalloc
 from collections.abc import Generator
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
@@ -523,14 +524,13 @@ class TestIncrementalIndexMetadata:
         src.write_text("x = 1\n", encoding="utf-8")
 
         # Construct an indexer just enough to test _write_meta / _load_meta.
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
         indexer._meta_path = tmp_path / "data" / "code_index_meta.json"
 
         with open(src, "rb") as f:
             content_hash = hashlib.file_digest(f, "blake2b").hexdigest()
         meta = {"mod.py": content_hash}
-        indexer._write_meta(meta)
+        indexer._write_meta(meta, policy=indexer._resolve_operation_policy())
 
         # Reload and verify types. The reserved embed-format marker is
         # stamped on disk but stripped from the loaded mapping, so every
@@ -564,8 +564,7 @@ class TestIncrementalIndexUnhashedFiles:
         files that failed read_bytes, preventing KeyError on save."""
         from ..indexer import CodebaseIndexer
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
         indexer._meta_path = tmp_path / "data" / "code_index_meta.json"
 
         # Simulate: two files scanned, but one failed hashing.
@@ -573,7 +572,10 @@ class TestIncrementalIndexUnhashedFiles:
         current_hashes = {"ok.py": "a" * 64}  # bad.py absent
 
         # Writing current_hashes directly (the fix) must not raise.
-        indexer._write_meta(current_hashes)
+        indexer._write_meta(
+            current_hashes,
+            policy=indexer._resolve_operation_policy(),
+        )
 
         loaded = indexer._load_meta()
         assert "ok.py" in loaded
@@ -841,8 +843,7 @@ class TestHashingPermissionError:
 
         from ..indexer import CodebaseIndexer
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
         indexer._meta_path = tmp_path / "data" / "code_index_meta.json"
 
         # Create a readable file and write meta with its hash
@@ -852,7 +853,7 @@ class TestHashingPermissionError:
             good_hash = hashlib.file_digest(f, "blake2b").hexdigest()
 
         meta = {"good.py": good_hash}
-        indexer._write_meta(meta)
+        indexer._write_meta(meta, policy=indexer._resolve_operation_policy())
 
         # Verify the meta was written correctly
         loaded = indexer._load_meta()
@@ -863,14 +864,14 @@ class TestHashingPermissionError:
         """_write_meta and _load_meta correctly round-trip blake2b hashes."""
         from ..indexer import CodebaseIndexer
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
         indexer._meta_path = tmp_path / "sub" / "code_index_meta.json"
 
         hashes = {
             "foo.py": "a" * 64,
             "bar/baz.rs": "b" * 64,
         }
-        indexer._write_meta(hashes)
+        indexer._write_meta(hashes, policy=indexer._resolve_operation_policy())
         # The loaded mapping is exactly the hashes: the embed-format
         # marker is stamped on disk but never surfaces in id math.
         assert indexer._load_meta() == hashes
@@ -966,17 +967,23 @@ class TestCodebaseMetaRoundTrip:
         import json
 
         from ..indexer import CodebaseIndexer
+        from ..indexer._code_meta import CONTENT_EPOCH_KEY, MEMBERSHIP_EPOCH_KEY
+        from ..indexer._content_policy import ContentKind
 
         meta_path: Path = tmp_path / ".rag" / "codebase_meta.json"
-        indexer = object.__new__(CodebaseIndexer)
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
         indexer._meta_path = meta_path
 
         hashes = {"src/foo.py": "abc123", "src/bar.py": "def456"}
-        indexer._write_meta(hashes)
+        policy = indexer._resolve_operation_policy()
+        indexer._write_meta(hashes, policy=policy)
 
         assert meta_path.exists()
         on_disk = json.loads(meta_path.read_text(encoding="utf-8"))
         assert on_disk.pop("__code_embed_schema__") == "2"
+        fingerprints = policy.fingerprints_for(ContentKind.CODE)
+        assert on_disk.pop(MEMBERSHIP_EPOCH_KEY) == fingerprints.membership
+        assert on_disk.pop(CONTENT_EPOCH_KEY) == fingerprints.content
         assert on_disk == hashes
 
     def test_load_meta_returns_written_hashes(self, tmp_path: Path) -> None:
@@ -984,11 +991,11 @@ class TestCodebaseMetaRoundTrip:
         from ..indexer import CodebaseIndexer
 
         meta_path: Path = tmp_path / ".rag" / "codebase_meta.json"
-        indexer = object.__new__(CodebaseIndexer)
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
         indexer._meta_path = meta_path
 
         hashes = {"src/foo.py": "aaa", "lib/baz.rs": "bbb"}
-        indexer._write_meta(hashes)
+        indexer._write_meta(hashes, policy=indexer._resolve_operation_policy())
         assert indexer._load_meta() == hashes
 
     def test_load_meta_returns_empty_when_missing(self, tmp_path: Path) -> None:

@@ -103,6 +103,15 @@ def _write_config(root: Path, rules: str) -> None:
     (root / ".vaultragpreprocess.toml").write_text(rules, encoding="utf-8")
 
 
+def _file_tree_bytes(root: Path) -> dict[str, bytes]:
+    """Snapshot exact files below one bounded test-owned directory."""
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+
 def _sentinel_extractor(root: Path, sentinel: Path) -> Path:
     """Write an extractor that proves execution by creating ``sentinel``.
 
@@ -214,21 +223,39 @@ class TestPreprocessEndToEnd:
     def test_off_kill_switch_skips_hooks(
         self, rag_components: RagComponentsWithManifest, tmp_path: Path
     ) -> None:
-        # VAULTSPEC_RAG_PREPROCESS=off is the kill switch: a repo that ships a
-        # command rule executes nothing (a sentinel the command would create
-        # stays absent) and the binary source is not indexed as a preprocessed
-        # unit.
-        from ... import CodebaseIndexer, VaultSearcher, VaultStore
+        # The kill switch disables execution without erasing ownership. A real
+        # baseline code index is therefore unchanged when a document-owned
+        # path arrives through the scoped watcher/indexing boundary.
+        from ... import CodebaseIndexer, VaultStore
+        from ...config import get_config
+        from ...indexer._content_policy import (
+            AdmissionReason,
+            ContentKind,
+        )
+        from ...indexer._preprocess_cache import preprocess_cache_dir
 
         model = rag_components["model"]
         sentinel = tmp_path / "EXECUTED.flag"
+        extractor = _sentinel_extractor(tmp_path, sentinel)
         _write_config(
             tmp_path,
-            f'[[rule]]\npattern = "*.pdf"\n'
-            f"command = '''{_command(_sentinel_extractor(tmp_path, sentinel))}'''\n"
+            "version = 2\n\n"
+            '[[rule]]\npattern = "*.pdf"\n'
+            f"command = '''{_command(extractor)}'''\n"
+            'target = "document"\n'
+            'extractor_version = "1"\n'
             'on_error = "skip"\n',
         )
-        (tmp_path / "doc.pdf").write_bytes(b"\x00\x01 binary")
+        (tmp_path / ".vaultragignore").write_text(
+            f"/{extractor.name}\n",
+            encoding="utf-8",
+        )
+        source = tmp_path / "doc.pdf"
+        source.write_bytes(b"\x00\x01 binary")
+        (tmp_path / "existing.py").write_text(
+            "preserved_code_point = True\n",
+            encoding="utf-8",
+        )
 
         key = EnvVar.PREPROCESS.value
         prev = os.environ.get(key)
@@ -237,15 +264,45 @@ class TestPreprocessEndToEnd:
         store = VaultStore(tmp_path)
         try:
             indexer = CodebaseIndexer(tmp_path, model, store)
-            indexer.full_index(reporter=NullProgressReporter())
+            scan = indexer.scan_content()
+            sample = next(item for item in scan.samples if item.path == "doc.pdf")
+            assert scan.preprocess_mode == "off"
+            assert scan.preprocess_rule_count == 1
+            assert not scan.hooks_will_run
+            assert sample.kind is ContentKind.DOCUMENT
+            assert sample.admitted
+            assert sample.reason is AdmissionReason.EXPLICIT_ROUTE
+            assert source not in scan.files
+
+            baseline = indexer.full_index(reporter=NullProgressReporter())
+            assert baseline.preprocess_ok == 0
             assert not sentinel.exists(), (
                 "preprocess command executed under the off kill switch"
             )
-            searcher = VaultSearcher(tmp_path, model, store)
-            results = searcher.search_codebase("sentinel extractor output", top_k=5)
-            assert not any(r.preprocessor_id == "sentinel" for r in results), (
-                "binary source was preprocessed despite the off kill switch"
+
+            cfg = get_config()
+            data_root = tmp_path / cfg.data_dir
+            metadata_path = data_root / cfg.code_index_metadata_file
+            cache_root = preprocess_cache_dir(data_root)
+            cache_root.mkdir(parents=True, exist_ok=True)
+            (cache_root / "preserved.json").write_bytes(b'{"preserved":true}')
+            before_ids = store.get_all_code_ids()
+            before_metadata = metadata_path.read_bytes()
+            before_cache = _file_tree_bytes(cache_root)
+            assert before_ids
+            assert store.get_code_ids_by_paths({"doc.pdf"}) == []
+
+            result = indexer.incremental_index(
+                reporter=NullProgressReporter(),
+                changed_paths=[source],
             )
+
+            assert (result.added, result.updated, result.removed) == (0, 0, 0)
+            assert not sentinel.exists()
+            assert store.get_all_code_ids() == before_ids
+            assert store.get_code_ids_by_paths({"doc.pdf"}) == []
+            assert metadata_path.read_bytes() == before_metadata
+            assert _file_tree_bytes(cache_root) == before_cache
         finally:
             store.close()
             if prev is None:

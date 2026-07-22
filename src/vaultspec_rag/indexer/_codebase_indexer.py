@@ -295,6 +295,11 @@ class CodebaseIndexer:
     hashing to skip unchanged files.
     """
 
+    # Immutable compatibility default for lightweight ``__new__`` consumers.
+    # Normal construction and every indexing operation replace this on the
+    # instance with the exact resolved snapshot semantics.
+    _chunk_execution_policy = _chunk_worker.ChunkExecutionPolicy()
+
     def __init__(
         self,
         root_dir: pathlib.Path,
@@ -346,6 +351,7 @@ class CodebaseIndexer:
         # files a preprocess rule skipped and ``_prep_ok`` counts rule-fed
         # files, both surfaced in the run's IndexResult.
         self._prep_ctx: PreprocessContext | None = None
+        self._chunk_execution_policy = _chunk_worker.ChunkExecutionPolicy()
         self._prep_skips: list[str] = []
         self._prep_ok: int = 0
         # Config epochs for the current run (D1-D3). Set at the start of each
@@ -365,10 +371,13 @@ class CodebaseIndexer:
         """
         from ._resolved_policy import resolve_index_policy
 
+        content_policy = getattr(self, "_content_policy", None) or RootContentPolicy(
+            SourceProfileVersion.CONVENTIONAL_V1
+        )
         return resolve_index_policy(
             self.root_dir,
-            content_policy=self._content_policy,
-            extra_excludes=self._extra_excludes,
+            content_policy=content_policy,
+            extra_excludes=getattr(self, "_extra_excludes", ()),
         )
 
     def _collect_gitignore_patterns(self) -> list[str]:
@@ -485,6 +494,12 @@ class CodebaseIndexer:
     ) -> None:
         """Reset per-run preprocess state at the start of a full/incremental run."""
         run_control.checkpoint()
+        self._chunk_execution_policy = _chunk_worker.ChunkExecutionPolicy(
+            encoding=policy.decoder.encoding,
+            errors=policy.decoder.errors,
+            normalize_newlines=policy.decoder.normalize_newlines,
+            html_strip=policy.html_strip,
+        )
         self._prep_ctx = self._resolve_preprocess_context(policy)
         self._prep_skips = []
         self._prep_ok = 0
@@ -739,7 +754,11 @@ class CodebaseIndexer:
         Returns:
             List of ``CodeChunk`` instances with empty vectors.
         """
-        return _chunk_worker.chunk_file(path, self.root_dir)
+        return _chunk_worker.chunk_file(
+            path,
+            self.root_dir,
+            execution_policy=self._chunk_execution_policy,
+        )
 
     def _chunk_with_ast(
         self,
@@ -887,6 +906,7 @@ class CodebaseIndexer:
                     self.root_dir,
                     rule,
                     prep,
+                    self._chunk_execution_policy,
                 )
                 futures[future] = len(group)
                 run_control.checkpoint()
@@ -913,6 +933,7 @@ class CodebaseIndexer:
                     path,
                     self.root_dir,
                     prep,
+                    self._chunk_execution_policy,
                 )
                 futures[future] = path
                 run_control.checkpoint()
@@ -960,6 +981,7 @@ class CodebaseIndexer:
                         self.root_dir,
                         rule,
                         prep,
+                        self._chunk_execution_policy,
                     )
                     futures[future] = len(group)
                     run_control.checkpoint()
@@ -1041,7 +1063,13 @@ class CodebaseIndexer:
             return
         for rule, group in batch_groups:
             run_control.checkpoint()
-            results = _chunk_worker.chunk_batch_files(group, self.root_dir, rule, prep)
+            results = _chunk_worker.chunk_batch_files(
+                group,
+                self.root_dir,
+                rule,
+                prep,
+                self._chunk_execution_policy,
+            )
             handle_group(results)
             run_control.checkpoint()
             for _ in range(len(group)):
@@ -1133,6 +1161,7 @@ class CodebaseIndexer:
                                 path,
                                 self.root_dir,
                                 prep,
+                                self._chunk_execution_policy,
                             )
                         ] = path
                         run_control.checkpoint()
@@ -1160,6 +1189,7 @@ class CodebaseIndexer:
                                         next_path,
                                         self.root_dir,
                                         prep,
+                                        self._chunk_execution_policy,
                                     )
                                 ] = next_path
                                 run_control.checkpoint()
@@ -1260,7 +1290,12 @@ class CodebaseIndexer:
         for path in paths:
             run_control.checkpoint()
             try:
-                result = _chunk_worker.chunk_file_with_status(path, self.root_dir, prep)
+                result = _chunk_worker.chunk_file_with_status(
+                    path,
+                    self.root_dir,
+                    prep,
+                    self._chunk_execution_policy,
+                )
             except PreprocessAbortError:
                 raise
             except Exception:
@@ -1288,7 +1323,10 @@ class CodebaseIndexer:
             run_control.checkpoint()
             try:
                 result = _chunk_worker.chunk_and_hash_file(
-                    path, self.root_dir, self._prep_ctx
+                    path,
+                    self.root_dir,
+                    self._prep_ctx,
+                    self._chunk_execution_policy,
                 )
             except PreprocessAbortError:
                 raise
@@ -1354,6 +1392,7 @@ class CodebaseIndexer:
                                 path,
                                 self.root_dir,
                                 self._prep_ctx,
+                                self._chunk_execution_policy,
                             )
                         )
                         run_control.checkpoint()
@@ -1430,6 +1469,7 @@ class CodebaseIndexer:
                     next_path,
                     self.root_dir,
                     self._prep_ctx,
+                    self._chunk_execution_policy,
                 )
             )
             run_control.checkpoint()
@@ -1828,6 +1868,7 @@ class CodebaseIndexer:
     def _commit_incremental_replacement(
         self,
         *,
+        policy: ResolvedIndexPolicy,
         existing_ids: set[str],
         published_ids: set[str],
         metadata: dict[str, str],
@@ -1857,7 +1898,7 @@ class CodebaseIndexer:
                     reporter.phase_end()
                 reporter.phase_start("write metadata", 1)
                 try:
-                    self._write_meta(metadata)
+                    self._write_meta(metadata, policy=policy)
                     reporter.advance(1)
                 finally:
                     reporter.phase_end()
@@ -2116,7 +2157,7 @@ class CodebaseIndexer:
 
             reporter.phase_start("write metadata", 1)
             try:
-                self._write_meta(meta)
+                self._write_meta(meta, policy=policy)
                 reporter.advance(1)
             finally:
                 reporter.phase_end()
@@ -2311,6 +2352,7 @@ class CodebaseIndexer:
         )
         current_hashes.update(published_hashes)
         self._commit_incremental_replacement(
+            policy=policy,
             existing_ids=existing_ids,
             published_ids=published_ids,
             metadata=current_hashes,
@@ -2469,6 +2511,7 @@ class CodebaseIndexer:
         for rel in delete_files:
             new_metadata.pop(rel, None)
         self._commit_incremental_replacement(
+            policy=policy,
             existing_ids=existing_ids,
             published_ids=published_ids,
             metadata=new_metadata,
@@ -2521,7 +2564,12 @@ class CodebaseIndexer:
             self._read_meta_raw(), self.store.count_code
         )
 
-    def _write_meta(self, meta: dict[str, str]) -> None:
+    def _write_meta(
+        self,
+        meta: dict[str, str],
+        *,
+        policy: ResolvedIndexPolicy,
+    ) -> None:
         """Atomically write content-hash metadata to the sidecar JSON file.
 
         Uses write-to-temp + ``os.replace`` so a crash mid-write never
@@ -2531,20 +2579,14 @@ class CodebaseIndexer:
 
         Args:
             meta: Mapping of relative file path to blake2b hex digest.
+            policy: Exact snapshot whose identity governs publication. Direct
+                callers must resolve and supply it explicitly.
 
         Raises:
             OSError: If the metadata directory cannot be created or the
                 file cannot be written.
         """
-        membership = getattr(self, "_membership_epoch", None)
-        content = getattr(self, "_content_epoch", None)
-        if (membership is None or content is None) and getattr(
-            self, "root_dir", None
-        ) is not None:
-            # Fallback for a direct call outside an index operation. Normal
-            # publication always carries the entry-point snapshot epochs.
-            policy = self._resolved_policy or self._resolve_operation_policy()
-            membership, content = self._compute_code_epochs(policy)
+        membership, content = self._compute_code_epochs(policy)
         self._meta_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = self._meta_path.with_suffix(".tmp")
         stamped = {**meta, EMBED_SCHEMA_KEY: CODE_EMBED_SCHEMA}
