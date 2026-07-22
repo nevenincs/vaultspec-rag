@@ -43,6 +43,14 @@ __all__ = [
 
 _STOP_COMMAND = "service.stop"
 
+# An operator stop waits for the daemon's own lifespan shutdown so both
+# discovery views are removed by the only lease holder authorized to remove
+# them. The drain covers job drain, store close, GPU release, and managed
+# Qdrant teardown; the surrounding budget leaves room for the forced-kill
+# escalation and owned-child reap once the drain window expires.
+_STOP_GRACEFUL_DRAIN_SECONDS = 20.0
+_STOP_TERMINATION_BUDGET_SECONDS = 45.0
+
 
 def _reclaim_machine_singleton() -> int | None:
     """Reclaim a resident machine-lock holder that has no discoverable status file.
@@ -127,9 +135,18 @@ def _refuse_terminate_from_unisolated_test() -> None:
 
 
 def _terminate_and_confirm(pid: int) -> None:
-    """Terminate *pid*, wait briefly, and emit the shutdown audit trail."""
+    """Terminate *pid*, wait for owner cleanup, and emit the shutdown trail."""
     _refuse_terminate_from_unisolated_test()
-    _cli._terminate_pid(pid)
+    # The daemon holds the only machine-lock lease, so it is the only process
+    # authorized to delete the machine discovery pointer. Escalating to a forced
+    # kill before its lifespan ``finally`` completes would strand that pointer
+    # advertising a dead PID, so an operator stop funds a real drain window and
+    # falls back to the kill only once the window expires.
+    _cli._terminate_pid(
+        pid,
+        timeout=_STOP_TERMINATION_BUDGET_SECONDS,
+        graceful_drain=_STOP_GRACEFUL_DRAIN_SECONDS,
+    )
 
     # Wait briefly for process to exit
     for _ in range(50):
@@ -137,9 +154,10 @@ def _terminate_and_confirm(pid: int) -> None:
             break
         time.sleep(0.1)
 
-    # On Windows, os.kill(SIGTERM) is TerminateProcess so the daemon's atexit
-    # handler and lifespan ``finally`` never fire; the CLI parent emits this
-    # mirror line so Windows operators get the audit trail. POSIX flows through
+    # A forced kill (drain window expired) still bypasses the daemon's atexit
+    # handler and lifespan ``finally`` on Windows, where os.kill(SIGTERM) is
+    # TerminateProcess; the CLI parent emits this mirror line so Windows
+    # operators keep the audit trail in that case. POSIX flows through
     # uvicorn's signal handler → lifespan finally → ``_record_shutdown("clean")``
     # and logs its own clean shutdown, but the CLI-side initiator attribution is
     # valuable on every platform, so the line is emitted unconditionally.

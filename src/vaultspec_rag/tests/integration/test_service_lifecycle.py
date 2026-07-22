@@ -1779,3 +1779,162 @@ def test_multi_project_search_isolation(
         assert unique_marker not in text_1 and "isolation-probe" not in text_1, (
             f"project-0 marker leaked into project-1 results: {text_1[:500]}"
         )
+
+
+def _wait_for_discovery_repair(
+    path: Path,
+    *,
+    timeout: float,
+) -> dict[str, object]:
+    """Return the republished discovery document at *path* within *timeout*."""
+    deadline = time.monotonic() + timeout
+    last_error = "never reappeared"
+    while time.monotonic() < deadline:
+        try:
+            parsed: object = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+        else:
+            if isinstance(parsed, dict):
+                payload = cast("dict[str, object]", parsed)
+                if payload.get("pid"):
+                    return payload
+            last_error = f"incomplete document: {parsed!r}"
+        time.sleep(0.5)
+    raise AssertionError(
+        f"{path} was not repaired within {timeout:.1f}s ({last_error})"
+    )
+
+
+def _assert_discovery_absent(paths: tuple[Path, ...], *, held_for: float) -> None:
+    """Assert every path in *paths* stays absent for *held_for* seconds."""
+    deadline = time.monotonic() + held_for
+    while time.monotonic() < deadline:
+        for path in paths:
+            assert not path.exists(), (
+                f"{path} was resurrected after owner cleanup: "
+                f"{path.read_text(encoding='utf-8')[:400]!r}"
+            )
+        time.sleep(0.5)
+
+
+@pytest.mark.subprocess_gpu
+def test_deleted_discovery_views_self_heal_on_the_next_heartbeat(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+) -> None:
+    """Both owner-published discovery views repair without a restart.
+
+    Deleting the status file and the machine pointer under a live isolated
+    daemon must converge on the next heartbeat from daemon-owned state, and
+    each view must repair independently of the other's presence.
+    """
+    from ..._machine_lock import machine_discovery_path
+
+    # One heartbeat interval is 15s; allow three so a tick that races the
+    # deletion cannot fail the assertion.
+    repair_timeout = 50.0
+
+    with _service_env(tmp_path):
+        port = _get_ephemeral_port()
+        log_path = tmp_path / "service.log"
+
+        pid = _spawn_service(port, log_path)
+        request.addfinalizer(lambda: _terminate_pid(pid))
+        health = _poll_health(port)
+        serving_pid = int(health["pid"])
+        _write_service_status(pid, port)
+
+        status_path = _status_file()
+        pointer_path = machine_discovery_path()
+
+        # Both views must exist before the corruption is meaningful.
+        _wait_for_discovery_repair(status_path, timeout=repair_timeout)
+        _wait_for_discovery_repair(pointer_path, timeout=repair_timeout)
+
+        # Deleting only the pointer must not disturb the status file.
+        pointer_path.unlink()
+        assert not pointer_path.exists()
+        repaired_pointer = _wait_for_discovery_repair(
+            pointer_path,
+            timeout=repair_timeout,
+        )
+        assert status_path.exists(), (
+            "status view was collaterally removed by pointer repair"
+        )
+        assert repaired_pointer["pid"] == serving_pid
+        assert repaired_pointer["port"] == port
+        assert repaired_pointer["phase"] == "running"
+        assert repaired_pointer["service_token"], (
+            "repaired pointer must carry the daemon identity token"
+        )
+
+        # Deleting only the status file must not disturb the pointer.
+        status_path.unlink()
+        assert not status_path.exists()
+        repaired_status = _wait_for_discovery_repair(
+            status_path,
+            timeout=repair_timeout,
+        )
+        assert pointer_path.exists(), (
+            "machine pointer was collaterally removed by status repair"
+        )
+        assert repaired_status["pid"] == serving_pid
+        assert repaired_status["port"] == port
+        assert repaired_status["service_token"] == repaired_pointer["service_token"]
+
+        # Deleting both together must repair both from one snapshot.
+        status_path.unlink()
+        pointer_path.unlink()
+        both_status = _wait_for_discovery_repair(status_path, timeout=repair_timeout)
+        both_pointer = _wait_for_discovery_repair(pointer_path, timeout=repair_timeout)
+        assert both_status["pid"] == serving_pid
+        assert both_pointer["pid"] == serving_pid
+        assert both_status["service_token"] == both_pointer["service_token"]
+
+
+@pytest.mark.subprocess_gpu
+def test_shutdown_cleanup_cannot_be_resurrected_by_a_late_heartbeat(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+) -> None:
+    """Owner cleanup is terminal: no later tick republishes either view.
+
+    The publisher quiesces before periodic tasks are cancelled, so an
+    already-running heartbeat worker finishes behind the same guard and every
+    later tick is inert. After a clean stop both views must stay absent well
+    past one heartbeat interval.
+    """
+    from ..._machine_lock import machine_discovery_path
+
+    with _service_env(tmp_path):
+        port = _get_ephemeral_port()
+        log_path = tmp_path / "service.log"
+
+        pid = _spawn_service(port, log_path)
+        request.addfinalizer(lambda: _terminate_pid(pid))
+        health = _poll_health(port)
+        serving_pid = int(health["pid"])
+        _write_service_status(pid, port)
+
+        status_path = _status_file()
+        pointer_path = machine_discovery_path()
+        _wait_for_discovery_repair(status_path, timeout=50.0)
+        _wait_for_discovery_repair(pointer_path, timeout=50.0)
+
+        result = runner.invoke(
+            app,
+            ["server", "stop"],
+            env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
+        )
+        assert result.exit_code == 0, f"stop failed: {result.stdout!r}"
+        assert _wait_for_exit(serving_pid), (
+            f"serving PID {serving_pid} did not exit after stop"
+        )
+
+        assert not status_path.exists(), "status view survived owner cleanup"
+        assert not pointer_path.exists(), "machine pointer survived owner cleanup"
+
+        # Hold past one full heartbeat interval so a surviving periodic task
+        # would have to republish inside the window.
+        _assert_discovery_absent((status_path, pointer_path), held_for=20.0)
