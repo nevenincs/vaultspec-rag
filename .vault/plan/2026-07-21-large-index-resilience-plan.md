@@ -112,7 +112,7 @@ Drive full, unscoped incremental, and scoped incremental work from storage-confi
 
 Make stale reconciliation, metadata publication, and clean-rebuild recovery restart-safe.
 
-- [ ] `W02.P07.S26` - Implement idempotent stale-identity reconciliation and generation publication phases; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `W02.P07.S26` - Implement idempotent stale-identity reconciliation and generation publication phases; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [ ] `W02.P07.S27` - Atomically publish metadata from ledger rows and preserve the last valid sidecar until replacement; `src/vaultspec_rag/indexer/_code_meta.py`.
 - [ ] `W02.P07.S28` - Persist clean-rebuild destructive intent and resume incomplete replacement generations without a second drop; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 

@@ -18,6 +18,7 @@ from ._run_ledger import (
     RunGeneration,
     RunLedger,
     RunLedgerCompatibilityError,
+    RunLedgerStateError,
     RunOperation,
     RunSignature,
     RunTerminalState,
@@ -137,6 +138,11 @@ class CodeRunCheckpoint:
         """Return the stable active generation identifier."""
         return self.generation.generation_id
 
+    @property
+    def ingestion_complete(self) -> bool:
+        """Return whether this generation must resume finalization, not ingestion."""
+        return self.generation.finalization_phase is not FinalizationPhase.INGESTING
+
     def unit_for(self, segment: CodeFileSegment, source_digest: str) -> CommitUnit:
         """Project one deterministic streaming segment into ledger evidence."""
         return CommitUnit(
@@ -235,10 +241,15 @@ class CodeRunCheckpoint:
 
     def publish_metadata(self, meta_path: Path) -> int:
         """Publish exact converged ledger rows and advance the durable phase."""
-        self.generation = self.ledger.advance_finalization(
-            self.generation_id,
-            FinalizationPhase.STALE_RECONCILED,
-        )
+        phase = self.generation.finalization_phase
+        if phase is FinalizationPhase.INGESTING:
+            self.generation = self.ledger.advance_finalization(
+                self.generation_id,
+                FinalizationPhase.STALE_RECONCILED,
+            )
+            phase = self.generation.finalization_phase
+        if phase is not FinalizationPhase.STALE_RECONCILED:
+            return 0
         fingerprints = self.policy.fingerprints_for(ContentKind.CODE)
         count = publish_meta_from_file_states(
             meta_path,
@@ -259,15 +270,26 @@ class CodeRunCheckpoint:
 
     def publish_generation(self) -> RunGeneration:
         """Certify generation publication and compact prior compatible rows."""
-        self.generation = self.ledger.advance_finalization(
-            self.generation_id,
-            FinalizationPhase.GENERATION_PUBLISHED,
-        )
-        self.generation = self.ledger.finish_generation(
-            self.generation_id,
-            RunTerminalState.SUCCEEDED,
-        )
-        self.ledger.compact(self.generation_id)
+        phase = self.generation.finalization_phase
+        if phase in (
+            FinalizationPhase.INGESTING,
+            FinalizationPhase.STALE_RECONCILED,
+        ):
+            raise RunLedgerStateError(
+                "metadata must be durably published before generation publication"
+            )
+        if phase is FinalizationPhase.METADATA_PUBLISHED:
+            self.generation = self.ledger.advance_finalization(
+                self.generation_id,
+                FinalizationPhase.GENERATION_PUBLISHED,
+            )
+        if self.generation.terminal_state is RunTerminalState.RUNNING:
+            self.generation = self.ledger.finish_generation(
+                self.generation_id,
+                RunTerminalState.SUCCEEDED,
+            )
+        if self.generation.finalization_phase is not FinalizationPhase.COMPACTED:
+            self.ledger.compact(self.generation_id)
         self.generation = self.ledger.generation(self.generation_id)
         self.run_policy.record_durable_progress(
             kind=DurableProgressKind.FINALIZATION_PHASE_COMMITTED,

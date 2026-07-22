@@ -164,3 +164,56 @@ def test_checkpoint_metadata_refuses_unresolved_file_state(tmp_path: Path) -> No
 def test_first_incremental_requires_a_published_manifest(tmp_path: Path) -> None:
     with pytest.raises(RunLedgerCompatibilityError, match="full reconciliation"):
         _open(tmp_path, operation=RunOperation.INCREMENTAL)
+
+
+@pytest.mark.parametrize(
+    "interrupted_phase",
+    [
+        FinalizationPhase.STALE_RECONCILED,
+        FinalizationPhase.METADATA_PUBLISHED,
+        FinalizationPhase.GENERATION_PUBLISHED,
+    ],
+)
+def test_checkpoint_resumes_each_publication_phase(
+    tmp_path: Path,
+    interrupted_phase: FinalizationPhase,
+) -> None:
+    checkpoint = _open(tmp_path)
+    segment = _segments("src/finalize.py")[1]
+    digest = _digest("finalize")
+    for pending in _segments("src/finalize.py"):
+        checkpoint.record_confirmed_segment(pending, digest)
+
+    meta_path = tmp_path / ".state" / "code_meta.json"
+    checkpoint.ledger.advance_finalization(
+        checkpoint.generation_id,
+        FinalizationPhase.STALE_RECONCILED,
+    )
+    if interrupted_phase in (
+        FinalizationPhase.METADATA_PUBLISHED,
+        FinalizationPhase.GENERATION_PUBLISHED,
+    ):
+        checkpoint.publish_metadata(meta_path)
+    if interrupted_phase is FinalizationPhase.GENERATION_PUBLISHED:
+        checkpoint.ledger.advance_finalization(
+            checkpoint.generation_id,
+            FinalizationPhase.GENERATION_PUBLISHED,
+        )
+    checkpoint.ledger.finish_generation(
+        checkpoint.generation_id,
+        RunTerminalState.CANCELLED,
+        detail=f"interrupted at {interrupted_phase.value}",
+    )
+
+    resumed = _open(tmp_path)
+    assert resumed.ingestion_complete
+    resumed.publish_metadata(meta_path)
+    published = resumed.publish_generation()
+
+    assert published.complete
+    assert published.finalization_phase is FinalizationPhase.COMPACTED
+    assert meta_path.exists()
+    assert resumed.ledger.unit_committed(
+        resumed.generation_id,
+        resumed.unit_for(segment, digest),
+    )
