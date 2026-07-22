@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#machine-discovery-recovery'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-22'
 tier: L3
 related:
   - '[[2026-07-21-machine-discovery-recovery-adr]]'
@@ -38,7 +38,7 @@ Establish fail-closed test isolation, retained singleton ownership, and self-hea
 Make both managed singleton paths unconditionally test-owned and prove ambient variables cannot redirect writers into operator state.
 
 - [x] `W01.P01.S01` - Force status and Qdrant storage paths beneath one session-owned temporary root and reset cached configuration at every test boundary; `src/vaultspec_rag/tests/conftest.py`.
-- [ ] `W01.P01.S02` - Enforce the session-owned containment root before singleton writes and process control whenever pytest is active; `src/vaultspec_rag/`.
+- [x] `W01.P01.S02` - Enforce the session-owned containment root before singleton writes and process control whenever pytest is active; `src/vaultspec_rag/`.
 - [ ] `W01.P01.S03` - Prove ambient and in-test path changes cannot redirect singleton writers into a test-owned trap outside the session root; `src/vaultspec_rag/tests/test_managed_singleton_isolation.py`.
 
 ### Phase `W01.P02` - owner lease and pointer primitives

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from os import PathLike
 
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "PYTEST_MANAGED_SINGLETON_BOOTSTRAP_ENV",
     "PYTEST_MANAGED_SINGLETON_ROOT_ENV",
     "ManagedSingletonIsolationError",
+    "enforce_pytest_managed_singleton_containment",
     "enforce_pytest_singleton_containment",
     "pytest_singleton_containment_active",
     "register_pytest_singleton_root",
@@ -201,6 +203,34 @@ def enforce_pytest_singleton_containment(
             f"refusing to {operation} during pytest: target {canonical_target} "
             f"escapes managed-singleton session root {root}"
         )
+
+
+def enforce_pytest_managed_singleton_containment(
+    *,
+    operation: str,
+    targets: Iterable[str | PathLike[str]] = (),
+) -> None:
+    """Contain one managed-singleton operation and all configured anchors.
+
+    A process-control operation may not have a filesystem target of its own,
+    while a writer can be passed an explicit path that differs from the current
+    configuration.  Under pytest, validate both configured singleton anchors
+    and every effect-specific target before the caller performs its first
+    mutation, lock acquisition, spawn, or signal.  Ordinary production calls
+    return before importing or resolving configuration.
+    """
+    if not pytest_singleton_containment_active():
+        return
+
+    from .config import get_config
+
+    cfg = get_config()
+    configured_targets: tuple[str | PathLike[str], ...] = (
+        str(cfg.status_dir),
+        str(cfg.qdrant_storage_dir),
+    )
+    for target in (*configured_targets, *targets):
+        enforce_pytest_singleton_containment(target, operation=operation)
 
 
 _adopt_inherited_pytest_singleton_root()

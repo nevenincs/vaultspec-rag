@@ -3,15 +3,17 @@ generated: true
 tags:
   - '#index'
   - '#machine-discovery-recovery'
-date: '2026-07-21'
-modified: '2026-07-21'
+date: '2026-07-22'
+modified: '2026-07-22'
 related:
   - '[[2026-07-21-machine-discovery-recovery-W01-P01-S01]]'
+  - '[[2026-07-21-machine-discovery-recovery-W01-P01-S02]]'
   - '[[2026-07-21-machine-discovery-recovery-adr]]'
   - '[[2026-07-21-machine-discovery-recovery-plan]]'
   - '[[2026-07-21-machine-discovery-recovery-reference]]'
   - '[[2026-07-21-machine-discovery-recovery-research]]'
   - '[[2026-07-21-machine-discovery-recovery-s01-test-isolation-audit]]'
+  - '[[2026-07-22-machine-discovery-recovery-s02-containment-audit]]'
 ---
 
 # `machine-discovery-recovery` feature index
@@ -27,10 +29,12 @@ Auto-generated index of all documents tagged with `#machine-discovery-recovery`.
 ### audit
 
 - `2026-07-21-machine-discovery-recovery-s01-test-isolation-audit` - `machine-discovery-recovery` audit: `W01.P01.S01 singleton test isolation`
+- `2026-07-22-machine-discovery-recovery-s02-containment-audit` - `machine-discovery-recovery` audit: `W01.P01.S02 containment guard`
 
 ### exec
 
 - `2026-07-21-machine-discovery-recovery-W01-P01-S01` - Force status and Qdrant storage paths beneath one session-owned temporary root and reset cached configuration at every test boundary
+- `2026-07-21-machine-discovery-recovery-W01-P01-S02` - Enforce the session-owned containment root before singleton writes and process control whenever pytest is active
 
 ### plan
 

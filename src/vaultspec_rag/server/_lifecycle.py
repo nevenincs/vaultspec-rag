@@ -66,6 +66,12 @@ def _resolve_log_path() -> Path:
 
     cfg = get_config()
     status_dir = Path(cfg.status_dir).expanduser()
+    from .._test_isolation import enforce_pytest_managed_singleton_containment
+
+    enforce_pytest_managed_singleton_containment(
+        operation="create the managed service log directory",
+        targets=(status_dir,),
+    )
     status_dir.mkdir(parents=True, exist_ok=True)
     return status_dir / cfg.log_file
 
@@ -104,6 +110,7 @@ def _unlink_status_file_silently() -> None:
     behind.
     """
     from .._machine_lock import machine_discovery_path
+    from .._test_isolation import enforce_pytest_managed_singleton_containment
 
     status_path = _m._status_file_path()
     paths: list[Path] = []
@@ -125,6 +132,10 @@ def _unlink_status_file_silently() -> None:
             error=exc,
         )
     for path in paths:
+        enforce_pytest_managed_singleton_containment(
+            operation="delete the machine service discovery pointer",
+            targets=(path,),
+        )
         try:
             path.unlink()
         except FileNotFoundError as exc:
@@ -258,9 +269,14 @@ def _write_machine_discovery(data: dict[str, object]) -> None:
     still describes the service; the lock remains the singleton authority).
     """
     from .._machine_lock import machine_discovery_path
+    from .._test_isolation import enforce_pytest_managed_singleton_containment
 
     try:
         pointer = machine_discovery_path()
+        enforce_pytest_managed_singleton_containment(
+            operation="write the machine service discovery pointer",
+            targets=(pointer,),
+        )
         pointer.parent.mkdir(parents=True, exist_ok=True)
         tmp = pointer.with_suffix(".tmp")
         tmp.write_text(json.dumps(data), encoding="utf-8")

@@ -89,6 +89,12 @@ def _status_dir() -> Path:
 
     cfg = get_config()
     d = Path(cfg.status_dir).expanduser()
+    from .._test_isolation import enforce_pytest_managed_singleton_containment
+
+    enforce_pytest_managed_singleton_containment(
+        operation="create the managed service status directory",
+        targets=(d,),
+    )
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -147,6 +153,12 @@ def _unlock_fd(fd: int) -> None:
 @contextmanager
 def _status_write_lock(path: Path, *, timeout: float = 1.0) -> Generator[None]:
     """Serialize cross-process status merges with one bounded OS file lock."""
+    from .._test_isolation import enforce_pytest_managed_singleton_containment
+
+    enforce_pytest_managed_singleton_containment(
+        operation="acquire the managed service status write lock",
+        targets=(path,),
+    )
     lock_path = path.with_name("service.json.lock")
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
     acquired = False
