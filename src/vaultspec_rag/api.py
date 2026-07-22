@@ -13,6 +13,13 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from ._public_index import DocumentScanResult, scan_documents
+from ._public_search import (
+    search_combined,
+    search_combined_timed,
+    search_documents,
+    search_documents_timed,
+)
 from .graph_cache import GraphCache
 from .progress import NullProgressReporter
 from .registry import get_registry
@@ -34,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "AllIndexOutcomes",
+    "DocumentScanResult",
     "DomainIndexOutcome",
     "GraphCache",
     "clean",
@@ -50,8 +58,13 @@ __all__ = [
     "run_quality_probe",
     "scan_codebase",
     "scan_codebase_files",
+    "scan_documents",
     "search_codebase",
     "search_codebase_timed",
+    "search_combined",
+    "search_combined_timed",
+    "search_documents",
+    "search_documents_timed",
     "search_vault",
     "search_vault_timed",
 ]
