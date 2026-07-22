@@ -29,7 +29,12 @@ from ._store_models import (
     DocumentChunk as _DocumentChunk,
 )
 from ._store_search import _VaultSearchMixin
-from ._store_writes import StoreWritePolicy, ensure_disk_headroom, run_write_with_retry
+from ._store_writes import (
+    StoreWritePolicy,
+    ensure_disk_headroom,
+    remaining_write_seconds,
+    run_write_with_retry,
+)
 
 if TYPE_CHECKING:
     import pathlib
@@ -325,7 +330,12 @@ class VaultStore(_VaultSearchMixin):
         acquired = False
         try:
             while not acquired:
-                remaining = policy.remaining_seconds()
+                remaining = remaining_write_seconds(
+                    policy,
+                    description=f"{collection} write lock",
+                )
+                if remaining is None:
+                    raise RuntimeError("managed write policy lost its deadline")
                 acquired = lock.acquire(
                     timeout=min(_WRITE_LOCK_POLL_SECONDS, remaining)
                 )
