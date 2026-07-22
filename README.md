@@ -107,7 +107,7 @@ See the [getting started guide](docs/getting-started.md) for the full walkthroug
 | Hybrid search            | Dense (semantic) and sparse (keyword) matching, cross-encoder reranked               |
 | Independent search       | Search `vault`, `code`, or extracted `document` content, or combine all three        |
 | Managed or local backend | A supervised Qdrant server for throughput, or `--local-only` for a zero-server setup |
-| MCP integration          | Search, reindex, clean, and inspect vault, code, and document domains                 |
+| MCP integration          | Search, reindex, clean, and inspect vault, code, and document domains                |
 | Live reindexing          | The running service watches your files and reindexes changes automatically           |
 | Preprocessing hooks      | Route project-defined extractor output explicitly to code or document indexing       |
 

@@ -297,9 +297,10 @@ is never made sticky. Cross-path reuse requires the rule's explicit
 `path_independent = true` declaration.
 
 To force re-extraction of unchanged files after upgrading your extractor, bump
-`extractor_version`. Collection cleanup is intentionally separate from cache lifecycle;
-cleaning only `code` or only `document` does not erase extraction outputs owned by the
-other domain.
+`extractor_version`. Collection cleanup is intentionally separate from cache lifecycle:
+cleaning or rebuilding `code`, `document`, or `combined` does not erase extraction-cache
+entries. Their complete execution fingerprints make obsolete entries unreachable without
+coupling one domain's cleanup to another domain's extractor work.
 
 - From the CLI: `vaultspec-rag index --rebuild --type document` (or `--type combined`),
   or `vaultspec-rag clean document` followed by a fresh index. See
