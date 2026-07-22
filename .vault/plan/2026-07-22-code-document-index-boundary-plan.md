@@ -115,17 +115,17 @@ Create document-native identity, payload, collection, metadata, lock, lifecycle,
 
 Route admitted source and document units into their own production models and stores while preserving metadata and explicit per-domain outcomes.
 
-- [ ] `W02.P04.S23` - Split worker output into source and document chunk result types without overloading `CodeChunk`; `src/vaultspec_rag/indexer/_chunk_worker.py, src/vaultspec_rag/_store_models.py`.
-- [ ] `W02.P04.S24` - Preserve title, section, anchor, locator, document metadata, unit metadata, and extractor identity on document chunks; `src/vaultspec_rag/indexer/_chunk_worker.py, src/vaultspec_rag/_store_models.py`.
-- [ ] `W02.P04.S25` - Dispatch bounded streaming batches to the collection selected by each admission disposition; `src/vaultspec_rag/indexer/_streaming.py, src/vaultspec_rag/indexer/_codebase_indexer.py`.
-- [ ] `W02.P04.S26` - Implement full document indexing behind one service-domain entry point; `src/vaultspec_rag/indexer/_document_indexer.py, src/vaultspec_rag/api.py`.
-- [ ] `W02.P04.S27` - Return explicit per-domain outcomes from all indexing without hiding a partial failure; `src/vaultspec_rag/api.py, src/vaultspec_rag/jobs.py`.
-- [ ] `W02.P04.S28` - Verify source and extracted units reach only their assigned collections through the real embedding and storage path; `src/vaultspec_rag/tests/integration/test_document_indexing.py, src/vaultspec_rag/tests/integration/test_preprocess_integration.py`.
-- [ ] `W02.P04.S101` - Implement unscoped incremental document indexing behind the service-domain entry point; `src/vaultspec_rag/indexer/_document_indexer.py, src/vaultspec_rag/api.py`.
-- [ ] `W02.P04.S102` - Implement scoped incremental document indexing behind the service-domain entry point; `src/vaultspec_rag/indexer/_document_indexer.py, src/vaultspec_rag/api.py`.
-- [ ] `W02.P04.S103` - Register document indexer construction, counts, close lifecycle, and watcher injection in managed project slots; `src/vaultspec_rag/service.py, src/vaultspec_rag/registry.py, src/vaultspec_rag/server/_watcher.py`.
-- [ ] `W02.P04.S104` - Ingest explicitly routed decodable raw documents without launching an extractor; `src/vaultspec_rag/indexer/_document_indexer.py, src/vaultspec_rag/indexer/_chunk_worker.py`.
-- [ ] `W02.P04.S105` - Verify raw and extracted document routes remain document-owned through real full and incremental indexing; `src/vaultspec_rag/tests/integration/test_document_indexing.py`.
+- [x] `W02.P04.S23` - Split worker output into source and document chunk result types without overloading `CodeChunk`; `src/vaultspec_rag/indexer/_chunk_worker.py, src/vaultspec_rag/_store_models.py`.
+- [x] `W02.P04.S24` - Preserve title, section, anchor, locator, document metadata, unit metadata, and extractor identity on document chunks; `src/vaultspec_rag/indexer/_chunk_worker.py, src/vaultspec_rag/_store_models.py`.
+- [x] `W02.P04.S25` - Dispatch bounded streaming batches to the collection selected by each admission disposition; `src/vaultspec_rag/indexer/_streaming.py, src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `W02.P04.S26` - Implement full document indexing behind one service-domain entry point; `src/vaultspec_rag/indexer/_document_indexer.py, src/vaultspec_rag/api.py`.
+- [x] `W02.P04.S27` - Return explicit per-domain outcomes from all indexing without hiding a partial failure; `src/vaultspec_rag/api.py, src/vaultspec_rag/jobs.py`.
+- [x] `W02.P04.S28` - Verify source and extracted units reach only their assigned collections through the real embedding and storage path; `src/vaultspec_rag/tests/integration/test_document_indexing.py, src/vaultspec_rag/tests/integration/test_preprocess_integration.py`.
+- [x] `W02.P04.S101` - Implement unscoped incremental document indexing behind the service-domain entry point; `src/vaultspec_rag/indexer/_document_indexer.py, src/vaultspec_rag/api.py`.
+- [x] `W02.P04.S102` - Implement scoped incremental document indexing behind the service-domain entry point; `src/vaultspec_rag/indexer/_document_indexer.py, src/vaultspec_rag/api.py`.
+- [x] `W02.P04.S103` - Register document indexer construction, counts, close lifecycle, and watcher injection in managed project slots; `src/vaultspec_rag/service.py, src/vaultspec_rag/registry.py, src/vaultspec_rag/server/_watcher.py`.
+- [x] `W02.P04.S104` - Ingest explicitly routed decodable raw documents without launching an extractor; `src/vaultspec_rag/indexer/_document_indexer.py, src/vaultspec_rag/indexer/_chunk_worker.py`.
+- [x] `W02.P04.S105` - Verify raw and extracted document routes remain document-owned through real full and incremental indexing; `src/vaultspec_rag/tests/integration/test_document_indexing.py`.
 
 ## Wave `W03` - faithful bounded preprocessing and convergence
 
@@ -135,15 +135,15 @@ Harden extraction identity, metadata, caching, failure state, and resource accou
 
 Deliver every semantics-bearing extractor input, bind output to the host-owned source, and prevent cache aliasing across paths, options, versions, or content domains.
 
-- [ ] `W03.P05.S29` - Define a versioned extractor invocation envelope with canonical source identity, normalized options, configured version, target, and mode; `src/vaultspec_rag/indexer/_preprocess_schema.py, src/vaultspec_rag/indexer/_preprocess_config.py`.
-- [ ] `W03.P05.S30` - Deliver the invocation envelope to command extractors without shell-specific argument reconstruction; `src/vaultspec_rag/indexer/_preprocess_runner.py`.
-- [ ] `W03.P05.S31` - Deliver the invocation envelope to entry-point extractors with the same contract as command execution; `src/vaultspec_rag/indexer/_preprocess_runner.py`.
-- [ ] `W03.P05.S32` - Reject emitted source redirection and validate bounded document and unit metadata; `src/vaultspec_rag/indexer/_preprocess_schema.py, src/vaultspec_rag/indexer/_chunk_worker.py`.
-- [ ] `W03.P05.S33` - Key extraction cache entries by source path, source hash, output schema, and canonical execution fingerprint; `src/vaultspec_rag/indexer/_preprocess_cache.py, src/vaultspec_rag/indexer/_chunk_worker.py`.
-- [ ] `W03.P05.S34` - Permit cross-path cache reuse only for extractors that explicitly declare path independence; `src/vaultspec_rag/indexer/_preprocess_config.py, src/vaultspec_rag/indexer/_preprocess_cache.py`.
-- [ ] `W03.P05.S35` - Partition extraction cache lifecycle from code and document collection cleanup; `src/vaultspec_rag/indexer/_preprocess_cache.py, src/vaultspec_rag/indexer/_codebase_indexer.py, src/vaultspec_rag/indexer/_document_indexer.py`.
-- [ ] `W03.P05.S36` - Verify options, versions, source binding, metadata retention, and path-dependent cache behavior with real extractor processes; `src/vaultspec_rag/tests/integration/test_preprocess_integration.py`.
-- [ ] `W03.P05.S106` - Render targets, extractor versions, path-independence, schema migration, and disabled execution through preprocess list, check, and status; `src/vaultspec_rag/cli/_preprocess.py`.
+- [x] `W03.P05.S29` - Define a versioned extractor invocation envelope with canonical source identity, normalized options, configured version, target, and mode; `src/vaultspec_rag/indexer/_preprocess_schema.py, src/vaultspec_rag/indexer/_preprocess_config.py`.
+- [x] `W03.P05.S30` - Deliver the invocation envelope to command extractors without shell-specific argument reconstruction; `src/vaultspec_rag/indexer/_preprocess_runner.py`.
+- [x] `W03.P05.S31` - Deliver the invocation envelope to entry-point extractors with the same contract as command execution; `src/vaultspec_rag/indexer/_preprocess_runner.py`.
+- [x] `W03.P05.S32` - Reject emitted source redirection and validate bounded document and unit metadata; `src/vaultspec_rag/indexer/_preprocess_schema.py, src/vaultspec_rag/indexer/_chunk_worker.py`.
+- [x] `W03.P05.S33` - Key extraction cache entries by source path, source hash, output schema, and canonical execution fingerprint; `src/vaultspec_rag/indexer/_preprocess_cache.py, src/vaultspec_rag/indexer/_chunk_worker.py`.
+- [x] `W03.P05.S34` - Permit cross-path cache reuse only for extractors that explicitly declare path independence; `src/vaultspec_rag/indexer/_preprocess_config.py, src/vaultspec_rag/indexer/_preprocess_cache.py`.
+- [x] `W03.P05.S35` - Partition extraction cache lifecycle from code and document collection cleanup; `src/vaultspec_rag/indexer/_preprocess_cache.py, src/vaultspec_rag/indexer/_codebase_indexer.py, src/vaultspec_rag/indexer/_document_indexer.py`.
+- [x] `W03.P05.S36` - Verify options, versions, source binding, metadata retention, and path-dependent cache behavior with real extractor processes; `src/vaultspec_rag/tests/integration/test_preprocess_integration.py`.
+- [x] `W03.P05.S106` - Render targets, extractor versions, path-independence, schema migration, and disabled execution through preprocess list, check, and status; `src/vaultspec_rag/cli/_preprocess.py`.
 
 ### Phase `W03.P06` - explicit failure outcomes and resource bounds
 
