@@ -548,17 +548,12 @@ async def _exercise_watcher_cancel_replacement(
     return replacement
 
 
-@pytest.mark.timeout(300)
-async def test_large_corpus_pause_resume_cancel_releases_and_converges(
-    tmp_path: Path,
-    _e2e_runtime: tuple[ServiceRegistry, JobManager],
+async def _pause_and_resume_large_job(
+    manager: JobManager,
+    slot: ProjectSlot,
+    root: Path,
 ) -> None:
-    """Pause and resume one large job, then prove cancellation is absorbing."""
-    registry, manager = _e2e_runtime
-    root = tmp_path / "large-vault"
-    _write_vault_corpus(root, start=0, count=384)
-    slot = registry.peek_project(root)
-
+    """Pause and resume one publishing job through a released attempt."""
     job_id = jobs.start_reindex_vault(root, clean=False)
     live = await _wait_for_job(
         manager,
@@ -608,6 +603,13 @@ async def test_large_corpus_pause_resume_cancel_releases_and_converges(
     assert slot.store.count() >= 384
     _assert_released(succeeded, slot)
 
+
+async def _cancel_large_job(
+    manager: JobManager,
+    slot: ProjectSlot,
+    root: Path,
+) -> None:
+    """Cancel a writer-blocked job and assert its published state is absorbing."""
     _write_vault_corpus(root, start=384, count=192)
     before_ids = slot.store.get_all_ids()
     metadata_path = root / get_config().data_dir / get_config().index_metadata_file
@@ -657,6 +659,128 @@ async def test_large_corpus_pause_resume_cancel_releases_and_converges(
 
 
 @pytest.mark.timeout(300)
+async def test_large_corpus_pause_resume_cancel_releases_and_converges(
+    tmp_path: Path,
+    _e2e_runtime: tuple[ServiceRegistry, JobManager],
+) -> None:
+    """Pause and resume one large job, then prove cancellation is absorbing."""
+    registry, manager = _e2e_runtime
+    root = tmp_path / "large-vault"
+    _write_vault_corpus(root, start=0, count=384)
+    slot = registry.peek_project(root)
+    await _pause_and_resume_large_job(manager, slot, root)
+    await _cancel_large_job(manager, slot, root)
+
+
+def _seed_restart_jobs(
+    manager: JobManager,
+    queued_root: Path,
+    paused_root: Path,
+    interrupted_root: Path,
+) -> tuple[JobSnapshot, JobSnapshot, JobOutcome]:
+    """Create queued, paused, and soon-interrupted durable restart intents."""
+    queued = manager.create(
+        _vault_job_spec(queued_root),
+        _integration_initiator(queued_root, "restart queued probe"),
+    )
+    paused = manager.create(
+        _vault_job_spec(paused_root),
+        _integration_initiator(paused_root, "restart paused probe"),
+        start_paused=True,
+    )
+    interrupted = manager.create(
+        _vault_job_spec(interrupted_root),
+        _integration_initiator(interrupted_root, "restart interrupted probe"),
+    )
+    assert queued.job is not None
+    assert paused.job is not None
+    assert interrupted.job is not None
+    return queued.job, paused.job, interrupted
+
+
+async def _complete_restored_queued_job(
+    manager: JobManager,
+    registry: ServiceRegistry,
+    restored: JobSnapshot,
+    root: Path,
+) -> None:
+    """Wait for restored queued work and assert released success."""
+    assert (
+        await manager.wait_for_attempt(
+            restored.id,
+            timeout_seconds=_E2E_TIMEOUT_SECONDS,
+        )
+    ).code == "attempt_released"
+    completed = manager.get(restored.id)
+    assert completed is not None
+    assert completed.state is JobState.SUCCEEDED
+    _assert_released(completed, registry.peek_project(root))
+
+
+async def _retry_restored_interruption(
+    manager: JobManager,
+    registry: ServiceRegistry,
+    restored: JobSnapshot,
+    root: Path,
+) -> None:
+    """Retry restored interrupted work and assert its durable parent link."""
+    retry = manager.retry(
+        restored.id,
+        initiator=_integration_initiator(root, "restart retry probe"),
+    )
+    assert retry.code == "job_retry_created"
+    assert retry.job is not None
+    assert retry.job.attempt.parent_job_id == restored.id
+    activated = await jobs.activate_index_job(
+        retry,
+        code_preflight=None,
+        registry=registry,
+    )
+    assert activated.status is not JobOutcomeStatus.ERROR
+    assert (
+        await manager.wait_for_attempt(
+            retry.job.id,
+            timeout_seconds=_E2E_TIMEOUT_SECONDS,
+        )
+    ).code == "attempt_released"
+    completed = manager.get(retry.job.id)
+    assert completed is not None
+    assert completed.state is JobState.SUCCEEDED
+    assert completed.attempt.parent_job_id == restored.id
+    _assert_released(completed, registry.peek_project(root))
+
+
+def _assert_restart_delete_and_pause(
+    manager: JobManager,
+    state_path: Path,
+    restored_interrupted: JobSnapshot,
+    restored_paused: JobSnapshot,
+) -> None:
+    """Assert deletion persistence and retained pause intent after restart."""
+    deleted = manager.delete(restored_interrupted.id)
+    assert deleted.code == "job_deleted"
+    assert manager.get(restored_interrupted.id) is None
+    still_paused = manager.get(restored_paused.id)
+    assert still_paused is not None
+    assert still_paused.state is JobState.PAUSED
+    assert still_paused.desired_state is DesiredJobState.PAUSED
+    observed_after_delete = JobManager(max_nonterminal=3, state_path=state_path)
+    assert observed_after_delete.restore_persisted().code == "job_state_restored"
+    assert observed_after_delete.get(restored_interrupted.id) is None
+    durable_pause = observed_after_delete.get(restored_paused.id)
+    assert durable_pause is not None
+    assert durable_pause.state is JobState.PAUSED
+    assert durable_pause.desired_state is DesiredJobState.PAUSED
+    cancelled_pause = manager.set_desired_state(
+        restored_paused.id,
+        DesiredJobState.CANCELLED,
+        expected_revision=still_paused.revision,
+    )
+    assert cancelled_pause.code == "job_cancelled"
+    assert manager.active() == []
+
+
+@pytest.mark.timeout(300)
 async def test_restart_dispatches_queued_preserves_pause_and_links_retry(
     tmp_path: Path,
     _e2e_runtime: tuple[ServiceRegistry, JobManager],
@@ -674,22 +798,14 @@ async def test_restart_dispatches_queued_preserves_pause_and_links_retry(
         _write_vault_corpus(root, start=marker, count=8)
 
     crash_state_path = tmp_path / "running-generation.json"
-    queued = seed_manager.create(
-        _vault_job_spec(queued_root),
-        _integration_initiator(queued_root, "restart queued probe"),
+    queued, paused, interrupted = _seed_restart_jobs(
+        seed_manager,
+        queued_root,
+        paused_root,
+        interrupted_root,
     )
-    paused = seed_manager.create(
-        _vault_job_spec(paused_root),
-        _integration_initiator(paused_root, "restart paused probe"),
-        start_paused=True,
-    )
-    interrupted = seed_manager.create(
-        _vault_job_spec(interrupted_root),
-        _integration_initiator(interrupted_root, "restart interrupted probe"),
-    )
-    assert queued.job is not None
-    assert paused.job is not None
-    assert interrupted.job is not None
+    interrupted_job = interrupted.job
+    assert interrupted_job is not None
 
     state_path = await _capture_running_restart_generation(
         seed_manager,
@@ -707,71 +823,29 @@ async def test_restart_dispatches_queued_preserves_pause_and_links_retry(
     restored_queued, restored_paused, restored_interrupted = (
         _assert_restored_restart_state(
             restarted,
-            queued_id=queued.job.id,
-            paused_id=paused.job.id,
-            interrupted_id=interrupted.job.id,
+            queued_id=queued.id,
+            paused_id=paused.id,
+            interrupted_id=interrupted_job.id,
         )
     )
-
-    assert (
-        await restarted.wait_for_attempt(
-            restored_queued.id,
-            timeout_seconds=_E2E_TIMEOUT_SECONDS,
-        )
-    ).code == "attempt_released"
-    completed_queued = restarted.get(restored_queued.id)
-    assert completed_queued is not None
-    assert completed_queued.state is JobState.SUCCEEDED
-    _assert_released(completed_queued, registry.peek_project(queued_root))
-
-    retry = restarted.retry(
-        restored_interrupted.id,
-        initiator=_integration_initiator(interrupted_root, "restart retry probe"),
+    await _complete_restored_queued_job(
+        restarted,
+        registry,
+        restored_queued,
+        queued_root,
     )
-    assert retry.code == "job_retry_created"
-    assert retry.job is not None
-    assert retry.job.attempt.parent_job_id == restored_interrupted.id
-    activated_retry = await jobs.activate_index_job(
-        retry,
-        code_preflight=None,
-        registry=registry,
+    await _retry_restored_interruption(
+        restarted,
+        registry,
+        restored_interrupted,
+        interrupted_root,
     )
-    assert activated_retry.status is not JobOutcomeStatus.ERROR
-    assert (
-        await restarted.wait_for_attempt(
-            retry.job.id,
-            timeout_seconds=_E2E_TIMEOUT_SECONDS,
-        )
-    ).code == "attempt_released"
-    completed_retry = restarted.get(retry.job.id)
-    assert completed_retry is not None
-    assert completed_retry.state is JobState.SUCCEEDED
-    assert completed_retry.attempt.parent_job_id == restored_interrupted.id
-    _assert_released(completed_retry, registry.peek_project(interrupted_root))
-
-    deleted = restarted.delete(restored_interrupted.id)
-    assert deleted.code == "job_deleted"
-    assert restarted.get(restored_interrupted.id) is None
-    still_paused = restarted.get(restored_paused.id)
-    assert still_paused is not None
-    assert still_paused.state is JobState.PAUSED
-    assert still_paused.desired_state is DesiredJobState.PAUSED
-
-    observed_after_delete = JobManager(max_nonterminal=3, state_path=state_path)
-    assert observed_after_delete.restore_persisted().code == "job_state_restored"
-    assert observed_after_delete.get(restored_interrupted.id) is None
-    durable_pause = observed_after_delete.get(restored_paused.id)
-    assert durable_pause is not None
-    assert durable_pause.state is JobState.PAUSED
-    assert durable_pause.desired_state is DesiredJobState.PAUSED
-
-    cancelled_pause = restarted.set_desired_state(
-        restored_paused.id,
-        DesiredJobState.CANCELLED,
-        expected_revision=still_paused.revision,
+    _assert_restart_delete_and_pause(
+        restarted,
+        state_path,
+        restored_interrupted,
+        restored_paused,
     )
-    assert cancelled_pause.code == "job_cancelled"
-    assert restarted.active() == []
 
 
 @pytest.mark.timeout(300)
@@ -879,97 +953,93 @@ async def test_watcher_coalesces_replaces_stops_and_closes_store_safely(
     assert str(root) not in health["projects"]
 
 
+def _create_operator_matrix_job(port: int, project_root: Path) -> tuple[str, int]:
+    """Create one paused job for the cross-surface operator matrix."""
+    created = _try_http_create_job(
+        "vault",
+        str(project_root),
+        port,
+        start_paused=True,
+        idempotency_key="e2e-operator-matrix",
+        timeout=5.0,
+    )
+    assert created is not None
+    assert created["code"] == "job_created"
+    created_job = cast("dict[str, object]", created["job"])
+    return cast("str", created_job["id"]), cast("int", created_job["revision"])
+
+
+def _assert_operator_matrix_lookup(port: int, job_id: str) -> None:
+    """Assert typed and CLI lookup agree on exact-ID semantics."""
+    detail = _try_http_get_job(job_id, port, timeout=5.0)
+    assert detail is not None
+    assert detail["ok"] is True
+    detail_job = cast("dict[str, object]", detail["job"])
+    assert detail_job["id"] == job_id
+    exit_code, shown = _invoke_job_json("show", job_id, "--port", str(port))
+    assert exit_code == 0
+    assert shown["ok"] is True
+    exit_code, prefix_rejected = _invoke_job_json(
+        "show", job_id[:8], "--port", str(port)
+    )
+    assert exit_code == 1
+    assert prefix_rejected["error"] == "job_not_found"
+
+
+def _assert_operator_matrix_conflicts(port: int, job_id: str, revision: int) -> None:
+    """Assert revision replay, active-delete, and force-stop outcomes."""
+    stale = _try_http_set_job_desired_state(
+        job_id,
+        "running",
+        port,
+        expected_revision=revision + 100,
+        timeout=5.0,
+    )
+    assert stale is not None
+    assert stale["ok"] is False
+    assert stale["error"] == "revision_conflict"
+    replay = _try_http_set_job_desired_state(
+        job_id,
+        "paused",
+        port,
+        expected_revision=revision + 100,
+        timeout=5.0,
+    )
+    assert replay is not None
+    assert replay["ok"] is True
+    assert replay["code"] == "already_satisfied"
+    active_delete = _try_http_delete_job(job_id, port, timeout=5.0)
+    assert active_delete is not None
+    assert active_delete["ok"] is False
+    assert active_delete["error"] == "job_not_terminal"
+    exit_code, force_rejected = _invoke_job_json(
+        "stop", job_id, "--port", str(port), "--force"
+    )
+    assert exit_code == 1
+    assert force_rejected["error"] == "force_termination_unavailable"
+
+
+def _complete_operator_matrix(port: int, job_id: str) -> None:
+    """Cancel through the CLI and delete through typed transport."""
+    exit_code, stopped = _invoke_job_json("stop", job_id, "--port", str(port))
+    assert exit_code == 0
+    assert stopped["ok"] is True
+    stopped_data = cast("dict[str, object]", stopped["data"])
+    assert stopped_data["status"] == "job_cancelled"
+    deleted = _try_http_delete_job(job_id, port, timeout=5.0)
+    assert deleted is not None
+    assert deleted["ok"] is True
+    assert deleted["code"] == "job_deleted"
+
+
 def test_http_transport_and_cli_outcome_matrix_uses_exact_job_ids(
     tmp_path: Path,
 ) -> None:
     """Cross HTTP, typed transport, and CLI with one exact job resource."""
     project_root = tmp_path / "operator-matrix"
     (project_root / ".vault").mkdir(parents=True)
-
     with _real_job_control_server(tmp_path) as port:
-        created = _try_http_create_job(
-            "vault",
-            str(project_root),
-            port,
-            start_paused=True,
-            idempotency_key="e2e-operator-matrix",
-            timeout=5.0,
-        )
-        assert created is not None
-        assert created["code"] == "job_created"
-        created_job = cast("dict[str, object]", created["job"])
-        job_id = cast("str", created_job["id"])
-        revision = cast("int", created_job["revision"])
-
-        detail = _try_http_get_job(job_id, port, timeout=5.0)
-        assert detail is not None
-        assert detail["ok"] is True
-        detail_job = cast("dict[str, object]", detail["job"])
-        assert detail_job["id"] == job_id
-
-        exit_code, shown = _invoke_job_json(
-            "show",
-            job_id,
-            "--port",
-            str(port),
-        )
-        assert exit_code == 0
-        assert shown["ok"] is True
-        exit_code, prefix_rejected = _invoke_job_json(
-            "show",
-            job_id[:8],
-            "--port",
-            str(port),
-        )
-        assert exit_code == 1
-        assert prefix_rejected["error"] == "job_not_found"
-
-        stale = _try_http_set_job_desired_state(
-            job_id,
-            "running",
-            port,
-            expected_revision=revision + 100,
-            timeout=5.0,
-        )
-        assert stale is not None
-        assert stale["ok"] is False
-        assert stale["error"] == "revision_conflict"
-        replay = _try_http_set_job_desired_state(
-            job_id,
-            "paused",
-            port,
-            expected_revision=revision + 100,
-            timeout=5.0,
-        )
-        assert replay is not None
-        assert replay["ok"] is True
-        assert replay["code"] == "already_satisfied"
-
-        active_delete = _try_http_delete_job(job_id, port, timeout=5.0)
-        assert active_delete is not None
-        assert active_delete["ok"] is False
-        assert active_delete["error"] == "job_not_terminal"
-        exit_code, force_rejected = _invoke_job_json(
-            "stop",
-            job_id,
-            "--port",
-            str(port),
-            "--force",
-        )
-        assert exit_code == 1
-        assert force_rejected["error"] == "force_termination_unavailable"
-
-        exit_code, stopped = _invoke_job_json(
-            "stop",
-            job_id,
-            "--port",
-            str(port),
-        )
-        assert exit_code == 0
-        assert stopped["ok"] is True
-        stopped_data = cast("dict[str, object]", stopped["data"])
-        assert stopped_data["status"] == "job_cancelled"
-        deleted = _try_http_delete_job(job_id, port, timeout=5.0)
-        assert deleted is not None
-        assert deleted["ok"] is True
-        assert deleted["code"] == "job_deleted"
+        job_id, revision = _create_operator_matrix_job(port, project_root)
+        _assert_operator_matrix_lookup(port, job_id)
+        _assert_operator_matrix_conflicts(port, job_id, revision)
+        _complete_operator_matrix(port, job_id)
