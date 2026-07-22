@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+import threading
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -418,3 +419,49 @@ def test_metadata_publication_streams_only_converged_ledger_rows(
             content_epoch="content-v1",
         )
     assert meta_path.read_bytes() == before
+
+
+def test_overlapping_metadata_publications_are_each_atomic(tmp_path: Path) -> None:
+    meta_path = tmp_path / "code_meta.json"
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+
+    def states(prefix: str):
+        barrier.wait(timeout=5.0)
+        for ordinal in range(200):
+            yield FileState.indexed(
+                f"src/{prefix}-{ordinal:04d}.py",
+                ContentKind.CODE,
+                _digest(f"{prefix}-{ordinal}"),
+            )
+
+    def publish(prefix: str) -> None:
+        try:
+            publish_meta_from_file_states(
+                meta_path,
+                states(prefix),
+                generation_id=f"generation-{prefix}",
+                membership_epoch="membership-v1",
+                content_epoch="content-v1",
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=publish, args=(prefix,))
+        for prefix in ("left", "right")
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10.0)
+
+    assert not errors
+    assert all(not thread.is_alive() for thread in threads)
+    raw = read_meta_raw(meta_path)
+    winner = raw[GENERATION_ID_KEY].removeprefix("generation-")
+    assert winner in {"left", "right"}
+    published = load_meta(meta_path)
+    assert len(published) == 200
+    assert all(path.startswith(f"src/{winner}-") for path in published)
+    assert not list(tmp_path.glob(f".{meta_path.name}.*.tmp"))

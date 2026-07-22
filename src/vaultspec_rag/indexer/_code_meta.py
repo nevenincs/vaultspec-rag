@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import _config_epoch
@@ -181,11 +183,16 @@ def publish_meta_from_file_states(
             raise ValueError(f"{name} must not be empty")
 
     meta_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = meta_path.with_suffix(".tmp")
+    descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{meta_path.name}.",
+        suffix=".tmp",
+        dir=meta_path.parent,
+    )
+    temp_path = Path(temp_name)
     count = 0
     previous_path: str | None = None
     try:
-        with temp_path.open("w", encoding="utf-8", newline="\n") as stream:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
             stream.write("{\n")
             reserved = (
                 (EMBED_SCHEMA_KEY, CODE_EMBED_SCHEMA),
