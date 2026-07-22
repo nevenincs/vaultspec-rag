@@ -121,51 +121,50 @@ def main(port: int | None = None) -> None:
         from ..config import get_config
         from ..logging_config import (
             configure_logging,
-            install_daemon_log_rotation,
+            install_daemon_log_capture,
         )
 
         # Install ordering (CRITICAL):
-        # argparse → configure_logging → install_daemon_log_rotation → uvicorn.run.
+        # argparse → configure_logging → install_daemon_log_capture → uvicorn.run.
         # The spawned daemon inherits the parent's stdout/stderr FD
-        # redirection onto service.log via Popen, but its own
-        # logging handlers are empty.  Core's configure_logging
-        # installs a stderr RichHandler, and install_daemon_log_rotation
-        # then layers the rotating file handler on top and re-dup2s
-        # fds 1/2 onto the rotating stream.  Rotation is a stdio-mode
+        # redirection onto service.log via Popen. Core's configure_logging
+        # installs its normal stderr sink; install_daemon_log_capture replaces
+        # it with one canonical stream and redirects fds 1/2 into a pipe whose
+        # bounded drain is the only service.log writer. Rotation is a stdio-mode
         # asymmetry on purpose: stdio is one-shot CLI tooling, not a
         # long-lived daemon, so no rotation is needed there.
         configure_logging(level="INFO")
         cfg = get_config()
-        install_daemon_log_rotation(
+        log_capture = install_daemon_log_capture(
             _m._resolve_log_path(),
-            max_bytes=int(cfg.service_log_max_bytes),
-            backup_count=int(cfg.service_log_backup_count),
-        )
-
-        from ..jobs import register_on_job_complete
-        from ._routes import ROUTES as READ_ONLY_ROUTES
-
-        def _on_reindex_complete(duration_s: float) -> None:
-            _m.incr("reindex_total")
-            _m.observe("reindex_last_duration_seconds", duration_s)
-
-        register_on_job_complete(_on_reindex_complete)
-
-        # ``/health`` stays UNGATED (registered here, not in
-        # ``_routes``); the read-only routes (e.g. token-gated ``/logs``)
-        # register from ``_routes.ROUTES`` on this same app. The daemon
-        # serves native REST only: no MCP mount, no ASGI wrappers, just
-        # Starlette ``Route``s. The MCP is a separate stdio client that
-        # reaches these routes over HTTP.
-        app = Starlette(
-            routes=[
-                Route("/health", health_handler),
-                *READ_ONLY_ROUTES,
-            ],
-            lifespan=service_lifespan,
+            max_bytes=int(cfg.managed_log_max_bytes),
+            backup_count=int(cfg.managed_log_backup_count),
         )
 
         try:
+            from ..jobs import register_on_job_complete
+            from ._routes import ROUTES as READ_ONLY_ROUTES
+
+            def _on_reindex_complete(duration_s: float) -> None:
+                _m.incr("reindex_total")
+                _m.observe("reindex_last_duration_seconds", duration_s)
+
+            register_on_job_complete(_on_reindex_complete)
+
+            # ``/health`` stays UNGATED (registered here, not in
+            # ``_routes``); the read-only routes (e.g. token-gated ``/logs``)
+            # register from ``_routes.ROUTES`` on this same app. The daemon
+            # serves native REST only: no MCP mount, no ASGI wrappers, just
+            # Starlette ``Route``s. The MCP is a separate stdio client that
+            # reaches these routes over HTTP.
+            app = Starlette(
+                routes=[
+                    Route("/health", health_handler),
+                    *READ_ONLY_ROUTES,
+                ],
+                lifespan=service_lifespan,
+            )
+
             uvicorn.run(
                 app,
                 host="127.0.0.1",
@@ -175,7 +174,13 @@ def main(port: int | None = None) -> None:
                 lifespan="on",
             )
         finally:
-            _m._registry.close_all()
+            try:
+                _m._registry.close_all()
+            finally:
+                if not log_capture.close():
+                    raise RuntimeError(
+                        "service log drain did not finish within its shutdown bound"
+                    )
     else:
         # stdio is the sole MCP transport. ``mcp`` is imported only here:
         # the HTTP daemon no longer mounts any MCP app, so it never needs

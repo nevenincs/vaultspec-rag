@@ -348,7 +348,7 @@ class TestServiceOperator:
         )
 
     def test_server_logs_no_service(self, tmp_path: Path) -> None:
-        """``server logs`` exits 3 with a remediation message when down."""
+        """``server logs`` reads retained source groups without a daemon."""
         from ._helpers import _service_env
 
         with _service_env(tmp_path):
@@ -362,10 +362,10 @@ class TestServiceOperator:
             exit_code=r.exit_code,
             output=r.output,
         )
-        assert obs.exit_code == 3, (
-            f"Expected exit 3, got {obs.exit_code}:\n{obs.output}"
+        assert obs.exit_code == 0, (
+            f"Expected a successful offline read, got {obs.exit_code}:\n{obs.output}"
         )
-        assert obs.output.strip(), "Expected non-empty output (remediation hint)"
+        assert obs.output == "[service]\n[qdrant]\n"
 
     def test_server_jobs_no_service(self, tmp_path: Path) -> None:
         """``server jobs`` exits 3 with a remediation message when down."""

@@ -278,9 +278,12 @@ def test_lru_cap_evicts_oldest(tmp_path: Path) -> None:
 def test_log_rotation_creates_backups(tmp_path: Path) -> None:
     """A small max_bytes drives multiple rotations and bounded backup count."""
     overrides = {
-        "VAULTSPEC_RAG_SERVICE_LOG_MAX_BYTES": "4096",
-        "VAULTSPEC_RAG_SERVICE_LOG_BACKUP_COUNT": "2",
+        "VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES": "4096",
+        "VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT": "2",
         "VAULTSPEC_RAG_LOG_LEVEL": "DEBUG",
+        # This scenario exercises the service writer only. Keep the real
+        # isolated service independent of a machine-provisioned Qdrant binary.
+        "VAULTSPEC_RAG_LOCAL_ONLY": "1",
     }
     with _service_env(tmp_path, overrides):
         port = _get_ephemeral_port()
@@ -324,9 +327,10 @@ def test_log_rotation_creates_backups(tmp_path: Path) -> None:
 def test_log_rotation_post_rollover_writes_to_active(tmp_path: Path) -> None:
     """New log records after rollover land in the active file, not the backup."""
     overrides = {
-        "VAULTSPEC_RAG_SERVICE_LOG_MAX_BYTES": "4096",
-        "VAULTSPEC_RAG_SERVICE_LOG_BACKUP_COUNT": "3",
+        "VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES": "4096",
+        "VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT": "3",
         "VAULTSPEC_RAG_LOG_LEVEL": "DEBUG",
+        "VAULTSPEC_RAG_LOCAL_ONLY": "1",
     }
     with _service_env(tmp_path, overrides):
         port = _get_ephemeral_port()

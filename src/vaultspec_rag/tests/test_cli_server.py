@@ -13,7 +13,6 @@ from ._cli_helpers import (
     EnvVar,
     _assert_no_table_borders,
     _assert_project_summary_language,
-    _empty_logs_contract_server,
     _find_free_port,
     _jobs_empty_contract_server,
     _jobs_populated_contract_server,
@@ -269,8 +268,29 @@ class TestServiceLogsCli:
         assert result.exit_code != 0
         assert "No such option" in result.output
 
-    def test_empty_logs_offer_wider_bounded_search(self) -> None:
-        server, thread, requests = _empty_logs_contract_server()
+    def test_logs_raw_compatibility_option_is_not_supported(self) -> None:
+        result = runner.invoke(app, ["server", "logs", "--raw"])
+
+        assert result.exit_code != 0
+        assert "No such option" in result.output
+
+    def test_logs_read_grouped_retained_sources_after_service_stops(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        status_dir = tmp_path / "status"
+        status_dir.mkdir()
+        (status_dir / "service.log").write_text(
+            "service older\nservice newest\n",
+            encoding="utf-8",
+        )
+        (status_dir / "qdrant.log").write_text(
+            "qdrant older\nqdrant newest\n",
+            encoding="utf-8",
+        )
+        os.environ[EnvVar.STATUS_DIR] = str(status_dir)
+        reset_base_config()
+        reset_rag_config()
         try:
             result = runner.invoke(
                 app,
@@ -278,44 +298,75 @@ class TestServiceLogsCli:
                     "server",
                     "logs",
                     "--limit",
-                    "5",
-                    "--contains",
-                    "service.lifecycle",
-                    "--port",
-                    str(server.server_port),
+                    "1",
                 ],
             )
         finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=1)
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            reset_base_config()
+            reset_rag_config()
 
         assert result.exit_code == 0, result.output
-        assert requests == ["/logs/json?lines=5&contains=service.lifecycle"]
-        lines = _plain_lines(result.output)
-        expected_present = [
-            f"Address: http://127.0.0.1:{server.server_port}",
-            (
-                'No service activity found matching text "service.lifecycle" '
-                "in the last 5 log lines."
-            ),
-            "Next actions:",
-            (
-                "vaultspec-rag server logs --limit 200 "
-                f"--port {server.server_port} --contains service.lifecycle"
-            ),
-            f"vaultspec-rag server jobs --state active --port {server.server_port}",
-            f"vaultspec-rag server jobs --state waiting --port {server.server_port}",
-            f"vaultspec-rag server status --port {server.server_port}",
-            (
-                "vaultspec-rag server logs --raw --limit 5 "
-                f"--port {server.server_port} --contains service.lifecycle"
-            ),
+        assert _plain_lines(result.output) == [
+            "[service]",
+            "service newest",
+            "[qdrant]",
+            "qdrant newest",
         ]
-        missing = [text for text in expected_present if text not in lines]
-        assert not missing, f"missing empty-log guidance lines: {missing}"
-        assert "Activity: none found" not in result.output
         _assert_no_table_borders(result.output)
+
+    def test_logs_offline_json_filters_one_source_with_production_contract(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        status_dir = tmp_path / "status"
+        status_dir.mkdir()
+        (status_dir / "qdrant.log").write_text(
+            "alpha JOB-7 other\nbeta job-7 needle\ngamma needle\n",
+            encoding="utf-8",
+        )
+        os.environ[EnvVar.STATUS_DIR] = str(status_dir)
+        reset_base_config()
+        reset_rag_config()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "server",
+                    "logs",
+                    "--source",
+                    "qdrant",
+                    "--limit",
+                    "1",
+                    "--job-id",
+                    "job-7",
+                    "--contains",
+                    "NEEDLE",
+                    "--json",
+                ],
+            )
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            reset_base_config()
+            reset_rag_config()
+
+        assert result.exit_code == 0, result.output
+        envelope = json.loads(result.output)
+        assert envelope == {
+            "ok": True,
+            "command": "server.logs",
+            "data": {
+                "source": "qdrant",
+                "limit": 1,
+                "groups": [
+                    {
+                        "source": "qdrant",
+                        "lines": ["beta job-7 needle"],
+                    }
+                ],
+                "filters": {"job_id": "job-7", "contains": "NEEDLE"},
+            },
+        }
 
 
 class TestServiceJobsCli:

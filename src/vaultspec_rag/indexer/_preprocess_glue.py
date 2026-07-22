@@ -87,7 +87,7 @@ def matches_preprocess_rule(prep_ctx: PreprocessContext | None, rel: str) -> boo
 
 
 def record_preprocess_result(
-    res: FileChunkResult | None,
+    res: FileChunkResult,
     prep_skips: list[str],
 ) -> int:
     """Score a worker result's preprocess disposition (D11).
@@ -99,8 +99,6 @@ def record_preprocess_result(
     here: skips for failure visibility, successes so a working pipeline is
     positively observable.
     """
-    if res is None:
-        return 0
     if res.preprocess_status == "ok":
         return 1
     if res.preprocess_status == "skipped":

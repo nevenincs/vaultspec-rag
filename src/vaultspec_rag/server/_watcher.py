@@ -35,6 +35,26 @@ logger = logging.getLogger("vaultspec_rag.server")
 _deferred_watcher_tasks: set[asyncio.Task[None]] = set()
 
 
+def _watcher_task_done(root: Path, task: asyncio.Task[None]) -> None:
+    """Remove one naturally exited watcher without disturbing a replacement."""
+    with _m._watcher_lock:
+        if _m._watcher_tasks.get(root) is not task:
+            return
+        _m._watcher_tasks.pop(root, None)
+        _m._watcher_stops.pop(root, None)
+    if task.cancelled():
+        return
+    error = task.exception()
+    log_event(
+        logger,
+        "service.watcher",
+        "task_exited",
+        severity=logging.ERROR if error is not None else logging.WARNING,
+        root=root,
+        error=error,
+    )
+
+
 def _ensure_watcher_soon(root: Path) -> None:
     """Ensure a watcher for *root* without blocking the event loop.
 
@@ -45,8 +65,11 @@ def _ensure_watcher_soon(root: Path) -> None:
     registered afterwards.
     """
     root = root.resolve()
-    if root in _m._watcher_tasks:
-        return
+    existing = _m._watcher_tasks.get(root)
+    if existing is not None:
+        if not existing.done():
+            return
+        _watcher_task_done(root, existing)
 
     async def _warm_and_start() -> None:
         import anyio.to_thread
@@ -99,8 +122,11 @@ def _ensure_watcher(
     if not cfg.watch_enabled:
         return False
     root = root.resolve()
-    if root in _m._watcher_tasks:
-        return True
+    existing = _m._watcher_tasks.get(root)
+    if existing is not None:
+        if not existing.done():
+            return True
+        _watcher_task_done(root, existing)
     # Resolve the project slot OUTSIDE the lock - peek_project() has
     # its own per-root locking and can take 50-200ms on cold start.
     # Holding _watcher_lock during that would block the event loop.
@@ -143,6 +169,11 @@ def _ensure_watcher(
         )
         _m._watcher_tasks[root] = task
         _m._watcher_stops[root] = stop_event
+        task.add_done_callback(
+            lambda completed, watched_root=root: _watcher_task_done(
+                watched_root, completed
+            )
+        )
         log_event(logger, "service.watcher", "task_started", root=root)
     return True
 

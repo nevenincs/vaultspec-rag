@@ -1,737 +1,553 @@
-"""Tests for the Tier-2a logs surface (#142, plan P03).
-
-Three layers, no mocks/skips/monkeypatch:
-
-- Unit: drive ``read_service_log`` against real temp files (``service.log`` +
-  ``service.log.1``) asserting oldest-first ordering, the trailing-line clamp,
-  and tolerance of a vanished backup.
-- Starlette: exercise the real ``GET /logs`` route through
-  ``starlette.testclient.TestClient`` (the real ASGI client, NOT a mock) built
-  from ``_routes.ROUTES`` with a known ``_SERVICE_TOKEN`` - 401 without token,
-  200 text with token.
-- MCP + CLI parity: the real ``get_logs`` tool returns ``{"lines": [...]}`` and
-  ``server logs`` reports exit 3 against a dead port.
-"""
+"""Real-file and authenticated HTTP coverage for managed log retrieval."""
 
 from __future__ import annotations
 
-import contextlib
-import http.server
 import json
+import os
+import socket
+import subprocess
+import sys
 import threading
-from typing import TYPE_CHECKING, ClassVar, cast
+import time
+import urllib.request
+from typing import TYPE_CHECKING, cast
 
 import pytest
+import uvicorn
 from starlette.applications import Starlette
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 from starlette.testclient import TestClient
 from typer.testing import CliRunner
 
-if TYPE_CHECKING:
-    import httpx
-
-import vaultspec_rag.mcp._admin_client as admin
 import vaultspec_rag.server as _m
 
 from ...cli import app
-from ...logging_config import read_service_log
+from ...config import EnvVar, reset_config
+from ...logging_config import (
+    MANAGED_LOG_TRUNCATION_MARKER,
+    MAX_MANAGED_LOG_SOURCE_BYTES,
+)
 from ...server._routes import ROUTES
+from ...serviceclient._transport import (
+    MAX_SERVICE_RESPONSE_BYTES,
+    _logs_route_path,
+    _try_http_admin,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterator
+    from collections.abc import Iterator
     from pathlib import Path
+    from typing import Protocol
 
+    import httpx
+    from starlette.requests import Request
+
+    class HTTPTestClient(Protocol):
+        def get(
+            self,
+            url: str,
+            *,
+            params: dict[str, str] | None = None,
+            headers: dict[str, str] | None = None,
+        ) -> httpx.Response: ...
+
+        def close(self) -> None: ...
+
+
+pytestmark = [pytest.mark.integration]
 runner = CliRunner()
-
-# A port with nothing listening: _try_http_admin gets connection-refused
-# and returns None -> the command reports service-not-running (exit 3).
-_DEAD_PORT = "59234"
-
-
-class _LogsHTTPHandler(http.server.BaseHTTPRequestHandler):
-    payloads: ClassVar[list[dict[str, object]]] = []
-    request_paths: ClassVar[list[str]] = []
-    request_count = 0
-
-    def do_GET(self) -> None:
-        payload_index = min(self.request_count, len(self.payloads) - 1)
-        payload = self.payloads[payload_index]
-        type(self).request_count += 1
-        type(self).request_paths.append(self.path)
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps(payload).encode("utf-8"))
-
-    def log_message(self, format: str, *args: object) -> None:
-        _ = format, args
-
-
-@contextlib.contextmanager
-def _logs_http_server(
-    payloads: list[dict[str, object]],
-) -> Generator[tuple[http.server.HTTPServer, int]]:
-    _LogsHTTPHandler.payloads = payloads
-    _LogsHTTPHandler.request_paths = []
-    _LogsHTTPHandler.request_count = 0
-    server = http.server.HTTPServer(("127.0.0.1", 0), _LogsHTTPHandler)
-    port = int(server.server_address[1])
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield server, port
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
-
-
-def _activity_payload() -> dict[str, object]:
-    return {
-        "lines": [
-            (
-                "2026-06-12 08:46:27,900 INFO     uvicorn.access: "
-                '127.0.0.1:60001 - "POST /search HTTP/1.1" 200'
-            ),
-            (
-                "2026-06-12 08:46:28,123 WARNING  vaultspec_rag.server: "
-                "service.lifecycle event=search "
-                "request_id=6793374dabcdef001122334455667788 "
-                "search_type=vault "
-                "root=Y:\\code\\chore-476-restructure-execution "
-                "results=10 total_seconds=1.383"
-            ),
-            (
-                "2026-06-12 08:46:29,000 WARNING  vaultspec_rag.server: "
-                "service.lifecycle event=startup pid=4242"
-            ),
-        ],
-        "total": 3,
-        "filters": {},
-    }
-
-
-def _store_update_payload() -> dict[str, object]:
-    return {
-        "lines": [
-            (
-                "2026-06-12 13:12:09,845 INFO     vaultspec_rag.store: "
-                "Upserted 64 codebase chunk(s)"
-            ),
-            (
-                "2026-06-12 13:12:10,845 INFO     vaultspec_rag.store: "
-                "Deleted 2 document(s)"
-            ),
-        ],
-        "total": 2,
-        "filters": {},
-    }
-
-
-def _vault_section_update_payload() -> dict[str, object]:
-    return {
-        "lines": [
-            (
-                "2026-06-12 13:12:11,845 INFO     vaultspec_rag.store: "
-                "Upserted 1 vault chunk(s)"
-            ),
-            (
-                "2026-06-12 13:12:12,845 INFO     vaultspec_rag.store: "
-                "Deleted 3 vault chunk(s)"
-            ),
-        ],
-        "total": 2,
-        "filters": {},
-    }
-
-
-def _file_change_payload() -> dict[str, object]:
-    return {
-        "lines": [
-            "INFO     1 change detected",
-            "2026-06-13 13:04:39,762 INFO     watchfiles.main: 1 change detected",
-            "INFO     2 changes detected",
-            "2026-06-13 13:04:40,471 INFO     watchfiles.main: 2 changes detected",
-        ],
-        "total": 4,
-        "filters": {},
-    }
-
-
-def _unstructured_warning_payload() -> dict[str, object]:
-    return {
-        "lines": [
-            (
-                "2026-06-12 13:14:09,845 WARNING  vaultspec_rag.server: "
-                "unexpected service-side warning"
-            ),
-        ],
-        "total": 1,
-        "filters": {},
-    }
-
-
-def _plain_lines(output: str) -> list[str]:
-    return [line.strip() for line in output.splitlines() if line.strip()]
-
-
-# --------------------------------------------------------------------------- #
-# Unit: read_service_log across the rotated set                               #
-# --------------------------------------------------------------------------- #
-
-
-def test_read_service_log_orders_oldest_first(tmp_path: Path) -> None:
-    # .log.1 is the OLDER backup; service.log is the live (newer) file.
-    (tmp_path / "service.log.1").write_text("old-1\nold-2\n", encoding="utf-8")
-    (tmp_path / "service.log").write_text("new-1\nnew-2\n", encoding="utf-8")
-
-    lines = read_service_log(10, status_dir=tmp_path)
-    assert lines == ["old-1", "old-2", "new-1", "new-2"]
-
-
-def test_read_service_log_spans_multiple_backups(tmp_path: Path) -> None:
-    # Highest index is oldest: .log.2 < .log.1 < service.log chronologically.
-    (tmp_path / "service.log.2").write_text("a\n", encoding="utf-8")
-    (tmp_path / "service.log.1").write_text("b\n", encoding="utf-8")
-    (tmp_path / "service.log").write_text("c\n", encoding="utf-8")
-
-    assert read_service_log(10, status_dir=tmp_path) == ["a", "b", "c"]
-
-
-def test_read_service_log_returns_last_n(tmp_path: Path) -> None:
-    (tmp_path / "service.log.1").write_text("1\n2\n3\n", encoding="utf-8")
-    (tmp_path / "service.log").write_text("4\n5\n6\n", encoding="utf-8")
-
-    # Newest lines last; the last 2 are the tail of the live file.
-    assert read_service_log(2, status_dir=tmp_path) == ["5", "6"]
-
-
-def test_read_service_log_non_positive_is_empty(tmp_path: Path) -> None:
-    (tmp_path / "service.log").write_text("x\n", encoding="utf-8")
-    assert read_service_log(0, status_dir=tmp_path) == []
-    assert read_service_log(-5, status_dir=tmp_path) == []
-
-
-def test_read_service_log_missing_live_file(tmp_path: Path) -> None:
-    # Only a backup exists; the live service.log has not been recreated yet.
-    (tmp_path / "service.log.1").write_text("only-backup\n", encoding="utf-8")
-    assert read_service_log(10, status_dir=tmp_path) == ["only-backup"]
-
-
-def test_read_service_log_empty_dir(tmp_path: Path) -> None:
-    assert read_service_log(10, status_dir=tmp_path) == []
-
-
-# --------------------------------------------------------------------------- #
-# Starlette: real ASGI TestClient against /logs gating                        #
-# --------------------------------------------------------------------------- #
 
 
 @pytest.fixture
-def _routes_app(  # pyright: ignore[reportUnusedFunction]
+def managed_log_app(
     tmp_path: Path,
-) -> Iterator[tuple[TestClient, str]]:
-    """Build a real Starlette app from the read-only ROUTES.
-
-    Sets a known ``_SERVICE_TOKEN`` on the package namespace (the route's
-    ``require_token`` reads it through the alias) and points the log reader
-    at a temp status dir via the RAG status-dir env var. Restores both on
-    teardown so the suite stays isolated.
-    """
-    import os
-
-    from ...config import EnvVar, reset_config
-
-    (tmp_path / "service.log").write_text(
-        "line-a\n"
-        "job_id=abc123 phase=running message=started\n"
-        "job_id=def456 phase=done message=finished\n"
-        "line-b\n",
-        encoding="utf-8",
-    )
-
-    prev_token = _m._SERVICE_TOKEN
-    prev_env = os.environ.get(EnvVar.STATUS_DIR.value)
-    _m._SERVICE_TOKEN = "test-token-abc"
+) -> Iterator[tuple[HTTPTestClient, str, Path]]:
+    """Serve the production routes against an isolated real log directory."""
+    token = "managed-log-test-token"
+    previous_token = _m._SERVICE_TOKEN
+    previous_status_dir = os.environ.get(EnvVar.STATUS_DIR.value)
+    _m._SERVICE_TOKEN = token
     os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path)
     reset_config()
-
-    app_under_test = Starlette(routes=ROUTES)
-    client = TestClient(app_under_test)
+    client = cast("HTTPTestClient", TestClient(Starlette(routes=ROUTES)))
     try:
-        yield client, "test-token-abc"
+        yield client, token, tmp_path
     finally:
-        _m._SERVICE_TOKEN = prev_token
-        if prev_env is None:
+        client.close()
+        _m._SERVICE_TOKEN = previous_token
+        if previous_status_dir is None:
             os.environ.pop(EnvVar.STATUS_DIR.value, None)
         else:
-            os.environ[EnvVar.STATUS_DIR.value] = prev_env
+            os.environ[EnvVar.STATUS_DIR.value] = previous_status_dir
         reset_config()
 
 
-def test_logs_route_401_without_token(
-    _routes_app: tuple[TestClient, str],
-) -> None:
-    client, _token = _routes_app
-    response = cast("httpx.Response", client.get("/logs"))  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
-    assert response.status_code == 401
-    payload = response.json()
-    assert payload["ok"] is False
-    assert payload["error"] == "unauthorized"
+def _auth(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
 
 
-def test_logs_route_401_with_wrong_token(
-    _routes_app: tuple[TestClient, str],
-) -> None:
-    client, _token = _routes_app
-    response = cast(
-        "httpx.Response",
-        client.get("/logs", headers={"Authorization": "Bearer wrong"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+def _seed_grouped_logs(status_dir: Path) -> None:
+    (status_dir / "service.log.3").write_text(
+        "service-oldest\nservice-job job_id=abc123 keep\n",
+        encoding="utf-8",
     )
-    assert response.status_code == 401
-
-
-def test_logs_route_200_with_bearer_token(
-    _routes_app: tuple[TestClient, str],
-) -> None:
-    client, token = _routes_app
-    response = cast(
-        "httpx.Response",
-        client.get("/logs", headers={"Authorization": f"Bearer {token}"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+    (status_dir / "service.log.1").write_text(
+        "service-newer\n",
+        encoding="utf-8",
     )
+    (status_dir / "service.log").write_text(
+        "service-active-a\nservice-active-b\n",
+        encoding="utf-8",
+    )
+    (status_dir / "qdrant.log.4").write_text(
+        "qdrant-oldest\nqdrant-job job_id=abc123 keep\n",
+        encoding="utf-8",
+    )
+    (status_dir / "qdrant.log.2").write_text(
+        "qdrant-newer\n",
+        encoding="utf-8",
+    )
+    (status_dir / "qdrant.log").write_text(
+        "qdrant-active-a\nqdrant-active-b\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize("path", ["/logs", "/logs/json"])
+def test_managed_log_routes_require_token(
+    managed_log_app: tuple[HTTPTestClient, str, Path],
+    path: str,
+) -> None:
+    client, _token, _status_dir = managed_log_app
+
+    response = client.get(path)
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "ok": False,
+        "error": "unauthorized",
+        "message": (
+            "This monitoring route requires the service_token via "
+            "'Authorization: Bearer <token>' or '?token='."
+        ),
+    }
+
+
+def test_logs_json_defaults_to_bounded_source_groups(
+    managed_log_app: tuple[HTTPTestClient, str, Path],
+) -> None:
+    client, token, status_dir = managed_log_app
+    _seed_grouped_logs(status_dir)
+
+    response = client.get("/logs/json", params={"lines": "2"}, headers=_auth(token))
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "source": "all",
+        "limit": 2,
+        "groups": [
+            {
+                "source": "service",
+                "lines": ["service-active-a", "service-active-b"],
+            },
+            {
+                "source": "qdrant",
+                "lines": ["qdrant-active-a", "qdrant-active-b"],
+            },
+        ],
+        "filters": {},
+    }
+
+
+def test_logs_json_selects_one_source(
+    managed_log_app: tuple[HTTPTestClient, str, Path],
+) -> None:
+    client, token, status_dir = managed_log_app
+    _seed_grouped_logs(status_dir)
+
+    response = client.get(
+        "/logs/json",
+        params={"source": "qdrant", "lines": "3"},
+        headers=_auth(token),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "source": "qdrant",
+        "limit": 3,
+        "groups": [
+            {
+                "source": "qdrant",
+                "lines": ["qdrant-newer", "qdrant-active-a", "qdrant-active-b"],
+            }
+        ],
+        "filters": {},
+    }
+
+
+def test_logs_plaintext_labels_groups_without_merging(
+    managed_log_app: tuple[HTTPTestClient, str, Path],
+) -> None:
+    client, token, status_dir = managed_log_app
+    _seed_grouped_logs(status_dir)
+
+    response = client.get("/logs", params={"lines": "1"}, headers=_auth(token))
+
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
-    assert response.text == (
-        "line-a\n"
-        "job_id=abc123 phase=running message=started\n"
-        "job_id=def456 phase=done message=finished\n"
-        "line-b"
-    )
+    assert response.text == ("[service]\nservice-active-b\n[qdrant]\nqdrant-active-b")
 
 
-def test_logs_route_200_with_query_token(
-    _routes_app: tuple[TestClient, str],
+def test_log_filters_search_bounded_history_then_tail_each_source(
+    managed_log_app: tuple[HTTPTestClient, str, Path],
 ) -> None:
-    client, token = _routes_app
-    response = cast("httpx.Response", client.get("/logs", params={"token": token}))  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
-    assert response.status_code == 200
-    assert response.text == (
-        "line-a\n"
-        "job_id=abc123 phase=running message=started\n"
-        "job_id=def456 phase=done message=finished\n"
-        "line-b"
+    client, token, status_dir = managed_log_app
+    _seed_grouped_logs(status_dir)
+
+    response = client.get(
+        "/logs/json",
+        params={"lines": "1", "job_id": "ABC123", "contains": "KEEP"},
+        headers=_auth(token),
     )
 
+    assert response.status_code == 200
+    assert response.json() == {
+        "source": "all",
+        "limit": 1,
+        "groups": [
+            {
+                "source": "service",
+                "lines": ["service-job job_id=abc123 keep"],
+            },
+            {
+                "source": "qdrant",
+                "lines": ["qdrant-job job_id=abc123 keep"],
+            },
+        ],
+        "filters": {"job_id": "ABC123", "contains": "KEEP"},
+    }
 
-def test_logs_route_respects_lines_param(
-    _routes_app: tuple[TestClient, str],
+
+def test_empty_filtered_groups_are_successful(
+    managed_log_app: tuple[HTTPTestClient, str, Path],
 ) -> None:
-    client, token = _routes_app
-    response = cast(
-        "httpx.Response",
-        client.get(  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
-            "/logs",
-            params={"token": token, "lines": "1"},
-        ),
+    client, token, status_dir = managed_log_app
+    _seed_grouped_logs(status_dir)
+
+    response = client.get(
+        "/logs/json",
+        params={"contains": "not-present"},
+        headers=_auth(token),
     )
+
     assert response.status_code == 200
-    assert response.text == "line-b"
+    assert response.json()["groups"] == [
+        {"source": "service", "lines": []},
+        {"source": "qdrant", "lines": []},
+    ]
 
 
-def test_logs_route_filters_by_job_id(
-    _routes_app: tuple[TestClient, str],
+@pytest.mark.parametrize("path", ["/logs", "/logs/json"])
+def test_logs_routes_reject_malformed_source_structurally(
+    managed_log_app: tuple[HTTPTestClient, str, Path],
+    path: str,
 ) -> None:
-    client, token = _routes_app
-    response = cast(
-        "httpx.Response",
-        client.get(  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
-            "/logs",
-            params={"token": token, "lines": "10", "job_id": "abc123"},
-        ),
+    client, token, _status_dir = managed_log_app
+
+    response = client.get(
+        path,
+        params={"source": "database"},
+        headers=_auth(token),
     )
-    assert response.status_code == 200
-    assert response.text == "job_id=abc123 phase=running message=started"
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "ok": False,
+        "error": "invalid_log_source",
+        "message": "source must be one of service, qdrant, all.",
+    }
 
 
-def test_logs_route_filter_searches_before_tail_limit(
-    _routes_app: tuple[TestClient, str],
+def test_logs_route_clamps_each_source_to_maximum(
+    managed_log_app: tuple[HTTPTestClient, str, Path],
 ) -> None:
-    client, token = _routes_app
-    response = cast(
-        "httpx.Response",
-        client.get(  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
-            "/logs",
-            params={"token": token, "lines": "1", "job_id": "abc123"},
-        ),
+    client, token, status_dir = managed_log_app
+    record_count = 5_001
+    (status_dir / "service.log").write_text(
+        "".join(f"service-{index}\n" for index in range(record_count)),
+        encoding="utf-8",
     )
-    assert response.status_code == 200
-    assert response.text == "job_id=abc123 phase=running message=started"
-
-
-def test_logs_json_route_filters_by_contains(
-    _routes_app: tuple[TestClient, str],
-) -> None:
-    client, token = _routes_app
-    response = cast(
-        "httpx.Response",
-        client.get(  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
-            "/logs/json",
-            params={"token": token, "lines": "10", "contains": "finished"},
-        ),
+    (status_dir / "qdrant.log").write_text(
+        "".join(f"qdrant-{index}\n" for index in range(record_count)),
+        encoding="utf-8",
     )
-    assert response.status_code == 200
+
+    response = client.get(
+        "/logs/json", params={"lines": "999999"}, headers=_auth(token)
+    )
     payload = response.json()
-    assert payload["lines"] == ["job_id=def456 phase=done message=finished"]
-    assert payload["total"] == 1
-    assert payload["filters"] == {"contains": "finished"}
+
+    assert response.status_code == 200
+    assert payload["limit"] == 5_000
+    groups = payload["groups"]
+    assert len(groups[0]["lines"]) == 5_000
+    assert len(groups[1]["lines"]) == 5_000
+    assert groups[0]["lines"][0] == "service-1"
+    assert groups[1]["lines"][0] == "qdrant-1"
 
 
-# --------------------------------------------------------------------------- #
-# MCP + CLI parity                                                            #
-# --------------------------------------------------------------------------- #
+def test_live_and_offline_cli_share_byte_truncation_contract(
+    managed_log_app: tuple[HTTPTestClient, str, Path],
+) -> None:
+    client, token, status_dir = managed_log_app
+    (status_dir / "service.log").write_bytes(b"x" * (MAX_MANAGED_LOG_SOURCE_BYTES * 3))
 
-
-@pytest.mark.subprocess_gpu
-async def test_get_logs_tool_returns_lines(live_service: tuple[int, Path]) -> None:
-    _port, status_dir = live_service
-
-    # Append to the real log file so we can read it back via the API
-    with open(status_dir / "service.log", "a", encoding="utf-8") as f:
-        f.write("m1\nm2\n")
-
-    result = await admin.get_logs(lines=10)
-
-    assert "m1" in result["lines"]
-    assert "m2" in result["lines"]
-
-
-def test_logs_not_running_json() -> None:
-    result = runner.invoke(
-        app,
-        ["server", "logs", "--port", _DEAD_PORT, "--json"],
+    live = client.get(
+        "/logs/json",
+        params={"source": "service", "lines": "1"},
+        headers=_auth(token),
     )
-    assert result.exit_code == 3
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is False
-    assert payload["command"] == "service.logs"
-    assert payload["error"] == "service_not_running"
+    offline = runner.invoke(
+        app,
+        ["server", "logs", "--source", "service", "--limit", "1", "--json"],
+    )
+
+    assert live.status_code == 200
+    assert offline.exit_code == 0, offline.output
+    offline_payload = json.loads(offline.output)["data"]
+    assert offline_payload == live.json()
+    group = offline_payload["groups"][0]
+    assert group["marker"] == MANAGED_LOG_TRUNCATION_MARKER
+    assert group["truncation"]["scanned_bytes"] == MAX_MANAGED_LOG_SOURCE_BYTES
+    assert group["truncation"]["returned_content_bytes"] <= MAX_MANAGED_LOG_SOURCE_BYTES
 
 
-def test_logs_not_running_prose() -> None:
-    result = runner.invoke(app, ["server", "logs", "--port", _DEAD_PORT])
-    assert result.exit_code == 3
-    assert f"Address: http://127.0.0.1:{_DEAD_PORT}" in result.stdout
-    assert "not running" in result.stdout.lower()
+def test_logs_transport_path_carries_source_and_filters() -> None:
+    path = _logs_route_path(
+        {
+            "lines": 25,
+            "source": "qdrant",
+            "job_id": "job 123",
+            "contains": "disk full",
+            "ignored": "value",
+        }
+    )
+
+    assert path.startswith("/logs/json?")
+    assert "lines=25" in path
+    assert "source=qdrant" in path
+    assert "job_id=job+123" in path
+    assert "contains=disk+full" in path
+    assert "ignored" not in path
 
 
-def test_logs_subcommand_registered() -> None:
-    result = runner.invoke(app, ["server", "logs", "--help"])
-    assert result.exit_code == 0
-    assert "--limit" in result.stdout
-    assert "--lines" not in result.stdout
-    assert "--raw" in result.stdout
-    assert "Emit JSON for scripts" in result.stdout
-    assert "Number of recent service log lines to inspect" in result.stdout
-    assert "Only inspect log lines for this job ID" in result.stdout
-    assert "Only inspect log lines containing this text" in result.stdout
-    assert "Show original log lines" in result.stdout
-    assert "activity entries" not in result.stdout
-    assert "Number of trailing log lines" not in result.stdout
-    assert "Only show lines containing" not in result.stdout
-    assert "diagnostic log lines" not in result.stdout
-    assert "JSON envelope" not in result.stdout
-    assert "raw implementation" not in result.stdout
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
 
 
-def test_logs_lines_alias_is_not_supported() -> None:
-    result = runner.invoke(app, ["server", "logs", "--lines", "8", "--help"])
-
-    assert result.exit_code != 0
-    assert "No such option" in result.output
+async def _oversized_logs_response(_request: Request) -> JSONResponse:
+    """Serve a real JSON body one byte beyond the transport's hard ceiling."""
+    return JSONResponse({"blob": "x" * MAX_SERVICE_RESPONSE_BYTES})
 
 
-def test_logs_human_output_is_activity_feed() -> None:
-    with _logs_http_server([_activity_payload()]) as (_server, port):
-        result = runner.invoke(
-            app,
-            ["server", "logs", "--limit", "8", "--port", str(port)],
+def test_admin_transport_rejects_oversized_http_response_before_json_decode() -> None:
+    port = _free_port()
+    server = uvicorn.Server(
+        uvicorn.Config(
+            Starlette(routes=[Route("/logs/json", _oversized_logs_response)]),
+            host="127.0.0.1",
+            port=port,
+            log_config=None,
+            lifespan="off",
         )
-
-    assert result.exit_code == 0, result.output
-    output = result.output
-    lines = _plain_lines(output)
-    assert lines[:4] == [
-        "Activity",
-        f"Address: http://127.0.0.1:{port}",
-        "Shown: 2 entries",
-        "Source: last 8 log lines",
-    ]
-    assert (
-        "08:46:28 search vault 10 results 1.38 seconds "
-        "chore-476-restructure-execution request 6793374d"
-    ) in output
-    assert "08:46:29 service started process 4242" in output
-    assert "request=" not in output
-    assert "pid=" not in output
-    assert "service.lifecycle" not in output
-    assert "POST /search" not in output
-    assert "uvicorn.access" not in output
-    for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
-        assert forbidden not in output
-
-
-def test_logs_duration_uses_words() -> None:
-    from ...cli._service_logs import _format_duration
-
-    assert _format_duration("0.050") == "less than 1 second"
-    assert _format_duration("1") == "1 second"
-    assert _format_duration("1.500") == "1.5 seconds"
-    assert _format_duration("12.04") == "12 seconds"
-    assert _format_duration("120.6") == "121 seconds"
-
-
-def test_logs_human_output_shows_index_updates() -> None:
-    with _logs_http_server([_store_update_payload()]) as (_server, port):
-        result = runner.invoke(
-            app,
-            ["server", "logs", "--limit", "8", "--port", str(port)],
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 5.0
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert server.started
+    try:
+        result = _try_http_admin(
+            "get_logs",
+            {"source": "service", "lines": 1},
+            port,
         )
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5.0)
 
-    assert result.exit_code == 0, result.output
-    output = result.output
-    lines = _plain_lines(output)
-    assert lines[:4] == [
-        "Activity",
-        f"Address: http://127.0.0.1:{port}",
-        "Shown: 2 entries",
-        "Source: last 8 log lines",
-    ]
-    assert "13:12:09 index updated 64 source code sections" in output
-    assert "13:12:10 index removed 2 vault documents" in output
-    assert "2 docs" not in output
-    assert "No activity entries" not in output
-    assert "vaultspec_rag.store" not in output
+    assert result is not None
+    assert result["ok"] is False
+    assert result["error"] == "http_call_failed"
+    assert "ServiceResponseTooLargeError" in str(result["message"])
 
 
-def test_logs_human_output_uses_document_section_language() -> None:
-    with _logs_http_server([_vault_section_update_payload()]) as (_server, port):
-        result = runner.invoke(
-            app,
-            ["server", "logs", "--limit", "8", "--port", str(port)],
+def test_admin_transport_preserves_live_structured_log_error(
+    managed_log_app: tuple[HTTPTestClient, str, Path],
+) -> None:
+    _client, token, status_dir = managed_log_app
+    port = _free_port()
+    (status_dir / "service.json").write_text(
+        json.dumps({"pid": os.getpid(), "port": port, "service_token": token}),
+        encoding="utf-8",
+    )
+    server = uvicorn.Server(
+        uvicorn.Config(
+            Starlette(routes=ROUTES),
+            host="127.0.0.1",
+            port=port,
+            log_config=None,
+            lifespan="off",
         )
-
-    assert result.exit_code == 0, result.output
-    output = result.output
-    assert "13:12:11 index updated 1 vault document section" in output
-    assert "13:12:12 index removed 3 vault document sections" in output
-    assert "vault chunk" not in output
-
-
-def test_logs_human_output_shows_file_change_index_updates() -> None:
-    with _logs_http_server([_file_change_payload()]) as (_server, port):
-        result = runner.invoke(
-            app,
-            ["server", "logs", "--limit", "8", "--port", str(port)],
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 5.0
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert server.started
+    try:
+        result = _try_http_admin(
+            "get_logs",
+            {"source": "database", "lines": 10},
+            port,
         )
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5.0)
 
-    assert result.exit_code == 0, result.output
-    output = result.output
-    lines = _plain_lines(output)
-    assert lines[:4] == [
-        "Activity",
-        f"Address: http://127.0.0.1:{port}",
-        "Shown: 2 entries",
-        "Source: last 8 log lines",
-    ]
-    assert "13:04:39 index update detected 1 file change" in output
-    assert "13:04:40 index update detected 2 file changes" in output
-    assert "No service activity found" not in output
-    assert "watchfiles" not in output
-    assert "watcher" not in output.lower()
+    assert result == {
+        "ok": False,
+        "error": "invalid_log_source",
+        "message": "source must be one of service, qdrant, all.",
+    }
 
 
-def test_logs_human_output_uses_plain_warning_detail_hint() -> None:
-    with _logs_http_server([_unstructured_warning_payload()]) as (_server, port):
-        result = runner.invoke(
+def test_uvicorn_access_only_traffic_drives_live_service_log_rollover(
+    tmp_path: Path,
+) -> None:
+    """Real Uvicorn access records rotate without an application log event."""
+    port = _free_port()
+    log_path = tmp_path / "service.log"
+    marker = "ACCESS_ONLY_FINAL_MARKER_4fcb5f"
+    code = r"""
+import os
+import sys
+from pathlib import Path
+
+import uvicorn
+from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
+
+from vaultspec_rag.logging_config import configure_logging, install_daemon_log_capture
+from vaultspec_rag.server._lifespan import health_handler
+
+log_path = Path(sys.argv[1])
+port = int(sys.argv[2])
+server = None
+
+async def stop_handler(_request):
+    assert server is not None
+    server.should_exit = True
+    return PlainTextResponse("stopping")
+
+capture = None
+try:
+    configure_logging(level="INFO")
+    capture = install_daemon_log_capture(log_path, max_bytes=1024, backup_count=2)
+    app = Starlette(
+        routes=[
+            Route("/health", health_handler),
+            Route("/stop", stop_handler),
+        ]
+    )
+    server = uvicorn.Server(
+        uvicorn.Config(
             app,
-            ["server", "logs", "--limit", "8", "--port", str(port)],
-        )
+            host="127.0.0.1",
+                port=port,
+                log_level="info",
+                lifespan="off",
+                timeout_graceful_shutdown=2,
+            )
+    )
+    server.run()
+finally:
+    if capture is not None and not capture.close(timeout=10.0):
+        os._exit(81)
+if capture is None or capture.persistence_error is not None:
+    os._exit(82)
+"""
+    process = subprocess.Popen(
+        [sys.executable, "-c", code, str(log_path), str(port)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                pytest.fail(
+                    f"Uvicorn access probe exited early with {process.returncode}"
+                )
+            try:
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/health",
+                    timeout=0.5,
+                ) as response:
+                    if response.status == 200:
+                        break
+            except OSError:
+                time.sleep(0.02)
+        else:
+            pytest.fail("Uvicorn access probe did not become ready")
 
-    assert result.exit_code == 0, result.output
-    output = result.output
-    lines = _plain_lines(output)
-    assert lines[:4] == [
-        "Activity",
-        f"Address: http://127.0.0.1:{port}",
-        "Shown: 1 entry",
-        "Source: last 8 log lines",
-    ]
-    assert len(lines) == 5
-    head, hint = lines[4].split("; ", 1)
-    clock, level, source = head.split()
-    assert clock == "13:14:09"
-    assert level == "warning"
-    assert source == "server"
-    assert hint == "run with --raw for original log line"
-    assert "unexpected service-side warning" not in output
-    assert "vaultspec_rag.server" not in output
-    assert "details=use --raw" not in output
-    assert "details available" not in output
+        for index in range(100):
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/health?access={index:04d}",
+                timeout=2.0,
+            ) as response:
+                assert response.status == 200
 
+        rollover_deadline = time.monotonic() + 5.0
+        rotated = log_path.with_name("service.log.1")
+        while time.monotonic() < rollover_deadline and not rotated.exists():
+            time.sleep(0.01)
+        assert rotated.exists(), "access-only traffic never triggered rollover"
 
-def test_logs_empty_output_routes_operator_to_next_commands() -> None:
-    with _logs_http_server([{"lines": [], "total": 0, "filters": {}}]) as (
-        _server,
-        port,
-    ):
-        result = runner.invoke(
-            app,
-            ["server", "logs", "--limit", "8", "--port", str(port)],
-        )
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/health?marker={marker}",
+            timeout=2.0,
+        ) as response:
+            assert response.status == 200
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/stop",
+            timeout=2.0,
+        ) as response:
+            assert response.status == 200
+        process.wait(timeout=15.0)
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5.0)
 
-    assert result.exit_code == 0, result.output
-    lines = [line.strip() for line in result.output.splitlines() if line.strip()]
-    assert lines[0] == f"Address: http://127.0.0.1:{port}"
-    assert lines[1] == "No service activity found in the last 8 log lines."
-    assert "Next actions:" in lines
-    assert "Try:" not in lines
-    commands = [line for line in lines if line.startswith("vaultspec-rag ")]
-    assert {
-        f"vaultspec-rag server logs --limit 200 --port {port}",
-        f"vaultspec-rag server jobs --state active --port {port}",
-        f"vaultspec-rag server jobs --state waiting --port {port}",
-        f"vaultspec-rag server status --port {port}",
-        f"vaultspec-rag server logs --raw --limit 8 --port {port}",
-    } == set(commands)
-    assert "No recent activity found" not in result.output
-    assert "Activity: none found" not in result.output
-    assert "entries were returned" not in result.output
-
-
-def test_logs_empty_output_preserves_filters_in_raw_followup() -> None:
-    with _logs_http_server([{"lines": [], "total": 0, "filters": {}}]) as (
-        _server,
-        port,
-    ):
-        result = runner.invoke(
-            app,
-            [
-                "server",
-                "logs",
-                "--limit",
-                "12",
-                "--job-id",
-                "abc123456789",
-                "--contains",
-                "disk space",
-                "--port",
-                str(port),
-            ],
-        )
-
-    assert result.exit_code == 0, result.output
-    assert (
-        'No service activity found matching job abc12345 and text "disk space" '
-        "in the last 12 log lines."
-    ) in result.output
-    assert (
-        "vaultspec-rag server logs --raw --limit 12 "
-        f'--port {port} --job-id abc123456789 --contains "disk space"'
-    ) in result.output
-
-
-def test_logs_activity_header_reports_filters() -> None:
-    with _logs_http_server([_activity_payload()]) as (_server, port):
-        result = runner.invoke(
-            app,
-            [
-                "server",
-                "logs",
-                "--limit",
-                "8",
-                "--contains",
-                "6793374d",
-                "--job-id",
-                "job-abcdef123",
-                "--port",
-                str(port),
-            ],
-        )
-
-    assert result.exit_code == 0, result.output
-    lines = _plain_lines(result.output)
-    assert lines[:5] == [
-        "Activity",
-        f"Address: http://127.0.0.1:{port}",
-        "Shown: 2 entries",
-        "Source: last 8 log lines",
-        'Filter: job job-abcd and text "6793374d"',
-    ]
-    request_path = _LogsHTTPHandler.request_paths[-1]
-    assert request_path.startswith("/logs/json?")
-    assert "lines=8" in request_path
-    assert "contains=6793374d" in request_path
-    assert "job_id=job-abcdef123" in request_path
-
-
-def test_logs_raw_mode_preserves_log_lines() -> None:
-    with _logs_http_server([_activity_payload()]) as (_server, port):
-        result = runner.invoke(
-            app,
-            ["server", "logs", "--limit", "8", "--port", str(port), "--raw"],
-        )
-
-    assert result.exit_code == 0, result.output
-    output = result.output
-    assert "service.lifecycle event=search" in output
-    assert "POST /search HTTP/1.1" in output
-    assert "request_id=6793374dabcdef001122334455667788" in output
-
-
-def test_logs_json_preserves_raw_service_payload() -> None:
-    payload = _activity_payload()
-    with _logs_http_server([payload]) as (_server, port):
-        result = runner.invoke(
-            app,
-            ["server", "logs", "--limit", "8", "--port", str(port), "--json"],
-        )
-
-    assert result.exit_code == 0, result.output
-    envelope = json.loads(result.output)
-    assert envelope["ok"] is True
-    assert envelope["command"] == "service.logs"
-    assert envelope["data"]["lines"] == payload["lines"]
-    assert "service.lifecycle event=search" in envelope["data"]["lines"][1]
-
-
-def test_logs_cli_filters_are_passed_to_service() -> None:
-    with _logs_http_server([_activity_payload()]) as (_server, port):
-        result = runner.invoke(
-            app,
-            [
-                "server",
-                "logs",
-                "--limit",
-                "8",
-                "--contains",
-                "6793374d",
-                "--job-id",
-                "job-abc",
-                "--port",
-                str(port),
-                "--raw",
-            ],
-        )
-
-    assert result.exit_code == 0, result.output
-    request_path = _LogsHTTPHandler.request_paths[-1]
-    assert request_path.startswith("/logs/json?")
-    assert "lines=8" in request_path
-    assert "contains=6793374d" in request_path
-    assert "job_id=job-abc" in request_path
-
-
-def test_logs_cli_mcp_parity() -> None:
-    assert callable(admin.get_logs)
-    help_result = runner.invoke(app, ["server", "--help"])
-    assert help_result.exit_code == 0
-    assert "logs" in help_result.stdout
+    assert process.returncode == 0
+    generations = sorted(tmp_path.glob("service.log*"))
+    assert {path.name for path in generations} == {
+        "service.log",
+        "service.log.1",
+        "service.log.2",
+    }
+    assert all(path.stat().st_size <= 1024 for path in generations)
+    retained = b"".join(path.read_bytes() for path in generations)
+    assert retained.count(marker.encode()) == 1

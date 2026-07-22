@@ -47,16 +47,18 @@ The tables in this section, together with the backend selection table, list ever
 
 ### Service runtime and logging
 
-| Variable                                 | Type    | Default            | Controls                                                    | CLI flag                              |
-| ---------------------------------------- | ------- | ------------------ | ----------------------------------------------------------- | ------------------------------------- |
-| `VAULTSPEC_RAG_STATUS_DIR`               | path    | `~/.vaultspec-rag` | Directory for service status, marker, binary, and log files | `--status-dir`                        |
-| `VAULTSPEC_RAG_LOG_FILE`                 | path    | `service.log`      | Log filename inside the status dir                          | `--log-file`                          |
-| `VAULTSPEC_RAG_PORT`                     | integer | `8766`             | HTTP service port and MCP fast path                         | `--port`                              |
-| `VAULTSPEC_RAG_LOG_LEVEL`                | string  | `WARNING`          | Root logger level                                           | `--verbose` (INFO), `--debug` (DEBUG) |
-| `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS` | integer | `1800`             | Seconds an idle project slot stays resident before eviction | -                                     |
-| `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS`     | integer | `16`               | Maximum simultaneously cached project slots                 | -                                     |
-| `VAULTSPEC_RAG_SERVICE_LOG_MAX_BYTES`    | integer | `10485760`         | Rotating log file size cap in bytes (10 MiB)                | -                                     |
-| `VAULTSPEC_RAG_SERVICE_LOG_BACKUP_COUNT` | integer | `5`                | Number of rotated log backups retained                      | -                                     |
+| Variable                                 | Type    | Default            | Controls                                                       | CLI flag                              |
+| ---------------------------------------- | ------- | ------------------ | -------------------------------------------------------------- | ------------------------------------- |
+| `VAULTSPEC_RAG_STATUS_DIR`               | path    | `~/.vaultspec-rag` | Directory for service status, marker, binary, and log files    | `--status-dir`                        |
+| `VAULTSPEC_RAG_LOG_FILE`                 | path    | `service.log`      | Resident service log filename inside the status dir            | `--log-file`                          |
+| `VAULTSPEC_RAG_PORT`                     | integer | `8766`             | HTTP service port and MCP fast path                            | `--port`                              |
+| `VAULTSPEC_RAG_LOG_LEVEL`                | string  | `WARNING`          | Root logger level                                              | `--verbose` (INFO), `--debug` (DEBUG) |
+| `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS` | integer | `1800`             | Seconds an idle project slot stays resident before eviction    | -                                     |
+| `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS`     | integer | `16`               | Maximum simultaneously cached project slots                    | -                                     |
+| `VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES`    | integer | `10485760`         | Active-file size threshold for each managed log source (10 MiB) | -                                     |
+| `VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT` | integer | `5`                | Rotated backups retained for each managed log source           | -                                     |
+
+The policy applies independently to `service.log` and `qdrant.log`. With the defaults, each source keeps one active file and five backups. The aggregate budget is approximately 120 MiB.
 
 ### Embedding and reranking
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 import errno
 import json
 import logging
+import math
 import os
 import socket
 import time
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "DEFAULT_SEARCH_TIMEOUT_SECONDS",
+    "MAX_SERVICE_RESPONSE_BYTES",
     "_do_http_call",
     "_get_search_timeout",
     "_is_connection_refused",
@@ -43,9 +45,25 @@ __all__ = [
 
 DEFAULT_SEARCH_TIMEOUT_SECONDS = 300.0
 DEFAULT_ADMIN_TIMEOUT_SECONDS = 30.0
+MAX_SERVICE_RESPONSE_BYTES = 8 * 1024 * 1024
 
 type ReindexType = Literal["vault", "codebase"]
 type ReindexInitiator = Literal["cli", "mcp"]
+
+
+class ServiceResponseTooLargeError(ValueError):
+    """Raised before a service response can exceed the client memory bound."""
+
+
+def _read_service_response(response: Any) -> bytes:
+    """Read at most one byte beyond the finite service-response ceiling."""
+    raw = cast("bytes", response.read(MAX_SERVICE_RESPONSE_BYTES + 1))
+    if len(raw) > MAX_SERVICE_RESPONSE_BYTES:
+        raise ServiceResponseTooLargeError(
+            "service response exceeded the "
+            f"{MAX_SERVICE_RESPONSE_BYTES}-byte client limit"
+        )
+    return raw
 
 
 def _is_connection_refused(exc: BaseException) -> bool:
@@ -71,16 +89,19 @@ def _is_timeout(exc: BaseException) -> bool:
 
 
 def _get_admin_timeout(timeout: float | None = None) -> float:
-    if timeout is not None:
-        return timeout
-    env_timeout = os.environ.get("VAULTSPEC_RAG_ADMIN_TIMEOUT")
-    if env_timeout:
-        try:
-            parsed = float(env_timeout)
-        except ValueError:
+    resolved = timeout
+    if timeout is None:
+        env_timeout = os.environ.get("VAULTSPEC_RAG_ADMIN_TIMEOUT")
+        if env_timeout:
+            try:
+                resolved = float(env_timeout)
+            except ValueError:
+                return DEFAULT_ADMIN_TIMEOUT_SECONDS
+        else:
             return DEFAULT_ADMIN_TIMEOUT_SECONDS
-        return parsed if parsed > 0 else DEFAULT_ADMIN_TIMEOUT_SECONDS
-    return DEFAULT_ADMIN_TIMEOUT_SECONDS
+    if resolved is None or not math.isfinite(resolved) or resolved <= 0:
+        return DEFAULT_ADMIN_TIMEOUT_SECONDS
+    return resolved
 
 
 def _format_timeout_seconds(timeout: float) -> str:
@@ -117,7 +138,7 @@ def _fetch_health_token(port: int, timeout: float | None = None) -> str:
         with urllib.request.urlopen(
             req, timeout=timeout or DEFAULT_ADMIN_TIMEOUT_SECONDS
         ) as resp:
-            data: object = json.loads(resp.read().decode("utf-8"))
+            data: object = json.loads(_read_service_response(resp).decode("utf-8"))
     except Exception as exc:
         if _is_timeout(exc):
             raise
@@ -159,10 +180,13 @@ def _send_call(
     """
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body = cast("dict[str, object]", json.loads(resp.read().decode("utf-8")))
+            body = cast(
+                "dict[str, object]",
+                json.loads(_read_service_response(resp).decode("utf-8")),
+            )
             return int(resp.status), body
     except urllib.error.HTTPError as e:
-        raw = e.read().decode("utf-8")
+        raw = _read_service_response(e).decode("utf-8")
         try:
             return e.code, cast("dict[str, object]", json.loads(raw))
         except json.JSONDecodeError:
@@ -315,17 +339,17 @@ def _admin_url_with_root(base: str, args: dict[str, Any]) -> str:
 
 
 def _logs_route_path(args: dict[str, Any]) -> str:
-    """Build the JSON logs route path with optional bounded filters.
+    """Build the grouped JSON logs route with source and bounded filters.
 
-    The daemon's ``/logs/json`` route returns ``{"lines": [...]}`` which the
-    JSON-parsing ``_do_http_call`` can decode; the plaintext ``/logs`` route
-    would fail JSON decoding and silently yield no lines.
+    The daemon's ``/logs/json`` route returns source-tagged groups which the
+    JSON-parsing ``_do_http_call`` can decode. The plaintext ``/logs`` route is
+    for direct human inspection and is not an admin-transport payload.
     """
     path = "/logs/json"
     params = {
         key: value
         for key, value in args.items()
-        if key in {"lines", "job_id", "contains"} and value is not None
+        if key in {"lines", "source", "job_id", "contains"} and value is not None
     }
     if params:
         path += "?" + urllib.parse.urlencode(params)
@@ -516,15 +540,19 @@ def _try_http_vault_document(
 
 
 def _get_search_timeout(timeout: float | None) -> float:
+    resolved = timeout
     if timeout is None:
         env_timeout = os.environ.get("VAULTSPEC_RAG_SEARCH_TIMEOUT")
         if env_timeout:
             try:
-                return float(env_timeout)
+                resolved = float(env_timeout)
             except ValueError:
                 return DEFAULT_SEARCH_TIMEOUT_SECONDS
+        else:
+            return DEFAULT_SEARCH_TIMEOUT_SECONDS
+    if resolved is None or not math.isfinite(resolved) or resolved <= 0:
         return DEFAULT_SEARCH_TIMEOUT_SECONDS
-    return timeout
+    return resolved
 
 
 def _probe_unavailable(kind: str, exc: Exception) -> dict[str, object]:

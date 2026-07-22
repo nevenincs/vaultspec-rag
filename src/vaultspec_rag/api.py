@@ -216,8 +216,13 @@ def search_vault_timed(
     root = _resolve(root_dir)
     registry = get_registry()
     # Empty/unbuilt index: return an empty result without loading the model.
-    if registry.vault_doc_count(root) == 0:
-        return [], {"model_load_seconds": 0.0, "project_lease_seconds": 0.0}
+    indexed_count = registry.vault_doc_count(root)
+    if indexed_count == 0:
+        return [], {
+            "indexed_count": indexed_count,
+            "model_load_seconds": 0.0,
+            "project_lease_seconds": 0.0,
+        }
     phase_started = time.perf_counter()
     registry.load_model()
     model_load_seconds = time.perf_counter() - phase_started
@@ -237,6 +242,7 @@ def search_vault_timed(
         )
     timings["model_load_seconds"] = model_load_seconds
     timings["project_lease_seconds"] = project_lease_seconds
+    timings["indexed_count"] = indexed_count
     return results, timings
 
 
@@ -375,8 +381,13 @@ def search_codebase_timed(
     root = _resolve(root_dir)
     registry = get_registry()
     # Empty/unbuilt code index: return an empty result without loading the model.
-    if registry.code_chunk_count(root) == 0:
-        return [], {"model_load_seconds": 0.0, "project_lease_seconds": 0.0}
+    indexed_count = registry.code_chunk_count(root)
+    if indexed_count == 0:
+        return [], {
+            "indexed_count": indexed_count,
+            "model_load_seconds": 0.0,
+            "project_lease_seconds": 0.0,
+        }
     phase_started = time.perf_counter()
     registry.load_model()
     model_load_seconds = time.perf_counter() - phase_started
@@ -404,6 +415,7 @@ def search_codebase_timed(
         )
     timings["model_load_seconds"] = model_load_seconds
     timings["project_lease_seconds"] = project_lease_seconds
+    timings["indexed_count"] = indexed_count
     return results, timings
 
 
@@ -547,24 +559,12 @@ def get_status(root_dir: pathlib.Path) -> dict[str, object]:
 
     from .capabilities import backend_capabilities_dict
     from .registry import get_registry
-    from .store import VaultStore
 
     registry = get_registry()
-    slot = registry._projects.get(root)  # pyright: ignore[reportPrivateUsage]  # get_status reads slot.store without acquiring a lease to avoid model init
-    if slot is not None:
-        store = slot.store
-        own_store = False
-    else:
-        store = VaultStore(root)
-        own_store = True
-
-    try:
+    with registry.lease_store(root) as store:
         vault_count = store.count()
         code_count = store.count_code()
         storage_path = str(store.db_path)
-    finally:
-        if own_store:
-            store.close()
 
     return {
         "cuda": cuda_available,

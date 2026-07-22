@@ -1,6 +1,7 @@
 """Unit tests for rag.indexer - extraction and doc preparation (no GPU)."""
 
 import hashlib
+import tracemalloc
 from collections.abc import Generator
 from pathlib import Path
 
@@ -206,6 +207,32 @@ class TestASTChunkerMultiLang:
         chunks = ASTChunker(chunk_size=100).chunk(code, "python")
         assert len(chunks) > 1
 
+    def test_large_leaf_has_exact_line_ranges_across_character_slices(self):
+        from tree_sitter_language_pack import get_parser
+
+        source = "'''aa\nbb\ncc\ndd'''"
+        tree = get_parser("python").parse(source.encode("utf-8"))
+        string_node = tree.root_node.children[0]
+        content_node = string_node.children[1]
+        content = source[content_node.start_byte : content_node.end_byte]
+        chunks: list[tuple[str, int, int, str | None, str | None, str | None]] = []
+
+        ASTChunker(chunk_size=4)._split_large_leaf(
+            content_node,
+            content,
+            None,
+            None,
+            chunks,
+        )
+
+        assert [
+            (text, line_start, line_end) for text, line_start, line_end, *_ in chunks
+        ] == [
+            ("aa\nb", 1, 2),
+            ("b\ncc", 2, 3),
+            ("\ndd", 3, 4),
+        ]
+
 
 class TestLanguageMap:
     def test_python_extension(self):
@@ -261,6 +288,19 @@ class TestBinaryDetection:
         f = tmp_path / "empty"
         f.write_bytes(b"")
         assert _is_binary(f) is False
+
+    def test_large_file_probe_has_bounded_python_memory(self, tmp_path: Path):
+        f = tmp_path / "large.py"
+        f.write_bytes(b"a" * (8 * 1024 * 1024))
+
+        tracemalloc.start()
+        try:
+            assert _is_binary(f) is False
+            _current, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
+        assert peak < 1024 * 1024
 
 
 class TestFileSizeLimit:
@@ -454,9 +494,8 @@ class TestChunkWithSplitterSearchOffset:
     def test_duplicate_blocks_get_different_lines(self, tmp_path: Path):
         from ..indexer import CodebaseIndexer
 
-        # Construct content with an identical block repeated.
-        block = "x = 1\ny = 2\nz = 3\n"
-        content = block + "\n" + block
+        # Repeated identical lines force two deterministic fallback chunks.
+        content = "a\n" * 300
         src = tmp_path / "repeat.yaml"
         src.write_text(content, encoding="utf-8")
 
@@ -465,14 +504,10 @@ class TestChunkWithSplitterSearchOffset:
         # Use _chunk_with_splitter (TextSplitter path).
         chunks = indexer._chunk_with_splitter(content, "repeat.yaml", "yaml")
 
-        if len(chunks) >= 2:
-            # The two chunks covering the same text must have different
-            # line_start values - the old content.find() bug would give
-            # them the same line_start.
-            line_starts = [c.line_start for c in chunks]
-            assert len(set(line_starts)) == len(line_starts), (
-                f"Duplicate line_start values: {line_starts}"
-            )
+        assert [(chunk.line_start, chunk.line_end) for chunk in chunks] == [
+            (1, 256),
+            (256, 300),
+        ]
 
 
 class TestIncrementalIndexMetadata:
@@ -756,6 +791,46 @@ class TestGitignoreNegationPatterns:
         assert not spec.match_file("subdir/keep.py")
         # other.py should be matched (ignored)
         assert spec.match_file("subdir/other.py")
+
+    def test_gitignore_collection_prunes_always_excluded_trees(
+        self, tmp_path: Path
+    ) -> None:
+        from ..indexer._ignore_specs import collect_gitignore_patterns
+
+        nested = tmp_path / "src" / "pkg"
+        excluded = tmp_path / "node_modules" / "dependency"
+        nested.mkdir(parents=True)
+        excluded.mkdir(parents=True)
+        (nested / ".gitignore").write_text("*.generated.py\n", encoding="utf-8")
+        (excluded / ".gitignore").write_text("*.poison.py\n", encoding="utf-8")
+
+        patterns = collect_gitignore_patterns(tmp_path)
+
+        assert "src/pkg/*.generated.py" in patterns
+        assert "node_modules/dependency/*.poison.py" not in patterns
+
+    def test_root_negation_cannot_reopen_always_excluded_tree(
+        self, tmp_path: Path
+    ) -> None:
+        from ..indexer import CodebaseIndexer
+
+        (tmp_path / ".gitignore").write_text("!node_modules/\n", encoding="utf-8")
+        dependency = tmp_path / "node_modules" / "dependency"
+        dependency.mkdir(parents=True)
+        (dependency / ".gitignore").write_text("*.py\n", encoding="utf-8")
+        poison = dependency / "poison.py"
+        poison.write_text("should_never_be_indexed = True\n", encoding="utf-8")
+        source = tmp_path / "src" / "kept.py"
+        source.parent.mkdir()
+        source.write_text("kept = True\n", encoding="utf-8")
+
+        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
+        indexer.root_dir = tmp_path
+        indexer._extra_excludes = []
+        scanned = indexer._scan_codebase()
+
+        assert source in scanned
+        assert poison not in scanned
 
 
 class TestHashingPermissionError:

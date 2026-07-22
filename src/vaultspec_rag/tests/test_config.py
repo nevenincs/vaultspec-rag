@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -10,7 +13,159 @@ import pytest
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-from ..config import EnvVar, get_config, hf_cache_only, reset_config
+from .._job_errors import JobError, JobErrorKind
+from ..config import (
+    EnvVar,
+    VaultSpecConfigWrapper,
+    get_config,
+    hf_cache_only,
+    reset_config,
+)
+from ..memory_probe import MemoryBudget
+
+_RESILIENCE_CONFIG_CASES: tuple[
+    tuple[str, EnvVar, str, object, str, object],
+    ...,
+] = (
+    (
+        "store_operation_timeout_seconds",
+        EnvVar.STORE_OPERATION_TIMEOUT_SECONDS,
+        "VAULTSPEC_RAG_STORE_OPERATION_TIMEOUT_SECONDS",
+        120.0,
+        "75.5",
+        75.5,
+    ),
+    (
+        "store_write_retry_attempts",
+        EnvVar.STORE_WRITE_RETRY_ATTEMPTS,
+        "VAULTSPEC_RAG_STORE_WRITE_RETRY_ATTEMPTS",
+        5,
+        "4",
+        4,
+    ),
+    (
+        "store_write_retry_base_seconds",
+        EnvVar.STORE_WRITE_RETRY_BASE_SECONDS,
+        "VAULTSPEC_RAG_STORE_WRITE_RETRY_BASE_SECONDS",
+        0.5,
+        "1.25",
+        1.25,
+    ),
+    (
+        "store_write_retry_max_seconds",
+        EnvVar.STORE_WRITE_RETRY_MAX_SECONDS,
+        "VAULTSPEC_RAG_STORE_WRITE_RETRY_MAX_SECONDS",
+        8.0,
+        "10.5",
+        10.5,
+    ),
+    (
+        "index_segment_max_chunks",
+        EnvVar.INDEX_SEGMENT_MAX_CHUNKS,
+        "VAULTSPEC_RAG_INDEX_SEGMENT_MAX_CHUNKS",
+        64,
+        "32",
+        32,
+    ),
+    (
+        "index_segment_max_bytes",
+        EnvVar.INDEX_SEGMENT_MAX_BYTES,
+        "VAULTSPEC_RAG_INDEX_SEGMENT_MAX_BYTES",
+        8 * 1024 * 1024,
+        "4194304",
+        4194304,
+    ),
+    (
+        "index_queue_max_chunks",
+        EnvVar.INDEX_QUEUE_MAX_CHUNKS,
+        "VAULTSPEC_RAG_INDEX_QUEUE_MAX_CHUNKS",
+        512,
+        "256",
+        256,
+    ),
+    (
+        "index_queue_max_bytes",
+        EnvVar.INDEX_QUEUE_MAX_BYTES,
+        "VAULTSPEC_RAG_INDEX_QUEUE_MAX_BYTES",
+        128 * 1024 * 1024,
+        "67108864",
+        67108864,
+    ),
+    (
+        "index_no_progress_timeout_seconds",
+        EnvVar.INDEX_NO_PROGRESS_TIMEOUT_SECONDS,
+        "VAULTSPEC_RAG_INDEX_NO_PROGRESS_TIMEOUT_SECONDS",
+        900.0,
+        "123.5",
+        123.5,
+    ),
+    (
+        "watch_retry_base_seconds",
+        EnvVar.WATCH_RETRY_BASE_SECONDS,
+        "VAULTSPEC_RAG_WATCH_RETRY_BASE_SECONDS",
+        30.0,
+        "2.5",
+        2.5,
+    ),
+    (
+        "watch_retry_max_seconds",
+        EnvVar.WATCH_RETRY_MAX_SECONDS,
+        "VAULTSPEC_RAG_WATCH_RETRY_MAX_SECONDS",
+        1800.0,
+        "45.25",
+        45.25,
+    ),
+    (
+        "watch_retry_jitter_fraction",
+        EnvVar.WATCH_RETRY_JITTER_FRACTION,
+        "VAULTSPEC_RAG_WATCH_RETRY_JITTER_FRACTION",
+        0.1,
+        "0.25",
+        0.25,
+    ),
+    (
+        "watch_circuit_failure_threshold",
+        EnvVar.WATCH_CIRCUIT_FAILURE_THRESHOLD,
+        "VAULTSPEC_RAG_WATCH_CIRCUIT_FAILURE_THRESHOLD",
+        3,
+        "7",
+        7,
+    ),
+    (
+        "index_rss_ceiling_mb",
+        EnvVar.INDEX_RSS_CEILING_MB,
+        "VAULTSPEC_RAG_INDEX_RSS_CEILING_MB",
+        16384.0,
+        "4096.5",
+        4096.5,
+    ),
+    (
+        "index_cuda_ceiling_mb",
+        EnvVar.INDEX_CUDA_CEILING_MB,
+        "VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB",
+        12288.0,
+        "3072.25",
+        3072.25,
+    ),
+    (
+        "index_cuda_allocator_fraction",
+        EnvVar.INDEX_CUDA_ALLOCATOR_FRACTION,
+        "VAULTSPEC_RAG_INDEX_CUDA_ALLOCATOR_FRACTION",
+        0.8,
+        "0.6",
+        0.6,
+    ),
+    (
+        "index_support_profile",
+        EnvVar.INDEX_SUPPORT_PROFILE,
+        "VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE",
+        "managed-service",
+        " Embedded-Local ",
+        "embedded-local",
+    ),
+)
+
+_RESILIENCE_ENV_VARS = tuple(case[1] for case in _RESILIENCE_CONFIG_CASES)
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +187,15 @@ def _restore_env(var: EnvVar, prev: str | None) -> None:
         os.environ.pop(var.value, None)
     else:
         os.environ[var.value] = prev
+
+
+def _clear_resilience_env() -> dict[EnvVar, str | None]:
+    return {var: os.environ.pop(var.value, None) for var in _RESILIENCE_ENV_VARS}
+
+
+def _restore_resilience_env(saved: dict[EnvVar, str | None]) -> None:
+    for var, previous in saved.items():
+        _restore_env(var, previous)
 
 
 def test_service_idle_ttl_default() -> None:
@@ -75,7 +239,12 @@ def test_empty_path_env_falls_back_to_default_not_cwd() -> None:
     # M1 (security): an empty/whitespace path override must be treated as absent
     # and fall back to the default, never collapse to cwd (Path("") == ".") -
     # which would repoint the managed-dir delete/clean blast radius.
-    default = get_config().status_dir
+    # The session-wide singleton isolation fixture deliberately supplies a
+    # non-default status directory. Compare the blank override with the
+    # production default itself, not with that outer test override.
+    default = VaultSpecConfigWrapper._RAG_DEFAULTS[  # pyright: ignore[reportPrivateUsage]
+        "status_dir"
+    ]
     reset_config()
     prev = _set_env(EnvVar.STATUS_DIR, "   ")
     reset_config()
@@ -104,14 +273,27 @@ def test_service_max_projects_default() -> None:
     assert cfg.service_max_projects == 16
 
 
-def test_service_log_max_bytes_default() -> None:
+def test_managed_log_max_bytes_default() -> None:
     cfg = get_config()
-    assert cfg.service_log_max_bytes == 10485760
+    assert cfg.managed_log_max_bytes == 10485760
 
 
-def test_service_log_backup_count_default() -> None:
+def test_managed_log_backup_count_default() -> None:
     cfg = get_config()
-    assert cfg.service_log_backup_count == 5
+    assert cfg.managed_log_backup_count == 5
+
+
+def test_managed_log_environment_names_are_generic_only() -> None:
+    assert EnvVar.MANAGED_LOG_MAX_BYTES.value == "VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES"
+    assert (
+        EnvVar.MANAGED_LOG_BACKUP_COUNT.value
+        == "VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT"
+    )
+    assert not any(name.startswith("SERVICE_LOG_") for name in EnvVar.__members__)
+    assert not any(
+        name.startswith("service_log_")
+        for name in VaultSpecConfigWrapper._RAG_DEFAULTS  # pyright: ignore[reportPrivateUsage]
+    )
 
 
 def test_service_idle_ttl_env_override() -> None:
@@ -140,30 +322,457 @@ def test_service_max_projects_env_override() -> None:
         reset_config()
 
 
-def test_service_log_max_bytes_env_override() -> None:
-    prev = _set_env(EnvVar.SERVICE_LOG_MAX_BYTES, "4096")
+def test_managed_log_max_bytes_env_override() -> None:
+    prev = _set_env(EnvVar.MANAGED_LOG_MAX_BYTES, "4096")
     try:
         reset_config()
         cfg = get_config()
-        value = cfg.service_log_max_bytes
+        value = cfg.managed_log_max_bytes
         assert value == 4096
         assert isinstance(value, int)
     finally:
-        _restore_env(EnvVar.SERVICE_LOG_MAX_BYTES, prev)
+        _restore_env(EnvVar.MANAGED_LOG_MAX_BYTES, prev)
         reset_config()
 
 
-def test_service_log_backup_count_env_override() -> None:
-    prev = _set_env(EnvVar.SERVICE_LOG_BACKUP_COUNT, "2")
+def test_managed_log_backup_count_env_override() -> None:
+    prev = _set_env(EnvVar.MANAGED_LOG_BACKUP_COUNT, "2")
     try:
         reset_config()
         cfg = get_config()
-        value = cfg.service_log_backup_count
+        value = cfg.managed_log_backup_count
         assert value == 2
         assert isinstance(value, int)
     finally:
-        _restore_env(EnvVar.SERVICE_LOG_BACKUP_COUNT, prev)
+        _restore_env(EnvVar.MANAGED_LOG_BACKUP_COUNT, prev)
         reset_config()
+
+
+@pytest.mark.parametrize("raw", ["0", "-1"])
+def test_managed_log_max_bytes_rejects_unbounded_values(raw: str) -> None:
+    prev = _set_env(EnvVar.MANAGED_LOG_MAX_BYTES, raw)
+    try:
+        reset_config()
+        with pytest.raises(ValueError, match="must be a positive integer"):
+            _ = get_config().managed_log_max_bytes
+    finally:
+        _restore_env(EnvVar.MANAGED_LOG_MAX_BYTES, prev)
+        reset_config()
+
+
+def test_managed_log_backup_count_rejects_negative_value() -> None:
+    prev = _set_env(EnvVar.MANAGED_LOG_BACKUP_COUNT, "-1")
+    try:
+        reset_config()
+        with pytest.raises(ValueError, match="must be a non-negative integer"):
+            _ = get_config().managed_log_backup_count
+    finally:
+        _restore_env(EnvVar.MANAGED_LOG_BACKUP_COUNT, prev)
+        reset_config()
+
+
+def test_resilience_configuration_defaults() -> None:
+    saved = _clear_resilience_env()
+    try:
+        reset_config()
+        cfg = get_config()
+        for (
+            attribute,
+            _var,
+            _env_name,
+            expected,
+            _raw,
+            _coerced,
+        ) in _RESILIENCE_CONFIG_CASES:
+            value = getattr(cfg, attribute)
+            assert value == expected
+            assert type(value) is type(expected)
+    finally:
+        _restore_resilience_env(saved)
+        reset_config()
+
+
+@pytest.mark.parametrize(
+    ("attribute", "var", "env_name", "_default", "raw", "expected"),
+    _RESILIENCE_CONFIG_CASES,
+    ids=[case[0] for case in _RESILIENCE_CONFIG_CASES],
+)
+def test_resilience_configuration_environment_mapping_and_coercion(
+    attribute: str,
+    var: EnvVar,
+    env_name: str,
+    _default: object,
+    raw: str,
+    expected: object,
+) -> None:
+    saved = _clear_resilience_env()
+    os.environ[var.value] = raw
+    try:
+        reset_config()
+        assert var.value == env_name
+        value = getattr(get_config(), attribute)
+        assert value == expected
+        assert type(value) is type(expected)
+    finally:
+        _restore_resilience_env(saved)
+        reset_config()
+
+
+@pytest.mark.parametrize(
+    ("var", "attribute"),
+    [
+        (EnvVar.STORE_WRITE_RETRY_ATTEMPTS, "store_write_retry_attempts"),
+        (EnvVar.INDEX_SEGMENT_MAX_CHUNKS, "index_segment_max_chunks"),
+        (EnvVar.INDEX_SEGMENT_MAX_BYTES, "index_segment_max_bytes"),
+        (EnvVar.INDEX_QUEUE_MAX_CHUNKS, "index_queue_max_chunks"),
+        (EnvVar.INDEX_QUEUE_MAX_BYTES, "index_queue_max_bytes"),
+        (
+            EnvVar.WATCH_CIRCUIT_FAILURE_THRESHOLD,
+            "watch_circuit_failure_threshold",
+        ),
+    ],
+)
+def test_resilience_positive_integer_settings_reject_zero(
+    var: EnvVar,
+    attribute: str,
+) -> None:
+    saved = _clear_resilience_env()
+    os.environ[var.value] = "0"
+    try:
+        reset_config()
+        with pytest.raises(ValueError, match=attribute):
+            getattr(get_config(), attribute)
+    finally:
+        _restore_resilience_env(saved)
+        reset_config()
+
+
+@pytest.mark.parametrize(
+    ("var", "attribute"),
+    [
+        (
+            EnvVar.STORE_OPERATION_TIMEOUT_SECONDS,
+            "store_operation_timeout_seconds",
+        ),
+        (
+            EnvVar.STORE_WRITE_RETRY_BASE_SECONDS,
+            "store_write_retry_base_seconds",
+        ),
+        (
+            EnvVar.STORE_WRITE_RETRY_MAX_SECONDS,
+            "store_write_retry_max_seconds",
+        ),
+        (
+            EnvVar.INDEX_NO_PROGRESS_TIMEOUT_SECONDS,
+            "index_no_progress_timeout_seconds",
+        ),
+        (EnvVar.WATCH_RETRY_BASE_SECONDS, "watch_retry_base_seconds"),
+        (EnvVar.WATCH_RETRY_MAX_SECONDS, "watch_retry_max_seconds"),
+        (EnvVar.INDEX_RSS_CEILING_MB, "index_rss_ceiling_mb"),
+        (EnvVar.INDEX_CUDA_CEILING_MB, "index_cuda_ceiling_mb"),
+    ],
+)
+def test_resilience_positive_float_settings_reject_zero(
+    var: EnvVar,
+    attribute: str,
+) -> None:
+    saved = _clear_resilience_env()
+    os.environ[var.value] = "0"
+    try:
+        reset_config()
+        with pytest.raises(ValueError, match=attribute):
+            getattr(get_config(), attribute)
+    finally:
+        _restore_resilience_env(saved)
+        reset_config()
+
+
+@pytest.mark.parametrize("raw", ["nan", "inf"])
+def test_resilience_positive_float_settings_reject_nonfinite(raw: str) -> None:
+    saved = _clear_resilience_env()
+    os.environ[EnvVar.INDEX_NO_PROGRESS_TIMEOUT_SECONDS.value] = raw
+    try:
+        reset_config()
+        with pytest.raises(ValueError, match="index_no_progress_timeout_seconds"):
+            _ = get_config().index_no_progress_timeout_seconds
+    finally:
+        _restore_resilience_env(saved)
+        reset_config()
+
+
+@pytest.mark.parametrize("raw", ["-0.01", "1.01", "nan"])
+def test_watch_retry_jitter_rejects_values_outside_closed_unit_interval(
+    raw: str,
+) -> None:
+    saved = _clear_resilience_env()
+    os.environ[EnvVar.WATCH_RETRY_JITTER_FRACTION.value] = raw
+    try:
+        reset_config()
+        with pytest.raises(ValueError, match="watch_retry_jitter_fraction"):
+            _ = get_config().watch_retry_jitter_fraction
+    finally:
+        _restore_resilience_env(saved)
+        reset_config()
+
+
+@pytest.mark.parametrize("raw", ["0", "1.01", "nan"])
+def test_cuda_allocator_fraction_rejects_values_outside_open_closed_interval(
+    raw: str,
+) -> None:
+    saved = _clear_resilience_env()
+    os.environ[EnvVar.INDEX_CUDA_ALLOCATOR_FRACTION.value] = raw
+    try:
+        reset_config()
+        with pytest.raises(ValueError, match="index_cuda_allocator_fraction"):
+            _ = get_config().index_cuda_allocator_fraction
+    finally:
+        _restore_resilience_env(saved)
+        reset_config()
+
+
+@pytest.mark.parametrize(
+    ("var", "attribute", "raw", "expected"),
+    [
+        (
+            EnvVar.WATCH_RETRY_JITTER_FRACTION,
+            "watch_retry_jitter_fraction",
+            "0.0",
+            0.0,
+        ),
+        (
+            EnvVar.WATCH_RETRY_JITTER_FRACTION,
+            "watch_retry_jitter_fraction",
+            "1.0",
+            1.0,
+        ),
+        (
+            EnvVar.INDEX_CUDA_ALLOCATOR_FRACTION,
+            "index_cuda_allocator_fraction",
+            "1.0",
+            1.0,
+        ),
+    ],
+)
+def test_fraction_settings_accept_included_endpoints(
+    var: EnvVar,
+    attribute: str,
+    raw: str,
+    expected: float,
+) -> None:
+    saved = _clear_resilience_env()
+    os.environ[var.value] = raw
+    try:
+        reset_config()
+        assert getattr(get_config(), attribute) == expected
+    finally:
+        _restore_resilience_env(saved)
+        reset_config()
+
+
+def test_index_support_profile_rejects_unknown_name() -> None:
+    saved = _clear_resilience_env()
+    os.environ[EnvVar.INDEX_SUPPORT_PROFILE.value] = "unknown-profile"
+    try:
+        reset_config()
+        with pytest.raises(ValueError, match="index_support_profile"):
+            _ = get_config().index_support_profile
+    finally:
+        _restore_resilience_env(saved)
+        reset_config()
+
+
+@pytest.mark.parametrize(
+    ("segment_var", "queue_var", "queue_attribute"),
+    [
+        (
+            EnvVar.INDEX_SEGMENT_MAX_CHUNKS,
+            EnvVar.INDEX_QUEUE_MAX_CHUNKS,
+            "index_queue_max_chunks",
+        ),
+        (
+            EnvVar.INDEX_SEGMENT_MAX_BYTES,
+            EnvVar.INDEX_QUEUE_MAX_BYTES,
+            "index_queue_max_bytes",
+        ),
+    ],
+)
+def test_index_queue_budget_must_admit_one_segment(
+    segment_var: EnvVar,
+    queue_var: EnvVar,
+    queue_attribute: str,
+) -> None:
+    saved = _clear_resilience_env()
+    os.environ[segment_var.value] = "8"
+    os.environ[queue_var.value] = "8"
+    try:
+        reset_config()
+        assert getattr(get_config(), queue_attribute) == 8
+        os.environ[queue_var.value] = "7"
+        with pytest.raises(ValueError, match="greater than or equal"):
+            getattr(get_config(), queue_attribute)
+    finally:
+        _restore_resilience_env(saved)
+        reset_config()
+
+
+@pytest.mark.parametrize(
+    ("base_var", "max_var", "max_attribute"),
+    [
+        (
+            EnvVar.STORE_WRITE_RETRY_BASE_SECONDS,
+            EnvVar.STORE_WRITE_RETRY_MAX_SECONDS,
+            "store_write_retry_max_seconds",
+        ),
+        (
+            EnvVar.WATCH_RETRY_BASE_SECONDS,
+            EnvVar.WATCH_RETRY_MAX_SECONDS,
+            "watch_retry_max_seconds",
+        ),
+    ],
+)
+def test_retry_maximum_must_not_be_less_than_base(
+    base_var: EnvVar,
+    max_var: EnvVar,
+    max_attribute: str,
+) -> None:
+    saved = _clear_resilience_env()
+    os.environ[base_var.value] = "8"
+    os.environ[max_var.value] = "8"
+    try:
+        reset_config()
+        assert getattr(get_config(), max_attribute) == 8.0
+        os.environ[max_var.value] = "7"
+        with pytest.raises(ValueError, match="greater than or equal"):
+            getattr(get_config(), max_attribute)
+    finally:
+        _restore_resilience_env(saved)
+        reset_config()
+
+
+def test_low_configured_memory_budget_accepts_exact_limit_and_latches_rss() -> None:
+    saved = _clear_resilience_env()
+    os.environ[EnvVar.INDEX_RSS_CEILING_MB.value] = "4"
+    os.environ[EnvVar.INDEX_CUDA_CEILING_MB.value] = "3"
+    try:
+        reset_config()
+        cfg = get_config()
+        budget = MemoryBudget(
+            rss_ceiling_mb=cfg.index_rss_ceiling_mb,
+            cuda_ceiling_mb=cfg.index_cuda_ceiling_mb,
+        )
+        exact = budget.observe(
+            label="exact-low-limits",
+            rss_mb=4.0,
+            cuda_allocated_mb=3.0,
+            cuda_reserved_mb=3.0,
+        )
+        assert exact.rss_mb == exact.rss_ceiling_mb == 4.0
+        assert exact.cuda_allocated_mb == exact.cuda_ceiling_mb == 3.0
+        assert exact.cuda_reserved_mb == exact.cuda_ceiling_mb == 3.0
+
+        with pytest.raises(JobError) as first_failure:
+            budget.observe(
+                label="first-rss-failure",
+                rss_mb=4.1,
+                cuda_allocated_mb=3.1,
+                cuda_reserved_mb=3.1,
+            )
+        assert first_failure.value.error_kind is JobErrorKind.RSS_MEMORY_CEILING
+        violating_snapshot = budget.snapshot
+        assert violating_snapshot is not None
+        assert violating_snapshot.label == "first-rss-failure"
+
+        with pytest.raises(JobError) as latched_failure:
+            budget.observe(
+                label="later-safe-observation",
+                rss_mb=0.0,
+                cuda_allocated_mb=0.0,
+                cuda_reserved_mb=0.0,
+            )
+        assert latched_failure.value.error_kind is first_failure.value.error_kind
+        assert latched_failure.value.detail == first_failure.value.detail
+        assert budget.snapshot is violating_snapshot
+    finally:
+        _restore_resilience_env(saved)
+        reset_config()
+
+
+@pytest.mark.parametrize(
+    ("allocated_mb", "reserved_mb", "measure"),
+    [(3.1, 0.0, "CUDA allocated"), (0.0, 3.1, "CUDA reserved")],
+)
+def test_low_configured_cuda_budget_returns_typed_failure(
+    allocated_mb: float,
+    reserved_mb: float,
+    measure: str,
+) -> None:
+    saved = _clear_resilience_env()
+    os.environ[EnvVar.INDEX_CUDA_CEILING_MB.value] = "3"
+    try:
+        reset_config()
+        budget = MemoryBudget(cuda_ceiling_mb=get_config().index_cuda_ceiling_mb)
+        with pytest.raises(JobError) as failure:
+            budget.observe(
+                label="cuda-failure",
+                rss_mb=0.0,
+                cuda_allocated_mb=allocated_mb,
+                cuda_reserved_mb=reserved_mb,
+            )
+        assert failure.value.error_kind is JobErrorKind.CUDA_MEMORY_CEILING
+        assert measure in failure.value.detail
+    finally:
+        _restore_resilience_env(saved)
+        reset_config()
+
+
+def test_memory_budget_fails_closed_when_real_measurements_are_unavailable() -> None:
+    source_root = Path(__file__).resolve().parents[2]
+    child_code = """
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+from vaultspec_rag._job_errors import JobError, JobErrorKind
+from vaultspec_rag.memory_probe import MemoryBudget
+
+rss_budget = MemoryBudget(rss_ceiling_mb=1.0)
+try:
+    rss_budget.sample("rss-unavailable")
+except JobError as exc:
+    assert exc.error_kind is JobErrorKind.RSS_MEMORY_CEILING
+    assert exc.detail == (
+        "RSS measurement was unavailable while enforcing the 1.0 MiB "
+        "ceiling at rss-unavailable"
+    )
+    rss_kind = exc.error_kind.value
+else:
+    raise AssertionError("unavailable RSS measurement was admitted")
+
+cuda_budget = MemoryBudget(cuda_ceiling_mb=1.0)
+try:
+    cuda_budget.sample("cuda-unavailable")
+except JobError as exc:
+    assert exc.error_kind is JobErrorKind.CUDA_MEMORY_CEILING
+    assert exc.detail == (
+        "CUDA measurement was unavailable while enforcing the 1.0 MiB "
+        "ceiling at cuda-unavailable"
+    )
+    cuda_kind = exc.error_kind.value
+else:
+    raise AssertionError("unavailable CUDA measurement was admitted")
+
+print(f"{rss_kind},{cuda_kind}")
+"""
+    completed = subprocess.run(
+        [sys.executable, "-S", "-c", child_code, os.fspath(source_root)],
+        cwd=source_root,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "rss_memory_ceiling,cuda_memory_ceiling"
 
 
 def test_watch_enabled_default() -> None:

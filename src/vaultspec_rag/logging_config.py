@@ -14,10 +14,10 @@ import json
 import logging
 import os
 import re
-import shutil
-from logging.handlers import RotatingFileHandler
+import sys
+import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, override
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict, cast
 
 from vaultspec_core.logging_config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
     configure_logging as _core_configure_logging,
@@ -27,17 +27,33 @@ from vaultspec_core.logging_config import (  # pyright: ignore[reportMissingType
     reset_logging,
 )
 
+from ._managed_log_sink import RawRotatingLogSink
+
 __all__ = [
-    "DaemonRotatingFileHandler",
+    "DEFAULT_MANAGED_LOG_LINES",
+    "MANAGED_LOG_TRUNCATION_MARKER",
+    "MAX_MANAGED_LOG_LINES",
+    "MAX_MANAGED_LOG_RECORD_BYTES",
+    "MAX_MANAGED_LOG_SOURCE_BYTES",
+    "DaemonLogCapture",
+    "InvalidManagedLogSourceError",
+    "ManagedLogGroup",
+    "ManagedLogSource",
+    "clamp_managed_log_lines",
     "configure_logging",
     "get_console",
-    "install_daemon_log_rotation",
+    "install_daemon_log_capture",
     "log_event",
-    "read_service_log",
+    "managed_log_filters",
+    "query_managed_logs",
+    "read_managed_logs",
+    "render_managed_log_groups",
     "reset_logging",
+    "validate_managed_log_payload",
 ]
 
 logger = logging.getLogger(__name__)
+_daemon_logging_install_lock = threading.RLock()
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -45,6 +61,44 @@ if TYPE_CHECKING:
 _EVENT_TOKEN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
 _FIELD_TOKEN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _BARE_VALUE_RE = re.compile(r"^[A-Za-z0-9_./:@\\-]+$")
+
+type ManagedLogSource = Literal["service", "qdrant", "all"]
+type ManagedLogGroupSource = Literal["service", "qdrant"]
+
+
+class ManagedLogGroup(TypedDict):
+    """One source's raw records, ordered only within that source."""
+
+    source: ManagedLogGroupSource
+    lines: list[str]
+    truncated: NotRequired[bool]
+    marker: NotRequired[str]
+    truncation: NotRequired[dict[str, int | bool]]
+
+
+class InvalidManagedLogSourceError(ValueError):
+    """Raised when a managed-log source selector is not supported."""
+
+
+_MANAGED_LOG_SOURCES: tuple[ManagedLogGroupSource, ...] = ("service", "qdrant")
+_QDRANT_LOG_NAME = "qdrant.log"
+DEFAULT_MANAGED_LOG_LINES = 200
+MAX_MANAGED_LOG_LINES = 5_000
+MAX_MANAGED_LOG_RECORD_BYTES = 64 * 1024
+MAX_MANAGED_LOG_SOURCE_BYTES = 2 * 1024 * 1024
+MANAGED_LOG_TRUNCATION_MARKER = (
+    "[vaultspec-rag: managed log output truncated by byte budget]"
+)
+_RECORD_TRUNCATION_MARKER = "...[vaultspec-rag record truncated]..."
+_RECORD_PREFIX_OMITTED_MARKER = "[...vaultspec-rag record prefix omitted...]"
+
+
+class _TailFileWindow(TypedDict):
+    lines: list[str]
+    scanned_bytes: int
+    omitted_bytes: int
+    record_truncations: int
+    source_budget_exhausted: bool
 
 
 def _format_event_value(value: object) -> str:
@@ -130,68 +184,542 @@ def _resolve_status_dir(status_dir: Path | None) -> Path:
     return Path(cfg.status_dir).expanduser()
 
 
-def read_service_log(lines: int, status_dir: Path | None = None) -> list[str]:
-    """Return the last *lines* log lines spanning the rotated set.
+def _managed_log_source(raw: str) -> ManagedLogSource:
+    if raw == "service":
+        return "service"
+    if raw == "qdrant":
+        return "qdrant"
+    if raw == "all":
+        return "all"
+    msg = "source must be one of service, qdrant, all."
+    raise InvalidManagedLogSourceError(msg)
 
-    The daemon's :class:`DaemonRotatingFileHandler` rotates
-    ``service.log`` into ``service.log.1``, ``service.log.2``, … with
-    the highest-numbered backup being the oldest. This reader walks the
-    set oldest-first (``service.log.N`` … ``service.log.1`` …
-    ``service.log``) so the concatenated stream is chronological -
-    newest lines last - then returns the final *lines* entries.
 
-    The walk is tolerant of a backup file vanishing mid-rollover: a
-    file that disappears (or otherwise fails to read) between the
-    existence probe and the read is logged at DEBUG and skipped, so a
-    concurrent rotation never crashes the reader.
-
-    Args:
-        lines: Maximum number of trailing lines to return. Values
-            ``<= 0`` yield an empty list.
-        status_dir: Optional explicit status directory. Defaults to the
-            resolved ``cfg.status_dir`` (env/CLI overrides honoured).
-
-    Returns:
-        Up to *lines* log lines (without trailing newlines),
-        oldest-first, newest last.
-    """
-    if lines <= 0:
-        return []
-
-    base = _resolve_status_dir(status_dir)
+def _managed_log_name(source: ManagedLogGroupSource) -> str:
+    if source == "qdrant":
+        return _QDRANT_LOG_NAME
     from .config import get_config
 
-    log_name = get_config().log_file
-    base_log = base / log_name
+    return str(get_config().log_file)
 
-    # Highest backup index is the oldest; walk N..1 then the live file
-    # so the concatenated stream is chronological (oldest-first).
-    backups: list[Path] = []
-    index = 1
-    while True:
-        candidate = base / f"{log_name}.{index}"
-        if not candidate.exists():
+
+def _rotated_log_paths(status_dir: Path, log_name: str) -> list[Path]:
+    """Return sparse generations oldest-first, followed by the active file."""
+    suffix_re = re.compile(rf"^{re.escape(log_name)}\.(\d+)$")
+    generations: list[tuple[int, Path]] = []
+    try:
+        entries = status_dir.iterdir()
+        for entry in entries:
+            match = suffix_re.fullmatch(entry.name)
+            if match is None:
+                continue
+            generation = int(match.group(1))
+            if generation > 0:
+                generations.append((generation, entry))
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.debug("managed log directory %s unreadable: %s", status_dir, exc)
+
+    generations.sort(key=lambda item: item[0], reverse=True)
+    return [*(path for _generation, path in generations), status_dir / log_name]
+
+
+def clamp_managed_log_lines(raw: object) -> int:
+    """Parse and clamp an operator-requested per-source record count."""
+    if raw is None:
+        return DEFAULT_MANAGED_LOG_LINES
+    try:
+        value = int(cast("Any", raw))
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULT_MANAGED_LOG_LINES
+    if value <= 0:
+        return DEFAULT_MANAGED_LOG_LINES
+    return min(value, MAX_MANAGED_LOG_LINES)
+
+
+def managed_log_filters(
+    *,
+    job_id: str | None = None,
+    contains: str | None = None,
+) -> dict[str, str]:
+    """Return the non-empty filters accepted by the managed-log contract."""
+    filters: dict[str, str] = {}
+    if job_id and job_id.strip():
+        filters["job_id"] = job_id.strip()
+    if contains and contains.strip():
+        filters["contains"] = contains.strip()
+    return filters
+
+
+def _truncate_record(raw: bytes, *, prefix_omitted: bool = False) -> tuple[str, int]:
+    """Decode one physical record within the finite per-record response budget."""
+    raw = raw[:-1] if raw.endswith(b"\r") else raw
+    text = raw.decode("utf-8", errors="replace")
+    encoded = text.encode("utf-8")
+    marker = (
+        _RECORD_PREFIX_OMITTED_MARKER if prefix_omitted else _RECORD_TRUNCATION_MARKER
+    )
+    marker_bytes = marker.encode("utf-8")
+    if not prefix_omitted and len(encoded) <= MAX_MANAGED_LOG_RECORD_BYTES:
+        return text, 0
+
+    content_budget = max(0, MAX_MANAGED_LOG_RECORD_BYTES - len(marker_bytes))
+    if prefix_omitted:
+        tail = encoded[-content_budget:] if content_budget else b""
+        rendered = marker + tail.decode("utf-8", errors="ignore")
+    else:
+        head_budget = content_budget // 2
+        tail_budget = content_budget - head_budget
+        head = encoded[:head_budget].decode("utf-8", errors="ignore")
+        tail = (
+            encoded[-tail_budget:].decode("utf-8", errors="ignore")
+            if tail_budget
+            else ""
+        )
+        rendered = head + marker + tail
+    retained = max(0, len(rendered.encode("utf-8")) - len(marker_bytes))
+    return rendered, max(0, len(raw) - retained)
+
+
+def _tail_file_window(path: Path, lines: int, byte_budget: int) -> _TailFileWindow:
+    """Read one file's newest records with a hard backward-read byte ceiling."""
+    empty: _TailFileWindow = {
+        "lines": [],
+        "scanned_bytes": 0,
+        "omitted_bytes": 0,
+        "record_truncations": 0,
+        "source_budget_exhausted": False,
+    }
+    if lines <= 0 or byte_budget <= 0:
+        return empty
+    try:
+        with path.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            scan_bytes = min(size, byte_budget)
+            start = size - scan_bytes
+            # Read one preceding byte solely to decide whether *start* is a
+            # physical-record boundary. The retained scan window never exceeds
+            # byte_budget, including for a newline-free multi-gigabyte file.
+            probe_start = max(0, start - 1)
+            stream.seek(probe_start)
+            data = stream.read(size - probe_start)
+    except FileNotFoundError as exc:
+        logger.debug("managed log %s vanished mid-read: %s", path, exc)
+        return empty
+    except OSError as exc:
+        logger.debug("managed log %s unreadable: %s", path, exc)
+        return empty
+
+    if not data:
+        return empty
+    prefix_is_partial = False
+    if probe_start < start:
+        prefix_is_partial = data[:1] != b"\n"
+        data = data[1:]
+
+    omitted_bytes = start
+    record_truncations = 0
+    if prefix_is_partial:
+        first_newline = data.find(b"\n")
+        if first_newline < 0:
+            rendered, record_omitted = _truncate_record(data, prefix_omitted=True)
+            return {
+                "lines": [rendered],
+                "scanned_bytes": scan_bytes,
+                "omitted_bytes": omitted_bytes + record_omitted,
+                "record_truncations": 1,
+                "source_budget_exhausted": True,
+            }
+        omitted_bytes += first_newline + 1
+        data = data[first_newline + 1 :]
+
+    raw_lines = data.split(b"\n")
+    if data.endswith(b"\n"):
+        raw_lines.pop()
+    raw_lines = raw_lines[-lines:]
+    rendered_lines: list[str] = []
+    for raw_line in raw_lines:
+        rendered, record_omitted = _truncate_record(raw_line)
+        rendered_lines.append(rendered)
+        if record_omitted:
+            record_truncations += 1
+            omitted_bytes += record_omitted
+    return {
+        "lines": rendered_lines,
+        "scanned_bytes": scan_bytes,
+        "omitted_bytes": omitted_bytes,
+        "record_truncations": record_truncations,
+        "source_budget_exhausted": start > 0,
+    }
+
+
+def _path_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def _read_managed_source(
+    status_dir: Path,
+    source: ManagedLogGroupSource,
+    lines: int,
+) -> ManagedLogGroup:
+    remaining = max(0, lines)
+    newest_chunks: list[list[str]] = []
+    remaining_bytes = MAX_MANAGED_LOG_SOURCE_BYTES
+    scanned_bytes = 0
+    omitted_bytes = 0
+    record_truncations = 0
+    source_budget_exhausted = False
+    paths = list(reversed(_rotated_log_paths(status_dir, _managed_log_name(source))))
+    # Paths are chronological; read them newest-first so older generations are
+    # never touched after the requested per-source record bound is satisfied.
+    for index, path in enumerate(paths):
+        if remaining <= 0:
             break
-        backups.append(candidate)
-        index += 1
-
-    ordered = [*reversed(backups), base_log]
-
-    collected: list[str] = []
-    for path in ordered:
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except FileNotFoundError as exc:
-            # The file vanished between the existence probe above and
-            # this read - a rotation raced us. Skip and continue.
-            logger.debug("read_service_log: %s vanished mid-read: %s", path, exc)
+        if remaining_bytes <= 0:
+            older_bytes = sum(_path_size(candidate) for candidate in paths[index:])
+            if older_bytes:
+                source_budget_exhausted = True
+                omitted_bytes += older_bytes
+            break
+        window = _tail_file_window(path, remaining, remaining_bytes)
+        chunk = window["lines"]
+        scanned_bytes += window["scanned_bytes"]
+        remaining_bytes -= window["scanned_bytes"]
+        omitted_bytes += window["omitted_bytes"]
+        record_truncations += window["record_truncations"]
+        if window["source_budget_exhausted"]:
+            source_budget_exhausted = True
+            omitted_bytes += sum(
+                _path_size(candidate) for candidate in paths[index + 1 :]
+            )
+            if chunk:
+                newest_chunks.append(chunk)
+                remaining -= len(chunk)
+            break
+        if not chunk:
             continue
-        except OSError as exc:
-            logger.debug("read_service_log: %s unreadable: %s", path, exc)
-            continue
-        collected.extend(text.splitlines())
+        newest_chunks.append(chunk)
+        remaining -= len(chunk)
 
-    return collected[-lines:]
+    source_lines = [line for chunk in reversed(newest_chunks) for line in chunk]
+    group: ManagedLogGroup = {"source": source, "lines": source_lines}
+    if source_budget_exhausted or record_truncations:
+        group["truncated"] = True
+        group["marker"] = MANAGED_LOG_TRUNCATION_MARKER
+        group["truncation"] = {
+            "record_limit_bytes": MAX_MANAGED_LOG_RECORD_BYTES,
+            "source_limit_bytes": MAX_MANAGED_LOG_SOURCE_BYTES,
+            "scanned_bytes": scanned_bytes,
+            "returned_content_bytes": 0,
+            "omitted_bytes_at_least": omitted_bytes,
+            "record_truncations": record_truncations,
+            "source_budget_exhausted": source_budget_exhausted,
+            "response_budget_exhausted": False,
+            "omitted_response_records": 0,
+        }
+    return group
+
+
+def read_managed_logs(
+    lines: int,
+    *,
+    source: str = "all",
+    status_dir: Path | None = None,
+) -> list[ManagedLogGroup]:
+    """Return bounded raw records grouped by managed producer.
+
+    ``all`` returns the service group followed by the Qdrant group. That is a
+    stable display order only: no chronology is inferred across producers.
+    Within each group, records are oldest-first and span any sparse numeric
+    backup generations plus the active file. Missing or concurrently rotated
+    files are skipped without failing the whole operator view.
+
+    Args:
+        lines: Maximum records returned for each selected source. Non-positive
+            values retain the selected empty group or groups.
+        source: ``service``, ``qdrant``, or ``all`` (the default).
+        status_dir: Explicit managed-log directory, primarily for offline use
+            and tests. Defaults to the configured status directory.
+
+    Raises:
+        InvalidManagedLogSourceError: When *source* is not supported.
+    """
+    selected = _managed_log_source(source)
+    selected_sources = _MANAGED_LOG_SOURCES if selected == "all" else (selected,)
+    base = _resolve_status_dir(status_dir)
+    return [
+        _read_managed_source(base, managed_source, lines)
+        for managed_source in selected_sources
+    ]
+
+
+def _filter_managed_log_groups(
+    groups: list[ManagedLogGroup],
+    *,
+    job_id: str | None = None,
+    contains: str | None = None,
+) -> None:
+    """Apply case-insensitive AND filters in place without losing metadata."""
+    job_filter = job_id.strip().lower() if job_id else None
+    contains_filter = contains.strip().lower() if contains else None
+    if not job_filter and not contains_filter:
+        return
+    for group in groups:
+        filtered: list[str] = []
+        for line in group["lines"]:
+            lowered = line.lower()
+            if job_filter and job_filter not in lowered:
+                continue
+            if contains_filter and contains_filter not in lowered:
+                continue
+            filtered.append(line)
+        group["lines"] = filtered
+
+
+def _json_line_bytes(line: str) -> int:
+    return len(json.dumps(line, ensure_ascii=True).encode("utf-8")) + 1
+
+
+def _fit_newest_lines(lines: list[str], byte_budget: int) -> tuple[list[str], int]:
+    kept_newest: list[str] = []
+    used = 0
+    for line in reversed(lines):
+        cost = _json_line_bytes(line)
+        if used + cost > byte_budget:
+            break
+        kept_newest.append(line)
+        used += cost
+    kept_newest.reverse()
+    return kept_newest, used
+
+
+def _bound_managed_group_response(group: ManagedLogGroup, limit: int) -> None:
+    """Apply the final line and encoded-byte response bounds to one source."""
+    selected = group["lines"][-limit:] if limit > 0 else []
+    already_truncated = bool(group.get("truncated"))
+    marker_cost = _json_line_bytes(MANAGED_LOG_TRUNCATION_MARKER)
+    available = MAX_MANAGED_LOG_SOURCE_BYTES - (marker_cost if already_truncated else 0)
+    fitted, used = _fit_newest_lines(selected, max(0, available))
+    response_omitted = len(selected) - len(fitted)
+    if response_omitted and not already_truncated:
+        already_truncated = True
+        available = MAX_MANAGED_LOG_SOURCE_BYTES - marker_cost
+        fitted, used = _fit_newest_lines(selected, max(0, available))
+        response_omitted = len(selected) - len(fitted)
+
+    group["lines"] = fitted
+    if not already_truncated:
+        return
+    existing = group.get("truncation")
+    truncation = (
+        dict(existing)
+        if existing is not None
+        else {
+            "record_limit_bytes": MAX_MANAGED_LOG_RECORD_BYTES,
+            "source_limit_bytes": MAX_MANAGED_LOG_SOURCE_BYTES,
+            "scanned_bytes": 0,
+            "omitted_bytes_at_least": 0,
+            "record_truncations": 0,
+            "source_budget_exhausted": False,
+        }
+    )
+    # Exact UTF-8 byte cost of the JSON-encoded line values plus the visible
+    # marker. Envelope keys and fixed metadata are deliberately not included.
+    truncation["returned_content_bytes"] = used + marker_cost
+    truncation["response_budget_exhausted"] = response_omitted > 0
+    truncation["omitted_response_records"] = response_omitted
+    group["truncated"] = True
+    group["marker"] = MANAGED_LOG_TRUNCATION_MARKER
+    group["truncation"] = truncation
+
+
+def query_managed_logs(
+    lines: object = None,
+    *,
+    source: str = "all",
+    job_id: str | None = None,
+    contains: str | None = None,
+    status_dir: Path | None = None,
+) -> dict[str, object]:
+    """Return the canonical bounded managed-log outcome for every adapter."""
+    limit = clamp_managed_log_lines(lines)
+    filters = managed_log_filters(job_id=job_id, contains=contains)
+    read_limit = MAX_MANAGED_LOG_LINES if filters else limit
+    groups = read_managed_logs(read_limit, source=source, status_dir=status_dir)
+    if filters:
+        _filter_managed_log_groups(groups, **filters)
+    for group in groups:
+        _bound_managed_group_response(group, limit)
+    return {
+        "source": source,
+        "limit": limit,
+        "groups": groups,
+        "filters": filters,
+    }
+
+
+def render_managed_log_groups(groups: list[ManagedLogGroup]) -> str:
+    """Render labeled source sections and visible truncation markers."""
+    rendered: list[str] = []
+    for group in groups:
+        rendered.append(f"[{group['source']}]")
+        marker = group.get("marker")
+        if marker:
+            rendered.append(marker)
+        rendered.extend(group["lines"])
+    return "\n".join(rendered)
+
+
+def _validated_managed_log_lines(raw: object, *, limit: int) -> list[str] | None:
+    """Return bounded string records, or reject the live payload value."""
+    if not isinstance(raw, list) or len(cast("list[object]", raw)) > limit:
+        return None
+    values = cast("list[object]", raw)
+    if any(not isinstance(line, str) for line in values):
+        return None
+    return cast("list[str]", values)
+
+
+def _managed_log_content_bytes(lines: list[str], *, marker: bool) -> int:
+    """Return the canonical encoded-content cost for one response group."""
+    content_bytes = sum(_json_line_bytes(line) for line in lines)
+    if marker:
+        content_bytes += _json_line_bytes(MANAGED_LOG_TRUNCATION_MARKER)
+    return content_bytes
+
+
+def _managed_log_lines_fit_bounds(lines: list[str], *, marker: bool) -> bool:
+    """Return whether records fit both per-record and per-source budgets."""
+    return (
+        all(len(line.encode("utf-8")) <= MAX_MANAGED_LOG_RECORD_BYTES for line in lines)
+        and _managed_log_content_bytes(lines, marker=marker)
+        <= MAX_MANAGED_LOG_SOURCE_BYTES
+    )
+
+
+def _is_nonnegative_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _validated_managed_log_truncation(
+    raw: object,
+    *,
+    lines: list[str],
+) -> dict[str, int | bool] | None:
+    """Validate structured truncation metadata against the returned content."""
+    if not isinstance(raw, dict):
+        return None
+    details = cast("dict[str, object]", raw)
+    required_ints = (
+        "record_limit_bytes",
+        "source_limit_bytes",
+        "scanned_bytes",
+        "returned_content_bytes",
+        "omitted_bytes_at_least",
+        "record_truncations",
+        "omitted_response_records",
+    )
+    if any(not _is_nonnegative_int(details.get(key)) for key in required_ints):
+        return None
+    if details.get("record_limit_bytes") != MAX_MANAGED_LOG_RECORD_BYTES:
+        return None
+    if details.get("source_limit_bytes") != MAX_MANAGED_LOG_SOURCE_BYTES:
+        return None
+    scanned = cast("int", details["scanned_bytes"])
+    returned = cast("int", details["returned_content_bytes"])
+    if (
+        scanned > MAX_MANAGED_LOG_SOURCE_BYTES
+        or returned > MAX_MANAGED_LOG_SOURCE_BYTES
+    ):
+        return None
+    if not isinstance(details.get("source_budget_exhausted"), bool):
+        return None
+    if not isinstance(details.get("response_budget_exhausted"), bool):
+        return None
+    content_bytes = _managed_log_content_bytes(lines, marker=True)
+    if not _managed_log_lines_fit_bounds(lines, marker=True):
+        return None
+    if returned != content_bytes:
+        return None
+    return cast("dict[str, int | bool]", details)
+
+
+def _validated_managed_log_group(
+    raw: object,
+    *,
+    expected_source: ManagedLogGroupSource,
+    limit: int,
+) -> ManagedLogGroup | None:
+    """Validate one exact source group from the live response."""
+    if not isinstance(raw, dict):
+        return None
+    data = cast("dict[str, object]", raw)
+    if data.get("source") != expected_source:
+        return None
+    lines = _validated_managed_log_lines(data.get("lines"), limit=limit)
+    if lines is None:
+        return None
+    group: ManagedLogGroup = {"source": expected_source, "lines": lines}
+    metadata_present = any(
+        data.get(key) is not None for key in ("truncated", "marker", "truncation")
+    )
+    if not metadata_present:
+        return group if _managed_log_lines_fit_bounds(lines, marker=False) else None
+    if data.get("truncated") is not True:
+        return None
+    if data.get("marker") != MANAGED_LOG_TRUNCATION_MARKER:
+        return None
+    details = _validated_managed_log_truncation(
+        data.get("truncation"),
+        lines=lines,
+    )
+    if details is None:
+        return None
+    group["truncated"] = True
+    group["marker"] = MANAGED_LOG_TRUNCATION_MARKER
+    group["truncation"] = details
+    return group
+
+
+def validate_managed_log_payload(
+    payload: dict[str, object],
+    *,
+    source: ManagedLogSource,
+    limit: int,
+    filters: dict[str, str],
+) -> list[ManagedLogGroup] | None:
+    """Validate the exact live response contract before CLI rendering."""
+    if payload.get("source") != source or payload.get("limit") != limit:
+        return None
+    if payload.get("filters") != filters:
+        return None
+    raw_groups = payload.get("groups")
+    expected_sources: tuple[ManagedLogGroupSource, ...] = (
+        _MANAGED_LOG_SOURCES if source == "all" else (source,)
+    )
+    if not isinstance(raw_groups, list) or len(cast("list[object]", raw_groups)) != len(
+        expected_sources
+    ):
+        return None
+    raw_group_values = cast("list[object]", raw_groups)
+    groups: list[ManagedLogGroup] = []
+    for expected_source, raw_group in zip(
+        expected_sources, raw_group_values, strict=True
+    ):
+        group = _validated_managed_log_group(
+            raw_group,
+            expected_source=expected_source,
+            limit=limit,
+        )
+        if group is None:
+            return None
+        groups.append(group)
+    return groups
 
 
 def configure_logging(
@@ -220,248 +748,338 @@ def configure_logging(
     _core_configure_logging(level=level, debug=debug, quiet=quiet)
 
 
-class DaemonRotatingFileHandler(RotatingFileHandler):
-    """RotatingFileHandler that re-``dup2``s stdout/stderr after rollover.
+def _enforce_daemon_log_containment(
+    path: str | os.PathLike[str],
+    *,
+    operation: str,
+) -> None:
+    """Fail before a daemon-log filesystem effect escapes pytest isolation."""
+    from ._test_isolation import enforce_pytest_singleton_containment
 
-    The daemon is spawned with its ``stdout``/``stderr`` already ``dup2``'d
-    onto the open ``service.log`` FD by the parent CLI.  On first rotation,
-    :class:`RotatingFileHandler` renames the log file and opens a fresh
-    stream - but fds 1/2 still reference the *original* kernel inode,
-    which ``os.rename`` has just moved to ``service.log.1``.  Without a
-    re-``dup2``, stdout/stderr get stuck writing to the rotated file
-    forever and the backup-count accounting silently goes wrong.
+    enforce_pytest_singleton_containment(path, operation=operation)
 
-    This subclass overrides :meth:`doRollover` to ``os.dup2`` the
-    freshly-opened stream's FD onto both 1 and 2 immediately after
-    :meth:`RotatingFileHandler.doRollover` swaps the stream.  Python's
-    :class:`logging.Handler` acquires a reentrant lock
-    (``threading.RLock``) around every :meth:`emit` call, so the
-    acquire/release inside :meth:`doRollover` is a defensive no-op in
-    the common path and safe against reentrant calls.
-    """
 
-    @override
-    def shouldRollover(self, record: logging.LogRecord) -> int:
-        """Decide rollover from on-disk file size, not the handler's own writes.
+def _canonical_daemon_log_path(path: str | os.PathLike[str]) -> Path:
+    """Return one comparison spelling for a guarded daemon log path."""
+    resolved = Path(path).expanduser().resolve(strict=False)
+    return Path(os.path.normcase(os.path.normpath(str(resolved))))
 
-        :class:`RotatingFileHandler.shouldRollover` measures
-        ``self.stream.tell()`` which only reflects bytes the handler itself
-        wrote.  In the daemon, ``print()``, uvicorn access logs, and core's
-        :class:`rich.RichHandler` (which we re-route by ``dup2``-ing fds 1
-        and 2 onto the same file) all bypass the handler's stream and grow
-        the file directly.  Without this override, the handler under-counts
-        the file size and never triggers rollover even after the on-disk
-        log balloons past ``maxBytes``.
-        """
-        if self.stream is None:
-            self.stream = self._open()
-        if self.maxBytes > 0:
-            size = self._safe_stream_size()
-            msg = f"{self.format(record)}\n"
-            if size + len(msg) >= self.maxBytes:
-                return 1
-        return 0
 
-    def _safe_stream_size(self) -> int:
-        """Best-effort current size of the active log file.
+def _contained_daemon_log_path(
+    path: str | os.PathLike[str],
+    *,
+    operation: str,
+) -> Path:
+    """Validate a daemon-log path and return its canonical spelling."""
+    _enforce_daemon_log_containment(path, operation=operation)
+    return _canonical_daemon_log_path(path)
 
-        ``shouldRollover`` is called from inside ``emit`` and must never
-        propagate an exception, otherwise the handler's error path
-        triggers and the rollover never fires.  Both ``fileno()`` and
-        ``tell()`` raise ``ValueError`` on a closed stream, and ``fstat``
-        can fail with ``OSError`` on some platforms - fall back through
-        all three to ``0`` rather than letting any of them escape.
-        """
-        if self.stream is None:
-            return 0
-        try:
-            return os.fstat(self.stream.fileno()).st_size
-        except (OSError, ValueError) as exc:
-            logger.debug("log fstat fell through to tell(): %s", exc)
-        try:
-            return self.stream.tell()
-        except (OSError, ValueError) as exc:
-            logger.debug("log tell() fell through to 0: %s", exc)
-            return 0
 
-    @override
-    def doRollover(self) -> None:
-        """Rotate the log file, then re-``dup2`` fds 1 and 2 onto the stream.
+def _close_detached_handler(
+    handler: logging.Handler,
+    failures: list[tuple[logging.Handler, Exception]],
+) -> None:
+    """Close one detached sink and contain a hostile close failure."""
+    try:
+        handler.close()
+    except Exception as exc:
+        failures.append((handler, exc))
+        stream = getattr(handler, "stream", None)
+        if stream is not None:
+            with contextlib.suppress(Exception):
+                stream.close()
 
-        On Windows, any open handle to the active log file blocks the
-        rename inside :meth:`RotatingFileHandler.doRollover`.  Because
-        the daemon has ``dup2``'d fds 1 and 2 onto the log file during
-        :func:`install_daemon_log_rotation`, those fds would otherwise
-        pin the file open.  The fix is to redirect fds 1 and 2 to
-        ``os.devnull`` for the duration of the rename, then re-``dup2``
-        them onto the freshly-opened stream once the parent class has
-        swapped files.
 
-        If anything in the rollover sequence raises (e.g. transient
-        Windows file-lock conflict, or ``self.stream is None`` because
-        the handler is in ``delay=True`` mode), fds 1 and 2 are
-        restored to *whatever ``self.baseFilename`` currently points
-        at* by opening it fresh and ``dup2``-ing the new fd onto 1 and
-        2.  This prevents the silent-log-loss failure mode where a
-        partial rollover leaves stdout/stderr permanently pinned to
-        ``/dev/null``.  Note that we do **not** save the original fds
-        1 / 2 before redirecting to ``/dev/null`` because those fds
-        point at the active log file and would themselves block the
-        Windows rename inside ``super().doRollover()``.
-        """
-        # logging.Handler.acquire() returns a reentrant RLock so it is
-        # safe even when emit() already holds it on our behalf.
-        self.acquire()
-        try:
-            devnull_fd = os.open(os.devnull, os.O_WRONLY)
-            try:
-                os.dup2(devnull_fd, 1)
-                os.dup2(devnull_fd, 2)
-            finally:
-                os.close(devnull_fd)
-            try:
-                super().doRollover()
-            except PermissionError:
-                if os.name != "nt":
-                    self._rebind_fds_to_basefile()
-                    raise
-                self._copytruncate_rollover()
-            except Exception:
-                self._rebind_fds_to_basefile()
-                raise
-            # ``self.stream is None`` is the expected state when
-            # ``delay=True`` is configured: the parent class defers the
-            # next ``_open()`` until the following emit().  Treat it as
-            # a valid no-op and rebind fds 1/2 to the (newly empty)
-            # ``baseFilename`` so subsequent stdout/stderr writes still
-            # land in the active log file rather than ``/dev/null``.
-            if self.stream is None:
-                self._rebind_fds_to_basefile()
-                return
-            fd = self.stream.fileno()
-            os.dup2(fd, 1)
-            os.dup2(fd, 2)
-        finally:
-            self.release()
+def _queue_injected_handlers(
+    root: logging.Logger,
+    *,
+    daemon_handler: logging.Handler,
+    pending: list[logging.Handler],
+    closed_ids: set[int],
+) -> None:
+    """Detach and queue handlers injected by a close callback."""
+    injected = tuple(root.handlers)
+    root.handlers.clear()
+    for candidate in injected:
+        if candidate is daemon_handler or id(candidate) in closed_ids:
+            continue
+        if candidate not in pending:
+            pending.append(candidate)
 
-    def _copytruncate_rollover(self) -> None:
-        """Rotate by copying and truncating when Windows blocks rename.
 
-        Some Windows handles inherited by the detached service can keep
-        the active log path non-renamable even after fds 1 and 2 are
-        redirected.  In that case, preserve the normal bounded-backup
-        contract by shifting existing backups, copying the active file
-        into ``.1``, and truncating the active file in place.
-        """
-        if self.stream is not None:
-            self.stream.close()
-            self.stream = None
-
-        if self.backupCount > 0:
-            self._shift_backups()
-            self._copy_base_to_first_backup()
-
-        with open(self.baseFilename, "w", encoding=self.encoding):
-            pass
-
-        if not self.delay:
-            self.stream = self._open()
-
-    def _shift_backups(self) -> None:
-        for i in range(self.backupCount - 1, 0, -1):
-            src = self.rotation_filename(f"{self.baseFilename}.{i}")
-            dst = self.rotation_filename(f"{self.baseFilename}.{i + 1}")
-            if os.path.exists(src):
-                if os.path.exists(dst):
-                    os.remove(dst)
-                os.replace(src, dst)
-
-    def _copy_base_to_first_backup(self) -> None:
-        first_backup = self.rotation_filename(f"{self.baseFilename}.1")
-        if os.path.exists(first_backup):
-            os.remove(first_backup)
-        if os.path.exists(self.baseFilename):
-            shutil.copyfile(self.baseFilename, first_backup)
-
-    def _rebind_fds_to_basefile(self) -> None:
-        """Best-effort: re-``dup2`` fds 1 and 2 onto ``self.baseFilename``.
-
-        Used by :meth:`doRollover`'s recovery path and the ``delay=True``
-        no-op path.  Failures are swallowed because the caller is
-        already mid-recovery - the original error (if any) still
-        propagates with its traceback intact.
-        """
-        try:
-            recovery_fd = os.open(
-                self.baseFilename,
-                os.O_WRONLY | os.O_APPEND | os.O_CREAT,
-                0o644,
+def _replace_root_handlers(
+    root: logging.Logger,
+    daemon_handler: logging.Handler,
+) -> list[tuple[logging.Handler, Exception]]:
+    """Make the daemon handler authoritative despite hostile close callbacks."""
+    pending = [
+        handler for handler in tuple(root.handlers) if handler is not daemon_handler
+    ]
+    root.handlers.clear()
+    failures: list[tuple[logging.Handler, Exception]] = []
+    closed_ids: set[int] = set()
+    try:
+        while pending:
+            handler = pending.pop()
+            if id(handler) in closed_ids:
+                continue
+            closed_ids.add(id(handler))
+            _close_detached_handler(handler, failures)
+            _queue_injected_handlers(
+                root,
+                daemon_handler=daemon_handler,
+                pending=pending,
+                closed_ids=closed_ids,
             )
-        except OSError as exc:
-            logger.debug(
-                "fd rebind: log open(%s) failed: %s",
-                self.baseFilename,
-                exc,
-            )
-            return
+    finally:
+        root.handlers.clear()
+        root.addHandler(daemon_handler)
+    return failures
+
+
+def _report_handler_close_failures(
+    failures: list[tuple[logging.Handler, Exception]],
+) -> None:
+    for handler, exc in failures:
+        logger.warning(
+            "detached root handler %r failed to close: %s",
+            handler,
+            exc,
+        )
+
+
+_SERVICE_LOG_DRAIN_CHUNK_BYTES = 64 * 1024
+_SERVICE_LOG_DRAIN_JOIN_SECONDS = 3.0
+_active_daemon_capture: DaemonLogCapture | None = None
+
+
+class DaemonLogCapture:
+    """Lifecycle owner for the daemon's single-writer stdio log pipeline."""
+
+    def __init__(
+        self,
+        log_path: Path,
+        *,
+        max_bytes: int,
+        backup_count: int,
+        handler: logging.StreamHandler[Any],
+    ) -> None:
+        self.log_path = log_path
+        self.max_bytes = max_bytes
+        self.backup_count = backup_count
+        self.handler = handler
+        self._read_fd = -1
+        self._drain_thread: threading.Thread | None = None
+        self._close_lock = threading.Lock()
+        self._closed = False
+        self._persistence_error: BaseException | None = None
+
+    @property
+    def persistence_error(self) -> BaseException | None:
+        """Return the first sink/drain failure without logging recursively."""
+        return self._persistence_error
+
+    @property
+    def drain_alive(self) -> bool:
+        """Return whether the sole file-writer thread is still running."""
+        thread = self._drain_thread
+        return thread is not None and thread.is_alive()
+
+    def _record_drain_error(self, exc: BaseException) -> None:
+        if self._persistence_error is None:
+            self._persistence_error = exc
+
+    def _drain(self) -> None:
+        """Copy fixed-size raw pipe chunks into the sole rotating file sink."""
+        sink = RawRotatingLogSink(
+            self.log_path,
+            max_bytes=self.max_bytes,
+            backup_count=self.backup_count,
+        )
+        read_size = min(_SERVICE_LOG_DRAIN_CHUNK_BYTES, self.max_bytes)
         try:
-            with contextlib.suppress(OSError):
-                os.dup2(recovery_fd, 1)
-                os.dup2(recovery_fd, 2)
+            while True:
+                try:
+                    payload = os.read(self._read_fd, read_size)
+                except OSError as exc:
+                    self._record_drain_error(exc)
+                    break
+                if not payload:
+                    break
+                try:
+                    sink.write(payload)
+                except (OSError, ValueError) as exc:
+                    self._record_drain_error(exc)
+                    with contextlib.suppress(OSError, ValueError):
+                        sink.close()
+                    # Persistence is degraded, but the pipe must keep draining
+                    # so noisy producers cannot deadlock the service.
+                    while True:
+                        try:
+                            if not os.read(self._read_fd, read_size):
+                                break
+                        except OSError:
+                            break
+                    break
         finally:
+            with contextlib.suppress(OSError, ValueError):
+                sink.close()
+            read_fd = self._read_fd
+            self._read_fd = -1
+            if read_fd >= 0:
+                with contextlib.suppress(OSError):
+                    os.close(read_fd)
+
+    def start(self) -> None:
+        """Create the pipe, start its drain, and atomically replace fds 1/2."""
+        read_fd, write_fd = os.pipe()
+        saved_stdout = os.dup(1)
+        saved_stderr = os.dup(2)
+        self._read_fd = read_fd
+        thread = threading.Thread(
+            target=self._drain,
+            name="service-log-drain",
+            daemon=True,
+        )
+        self._drain_thread = thread
+        thread.start()
+        try:
+            os.dup2(write_fd, 1)
+            os.dup2(write_fd, 2)
+        except BaseException:
             with contextlib.suppress(OSError):
-                os.close(recovery_fd)
+                os.dup2(saved_stdout, 1)
+            with contextlib.suppress(OSError):
+                os.dup2(saved_stderr, 2)
+            raise
+        finally:
+            os.close(write_fd)
+            os.close(saved_stdout)
+            os.close(saved_stderr)
+
+    @staticmethod
+    def _flush_producers() -> None:
+        """Flush Python producers before their pipe writers are detached."""
+        root = logging.getLogger()
+        for handler in tuple(root.handlers):
+            with contextlib.suppress(Exception):
+                handler.flush()
+        for stream in (sys.stdout, sys.stderr):
+            with contextlib.suppress(Exception):
+                stream.flush()
+
+    @staticmethod
+    def _detach_stdio() -> None:
+        """Close both pipe writers by rebinding stdout/stderr to null."""
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull_fd, 1)
+            os.dup2(devnull_fd, 2)
+        finally:
+            os.close(devnull_fd)
+
+    def close(self, *, timeout: float = _SERVICE_LOG_DRAIN_JOIN_SECONDS) -> bool:
+        """Flush producers, detach writers, and join the sole sink owner."""
+        global _active_daemon_capture
+
+        with self._close_lock:
+            if self._closed:
+                return not self.drain_alive
+            self._flush_producers()
+            root = logging.getLogger()
+            if self.handler in root.handlers:
+                root.removeHandler(self.handler)
+            with contextlib.suppress(Exception):
+                self.handler.close()
+            self._detach_stdio()
+            thread = self._drain_thread
+            if thread is not None:
+                thread.join(timeout=max(0.0, timeout))
+            completed = thread is None or not thread.is_alive()
+            if completed:
+                self._drain_thread = None
+                self._closed = True
+                with _daemon_logging_install_lock:
+                    if _active_daemon_capture is self:
+                        _active_daemon_capture = None
+            return completed
 
 
-def install_daemon_log_rotation(
+def _validate_daemon_capture_settings(max_bytes: int, backup_count: int) -> None:
+    """Reject settings that cannot preserve bounded managed-log retention."""
+    if (
+        isinstance(max_bytes, bool)
+        or not isinstance(max_bytes, int)  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
+        or max_bytes <= 0
+    ):
+        raise ValueError("max_bytes must be a positive integer")
+    if (
+        isinstance(backup_count, bool)
+        or not isinstance(backup_count, int)  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
+        or backup_count < 0
+    ):
+        raise ValueError("backup_count must be a non-negative integer")
+
+
+def install_daemon_log_capture(
     log_path: Path,
     *,
     max_bytes: int,
     backup_count: int,
-) -> DaemonRotatingFileHandler:
-    """Attach a :class:`DaemonRotatingFileHandler` to the root logger.
+) -> DaemonLogCapture:
+    """Install the daemon's one pipe and one exclusive rotating-log writer.
 
-    Idempotent: if a :class:`DaemonRotatingFileHandler` is already
-    attached to the root logger, the existing handler is returned
-    unchanged.  On first install, opens the handler against
-    *log_path*, attaches it to the root logger, and performs an
-    initial ``os.dup2`` of the stream's FD onto fds 1 and 2 so
-    ``print()`` and third-party raw stdout writes land in the
-    rotated file alongside formatted log records.
+    Root logging, Uvicorn stream handlers, ``print``, direct ``os.write`` calls,
+    and native stdout/stderr all enter the same pipe. Only the bounded binary
+    drain touches ``service.log``, so every byte participates in rollover.
 
     Args:
         log_path: Absolute path to the active ``service.log`` file.
             The parent directory is created if missing.
-        max_bytes: Rollover threshold in bytes.  ``0`` disables
-            rotation (handler still installs but never rolls).
+        max_bytes: Positive rollover threshold in bytes.
         backup_count: Number of rotated backups to keep.  ``0`` rolls
             and truncates without keeping history.
 
     Returns:
-        The installed (or pre-existing)
-        :class:`DaemonRotatingFileHandler` instance.
+        An explicit lifecycle handle which must be closed after all producers.
     """
-    root = logging.getLogger()
-    for handler in root.handlers:
-        if isinstance(handler, DaemonRotatingFileHandler):
-            return handler
+    global _active_daemon_capture
 
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    handler = DaemonRotatingFileHandler(
-        str(log_path),
-        maxBytes=max_bytes,
-        backupCount=backup_count,
-        encoding="utf-8",
+    _validate_daemon_capture_settings(max_bytes, backup_count)
+    requested_log_path = _contained_daemon_log_path(
+        log_path,
+        operation="install daemon log capture",
     )
     formatter = logging.Formatter(
         "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )
-    handler.setFormatter(formatter)
-    root.addHandler(handler)
 
-    if handler.stream is not None:
-        fd = handler.stream.fileno()
-        os.dup2(fd, 1)
-        os.dup2(fd, 2)
+    with _daemon_logging_install_lock:
+        if _active_daemon_capture is not None:
+            raise RuntimeError("daemon log capture is already active")
+        root = logging.getLogger()
+        requested_log_path.parent.mkdir(parents=True, exist_ok=True)
+        daemon_handler = logging.StreamHandler(sys.stderr)
+        daemon_handler.setFormatter(formatter)
+        capture = DaemonLogCapture(
+            requested_log_path,
+            max_bytes=max_bytes,
+            backup_count=backup_count,
+            handler=daemon_handler,
+        )
+        capture.start()
+        try:
+            close_failures = _replace_root_handlers(root, daemon_handler)
+        except BaseException:
+            capture.close()
+            raise
+        _active_daemon_capture = capture
 
-    return handler
+        # Routine Qdrant HTTP requests are already represented by the service's
+        # structured operation summaries. Keeping client wire chatter at INFO
+        # obscures those summaries and creates disproportionate managed-log I/O.
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+        _report_handler_close_failures(close_failures)
+        return capture
