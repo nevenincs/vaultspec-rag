@@ -15,7 +15,7 @@ from contextlib import contextmanager, nullcontext
 from typing import TYPE_CHECKING, Protocol, cast
 
 from ._intent_rank import apply_intent_prior, apply_status_filter, apply_type_cap
-from ._models import ParsedQuery, SearchResult
+from ._models import DocumentSearchResult, ParsedQuery, SearchResult
 from ._noise import (
     apply_domain_demotion,
     partition_hard_domains,
@@ -52,6 +52,7 @@ from ._result_shaping import (
 from ._result_shaping import (
     record_seconds as _record_seconds,
 )
+from ._result_shaping import select_combined_results as _select_combined_results
 
 if TYPE_CHECKING:
     import pathlib
@@ -64,7 +65,6 @@ if TYPE_CHECKING:
 
     from ..embeddings import EmbeddingModel, SparseResult
     from ..store import VaultStore
-    from ._models import DocumentSearchResult
     from ._noise import NoisePolicy
 
 logger = logging.getLogger(__name__)
@@ -1006,25 +1006,21 @@ class VaultSearcher:
         )
         return results
 
-    def search_document_timed(
+    def _search_document_encoded(
         self,
-        raw_query: str,
-        top_k: int = 5,
+        query_vector: list[float],
+        sparse_vector: SparseResult | None,
+        parsed: ParsedQuery,
+        query_text: str,
+        top_k: int,
         *,
         source_path: str | None = None,
         extractor_id: str | None = None,
         extractor_version: str | None = None,
         locator_kind: str | None = None,
-    ) -> tuple[list[DocumentSearchResult], dict[str, float]]:
-        """Search documents and return phase timings for diagnostics."""
-        timings: dict[str, float] = {}
-        phase_started = time.perf_counter()
-        parsed, query_text, query_vector, sparse_vector = self._encode_query(
-            raw_query,
-            surface="document",
-            timings=timings,
-        )
-        timings["embedding_seconds"] = time.perf_counter() - phase_started
+        timings: dict[str, float] | None = None,
+    ) -> list[DocumentSearchResult]:
+        """Search documents from one already encoded query."""
         filters = {
             key: value
             for key, value in parsed.filters.items()
@@ -1066,11 +1062,123 @@ class VaultSearcher:
         phase_started = time.perf_counter()
         results = self._rerank(query_text, results, top_k, timings=timings)
         _record_seconds(timings, "rerank_seconds", phase_started)
-        timings["postprocess_seconds"] = (
-            timings.get("result_mapping_seconds", 0.0)
-            + timings.get("rerank_seconds", 0.0)
+        if timings is not None:
+            timings["postprocess_seconds"] = (
+                timings.get("result_mapping_seconds", 0.0)
+                + timings.get("rerank_seconds", 0.0)
+            )
+        return results
+
+    def search_document_timed(
+        self,
+        raw_query: str,
+        top_k: int = 5,
+        *,
+        source_path: str | None = None,
+        extractor_id: str | None = None,
+        extractor_version: str | None = None,
+        locator_kind: str | None = None,
+    ) -> tuple[list[DocumentSearchResult], dict[str, float]]:
+        """Search documents and return phase timings for diagnostics."""
+        timings: dict[str, float] = {}
+        phase_started = time.perf_counter()
+        parsed, query_text, query_vector, sparse_vector = self._encode_query(
+            raw_query,
+            surface="document",
+            timings=timings,
+        )
+        timings["embedding_seconds"] = time.perf_counter() - phase_started
+        results = self._search_document_encoded(
+            query_vector,
+            sparse_vector,
+            parsed,
+            query_text,
+            top_k,
+            source_path=source_path,
+            extractor_id=extractor_id,
+            extractor_version=extractor_version,
+            locator_kind=locator_kind,
+            timings=timings,
         )
         return results, timings
+
+    def search_combined(
+        self,
+        raw_query: str,
+        top_k: int = 5,
+    ) -> list[SearchResult | DocumentSearchResult]:
+        """Search all three domains with explicit equal candidate allocation."""
+        results, _timings = self.search_combined_timed(raw_query, top_k=top_k)
+        return results
+
+    def search_combined_timed(
+        self,
+        raw_query: str,
+        top_k: int = 5,
+    ) -> tuple[list[SearchResult | DocumentSearchResult], dict[str, float]]:
+        """Search all domains from one encoding and deterministically select top-k."""
+        timings: dict[str, float] = {}
+        phase_started = time.perf_counter()
+        parsed, query_text, query_vector, sparse_vector = self._encode_query(
+            raw_query,
+            surface=None,
+            timings=timings,
+        )
+        timings["embedding_seconds"] = time.perf_counter() - phase_started
+
+        allocation = max(1, top_k)
+        vault_timings: dict[str, float] = {}
+        code_timings: dict[str, float] = {}
+        document_timings: dict[str, float] = {}
+        vault = self._search_vault_encoded(
+            query_vector,
+            sparse_vector,
+            parsed,
+            query_text,
+            allocation,
+            timings=vault_timings,
+        )
+        code = self._search_codebase_encoded(
+            query_vector,
+            sparse_vector,
+            parsed,
+            query_text,
+            allocation,
+            timings=code_timings,
+        )
+        documents = self._search_document_encoded(
+            query_vector,
+            sparse_vector,
+            parsed,
+            query_text,
+            allocation,
+            timings=document_timings,
+        )
+        candidates: list[SearchResult | DocumentSearchResult] = [
+            *vault,
+            *code,
+            *documents,
+        ]
+        phase_started = time.perf_counter()
+        candidates = self._rerank(
+            query_text,
+            candidates,
+            len(candidates),
+            timings=timings,
+        )
+        selected = _select_combined_results(candidates, top_k)
+        timings["combined_selection_seconds"] = (
+            time.perf_counter() - phase_started
+        )
+        for domain, values in (
+            ("vault", vault_timings),
+            ("code", code_timings),
+            ("document", document_timings),
+        ):
+            for key, value in values.items():
+                timings[f"{domain}_{key}"] = value
+        timings["candidate_allocation_per_domain"] = float(allocation)
+        return selected, timings
 
     def search_codebase_timed(
         self,
