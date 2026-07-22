@@ -111,6 +111,8 @@ __all__ = [
     "start_reindex_codebase",
     "start_reindex_vault",
     "validate_code_index_policy",
+    "validate_code_job_admission",
+    "validate_code_support_profile",
     "validate_document_index_policy",
     "validate_document_job_admission",
     "validate_document_support_profile",
@@ -835,6 +837,42 @@ def validate_code_index_policy(root: Path) -> CodeIndexPreflight:
     return _code_policy_indexer(root).preflight_content()
 
 
+def validate_code_support_profile(
+    root: Path,
+    preflight: CodeIndexPreflight | CodeScopedPreflight,
+) -> None:
+    """Enforce the named code profile before any model or mutable resource."""
+    import shutil
+
+    import psutil
+
+    from .config import get_config
+    from .index_profiles import IndexDomain, validate_profile_admission
+    from .indexer._codebase_indexer import CodeIndexPreflight
+
+    measurement = (
+        preflight.scan.measurement
+        if isinstance(preflight, CodeIndexPreflight)
+        else preflight.measurement
+    )
+    cfg = get_config()
+    validate_profile_admission(
+        cfg.index_support_profile,
+        IndexDomain.CODE,
+        measurement,
+        backend="server" if cfg.effective_server_mode() else "local",
+        available_ram_bytes=int(psutil.virtual_memory().total),
+        free_disk_bytes=int(shutil.disk_usage(root).free),
+    )
+
+
+def validate_code_job_admission(root: Path) -> CodeIndexPreflight:
+    """Return code authority only after policy and profile admission."""
+    preflight = validate_code_index_policy(root)
+    validate_code_support_profile(root, preflight)
+    return preflight
+
+
 def _document_policy_indexer(root: Path):
     """Build a model-free document indexer used only for policy preflight."""
     from .indexer import DocumentIndexer
@@ -1166,7 +1204,7 @@ def start_reindex_codebase(
     initiator_kind: str = "service",
 ) -> str:
     """Start a background codebase reindexing task and return the job_id."""
-    code_preflight = validate_code_index_policy(root)
+    code_preflight = validate_code_job_admission(root)
     manager, job_id, created = _admit_index_job(
         root,
         source=JobSource.CODE,

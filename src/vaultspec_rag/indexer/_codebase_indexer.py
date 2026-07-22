@@ -25,9 +25,15 @@ from concurrent.futures import (
     wait,
 )
 from concurrent.futures.process import BrokenProcessPool
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, NamedTuple
 
+from .._job_errors import JobError, JobErrorKind
+from ..index_profiles import (
+    SupportMeasurement,
+    SupportProfileLimits,
+    get_index_support_profile,
+)
 from ..job_control import NO_RUN_CONTROL, RunControlSignal
 from ..logging_config import log_event
 from . import _chunk_worker, _code_meta, _ignore_specs, _preprocess_glue
@@ -146,6 +152,7 @@ class ContentScanResult:
     preprocess_mode: PreprocessMode
     preprocess_rule_count: int
     hooks_will_run: bool
+    measurement: SupportMeasurement
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +171,9 @@ class CodeScopedPreflight:
     root_dir: pathlib.Path
     policy: ResolvedIndexPolicy
     changed_paths: tuple[pathlib.Path, ...]
+    measurement: SupportMeasurement = field(
+        default_factory=lambda: SupportMeasurement(0, 0)
+    )
 
 
 type CodeExecutionPreflight = CodeIndexPreflight | CodeScopedPreflight
@@ -392,6 +402,67 @@ class CodebaseIndexer:
         self._membership_epoch: str | None = None
         self._content_epoch: str | None = None
         self._resolved_policy: ResolvedIndexPolicy | None = None
+        self._support_measurement = SupportMeasurement(0, 0)
+        self._support_limits: SupportProfileLimits | None = None
+        self._support_profile_name: str | None = None
+
+    @property
+    def support_measurement(self) -> SupportMeasurement:
+        """Return the latest immutable code workload measurement snapshot."""
+        return getattr(self, "_support_measurement", SupportMeasurement(0, 0))
+
+    def _begin_support_measurement(
+        self,
+        paths: Iterable[pathlib.Path],
+    ) -> None:
+        """Measure source dimensions by streaming path metadata only."""
+        from ..config import get_config
+
+        source_files = 0
+        source_bytes = 0
+        for path in paths:
+            source_files += 1
+            source_bytes += path.stat().st_size
+        profile = get_index_support_profile(get_config().index_support_profile)
+        self._support_limits = profile.code
+        self._support_profile_name = profile.name
+        self._set_support_measurement(
+            SupportMeasurement(
+                source_files=source_files,
+                source_bytes=source_bytes,
+            )
+        )
+
+    def _set_support_measurement(self, measured: SupportMeasurement) -> None:
+        """Publish one snapshot and reject its first exceeded dimension."""
+        self._support_measurement = measured
+        limits = self._support_limits
+        exceeded = limits.exceeded_by(measured) if limits is not None else None
+        if exceeded is None:
+            return
+        dimension, actual, limit = exceeded
+        raise JobError(
+            JobErrorKind.CORPUS_LIMIT_EXCEEDED,
+            f"code {dimension} is {actual}; profile "
+            f"{self._support_profile_name!r} permits {limit}",
+        )
+
+    def _measure_code_segments(
+        self,
+        segments: Iterable[CodeFileSegment],
+    ) -> Iterator[CodeFileSegment]:
+        """Measure generated workload while retaining one bounded segment."""
+        for segment in segments:
+            current = self.support_measurement
+            self._set_support_measurement(
+                SupportMeasurement(
+                    source_files=current.source_files,
+                    source_bytes=current.source_bytes,
+                    generated_chunks=current.generated_chunks + len(segment.chunks),
+                    weighted_bytes=current.weighted_bytes + segment.estimated_bytes,
+                )
+            )
+            yield segment
 
     def _resolve_operation_policy(self) -> ResolvedIndexPolicy:
         """Resolve and validate one immutable snapshot before mutation authority.
@@ -436,15 +507,22 @@ class CodebaseIndexer:
         """Resolve policy and classify one exact normalized changed-path scope."""
         policy = self.resolve_policy_snapshot()
         normalized = self._normalize_changed_paths(changed_paths)
+        source_files = 0
+        source_bytes = 0
         for path in normalized:
             rel = path.relative_to(self.root_dir).as_posix()
             policy.classify(rel)
             if path.is_file():
-                self._classify_file(path, rel, policy)
+                classified = self._classify_file(path, rel, policy)
+                disposition = classified.disposition
+                if disposition.admitted and disposition.kind is ContentKind.CODE:
+                    source_files += 1
+                    source_bytes += path.stat().st_size
         return CodeScopedPreflight(
             root_dir=self.root_dir.resolve(),
             policy=policy,
             changed_paths=normalized,
+            measurement=SupportMeasurement(source_files, source_bytes),
         )
 
     def _normalize_changed_paths(
@@ -491,10 +569,7 @@ class CodebaseIndexer:
             for path in preflight.scan.files:
                 rel = path.relative_to(root).as_posix()
                 disposition = preflight.policy.classify(rel).disposition
-                if not (
-                    disposition.admitted
-                    and disposition.kind is ContentKind.CODE
-                ):
+                if not (disposition.admitted and disposition.kind is ContentKind.CODE):
                     raise ValueError(
                         "code index preflight contains a path not admitted as code"
                     )
@@ -840,6 +915,8 @@ class CodebaseIndexer:
             raise ValueError("sample_limit must be non-negative")
 
         result: list[pathlib.Path] = []
+        source_files = 0
+        source_bytes = 0
         counts: dict[tuple[ContentKind | None, bool, AdmissionReason], int] = {}
         samples: list[AdmissionSample] = []
         root_str = str(self.root_dir)
@@ -853,7 +930,7 @@ class CodebaseIndexer:
                 dirs[:] = [
                     d for d in dirs if not self._is_ignored(policy, f"{rel_dir}/{d}/")
                 ]
-            self._process_scan_files(
+            admitted_files, admitted_bytes = self._process_scan_files(
                 dirpath,
                 files,
                 rel_dir,
@@ -864,6 +941,8 @@ class CodebaseIndexer:
                 sample_limit,
                 run_control=run_control,
             )
+            source_files += admitted_files
+            source_bytes += admitted_bytes
             run_control.checkpoint()
         ordered_counts = tuple(
             AdmissionCount(kind, admitted, reason, count)
@@ -885,6 +964,10 @@ class CodebaseIndexer:
             preprocess_rule_count=len(policy.preprocess_rules),
             hooks_will_run=(
                 policy.execution_mode != "off" and bool(policy.preprocess_rules)
+            ),
+            measurement=SupportMeasurement(
+                source_files=source_files,
+                source_bytes=source_bytes,
             ),
         )
 
@@ -912,13 +995,28 @@ class CodebaseIndexer:
         sample_limit: int,
         *,
         run_control: RunControl = NO_RUN_CONTROL,
-    ) -> None:
+    ) -> tuple[int, int]:
+        admitted_files = 0
+        admitted_bytes = 0
         for fname in files:
             run_control.checkpoint()
             p = pathlib.Path(dirpath) / fname
             rel = fname if rel_dir == "." else f"{rel_dir}/{fname}"
             classified = self._classify_file(p, rel, policy)
             disposition = classified.disposition
+            source_size = 0
+            if disposition.admitted and disposition.kind is ContentKind.CODE:
+                try:
+                    source_size = p.stat().st_size
+                except OSError:
+                    classified = ClassifiedContent(
+                        AdmissionDisposition(
+                            ContentKind.CODE,
+                            False,
+                            AdmissionReason.SOURCE_PROBE_FAILED,
+                        )
+                    )
+                    disposition = classified.disposition
             key = (disposition.kind, disposition.admitted, disposition.reason)
             counts[key] = counts.get(key, 0) + 1
             if len(samples) < sample_limit:
@@ -932,7 +1030,10 @@ class CodebaseIndexer:
                 )
             if disposition.admitted and disposition.kind is ContentKind.CODE:
                 result.append(p)
+                admitted_files += 1
+                admitted_bytes += source_size
             run_control.checkpoint()
+        return admitted_files, admitted_bytes
 
     def scan_content(
         self,
@@ -1736,9 +1837,7 @@ class CodebaseIndexer:
                                 key=lambda chunk: -len(chunk.content),
                             )
                             try:
-                                probe.checkpoint(
-                                    f"slice-{slice_index}-before-encode"
-                                )
+                                probe.checkpoint(f"slice-{slice_index}-before-encode")
                                 slice_index += 1
 
                                 def _record_storage_confirmed(
@@ -1774,9 +1873,7 @@ class CodebaseIndexer:
                                 run_control.checkpoint()
                                 new_ids.update(chunk.id for chunk in slice_chunks)
                                 total[0] += len(slice_chunks)
-                                probe.checkpoint(
-                                    f"slice-{slice_index}-after-store"
-                                )
+                                probe.checkpoint(f"slice-{slice_index}-after-store")
                             finally:
                                 del slice_chunks
             except BaseException as exc:
@@ -1855,9 +1952,7 @@ class CodebaseIndexer:
         model_identity = json.dumps(
             {
                 "dense": str(config.embedding_model),
-                "sparse": (
-                    str(config.sparse_model) if limits.sparse_enabled else None
-                ),
+                "sparse": (str(config.sparse_model) if limits.sparse_enabled else None),
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -1956,10 +2051,11 @@ class CodebaseIndexer:
             sparse_dimension=limits.sparse_dimension,
             run_control=run_control,
         )
+        measured_segments = self._measure_code_segments(segments)
         pending_segments = (
-            checkpoint.pending_segments(segments, result.content_hash)
+            checkpoint.pending_segments(measured_segments, result.content_hash)
             if checkpoint is not None
-            else segments
+            else measured_segments
         )
         for segment in pending_segments:
             while not consumer_exceptions and consumer.is_alive():
@@ -2069,17 +2165,14 @@ class CodebaseIndexer:
         """Overlap bounded CPU production with one weighted GPU consumer."""
         new_ids: set[str] = set()
         if checkpoint is not None:
-            new_ids.update(
-                checkpoint.ledger.iter_point_ids(checkpoint.generation_id)
-            )
+            new_ids.update(checkpoint.ledger.iter_point_ids(checkpoint.generation_id))
             if checkpoint.generation.signature.operation is not RunOperation.FULL:
                 new_ids.update(
-                    checkpoint.ledger.iter_retained_point_ids(
-                        checkpoint.generation_id
-                    )
+                    checkpoint.ledger.iter_retained_point_ids(checkpoint.generation_id)
                 )
         metadata: dict[str, str] = {}
         total = [len(new_ids)]
+        self._begin_support_measurement(paths)
         self.store.disk_headroom_preflight(len(paths) * _CHUNKS_PER_FILE_ESTIMATE)
         run_control.checkpoint()
         reporter.phase_start("chunk + embed", len(paths))
@@ -2296,8 +2389,7 @@ class CodebaseIndexer:
         committed_deletions = {
             (unit.rel_path, unit.kind)
             for unit in checkpoint.ledger.iter_units(checkpoint.generation_id)
-            if unit.kind
-            in (CommitUnitKind.DELETE_PATH, CommitUnitKind.DELETE_STALE)
+            if unit.kind in (CommitUnitKind.DELETE_PATH, CommitUnitKind.DELETE_STALE)
         }
         for rel in sorted(prior_ids_by_path):
             deletion_kind = (
@@ -2308,10 +2400,7 @@ class CodebaseIndexer:
             if (rel, deletion_kind) in committed_deletions:
                 continue
             obsolete_ids = tuple(
-                sorted(
-                    prior_ids_by_path[rel]
-                    - current_ids_by_path.get(rel, set())
-                )
+                sorted(prior_ids_by_path[rel] - current_ids_by_path.get(rel, set()))
             )
             if not obsolete_ids:
                 continue
@@ -2342,9 +2431,7 @@ class CodebaseIndexer:
             run_control.checkpoint()
             publication_span = (
                 (
-                    checkpoint.run_policy.protected(
-                        "incremental code replacement"
-                    )
+                    checkpoint.run_policy.protected("incremental code replacement")
                     if checkpoint is not None
                     else run_control.protected()
                 )
@@ -2633,10 +2720,14 @@ class CodebaseIndexer:
         )
         if resumed_publication is not None:
             return resumed_publication
-        clean_has_confirmed_units = effective_clean and next(
-            checkpoint.ledger.iter_units(checkpoint.generation_id),
-            None,
-        ) is not None
+        clean_has_confirmed_units = (
+            effective_clean
+            and next(
+                checkpoint.ledger.iter_units(checkpoint.generation_id),
+                None,
+            )
+            is not None
+        )
 
         # Failure-safe rebuild (mirrors VaultIndexer.full_index): snapshot the
         # existing chunk ids BEFORE streaming, keep the old chunks live, and

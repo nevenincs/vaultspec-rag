@@ -145,10 +145,10 @@ def _run_code_attempt(
     registry: ServiceRegistry,
 ) -> JobExecutionResult:
     """Run one code attempt through fresh execution authority."""
-    from .jobs import JobProgressReporter, validate_code_index_policy
+    from .jobs import JobProgressReporter, validate_code_job_admission
 
     context.control.checkpoint()
-    preflight = validate_code_index_policy(root)
+    preflight = validate_code_job_admission(root)
     context.control.checkpoint()
     registry.load_model()
     try:
