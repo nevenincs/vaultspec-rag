@@ -61,6 +61,8 @@ def resolve_preprocess_context(
     from ..config import get_config
 
     cfg = get_config()
+    if cfg.preprocess_mode == "off":
+        return None
     return PreprocessContext(
         config=config,
         cache_root=preprocess_cache_dir(data_root),

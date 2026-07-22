@@ -255,12 +255,9 @@ def load_preprocess_rules(
     :class:`PreprocessConfigError` on the first defect and backs the
     ``preprocess check`` CLI verb.
 
-    After resolution, the non-strict path enforces only the preprocess kill
-    switch: ``off`` returns zero rules; ``default`` returns the resolved rules
-    for any root - a root's preprocess config is repo-authored code and runs
-    with the operator's privileges, so no trust check gates execution.
-    ``strict=True`` bypasses even the kill switch so ``preprocess check``
-    validates the config regardless of the host's mode.
+    Resolution always retains valid rules, including when execution is switched
+    off.  The kill switch is enforced only while materializing worker context,
+    so routing and ownership remain available to discovery and reconciliation.
 
     Args:
         root_dir: The project root to resolve the config from.
@@ -269,8 +266,7 @@ def load_preprocess_rules(
 
     Returns:
         A :class:`PreprocessConfig`; empty when the file is absent, malformed
-        (non-strict), carries no valid rules, or is gated off by the ``off``
-        kill switch.
+        (non-strict), or carries no valid rules.
 
     Raises:
         PreprocessConfigError: Only when ``strict`` is ``True`` and the config
@@ -331,52 +327,7 @@ def load_preprocess_rules(
             rules.append(rule)
     resolved = PreprocessConfig(rules, schema_version=version)
 
-    # Strict mode backs the ``preprocess check`` CLI verb: it validates the
-    # config file itself and must report defects regardless of the host's
-    # preprocess mode, so it never passes through the kill-switch gate.
-    if strict:
-        return resolved
-
-    return _enforce_preprocess_mode(resolved, config_file)
-
-
-def _enforce_preprocess_mode(
-    config: PreprocessConfig,
-    config_file: pathlib.Path,
-) -> PreprocessConfig:
-    """Apply the ``off`` kill switch to a resolved config.
-
-    Rules resolve for any root: a root's preprocess config is repo-authored
-    code running with the operator's privileges, so no trust check gates
-    execution here. The sole gate the loader applies is the ``off`` kill
-    switch. An empty
-    config needs no gating and is returned as-is. The import is function-local
-    so the module stays cheap to import from the spawn worker.
-
-    Args:
-        config: The resolved rules (empty when the file carried none).
-        config_file: The config path, for actionable log messages.
-
-    Returns:
-        ``config`` when preprocessing is not switched off, else an empty
-        :class:`PreprocessConfig`.
-    """
-    if not config:
-        return config
-
-    from ..config import get_config
-
-    if get_config().preprocess_mode == "off":
-        logger.debug(
-            "%s at %s defines %d rule(s) but preprocess_mode is 'off'; "
-            "skipping all rules",
-            PREPROCESS_CONFIG_FILENAME,
-            config_file,
-            len(config.rules),
-        )
-        return PreprocessConfig([])
-
-    return config
+    return resolved
 
 
 class _RuleRejectedError(Exception):

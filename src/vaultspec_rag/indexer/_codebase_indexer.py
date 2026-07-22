@@ -141,18 +141,24 @@ class ContentScanResult:
 
 
 @dataclass(frozen=True, slots=True)
-class CodePolicyPreflight:
-    """Read-only policy authority for one code operation."""
+class CodeIndexPreflight:
+    """Read-only policy and discovery authority for one code operation."""
 
     root_dir: pathlib.Path
     policy: ResolvedIndexPolicy
+    scan: ContentScanResult
 
 
 @dataclass(frozen=True, slots=True)
-class CodeIndexPreflight(CodePolicyPreflight):
-    """Read-only policy and discovery authority for one code operation."""
+class CodeScopedPreflight:
+    """Read-only policy and exact changed-path authority for scoped work."""
 
-    scan: ContentScanResult
+    root_dir: pathlib.Path
+    policy: ResolvedIndexPolicy
+    changed_paths: tuple[pathlib.Path, ...]
+
+
+type CodeExecutionPreflight = CodeIndexPreflight | CodeScopedPreflight
 
 
 class _UnsettledCodeConsumerError(RuntimeError):
@@ -368,6 +374,8 @@ class CodebaseIndexer:
         self._prep_ctx: PreprocessContext | None = None
         self._chunk_execution_policy = _chunk_worker.ChunkExecutionPolicy()
         self._prep_skips: list[str] = []
+        self._prep_stale_paths: set[str] = set()
+        self._prep_rule_total: int = 0
         self._prep_ok: int = 0
         # Config epochs for the current run (D1-D3). Set at the start of each
         # locked run from the same resolved inputs the scan uses, then stamped
@@ -442,8 +450,7 @@ class CodebaseIndexer:
                 )
             root = preflight.root_dir
             if any(
-                not path.resolve().is_relative_to(root)
-                for path in preflight.scan.files
+                not path.resolve().is_relative_to(root) for path in preflight.scan.files
             ):
                 raise ValueError(
                     "code index preflight contains a path outside its root"
@@ -573,12 +580,103 @@ class CodebaseIndexer:
         )
         self._prep_ctx = self._resolve_preprocess_context(policy)
         self._prep_skips = []
+        self._prep_stale_paths = set()
+        self._prep_rule_total = len(policy.preprocess_rules)
         self._prep_ok = 0
         run_control.checkpoint()
 
     def _prep_rule_count(self) -> int:
-        """Return the number of preprocess rules active for the current run."""
-        return _preprocess_glue.prep_rule_count(self._prep_ctx)
+        """Return the number of routed preprocess rules in the run snapshot."""
+        return getattr(
+            self,
+            "_prep_rule_total",
+            _preprocess_glue.prep_rule_count(getattr(self, "_prep_ctx", None)),
+        )
+
+    @staticmethod
+    def _disabled_transform(
+        policy: ResolvedIndexPolicy,
+        rel_path: str,
+    ) -> bool:
+        """Return whether routing is retained while its transform is disabled."""
+        return (
+            policy.execution_mode == "off"
+            and policy.match_preprocess(rel_path) is not None
+        )
+
+    def _mark_preprocess_stale(self, rel_path: str) -> None:
+        """Surface disabled transform work once without changing membership."""
+        if rel_path in self._prep_stale_paths:
+            return
+        self._prep_stale_paths.add(rel_path)
+        self._prep_skips.append(
+            f"{rel_path}: preprocessing disabled; retained work as stale"
+        )
+
+    def _partition_disabled_paths(
+        self,
+        paths: Iterable[pathlib.Path],
+        policy: ResolvedIndexPolicy,
+    ) -> list[pathlib.Path]:
+        """Remove disabled transforms from execution while retaining ownership."""
+        executable: list[pathlib.Path] = []
+        for path in paths:
+            rel = str(path.relative_to(self.root_dir)).replace("\\", "/")
+            if self._disabled_transform(policy, rel):
+                self._mark_preprocess_stale(rel)
+                continue
+            executable.append(path)
+        return executable
+
+    def _preserved_disabled_metadata(
+        self,
+        policy: ResolvedIndexPolicy,
+        previous_metadata: dict[str, str],
+    ) -> dict[str, str]:
+        """Return published transform rows that off mode must retain stale."""
+        preserved: dict[str, str] = {}
+        for rel, content_hash in previous_metadata.items():
+            if not self._disabled_transform(policy, rel):
+                continue
+            if not (self.root_dir / pathlib.PurePosixPath(rel)).is_file():
+                continue
+            self._mark_preprocess_stale(rel)
+            preserved[rel] = content_hash
+        return preserved
+
+    def _prepare_disabled_full_preservation(
+        self,
+        policy: ResolvedIndexPolicy,
+        previous_metadata: dict[str, str],
+        *,
+        clean: bool,
+    ) -> tuple[dict[str, str], set[str] | None, bool]:
+        """Resolve stale rows and whether a destructive rebuild remains safe."""
+        preserved_metadata = self._preserved_disabled_metadata(
+            policy,
+            previous_metadata,
+        )
+        try:
+            preserved_ids = (
+                set(self._get_chunk_ids_for_files(set(preserved_metadata)))
+                if preserved_metadata
+                else set()
+            )
+        except (OSError, RuntimeError):
+            logger.warning(
+                "Could not resolve stored IDs for disabled preprocessing paths; "
+                "retaining failure-safe rebuild behavior",
+                exc_info=True,
+            )
+            preserved_ids = None
+        effective_clean = clean and not preserved_metadata
+        if clean and preserved_metadata:
+            logger.warning(
+                "Preprocessing is disabled for %d published path(s); retaining "
+                "their stored content as stale and using a failure-safe rebuild",
+                len(preserved_metadata),
+            )
+        return preserved_metadata, preserved_ids, effective_clean
 
     def _record_preprocess_result(self, res: FileChunkResult) -> None:
         """Accumulate a worker result's preprocess disposition (D11)."""
@@ -619,15 +717,12 @@ class CodebaseIndexer:
         return classified.disposition.reason is AdmissionReason.IGNORED
 
     @staticmethod
-    def _active_transform(
+    def _has_transform(
         policy: ResolvedIndexPolicy,
         rel_path: str,
     ) -> bool:
-        """Return whether this snapshot may execute a matched transform."""
-        return (
-            policy.execution_mode != "off"
-            and policy.match_preprocess(rel_path) is not None
-        )
+        """Return whether ownership includes a matched transform."""
+        return policy.match_preprocess(rel_path) is not None
 
     def _classify_file(
         self,
@@ -640,7 +735,7 @@ class CodebaseIndexer:
         disposition = classified.disposition
         if not (
             disposition.admitted and disposition.kind is ContentKind.CODE
-        ) or self._active_transform(policy, rel_path):
+        ) or self._has_transform(policy, rel_path):
             return classified
         try:
             if path.stat().st_size > _MAX_FILE_SIZE:
@@ -1892,7 +1987,7 @@ class CodebaseIndexer:
         finally:
             reporter.phase_end()
         run_control.checkpoint()
-        return paths
+        return self._partition_disabled_paths(paths, policy)
 
     def _publish_incremental_paths(
         self,
@@ -2163,6 +2258,14 @@ class CodebaseIndexer:
             discovered_paths=discovered_paths,
             run_control=run_control,
         )
+        previous_metadata = self._load_meta()
+        preserved_metadata, preserved_ids, effective_clean = (
+            self._prepare_disabled_full_preservation(
+                policy,
+                previous_metadata,
+                clean=clean,
+            )
+        )
 
         # Failure-safe rebuild (mirrors VaultIndexer.full_index): snapshot the
         # existing chunk ids BEFORE streaming, keep the old chunks live, and
@@ -2179,12 +2282,12 @@ class CodebaseIndexer:
         # stale cleanup, and atomic metadata publication. Non-clean rebuilding
         # remains failure-safe and interruptible between bounded slices.
         publication_span = (
-            run_control.protected() if clean else contextlib.nullcontext()
+            run_control.protected() if effective_clean else contextlib.nullcontext()
         )
         with publication_span:
             reporter.phase_start("prepare collection", 1)
             try:
-                if clean:
+                if effective_clean:
                     self.store.drop_code_table()
                     self._clear_preprocess_cache()
                     self.store.ensure_code_table()
@@ -2219,6 +2322,10 @@ class CodebaseIndexer:
                 reporter=reporter,
                 run_control=run_control,
             )
+            new_ids.update(
+                existing_ids_before if preserved_ids is None else preserved_ids
+            )
+            meta.update(preserved_metadata)
 
             stale_ids = sorted(existing_ids_before - new_ids)
             run_control.checkpoint()
@@ -2249,7 +2356,7 @@ class CodebaseIndexer:
 
         duration_ms = int((time.time() - start) * 1000)
         return IndexResult(
-            total=total_chunks,
+            total=self.store.count_code(),
             added=total_chunks,
             updated=0,
             # Mirror VaultIndexer.full_index - surface the post-stream
@@ -2416,6 +2523,16 @@ class CodebaseIndexer:
             discovered_paths=discovered_paths,
             run_control=run_control,
         )
+        disabled_current = {
+            rel for rel in current_files if self._disabled_transform(policy, rel)
+        }
+        for rel in disabled_current:
+            self._mark_preprocess_stale(rel)
+            current_files.pop(rel, None)
+            current_hashes.pop(rel, None)
+        current_hashes.update(
+            self._preserved_disabled_metadata(policy, previous_metadata)
+        )
         previous_files = set(previous_metadata)
         current_names = set(current_hashes)
         new_files = current_names - previous_files
@@ -2513,6 +2630,9 @@ class CodebaseIndexer:
         if path.is_file():
             classified = self._classify_file(path, rel, policy)
             disposition = classified.disposition
+            if self._disabled_transform(policy, rel):
+                self._mark_preprocess_stale(rel)
+                return
             if disposition.admitted and disposition.kind is ContentKind.CODE:
                 to_hash[rel] = path
                 return
