@@ -51,6 +51,7 @@ related:
   - '[[2026-07-21-service-job-control-W04-P13-S28]]'
   - '[[2026-07-21-service-job-control-W04-P13-summary]]'
   - '[[2026-07-21-service-job-control-W04-P14-S29]]'
+  - '[[2026-07-21-service-job-control-W04-P14-S30]]'
   - '[[2026-07-21-service-job-control-adr]]'
   - '[[2026-07-21-service-job-control-plan]]'
   - '[[2026-07-21-service-job-control-reference]]'
@@ -84,6 +85,7 @@ related:
   - '[[2026-07-22-service-job-control-s27-client-transport-audit]]'
   - '[[2026-07-22-service-job-control-s28-client-real-server-transport-audit]]'
   - '[[2026-07-22-service-job-control-s29-cli-job-registration-audit]]'
+  - '[[2026-07-22-service-job-control-s30-cli-job-controls-audit]]'
 ---
 
 # `service-job-control` feature index
@@ -127,6 +129,7 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-22-service-job-control-s27-client-transport-audit` - `service-job-control` audit: `s27 client transport`
 - `2026-07-22-service-job-control-s28-client-real-server-transport-audit` - `service-job-control` audit: `s28 client real server transport`
 - `2026-07-22-service-job-control-s29-cli-job-registration-audit` - `service-job-control` audit: `s29 cli job registration`
+- `2026-07-22-service-job-control-s30-cli-job-controls-audit` - `service-job-control` audit: `s30 cli job controls`
 
 ### exec
 
@@ -175,6 +178,7 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-21-service-job-control-W04-P13-S28` - Verify GET, POST, PUT, and DELETE client operations and structured conflicts against a real server using vaultspec-standard-executor
 - `2026-07-21-service-job-control-W04-P13-summary` - `service-job-control` `W04.P13` summary
 - `2026-07-21-service-job-control-W04-P14-S29` - Register the singular server job command group while preserving the server jobs collection command using vaultspec-low-executor
+- `2026-07-21-service-job-control-W04-P14-S30` - Implement show, pause, resume, stop, retry, and delete commands with unique-prefix resolution before exact mutation using vaultspec-standard-executor
 
 ### plan
 
