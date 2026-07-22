@@ -26,6 +26,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+from . import store_schema
 from .storage_manifest import ManifestEntry, classify_root
 
 __all__ = [
@@ -93,7 +94,15 @@ class NamespaceSurvey:
     status: str
     collections: list[str] = field(default_factory=list)
     points: int = 0
+    vault_points: int = 0
+    code_points: int = 0
+    document_points: int = 0
     footprint_bytes: int = 0
+
+
+def _kind_points(names: list[str], counts: dict[str, int], suffix: str) -> int:
+    """Return the bounded integer count for one declared collection kind."""
+    return sum(counts.get(name, 0) for name in names if name.endswith(suffix))
 
 
 def _prefix_of(collection_name: str) -> str:
@@ -147,6 +156,21 @@ def classify_namespaces(
                 status=status,
                 collections=sorted(names),
                 points=sum(counts.get(n, 0) for n in names),
+                vault_points=_kind_points(
+                    names,
+                    counts,
+                    store_schema.VAULT_COLLECTION,
+                ),
+                code_points=_kind_points(
+                    names,
+                    counts,
+                    store_schema.CODE_COLLECTION,
+                ),
+                document_points=_kind_points(
+                    names,
+                    counts,
+                    store_schema.DOCUMENT_COLLECTION,
+                ),
                 footprint_bytes=sum(sizes.get(n, 0) for n in names),
             )
         )
