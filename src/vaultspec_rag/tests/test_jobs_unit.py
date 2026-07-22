@@ -40,6 +40,7 @@ from ..jobs import (
     JobSource,
     JobSpec,
     JobState,
+    index_job_status,
     record_finish,
     record_start,
     reset,
@@ -569,6 +570,60 @@ class TestJobStallShaping:
         assert summary["controllable"] == 2
         assert summary["control_pending"] == 1
         assert summary["error_kinds"] == {"disk_full": 1}
+
+
+def test_index_job_status_reports_latest_generation_and_degradation(
+    tmp_path: Path,
+) -> None:
+    manager = JobManager(max_nonterminal=3, state_path=None)
+    initiator = JobInitiator("service", "status coverage", str(tmp_path))
+    created = {
+        source: manager.create(
+            JobSpec(
+                JobOperation.INDEX,
+                source,
+                str(tmp_path),
+                JobMode.INCREMENTAL,
+            ),
+            initiator,
+        )
+        for source in (JobSource.VAULT, JobSource.CODE, JobSource.DOCUMENT)
+    }
+    document = created[JobSource.DOCUMENT].job
+    assert document is not None
+    assert (
+        manager.fail_unstarted(
+            document.id,
+            result="extractor unavailable",
+        ).job
+        is not None
+    )
+
+    status = index_job_status(tmp_path, manager=manager, now=1_000_000.0)
+    sources = cast("dict[str, object]", status["sources"])
+    document_status = cast("dict[str, object]", sources["document"])
+    assert set(sources) == {"vault", "code", "document"}
+    assert document_status["job_id"] == document.id
+    assert document_status["generation"] == 1
+    assert document_status["state"] == "failed"
+    assert document_status["desired_state"] == "running"
+    assert document_status["attempt"] == {
+        "number": 1,
+        "parent_job_id": None,
+        "resumed_from_attempt": None,
+        "resume_strategy": None,
+    }
+    assert document_status["progress"] is None
+    timestamps = cast("dict[str, object]", document_status["timestamps"])
+    assert timestamps["finished_at"] is not None
+    assert status["degraded_reasons"] == [
+        {
+            "source": "document",
+            "job_id": document.id,
+            "reason": "failed",
+            "error_kind": "unavailable",
+        }
+    ]
 
 
 class TestJobsHumanSummarySignpost:

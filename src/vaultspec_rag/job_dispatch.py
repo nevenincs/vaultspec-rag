@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from .indexer._codebase_indexer import CodeIndexPreflight
+    from .indexer._document_indexer import DocumentIndexPreflight
     from .job_manager import JobManager
     from .job_models import JobSnapshot
     from .service import ServiceRegistry
@@ -24,6 +25,7 @@ def bind_index_job(
     *,
     registry: ServiceRegistry,
     code_preflight: CodeIndexPreflight | None,
+    document_preflight: DocumentIndexPreflight | None,
     on_started: Callable[[JobSnapshot], None] | None = None,
     on_finished: (
         Callable[
@@ -34,7 +36,9 @@ def bind_index_job(
     ) = None,
 ) -> JobOutcome:
     """Bind one restored or newly admitted indexing job to production services."""
-    del code_preflight  # Admission authority must never survive until execution.
+    # Admission authority proves creation was validated; execution rediscovers
+    # after queueing so paused, retried, and restored jobs cannot use stale scope.
+    del code_preflight, document_preflight
     snapshot = manager.get(job_id)
     if snapshot is None:
         raise RuntimeError(f"Cannot bind unknown job: {job_id}")
@@ -205,14 +209,9 @@ def _run_document_attempt(
     registry: ServiceRegistry,
 ) -> JobExecutionResult:
     """Run one document attempt with independent policy and storage state."""
-    from .jobs import (
-        JobProgressReporter,
-        validate_document_index_policy,
-        validate_document_support_profile,
-    )
+    from .jobs import JobProgressReporter, validate_document_job_admission
 
-    preflight = validate_document_index_policy(root)
-    validate_document_support_profile(root, preflight)
+    preflight = validate_document_job_admission(root)
     registry.load_model()
     try:
         with registry.lease(root) as slot:
