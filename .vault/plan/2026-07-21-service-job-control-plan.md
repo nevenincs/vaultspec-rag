@@ -131,7 +131,7 @@ Expose create, exact detail, desired-state, retry, and terminal-only deletion wh
 Add explicit HTTP methods and typed job operations without changing established read behavior or structured outcomes.
 
 - [x] `W04.P13.S27` - Add explicit HTTP method handling and typed create, detail, desired-state, retry, and delete client operations using vaultspec-standard-executor; `src/vaultspec_rag/serviceclient/_transport.py`.
-- [ ] `W04.P13.S28` - Verify GET, POST, PUT, and DELETE client operations and structured conflicts against a real server using vaultspec-standard-executor; `src/vaultspec_rag/tests/integration/test_service_job_control.py`.
+- [x] `W04.P13.S28` - Verify GET, POST, PUT, and DELETE client operations and structured conflicts against a real server using vaultspec-standard-executor; `src/vaultspec_rag/tests/integration/test_service_job_control.py`.
 
 ### Phase `W04.P14` - CLI job controls
 

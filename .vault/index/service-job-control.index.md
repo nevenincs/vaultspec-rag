@@ -48,6 +48,8 @@ related:
   - '[[2026-07-21-service-job-control-W04-P12-S26]]'
   - '[[2026-07-21-service-job-control-W04-P12-summary]]'
   - '[[2026-07-21-service-job-control-W04-P13-S27]]'
+  - '[[2026-07-21-service-job-control-W04-P13-S28]]'
+  - '[[2026-07-21-service-job-control-W04-P13-summary]]'
   - '[[2026-07-21-service-job-control-adr]]'
   - '[[2026-07-21-service-job-control-plan]]'
   - '[[2026-07-21-service-job-control-reference]]'
@@ -79,6 +81,7 @@ related:
   - '[[2026-07-22-service-job-control-s25-health-rollups-audit]]'
   - '[[2026-07-22-service-job-control-s26-http-job-crud-tests-audit]]'
   - '[[2026-07-22-service-job-control-s27-client-transport-audit]]'
+  - '[[2026-07-22-service-job-control-s28-client-real-server-transport-audit]]'
 ---
 
 # `service-job-control` feature index
@@ -120,6 +123,7 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-22-service-job-control-s25-health-rollups-audit` - `service-job-control` audit: `s25 health rollups`
 - `2026-07-22-service-job-control-s26-http-job-crud-tests-audit` - `service-job-control` audit: `s26 http job crud tests`
 - `2026-07-22-service-job-control-s27-client-transport-audit` - `service-job-control` audit: `s27 client transport`
+- `2026-07-22-service-job-control-s28-client-real-server-transport-audit` - `service-job-control` audit: `s28 client real server transport`
 
 ### exec
 
@@ -165,6 +169,8 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-21-service-job-control-W04-P12-S26` - Verify authenticated real-ASGI job CRUD, exact mutations, revisions, idempotency, capacity, force rejection, retry linkage, deletion conflicts, and Location headers using vaultspec-standard-executor
 - `2026-07-21-service-job-control-W04-P12-summary` - `service-job-control` `W04.P12` summary
 - `2026-07-21-service-job-control-W04-P13-S27` - Add explicit HTTP method handling and typed create, detail, desired-state, retry, and delete client operations using vaultspec-standard-executor
+- `2026-07-21-service-job-control-W04-P13-S28` - Verify GET, POST, PUT, and DELETE client operations and structured conflicts against a real server using vaultspec-standard-executor
+- `2026-07-21-service-job-control-W04-P13-summary` - `service-job-control` `W04.P13` summary
 
 ### plan
 
