@@ -26,7 +26,7 @@ class PublicSourceType(StrEnum):
 _ALIASES: Final = MappingProxyType(
     {
         "codebase": PublicSourceType.CODE,
-        "docs": PublicSourceType.DOCUMENT,
+        "docs": PublicSourceType.VAULT,
         "all": PublicSourceType.COMBINED,
     }
 )

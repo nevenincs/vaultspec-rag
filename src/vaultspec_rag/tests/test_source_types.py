@@ -23,7 +23,7 @@ def test_canonical_source_types_round_trip(source: PublicSourceType) -> None:
     ("alias", "expected"),
     [
         ("codebase", PublicSourceType.CODE),
-        ("docs", PublicSourceType.DOCUMENT),
+        ("docs", PublicSourceType.VAULT),
         ("all", PublicSourceType.COMBINED),
     ],
 )
