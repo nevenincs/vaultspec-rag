@@ -60,7 +60,7 @@ Make daemon snapshots self-healing and order heartbeat quiescence, pointer clean
 
 Reproduce the singleton race with real HTTP processes and authorize no production lifecycle change unless the boundary fails.
 
-- [ ] `W01.P04.S09` - Prove a losing real HTTP daemon exits nonzero before listener, Qdrant, pointer, watcher, or maintenance startup; `src/vaultspec_rag/tests/integration/test_machine_singleton.py`.
+- [x] `W01.P04.S09` - Prove a losing real HTTP daemon exits nonzero before listener, Qdrant, pointer, watcher, or maintenance startup; `src/vaultspec_rag/tests/integration/test_machine_singleton.py`.
 
 ## Wave `W02` - typed resolution and canonical operability
 
