@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from contextlib import nullcontext
 from dataclasses import dataclass
-from itertools import chain, groupby, pairwise
+from itertools import chain, pairwise
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 if TYPE_CHECKING:
@@ -28,7 +28,6 @@ __all__ = [
     "CodeFileSegment",
     "WeightedCodeSlice",
     "_release_cuda_cache",
-    "_stream_encode_and_upsert_codebase",
     "_stream_encode_and_upsert_vault",
     "encode_and_upsert_code_slice",
     "estimate_code_chunk_bytes",
@@ -825,104 +824,3 @@ def encode_and_upsert_code_slice(
         _release_vector_fields(slice_chunks)
         if release_cache:
             _release_cuda_cache()
-
-
-def _stream_encode_and_upsert_codebase(
-    *,
-    chunks: list[CodeChunk],
-    slice_size: int,
-    model: EmbeddingModel,
-    store: VaultStore,
-    gpu_lock: threading.Lock | None,
-    reporter: ProgressReporter,
-) -> None:
-    """Streaming variant of :func:`_stream_encode_and_upsert_vault`.
-
-    This boundary no longer duplicates and sorts the whole corpus. It preserves
-    incoming file/chunk order while forming configured segment chunk and byte
-    budgets, then length-sorts only the active bounded slice to limit model
-    padding. S08-S10 feed the same segment primitive directly so upstream
-    production and queue retention become bounded as well.
-    """
-    from ..config import get_config
-    from ..memory_probe import MemoryProbe
-
-    cfg = get_config()
-    encode_batch_size = int(cfg.embedding_code_encode_batch_size)
-    flush_slices = max(1, int(cfg.index_cache_flush_slices))
-    if slice_size <= 0:
-        raise ValueError(f"slice_size must be a positive integer, got {slice_size}")
-    segment_max_chunks = min(slice_size, int(cfg.index_segment_max_chunks))
-    segment_max_bytes = int(cfg.index_segment_max_bytes)
-    slice_max_chunks = min(slice_size, int(cfg.index_queue_max_chunks))
-    slice_max_bytes = int(cfg.index_queue_max_bytes)
-    dense_dimension = int(cfg.embedding_dimension)
-    sparse_enabled = bool(cfg.sparse_enabled)
-    sparse_dimension = int(model.sparse_dimension)
-
-    # Fail in milliseconds, not at 1-2% hours later: a run whose estimated
-    # footprint cannot fit on the store volume must never start encoding.
-    store.disk_headroom_preflight(len(chunks))
-
-    with MemoryProbe(name="codebase-full-index") as probe:
-        reporter.phase_start("embed + upsert chunks", len(chunks))
-        slice_idx = 0
-        consumed = 0
-
-        def _segments() -> Iterator[CodeFileSegment]:
-            # Worker and serial producers emit each file's chunks contiguously.
-            # groupby keeps that boundary without a corpus-sized regroup/sort.
-            for _path, file_chunks in groupby(
-                chunks,
-                key=lambda chunk: chunk.path,
-            ):
-                yield from iter_code_file_segments(
-                    file_chunks,
-                    max_chunks=segment_max_chunks,
-                    max_bytes=segment_max_bytes,
-                    dense_dimension=dense_dimension,
-                    sparse_enabled=sparse_enabled,
-                    sparse_dimension=sparse_dimension,
-                )
-
-        try:
-            for weighted_slice in iter_weighted_code_slices(
-                _segments(),
-                max_chunks=slice_max_chunks,
-                max_bytes=slice_max_bytes,
-            ):
-                # Preserve the previous padding optimization without its
-                # corpus-sized sorted copy. Qdrant upsert order is irrelevant;
-                # the weighted slice retains deterministic segment order for
-                # later storage-confirmed checkpointing.
-                slice_chunks = sorted(
-                    weighted_slice.chunks,
-                    key=lambda chunk: -len(chunk.content),
-                )
-                slice_count = len(slice_chunks)
-                try:
-                    probe.checkpoint(f"slice-{consumed}-before-encode")
-                    slice_idx += 1
-                    encode_and_upsert_code_slice(
-                        slice_chunks,
-                        model=model,
-                        store=store,
-                        gpu_lock=gpu_lock,
-                        release_cache=slice_idx % flush_slices == 0,
-                        encode_batch_size=encode_batch_size,
-                    )
-                    probe.checkpoint(f"slice-{consumed}-after-empty-cache")
-                    reporter.advance(slice_count)
-                    consumed += slice_count
-                finally:
-                    # The weighted tuple is the only remaining bounded owner;
-                    # drop the mutable call list on every exit path.
-                    del slice_chunks
-        finally:
-            # Flush at stream completion and on every exceptional/cancelled
-            # unwind even when the cadence did not land on this final slice.
-            _release_cuda_cache()
-            reporter.phase_end()
-
-    if probe.samples:
-        logger.info("%s", probe.report())

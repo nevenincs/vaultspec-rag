@@ -43,7 +43,6 @@ from ._preprocess_runner import PreprocessAbortError
 from ._streaming import (
     CodeFileSegment,
     _release_cuda_cache,
-    _stream_encode_and_upsert_codebase,
     encode_and_upsert_code_slice,
     iter_code_file_segments,
     iter_weighted_code_slices,
@@ -1886,56 +1885,6 @@ class CodebaseIndexer:
         )
         return published_hashes
 
-    def _publish_incremental_chunks(
-        self,
-        *,
-        chunks: list[CodeChunk],
-        attempted_paths: set[str],
-        slice_size: int,
-        reporter: ProgressReporter,
-    ) -> None:
-        """Publish replacements before removing obsolete chunk identities.
-
-        Existing identities are captured before the first upsert. A modified
-        file can retain some deterministic chunk IDs, so the post-publish
-        purge removes only identities absent from the successfully published
-        result. Encoding or storage failure exits before any old identity is
-        deleted; metadata publication remains the caller's final step.
-        """
-        existing_ids: set[str] = (
-            set(self._get_chunk_ids_for_files(attempted_paths))
-            if attempted_paths
-            else set()
-        )
-
-        if chunks:
-            try:
-                _stream_encode_and_upsert_codebase(
-                    chunks=chunks,
-                    slice_size=slice_size,
-                    model=self.model,
-                    store=self.store,
-                    gpu_lock=self._gpu_lock,
-                    reporter=reporter,
-                )
-            except BaseException:
-                self._discard_failed_incremental_additions(
-                    attempted_paths=attempted_paths,
-                    existing_ids=existing_ids,
-                )
-                raise
-        else:
-            reporter.phase_start("embed + upsert chunks", 0)
-            reporter.phase_end()
-
-        published_ids = {chunk.id for chunk in chunks}
-        self._delete_obsolete_incremental_chunks(
-            existing_ids=existing_ids,
-            published_ids=published_ids,
-            files_count=len(attempted_paths),
-            reporter=reporter,
-        )
-
     def _discard_failed_incremental_additions(
         self,
         *,
@@ -2075,10 +2024,7 @@ class CodebaseIndexer:
             An ``IndexResult`` with added/updated/removed file counts and
             the post-reconcile total chunk count.
         """
-        from ..config import get_config
-
         start = time.time()
-        slice_size = max(1, get_config().embedding_batch_size)
         self._begin_preprocess_run()
         prev_meta = self._load_meta()
 
@@ -2095,22 +2041,14 @@ class CodebaseIndexer:
         }
         to_index = new_files | modified_files
 
-        all_new_chunks: list[CodeChunk] = []
-        reporter.phase_start("chunk files", len(to_index))
-        try:
-            if to_index:
-                paths_to_index = [to_hash[r] for r in sorted(to_index)]
-                all_new_chunks = self._chunk_paths(paths_to_index, reporter=reporter)
-        finally:
-            reporter.phase_end()
-
+        paths_to_index = [to_hash[r] for r in sorted(to_index)]
         attempted_paths = to_index | delete_files
-        self._publish_incremental_chunks(
-            chunks=all_new_chunks,
+        published_hashes = self._publish_incremental_paths(
+            paths=paths_to_index,
             attempted_paths=attempted_paths,
-            slice_size=slice_size,
             reporter=reporter,
         )
+        changed_hashes.update(published_hashes)
 
         new_meta = dict(prev_meta)
         new_meta.update(changed_hashes)
