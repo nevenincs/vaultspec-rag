@@ -160,7 +160,7 @@ def test_commit_units_are_atomic_idempotent_and_row_streamed(tmp_path: Path) -> 
 
     deletion = CommitUnit(
         rel_path="src/removed.py",
-        kind=CommitUnitKind.DELETE,
+        kind=CommitUnitKind.DELETE_PATH,
         segment_ordinal=0,
         is_file_end=True,
         point_ids=("removed-point",),
@@ -213,6 +213,21 @@ def test_file_outcomes_and_finalization_are_immutable(tmp_path: Path) -> None:
     assert list(
         ledger.iter_file_states(generation.generation_id, converged_only=True)
     ) == [rejected, indexed]
+
+    with pytest.raises(RunLedgerStateError, match="unresolved"):
+        ledger.advance_finalization(
+            generation.generation_id,
+            FinalizationPhase.STALE_RECONCILED,
+        )
+    assert failed.content_hash is not None
+    ledger.record_storage_confirmed_unit(
+        generation.generation_id,
+        _unit("src/bad.py", 0, 1, digest=failed.content_hash),
+    )
+    ledger.record_file_state(
+        generation.generation_id,
+        FileState.indexed("src/bad.py", ContentKind.CODE, failed.content_hash),
+    )
 
     with pytest.raises(RunLedgerStateError, match="cannot advance"):
         ledger.advance_finalization(
@@ -351,6 +366,81 @@ def test_bounded_iterator_does_not_hold_a_writer_transaction(tmp_path: Path) -> 
     third = _unit("src/c.py", 0, 1)
     assert ledger.record_storage_confirmed_unit(generation.generation_id, third)
     assert list(rows) == [second, third]
+
+
+def test_incremental_manifest_carries_forward_and_deletes_exact_paths(
+    tmp_path: Path,
+) -> None:
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    full = ledger.start_generation(_signature(tmp_path))
+    hashes = {path: _digest(path) for path in ("src/a.py", "src/b.py")}
+    for path, content_hash in hashes.items():
+        ledger.record_storage_confirmed_unit(
+            full.generation_id,
+            _unit(path, 0, 1, digest=content_hash),
+        )
+        ledger.record_file_state(
+            full.generation_id,
+            FileState.indexed(path, ContentKind.CODE, content_hash),
+        )
+    for phase in (
+        FinalizationPhase.STALE_RECONCILED,
+        FinalizationPhase.METADATA_PUBLISHED,
+        FinalizationPhase.GENERATION_PUBLISHED,
+    ):
+        ledger.advance_finalization(full.generation_id, phase)
+    ledger.finish_generation(full.generation_id, RunTerminalState.SUCCEEDED)
+
+    incremental_signature = replace(
+        full.signature,
+        operation=RunOperation.INCREMENTAL,
+    )
+    incremental = ledger.start_generation(incremental_signature)
+    assert incremental.parent_generation_id == full.generation_id
+    assert [
+        state.rel_path
+        for state in ledger.iter_file_states(incremental.generation_id)
+    ] == ["src/a.py", "src/b.py"]
+
+    deletion = CommitUnit(
+        rel_path="src/a.py",
+        kind=CommitUnitKind.DELETE_PATH,
+        segment_ordinal=0,
+        is_file_end=True,
+        point_ids=("old-a",),
+    )
+    ledger.record_storage_confirmed_unit(incremental.generation_id, deletion)
+    with pytest.raises(RunLedgerStateError, match="retained in the manifest"):
+        ledger.advance_finalization(
+            incremental.generation_id,
+            FinalizationPhase.STALE_RECONCILED,
+        )
+    ledger.record_path_deleted(incremental.generation_id, "src/a.py")
+    assert [
+        state.rel_path
+        for state in ledger.iter_file_states(incremental.generation_id)
+    ] == ["src/b.py"]
+
+    replacement_hash = _digest("new-b")
+    first_segment = _unit("src/b.py", 0, 2, digest=replacement_hash)
+    ledger.record_storage_confirmed_unit(incremental.generation_id, first_segment)
+    with pytest.raises(RunLedgerStateError, match="incomplete"):
+        ledger.advance_finalization(
+            incremental.generation_id,
+            FinalizationPhase.STALE_RECONCILED,
+        )
+    ledger.record_storage_confirmed_unit(
+        incremental.generation_id,
+        _unit("src/b.py", 1, 2, digest=replacement_hash),
+    )
+    ledger.record_file_state(
+        incremental.generation_id,
+        FileState.indexed("src/b.py", ContentKind.CODE, replacement_hash),
+    )
+    assert [
+        state.content_hash
+        for state in ledger.iter_file_states(incremental.generation_id)
+    ] == [replacement_hash]
 
 
 def test_metadata_publication_streams_only_converged_ledger_rows(

@@ -17,6 +17,7 @@ from ._run_ledger import (
     FinalizationPhase,
     RunGeneration,
     RunLedger,
+    RunLedgerCompatibilityError,
     RunOperation,
     RunSignature,
     RunTerminalState,
@@ -77,9 +78,18 @@ class CodeRunCheckpoint:
             policy_fingerprint=policy.fingerprints.snapshot,
         )
         ledger = RunLedger(data_root / CODE_RUN_LEDGER_FILENAME)
+        generation = ledger.start_generation(signature)
+        if (
+            operation in (RunOperation.INCREMENTAL, RunOperation.SCOPED_INCREMENTAL)
+            and generation.parent_generation_id is None
+        ):
+            raise RunLedgerCompatibilityError(
+                "incremental indexing requires a compatible published manifest; "
+                "run a full reconciliation"
+            )
         return cls(
             ledger=ledger,
-            generation=ledger.start_generation(signature),
+            generation=generation,
             policy=policy,
             run_policy=run_policy,
         )
@@ -104,37 +114,35 @@ class CodeRunCheckpoint:
         self,
         segments: Iterable[CodeFileSegment],
         source_digest: str,
-    ) -> tuple[CodeFileSegment, ...]:
-        """Return only units not already confirmed by a compatible attempt."""
-        pending: list[CodeFileSegment] = []
+    ) -> Iterable[CodeFileSegment]:
+        """Yield only units not already confirmed by a compatible attempt."""
         for segment in segments:
             unit = self.unit_for(segment, source_digest)
             if self.ledger.unit_committed(self.generation_id, unit):
                 if segment.is_file_end:
                     self._record_indexed_file(segment.path, source_digest)
                 continue
-            pending.append(segment)
-        return tuple(pending)
+            yield segment
 
-    def record_confirmed_segments(
+    def record_confirmed_segment(
         self,
-        segments: Iterable[CodeFileSegment],
-        source_digests: Mapping[str, str],
-    ) -> int:
-        """Checkpoint each segment after their shared store mutation returns."""
-        committed = 0
-        for segment in segments:
-            source_digest = source_digests[segment.path]
-            unit = self.unit_for(segment, source_digest)
-            if self.ledger.record_storage_confirmed_unit(self.generation_id, unit):
-                committed += 1
-                self.run_policy.record_durable_progress(
-                    kind=DurableProgressKind.LEDGER_UNIT_COMMITTED,
-                    label=f"code segment {segment.path}#{segment.ordinal}",
-                )
-            if segment.is_file_end:
-                self._record_indexed_file(segment.path, source_digest)
-        return committed
+        segment: CodeFileSegment,
+        source_digest: str,
+    ) -> bool:
+        """Checkpoint exactly one matching storage mutation after it returns."""
+        unit = self.unit_for(segment, source_digest)
+        inserted = self.ledger.record_storage_confirmed_unit(
+            self.generation_id,
+            unit,
+        )
+        if inserted:
+            self.run_policy.record_durable_progress(
+                kind=DurableProgressKind.LEDGER_UNIT_COMMITTED,
+                label=f"code segment {segment.path}#{segment.ordinal}",
+            )
+        if segment.is_file_end:
+            self._record_indexed_file(segment.path, source_digest)
+        return inserted
 
     def record_confirmed_deletion(
         self,
@@ -144,7 +152,7 @@ class CodeRunCheckpoint:
         """Checkpoint one idempotent path deletion after storage confirmation."""
         unit = CommitUnit(
             rel_path=rel_path,
-            kind=CommitUnitKind.DELETE,
+            kind=CommitUnitKind.DELETE_PATH,
             source_digest=None,
             segment_ordinal=0,
             is_file_end=True,
@@ -159,6 +167,7 @@ class CodeRunCheckpoint:
                 kind=DurableProgressKind.LEDGER_UNIT_COMMITTED,
                 label=f"code deletion {rel_path}",
             )
+        self.ledger.record_path_deleted(self.generation_id, rel_path)
         return inserted
 
     def publish_metadata(self, meta_path: Path) -> int:
@@ -170,10 +179,7 @@ class CodeRunCheckpoint:
         fingerprints = self.policy.fingerprints_for(ContentKind.CODE)
         count = publish_meta_from_file_states(
             meta_path,
-            self.ledger.iter_file_states(
-                self.generation_id,
-                converged_only=True,
-            ),
+            self.ledger.iter_file_states(self.generation_id),
             generation_id=self.generation_id,
             membership_epoch=fingerprints.membership,
             content_epoch=fingerprints.content,
