@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 import threading
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, cast
@@ -19,6 +21,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from ...indexer._content_policy import RootContentPolicy
+    from ...indexer._vault_prep import IndexResult
 
 _SCHEMA_VERSION: Final = 1
 _MARKER_NAME: Final = ".document-index-resilience-workload.json"
@@ -72,6 +75,22 @@ class DocumentWorkloadMeasurement:
     queue_bytes: int
     rss_bytes: int
     cuda_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentAcceptanceReport:
+    """Machine-readable completion and storage-confirmed resume evidence."""
+
+    schema_version: int
+    root: str
+    profile: str
+    backend: str
+    prepared: dict[str, int]
+    measurement: dict[str, int]
+    result: dict[str, object]
+    interrupted_generation: str
+    confirmed_before_resume: int
+    confirmed_after_resume: int
 
 
 class _RuntimeSampler:
@@ -180,7 +199,7 @@ payload = {
             "title": f"Unit {ordinal}",
             "section": "Acceptance",
             "anchor": f"unit={ordinal}",
-            "locator": {"kind": "unit", "value": ordinal},
+            "locator": {"kind": "line", "value": ordinal + 1},
             "text": " ".join(
                 f"document_{token}_{ordinal}_{word}" for word in range(words)
             ),
@@ -316,6 +335,178 @@ def measure_document_workload(root: Path) -> DocumentWorkloadMeasurement:
     )
 
 
+def _validate_measurement(
+    root: Path,
+    measurement: DocumentWorkloadMeasurement,
+) -> None:
+    """Apply the configured document profile before loading embedding models."""
+    import psutil
+
+    from ...config import get_config
+    from ...index_profiles import (
+        IndexDomain,
+        SupportMeasurement,
+        validate_profile_admission,
+    )
+
+    cfg = get_config()
+    validate_profile_admission(
+        cfg.index_support_profile,
+        IndexDomain.DOCUMENT,
+        SupportMeasurement(**asdict(measurement)),
+        backend="server" if cfg.qdrant_url else "local",
+        available_ram_bytes=int(psutil.virtual_memory().total),
+        free_disk_bytes=int(shutil.disk_usage(root).free),
+    )
+
+
+def _run_interrupted_index(
+    indexer: Any,
+    root: Path,
+    *,
+    interrupt_after_units: int,
+) -> tuple[str, int]:
+    """Interrupt after durable units exist and return their generation evidence."""
+    from ... import store_schema
+    from ...config import get_config
+    from ...indexer._content_policy import ContentKind
+    from ...indexer._run_ledger import RunLedger, index_run_ledger_path
+    from ...job_control import CancelRequested, RunControlToken
+    from ...progress import NullProgressReporter
+
+    if interrupt_after_units <= 0:
+        raise ValueError("interrupt_after_units must be positive")
+    token = RunControlToken()
+    failures: list[BaseException] = []
+
+    def _run() -> None:
+        try:
+            indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+                run_control=token,
+            )
+        except BaseException as exc:
+            failures.append(exc)
+
+    worker = threading.Thread(target=_run, name="document-acceptance-interrupt")
+    worker.start()
+    ledger_path = index_run_ledger_path(root / get_config().data_dir)
+    deadline = time.monotonic() + 600.0
+    generation_id = ""
+    confirmed = 0
+    while time.monotonic() < deadline and worker.is_alive():
+        if ledger_path.is_file():
+            ledger = RunLedger(ledger_path)
+            generation = ledger.latest_generation(
+                ContentKind.DOCUMENT,
+                collection_identity=store_schema.DOCUMENT_COLLECTION,
+            )
+            if generation is not None:
+                units = tuple(ledger.iter_units(generation.generation_id))
+                generation_id = generation.generation_id
+                confirmed = len(units)
+                if confirmed >= interrupt_after_units:
+                    token.request_cancel()
+                    break
+        time.sleep(0.01)
+    if confirmed < interrupt_after_units:
+        token.request_cancel()
+        worker.join(timeout=300.0)
+        if worker.is_alive():
+            raise RuntimeError("document run did not reach a cancellable checkpoint")
+        raise RuntimeError("document run produced no durable interruption boundary")
+    worker.join(timeout=300.0)
+    if worker.is_alive():
+        token.request_cancel()
+        raise RuntimeError("interrupted document run did not terminate")
+    if not failures or not isinstance(failures[0], CancelRequested):
+        raise RuntimeError(f"document run did not stop at cancellation: {failures!r}")
+    if not generation_id:
+        raise RuntimeError("document interruption lost its generation identity")
+    return generation_id, confirmed
+
+
+def run_document_acceptance(
+    root: Path,
+    spec: DocumentWorkloadSpec,
+    *,
+    local_files_only: bool,
+    interrupt_after_units: int = 1,
+) -> DocumentAcceptanceReport:
+    """Run real extraction, CUDA embedding, Qdrant writes, interruption, and resume."""
+    from ... import EmbeddingModel, VaultStore, store_schema
+    from ...config import get_config
+    from ...indexer import DocumentIndexer
+    from ...indexer._content_policy import ContentKind
+    from ...indexer._run_ledger import RunLedger, index_run_ledger_path
+    from ...progress import NullProgressReporter
+
+    resolved = root.resolve()
+    prepared = prepare_document_workload(resolved, spec)
+    measurement = measure_document_workload(resolved)
+    _validate_measurement(resolved, measurement)
+    cfg = get_config()
+    model = EmbeddingModel(local_files_only=local_files_only)
+    store = VaultStore(resolved)
+    try:
+        interrupted = DocumentIndexer(
+            resolved,
+            model,
+            store,
+            content_policy=_policy(),
+        )
+        generation_id, confirmed_before = _run_interrupted_index(
+            interrupted,
+            resolved,
+            interrupt_after_units=interrupt_after_units,
+        )
+        resumed = DocumentIndexer(
+            resolved,
+            model,
+            store,
+            content_policy=_policy(),
+        )
+        with _RuntimeSampler() as sampler:
+            result: IndexResult = resumed.full_index(
+                reporter=NullProgressReporter(),
+                preflight=resumed.preflight_content(),
+            )
+        ledger = RunLedger(index_run_ledger_path(resolved / cfg.data_dir))
+        published = ledger.latest_generation(
+            ContentKind.DOCUMENT,
+            collection_identity=store_schema.DOCUMENT_COLLECTION,
+        )
+        if published is None or published.generation_id != generation_id:
+            raise RuntimeError(
+                "document resume did not continue its interrupted generation"
+            )
+        confirmed_after = len(tuple(ledger.iter_units(generation_id)))
+        if confirmed_after <= confirmed_before:
+            raise RuntimeError("document resume made no durable forward progress")
+        if result.files != spec.source_files or store.count_document() != result.total:
+            raise RuntimeError("document result, workload, and collection diverged")
+        final_measurement = {
+            **asdict(measurement),
+            "rss_bytes": max(measurement.rss_bytes, sampler.rss_bytes),
+            "cuda_bytes": max(measurement.cuda_bytes, sampler.cuda_bytes),
+        }
+        return DocumentAcceptanceReport(
+            schema_version=_SCHEMA_VERSION,
+            root=str(resolved),
+            profile=str(cfg.index_support_profile),
+            backend="server" if cfg.qdrant_url else "local",
+            prepared=asdict(prepared),
+            measurement=final_measurement,
+            result=cast("dict[str, object]", asdict(result)),
+            interrupted_generation=generation_id,
+            confirmed_before_resume=confirmed_before,
+            confirmed_after_resume=confirmed_after,
+        )
+    finally:
+        store.close()
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
@@ -324,6 +515,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--units", type=int, default=3)
     parser.add_argument("--words", type=int, default=160)
     parser.add_argument("--prepare-only", action="store_true")
+    parser.add_argument("--accept", action="store_true")
+    parser.add_argument("--local-files-only", action="store_true")
+    parser.add_argument("--interrupt-after-units", type=int, default=1)
     parser.add_argument("--json", type=Path, default=None)
     return parser
 
@@ -344,7 +538,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         "spec": asdict(spec),
         "prepared": asdict(prepared),
     }
-    if not args.prepare_only:
+    if args.accept:
+        payload = asdict(
+            run_document_acceptance(
+                args.root,
+                spec,
+                local_files_only=args.local_files_only,
+                interrupt_after_units=args.interrupt_after_units,
+            )
+        )
+    elif not args.prepare_only:
         payload["measurement"] = asdict(measure_document_workload(args.root))
     if args.json is not None:
         _write_json(args.json, payload)
