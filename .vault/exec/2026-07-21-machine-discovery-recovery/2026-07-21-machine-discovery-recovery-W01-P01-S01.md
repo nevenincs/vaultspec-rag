@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#machine-discovery-recovery'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-22'
 step_id: 'S01'
 related:
   - "[[2026-07-21-machine-discovery-recovery-plan]]"

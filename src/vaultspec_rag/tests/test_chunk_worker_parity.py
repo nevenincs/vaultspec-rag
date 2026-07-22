@@ -33,6 +33,7 @@ from rich.console import Console
 from .. import CodebaseIndexer
 from ..config import EnvVar, reset_config
 from ..indexer import _chunk_worker
+from ..indexer._content_policy import ContentKind
 from ..indexer._preprocess_cache import preprocess_cache_dir
 from ..indexer._preprocess_config import (
     PreprocessConfig,
@@ -242,6 +243,8 @@ def _blocking_preprocess_context(
         command=command,
         entry_point=None,
         priority=100,
+        target=ContentKind.DOCUMENT,
+        extractor_version="1.0",
         on_error="fail",
         timeout_s=30.0,
         options={},
@@ -328,6 +331,8 @@ class TestSingleFileScheduler:
             command=command,
             entry_point=None,
             priority=100,
+            target=ContentKind.DOCUMENT,
+            extractor_version="1.0",
             on_error="fail",
             timeout_s=30.0,
             options={},

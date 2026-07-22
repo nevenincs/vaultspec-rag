@@ -162,34 +162,42 @@ def _idempotency_binding_to_dict(
     }
 
 
+def _replace_once(source: Path, destination: Path) -> None:
+    """Perform one durable replace attempt on this platform."""
+    if os.name == "nt":
+        _replace_windows_write_through(source, destination)
+        return
+    os.replace(source, destination)
+    try:
+        _fsync_directory(destination.parent)
+    except OSError as exc:
+        raise PersistenceWriteError(str(exc), published=True) from exc
+
+
+def _replace_is_retryable(exc: OSError) -> bool:
+    """Whether a failed replace is a transient sharing violation."""
+    return isinstance(exc, PermissionError) or (
+        os.name == "nt" and getattr(exc, "winerror", None) in {5, 32}
+    )
+
+
 def _atomic_replace(source: Path, destination: Path) -> None:
     """Durably replace one state file with bounded sharing retries."""
     for attempt in range(_ATOMIC_REPLACE_ATTEMPTS):
         try:
-            if os.name == "nt":
-                _replace_windows_write_through(source, destination)
-            else:
-                os.replace(source, destination)
-                try:
-                    _fsync_directory(destination.parent)
-                except OSError as exc:
-                    raise PersistenceWriteError(
-                        str(exc),
-                        published=True,
-                    ) from exc
-            return
+            _replace_once(source, destination)
         except PersistenceWriteError:
             raise
         except OSError as exc:
-            retryable = isinstance(exc, PermissionError) or (
-                os.name == "nt" and getattr(exc, "winerror", None) in {5, 32}
-            )
+            retryable = _replace_is_retryable(exc)
             if retryable and attempt + 1 < _ATOMIC_REPLACE_ATTEMPTS:
                 time.sleep(_ATOMIC_REPLACE_RETRY_SECONDS * (attempt + 1))
                 continue
             if retryable or os.name != "nt":
                 raise
             raise PersistenceWriteError(str(exc), published=True) from exc
+        else:
+            return
 
 
 def _replace_windows_write_through(source: Path, destination: Path) -> None:

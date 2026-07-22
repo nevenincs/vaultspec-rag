@@ -27,6 +27,7 @@ import pytest
 from .. import CodebaseIndexer
 from ..config import EnvVar, reset_config
 from ..indexer import _chunk_worker
+from ..indexer._content_policy import ContentKind
 from ..indexer._preprocess_cache import preprocess_cache_dir
 from ..indexer._preprocess_config import (
     PREPROCESS_CONFIG_FILENAME,
@@ -283,6 +284,8 @@ def _batch_rule(
         command=" ".join(parts),
         entry_point=None,
         priority=100,
+        target=ContentKind.DOCUMENT,
+        extractor_version="1.0",
         on_error=on_error,
         timeout_s=timeout_s,
         options={},
@@ -471,6 +474,8 @@ def _counting_context(tmp_path: Path) -> tuple[PreprocessContext, Path]:
         command=command,
         entry_point=None,
         priority=100,
+        target=ContentKind.DOCUMENT,
+        extractor_version="1.0",
         on_error="skip",
         timeout_s=30.0,
         options={},
@@ -614,6 +619,8 @@ def _counting_rule(command: str, pattern: str) -> PreprocessRule:
         command=command,
         entry_point=None,
         priority=100,
+        target=ContentKind.DOCUMENT,
+        extractor_version="1.0",
         on_error="skip",
         timeout_s=30.0,
         options={},
@@ -679,6 +686,8 @@ def test_indexer_pool_propagates_batch_on_error_fail(tmp_path: Path) -> None:
             command=command,
             entry_point=None,
             priority=100,
+            target=ContentKind.DOCUMENT,
+            extractor_version="1.0",
             on_error="fail",
             timeout_s=30.0,
             options={},
