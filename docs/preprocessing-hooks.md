@@ -109,8 +109,10 @@ uv run vaultspec-rag preprocess run-one a.pdf   # trial the matching rule agains
   defect. Invalid or legacy targetless configuration is rejected before indexing can
   mutate a collection, sidecar, ledger, or cache.
 - `preprocess run-one <path>` runs the matching rule against one file and prints the
-  validated output, with no indexing side effect. Configuration and extractor failures
-  are structured errors and produce a non-zero exit.
+  validated output, with no indexing side effect. Routing and migration defects, plus an
+  extractor abort under `on_error = "fail"`, are structured errors with a non-zero exit.
+  Other malformed rules use the non-strict loader and may appear as no match; run
+  `preprocess check` first when validating configuration.
 
 All three accept `--json` for scripting. `preprocess status` adds the effective execution
 mode, schema version, targets, extractor versions, rule count, and whether the kill switch
@@ -125,7 +127,7 @@ it with `vaultspec_rag.indexer._preprocess_schema.load_preprocess_invocation()`.
 ```json
 {
   "schema_version": 1,
-  "source_paths": ["/absolute/project/docs/report.pdf"],
+  "source_paths": ["docs/report.pdf"],
   "options": {"layout": "pages"},
   "extractor_version": "1.0.0",
   "target": "document",
