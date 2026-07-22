@@ -104,8 +104,22 @@ class _OOMSparseModel:
     def __init__(self) -> None:
         self.batch_sizes: list[int] = []
 
-    def encode_document(self, texts: list[str], *, batch_size: int) -> Any:
-        del texts
+    def encode_document(
+        self,
+        texts: list[str],
+        *,
+        batch_size: int,
+        show_progress_bar: bool = False,
+        convert_to_tensor: bool = True,
+        convert_to_sparse_tensor: bool = False,
+        save_to_cpu: bool = False,
+    ) -> Any:
+        # Mirrors the production call site's keyword set; the sparse
+        # encode path passes these explicitly, so a double that accepts
+        # only batch_size fails on the call rather than on the OOM the
+        # test is actually about.
+        del texts, show_progress_bar, convert_to_tensor
+        del convert_to_sparse_tensor, save_to_cpu
         import torch
 
         self.batch_sizes.append(batch_size)
