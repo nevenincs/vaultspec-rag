@@ -50,6 +50,19 @@ issue. The implementation now returns post-dispatch revisions, validates code
 policy before admission, and rejects malformed reindex type values. Focused
 correction coverage and the final Ruff and Ty checks pass.
 
+A later performance review found another high-severity issue: synchronous
+whole-registry writes, atomic replacement, and fsync ran directly in the async
+mutation handlers. The correction awaits create, desired-state, retry, delete,
+and compatibility-adapter durability through the existing worker boundary.
+Dispatch remains loop-owned but cannot begin execution until its runtime claim
+has been durably written.
+
+The real-ASGI responsiveness regression retains a 32 MiB terminal resource in
+the production registry and proves create, desired-state, retry, and delete each
+overlap an independent authentication rejection. The focused four-route
+matrix and responsiveness regression pass without loading a model or using a
+test double.
+
 ## Notes
 
 No fake, mock, stub, patch, monkeypatch, skipped test, or expected-failure path

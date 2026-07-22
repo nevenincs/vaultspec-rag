@@ -18,6 +18,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
+from anyio.to_thread import run_sync as _run_in_thread
+
 from ._job_errors import classify_error_text
 from .job_manager import (
     MAX_RECORDS,
@@ -755,29 +757,15 @@ def _bind_index_dispatch(
     )
 
 
-def activate_index_job(
-    outcome: JobOutcome,
-    *,
-    registry: ServiceRegistry | None = None,
+def _prepare_index_job_activation(
+    manager: JobManager,
+    snapshot: JobSnapshot,
+    registry: ServiceRegistry | None,
 ) -> JobOutcome:
-    """Bind and dispatch one newly admitted canonical indexing job.
-
-    Replayed or deduplicated creation outcomes already refer to an activated
-    resource and are returned unchanged. Newly created paused jobs are bound
-    but remain inert until their desired state changes to ``running``.
-    """
-    snapshot = outcome.job
-    if (
-        outcome.status is JobOutcomeStatus.ERROR
-        or snapshot is None
-        or outcome.code not in {"job_created", "job_retry_created"}
-    ):
-        return outcome
-
+    """Publish legacy observability and bind execution outside the event loop."""
     root = Path(snapshot.spec.project_root) if snapshot.spec.project_root else None
     if snapshot.spec.source is JobSource.CODE and root is not None:
         validate_code_index_policy(root)
-    manager = get_job_manager()
     source = "vault" if snapshot.spec.source is JobSource.VAULT else "code"
     trigger: Trigger = (
         cast("Trigger", snapshot.initiator.kind)
@@ -793,22 +781,67 @@ def activate_index_job(
         _record_id=snapshot.id,
     )
     record_progress(snapshot.id, snapshot.state.value)
+    return _bind_index_dispatch(manager, snapshot.id, registry=registry)
 
-    bound = _bind_index_dispatch(manager, snapshot.id, registry=registry)
+
+def _fail_index_job_activation(
+    manager: JobManager,
+    job_id: str,
+    message: str,
+) -> None:
+    """Durably fail an unstarted job and finish its legacy record off-loop."""
+    manager.fail_unstarted(job_id, result=message)
+    record_finish(job_id, error=message)
+
+
+async def activate_index_job(
+    outcome: JobOutcome,
+    *,
+    registry: ServiceRegistry | None = None,
+) -> JobOutcome:
+    """Bind and dispatch one newly admitted job without blocking its event loop.
+
+    Replayed or deduplicated creation outcomes already refer to an activated
+    resource and are returned unchanged. Newly created paused jobs are bound
+    but remain inert until their desired state changes to ``running``.
+    """
+    snapshot = outcome.job
+    if (
+        outcome.status is JobOutcomeStatus.ERROR
+        or snapshot is None
+        or outcome.code not in {"job_created", "job_retry_created"}
+    ):
+        return outcome
+
+    manager = get_job_manager()
+    bound = await _run_in_thread(
+        _prepare_index_job_activation,
+        manager,
+        snapshot,
+        registry,
+    )
     if bound.status is JobOutcomeStatus.ERROR:
-        manager.fail_unstarted(snapshot.id, result=bound.message)
-        record_finish(snapshot.id, error=bound.message)
+        await _run_in_thread(
+            _fail_index_job_activation,
+            manager,
+            snapshot.id,
+            bound.message,
+        )
         return bound
     if snapshot.desired_state is DesiredJobState.PAUSED:
         return outcome
 
-    dispatched = manager.dispatch(snapshot.id)
+    dispatched = await manager.dispatch_async(snapshot.id)
     if dispatched.status is not JobOutcomeStatus.ERROR:
         return replace(outcome, job=dispatched.job)
     if dispatched.code == "dispatch_stopped":
         return outcome
-    manager.fail_unstarted(snapshot.id, result=dispatched.message)
-    record_finish(snapshot.id, error=dispatched.message)
+    await _run_in_thread(
+        _fail_index_job_activation,
+        manager,
+        snapshot.id,
+        dispatched.message,
+    )
     return dispatched
 
 

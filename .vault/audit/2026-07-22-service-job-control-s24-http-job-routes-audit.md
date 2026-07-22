@@ -20,6 +20,20 @@ coverage.
 
 ## Findings
 
+### s24-http-job-routes | high | durable mutations blocked the ASGI event loop
+
+Resolved. Create, desired-state, retry, delete, and `/reindex` now await real
+registry persistence through the existing AnyIO worker boundary. Asynchronous
+dispatch creates its task on the owning event loop but holds execution behind a
+gate until runtime ownership is durably published, preserving
+durable-before-dispatch ordering. Activation bookkeeping and unstarted failure
+publication also run off-loop.
+
+A real-ASGI regression keeps a 32 MiB terminal result in the production durable
+registry, exercises all four canonical mutation methods, and proves each write
+overlaps an independent `401` response. It imports the production manager,
+routes, persistence, and ASGI application without test doubles.
+
 ### s24-http-job-routes | high | create and retry returned stale snapshots
 
 Resolved. Successful dispatch now replaces the pre-dispatch job in the
@@ -40,5 +54,6 @@ values outside the accepted vocabulary.
 
 ## Recommendations
 
-Accept S24 after the required corrections. Continue health rollups under S25
-and the comprehensive authenticated route matrix under S26.
+Accept S24 after the required corrections and the event-loop responsiveness
+follow-up. Continue health rollups under S25 and the comprehensive authenticated
+route matrix under S26.

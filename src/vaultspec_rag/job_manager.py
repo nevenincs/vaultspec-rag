@@ -464,6 +464,101 @@ class JobManager:
         self._notify_started(binding, started_snapshot)
         return started
 
+    async def dispatch_async(self, job_id: str) -> JobOutcome:
+        """Dispatch without running durable registry writes on the event loop.
+
+        The attempt task is created on its owning loop, but waits behind a gate
+        until :meth:`start_attempt` has synchronously persisted runtime ownership
+        in a worker thread.  This retains durable-before-execution ordering while
+        keeping whole-registry serialization, replacement, and fsync off ASGI.
+        """
+        command = "dispatch"
+        loop = asyncio.get_running_loop()
+        start_gate = asyncio.Event()
+
+        with self._lock:
+            managed = self._active.get(job_id)
+            if managed is None:
+                return self._error(command, "job_not_found", "The job was not found.")
+            if not self._accepting_dispatch:
+                return self._error(
+                    command,
+                    "dispatch_stopped",
+                    "Managed dispatch is stopped for service shutdown.",
+                    managed,
+                )
+            binding = self._dispatchers.get(job_id)
+            if binding is None:
+                return self._error(
+                    command,
+                    "dispatch_not_bound",
+                    "The job has no execution binding.",
+                    managed,
+                )
+            if managed.runtime.task is not None:
+                return self._error(
+                    command,
+                    "runtime_already_owned",
+                    "The current attempt already has a runtime owner.",
+                    managed,
+                )
+            if (
+                managed.snapshot.state is not JobState.QUEUED
+                or managed.snapshot.desired_state is not DesiredJobState.RUNNING
+            ):
+                return self._error(
+                    command,
+                    "invalid_transition",
+                    "Only queued work with running desired state can dispatch.",
+                    managed,
+                )
+
+            if binding.loop is not loop:
+                binding = replace(binding, loop=loop)
+                self._dispatchers[job_id] = binding
+            attempt = managed.snapshot.attempt.number
+            control = RunControlToken()
+            task = loop.create_task(
+                self._run_attempt_after_start(
+                    start_gate,
+                    job_id=job_id,
+                    attempt=attempt,
+                    control=control,
+                    binding=binding,
+                ),
+                name=f"vaultspec-job-{job_id}-attempt-{attempt}",
+            )
+            self._retiring_tasks.add(task)
+            task.add_done_callback(
+                partial(
+                    self._complete_attempt,
+                    job_id,
+                    attempt,
+                    binding=binding,
+                )
+            )
+
+        try:
+            started = await _run_in_thread(
+                partial(self.start_attempt, job_id, task=task, control=control)
+            )
+        except BaseException:
+            task.cancel()
+            raise
+
+        with self._lock:
+            latest = self._active.get(job_id)
+            owns_runtime = latest is not None and latest.runtime.task is task
+            if not owns_runtime:
+                task.cancel()
+                return started
+            assert latest is not None
+            started_snapshot = self._snapshot_locked(latest)
+
+        start_gate.set()
+        self._notify_started(binding, started_snapshot)
+        return started
+
     async def wait_for_attempt(
         self,
         job_id: str,
@@ -643,6 +738,24 @@ class JobManager:
             error=error,
             duration_seconds=time.perf_counter() - started,
             release_persisted=release_persisted,
+        )
+
+    async def _run_attempt_after_start(
+        self,
+        start_gate: asyncio.Event,
+        *,
+        job_id: str,
+        attempt: int,
+        control: RunControlToken,
+        binding: _JobDispatchBinding,
+    ) -> _AttemptExit:
+        """Hold execution until its runtime ownership is durably published."""
+        await start_gate.wait()
+        return await self._run_attempt(
+            job_id=job_id,
+            attempt=attempt,
+            control=control,
+            binding=binding,
         )
 
     def _run_worker_attempt(
@@ -1405,6 +1518,7 @@ class JobManager:
         *,
         expected_revision: int | None = None,
         mode: Literal["graceful", "force"] = "graceful",
+        _schedule_dispatch_after_transition: bool = True,
     ) -> JobOutcome:
         """Set operator intent for one exact job and request cooperative control.
 
@@ -1532,8 +1646,46 @@ class JobManager:
                 and managed.snapshot.desired_state is DesiredJobState.RUNNING
                 and job_id in self._dispatchers
             )
-        if dispatch_after_transition:
+        if _schedule_dispatch_after_transition and dispatch_after_transition:
             self._schedule_dispatch(job_id)
+        return outcome
+
+    async def set_desired_state_async(
+        self,
+        job_id: str,
+        desired_state: DesiredJobState,
+        *,
+        expected_revision: int | None = None,
+        mode: Literal["graceful", "force"] = "graceful",
+    ) -> JobOutcome:
+        """Persist desired state off-loop, then dispatch through the owning loop."""
+        outcome = await _run_in_thread(
+            partial(
+                self.set_desired_state,
+                job_id,
+                desired_state,
+                expected_revision=expected_revision,
+                mode=mode,
+                _schedule_dispatch_after_transition=False,
+            )
+        )
+        snapshot = outcome.job
+        if (
+            outcome.status is not JobOutcomeStatus.ERROR
+            and snapshot is not None
+            and snapshot.state is JobState.QUEUED
+            and snapshot.desired_state is DesiredJobState.RUNNING
+        ):
+            with self._lock:
+                dispatch_bound = job_id in self._dispatchers
+            if dispatch_bound:
+                dispatched = await self.dispatch_async(job_id)
+                if dispatched.status is JobOutcomeStatus.ERROR:
+                    logger.error(
+                        "could not dispatch resumed job %s: %s",
+                        job_id,
+                        dispatched.message,
+                    )
         return outcome
 
     def _schedule_dispatch(self, job_id: str) -> None:
