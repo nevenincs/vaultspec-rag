@@ -20,7 +20,6 @@ from concurrent.futures import (
     FIRST_COMPLETED,
     Future,
     ProcessPoolExecutor,
-    as_completed,
     wait,
 )
 from concurrent.futures.process import BrokenProcessPool
@@ -39,6 +38,7 @@ from ._code_meta import (
     EMBED_SCHEMA_KEY,
     MEMBERSHIP_EPOCH_KEY,
 )
+from ._preprocess_runner import PreprocessAbortError
 from ._streaming import (
     _stream_encode_and_upsert_codebase,
     encode_and_upsert_code_slice,
@@ -81,12 +81,17 @@ _CHUNKS_PER_FILE_ESTIMATE = 12
 # amortised across the group instead of paid per file.
 BATCH_SIZE = 64
 
+# Keep one queued single-file task behind each active worker. This absorbs the
+# coordinator's result/accounting latency without retaining one Future (and
+# potentially one completed chunk result) per source path on large trees.
+_CHUNK_FUTURE_WINDOW_PER_WORKER = 2
+
 
 class _ScanInputs(NamedTuple):
     """Ignore specs and preprocess config resolved in one pass.
 
     The compiled specs (for the scan) and the raw pattern lists (for the
-    config epoch) come from a single ``.gitignore`` rglob, so the scoped
+    config epoch) come from a single pruned ``.gitignore`` walk, so the scoped
     watcher path computes the epoch and scans without a second tree walk.
     ``vaultragignore_patterns`` are the file-only patterns; CLI ``--exclude``
     entries live in ``rag_spec`` but are kept out of the epoch inputs.
@@ -168,7 +173,7 @@ class CodebaseIndexer:
         """Collect the hardcoded and ``.gitignore``-sourced exclusion patterns.
 
         Delegates to :func:`_ignore_specs.collect_gitignore_patterns`; kept as
-        a method so callers (and tests) can monkeypatch the single tree walk.
+        a method so callers can instrument the single tree walk.
         """
         return _ignore_specs.collect_gitignore_patterns(self.root_dir)
 
@@ -195,7 +200,8 @@ class CodebaseIndexer:
 
         The compiled specs drive the scan; the raw pattern lists and the
         preprocess config drive the membership/content epochs. Sharing one
-        ``.gitignore`` rglob keeps the scoped path free of a second traversal.
+        pruned ``.gitignore`` walk keeps the scoped path free of a second
+        traversal.
         """
         import pathspec
 
@@ -556,7 +562,7 @@ class CodebaseIndexer:
         Each group is one :func:`_chunk_worker.chunk_batch_files` task: a single
         hook spawn over the group's manifest, then per-file chunking. ``handle_group``
         is invoked with each completed group's results as they arrive, so a
-        streaming caller never has to hold every group's chunks at once. Falls
+        streaming caller retains at most one worker window of results. Falls
         back to the serial in-process path when a single worker is resolved or
         the pool cannot start before any progress has been reported. The reporter
         is advanced once per file in each completed group.
@@ -574,31 +580,38 @@ class CodebaseIndexer:
         ctx = multiprocessing.get_context("spawn")
         try:
             with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
-                futures = {
-                    pool.submit(
+                group_iter = iter(batch_groups)
+                futures: dict[Future[list[FileChunkResult]], int] = {}
+
+                def _submit_one() -> bool:
+                    try:
+                        rule, group = next(group_iter)
+                    except StopIteration:
+                        return False
+                    future = pool.submit(
                         _chunk_worker.chunk_batch_files,
                         group,
                         self.root_dir,
                         rule,
                         prep,
-                    ): len(group)
-                    for rule, group in batch_groups
-                }
-                for future in as_completed(futures):
-                    group_len = futures[future]
-                    try:
-                        handle_group(future.result())
-                    except BrokenProcessPool:
-                        raise
-                    except Exception:
-                        logger.warning(
-                            "Batch worker failed for a group of %d files",
-                            group_len,
-                            exc_info=True,
+                    )
+                    futures[future] = len(group)
+                    return True
+
+                for _ in range(min(len(batch_groups), workers)):
+                    _submit_one()
+
+                while futures:
+                    done, _pending = wait(set(futures), return_when=FIRST_COMPLETED)
+                    while done:
+                        completed += self._process_batch_future(
+                            done.pop(), futures, reporter, handle_group
                         )
-                    for _ in range(group_len):
-                        reporter.advance()
-                    completed += group_len
+                        # Refill each released slot immediately. ``futures``
+                        # remains capped at ``workers`` while CPU preprocessing
+                        # overlaps sequential publication of the other
+                        # completed groups.
+                        _submit_one()
         except BrokenProcessPool:
             if completed:
                 logger.error(
@@ -610,6 +623,37 @@ class CodebaseIndexer:
                 "Batch process pool could not start; running batch groups serially"
             )
             self._run_batch_groups_serial(batch_groups, reporter, handle_group)
+
+    def _process_batch_future(
+        self,
+        future: Future[list[FileChunkResult]],
+        futures: dict[Future[list[FileChunkResult]], int],
+        reporter: ProgressReporter,
+        handle_group: Callable[[list[FileChunkResult]], None],
+    ) -> int:
+        """Publish one completed worker group, propagating fatal failures."""
+        group_len = futures.pop(future)
+        try:
+            results = future.result()
+        except BrokenProcessPool:
+            raise
+        except PreprocessAbortError:
+            raise
+        except Exception:
+            logger.error(
+                "Batch worker failed for a group of %d files",
+                group_len,
+                exc_info=True,
+            )
+            raise
+
+        # Publication errors are not worker failures. Let them abort the run
+        # so metadata/stale cleanup cannot publish a generation whose vectors
+        # were never stored.
+        handle_group(results)
+        for _ in range(group_len):
+            reporter.advance()
+        return group_len
 
     def _run_batch_groups_serial(
         self,
@@ -626,17 +670,7 @@ class CodebaseIndexer:
         if prep is None:
             return
         for rule, group in batch_groups:
-            try:
-                results = _chunk_worker.chunk_batch_files(
-                    group, self.root_dir, rule, prep
-                )
-            except Exception:
-                logger.warning(
-                    "Failed to run batch group of %d files",
-                    len(group),
-                    exc_info=True,
-                )
-                results = []
+            results = _chunk_worker.chunk_batch_files(group, self.root_dir, rule, prep)
             handle_group(results)
             for _ in range(len(group)):
                 reporter.advance()
@@ -690,7 +724,9 @@ class CodebaseIndexer:
         pool uses the ``spawn`` start method so no parent CUDA context is
         inherited (#155 ADR, rule ``index-workers-stay-cpu-only``). Falls back
         to the serial in-process path when a single worker is resolved, or when
-        the pool cannot start before any progress has been reported.
+        the pool cannot start before any progress has been reported. The submit
+        window retains at most two futures per worker and refills each released
+        slot immediately, bounding scheduler memory without starving workers.
         """
         all_chunks: list[CodeChunk] = []
         if not paths:
@@ -705,6 +741,11 @@ class CodebaseIndexer:
         prep = getattr(self, "_prep_ctx", None)
         try:
             with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+                paths_iter = iter(paths)
+                window = min(
+                    len(paths),
+                    _CHUNK_FUTURE_WINDOW_PER_WORKER * workers,
+                )
                 futures = {
                     pool.submit(
                         _chunk_worker.chunk_file_with_status,
@@ -712,25 +753,33 @@ class CodebaseIndexer:
                         self.root_dir,
                         prep,
                     ): p
-                    for p in paths
+                    for p in itertools.islice(paths_iter, window)
                 }
-                for future in as_completed(futures):
-                    try:
-                        res = future.result()
-                        all_chunks.extend(res.chunks)
-                        self._record_scoped_preprocess(futures[future], res)
-                    except BrokenProcessPool:
-                        # Pool-level fatal - propagate rather than mis-record
-                        # it as a single-file failure.
-                        raise
-                    except Exception:
-                        logger.warning(
-                            "Worker failed to chunk %s",
-                            futures[future],
-                            exc_info=True,
+                while futures:
+                    done, _pending = wait(futures, return_when=FIRST_COMPLETED)
+                    while done:
+                        future = done.pop()
+                        path = futures.pop(future)
+                        self._process_single_future(
+                            future,
+                            path,
+                            all_chunks,
+                            reporter,
                         )
-                    completed += 1
-                    reporter.advance()
+                        completed += 1
+
+                        # Refill after publication/accounting so completed
+                        # results cannot accumulate behind coordinator work.
+                        nxt = next(paths_iter, None)
+                        if nxt is not None:
+                            futures[
+                                pool.submit(
+                                    _chunk_worker.chunk_file_with_status,
+                                    nxt,
+                                    self.root_dir,
+                                    prep,
+                                )
+                            ] = nxt
         except BrokenProcessPool:
             if completed:
                 # Progress already reported for some files; re-chunking would
@@ -744,6 +793,32 @@ class CodebaseIndexer:
             logger.warning("Chunk process pool could not start; chunking serially")
             return self._chunk_singles_serial(paths, reporter)
         return all_chunks
+
+    def _process_single_future(
+        self,
+        future: Future[_chunk_worker.ScopedChunkResult],
+        path: pathlib.Path,
+        all_chunks: list[CodeChunk],
+        reporter: ProgressReporter,
+    ) -> None:
+        """Publish one completed single-file result and advance accounting."""
+        try:
+            res = future.result()
+        except BrokenProcessPool:
+            # Pool-level fatal - propagate rather than mis-record it as a
+            # recoverable single-file failure.
+            raise
+        except PreprocessAbortError:
+            raise
+        except Exception:
+            logger.warning("Worker failed to chunk %s", path, exc_info=True)
+        else:
+            # Only worker execution belongs to the per-file recovery boundary.
+            # Coordinator publication failures abort the run so metadata cannot
+            # describe chunks that were never retained.
+            self._record_scoped_preprocess(path, res)
+            all_chunks.extend(res.chunks)
+        reporter.advance()
 
     def _chunk_paths_serial(
         self,
@@ -785,10 +860,13 @@ class CodebaseIndexer:
         for p in paths:
             try:
                 res = _chunk_worker.chunk_file_with_status(p, self.root_dir, prep)
-                all_chunks.extend(res.chunks)
-                self._record_scoped_preprocess(p, res)
+            except PreprocessAbortError:
+                raise
             except Exception:
                 logger.warning("Failed to chunk %s", p, exc_info=True)
+            else:
+                self._record_scoped_preprocess(p, res)
+                all_chunks.extend(res.chunks)
             reporter.advance()
         return all_chunks
 
@@ -834,12 +912,18 @@ class CodebaseIndexer:
                 res = _chunk_worker.chunk_and_hash_file(
                     p, self.root_dir, self._prep_ctx
                 )
+            except PreprocessAbortError:
+                raise
+            except Exception:
+                logger.warning("Failed to chunk %s", p, exc_info=True)
+            else:
                 if res is not None:
+                    # Coordinator state publication is outside the worker-read
+                    # recovery boundary. Accounting or memory failures must
+                    # abort rather than publish a partial generation.
                     meta[res.rel_path] = res.content_hash
                     acc.extend(res.chunks)
                     self._record_preprocess_result(res)
-            except Exception:
-                logger.warning("Failed to chunk %s", p, exc_info=True)
             advanced += 1
             reporter.advance()
             _encode_accumulated(force=False)
@@ -861,8 +945,8 @@ class CodebaseIndexer:
         Runs the batch groups (one hook spawn per group) and, as each group
         completes, records each file's content hash and preprocess disposition
         and embeds that group's chunks through the same encode/upsert slice path
-        the singles pipeline uses. Embedding per group bounds peak memory to a
-        single group's chunks rather than every group's at once.
+        the singles pipeline uses. The scheduler bounds retained preprocessing
+        output to one worker window rather than every group in the corpus.
 
         Returns:
             The number of chunks embedded, for the run's total tally.
@@ -975,6 +1059,8 @@ class CodebaseIndexer:
         try:
             res: FileChunkResult | None = fut.result()
         except BrokenProcessPool:
+            raise
+        except PreprocessAbortError:
             raise
         except Exception:
             logger.warning("Worker failed to chunk a file", exc_info=True)
