@@ -99,3 +99,36 @@ lease-authenticated machine-pointer operation independently. Add non-tautologica
 tests using real isolated filesystem permissions/lock contention and a real
 supervised child process to prove cleanup retry, quiescence, failure retention,
 and exact release-last behavior without mocks, patches, skips, or xfails.
+
+## Post-implementation re-review
+
+Re-reviewed the bounded non-destructive reconcile introduced in commits
+`dd523c7f` and `bf77de39` against machine-discovery ADR D5. The implementation
+re-resolves typed discovery without mutating either discovery view and returns
+bounded unresolved evidence, but its success predicate is weaker than the
+approved convergence contract.
+
+### discovery-reconcile-identity | high | Reconcile can succeed without a singleton owner or complete identity
+
+`reconcile_discovery` treats any `running` verdict as converged when
+`_identity_confirmed` does not find a contradiction. A legacy status-file
+resolution can be `running` while no process holds the machine singleton, and
+the predicate accepts a missing pointer PID, missing health PID, and missing
+pointer token because it compares those fields only when both sides supplied a
+value. It never requires the machine-pointer source or an equal positive holder
+and pointer PID. The command can therefore report `already_converged` for a
+reachable legacy address with no singleton owner, or for an incomplete pointer
+whose identity claims are absent, even though ADR D5 requires holder, pointer,
+freshness, address, token, and health to agree. The real lifecycle test proves
+owner heartbeat repair of deleted, stale, and foreign pointers, but does not
+exercise the no-holder fallback or missing-identity cases.
+
+## Post-implementation recommendation
+
+Require a fresh machine-pointer resolution with a positive equal holder and
+pointer PID, a non-empty pointer token, matching health PID and token, the same
+address, and a healthy response before returning either converged outcome.
+Retain the current final evidence on timeout and add isolated real-process tests
+for a live legacy status record without a singleton owner and for incomplete
+identity fields. Do not close the final machine-discovery gate from the current
+happy-path lifecycle evidence.
