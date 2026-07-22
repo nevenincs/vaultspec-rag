@@ -39,7 +39,7 @@ wheel-recorded package-local runtime DLLs were missing.
   neither file nor the containing `.libs` directory exists.
 - `uv pip check` and `uv lock --check` both pass, so dependency metadata did not expose
   the missing wheel payload.
-- No S59 intent-ranking worker remained after the error. The pre-existing AEAT service
+- No S59 intent-ranking worker remained after the error. The pre-existing client service
   was not modified or credited.
 - The incomplete Windows segment and every later runtime, static, package, provider,
   and host-recognition gate receive no credit or waiver.

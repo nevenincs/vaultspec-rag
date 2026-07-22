@@ -46,14 +46,14 @@ Rewrite the test surface for direct execution semantics, update operator docs to
 - [x] `P03.S18` - Update operator docs to the trust-based framing that preprocess config is code execution with operator privileges, removing sandbox/unsandboxed knob references; `docs/preprocessing-hooks.md`.
 - [x] `P03.S19` - Sweep remaining sandbox mentions from README, cli, and configuration docs; `docs/`.
 - [x] `P03.S20` - Run the full unit suite, lints (ruff, ty, basedpyright), and an end-to-end preprocess index benchmark on a rule-matched corpus to confirm the per-file cost returns to the process-spawn baseline; `src/vaultspec_rag/`.
-- [x] `P03.S21` - Amend the hook child cwd from a scratch dir to the project root so project-launcher commands (uv run) resolve, per the aeat validation failure; `src/vaultspec_rag/indexer/_preprocess_runner.py`.
+- [x] `P03.S21` - Amend the hook child cwd from a scratch dir to the project root so project-launcher commands (uv run) resolve, per the client validation failure; `src/vaultspec_rag/indexer/_preprocess_runner.py`.
 
 ## Description
 
 Remove the OS-level preprocess hook sandbox per the accepted removal ADR (D1-D10 in the
 related frontmatter chain). The AppContainer/bwrap/seatbelt containment layer costs
 ~5-8s per matched file against a ~50ms baseline (measured: 640 chunks in 80 minutes on
-the aeat corpus); the owner mandate keeps preprocessing on by default and removes the
+the production corpus); the owner mandate keeps preprocessing on by default and removes the
 containment. The hook remains a bounded subprocess grandchild (CPU/CUDA-correctness
 boundary per the preprocess-hooks ADR D6/D9 and the index-workers-stay-cpu-only rule)
 with the curated env, timeout, output caps, schema validation, and content-hash cache
@@ -79,7 +79,7 @@ parallelize with the tests, and S20 (full verification) is strictly final.
 - Lints and type checks pass: ruff, ty, basedpyright.
 - A rule-matched corpus indexes with per-file hook cost at process-spawn baseline
   (no icacls children, no AppContainer launches in Process Monitor terms); the 80-minute
-  aeat pathology is not reproducible.
+  client-specific pathology is not reproducible.
 - The fresh-interpreter regression guard still shows `torch` absent from
   `sys.modules` after importing the chunk worker (index-workers-stay-cpu-only holds).
 - `vaultspec-rag preprocess status` reports the two-state mode; `--preprocess-unsandboxed`

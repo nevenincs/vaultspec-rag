@@ -15,7 +15,7 @@ related:
 Users of `vaultspec-rag search --type code` in polyglot codebases
 need to **exclude** path patterns (e.g. `locales/*.yml`,
 `tests/**`) or **restrict** to a path subtree
-(e.g. `src/aeat/application/**`) so the production code surface is
+(e.g. `src/client/application/**`) so the production code surface is
 not crowded out by i18n YAMLs and test docstrings. PR #109's
 exact-match `--path` flag is sufficient for "this one file" but
 not for "everything under src/foo except locales".

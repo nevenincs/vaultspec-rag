@@ -101,7 +101,7 @@ Confidence: high on 1-3; medium-high on deferring 4.
 
 Chunk-stage A/B (serial vs parallel chunking in isolation, 24-core, parity verified):
 
-- Real codebase (aeat worktree): 17,872 files / 50.5 MiB — 22.3s -> 11.6s (1.9x). Chunking
+- Real client worktree: 17,872 files / 50.5 MiB — 22.3s -> 11.6s (1.9x). Chunking
   here is already fast (800 files/s); not the bottleneck.
 - Heavy synthetic: 8,000 files / 75.8 MiB — 37.0s -> 10.2s (3.6x). Speedup grows with
   per-file chunking cost; #154's ~21 files/s regime sits deeper in the chunk-bound zone.

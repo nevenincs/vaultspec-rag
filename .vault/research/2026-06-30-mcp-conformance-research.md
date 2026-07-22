@@ -25,7 +25,7 @@ epic whose two pillars are (1) make MCP reliably reach the correct running servi
 ### 1. The symptom (live transcript)
 
 An agent issued MCP `get_service_state(project_root=…\main)`. The service reported *up*,
-but with an unrelated `aeat` project loaded and `vault_count 0` for the caller's own
+but with an unrelated client project loaded and `vault_count 0` for the caller's own
 root; MCP `search_vault` consequently returned `status: missing`. To recover, the agent
 abandoned MCP entirely and shelled out to the CLI: it first targeted the wrong port
 (Qdrant's `8765`, yielding an opaque `Error: 404:` with an empty body), retried on the
@@ -52,12 +52,12 @@ ways on process lifetime:
   `VAULTSPEC_RAG_STATUS_DIR` / cwd the MCP was spawned under is therefore frozen for the
   entire process lifetime.
 
-Consequently, an MCP spawned under the `aeat` project's status dir permanently reads
-`aeat`'s `service.json`, selects `aeat`'s port, and talks to `aeat`'s daemon. The
+Consequently, an MCP spawned under the client project's status dir permanently reads
+that project's `service.json`, selects its port, and talks to its daemon. The
 daemon's `get_service_state_route` honours the passed `project_root` via `_resolve_root`
-(HTTP mode requires a non-empty root and resolves it exactly), so the `aeat` daemon
+(HTTP mode requires a non-empty root and resolves it exactly), so the client daemon
 faithfully answers `get_service_state(main)` against its own slots — having never indexed
-`main`, it returns `vault_count 0` while its slot listing still shows `aeat`. That is the
+`main`, it returns `vault_count 0` while its slot listing still shows the client. That is the
 reported symptom precisely.
 
 **`project_root` never re-targets the service.** Across `mcp/_tools.py` and
@@ -169,7 +169,7 @@ regressing untested.
 The one fact unobservable from static analysis is the MCP process's effective
 `VAULTSPEC_RAG_STATUS_DIR` and cwd at the failing call. The decisive confirmation: if the
 MCP's status dir were the default `~/.vaultspec-rag/` with `service.json` absent (as
-now), `_require_port()` would raise "service not running" — not "service up with aeat."
-That it returned `aeat` means the MCP was spawned under an `aeat`-scoped status dir whose
-`service.json` named the live `aeat` service. Capturing the MCP server process's
+now), `_require_port()` would raise "service not running" — not "service up with a client."
+That it returned the client means the MCP was spawned under a client-scoped status dir whose
+`service.json` named the live client service. Capturing the MCP server process's
 environment and that dir's `service.json` at failure time would confirm it directly.

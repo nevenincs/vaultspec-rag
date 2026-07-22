@@ -9,7 +9,7 @@ related:
   - "[[2026-07-14-preprocess-sandbox-removal-plan]]"
 ---
 
-# Amend the hook child cwd from a scratch dir to the project root so project-launcher commands (uv run) resolve, per the aeat validation failure
+# Amend the hook child cwd from a scratch dir to the project root so project-launcher commands (uv run) resolve, per the client validation failure
 
 ## Scope
 
@@ -22,7 +22,7 @@ related:
 
 ## Outcome
 
-The aeat validation run had all 531 hook invocations failing (`uv run` cannot resolve its project from a scratch cwd); with the project-root cwd, `preprocess run-one` on a previously-failing corpus PDF extracts 82 sections. Matches the pre-sandbox contract hooks were authored against.
+The client validation run had all 531 hook invocations failing (`uv run` cannot resolve its project from a scratch cwd); with the project-root cwd, `preprocess run-one` on a previously-failing corpus PDF extracts 82 sections. Matches the pre-sandbox contract hooks were authored against.
 
 ## Notes
 
