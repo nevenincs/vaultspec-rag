@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import pathlib
 import shlex
 import subprocess
 import sys
@@ -38,15 +39,14 @@ from pydantic import ValidationError
 from ._hook_sandbox import curated_child_env, default_popen_handle
 from ._preprocess_schema import (
     PREPROCESS_INVOCATION_ENV,
-    PreprocOutput,
     PreprocessInvocation,
     PreprocessInvocationMode,
+    PreprocOutput,
     UnsupportedSchemaVersionError,
     validate_preproc_output,
 )
 
 if TYPE_CHECKING:
-    import pathlib
     from collections.abc import Sequence
 
     from ._preprocess_config import PreprocessRule
@@ -183,14 +183,17 @@ def _invocation_envelope(
     mode: PreprocessInvocationMode,
 ) -> PreprocessInvocation:
     """Build the canonical envelope shared by command and entry-point forms."""
-    return PreprocessInvocation(
-        source_paths=tuple(
-            _canonical_source_identity(path, project_root) for path in source_paths
-        ),
-        options=dict(rule.options),
-        extractor_version=rule.extractor_version,
-        target=rule.target.value,
-        mode=mode,
+    return PreprocessInvocation.model_validate(
+        {
+            "source_paths": tuple(
+                _canonical_source_identity(path, project_root)
+                for path in source_paths
+            ),
+            "options": dict(rule.options),
+            "extractor_version": rule.extractor_version,
+            "target": rule.target.value,
+            "mode": mode,
+        }
     )
 
 

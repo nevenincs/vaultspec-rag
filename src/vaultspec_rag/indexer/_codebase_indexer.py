@@ -2016,8 +2016,8 @@ class CodebaseIndexer:
         paths: list[pathlib.Path],
         *,
         reporter: ProgressReporter,
-        checkpoint: CodeRunCheckpoint | None = None,
-        limits: _CodePipelineLimits | None = None,
+        checkpoint: CodeRunCheckpoint,
+        limits: _CodePipelineLimits,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> tuple[set[str], int, dict[str, str]]:
         """Overlap bounded CPU production with one weighted GPU consumer."""
@@ -2139,8 +2139,8 @@ class CodebaseIndexer:
         attempted_paths: set[str],
         existing_ids: set[str],
         reporter: ProgressReporter,
-        checkpoint: CodeRunCheckpoint | None = None,
-        limits: _CodePipelineLimits | None = None,
+        checkpoint: CodeRunCheckpoint,
+        limits: _CodePipelineLimits,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> tuple[set[str], dict[str, str]]:
         """Stream changed paths and roll back attempt-introduced IDs."""
@@ -2158,14 +2158,8 @@ class CodebaseIndexer:
             self._discard_failed_incremental_additions(
                 attempted_paths=attempted_paths,
                 existing_ids=existing_ids,
-                protected_ids=(
-                    set(
-                        checkpoint.ledger.iter_point_ids(
-                            checkpoint.generation_id
-                        )
-                    )
-                    if checkpoint is not None
-                    else set()
+                protected_ids=set(
+                    checkpoint.ledger.iter_point_ids(checkpoint.generation_id)
                 ),
             )
             raise
