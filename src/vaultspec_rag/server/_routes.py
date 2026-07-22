@@ -110,6 +110,24 @@ def _bad_request_invalid_root(exc: ValueError) -> JSONResponse:
     )
 
 
+def _normalise_search_type(value: object) -> str | JSONResponse:
+    if value == "vault":
+        return "vault"
+    if value in ("code", "codebase"):
+        return "code"
+    return JSONResponse(
+        {
+            "ok": False,
+            "error": "bad_request",
+            "message": (
+                "type must be one of the allowed values: 'vault', 'code', or "
+                "'codebase'; 'codebase' is an alias for 'code'."
+            ),
+        },
+        status_code=400,
+    )
+
+
 def _extract_token(request: Request) -> str | None:
     """Pull the presented token from the bearer header or ``?token=``.
 
@@ -390,7 +408,9 @@ async def search_route(request: Request) -> JSONResponse:
 
     payload = await request.json()
     request_id = uuid.uuid4().hex
-    search_type = payload.get("type", "vault")
+    search_type = _normalise_search_type(payload.get("type", "vault"))
+    if isinstance(search_type, JSONResponse):
+        return search_type
     query = payload.get("query", "")
     top_k = payload.get("top_k", 5)
     project_root = payload.get("project_root")

@@ -1233,6 +1233,59 @@ def test_direct_http_code_search_reports_code_index_state(
 
 
 @pytest.mark.subprocess_gpu
+def test_direct_http_search_type_contract(
+    live_service: tuple[int, Path],
+    tmp_path: Path,
+) -> None:
+    port, _status_dir = live_service
+    root = tmp_path / "search-type-contract-project"
+    (root / ".vault").mkdir(parents=True)
+    health = _do_http_call(port, "/health", None, timeout=5)
+    assert isinstance(health, dict), health
+    token = health.get("service_token")
+    assert isinstance(token, str) and token, health
+
+    for invalid_type in ("all", ["code"]):
+        status, _headers, body = _raw_search(
+            port,
+            token,
+            {
+                "query": "",
+                "type": invalid_type,
+                "project_root": str(tmp_path / "missing-project"),
+            },
+            timeout=5,
+        )
+        assert status == 400, body
+        assert body["ok"] is False, body
+        assert body["error"] == "bad_request", body
+        message = str(body["message"])
+        assert "'vault'" in message, body
+        assert "'code'" in message, body
+        assert "'codebase'" in message, body
+
+    alias_status, _alias_headers, alias_body = _raw_search(
+        port,
+        token,
+        {
+            "query": "nothing should match this empty code workspace",
+            "type": "codebase",
+            "top_k": 3,
+            "project_root": str(root),
+        },
+        timeout=120,
+    )
+    assert alias_status == 200, alias_body
+    index_state = cast("dict[str, object]", alias_body["index_state"])
+    assert index_state["source"] == "code", alias_body
+    request_id = _assert_request_id(alias_body)
+    alias_log = _wait_for_search_log_line(port, request_id)
+    assert "source=code" in alias_log
+    assert "search_type=code" in alias_log
+    assert "search_type=codebase" not in alias_log
+
+
+@pytest.mark.subprocess_gpu
 def test_search_request_id_is_log_correlatable(
     live_service: tuple[int, Path],
     tmp_path: Path,
