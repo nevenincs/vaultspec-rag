@@ -30,6 +30,7 @@ from ...indexer._chunk_worker import (
     chunk_file_with_status,
     stream_document_and_hash_file,
 )
+from ...indexer._document_indexer import _DocumentResourceBudget
 from ...indexer._preprocess_config import (
     PreprocessConfig,
     PreprocessContext,
@@ -48,6 +49,10 @@ from ...job_models import (
     JobSource,
     JobSpec,
     job_spec_error,
+)
+from ...jobs import (
+    validate_document_index_policy,
+    validate_document_support_profile,
 )
 from ...service import ServiceRegistry
 from ...watcher_retry import WatcherRetryPolicy, WatcherSource
@@ -342,6 +347,57 @@ async def test_document_attempt_honors_cancellation_before_admission(
             )
     finally:
         registry.close_all()
+
+
+def test_document_admission_checkpoints_policy_and_measurement(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "record.txt"
+    source.write_text("document admission cancellation", encoding="utf-8")
+
+    policy_control = RunControlToken()
+    policy_control.request_cancel()
+    with pytest.raises(CancelRequested):
+        validate_document_index_policy(
+            tmp_path,
+            run_control=policy_control,
+        )
+
+    preflight = validate_document_index_policy(tmp_path)
+    measurement_control = RunControlToken()
+    measurement_control.request_cancel()
+    with pytest.raises(CancelRequested):
+        validate_document_support_profile(
+            tmp_path,
+            preflight,
+            run_control=measurement_control,
+        )
+
+
+def test_document_runtime_budget_enforces_extracted_rss_and_cuda_dimensions() -> None:
+    limits = get_index_support_profile("managed-service").document
+    extracted_budget = _DocumentResourceBudget(
+        replace(limits, extracted_bytes=4),
+    )
+    with pytest.raises(JobError, match="extracted_bytes") as extracted:
+        extracted_budget.reserve(1, 1, 5)
+    assert extracted.value.error_kind is JobErrorKind.CORPUS_LIMIT_EXCEEDED
+
+    runtime_budget = _DocumentResourceBudget(
+        replace(limits, rss_bytes=1),
+    )
+    with pytest.raises(JobError, match="rss_bytes") as runtime:
+        runtime_budget.checkpoint_runtime_resources()
+    assert runtime.value.error_kind is JobErrorKind.CORPUS_LIMIT_EXCEEDED
+    assert runtime_budget.rss_bytes > 1
+    assert runtime_budget.cuda_bytes >= 0
+
+    cuda_budget = _DocumentResourceBudget(
+        replace(limits, cuda_bytes=1),
+    )
+    with pytest.raises(JobError, match="cuda_bytes") as cuda:
+        cuda_budget.record_runtime_resources(rss_bytes=1, cuda_bytes=2)
+    assert cuda.value.error_kind is JobErrorKind.CORPUS_LIMIT_EXCEEDED
 
 
 def test_document_retry_state_and_resource_profile_are_independent(

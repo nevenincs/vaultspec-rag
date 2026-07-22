@@ -70,15 +70,24 @@ type DocumentExecutionPreflight = DocumentIndexPreflight | DocumentScopedPreflig
 
 @dataclass(slots=True)
 class _DocumentResourceBudget:
-    """Aggregate generated-chunk and weighted-byte ceiling for one operation."""
+    """Aggregate document ceilings enforced at each measurable runtime edge."""
 
     limits: SupportProfileLimits
     generated_chunks: int = 0
     weighted_bytes: int = 0
+    extracted_bytes: int = 0
+    rss_bytes: int = 0
+    cuda_bytes: int = 0
 
-    def reserve(self, chunks: int, weighted_bytes: int) -> None:
+    def reserve(
+        self,
+        chunks: int,
+        weighted_bytes: int,
+        extracted_bytes: int,
+    ) -> None:
         next_chunks = self.generated_chunks + chunks
         next_weight = self.weighted_bytes + weighted_bytes
+        next_extracted = self.extracted_bytes + extracted_bytes
         if next_chunks > self.limits.generated_chunks:
             raise JobError(
                 JobErrorKind.CORPUS_LIMIT_EXCEEDED,
@@ -91,8 +100,40 @@ class _DocumentResourceBudget:
                 f"document weighted_bytes is {next_weight}; support profile permits "
                 f"{self.limits.weighted_bytes}",
             )
+        if next_extracted > self.limits.extracted_bytes:
+            raise JobError(
+                JobErrorKind.CORPUS_LIMIT_EXCEEDED,
+                f"document extracted_bytes is {next_extracted}; support profile "
+                f"permits {self.limits.extracted_bytes}",
+            )
         self.generated_chunks = next_chunks
         self.weighted_bytes = next_weight
+        self.extracted_bytes = next_extracted
+
+    def checkpoint_runtime_resources(self) -> None:
+        """Enforce peak process and CUDA measurements around document work."""
+        from ..memory_probe import current_cuda_mb, current_rss_mb
+
+        _allocated_mb, reserved_mb = current_cuda_mb()
+        self.record_runtime_resources(
+            rss_bytes=int(current_rss_mb() * 1024**2),
+            cuda_bytes=int(reserved_mb * 1024**2),
+        )
+
+    def record_runtime_resources(self, *, rss_bytes: int, cuda_bytes: int) -> None:
+        """Record measured peaks and enforce both independent ceilings."""
+        self.rss_bytes = max(self.rss_bytes, rss_bytes)
+        self.cuda_bytes = max(self.cuda_bytes, cuda_bytes)
+        for dimension, measured, limit in (
+            ("rss_bytes", self.rss_bytes, self.limits.rss_bytes),
+            ("cuda_bytes", self.cuda_bytes, self.limits.cuda_bytes),
+        ):
+            if measured > limit:
+                raise JobError(
+                    JobErrorKind.CORPUS_LIMIT_EXCEEDED,
+                    f"document {dimension} is {measured}; support profile permits "
+                    f"{limit}",
+                )
 
 
 @dataclass(slots=True)
@@ -146,11 +187,17 @@ class DocumentIndexer:
     def _ignored_directory(policy: ResolvedIndexPolicy, rel_path: str) -> bool:
         return policy.classify(rel_path).disposition.reason.value == "ignored"
 
-    def _discover(self, policy: ResolvedIndexPolicy) -> tuple[pathlib.Path, ...]:
+    def _discover(
+        self,
+        policy: ResolvedIndexPolicy,
+        *,
+        run_control: RunControl = NO_RUN_CONTROL,
+    ) -> tuple[pathlib.Path, ...]:
         """Return only file paths owned by the document domain."""
         discovered: list[pathlib.Path] = []
         root_text = str(self.root_dir)
         for directory, dirs, files in os.walk(self.root_dir, topdown=True):
+            run_control.checkpoint()
             rel_dir = os.path.relpath(directory, root_text).replace("\\", "/")
             prefix = "" if rel_dir == "." else f"{rel_dir}/"
             dirs[:] = [
@@ -159,35 +206,55 @@ class DocumentIndexer:
                 if not self._ignored_directory(policy, f"{prefix}{name}/")
             ]
             for name in files:
+                run_control.checkpoint()
                 rel = f"{prefix}{name}"
                 disposition = policy.classify(rel).disposition
                 if disposition.admitted and disposition.kind is ContentKind.DOCUMENT:
                     discovered.append(pathlib.Path(directory) / name)
+            run_control.checkpoint()
         return tuple(sorted(discovered, key=lambda path: path.as_posix()))
 
-    def preflight_content(self) -> DocumentIndexPreflight:
+    def preflight_content(
+        self,
+        *,
+        run_control: RunControl = NO_RUN_CONTROL,
+    ) -> DocumentIndexPreflight:
         """Resolve policy and document discovery before any mutable resource."""
+        run_control.checkpoint()
         policy = self.resolve_policy_snapshot()
-        return DocumentIndexPreflight(self.root_dir, policy, self._discover(policy))
+        files = self._discover(policy, run_control=run_control)
+        run_control.checkpoint()
+        return DocumentIndexPreflight(self.root_dir, policy, files)
 
     def _normalize_changed_paths(
         self,
         changed_paths: Iterable[pathlib.Path],
+        *,
+        run_control: RunControl = NO_RUN_CONTROL,
     ) -> tuple[pathlib.Path, ...]:
+        run_control.checkpoint()
         normalized = {path.resolve() for path in changed_paths}
         if any(not path.is_relative_to(self.root_dir) for path in normalized):
             raise ValueError("document index scope contains a path outside its root")
+        run_control.checkpoint()
         return tuple(sorted(normalized, key=lambda path: path.as_posix()))
 
     def preflight_changed_paths(
         self,
         changed_paths: Iterable[pathlib.Path],
+        *,
+        run_control: RunControl = NO_RUN_CONTROL,
     ) -> DocumentScopedPreflight:
         """Resolve policy and classify only the exact caller-selected scope."""
         policy = self.resolve_policy_snapshot()
-        normalized = self._normalize_changed_paths(changed_paths)
+        normalized = self._normalize_changed_paths(
+            changed_paths,
+            run_control=run_control,
+        )
         for path in normalized:
+            run_control.checkpoint()
             policy.classify(path.relative_to(self.root_dir).as_posix())
+        run_control.checkpoint()
         return DocumentScopedPreflight(self.root_dir, policy, normalized)
 
     def _accept_preflight(
@@ -195,11 +262,15 @@ class DocumentIndexer:
         preflight: DocumentExecutionPreflight | None,
         *,
         changed_paths: Iterable[pathlib.Path] | None,
+        run_control: RunControl,
     ) -> tuple[ResolvedIndexPolicy, tuple[pathlib.Path, ...]]:
         authority = preflight or (
-            self.preflight_content()
+            self.preflight_content(run_control=run_control)
             if changed_paths is None
-            else self.preflight_changed_paths(changed_paths)
+            else self.preflight_changed_paths(
+                changed_paths,
+                run_control=run_control,
+            )
         )
         if (
             authority.root_dir != self.root_dir
@@ -215,6 +286,7 @@ class DocumentIndexer:
             ):
                 raise ValueError("document preflight contains a path outside its root")
             for path in authority.files:
+                run_control.checkpoint()
                 rel = path.relative_to(self.root_dir).as_posix()
                 disposition = authority.policy.classify(rel).disposition
                 if not (
@@ -224,7 +296,10 @@ class DocumentIndexer:
             return authority.policy, authority.files
         if changed_paths is None:
             raise ValueError("scoped document preflight requires changed paths")
-        normalized = self._normalize_changed_paths(changed_paths)
+        normalized = self._normalize_changed_paths(
+            changed_paths,
+            run_control=run_control,
+        )
         if normalized != authority.changed_paths:
             raise ValueError("document index scope does not match its preflight")
         return authority.policy, authority.changed_paths
@@ -278,6 +353,7 @@ class DocumentIndexer:
         from ._run_policy import RunPolicy
 
         run_control.checkpoint()
+        budget.checkpoint_runtime_resources()
         extractor_policy = RunPolicy.from_config(run_control=run_control)
         result = _chunk_worker.stream_document_and_hash_file(
             path,
@@ -315,7 +391,14 @@ class DocumentIndexer:
                 run_control.checkpoint()
                 following = next(iterator, None)
                 selected = list(weighted.chunks)
-                budget.reserve(len(selected), weighted.estimated_bytes)
+                budget.reserve(
+                    len(selected),
+                    weighted.estimated_bytes,
+                    sum(
+                        len(chunk.payload.content.encode("utf-8")) for chunk in selected
+                    ),
+                )
+                budget.checkpoint_runtime_resources()
                 unit = checkpoint.unit_for(
                     result.rel_path,
                     result.content_hash,
@@ -334,6 +417,7 @@ class DocumentIndexer:
                         run_control=run_control,
                     )
                     checkpoint.record_confirmed_slice(unit)
+                    budget.checkpoint_runtime_resources()
                 point_ids.extend(chunk.id for chunk in selected)
                 reporter.advance(len(selected))
                 ordinal += 1
@@ -661,7 +745,11 @@ class DocumentIndexer:
     ) -> IndexResult:
         """Reconcile the complete explicitly routed document set."""
         started = time.monotonic()
-        policy, paths = self._accept_preflight(preflight, changed_paths=None)
+        policy, paths = self._accept_preflight(
+            preflight,
+            changed_paths=None,
+            run_control=run_control,
+        )
         limits = self._support_limits()
         prep = self._preprocess_context(policy, limits)
         budget = _DocumentResourceBudget(limits)
@@ -750,6 +838,7 @@ class DocumentIndexer:
         policy, authorized_paths = self._accept_preflight(
             preflight,
             changed_paths=changed_paths,
+            run_control=run_control,
         )
         limits = self._support_limits()
         prep = self._preprocess_context(policy, limits)
@@ -769,7 +858,7 @@ class DocumentIndexer:
                 preflight=DocumentIndexPreflight(
                     self.root_dir,
                     policy,
-                    self._discover(policy),
+                    self._discover(policy, run_control=run_control),
                 ),
                 run_control=run_control,
             )
