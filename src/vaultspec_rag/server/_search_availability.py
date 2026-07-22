@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, cast
 
+from qdrant_client.http.exceptions import UnexpectedResponse
+
 __all__ = [
     "SearchResponseClassification",
+    "classify_qdrant_collection_disappearance",
     "classify_search_response",
 ]
 
@@ -44,6 +48,7 @@ class SearchResponseClassification:
     matching_jobs: tuple[MatchingIndexJobReference, ...]
     matching_jobs_truncated: bool
     rebuilding: bool
+    availability_cause: Literal["matching_index_job", "collection_missing"] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,6 +208,61 @@ def _build_index_unavailable_response(
     }
 
 
+def _is_qdrant_collection_disappearance(exc: BaseException) -> bool:
+    """Recognize only Qdrant's structured collection-missing HTTP 404."""
+    if not isinstance(exc, UnexpectedResponse) or exc.status_code != 404:
+        return False
+    try:
+        payload_object: object = json.loads(exc.content)
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(payload_object, Mapping):
+        return False
+    payload = cast("Mapping[str, object]", payload_object)
+    status_object = payload.get("status")
+    if not isinstance(status_object, Mapping):
+        return False
+    status = cast("Mapping[str, object]", status_object)
+    error = status.get("error")
+    if not isinstance(error, str):
+        return False
+    normalized_error = error.casefold()
+    return "collection" in normalized_error and (
+        "doesn't exist" in normalized_error
+        or "does not exist" in normalized_error
+        or "not found" in normalized_error
+    )
+
+
+def classify_qdrant_collection_disappearance(
+    exc: BaseException,
+    *,
+    before_snapshot: Sequence[object],
+    after_snapshot: Sequence[object],
+    requested_root: Path,
+    source: IndexSource,
+    request_id: str,
+    index_state: Mapping[str, object],
+    port: int | None,
+) -> SearchResponseClassification | None:
+    """Convert a matching collection-disappearance race, or decline it."""
+    if not _is_qdrant_collection_disappearance(exc):
+        return None
+    classification = classify_search_response(
+        {"results": []},
+        before_snapshot=before_snapshot,
+        after_snapshot=after_snapshot,
+        requested_root=requested_root,
+        source=source,
+        request_id=request_id,
+        index_state=index_state,
+        port=port,
+    )
+    if classification.status_code != 503:
+        return None
+    return replace(classification, availability_cause="collection_missing")
+
+
 def classify_search_response(
     result: dict[str, object],
     *,
@@ -248,6 +308,7 @@ def classify_search_response(
             matching_jobs=matching_jobs,
             matching_jobs_truncated=matching_jobs_truncated,
             rebuilding=rebuilding,
+            availability_cause="matching_index_job",
         )
     return SearchResponseClassification(
         response=result,
@@ -255,4 +316,5 @@ def classify_search_response(
         matching_jobs=matching_jobs,
         matching_jobs_truncated=matching_jobs_truncated,
         rebuilding=rebuilding,
+        availability_cause=None,
     )
