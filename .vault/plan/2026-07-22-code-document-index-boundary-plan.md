@@ -63,7 +63,7 @@ Define generic content ownership, routing, migration, and fingerprint contracts 
 - [x] `W01.P01.S06` - Resolve one immutable policy snapshot containing routing, preprocessing, decoding, execution mode, and normalized fingerprints; `src/vaultspec_rag/indexer/_resolved_policy.py, src/vaultspec_rag/indexer/_config_epoch.py`.
 - [x] `W01.P01.S37` - Define indexed, policy-rejected, retryable-extraction, terminal-extraction, decode-failed, and chunk-failed file states; `src/vaultspec_rag/indexer/_file_state.py, src/vaultspec_rag/_job_errors.py`.
 - [x] `W01.P01.S47` - Derive per-kind membership and content signatures from source profile, ordered routes, targets, ignores, schema, and extractor semantics; `src/vaultspec_rag/indexer/_config_epoch.py, src/vaultspec_rag/indexer/_resolved_policy.py`.
-- [ ] `W01.P01.S07` - Verify real configuration loading, route ordering, one-owner enforcement, and mutation-free migration refusal; `src/vaultspec_rag/tests/test_content_policy.py, src/vaultspec_rag/tests/test_preprocess_config.py`.
+- [x] `W01.P01.S07` - Verify real configuration loading, route ordering, one-owner enforcement, and mutation-free migration refusal; `src/vaultspec_rag/tests/test_content_policy.py, src/vaultspec_rag/tests/test_preprocess_config.py`.
 - [ ] `W01.P01.S88` - Gate index and job entry points on a valid resolved policy before acquiring store, ledger, cache, writer, or GPU mutation authority; `src/vaultspec_rag/indexer/_codebase_indexer.py, src/vaultspec_rag/jobs.py`.
 - [ ] `W01.P01.S89` - Verify invalid routing leaves real collections, sidecars, ledger rows, and caches unchanged; `src/vaultspec_rag/tests/integration/test_content_policy_fail_closed.py`.
 
