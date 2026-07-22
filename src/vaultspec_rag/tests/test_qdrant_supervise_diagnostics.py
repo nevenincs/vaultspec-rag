@@ -13,10 +13,14 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from ..qdrant_runtime._supervise import QdrantSupervisor
+
+if TYPE_CHECKING:
+    from typing import BinaryIO
 
 
 def _drain_process_output(supervisor: QdrantSupervisor, output: str) -> None:
@@ -25,18 +29,18 @@ def _drain_process_output(supervisor: QdrantSupervisor, output: str) -> None:
         [
             sys.executable,
             "-c",
-            "import sys; sys.stdout.write(sys.argv[1]); sys.stdout.flush()",
+            "import os,sys; os.write(1, sys.argv[1].encode())",
             output,
         ],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
-        text=True,
-        encoding="utf-8",
-        errors="strict",
+        text=False,
     )
     assert process.stdout is not None
-    supervisor._drain_output(process.stdout)  # pyright: ignore[reportPrivateUsage]
+    supervisor._drain_output(  # pyright: ignore[reportPrivateUsage]
+        cast("BinaryIO", process.stdout)
+    )
     assert process.wait(timeout=10.0) == 0
 
 
@@ -93,41 +97,74 @@ class TestSupervisorOutputCapture:
             "qdrant.log.1",
             "qdrant.log.2",
         }
-        assert log_path.read_text(encoding="utf-8") == "record-06\n"
-        assert (
-            log_path.with_name("qdrant.log.1").read_text(encoding="utf-8")
-            == "record-04\nrecord-05\n"
-        )
-        assert (
-            log_path.with_name("qdrant.log.2").read_text(encoding="utf-8")
-            == "record-02\nrecord-03\n"
-        )
-        assert "record-00" not in "".join(
-            path.read_text(encoding="utf-8") for path in tmp_path.glob("qdrant.log*")
+        generations = [
+            log_path.with_name("qdrant.log.2"),
+            log_path.with_name("qdrant.log.1"),
+            log_path,
+        ]
+        assert all(path.stat().st_size <= 30 for path in generations)
+        assert b"".join(path.read_bytes() for path in generations) == b"".join(
+            f"record-{index:02d}\n".encode() for index in range(7)
         )
         assert "record-00" in sup.recent_output_tail(max_lines=50)
+
+    def test_newline_free_output_cannot_bypass_log_or_memory_bounds(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        log_path = tmp_path / "qdrant.log"
+        sup = QdrantSupervisor(
+            tmp_path / "unused-binary",
+            http_port=59989,
+            storage_dir=tmp_path / "storage",
+            log_path=log_path,
+            log_max_bytes=1024,
+            log_backup_count=2,
+        )
+        marker = "NEWLINE_FREE_FINAL_MARKER"
+
+        _drain_process_output(sup, ("x" * 20_000) + marker)
+
+        generations = sorted(tmp_path.glob("qdrant.log*"))
+        assert {path.name for path in generations} == {
+            "qdrant.log",
+            "qdrant.log.1",
+            "qdrant.log.2",
+        }
+        assert all(path.stat().st_size <= 1024 for path in generations)
+        assert marker in sup.recent_output_tail(max_lines=50)
+        assert len(sup.recent_output_tail(max_lines=50)) <= 16 * 1024
 
     def test_preexisting_oversized_active_rolls_before_fresh_output(
         self,
         tmp_path: Path,
     ) -> None:
         log_path = tmp_path / "qdrant.log"
-        prior = b"previous-child-output\n"
+        max_bytes = 1024
+        prior = (b"discarded-prefix-" * 700) + b"previous-child-output\n"
         log_path.write_bytes(prior)
+        oversized_backup = log_path.with_name("qdrant.log.1")
+        oversized_backup.write_bytes(b"old-backup-" * 1000)
         sup = QdrantSupervisor(
             tmp_path / "unused-binary",
             http_port=59995,
             storage_dir=tmp_path / "storage",
             log_path=log_path,
-            log_max_bytes=len(prior),
+            log_max_bytes=max_bytes,
             log_backup_count=2,
         )
 
         _drain_process_output(sup, "fresh-child-output\n")
 
         assert log_path.read_bytes() == b"fresh-child-output\n"
-        assert log_path.with_name("qdrant.log.1").read_bytes() == prior
-        assert not log_path.with_name("qdrant.log.2").exists()
+        assert log_path.with_name("qdrant.log.1").read_bytes() == prior[-max_bytes:]
+        assert (
+            log_path.with_name("qdrant.log.2").read_bytes()
+            == (b"old-backup-" * 1000)[-max_bytes:]
+        )
+        assert all(
+            path.stat().st_size <= max_bytes for path in tmp_path.glob("qdrant.log*")
+        )
 
     def test_reopened_drain_appends_across_child_restart_boundary(
         self,
@@ -183,9 +220,7 @@ class TestSupervisorOutputCapture:
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="strict",
+            text=False,
         )
         assert process.stdout is not None
         supervisor._proc = process  # pyright: ignore[reportPrivateUsage]

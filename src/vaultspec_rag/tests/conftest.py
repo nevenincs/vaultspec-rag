@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -8,7 +9,6 @@ import pytest
 if TYPE_CHECKING:
     import pathlib
     from collections.abc import Callable, Generator, Mapping
-    from pathlib import Path
 
     from pytest import TempPathFactory
 
@@ -19,6 +19,11 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
     reset_config,
 )
 
+from .._test_isolation import (
+    PYTEST_MANAGED_SINGLETON_ACTIVE_ENV,
+    PYTEST_MANAGED_SINGLETON_ROOT_ENV,
+    register_pytest_singleton_root,
+)
 from ..config import VaultSpecConfigWrapper as VaultSpecConfig
 from ..config import get_config
 from ..config import reset_config as reset_rag_config
@@ -40,9 +45,7 @@ def _force_machine_singleton_test_paths(paths: Mapping[str, str]) -> None:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def isolated_machine_singleton_dirs(
-    tmp_path_factory: TempPathFactory,
-) -> Generator[Mapping[str, str]]:
+def isolated_machine_singleton_dirs() -> Generator[Mapping[str, str]]:
     """Point the machine-singleton dirs at a session temp tree for every test.
 
     The status dir and the qdrant storage dir resolve the machine-global
@@ -63,15 +66,30 @@ def isolated_machine_singleton_dirs(
     )
 
     host_qdrant = _resolve_host_provisioned_qdrant()
-    base = tmp_path_factory.mktemp("machine-singleton")
+    raw_root = os.environ.get(PYTEST_MANAGED_SINGLETON_ROOT_ENV)
+    if not raw_root:
+        raise RuntimeError(
+            "repository pytest bootstrap did not publish singleton containment"
+        )
+    session_root = register_pytest_singleton_root(raw_root)
+    status_dir = os.environ.get(EnvVar.STATUS_DIR.value)
+    qdrant_storage_dir = os.environ.get(EnvVar.QDRANT_STORAGE_DIR.value)
+    if not status_dir or not qdrant_storage_dir:
+        raise RuntimeError(
+            "repository pytest bootstrap did not publish singleton paths"
+        )
+    base = Path(status_dir).expanduser().resolve().parent
     session_paths = MappingProxyType(
         {
-            EnvVar.STATUS_DIR.value: str(base / "status"),
-            EnvVar.QDRANT_STORAGE_DIR.value: str(base / "qdrant-server" / "storage"),
+            PYTEST_MANAGED_SINGLETON_ACTIVE_ENV: "1",
+            PYTEST_MANAGED_SINGLETON_ROOT_ENV: str(session_root),
+            EnvVar.STATUS_DIR.value: status_dir,
+            EnvVar.QDRANT_STORAGE_DIR.value: qdrant_storage_dir,
         }
     )
     prior = {var: os.environ.get(var) for var in session_paths}
     try:
+        register_pytest_singleton_root(session_root)
         _force_machine_singleton_test_paths(session_paths)
         if host_qdrant is not None:
             _mirror_managed_qdrant_binary(base / "status", host_qdrant)

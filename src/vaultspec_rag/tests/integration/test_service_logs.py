@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 import os
 import socket
+import subprocess
+import sys
 import threading
 import time
+import urllib.request
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -422,3 +425,129 @@ def test_admin_transport_preserves_live_structured_log_error(
         "error": "invalid_log_source",
         "message": "source must be one of service, qdrant, all.",
     }
+
+
+def test_uvicorn_access_only_traffic_drives_live_service_log_rollover(
+    tmp_path: Path,
+) -> None:
+    """Real Uvicorn access records rotate without an application log event."""
+    port = _free_port()
+    log_path = tmp_path / "service.log"
+    marker = "ACCESS_ONLY_FINAL_MARKER_4fcb5f"
+    code = r"""
+import os
+import sys
+from pathlib import Path
+
+import uvicorn
+from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
+
+from vaultspec_rag.logging_config import configure_logging, install_daemon_log_capture
+from vaultspec_rag.server._lifespan import health_handler
+
+log_path = Path(sys.argv[1])
+port = int(sys.argv[2])
+server = None
+
+async def stop_handler(_request):
+    assert server is not None
+    server.should_exit = True
+    return PlainTextResponse("stopping")
+
+capture = None
+try:
+    configure_logging(level="INFO")
+    capture = install_daemon_log_capture(log_path, max_bytes=1024, backup_count=2)
+    app = Starlette(
+        routes=[
+            Route("/health", health_handler),
+            Route("/stop", stop_handler),
+        ]
+    )
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host="127.0.0.1",
+                port=port,
+                log_level="info",
+                lifespan="off",
+                timeout_graceful_shutdown=2,
+            )
+    )
+    server.run()
+finally:
+    if capture is not None and not capture.close(timeout=10.0):
+        os._exit(81)
+if capture is None or capture.persistence_error is not None:
+    os._exit(82)
+"""
+    process = subprocess.Popen(
+        [sys.executable, "-c", code, str(log_path), str(port)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                pytest.fail(
+                    f"Uvicorn access probe exited early with {process.returncode}"
+                )
+            try:
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/health",
+                    timeout=0.5,
+                ) as response:
+                    if response.status == 200:
+                        break
+            except OSError:
+                time.sleep(0.02)
+        else:
+            pytest.fail("Uvicorn access probe did not become ready")
+
+        for index in range(100):
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/health?access={index:04d}",
+                timeout=2.0,
+            ) as response:
+                assert response.status == 200
+
+        rollover_deadline = time.monotonic() + 5.0
+        rotated = log_path.with_name("service.log.1")
+        while time.monotonic() < rollover_deadline and not rotated.exists():
+            time.sleep(0.01)
+        assert rotated.exists(), "access-only traffic never triggered rollover"
+
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/health?marker={marker}",
+            timeout=2.0,
+        ) as response:
+            assert response.status == 200
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/stop",
+            timeout=2.0,
+        ) as response:
+            assert response.status == 200
+        process.wait(timeout=15.0)
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5.0)
+
+    assert process.returncode == 0
+    generations = sorted(tmp_path.glob("service.log*"))
+    assert {path.name for path in generations} == {
+        "service.log",
+        "service.log.1",
+        "service.log.2",
+    }
+    assert all(path.stat().st_size <= 1024 for path in generations)
+    retained = b"".join(path.read_bytes() for path in generations)
+    assert retained.count(marker.encode()) == 1
