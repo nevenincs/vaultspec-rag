@@ -8,6 +8,7 @@ import typing
 
 import pytest
 
+from ..cli._process import _DEFAULT_GRACEFUL_DRAIN_SECONDS
 from ..cli._service_stop import (
     _STOP_GRACEFUL_DRAIN_SECONDS,
     _STOP_TERMINATION_BUDGET_SECONDS,
@@ -817,14 +818,14 @@ class TestWinShutdownLog:
             assert result.exit_code == 0, result.output
             assert f"Process ID: {os.getpid()}" in result.output
             assert "PID:" not in result.output
-            # Only the daemon holds the lease authorising machine-pointer
-            # deletion, so the stop path must fund a drain long enough for its
-            # own cleanup rather than escalating to a forced kill immediately.
+            # A console-detached daemon can never receive a console control
+            # event, so Windows must not spend the long drain waiting for a
+            # graceful shutdown that cannot be signalled; it goes straight to
+            # the forced kill and reclaims the pointer afterwards.
             assert budgets == [
-                (_STOP_TERMINATION_BUDGET_SECONDS, _STOP_GRACEFUL_DRAIN_SECONDS)
+                (_STOP_TERMINATION_BUDGET_SECONDS, _DEFAULT_GRACEFUL_DRAIN_SECONDS)
             ]
-            assert _STOP_GRACEFUL_DRAIN_SECONDS >= 10.0
-            assert _STOP_TERMINATION_BUDGET_SECONDS > _STOP_GRACEFUL_DRAIN_SECONDS
+            assert _DEFAULT_GRACEFUL_DRAIN_SECONDS < _STOP_GRACEFUL_DRAIN_SECONDS
             assert log_path.exists(), (
                 f"Expected CLI to create {log_path}; result: {result.output}"
             )

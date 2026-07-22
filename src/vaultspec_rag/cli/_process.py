@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from ..qdrant_runtime._resolve import QdrantIdentity
 
 __all__ = [
+    "_DEFAULT_GRACEFUL_DRAIN_SECONDS",
     "_HEARTBEAT_STALENESS_SECONDS",
     "DaemonBreakawayError",
     "_health_probe",

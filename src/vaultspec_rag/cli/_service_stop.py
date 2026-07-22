@@ -20,7 +20,12 @@ import typer
 import vaultspec_rag.cli as _cli
 
 from ._app import server_app
-from ._process import _health_probe, _port_is_listening
+from ._core import logger
+from ._process import (
+    _DEFAULT_GRACEFUL_DRAIN_SECONDS,
+    _health_probe,
+    _port_is_listening,
+)
 from ._render import _emit_json
 from ._service_lifecycle import (
     _print_lifecycle_lines,
@@ -134,18 +139,68 @@ def _refuse_terminate_from_unisolated_test() -> None:
     )
 
 
+def _stop_graceful_drain_seconds() -> float:
+    """Return the drain window worth funding on this platform.
+
+    A daemon that can act on the termination signal cleans up after itself,
+    which is always the better outcome: it is the lease holder, so it is the
+    only process that can delete its own discovery pointer while still owning
+    the singleton. POSIX delivers ``SIGTERM`` to it, so the wait buys a real
+    clean shutdown. Windows cannot: the daemon is spawned console-detached, and
+    a console control event only reaches processes sharing the sender's
+    console, so the signal is never delivered and waiting on it would buy
+    nothing but latency before the forced kill.
+    """
+    if sys.platform == "win32":
+        return _DEFAULT_GRACEFUL_DRAIN_SECONDS
+    return _STOP_GRACEFUL_DRAIN_SECONDS
+
+
+def _clean_orphaned_machine_pointer() -> bool:
+    """Delete a discovery pointer whose publishing daemon is confirmed gone.
+
+    Pointer deletion is owner-authenticated, so this does not bypass that
+    contract - it satisfies it. The previous holder's death released the OS
+    lock, so acquiring it here makes this process the singleton owner for the
+    duration of the delete. A failure to acquire means someone else already
+    owns the singleton, and a live owner's pointer is theirs to publish and
+    clean; refusing to touch it is what keeps a stop from erasing a successor's
+    discovery.
+
+    Returns whether the pointer is gone.
+    """
+    from .._machine_lock import (
+        acquire_machine_lock_lease,
+        delete_machine_discovery,
+        machine_discovery_path,
+        release_machine_lock_lease,
+    )
+
+    try:
+        if not machine_discovery_path().exists():
+            return True
+        lease, _holder = acquire_machine_lock_lease()
+        if lease is None:
+            return False
+        try:
+            delete_machine_discovery(lease)
+        finally:
+            release_machine_lock_lease(lease)
+    except (OSError, PermissionError, RuntimeError) as exc:
+        # Never fail a satisfied stop over cleanup of a record the staleness
+        # contract already neutralises; debug-log so the swallow is observable.
+        logger.debug("orphaned machine pointer cleanup failed: %s", exc, exc_info=True)
+        return False
+    return True
+
+
 def _terminate_and_confirm(pid: int) -> None:
-    """Terminate *pid*, wait for owner cleanup, and emit the shutdown trail."""
+    """Terminate *pid*, confirm its exit, then clear its discovery records."""
     _refuse_terminate_from_unisolated_test()
-    # The daemon holds the only machine-lock lease, so it is the only process
-    # authorized to delete the machine discovery pointer. Escalating to a forced
-    # kill before its lifespan ``finally`` completes would strand that pointer
-    # advertising a dead PID, so an operator stop funds a real drain window and
-    # falls back to the kill only once the window expires.
     _cli._terminate_pid(
         pid,
         timeout=_STOP_TERMINATION_BUDGET_SECONDS,
-        graceful_drain=_STOP_GRACEFUL_DRAIN_SECONDS,
+        graceful_drain=_stop_graceful_drain_seconds(),
     )
 
     # Wait briefly for process to exit
@@ -153,6 +208,12 @@ def _terminate_and_confirm(pid: int) -> None:
         if not _cli._is_pid_alive(pid):
             break
         time.sleep(0.1)
+
+    # A forced kill leaves the daemon's own pointer behind. Now that its holder
+    # is gone the singleton is free, so reclaim it and remove the record rather
+    # than leaving a pointer that advertises a dead process.
+    if not _cli._is_pid_alive(pid):
+        _clean_orphaned_machine_pointer()
 
     # A forced kill (drain window expired) still bypasses the daemon's atexit
     # handler and lifespan ``finally`` on Windows, where os.kill(SIGTERM) is
