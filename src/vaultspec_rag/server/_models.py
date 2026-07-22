@@ -8,9 +8,21 @@ root.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator
 
 from ..capabilities import BackendCapabilities
+
+
+class DocumentLocatorItem(BaseModel):
+    """Transport-safe native locator for a document search hit."""
+
+    model_config = {"from_attributes": True}
+
+    kind: Literal["byte", "page", "sheet", "line", "char", "none"]
+    value: int | str
+    end: int | str | None = None
 
 
 class SearchResultItem(BaseModel):
@@ -58,7 +70,7 @@ class SearchResultItem(BaseModel):
     title: str
     score: float
     snippet: str
-    source: str
+    source: Literal["vault", "codebase", "document"]
     doc_type: str = ""
     feature: str = ""
     date: str = ""
@@ -71,8 +83,19 @@ class SearchResultItem(BaseModel):
     source_path: str | None = None
     preprocessor_id: str | None = None
     anchor: str | None = None
-    locator: str | None = None
+    locator: str | DocumentLocatorItem | None = None
+    section: str | None = None
+    document_metadata: dict[str, object] = Field(default_factory=dict)
+    unit_metadata: dict[str, object] = Field(default_factory=dict)
+    extractor_id: str | None = None
+    extractor_version: str | None = None
     rerank_text: str | None = None
+
+    @field_validator("document_metadata", "unit_metadata", mode="before")
+    @classmethod
+    def _materialize_document_metadata(cls, value: object) -> object:
+        materialize = getattr(value, "materialize", None)
+        return materialize() if callable(materialize) else value
 
 
 class SearchResponse(BaseModel):
@@ -117,6 +140,10 @@ class IndexStatus(BaseModel):
     )
     code_count: int = Field(
         description="Number of indexed codebase chunks",
+    )
+    document_count: int = Field(
+        default=0,
+        description="Number of independently indexed document chunks",
     )
     storage_path: str = Field(
         description="Path to the vector database",
