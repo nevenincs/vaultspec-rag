@@ -646,6 +646,10 @@ def _admission_preflight(preflight: CodeIndexPreflight) -> dict[str, object]:
             "source_bytes": scan.measurement.source_bytes,
             "generated_chunks": scan.measurement.generated_chunks,
             "weighted_bytes": scan.measurement.weighted_bytes,
+            "extracted_bytes": scan.measurement.extracted_bytes,
+            "queue_bytes": scan.measurement.queue_bytes,
+            "rss_bytes": scan.measurement.rss_bytes,
+            "cuda_bytes": scan.measurement.cuda_bytes,
         },
         "counts": [
             {
