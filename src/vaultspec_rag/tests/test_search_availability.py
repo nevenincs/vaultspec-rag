@@ -7,6 +7,8 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
+from httpx import Headers
+from qdrant_client.http.exceptions import UnexpectedResponse
 
 from ..job_manager import JobManager
 from ..job_models import (
@@ -19,6 +21,7 @@ from ..job_models import (
     JobState,
 )
 from ..server._search_availability import (
+    classify_qdrant_collection_disappearance,
     classify_search_response,
 )
 
@@ -328,3 +331,107 @@ def test_classification_evidence_is_after_first_bounded_and_shared_with_response
     assert [job["id"] for job in response_jobs] == expected_ids
     assert response_index_state["matching_jobs_truncated"] is True
     assert response_index_state["status"] == "rebuilding"
+
+
+def _qdrant_collection_response(status_code: int) -> UnexpectedResponse:
+    return UnexpectedResponse(
+        status_code,
+        "Not Found" if status_code == 404 else "Internal Server Error",
+        (
+            b'{"status":{"error":"Not found: Collection '
+            b"`r0123456789ab_vault_docs` doesn't exist!"
+            b'"},"time":0.00001}'
+        ),
+        Headers(),
+    )
+
+
+def test_qdrant_collection_disappearance_uses_matching_canonical_job_evidence(
+    tmp_path: Path,
+) -> None:
+    root = (tmp_path / "project").resolve()
+    manager = JobManager(max_nonterminal=1, state_path=None)
+    created = manager.create(
+        JobSpec(
+            JobOperation.INDEX,
+            JobSource.VAULT,
+            str(root),
+            JobMode.REBUILD,
+        ),
+        JobInitiator("test", "collection disappearance", str(root)),
+        job_id="collection-rebuild",
+        start_paused=True,
+    )
+    assert created.job is not None
+    before_snapshot = [job.to_dict() for job in manager.list_jobs()]
+    index_state: dict[str, object] = {
+        "source": "vault",
+        "indexed_count": 0,
+        "indexed_target_root": str(root),
+        "requested_target_root": str(root),
+        "target_matches": True,
+        "status": "missing",
+    }
+
+    classification = classify_qdrant_collection_disappearance(
+        _qdrant_collection_response(404),
+        before_snapshot=before_snapshot,
+        after_snapshot=(),
+        requested_root=root,
+        source="vault",
+        request_id="collection-request",
+        index_state=index_state,
+        port=8766,
+    )
+
+    assert classification is not None
+    assert classification.status_code == 503
+    assert classification.availability_cause == "collection_missing"
+    assert classification.response["error"] == "index_unavailable"
+    assert "results" not in classification.response
+    assert [(job.id, job.state, job.mode) for job in classification.matching_jobs] == [
+        ("collection-rebuild", "paused", "rebuild")
+    ]
+
+
+def test_qdrant_collection_disappearance_declines_unrelated_failures(
+    tmp_path: Path,
+) -> None:
+    root = (tmp_path / "project").resolve()
+    matching = _canonical_snapshot(
+        root,
+        job_id="matching-rebuild",
+        mode=JobMode.REBUILD,
+    ).to_dict()
+    index_state: dict[str, object] = {
+        "source": "vault",
+        "indexed_count": 0,
+        "indexed_target_root": str(root),
+        "requested_target_root": str(root),
+        "target_matches": True,
+        "status": "missing",
+    }
+
+    wrong_status = classify_qdrant_collection_disappearance(
+        _qdrant_collection_response(500),
+        before_snapshot=[matching],
+        after_snapshot=(),
+        requested_root=root,
+        source="vault",
+        request_id="wrong-status-request",
+        index_state=index_state,
+        port=8766,
+    )
+    no_matching_job = classify_qdrant_collection_disappearance(
+        _qdrant_collection_response(404),
+        before_snapshot=(),
+        after_snapshot=(),
+        requested_root=root,
+        source="vault",
+        request_id="no-matching-job-request",
+        index_state=index_state,
+        port=8766,
+    )
+
+    assert wrong_status is None
+    assert no_matching_job is None

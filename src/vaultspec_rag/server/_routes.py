@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
+from qdrant_client.http.exceptions import UnexpectedResponse
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
 
@@ -63,6 +64,7 @@ from ._routes_storage import (
 )
 from ._search_availability import (
     SearchResponseClassification,
+    classify_qdrant_collection_disappearance,
     classify_search_response,
 )
 from ._utils import (
@@ -73,6 +75,8 @@ from ._utils import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from starlette.requests import Request
 
     from ..indexer._codebase_indexer import ContentScanResult
@@ -303,6 +307,101 @@ def _classify_search_result(
             port=port,
         )
     return classification
+
+
+def _classify_collection_disappearance(
+    exc: UnexpectedResponse,
+    *,
+    job_snapshot_before: list[dict[str, object]],
+    root: Path,
+    source: Literal["vault", "code"],
+    request_id: str,
+    port: int | None,
+) -> SearchResponseClassification | None:
+    """Classify one instantaneous missing-collection search observation."""
+    return classify_qdrant_collection_disappearance(
+        exc,
+        before_snapshot=job_snapshot_before,
+        after_snapshot=_canonical_job_snapshot(),
+        requested_root=root,
+        source=source,
+        request_id=request_id,
+        index_state=_search_index_state(
+            indexed_count=0,
+            requested_root=root,
+            search_type=source,
+        ),
+        port=port,
+    )
+
+
+async def _run_search_with_availability(
+    run: Callable[[], dict[str, object]],
+    *,
+    job_snapshot_before: list[dict[str, object]],
+    root: Path,
+    source: Literal["vault", "code"],
+    request_id: str,
+    port: int | None,
+) -> tuple[dict[str, object], SearchResponseClassification | None]:
+    """Run retrieval and recover only an evidenced collection disappearance."""
+    try:
+        return await _run_in_thread(run, limiter=get_search_limiter()), None
+    except UnexpectedResponse as exc:
+        classification = _classify_collection_disappearance(
+            exc,
+            job_snapshot_before=job_snapshot_before,
+            root=root,
+            source=source,
+            request_id=request_id,
+            port=port,
+        )
+        if classification is None:
+            raise
+        return classification.response, classification
+
+
+def _complete_classified_search(
+    classification: SearchResponseClassification,
+    *,
+    root: Path,
+    source: Literal["vault", "code"],
+    request_id: str,
+    total_seconds: float,
+) -> tuple[dict[str, object], Literal[200, 503]]:
+    """Complete watcher and log effects from one classification decision."""
+    result = classification.response
+    response_status = classification.status_code
+    _m._ensure_watcher_soon(root)
+    hits = result.get("results")
+    hit_count = len(cast("list[object]", hits)) if isinstance(hits, list) else 0
+    unavailable = response_status == 503 and result.get("error") == "index_unavailable"
+    log_event(
+        logger,
+        "service.search",
+        "unavailable" if unavailable else "completed",
+        fields={
+            "status_code": response_status,
+            **({"error": "index_unavailable"} if unavailable else {}),
+            **(
+                {"availability_cause": classification.availability_cause}
+                if classification.availability_cause is not None
+                else {}
+            ),
+            "request_id": request_id,
+            "source": source,
+            "search_type": source,
+            "root": root,
+            "results": hit_count,
+            "matching_index_jobs": len(classification.matching_jobs),
+            "matching_index_job_ids": ",".join(
+                job.id for job in classification.matching_jobs
+            ),
+            "matching_index_jobs_truncated": classification.matching_jobs_truncated,
+            "total_seconds": f"{total_seconds:.3f}",
+        },
+    )
+    return result, response_status
 
 
 def _canonical_job_snapshot() -> list[dict[str, object]]:
@@ -929,7 +1028,7 @@ async def search_route(request: Request) -> JSONResponse:
     search_source = "code" if search_type == "code" else "vault"
     notes: dict[str, object] = {}
 
-    def _run():
+    def _run() -> dict[str, object]:
         import vaultspec_rag
 
         try:
@@ -1018,12 +1117,19 @@ async def search_route(request: Request) -> JSONResponse:
             return _m._local_store_locked_error_dict(exc)
 
     started = time.perf_counter()
-    result = await _run_in_thread(_run, limiter=get_search_limiter())
+    result, classification = await _run_search_with_availability(
+        _run,
+        job_snapshot_before=job_snapshot_before,
+        root=root,
+        source=search_source,
+        request_id=request_id,
+        port=request.url.port,
+    )
     total_seconds = time.perf_counter() - started
     _m.incr("search_total")
     _m.observe("search_last_duration_seconds", total_seconds)
     response_status = 200
-    if "results" in result:
+    if classification is None and "results" in result:
         result["request_id"] = request_id
         timing = result.get("timing")
         if isinstance(timing, dict):
@@ -1036,35 +1142,13 @@ async def search_route(request: Request) -> JSONResponse:
             request_id=request_id,
             port=request.url.port,
         )
-        result = classification.response
-        response_status = classification.status_code
-        _m._ensure_watcher_soon(root)
-        hits = result.get("results")
-        hit_count = len(cast("list[object]", hits)) if isinstance(hits, list) else 0
-        unavailable = (
-            response_status == 503 and result.get("error") == "index_unavailable"
-        )
-        log_event(
-            logger,
-            "service.search",
-            "unavailable" if unavailable else "completed",
-            fields={
-                "status_code": response_status,
-                **({"error": "index_unavailable"} if unavailable else {}),
-                "request_id": request_id,
-                "source": search_source,
-                "search_type": search_source,
-                "root": root,
-                "results": hit_count,
-                "matching_index_jobs": len(classification.matching_jobs),
-                "matching_index_job_ids": ",".join(
-                    job.id for job in classification.matching_jobs
-                ),
-                "matching_index_jobs_truncated": (
-                    classification.matching_jobs_truncated
-                ),
-                "total_seconds": f"{total_seconds:.3f}",
-            },
+    if classification is not None:
+        result, response_status = _complete_classified_search(
+            classification,
+            root=root,
+            source=search_source,
+            request_id=request_id,
+            total_seconds=total_seconds,
         )
     return JSONResponse(result, status_code=response_status)
 
