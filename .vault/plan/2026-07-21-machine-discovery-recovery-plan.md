@@ -62,7 +62,7 @@ Introduce retained ownership and atomic pointer mutation primitives before lifec
 
 Make daemon snapshots self-healing and order heartbeat quiescence, pointer cleanup, and lease release safely.
 
-- [ ] `W01.P03.S06` - Build heartbeat snapshots from daemon-owned state and repair both discovery views independently; `src/vaultspec_rag/server/_lifecycle.py`.
+- [x] `W01.P03.S06` - Build heartbeat snapshots from daemon-owned state and repair both discovery views independently; `src/vaultspec_rag/server/_lifecycle.py`.
 - [ ] `W01.P03.S07` - Thread the retained lease through startup and quiesce heartbeat before owner cleanup and lock release; `src/vaultspec_rag/server/_lifespan.py`.
 - [ ] `W01.P03.S08` - Verify deleted records self-heal and shutdown cannot resurrect discovery after cleanup; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
 

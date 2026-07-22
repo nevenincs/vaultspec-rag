@@ -58,6 +58,7 @@ __all__ = [
     "_machine_service_resolution",
     "_merge_service_status",
     "_read_service_status",
+    "_replace_service_status",
     "_status_dir",
     "_status_file",
 ]
@@ -275,6 +276,42 @@ def _merge_service_status(
         finally:
             tmp.unlink(missing_ok=True)
         return data
+
+
+def _replace_service_status(
+    fields: Mapping[str, object],
+    *,
+    timeout: float = 1.0,
+    path: Path | None = None,
+) -> dict[str, object]:
+    """Atomically replace status with one daemon-owned canonical snapshot.
+
+    Unlike the launcher/daemon merge path, heartbeat recovery must not depend
+    on the existing document being present or parseable. The shared status
+    lock still serializes replacement with launcher merges and deletion, while
+    the complete snapshot makes missing and corrupt operator views repairable.
+    """
+    path = path or _status_file()
+    from .._test_isolation import enforce_pytest_managed_singleton_containment
+
+    enforce_pytest_managed_singleton_containment(
+        operation="replace the managed service status snapshot",
+        targets=(path,),
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = dict(fields)
+    encoded = json.dumps(data)
+    with _status_write_lock(path, timeout=timeout):
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
+        try:
+            with tmp.open("w", encoding="utf-8") as handle:
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
+    return data
 
 
 def _delete_service_status(
