@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from ..config import EnvVar, reset_config
+from ..indexer._chunking import SUPPORTED_EXTENSIONS
 from ..indexer._preprocess_config import (
     PREPROCESS_CONFIG_FILENAME,
     load_preprocess_rules,
@@ -92,6 +93,29 @@ def test_path_outside_root_is_rejected(
 def test_unrelated_extension_still_rejected(project: tuple[Path, Path]) -> None:
     root, vault = project
     assert _is_code_change(root / "photo.jpg", root, vault) is False
+
+
+def test_watcher_uses_every_indexer_extension(project: tuple[Path, Path]) -> None:
+    root, vault = project
+    for extension in SUPPORTED_EXTENSIONS:
+        assert _is_code_change(root / f"source{extension}", root, vault) is True
+
+
+def test_watcher_normalizes_suffix_case(project: tuple[Path, Path]) -> None:
+    root, vault = project
+    assert _is_code_change(root / "MODULE.PY", root, vault) is True
+    assert _is_code_change(root / "CONFIG.JSON", root, vault) is True
+    assert _is_code_change(root / "README.MD", root, vault) is True
+    assert _is_vault_change(vault / "DECISION.MD", vault) is True
+
+
+def test_watcher_rejects_extensions_absent_from_indexer(
+    project: tuple[Path, Path],
+) -> None:
+    root, vault = project
+    for extension in (".lua", ".swift", ".zig"):
+        assert extension not in SUPPORTED_EXTENSIONS
+        assert _is_code_change(root / f"source{extension}", root, vault) is False
 
 
 @pytest.mark.usefixtures("_default_preprocess_mode")

@@ -7,8 +7,12 @@ re-indexing when changes are detected.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
 import time
+from contextlib import suppress
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,54 +24,37 @@ from watchfiles import (
 
 from . import jobs as _jobs
 from .concurrency import get_index_limiter
+from .indexer._chunking import SUPPORTED_EXTENSIONS
 from .indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
 from .logging_config import log_event
+from .watcher_retry import (
+    WatcherRetryDecision,
+    WatcherRetryPolicy,
+    WatcherRetryState,
+    WatcherRetryStateError,
+    WatcherRetryUnavailableError,
+    WatcherSource,
+)
 
 if TYPE_CHECKING:
-    import asyncio
+    from collections.abc import Callable, Iterable
 
     from .graph_cache import GraphCache
     from .indexer import CodebaseIndexer, VaultIndexer
     from .indexer._preprocess_config import PreprocessConfig
 
 logger = logging.getLogger(__name__)
+_CANCELLATION_DURABILITY_SECONDS = 3.0
+_CANCELLATION_FALLBACK_SECONDS = 2.0
+_STATE_TRANSACTION_WORKER_SLOTS = threading.BoundedSemaphore(4)
+_CANCELLATION_FALLBACK_WORKER_SLOTS = threading.BoundedSemaphore(2)
 
 # Extensions recognized as vault documentation
 _VAULT_EXTENSIONS = frozenset({".md"})
 
-# Extensions recognized as indexable source code (mirrors CodebaseIndexer)
-_CODE_EXTENSIONS = frozenset(
-    {
-        ".py",
-        ".rs",
-        ".ts",
-        ".tsx",
-        ".js",
-        ".jsx",
-        ".go",
-        ".java",
-        ".c",
-        ".cpp",
-        ".h",
-        ".hpp",
-        ".cs",
-        ".rb",
-        ".swift",
-        ".kt",
-        ".lua",
-        ".zig",
-        # Plain-text/markup tails added to LANGUAGE_MAP (#185 adjacent ask) so a
-        # watched edit to one triggers a reindex like any other source file.
-        ".txt",
-        ".xml",
-        ".xsd",
-        ".properties",
-        # Non-vault markdown is indexed as code (LANGUAGE_MAP has .md); vault
-        # classification wins first in the change filter, so only markdown
-        # outside .vault/ arrives here.
-        ".md",
-    }
-)
+# One CPU-only source of truth with CodebaseIndexer. Non-vault markdown remains
+# code-indexable because vault classification wins before this predicate.
+_CODE_EXTENSIONS = frozenset(SUPPORTED_EXTENSIONS)
 
 # Index-shaping control files. An edit to one of these changes index
 # membership without changing any indexed file's bytes, so it must reach the
@@ -109,7 +96,7 @@ def _is_vault_change(path: Path, vault_dir: Path) -> bool:
     except ValueError as exc:
         logger.debug("watcher: %s not under vault dir %s: %s", path, vault_dir, exc)
         return False
-    return path.suffix in _VAULT_EXTENSIONS
+    return path.suffix.lower() in _VAULT_EXTENSIONS
 
 
 def _is_code_change(
@@ -149,12 +136,399 @@ def _is_code_change(
         return False
     if path.name in _CONFIG_FILENAMES:
         return True
-    if path.suffix in _CODE_EXTENSIONS:
+    if path.suffix.lower() in _CODE_EXTENSIONS:
         return True
     if preprocess_config is not None:
         rel_posix = str(rel).replace("\\", "/")
         return preprocess_config.match(rel_posix) is not None
     return False
+
+
+def _record_changes(
+    changes: Iterable[tuple[Change, str]],
+    *,
+    root_dir: Path,
+    vault_dir: Path,
+    code_indexer: CodebaseIndexer,
+    prep_config: list[PreprocessConfig],
+    pending_vault: set[Path],
+    pending_code: set[Path],
+) -> tuple[bool, bool]:
+    """Classify one watcher batch and retain its exact convergence scope."""
+    vault_events_observed = False
+    code_events_observed = False
+    for change_type, path_str in changes:
+        path = Path(path_str)
+        if change_type not in (Change.added, Change.modified, Change.deleted):
+            continue
+        if path.name == PREPROCESS_CONFIG_FILENAME and path.parent == root_dir:
+            prep_config[0] = code_indexer.preprocess_config()
+            log_event(
+                logger,
+                "service.watcher",
+                "preprocess_config_reloaded",
+                root=root_dir,
+                rules=len(prep_config[0].rules),
+            )
+        if _is_vault_change(path, vault_dir):
+            pending_vault.add(path)
+            vault_events_observed = True
+        elif _is_code_change(path, root_dir, vault_dir, prep_config[0]):
+            pending_code.add(path)
+            code_events_observed = True
+    return vault_events_observed, code_events_observed
+
+
+async def _run_retry_transaction[T](operation: Callable[[], T]) -> T:
+    """Run retry-state locking and durable I/O outside the service event loop."""
+
+    def _guarded_operation() -> T:
+        if not _STATE_TRANSACTION_WORKER_SLOTS.acquire(blocking=False):
+            raise WatcherRetryUnavailableError(
+                "watcher retry state worker capacity is unavailable"
+            )
+        try:
+            return operation()
+        finally:
+            _STATE_TRANSACTION_WORKER_SLOTS.release()
+
+    return await _run_in_thread(_guarded_operation, abandon_on_cancel=True)
+
+
+async def _run_fallback_transaction[T](operation: Callable[[], T]) -> T:
+    """Run a recovery handoff without competing for state worker capacity."""
+
+    def _guarded_operation() -> T:
+        if not _CANCELLATION_FALLBACK_WORKER_SLOTS.acquire(blocking=False):
+            raise WatcherRetryUnavailableError(
+                "watcher recovery handoff worker capacity is unavailable"
+            )
+        try:
+            return operation()
+        finally:
+            _CANCELLATION_FALLBACK_WORKER_SLOTS.release()
+
+    return await _run_in_thread(_guarded_operation, abandon_on_cancel=True)
+
+
+async def _await_retry_transaction[T](
+    transaction: asyncio.Task[T],
+    cancellation_deadline: float | None,
+) -> T:
+    """Await one transaction, imposing a hard bound only after cancellation."""
+    if cancellation_deadline is None:
+        return await asyncio.shield(transaction)
+    remaining = cancellation_deadline - time.monotonic()
+    if remaining <= 0.0:
+        raise TimeoutError
+    return await asyncio.wait_for(asyncio.shield(transaction), timeout=remaining)
+
+
+async def _run_durable_retry_transaction[T](
+    operation: Callable[[], T],
+    *,
+    source: WatcherSource,
+    root_dir: Path,
+    action: str,
+    cancellation_fallback: Callable[[], object] | None = None,
+) -> tuple[T, bool]:
+    """Retry transient state I/O and defer cancellation until it is durable."""
+    delay = 0.01
+    next_log_at = 0.0
+    cancellation_requested = False
+    cancellation_deadline: float | None = None
+    while True:
+        if (
+            cancellation_deadline is not None
+            and time.monotonic() >= cancellation_deadline
+        ):
+            await _complete_cancellation_handoff(
+                cancellation_fallback,
+                source=source,
+                root_dir=root_dir,
+                action=action,
+            )
+            raise asyncio.CancelledError
+        transaction = asyncio.create_task(_run_retry_transaction(operation))
+        while True:
+            try:
+                result = await _await_retry_transaction(
+                    transaction,
+                    cancellation_deadline,
+                )
+            except asyncio.CancelledError:
+                cancellation_requested = True
+                if cancellation_deadline is None:
+                    cancellation_deadline = (
+                        time.monotonic() + _CANCELLATION_DURABILITY_SECONDS
+                    )
+                continue
+            except TimeoutError:
+                transaction.cancel()
+                transaction.add_done_callback(_consume_background_result)
+                await _complete_cancellation_handoff(
+                    cancellation_fallback,
+                    source=source,
+                    root_dir=root_dir,
+                    action=action,
+                )
+                raise asyncio.CancelledError from None
+            except WatcherRetryUnavailableError as exc:
+                now = time.monotonic()
+                if now >= next_log_at:
+                    log_event(
+                        logger,
+                        "service.watcher",
+                        "state_transaction_retry",
+                        severity=logging.WARNING,
+                        root=root_dir,
+                        source=source,
+                        action=action,
+                        retry_delay_seconds=f"{delay:.3f}",
+                        error=exc,
+                    )
+                    next_log_at = now + 5.0
+                break
+            else:
+                return result, cancellation_requested
+        try:
+            remaining = (
+                None
+                if cancellation_deadline is None
+                else max(0.0, cancellation_deadline - time.monotonic())
+            )
+            await asyncio.sleep(delay if remaining is None else min(delay, remaining))
+        except asyncio.CancelledError:
+            cancellation_requested = True
+            if cancellation_deadline is None:
+                cancellation_deadline = (
+                    time.monotonic() + _CANCELLATION_DURABILITY_SECONDS
+                )
+        delay = min(1.0, delay * 2.0)
+
+
+async def _complete_cancellation_handoff(
+    fallback: Callable[[], object] | None,
+    *,
+    source: WatcherSource,
+    root_dir: Path,
+    action: str,
+) -> None:
+    """Attempt the lock-independent handoff within its separate hard bound."""
+    if fallback is None:
+        return
+    if await _run_cancellation_fallback(fallback):
+        return
+    log_event(
+        logger,
+        "service.watcher",
+        "state_handoff_timeout",
+        severity=logging.ERROR,
+        root=root_dir,
+        source=source,
+        action=action,
+        timeout_seconds=f"{_CANCELLATION_FALLBACK_SECONDS:.0f}",
+    )
+
+
+def _consume_background_result[T](task: asyncio.Task[T]) -> None:
+    """Observe a detached fallback result after its caller reached its deadline."""
+    with suppress(asyncio.CancelledError, Exception):
+        task.result()
+
+
+async def _run_cancellation_fallback(operation: Callable[[], object]) -> bool:
+    """Retry transient handoff I/O within one cancellation-owned deadline."""
+    deadline = time.monotonic() + _CANCELLATION_FALLBACK_SECONDS
+    delay = 0.01
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            return False
+        task = asyncio.create_task(_run_fallback_transaction(operation))
+        while True:
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=remaining)
+            except asyncio.CancelledError:
+                if task.cancelled():
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    task.cancel()
+                    task.add_done_callback(_consume_background_result)
+                    return False
+                continue
+            except TimeoutError:
+                task.cancel()
+                task.add_done_callback(_consume_background_result)
+                return False
+            except WatcherRetryUnavailableError:
+                break
+            else:
+                return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            return False
+        with suppress(asyncio.CancelledError):
+            await asyncio.sleep(min(delay, remaining))
+        delay = min(0.25, delay * 2.0)
+
+
+async def _persist_convergence_pending(
+    policy: WatcherRetryPolicy,
+    *,
+    source: WatcherSource,
+    root_dir: Path,
+) -> bool:
+    """Persist one accepted event batch even when shutdown races it."""
+    _state, cancellation_requested = await _run_durable_retry_transaction(
+        policy.mark_convergence_pending,
+        source=source,
+        root_dir=root_dir,
+        action="mark_convergence_pending",
+        cancellation_fallback=policy.write_recovery_marker,
+    )
+    return cancellation_requested
+
+
+async def _persist_observed_sources(
+    *,
+    vault_events_observed: bool,
+    code_events_observed: bool,
+    vault_retry: WatcherRetryPolicy,
+    code_retry: WatcherRetryPolicy,
+    root_dir: Path,
+) -> bool:
+    """Settle every source in one accepted batch before delivering cancellation."""
+    cancellation_requested = False
+    errors: list[Exception] = []
+    operations = [
+        (vault_events_observed, WatcherSource.VAULT, vault_retry),
+        (code_events_observed, WatcherSource.CODE, code_retry),
+    ]
+    tasks = [
+        asyncio.create_task(
+            _persist_convergence_pending(
+                policy,
+                source=source,
+                root_dir=root_dir,
+            )
+        )
+        for observed, source, policy in operations
+        if observed
+    ]
+    grouped = asyncio.gather(*tasks, return_exceptions=True)
+    while True:
+        try:
+            outcomes = await asyncio.shield(grouped)
+        except asyncio.CancelledError:
+            cancellation_requested = True
+            for unsettled in tasks:
+                if not unsettled.done():
+                    unsettled.cancel()
+        else:
+            break
+    for outcome in outcomes:
+        if isinstance(outcome, asyncio.CancelledError):
+            cancellation_requested = True
+        elif isinstance(outcome, Exception):
+            errors.append(outcome)
+        elif isinstance(outcome, bool):
+            cancellation_requested |= outcome
+        else:
+            raise outcome
+    if len(errors) == 1:
+        raise errors[0]
+    if errors:
+        raise ExceptionGroup("watcher intent persistence failed", errors)
+    return cancellation_requested
+
+
+async def _admit_watcher_attempt(
+    policy: WatcherRetryPolicy,
+    *,
+    source: WatcherSource,
+    root_dir: Path,
+) -> WatcherRetryDecision:
+    """Admit atomically, settling a claim if cancellation raced its commit."""
+    attempt_token = policy.reserve_admission()
+    decision, cancellation_requested = await _run_durable_retry_transaction(
+        lambda: policy.admit_reserved(attempt_token, now=time.time()),
+        source=source,
+        root_dir=root_dir,
+        action="admit",
+        cancellation_fallback=policy.write_recovery_marker,
+    )
+    if not cancellation_requested:
+        return decision
+    attempt_generation = decision.attempt_generation
+    if decision.admitted and attempt_generation is not None:
+        await _run_durable_retry_transaction(
+            lambda: policy.record_interrupted(attempt_generation),
+            source=source,
+            root_dir=root_dir,
+            action="interrupt_cancelled_admission",
+            cancellation_fallback=policy.write_recovery_marker,
+        )
+    raise asyncio.CancelledError
+
+
+def _raise_if_cancellation_requested(requested: bool) -> None:
+    """Deliver cancellation only after the selected durable outcome exists."""
+    if requested:
+        raise asyncio.CancelledError
+
+
+async def _collect_watcher_events(
+    *,
+    root_dir: Path,
+    vault_dir: Path,
+    code_indexer: CodebaseIndexer,
+    stop_event: asyncio.Event,
+    debounce: int,
+    prep_config: list[PreprocessConfig],
+    pending_vault: set[Path],
+    pending_code: set[Path],
+    vault_retry: WatcherRetryPolicy,
+    code_retry: WatcherRetryPolicy,
+    dispatch_wakeup: asyncio.Queue[None],
+) -> None:
+    """Persist incoming intent while indexing runs in the dispatcher task."""
+    try:
+        async for changes in awatch(
+            root_dir,
+            debounce=debounce,
+            rust_timeout=_WATCH_IDLE_TICK_MS,
+            yield_on_timeout=True,
+            stop_event=stop_event,
+            watch_filter=lambda _change, path: (
+                _is_vault_change(Path(path), vault_dir)
+                or _is_code_change(Path(path), root_dir, vault_dir, prep_config[0])
+            ),
+        ):
+            vault_events_observed, code_events_observed = _record_changes(
+                changes,
+                root_dir=root_dir,
+                vault_dir=vault_dir,
+                code_indexer=code_indexer,
+                prep_config=prep_config,
+                pending_vault=pending_vault,
+                pending_code=pending_code,
+            )
+            cancellation_requested = await _persist_observed_sources(
+                vault_events_observed=vault_events_observed,
+                code_events_observed=code_events_observed,
+                vault_retry=vault_retry,
+                code_retry=code_retry,
+                root_dir=root_dir,
+            )
+            if dispatch_wakeup.empty():
+                dispatch_wakeup.put_nowait(None)
+            if cancellation_requested:
+                raise asyncio.CancelledError
+    finally:
+        if dispatch_wakeup.empty():
+            dispatch_wakeup.put_nowait(None)
 
 
 async def watch_and_reindex(
@@ -194,6 +568,32 @@ async def watch_and_reindex(
         This coroutine does not propagate exceptions from indexing.
         Indexing errors are caught and logged via ``logger.exception``.
     """
+    try:
+        vault_retry, vault_start_cancelled = await _run_durable_retry_transaction(
+            lambda: WatcherRetryPolicy.for_root(root_dir, WatcherSource.VAULT),
+            source=WatcherSource.VAULT,
+            root_dir=root_dir,
+            action="initialize",
+        )
+        code_retry, code_start_cancelled = await _run_durable_retry_transaction(
+            lambda: WatcherRetryPolicy.for_root(root_dir, WatcherSource.CODE),
+            source=WatcherSource.CODE,
+            root_dir=root_dir,
+            action="initialize",
+        )
+        _raise_if_cancellation_requested(vault_start_cancelled or code_start_cancelled)
+    except Exception as exc:
+        log_event(
+            logger,
+            "service.watcher",
+            "retry_state_failed",
+            severity=logging.ERROR,
+            exc_info=True,
+            root=root_dir,
+            error=exc,
+        )
+        return
+
     log_event(
         logger,
         "service.watcher",
@@ -202,6 +602,10 @@ async def watch_and_reindex(
         vault=vault_dir,
         debounce_ms=debounce,
         cooldown_seconds=f"{cooldown:.0f}",
+        vault_circuit_state=vault_retry.state.circuit_state,
+        vault_next_retry_at=f"{vault_retry.state.next_retry_at:.3f}",
+        code_circuit_state=code_retry.state.circuit_state,
+        code_next_retry_at=f"{code_retry.state.next_retry_at:.3f}",
     )
 
     # Track last index times per source to enforce the cooldown window.
@@ -225,46 +629,53 @@ async def watch_and_reindex(
     # single-slot list because the change filter closes over it and must see
     # the refreshed config after a reload.
     prep_config: list[PreprocessConfig] = [code_indexer.preprocess_config()]
+    dispatch_wakeup: asyncio.Queue[None] = asyncio.Queue(maxsize=1)
+    collector = asyncio.create_task(
+        _collect_watcher_events(
+            root_dir=root_dir,
+            vault_dir=vault_dir,
+            code_indexer=code_indexer,
+            stop_event=stop_event,
+            debounce=debounce,
+            prep_config=prep_config,
+            pending_vault=pending_vault,
+            pending_code=pending_code,
+            vault_retry=vault_retry,
+            code_retry=code_retry,
+            dispatch_wakeup=dispatch_wakeup,
+        )
+    )
+    # Evaluate restored durable intent immediately instead of waiting for the
+    # first filesystem event or idle tick.
+    dispatch_wakeup.put_nowait(None)
 
     try:
-        async for changes in awatch(
-            root_dir,
-            debounce=debounce,
-            rust_timeout=_WATCH_IDLE_TICK_MS,
-            yield_on_timeout=True,
-            stop_event=stop_event,
-            watch_filter=lambda _change, path: (
-                _is_vault_change(Path(path), vault_dir)
-                or _is_code_change(Path(path), root_dir, vault_dir, prep_config[0])
-            ),
-        ):
-            # ``changes`` is empty on an idle tick (yield_on_timeout): the loop
-            # body below still runs, re-checking the cooldown and flushing any
-            # carried-forward pending set, so a change suppressed during a
-            # cooldown window is reconciled even when no further change arrives.
-            for change_type, path_str in changes:
-                path = Path(path_str)
-                if change_type in (Change.added, Change.modified, Change.deleted):
-                    if (
-                        path.name == PREPROCESS_CONFIG_FILENAME
-                        and path.parent == root_dir
-                    ):
-                        prep_config[0] = code_indexer.preprocess_config()
-                        log_event(
-                            logger,
-                            "service.watcher",
-                            "preprocess_config_reloaded",
-                            root=root_dir,
-                            rules=len(prep_config[0].rules),
-                        )
-                    if _is_vault_change(path, vault_dir):
-                        pending_vault.add(path)
-                    elif _is_code_change(path, root_dir, vault_dir, prep_config[0]):
-                        pending_code.add(path)
+        while True:
+            await dispatch_wakeup.get()
+            if collector.done():
+                await collector
+                break
+            if stop_event.is_set():
+                break
 
             now = time.monotonic()
+            vault_state, vault_refresh_cancelled = await _run_durable_retry_transaction(
+                vault_retry.refresh,
+                source=WatcherSource.VAULT,
+                root_dir=root_dir,
+                action="refresh",
+            )
+            code_state, code_refresh_cancelled = await _run_durable_retry_transaction(
+                code_retry.refresh,
+                source=WatcherSource.CODE,
+                root_dir=root_dir,
+                action="refresh",
+            )
+            _raise_if_cancellation_requested(
+                vault_refresh_cancelled or code_refresh_cancelled
+            )
 
-            if pending_vault:
+            if pending_vault or vault_state.convergence_pending:
                 (
                     _last_vault_index,
                     pending_vault,
@@ -277,9 +688,10 @@ async def watch_and_reindex(
                     vault_indexer,
                     graph_cache,
                     active_vault_job,
+                    vault_retry,
                 )
 
-            if pending_code:
+            if pending_code or code_state.convergence_pending:
                 (
                     _last_code_index,
                     pending_code,
@@ -291,8 +703,24 @@ async def watch_and_reindex(
                     now,
                     code_indexer,
                     active_code_job,
+                    code_retry,
                 )
+    except Exception as exc:
+        log_event(
+            logger,
+            "service.watcher",
+            "failed",
+            severity=logging.ERROR,
+            exc_info=True,
+            root=root_dir,
+            error=exc,
+        )
     finally:
+        stop_event.set()
+        if not collector.done():
+            collector.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await collector
         if active_vault_job is not None:
             _jobs.record_finish(
                 active_vault_job, phase="cancelled", error="watcher task stopped"
@@ -304,6 +732,104 @@ async def watch_and_reindex(
         log_event(logger, "service.watcher", "stopped", root=root_dir)
 
 
+def _finish_watcher_job(
+    job_id: str | None,
+    *,
+    error: str,
+    phase: _jobs.Phase | None = None,
+) -> None:
+    """Finish a watcher job only when admission created one."""
+    if job_id is None:
+        return
+    if phase is None:
+        _jobs.record_finish(job_id, error=error)
+    else:
+        _jobs.record_finish(job_id, phase=phase, error=error)
+
+
+async def _interrupt_watcher_attempt(
+    policy: WatcherRetryPolicy,
+    generation: int,
+    *,
+    source: WatcherSource,
+    root_dir: Path,
+    job_id: str | None,
+) -> None:
+    try:
+        await _run_durable_retry_transaction(
+            lambda: policy.record_interrupted(generation),
+            source=source,
+            root_dir=root_dir,
+            action="record_interrupted",
+            cancellation_fallback=policy.write_recovery_marker,
+        )
+    finally:
+        _finish_watcher_job(
+            job_id,
+            phase="cancelled",
+            error="watcher task cancelled",
+        )
+
+
+async def _record_watcher_failure(
+    policy: WatcherRetryPolicy,
+    error: Exception,
+    generation: int,
+    *,
+    source: WatcherSource,
+    root_dir: Path,
+    job_id: str | None,
+) -> tuple[WatcherRetryState, bool]:
+    try:
+        return await _run_durable_retry_transaction(
+            partial(policy.record_failure, error, generation),
+            source=source,
+            root_dir=root_dir,
+            action="record_failure",
+            cancellation_fallback=policy.write_recovery_marker,
+        )
+    except asyncio.CancelledError:
+        _finish_watcher_job(
+            job_id,
+            phase="cancelled",
+            error="watcher task cancelled during failure settlement",
+        )
+        raise
+    except Exception:
+        _finish_watcher_job(job_id, error=str(error))
+        raise
+
+
+async def _record_watcher_success(
+    policy: WatcherRetryPolicy,
+    generation: int,
+    *,
+    source: WatcherSource,
+    root_dir: Path,
+    job_id: str | None,
+) -> bool:
+    try:
+        _state, cancellation_requested = await _run_durable_retry_transaction(
+            lambda: policy.record_success(generation),
+            source=source,
+            root_dir=root_dir,
+            action="record_success",
+            cancellation_fallback=policy.write_recovery_marker,
+        )
+    except asyncio.CancelledError:
+        _finish_watcher_job(
+            job_id,
+            phase="cancelled",
+            error="watcher task cancelled during success settlement",
+        )
+        raise
+    except Exception as exc:
+        if job_id is not None:
+            _jobs.record_finish(job_id, error=str(exc))
+        raise
+    return cancellation_requested
+
+
 async def _process_vault_changes(
     pending_vault: set[Path],
     _last_vault_index: float,
@@ -312,8 +838,8 @@ async def _process_vault_changes(
     vault_indexer: VaultIndexer,
     graph_cache: GraphCache,
     active_vault_job: str | None,
+    retry_policy: WatcherRetryPolicy,
 ) -> tuple[float, set[Path], str | None]:
-    import asyncio
     import time
 
     if now - _last_vault_index < cooldown:
@@ -328,22 +854,53 @@ async def _process_vault_changes(
         )
         return _last_vault_index, pending_vault, active_vault_job
 
-    batch = frozenset(pending_vault)
-    active_vault_job = _jobs.record_start(
-        "vault",
-        "watcher",
-        project_root=vault_indexer.root_dir,
+    decision = await _admit_watcher_attempt(
+        retry_policy,
+        source=WatcherSource.VAULT,
+        root_dir=vault_indexer.root_dir,
     )
-    log_event(
-        logger,
-        "service.watcher",
-        "reindex_started",
-        source="vault",
-        job_id=active_vault_job,
-        pending_paths=len(pending_vault),
-    )
-    _jobs.record_progress(active_vault_job, "queued")
+    if not decision.admitted:
+        if decision.reason != "retry delay active":
+            log_event(
+                logger,
+                "service.watcher",
+                "reindex_suppressed",
+                severity=logging.DEBUG,
+                source="vault",
+                reason=decision.reason,
+                circuit_state=decision.circuit_state,
+                retry_at=f"{decision.retry_at:.3f}",
+                retry_in_seconds=f"{decision.retry_in_seconds:.3f}",
+                consecutive_failures=retry_policy.state.consecutive_failures,
+                pending_paths=len(pending_vault),
+            )
+        return _last_vault_index, pending_vault, active_vault_job
+    attempt_generation = decision.attempt_generation
+    if attempt_generation is None:
+        raise WatcherRetryStateError("admitted vault attempt has no generation")
+
     try:
+        attempted_paths = frozenset(pending_vault)
+        batch = None if decision.requires_unscoped else attempted_paths
+        if batch is not None and not batch:
+            raise WatcherRetryStateError("scoped vault attempt has no changed paths")
+        active_vault_job = _jobs.record_start(
+            "vault",
+            "watcher",
+            project_root=vault_indexer.root_dir,
+        )
+        log_event(
+            logger,
+            "service.watcher",
+            "reindex_started",
+            source="vault",
+            job_id=active_vault_job,
+            pending_paths=len(attempted_paths),
+            scope="scoped" if batch is not None else "unscoped",
+            circuit_state=decision.circuit_state,
+            attempt_generation=attempt_generation,
+        )
+        _jobs.record_progress(active_vault_job, "queued")
         result = await _run_in_thread(
             lambda paths=batch, job_id=active_vault_job: (
                 vault_indexer.incremental_index(
@@ -354,8 +911,50 @@ async def _process_vault_changes(
             limiter=get_index_limiter(),
         )
         graph_cache.invalidate()
+    except asyncio.CancelledError:
+        await _interrupt_watcher_attempt(
+            retry_policy,
+            attempt_generation,
+            source=WatcherSource.VAULT,
+            root_dir=vault_indexer.root_dir,
+            job_id=active_vault_job,
+        )
+        raise
+    except Exception as exc:
+        retry_state, settlement_cancelled = await _record_watcher_failure(
+            retry_policy,
+            exc,
+            attempt_generation,
+            source=WatcherSource.VAULT,
+            root_dir=vault_indexer.root_dir,
+            job_id=active_vault_job,
+        )
+        _finish_watcher_job(active_vault_job, error=str(exc))
+        log_event(
+            logger,
+            "service.watcher",
+            "reindex_failed",
+            severity=logging.ERROR,
+            exc_info=True,
+            source="vault",
+            job_id=active_vault_job,
+            error=exc,
+            error_kind=retry_state.last_error_kind,
+            consecutive_failures=retry_state.consecutive_failures,
+            circuit_state=retry_state.circuit_state,
+            next_retry_at=f"{retry_state.next_retry_at:.3f}",
+        )
+        _raise_if_cancellation_requested(settlement_cancelled)
+    else:
+        settlement_cancelled = await _record_watcher_success(
+            retry_policy,
+            attempt_generation,
+            source=WatcherSource.VAULT,
+            root_dir=vault_indexer.root_dir,
+            job_id=active_vault_job,
+        )
         _last_vault_index = time.monotonic()
-        pending_vault = set()
+        pending_vault.difference_update(attempted_paths)
         _jobs.record_finish(
             active_vault_job,
             result=(
@@ -374,25 +973,7 @@ async def _process_vault_changes(
             removed=result.removed,
             duration_ms=result.duration_ms,
         )
-    except Exception as exc:
-        _jobs.record_finish(active_vault_job, error=str(exc))
-        log_event(
-            logger,
-            "service.watcher",
-            "reindex_failed",
-            severity=logging.ERROR,
-            exc_info=True,
-            source="vault",
-            job_id=active_vault_job,
-            error=exc,
-        )
-    except asyncio.CancelledError:
-        _jobs.record_finish(
-            active_vault_job,
-            phase="cancelled",
-            error="watcher task cancelled",
-        )
-        raise
+        _raise_if_cancellation_requested(settlement_cancelled)
     finally:
         active_vault_job = None
     return _last_vault_index, pending_vault, active_vault_job
@@ -405,8 +986,8 @@ async def _process_code_changes(
     now: float,
     code_indexer: CodebaseIndexer,
     active_code_job: str | None,
+    retry_policy: WatcherRetryPolicy,
 ) -> tuple[float, set[Path], str | None]:
-    import asyncio
     import time
 
     if now - _last_code_index < cooldown:
@@ -421,22 +1002,53 @@ async def _process_code_changes(
         )
         return _last_code_index, pending_code, active_code_job
 
-    batch = frozenset(pending_code)
-    active_code_job = _jobs.record_start(
-        "code",
-        "watcher",
-        project_root=code_indexer.root_dir,
+    decision = await _admit_watcher_attempt(
+        retry_policy,
+        source=WatcherSource.CODE,
+        root_dir=code_indexer.root_dir,
     )
-    log_event(
-        logger,
-        "service.watcher",
-        "reindex_started",
-        source="code",
-        job_id=active_code_job,
-        pending_paths=len(pending_code),
-    )
-    _jobs.record_progress(active_code_job, "queued")
+    if not decision.admitted:
+        if decision.reason != "retry delay active":
+            log_event(
+                logger,
+                "service.watcher",
+                "reindex_suppressed",
+                severity=logging.DEBUG,
+                source="code",
+                reason=decision.reason,
+                circuit_state=decision.circuit_state,
+                retry_at=f"{decision.retry_at:.3f}",
+                retry_in_seconds=f"{decision.retry_in_seconds:.3f}",
+                consecutive_failures=retry_policy.state.consecutive_failures,
+                pending_paths=len(pending_code),
+            )
+        return _last_code_index, pending_code, active_code_job
+    attempt_generation = decision.attempt_generation
+    if attempt_generation is None:
+        raise WatcherRetryStateError("admitted code attempt has no generation")
+
     try:
+        attempted_paths = frozenset(pending_code)
+        batch = None if decision.requires_unscoped else attempted_paths
+        if batch is not None and not batch:
+            raise WatcherRetryStateError("scoped code attempt has no changed paths")
+        active_code_job = _jobs.record_start(
+            "code",
+            "watcher",
+            project_root=code_indexer.root_dir,
+        )
+        log_event(
+            logger,
+            "service.watcher",
+            "reindex_started",
+            source="code",
+            job_id=active_code_job,
+            pending_paths=len(attempted_paths),
+            scope="scoped" if batch is not None else "unscoped",
+            circuit_state=decision.circuit_state,
+            attempt_generation=attempt_generation,
+        )
+        _jobs.record_progress(active_code_job, "queued")
         result = await _run_in_thread(
             lambda paths=batch, job_id=active_code_job: code_indexer.incremental_index(
                 reporter=_jobs.JobProgressReporter(job_id),
@@ -444,8 +1056,50 @@ async def _process_code_changes(
             ),
             limiter=get_index_limiter(),
         )
+    except asyncio.CancelledError:
+        await _interrupt_watcher_attempt(
+            retry_policy,
+            attempt_generation,
+            source=WatcherSource.CODE,
+            root_dir=code_indexer.root_dir,
+            job_id=active_code_job,
+        )
+        raise
+    except Exception as exc:
+        retry_state, settlement_cancelled = await _record_watcher_failure(
+            retry_policy,
+            exc,
+            attempt_generation,
+            source=WatcherSource.CODE,
+            root_dir=code_indexer.root_dir,
+            job_id=active_code_job,
+        )
+        _finish_watcher_job(active_code_job, error=str(exc))
+        log_event(
+            logger,
+            "service.watcher",
+            "reindex_failed",
+            severity=logging.ERROR,
+            exc_info=True,
+            source="code",
+            job_id=active_code_job,
+            error=exc,
+            error_kind=retry_state.last_error_kind,
+            consecutive_failures=retry_state.consecutive_failures,
+            circuit_state=retry_state.circuit_state,
+            next_retry_at=f"{retry_state.next_retry_at:.3f}",
+        )
+        _raise_if_cancellation_requested(settlement_cancelled)
+    else:
+        settlement_cancelled = await _record_watcher_success(
+            retry_policy,
+            attempt_generation,
+            source=WatcherSource.CODE,
+            root_dir=code_indexer.root_dir,
+            job_id=active_code_job,
+        )
         _last_code_index = time.monotonic()
-        pending_code = set()
+        pending_code.difference_update(attempted_paths)
         skipped_suffix = (
             f" ~{result.preprocess_skipped}" if result.preprocess_skipped else ""
         )
@@ -470,25 +1124,7 @@ async def _process_code_changes(
             removed=result.removed,
             duration_ms=result.duration_ms,
         )
-    except Exception as exc:
-        _jobs.record_finish(active_code_job, error=str(exc))
-        log_event(
-            logger,
-            "service.watcher",
-            "reindex_failed",
-            severity=logging.ERROR,
-            exc_info=True,
-            source="code",
-            job_id=active_code_job,
-            error=exc,
-        )
-    except asyncio.CancelledError:
-        _jobs.record_finish(
-            active_code_job,
-            phase="cancelled",
-            error="watcher task cancelled",
-        )
-        raise
+        _raise_if_cancellation_requested(settlement_cancelled)
     finally:
         active_code_job = None
     return _last_code_index, pending_code, active_code_job
