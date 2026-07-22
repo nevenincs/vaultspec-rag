@@ -26,11 +26,11 @@ related:
 
 ## Outcome
 
-Three focused real-server scenarios pass. Human commands resolve only one
+Two focused real-server scenarios pass. Human commands resolve only one
 unique prefix before exact requests, JSON commands reject prefixes through
 exact detail, already-satisfied controls exit successfully, and stable error
-codes survive the CLI adapter. Ruff, Ruff format, and Ty pass. Independent
-review passed with no critical, high, or medium findings.
+codes survive the CLI adapter. Ruff, Ruff format, and BasedPyright pass.
+Independent review passed with no critical, high, or medium findings.
 
 ## Notes
 

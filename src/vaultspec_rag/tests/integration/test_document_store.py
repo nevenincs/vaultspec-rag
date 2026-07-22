@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import contextlib
+import copy
+import json
 import os
 import socket
 from typing import TYPE_CHECKING
@@ -18,6 +20,12 @@ from ..._store_models import (
 )
 from ...config import EnvVar, reset_config
 from ...indexer._document_identity import document_point_id
+from ...indexer._document_meta import (
+    DocumentFileMetadata,
+    DocumentIndexMetadata,
+    document_metadata_path,
+    write_document_meta,
+)
 from ...qdrant_runtime import (
     QdrantProvisionAction,
     QdrantSupervisor,
@@ -25,6 +33,8 @@ from ...qdrant_runtime import (
     resolve_binary,
 )
 from ...store import VaultStore
+from ...storage_ops import archive_prefix, gather_survey
+from ...server._routes_storage import _shape_survey_payload
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -236,3 +246,112 @@ def test_document_schema_and_identity_contract() -> None:
         locator=DocumentLocator("page", 2),
     )
     assert first == second
+
+
+def test_document_descriptor_version_compatibility_contract() -> None:
+    """Direct consumers refuse missing document and unknown newer shapes."""
+    descriptor = store_schema.describe_storage_schema()
+    compatible = store_schema.assert_compatible(
+        descriptor,
+        known_version=store_schema.STORAGE_SCHEMA_VERSION,
+        expected_dense_dim=store_schema.effective_dense_dim(),
+        required_domains=("document",),
+    )
+    assert compatible == {"compatible": True, "reason": ""}
+
+    older = copy.deepcopy(descriptor)
+    older["version"] = store_schema.STORAGE_SCHEMA_VERSION - 1
+    del older["document"]
+    older_verdict = store_schema.assert_compatible(
+        older,
+        known_version=store_schema.STORAGE_SCHEMA_VERSION,
+        expected_dense_dim=store_schema.effective_dense_dim(),
+        required_domains=("document",),
+    )
+    assert older_verdict["compatible"] is False
+    assert "document" in older_verdict["reason"]
+
+    newer = copy.deepcopy(descriptor)
+    newer["version"] = store_schema.STORAGE_SCHEMA_VERSION + 1
+    newer_verdict = store_schema.assert_compatible(
+        newer,
+        known_version=store_schema.STORAGE_SCHEMA_VERSION,
+        expected_dense_dim=store_schema.effective_dense_dim(),
+        required_domains=("document",),
+    )
+    assert newer_verdict["compatible"] is False
+    assert "newer" in newer_verdict["reason"]
+
+
+def test_document_count_appears_in_real_storage_survey(
+    document_server_mode: QdrantSupervisor,  # noqa: ARG001
+    tmp_path: Path,
+) -> None:
+    """Expose an independently counted real document collection."""
+    store = VaultStore(tmp_path, embedding_dim=4)
+    try:
+        store.upsert_document_content_chunks([_chunk()], write_policy=None)
+        surveys = gather_survey(store.client, storage_dir=None)
+        survey = next(item for item in surveys if item.root == str(tmp_path.resolve()))
+        assert survey.points == 1
+        assert survey.vault_points == 0
+        assert survey.code_points == 0
+        assert survey.document_points == 1
+
+        payload = _shape_survey_payload(
+            surveys,
+            None,
+            10,
+            None,
+            computed_at="2026-07-22T00:00:00+00:00",
+            source="fresh",
+        )
+        namespace = next(
+            item
+            for item in payload["namespaces"]
+            if item["root"] == str(tmp_path.resolve())
+        )
+        assert namespace["document_points"] == 1
+        assert payload["totals"]["document_points"] >= 1
+    finally:
+        store.close()
+
+
+def test_document_collection_and_metadata_appear_in_real_snapshot_manifest(
+    document_server_mode: QdrantSupervisor,
+    tmp_path: Path,
+) -> None:
+    """Archive real document points with their independent metadata evidence."""
+    store = VaultStore(tmp_path, embedding_dim=4)
+    chunk = _chunk()
+    try:
+        store.upsert_document_content_chunks([chunk], write_policy=None)
+        metadata = DocumentIndexMetadata(
+            membership_fingerprint="membership-v1",
+            content_fingerprint="content-v1",
+            policy_snapshot="policy-v1",
+            files=(
+                DocumentFileMetadata(
+                    source_path=chunk.payload.source_path,
+                    content_fingerprint=chunk.payload.content_fingerprint,
+                    point_ids=(chunk.id,),
+                ),
+            ),
+        )
+        write_document_meta(document_metadata_path(tmp_path), metadata)
+        archive_dir = tmp_path / "archive"
+        artifacts = archive_prefix(
+            store.client,
+            store.TABLE_NAME[: -len(store_schema.VAULT_COLLECTION)],
+            snapshots_dir=document_server_mode.storage_dir.parent / "snapshots",
+            archive_dir=archive_dir,
+        )
+        manifest_path = next(path for path in artifacts if path.name == "snapshot-manifest.json")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        collections = {item["name"]: item for item in manifest["collections"]}
+        assert store.DOCUMENT_TABLE_NAME in collections
+        assert collections[store.DOCUMENT_TABLE_NAME]["points"] == 1
+        assert manifest["metadata_files"] == ["document_index_meta.json"]
+        assert (manifest_path.parent / "document_index_meta.json").is_file()
+    finally:
+        store.close()

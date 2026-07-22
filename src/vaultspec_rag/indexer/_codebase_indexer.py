@@ -47,8 +47,8 @@ from ._content_policy import (
     SourceProfileVersion,
 )
 from ._preprocess_runner import PreprocessAbortError
-from ._run_checkpoint import CodeRunCheckpoint
-from ._run_ledger import RunOperation
+from ._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
+from ._run_ledger import RunLedgerCompatibilityError, RunOperation
 from ._run_policy import RunPolicy
 from ._streaming import (
     CodeFileSegment,
@@ -1857,17 +1857,18 @@ class CodebaseIndexer:
             sort_keys=True,
             separators=(",", ":"),
         )
-        checkpoint_configuration = {
-            "segment_max_chunks": limits.segment_max_chunks,
-            "segment_max_bytes": limits.segment_max_bytes,
-            "queue_max_chunks": limits.queue_max_chunks,
-            "queue_max_bytes": limits.queue_max_bytes,
-            "slice_max_chunks": limits.slice_max_chunks,
-            "slice_max_bytes": limits.slice_max_bytes,
-            "sparse_enabled": limits.sparse_enabled,
-            "sparse_dimension": limits.sparse_dimension,
-            "encode_batch_size": limits.encode_batch_size,
-        }
+        checkpoint_configuration = CodeRunConfiguration(
+            segment_max_chunks=limits.segment_max_chunks,
+            segment_max_bytes=limits.segment_max_bytes,
+            queue_max_chunks=limits.queue_max_chunks,
+            queue_max_bytes=limits.queue_max_bytes,
+            slice_max_chunks=limits.slice_max_chunks,
+            slice_max_bytes=limits.slice_max_bytes,
+            sparse_enabled=limits.sparse_enabled,
+            sparse_dimension=limits.sparse_dimension,
+            encode_batch_size=limits.encode_batch_size,
+            flush_slices=limits.flush_slices,
+        )
         return CodeRunCheckpoint.open(
             data_root=self._data_root,
             root_dir=self.root_dir,
@@ -2129,6 +2130,8 @@ class CodebaseIndexer:
         attempted_paths: set[str],
         existing_ids: set[str],
         reporter: ProgressReporter,
+        checkpoint: CodeRunCheckpoint | None = None,
+        limits: _CodePipelineLimits | None = None,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> tuple[set[str], dict[str, str]]:
         """Stream changed paths and roll back attempt-introduced IDs."""
@@ -2136,6 +2139,8 @@ class CodebaseIndexer:
             published_ids, _total, published_hashes = self._pipeline_chunk_and_embed(
                 paths,
                 reporter=reporter,
+                checkpoint=checkpoint,
+                limits=limits,
                 run_control=run_control,
             )
         except _UnsettledCodeConsumerError:
@@ -2144,6 +2149,15 @@ class CodebaseIndexer:
             self._discard_failed_incremental_additions(
                 attempted_paths=attempted_paths,
                 existing_ids=existing_ids,
+                protected_ids=(
+                    set(
+                        checkpoint.ledger.iter_point_ids(
+                            checkpoint.generation_id
+                        )
+                    )
+                    if checkpoint is not None
+                    else set()
+                ),
             )
             raise
         return published_ids, published_hashes
@@ -2153,13 +2167,16 @@ class CodebaseIndexer:
         *,
         attempted_paths: set[str],
         existing_ids: set[str],
+        protected_ids: set[str] | None = None,
     ) -> None:
         """Best-effort rollback after every consumer has settled."""
         if not attempted_paths:
             return
         try:
             current_ids = set(self._get_chunk_ids_for_files(attempted_paths))
-            introduced_ids = sorted(current_ids - existing_ids)
+            introduced_ids = sorted(
+                current_ids - existing_ids - (protected_ids or set())
+            )
             if introduced_ids:
                 self.store.delete_code_chunks(introduced_ids)
         except Exception:
@@ -2694,6 +2711,27 @@ class CodebaseIndexer:
         to_index = new_files | modified_files
         paths_to_index = [current_files[rel] for rel in sorted(to_index)]
         attempted_paths = to_index | deleted_files
+        limits = self._resolve_code_pipeline_limits()
+        try:
+            checkpoint = self._open_run_checkpoint(
+                policy=policy,
+                operation=RunOperation.INCREMENTAL,
+                clean=False,
+                limits=limits,
+                run_control=run_control,
+            )
+        except RunLedgerCompatibilityError:
+            logger.info(
+                "No compatible published code manifest; running a full "
+                "failure-safe reconciliation"
+            )
+            return self._full_index_locked(
+                clean=False,
+                policy=policy,
+                discovered_paths=discovered_paths,
+                reporter=reporter,
+                run_control=run_control,
+            )
         run_control.checkpoint()
         existing_ids: set[str] = (
             set(self._get_chunk_ids_for_files(attempted_paths))
@@ -2706,6 +2744,8 @@ class CodebaseIndexer:
             attempted_paths=attempted_paths,
             existing_ids=existing_ids,
             reporter=reporter,
+            checkpoint=checkpoint,
+            limits=limits,
             run_control=run_control,
         )
         current_hashes.update(published_hashes)

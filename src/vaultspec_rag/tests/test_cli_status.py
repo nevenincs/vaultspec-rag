@@ -551,13 +551,27 @@ class TestWarmingStatusState:
         import json
 
         import vaultspec_rag.server as server_state
+        from vaultspec_rag._machine_lock import (
+            acquire_machine_lock_lease,
+            release_machine_lock_lease,
+        )
+        from vaultspec_rag.server._lifecycle import _DiscoveryPublisher
         from vaultspec_rag.server._lifespan import _stamp_service_phase
 
         os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        os.environ[EnvVar.QDRANT_STORAGE_DIR] = str(tmp_path / "qdrant" / "storage")
+        reset_base_config()
+        reset_rag_config()
         previous_port = server_state._service_port
+        previous_token = server_state._SERVICE_TOKEN
         server_state._service_port = 8766
+        server_state._SERVICE_TOKEN = "phase-stamp-test-token"
+        lease, holder = acquire_machine_lock_lease()
+        assert lease is not None
+        assert holder == os.getpid()
+        publisher = _DiscoveryPublisher(lease)
         try:
-            _stamp_service_phase("warming")
+            _stamp_service_phase(publisher, "warming")
             sf = tmp_path / "service.json"
             data = json.loads(sf.read_text(encoding="utf-8"))
             assert data["phase"] == "warming"
@@ -569,9 +583,16 @@ class TestWarmingStatusState:
             assert data["phase"] == "warming"
             assert data["pid"] == os.getpid()
 
-            _stamp_service_phase("running")
+            _stamp_service_phase(publisher, "running")
             data = json.loads(sf.read_text(encoding="utf-8"))
             assert data["phase"] == "running"
         finally:
+            publisher.quiesce()
+            publisher.cleanup()
+            release_machine_lock_lease(lease)
             server_state._service_port = previous_port
+            server_state._SERVICE_TOKEN = previous_token
             os.environ.pop(EnvVar.STATUS_DIR, None)
+            os.environ.pop(EnvVar.QDRANT_STORAGE_DIR, None)
+            reset_base_config()
+            reset_rag_config()

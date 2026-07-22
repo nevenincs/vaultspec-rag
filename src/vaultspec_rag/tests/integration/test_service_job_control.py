@@ -280,6 +280,13 @@ def test_human_cli_job_controls_resolve_unique_prefixes_before_exact_mutation(
         )
         assert retried.exit_code == 0, retried.output
         assert "Outcome: job_retry_created" in retried.stdout
+        linked_retries = [
+            snapshot
+            for snapshot in get_job_manager().list_jobs()
+            if snapshot.attempt.parent_job_id == first_id
+        ]
+        assert len(linked_retries) == 1
+        assert linked_retries[0].id != first_id
 
         deleted = runner.invoke(
             app,
