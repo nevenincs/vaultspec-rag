@@ -661,7 +661,11 @@ class QdrantSupervisor:
             child_died = not self.is_alive()
             # Stop joins the output-drain thread, so the panic tail is fully
             # captured here; reading it before stop() can race the final line.
-            self.stop()
+            if not self.stop():
+                raise RuntimeError(
+                    "qdrant failed to stop after an unsuccessful readiness probe; "
+                    "refusing recovery while the prior child or log writer survives"
+                )
             tail = self.recent_output_tail()
             culprit = (
                 _corrupt_collection_from_output(tail, self.storage_dir)
@@ -713,10 +717,9 @@ class QdrantSupervisor:
         if timeout is None:
             timeout = _ready_timeout_seconds()
         self.restart_count += 1
-        self.stop()
-        if not self._join_output_drain(timeout=0.0):
+        if not self.stop():
             logger.error(
-                "qdrant restart refused: previous output drain still owns the log sink"
+                "qdrant restart refused: prior child or output drain did not converge"
             )
             return False
         try:
@@ -739,7 +742,11 @@ class QdrantSupervisor:
                 )
             except Exception:
                 logger.exception("qdrant restart identity publication failed")
-                self.stop()
+                if not self.stop():
+                    logger.error(
+                        "qdrant identity publication failed and child teardown "
+                        "did not converge"
+                    )
                 return False
         return ready
 
@@ -761,14 +768,15 @@ class QdrantSupervisor:
             return self._ready_probe()
         return self._proc is not None and self._proc.poll() is None
 
-    def stop(self, timeout: float = _STOP_TIMEOUT_SECONDS) -> None:
-        """Terminate the child gracefully, force-killing on timeout.
+    def stop(self, timeout: float = _STOP_TIMEOUT_SECONDS) -> bool:
+        """Terminate the child and report confirmed child and drain convergence.
 
         Idempotent; safe to call with no child running. A drain that does not
         reach EOF within the bounded join remains referenced so no replacement
         child can acquire a second rotating-log sink concurrently.
         """
         proc = self._proc
+        child_stopped = proc is None or proc.poll() is not None
         if proc is not None and proc.poll() is None:
             from .._test_isolation import (
                 enforce_pytest_managed_singleton_containment,
@@ -798,17 +806,22 @@ class QdrantSupervisor:
                     proc.wait(timeout=5.0)
                 except subprocess.TimeoutExpired:
                     logger.error("qdrant pid=%d survived kill", proc.pid)
+            child_stopped = proc.poll() is not None
         # The child's exit closes the output pipe, so the drain thread sees EOF
         # and finishes; join it (bounded) so the log handle is flushed/closed.
-        if not self._join_output_drain(timeout=_DRAIN_JOIN_TIMEOUT_SECONDS):
+        drain_stopped = self._join_output_drain(timeout=_DRAIN_JOIN_TIMEOUT_SECONDS)
+        if not drain_stopped:
             logger.warning(
                 "qdrant output drain did not exit within %.0fs; retaining its "
                 "single-writer guard",
                 _DRAIN_JOIN_TIMEOUT_SECONDS,
             )
+        if not child_stopped or not drain_stopped:
+            return False
         if proc is not None:
             logger.info("qdrant child pid=%d stopped", proc.pid)
         self._proc = None
+        return True
 
     def state(self) -> QdrantRuntimeState:
         """Service-domain snapshot for operability surfaces."""

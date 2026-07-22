@@ -23,9 +23,16 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ..store import CodeChunk
+from ..store import (
+    CodeChunk,
+    DocumentChunk,
+    DocumentLocator,
+    DocumentMetadata,
+    DocumentPayload,
+)
 from ._ast_chunker import ASTChunker
 from ._chunking import LANGUAGE_MAP, TextSplitter
+from ._document_identity import document_point_id
 from ._preprocess_cache import (
     PreprocessCacheIdentity,
     read_cached_output,
@@ -69,6 +76,17 @@ class FileChunkResult:
     rel_path: str
     content_hash: str
     chunks: list[CodeChunk]
+    preprocess_status: str | None = None
+    preprocess_reason: str | None = None
+
+
+@dataclass(slots=True)
+class DocumentFileChunkResult:
+    """One document source's independently typed chunks and source hash."""
+
+    rel_path: str
+    content_hash: str
+    chunks: list[DocumentChunk]
     preprocess_status: str | None = None
     preprocess_reason: str | None = None
 
@@ -251,6 +269,194 @@ def _decode_source(
     if execution_policy.normalize_newlines:
         return text.replace("\r\n", "\n").replace("\r", "\n")
     return text
+
+
+def _document_chunks_from_text(
+    text: str,
+    *,
+    rel_path: str,
+    content_hash: str,
+    document_metadata: DocumentMetadata = DocumentMetadata(),
+    extractor_id: str | None = None,
+    extractor_version: str | None = None,
+) -> list[DocumentChunk]:
+    """Split decoded text into document-native chunks with stable identities."""
+    splitter = TextSplitter(language="text", chunk_overlap=0)
+    chunks: list[DocumentChunk] = []
+    for ordinal, content in enumerate(splitter.split_text(text)):
+        if not content.strip():
+            continue
+        payload = DocumentPayload(
+            source_path=rel_path,
+            unit_ordinal=ordinal,
+            content_fingerprint=content_hash,
+            content=content,
+            document_metadata=document_metadata,
+            extractor_id=extractor_id,
+            extractor_version=extractor_version,
+        )
+        chunks.append(
+            DocumentChunk(
+                document_point_id(
+                    source_path=rel_path,
+                    unit_ordinal=ordinal,
+                    content_fingerprint=content_hash,
+                ),
+                payload,
+            )
+        )
+    return chunks
+
+
+def _document_chunks_from_output(
+    output: PreprocOutput,
+    *,
+    rel_path: str,
+    content_hash: str,
+) -> list[DocumentChunk]:
+    """Preserve every validated document and unit field on native chunks."""
+    document_metadata = DocumentMetadata.from_mapping(dict(output.metadata))
+    if output.units is None:
+        return _document_chunks_from_text(
+            output.text or "",
+            rel_path=rel_path,
+            content_hash=content_hash,
+            document_metadata=document_metadata,
+            extractor_id=output.preprocessor_id,
+            extractor_version=output.preprocessor_version,
+        )
+
+    chunks: list[DocumentChunk] = []
+    for ordinal, unit in enumerate(output.units):
+        locator = (
+            DocumentLocator(unit.locator.kind, unit.locator.value, unit.locator.end)
+            if unit.locator is not None
+            else None
+        )
+        payload = DocumentPayload(
+            source_path=rel_path,
+            unit_ordinal=ordinal,
+            content_fingerprint=content_hash,
+            content=unit.text,
+            title=unit.title,
+            section=unit.section,
+            anchor=unit.anchor,
+            locator=locator,
+            document_metadata=document_metadata,
+            unit_metadata=DocumentMetadata.from_mapping(dict(unit.metadata)),
+            extractor_id=output.preprocessor_id,
+            extractor_version=output.preprocessor_version,
+        )
+        chunks.append(
+            DocumentChunk(
+                document_point_id(
+                    source_path=rel_path,
+                    unit_ordinal=ordinal,
+                    content_fingerprint=content_hash,
+                    locator=locator,
+                ),
+                payload,
+            )
+        )
+    return chunks
+
+
+def _document_preprocess_output(
+    *,
+    content_hash: str,
+    path: pathlib.Path,
+    root_dir: pathlib.Path,
+    prep: PreprocessContext,
+) -> tuple[str, PreprocOutput | None, str | None]:
+    """Run one document extractor while retaining cache and error disposition."""
+    rel_path = path.relative_to(root_dir).as_posix()
+    rule = prep.config.match(rel_path)
+    if rule is None or (rule.command is None and rule.entry_point is None):
+        return "none", None, None
+    identity = PreprocessCacheIdentity.from_rule(
+        source_path=rel_path,
+        source_hash=content_hash,
+        rule=rule,
+        mode="batch" if rule.batch else "single",
+    )
+    output = read_cached_output(prep.cache_root, identity)
+    if output is not None:
+        if rule.path_independent:
+            output = output.model_copy(update={"source_path": rel_path})
+        return "ok", output, None
+    if rule.batch:
+        result = run_preprocessor_batch(
+            [path],
+            rule,
+            max_emitted_bytes=prep.max_emitted_bytes,
+            project_root=prep.project_root,
+        )[str(path)]
+    else:
+        result = run_preprocessor(
+            path,
+            rule,
+            max_emitted_bytes=prep.max_emitted_bytes,
+            project_root=prep.project_root,
+        )
+    if result.status == "ok" and result.output is not None:
+        write_cached_output(prep.cache_root, identity, result.output)
+        return "ok", result.output, None
+    return result.status, None, result.reason
+
+
+def chunk_document_and_hash_file(
+    path: pathlib.Path,
+    root_dir: pathlib.Path,
+    prep: PreprocessContext | None = None,
+    execution_policy: ChunkExecutionPolicy = _DEFAULT_EXECUTION_POLICY,
+) -> DocumentFileChunkResult:
+    """Read and chunk one explicitly admitted document without code models."""
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        logger.warning("Cannot read %s: %s", path, exc)
+        raise
+    content_hash = hashlib.blake2b(raw).hexdigest()
+    rel_path = path.relative_to(root_dir).as_posix()
+    if prep is not None:
+        status, output, reason = _document_preprocess_output(
+            content_hash=content_hash,
+            path=path,
+            root_dir=root_dir,
+            prep=prep,
+        )
+        if status == "ok" and output is not None:
+            return DocumentFileChunkResult(
+                rel_path,
+                content_hash,
+                _document_chunks_from_output(
+                    output,
+                    rel_path=rel_path,
+                    content_hash=content_hash,
+                ),
+                preprocess_status="ok",
+            )
+        if status == "skipped":
+            return DocumentFileChunkResult(
+                rel_path,
+                content_hash,
+                [],
+                preprocess_status="skipped",
+                preprocess_reason=reason,
+            )
+        # No extractor or an explicit passthrough continues in document kind.
+    text = _decode_source(raw, path, execution_policy)
+    if text is None:
+        return DocumentFileChunkResult(rel_path, content_hash, [])
+    return DocumentFileChunkResult(
+        rel_path,
+        content_hash,
+        _document_chunks_from_text(
+            text,
+            rel_path=rel_path,
+            content_hash=content_hash,
+        ),
+    )
 
 
 def _chunk_decoded(

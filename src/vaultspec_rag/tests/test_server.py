@@ -9,7 +9,6 @@ import subprocess
 import sys
 import threading
 import typing
-from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, cast
 
@@ -17,7 +16,7 @@ import pytest
 
 if TYPE_CHECKING:
     import logging
-    from collections.abc import Coroutine
+    from collections.abc import Coroutine, Iterator
     from pathlib import Path
 
     import httpx
@@ -99,6 +98,7 @@ def discovery_publisher(tmp_path: Path) -> Iterator[_DiscoveryPublisher]:
         acquire_machine_lock_lease,
         release_machine_lock_lease,
     )
+
     status_key = EnvVar.STATUS_DIR.value
     storage_key = EnvVar.QDRANT_STORAGE_DIR.value
     previous_env = {

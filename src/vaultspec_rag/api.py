@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from .graph_cache import GraphCache
@@ -20,6 +21,8 @@ if TYPE_CHECKING:
     import pathlib
 
     from .indexer import IndexResult
+    from .indexer._content_policy import RootContentPolicy
+    from .indexer._document_indexer import DocumentIndexPreflight
     from .indexer._codebase_indexer import CodeIndexPreflight, ContentScanResult
     from .progress import ProgressReporter
     from .search import SearchResult
@@ -28,13 +31,17 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "GraphCache",
+    "AllIndexOutcomes",
+    "DomainIndexOutcome",
     "clean",
     "get_readiness",
     "get_related",
     "get_service_state",
     "get_status",
     "index",
+    "index_all",
     "index_codebase",
+    "index_documents",
     "list_documents",
     "run_benchmark",
     "run_quality_probe",
@@ -45,6 +52,31 @@ __all__ = [
     "search_vault",
     "search_vault_timed",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class DomainIndexOutcome:
+    """Explicit success or failure for one independently mutable domain."""
+
+    result: IndexResult | None = None
+    error: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.result is None) == (self.error is None):
+            raise ValueError("domain outcome must contain exactly one result or error")
+
+    @property
+    def ok(self) -> bool:
+        return self.result is not None
+
+
+@dataclass(frozen=True, slots=True)
+class AllIndexOutcomes:
+    """Complete, non-collapsing outcome of an all-domain index request."""
+
+    vault: DomainIndexOutcome
+    code: DomainIndexOutcome
+    document: DomainIndexOutcome
 
 
 def _resolve(root_dir: pathlib.Path) -> pathlib.Path:
@@ -69,6 +101,25 @@ def _preflight_code_index(
         extra_excludes=extra_excludes,
     )
     return indexer.preflight_content(sample_limit=sample_limit)
+
+
+def _preflight_document_index(
+    root: pathlib.Path,
+    *,
+    extra_excludes: list[str] | None = None,
+    content_policy: RootContentPolicy | None = None,
+) -> DocumentIndexPreflight:
+    """Resolve document policy and discovery before storage or model loading."""
+    from .indexer import DocumentIndexer
+
+    indexer = DocumentIndexer(
+        root,
+        model=cast("Any", None),
+        store=cast("Any", None),
+        extra_excludes=extra_excludes,
+        content_policy=content_policy,
+    )
+    return indexer.preflight_content()
 
 
 def index(
@@ -154,6 +205,97 @@ def index_codebase(
             reporter=rep,
             preflight=preflight,
         )
+
+
+def index_documents(
+    root_dir: pathlib.Path,
+    *,
+    full: bool = False,
+    clean: bool = False,
+    changed_paths: list[pathlib.Path] | None = None,
+    reporter: ProgressReporter | None = None,
+    model_name: str | None = None,
+    extra_excludes: list[str] | None = None,
+    content_policy: RootContentPolicy | None = None,
+) -> IndexResult:
+    """Index only explicitly routed documents into document storage."""
+    if changed_paths is not None and (full or clean):
+        raise ValueError("scoped document indexing cannot be full or clean")
+    root = _resolve(root_dir)
+    rep = reporter if reporter is not None else NullProgressReporter()
+    preflight = _preflight_document_index(
+        root,
+        extra_excludes=extra_excludes,
+        content_policy=content_policy,
+    )
+    registry = get_registry()
+    registry.load_model(model_name)
+    with registry.lease(root) as slot:
+        if full or clean:
+            return slot.document_indexer.full_index(
+                clean=clean,
+                reporter=rep,
+                preflight=preflight,
+            )
+        return slot.document_indexer.incremental_index(
+            reporter=rep,
+            changed_paths=changed_paths,
+            preflight=preflight,
+        )
+
+
+def _domain_outcome(operation: Any) -> DomainIndexOutcome:
+    """Run one domain operation while retaining its explicit failure."""
+    try:
+        return DomainIndexOutcome(result=operation())
+    except Exception as exc:
+        logger.exception("Index domain failed")
+        return DomainIndexOutcome(error=f"{type(exc).__name__}: {exc}")
+
+
+def index_all(
+    root_dir: pathlib.Path,
+    *,
+    full: bool = False,
+    clean: bool = False,
+    reporter: ProgressReporter | None = None,
+    model_name: str | None = None,
+    extra_excludes: list[str] | None = None,
+    content_policy: RootContentPolicy | None = None,
+) -> AllIndexOutcomes:
+    """Index every domain and return every success or failure independently."""
+    return AllIndexOutcomes(
+        vault=_domain_outcome(
+            lambda: index(
+                root_dir,
+                full=full,
+                clean=clean,
+                reporter=reporter,
+                model_name=model_name,
+            )
+        ),
+        code=_domain_outcome(
+            lambda: index_codebase(
+                root_dir,
+                full=full,
+                clean=clean,
+                reporter=reporter,
+                model_name=model_name,
+                extra_excludes=extra_excludes,
+            )
+        ),
+        document=_domain_outcome(
+            lambda: index_documents(
+                root_dir,
+                full=full,
+                clean=clean,
+                reporter=reporter,
+                model_name=model_name,
+                extra_excludes=extra_excludes,
+                content_policy=content_policy,
+            )
+        ),
+    )
 
 
 def search_vault(

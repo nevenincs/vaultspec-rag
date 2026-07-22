@@ -121,7 +121,7 @@ def _stop_active_qdrant() -> bool:
     if supervisor is None:
         return True
     try:
-        supervisor.stop()
+        stopped = supervisor.stop()
     except Exception:
         log_event(
             logger,
@@ -130,6 +130,8 @@ def _stop_active_qdrant() -> bool:
             severity=logging.WARNING,
             exc_info=True,
         )
+        return False
+    if not stopped:
         return False
     _qr.set_active_supervisor(None)
     os.environ.pop(EnvVar.QDRANT_URL.value, None)

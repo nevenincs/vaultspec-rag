@@ -595,10 +595,6 @@ class CodebaseIndexer:
         """
         return self._build_preprocess_rules()
 
-    def _clear_preprocess_cache(self) -> None:
-        """Remove the preprocess output cache subtree for a clean rebuild (D7)."""
-        _preprocess_glue.clear_preprocess_cache_for(self._data_root)
-
     def _resolve_preprocess_context(
         self,
         policy: ResolvedIndexPolicy,
@@ -2026,11 +2022,12 @@ class CodebaseIndexer:
             new_ids.update(
                 checkpoint.ledger.iter_point_ids(checkpoint.generation_id)
             )
-            new_ids.update(
-                checkpoint.ledger.iter_retained_point_ids(
-                    checkpoint.generation_id
+            if checkpoint.generation.signature.operation is not RunOperation.FULL:
+                new_ids.update(
+                    checkpoint.ledger.iter_retained_point_ids(
+                        checkpoint.generation_id
+                    )
                 )
-            )
         metadata: dict[str, str] = {}
         total = [len(new_ids)]
         self.store.disk_headroom_preflight(len(paths) * _CHUNKS_PER_FILE_ESTIMATE)
@@ -2314,7 +2311,11 @@ class CodebaseIndexer:
                     reporter.phase_end()
                 reporter.phase_start("write metadata", 1)
                 try:
-                    self._write_meta(metadata, policy=policy)
+                    if checkpoint is None:
+                        self._write_meta(metadata, policy=policy)
+                    else:
+                        checkpoint.publish_metadata(self._meta_path)
+                        checkpoint.publish_generation()
                     reporter.advance(1)
                 finally:
                     reporter.phase_end()
@@ -2523,6 +2524,10 @@ class CodebaseIndexer:
             limits=limits,
             run_control=run_control,
         )
+        clean_has_confirmed_units = effective_clean and next(
+            checkpoint.ledger.iter_units(checkpoint.generation_id),
+            None,
+        ) is not None
 
         # Failure-safe rebuild (mirrors VaultIndexer.full_index): snapshot the
         # existing chunk ids BEFORE streaming, keep the old chunks live, and
@@ -2544,9 +2549,8 @@ class CodebaseIndexer:
         with publication_span:
             reporter.phase_start("prepare collection", 1)
             try:
-                if effective_clean:
+                if effective_clean and not clean_has_confirmed_units:
                     self.store.drop_code_table()
-                    self._clear_preprocess_cache()
                     self.store.ensure_code_table()
                     # The collection was just dropped: the snapshot is
                     # empty by construction, and a full id scan of a large
@@ -2587,12 +2591,30 @@ class CodebaseIndexer:
             meta.update(preserved_metadata)
 
             stale_ids = sorted(existing_ids_before - new_ids)
+            removed_paths = set(previous_metadata) - set(meta)
+            removed_ids_by_path = self._checkpoint_ids_by_path(
+                checkpoint,
+                removed_paths,
+                retained=True,
+            )
             run_control.checkpoint()
             reporter.phase_start("purge stale chunks", len(stale_ids))
             try:
                 if stale_ids:
                     try:
-                        self.store.delete_code_chunks(stale_ids)
+                        path_removed_ids: set[str] = set()
+                        for rel in sorted(removed_paths):
+                            point_ids = tuple(sorted(removed_ids_by_path[rel]))
+                            if not point_ids:
+                                continue
+                            self.store.delete_code_chunks(list(point_ids))
+                            checkpoint.record_confirmed_deletion(rel, point_ids)
+                            path_removed_ids.update(point_ids)
+                        remaining_stale_ids = sorted(
+                            set(stale_ids) - path_removed_ids
+                        )
+                        if remaining_stale_ids:
+                            self.store.delete_code_chunks(remaining_stale_ids)
                     except OSError:
                         logger.error(
                             "Failed to purge stale code chunks after "
@@ -2607,7 +2629,8 @@ class CodebaseIndexer:
 
             reporter.phase_start("write metadata", 1)
             try:
-                self._write_meta(meta, policy=policy)
+                checkpoint.publish_metadata(self._meta_path)
+                checkpoint.publish_generation()
                 reporter.advance(1)
             finally:
                 reporter.phase_end()

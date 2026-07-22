@@ -372,6 +372,7 @@ def _start_watcher_locked(
             vault_dir=root / ".vault",
             vault_indexer=slot.vault_indexer,
             code_indexer=slot.code_indexer,
+            document_indexer=slot.document_indexer,
             stop_event=stop_event,
             graph_cache=slot.graph_cache,
             debounce=debounce,

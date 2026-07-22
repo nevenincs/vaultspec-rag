@@ -37,11 +37,14 @@ def _identity(
     source_hash: str = "hash1",
     execution_fingerprint: str = "extract-v1",
     source_path: str = "docs/a.pdf",
+    *,
+    path_independent: bool = False,
 ) -> PreprocessCacheIdentity:
     return PreprocessCacheIdentity(
         source_path=source_path,
         source_hash=source_hash,
         execution_fingerprint=execution_fingerprint,
+        path_independent=path_independent,
     )
 
 
@@ -63,6 +66,23 @@ def test_different_source_hash_misses(tmp_path: Path) -> None:
     root = preprocess_cache_dir(tmp_path)
     write_cached_output(root, _identity(), _output())
     assert read_cached_output(root, _identity(source_hash="hash2")) is None
+
+
+def test_path_dependent_cache_does_not_alias_identical_files(tmp_path: Path) -> None:
+    root = preprocess_cache_dir(tmp_path)
+    write_cached_output(root, _identity(), _output())
+    assert read_cached_output(
+        root,
+        _identity(source_path="docs/b.pdf"),
+    ) is None
+
+
+def test_path_independent_cache_reuse_requires_explicit_identity(tmp_path: Path) -> None:
+    root = preprocess_cache_dir(tmp_path)
+    first = _identity(path_independent=True)
+    second = _identity(source_path="docs/b.pdf", path_independent=True)
+    write_cached_output(root, first, _output())
+    assert read_cached_output(root, second) is not None
 
 
 def test_command_change_invalidates(tmp_path: Path) -> None:

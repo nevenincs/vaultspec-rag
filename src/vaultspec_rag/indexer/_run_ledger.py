@@ -387,11 +387,7 @@ class RunLedger:
                     now,
                 ),
             )
-            if (
-                not signature.clean
-                and signature.operation
-                in (RunOperation.INCREMENTAL, RunOperation.SCOPED_INCREMENTAL)
-            ):
+            if not signature.clean:
                 parent_generation_id = self._carry_published_manifest(
                     connection,
                     generation_id,

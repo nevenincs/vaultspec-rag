@@ -84,9 +84,15 @@ def handle_preprocess_list(
         {
             "pattern": r.pattern,
             "command": r.command,
+            "entry_point": r.entry_point,
             "priority": r.priority,
+            "target": r.target.value,
+            "extractor_version": r.extractor_version,
             "on_error": r.on_error,
             "timeout_s": r.timeout_s,
+            "batch": r.batch,
+            "path_independent": r.path_independent,
+            "options": dict(r.options),
         }
         for r in config.rules
     ]
@@ -100,6 +106,16 @@ def handle_preprocess_list(
     for index, rule in enumerate(rules, start=1):
         _cli.console.print(f"{index}. Files: {rule['pattern']}", markup=False)
         _cli.console.print(f"   Priority: {rule['priority']}", markup=False)
+        _cli.console.print(f"   Target: {rule['target']}", markup=False)
+        _cli.console.print(
+            f"   Extractor version: {rule['extractor_version']}",
+            markup=False,
+        )
+        _cli.console.print(
+            "   Cross-path cache reuse: "
+            f"{'enabled' if rule['path_independent'] else 'disabled'}",
+            markup=False,
+        )
         _cli.console.print(
             f"   Failure handling: {_format_failure_handling(rule['on_error'])}",
             markup=False,
@@ -109,7 +125,7 @@ def handle_preprocess_list(
             markup=False,
         )
         _cli.console.print(
-            f"   Command: {rule['command']}",
+            f"   Invocation: {rule['command'] or rule['entry_point']}",
             markup=False,
             highlight=False,
         )
@@ -144,7 +160,22 @@ def handle_preprocess_check(
         raise typer.Exit(code=1) from exc
     count = len(config.rules)
     if json_mode:
-        _emit_json(True, "preprocess check", data={"valid": True, "rule_count": count})
+        _emit_json(
+            True,
+            "preprocess check",
+            data={
+                "valid": True,
+                "schema_version": config.schema_version,
+                "rule_count": count,
+                "targets": sorted({rule.target.value for rule in config.rules}),
+                "extractor_versions": sorted(
+                    {rule.extractor_version for rule in config.rules}
+                ),
+                "path_independent_rules": sum(
+                    rule.path_independent for rule in config.rules
+                ),
+            },
+        )
         return
     if count == 0:
         _cli.console.print(
@@ -355,6 +386,10 @@ def handle_preprocess_status(
     config_present = (root / PREPROCESS_CONFIG_FILENAME).is_file()
 
     rule_count = 0
+    schema_version: int | None = None
+    targets: list[str] = []
+    extractor_versions: list[str] = []
+    path_independent_rules = 0
     config_valid = True
     if config_present:
         try:
@@ -363,6 +398,14 @@ def handle_preprocess_status(
             config_valid = False
         else:
             rule_count = len(config.rules)
+            schema_version = config.schema_version
+            targets = sorted({rule.target.value for rule in config.rules})
+            extractor_versions = sorted(
+                {rule.extractor_version for rule in config.rules}
+            )
+            path_independent_rules = sum(
+                rule.path_independent for rule in config.rules
+            )
 
     effective = _would_run(mode, rule_count)
 
@@ -376,6 +419,10 @@ def handle_preprocess_status(
                 "config_present": config_present,
                 "config_valid": config_valid,
                 "rule_count": rule_count,
+                "schema_version": schema_version,
+                "targets": targets,
+                "extractor_versions": extractor_versions,
+                "path_independent_rules": path_independent_rules,
                 "would_run": effective,
             },
         )
@@ -389,6 +436,14 @@ def handle_preprocess_status(
         highlight=False,
     )
     _cli.console.print(f"Rules: {rule_count}", markup=False, highlight=False)
+    if schema_version is not None:
+        _cli.console.print(
+            f"Schema: {schema_version}; targets: {', '.join(targets) or 'none'}; "
+            f"extractor versions: {', '.join(extractor_versions) or 'none'}; "
+            f"cross-path cache rules: {path_independent_rules}",
+            markup=False,
+            highlight=False,
+        )
     _cli.console.print(
         f"Effect: {_status_effect_line(mode, rule_count)}",
         markup=False,
