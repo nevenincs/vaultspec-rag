@@ -618,3 +618,181 @@ def test_overlapping_metadata_publications_are_each_atomic(tmp_path: Path) -> No
     assert len(published) == 200
     assert all(path.startswith(f"src/{winner}-") for path in published)
     assert not list(tmp_path.glob(f".{meta_path.name}.*.tmp"))
+
+
+def test_reopening_a_drifted_path_supersedes_only_its_stale_upserts(
+    tmp_path: Path,
+) -> None:
+    """A resumed indexed path whose source changed can be ingested again.
+
+    This is the ledger half of the resume-after-failure cascade: an attempt
+    marks a path indexed, fails, and the next attempt finds that path's source
+    changed. Its fresh segments carry a new digest, so they are neither
+    recognised as already committed nor writable over an indexed path.
+    """
+    ledger = RunLedger(index_run_ledger_path(tmp_path))
+    generation = ledger.start_generation(_signature(tmp_path))
+    generation_id = generation.generation_id
+    old_digest = _digest("before the edit")
+    new_digest = _digest("after the edit")
+
+    for ordinal in range(2):
+        ledger.record_storage_confirmed_unit(
+            generation_id,
+            _unit("src/drifted.py", ordinal, 2, digest=old_digest),
+        )
+    ledger.record_storage_confirmed_unit(
+        generation_id,
+        CommitUnit(
+            rel_path="src/drifted.py",
+            kind=CommitUnitKind.DELETE_STALE,
+            source_digest=None,
+            segment_ordinal=0,
+            is_file_end=True,
+            point_ids=("src/drifted.py:stale:0",),
+        ),
+    )
+    ledger.record_file_state(
+        generation_id,
+        FileState.indexed("src/drifted.py", ContentKind.CODE, old_digest),
+    )
+    for ordinal in range(2):
+        ledger.record_storage_confirmed_unit(
+            generation_id,
+            _unit("src/untouched.py", ordinal, 2),
+        )
+    ledger.record_file_state(
+        generation_id,
+        FileState.indexed(
+            "src/untouched.py", ContentKind.CODE, _digest("src/untouched.py")
+        ),
+    )
+
+    lookup = ("src/drifted.py", "src/untouched.py")
+    assert ledger.indexed_digests_for_paths(generation_id, lookup) == {
+        "src/drifted.py": old_digest,
+        "src/untouched.py": _digest("src/untouched.py"),
+    }
+
+    # The cascade itself: the fresh content cannot be written over the path.
+    fresh = _unit("src/drifted.py", 0, 1, digest=new_digest)
+    with pytest.raises(RunLedgerStateError, match="after a path is indexed"):
+        ledger.record_storage_confirmed_unit(generation_id, fresh)
+
+    assert (
+        ledger.reopen_drifted_path(
+            generation_id, "src/drifted.py", superseded_digest=old_digest
+        )
+        == 2
+    )
+
+    remaining = [
+        unit
+        for unit in ledger.iter_units(generation_id)
+        if unit.rel_path == "src/drifted.py"
+    ]
+    # The deletion unit is the durable record that the published points were
+    # removed from storage, so it must outlive the upserts it supersedes.
+    assert [unit.kind for unit in remaining] == [CommitUnitKind.DELETE_STALE]
+    assert not any(unit.source_digest == old_digest for unit in remaining)
+    # A sibling path's evidence and indexed state are untouched.
+    untouched = [
+        unit
+        for unit in ledger.iter_units(generation_id)
+        if unit.rel_path == "src/untouched.py"
+    ]
+    assert len(untouched) == 2
+    assert ledger.indexed_digests_for_paths(generation_id, lookup) == {
+        "src/untouched.py": _digest("src/untouched.py")
+    }
+
+    # The previously refused write now succeeds and the path re-converges.
+    ledger.record_storage_confirmed_unit(generation_id, fresh)
+    ledger.record_file_state(
+        generation_id,
+        FileState.indexed("src/drifted.py", ContentKind.CODE, new_digest),
+    )
+    assert ledger.indexed_digests_for_paths(generation_id, ("src/drifted.py",)) == {
+        "src/drifted.py": new_digest
+    }
+    # Replaying the re-open after an interruption removes nothing.
+    assert (
+        ledger.reopen_drifted_path(
+            generation_id, "src/drifted.py", superseded_digest=old_digest
+        )
+        == 0
+    )
+
+
+def test_reopening_a_path_is_refused_once_finalization_begins(tmp_path: Path) -> None:
+    """Re-opening is an ingestion-phase repair, not a post-publication edit."""
+    ledger = RunLedger(index_run_ledger_path(tmp_path))
+    generation_id = ledger.start_generation(_signature(tmp_path)).generation_id
+    digest = _digest("only content")
+    ledger.record_storage_confirmed_unit(
+        generation_id, _unit("src/one.py", 0, 1, digest=digest)
+    )
+    ledger.record_file_state(
+        generation_id, FileState.indexed("src/one.py", ContentKind.CODE, digest)
+    )
+    ledger.advance_finalization(generation_id, FinalizationPhase.STALE_RECONCILED)
+
+    with pytest.raises(RunLedgerStateError, match="finalization"):
+        ledger.reopen_drifted_path(
+            generation_id, "src/one.py", superseded_digest=digest
+        )
+
+
+def test_carried_forward_points_are_retained_by_the_inheriting_generation(
+    tmp_path: Path,
+) -> None:
+    """Inherited points must survive a generation that carries them forward.
+
+    A carried-forward file state keeps the generation that produced its
+    evidence while living under the new one, so its units - and therefore its
+    points - belong to the parent. A retained-point lookup that constrains
+    points to the querying generation finds none of them, the caller reads
+    that as obsolete, and an ordinary incremental run silently deletes the
+    inherited half of the index.
+    """
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    full = ledger.start_generation(_signature(tmp_path))
+    paths = ("src/carried_one.py", "src/carried_two.py")
+    inherited_points: set[str] = set()
+    for path in paths:
+        unit = _unit(path, 0, 1, digest=_digest(path))
+        inherited_points.update(unit.point_ids)
+        ledger.record_storage_confirmed_unit(full.generation_id, unit)
+        ledger.record_file_state(
+            full.generation_id,
+            FileState.indexed(path, ContentKind.CODE, _digest(path)),
+        )
+    for phase in (
+        FinalizationPhase.STALE_RECONCILED,
+        FinalizationPhase.METADATA_PUBLISHED,
+        FinalizationPhase.GENERATION_PUBLISHED,
+    ):
+        ledger.advance_finalization(full.generation_id, phase)
+    ledger.finish_generation(full.generation_id, RunTerminalState.SUCCEEDED)
+
+    incremental = ledger.start_generation(
+        replace(
+            full.signature,
+            operation=RunOperation.INCREMENTAL,
+            configuration_fingerprint="configuration-v2",
+        )
+    )
+    assert incremental.parent_generation_id == full.generation_id
+    # The states now live under the new generation while their evidence still
+    # points at the parent, which is the condition that made this reachable.
+    carried = ledger.file_states_for_paths(incremental.generation_id, paths)
+    assert set(carried) == set(paths)
+
+    retained = ledger.retained_point_ids_for_candidates(
+        incremental.generation_id,
+        tuple(sorted(inherited_points)),
+    )
+    assert retained == frozenset(inherited_points), (
+        "carried-forward points were not recognised as retained; an "
+        "incremental run would delete the inherited index"
+    )

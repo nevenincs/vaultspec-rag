@@ -1036,6 +1036,70 @@ class RunLedger:
                 (generation_id, rel_path),
             )
 
+    def reopen_drifted_path(
+        self,
+        generation_id: str,
+        rel_path: str,
+        *,
+        superseded_digest: str,
+    ) -> int:
+        """Re-open one indexed path whose source changed after it was indexed.
+
+        A resumed generation carries the file states of the attempt that
+        failed. When a path was marked indexed there and its source has since
+        changed, the fresh segments describe different content under a new
+        digest, so they can neither be recognised as already committed nor
+        recorded on top of an indexed path. Superseding clears the stale
+        upsert evidence and the indexed state so the path is ingested again
+        from nothing.
+
+        Only the superseded digest's upsert units are removed. Deletion units
+        survive, because they are the durable record that the previously
+        published points were removed from storage - the caller performs that
+        deletion before calling this, so a crash between the two replays as a
+        no-op rather than stranding points.
+
+        Args:
+            generation_id: The resumed generation being repaired.
+            rel_path: The project-relative path to re-open.
+            superseded_digest: The digest recorded when the path was indexed.
+
+        Returns:
+            The number of stale upsert units removed.
+
+        Raises:
+            RunLedgerStateError: When the generation has left ingestion, so
+                its file states can no longer change.
+        """
+        _validate_rel_path(rel_path)
+        with self._transaction() as connection:
+            generation = self._require_mutable_generation(connection, generation_id)
+            if generation["finalization_phase"] != FinalizationPhase.INGESTING.value:
+                raise RunLedgerStateError(
+                    "cannot re-open a path after finalization begins"
+                )
+            removed = connection.execute(
+                """
+                DELETE FROM commit_units
+                WHERE generation_id = ? AND rel_path = ?
+                  AND unit_kind = ? AND source_digest = ?
+                """,
+                (
+                    generation_id,
+                    rel_path,
+                    CommitUnitKind.UPSERT.value,
+                    superseded_digest,
+                ),
+            ).rowcount
+            connection.execute(
+                """
+                DELETE FROM file_states
+                WHERE generation_id = ? AND rel_path = ?
+                """,
+                (generation_id, rel_path),
+            )
+            return removed
+
     def iter_file_states(
         self,
         generation_id: str,
@@ -1100,6 +1164,30 @@ class RunLedger:
             for state in (_file_state_from_row(row) for row in rows)
         }
 
+    def indexed_digests_for_paths(
+        self,
+        generation_id: str,
+        rel_paths: tuple[str, ...],
+    ) -> dict[str, str]:
+        """Return the recorded digest of every named path already indexed.
+
+        Paths absent from the generation, recorded in any state other than
+        indexed, or carrying no digest are omitted, so the result contains
+        exactly the paths whose recorded content can be compared against a
+        freshly observed digest. The lookup is chunked internally, so callers
+        may pass an unbounded path set.
+        """
+        unique_paths = tuple(dict.fromkeys(rel_paths))
+        digests: dict[str, str] = {}
+        for start in range(0, len(unique_paths), _FETCH_BATCH):
+            page = unique_paths[start : start + _FETCH_BATCH]
+            for rel_path, state in self.file_states_for_paths(
+                generation_id, page
+            ).items():
+                if state.state is FileStateKind.INDEXED and state.content_hash:
+                    digests[rel_path] = state.content_hash
+        return digests
+
     def retained_point_ids_for_candidates(
         self,
         generation_id: str,
@@ -1119,6 +1207,15 @@ class RunLedger:
             # loop.  A regular JOIN lets SQLite start from every indexed file
             # state and probe the candidate set, making each store page scale
             # with the entire generation during finalization.
+            #
+            # The points table is deliberately NOT constrained to the queried
+            # generation. Carried-forward file states preserve the generation
+            # that produced their evidence while living under the current one,
+            # so their units - and therefore their points - belong to the
+            # parent. The join chain already pins points to whichever
+            # generation owns the matching unit; constraining them to the
+            # queried generation instead drops every inherited point, which
+            # then reads as obsolete and is deleted.
             rows = connection.execute(
                 f"""
                 SELECT points.point_id
@@ -1129,15 +1226,13 @@ class RunLedger:
                 CROSS JOIN file_states AS states
                   ON states.evidence_generation_id = units.generation_id
                  AND states.rel_path = units.rel_path
-                WHERE points.generation_id = ?
-                  AND points.point_id IN ({placeholders})
+                WHERE points.point_id IN ({placeholders})
                   AND units.unit_kind = ?
                   AND units.source_digest = states.content_hash
                   AND states.generation_id = ?
                   AND states.state = ?
                 """,
                 (
-                    generation_id,
                     *unique_ids,
                     CommitUnitKind.UPSERT.value,
                     generation_id,
@@ -1460,6 +1555,8 @@ class RunLedger:
                         REFERENCES commit_units(generation_id, unit_id)
                         ON DELETE CASCADE
                 );
+                CREATE INDEX IF NOT EXISTS commit_point_ids_point
+                    ON commit_point_ids(point_id);
 
                 CREATE TABLE IF NOT EXISTS file_states (
                     generation_id TEXT NOT NULL REFERENCES generations(generation_id)
@@ -1480,6 +1577,19 @@ class RunLedger:
             )
             connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
             connection.commit()
+            return
+        # Additive index for ledgers created before it existed. Without it the
+        # bounded retained-point lookup degrades to a full scan of every point
+        # in the ledger, so it must reach existing files too - and an index is
+        # a pure read-path addition, so it needs no schema-version bump and
+        # cannot invalidate a ledger that is otherwise current.
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS commit_point_ids_point
+                ON commit_point_ids(point_id)
+            """
+        )
+        connection.commit()
 
     def _verify_integrity(self, connection: sqlite3.Connection) -> None:
         rows = connection.execute("PRAGMA quick_check").fetchall()
