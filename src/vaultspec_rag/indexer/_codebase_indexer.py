@@ -25,21 +25,26 @@ from concurrent.futures import (
     wait,
 )
 from concurrent.futures.process import BrokenProcessPool
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple
 
 from ..job_control import NO_RUN_CONTROL, RunControlSignal
 from ..logging_config import log_event
 from . import _chunk_worker, _code_meta, _ignore_specs, _preprocess_glue
-from ._chunking import (
-    _MAX_FILE_SIZE,
-    SUPPORTED_EXTENSIONS,
-    _is_binary,
-)
+from ._chunking import _MAX_FILE_SIZE, _is_binary
 from ._code_meta import (
     CODE_EMBED_SCHEMA,
     CONTENT_EPOCH_KEY,
     EMBED_SCHEMA_KEY,
     MEMBERSHIP_EPOCH_KEY,
+)
+from ._content_policy import (
+    AdmissionDisposition,
+    AdmissionReason,
+    ClassifiedContent,
+    ContentKind,
+    RootContentPolicy,
+    SourceProfileVersion,
 )
 from ._preprocess_runner import PreprocessAbortError
 from ._streaming import (
@@ -58,6 +63,7 @@ if TYPE_CHECKING:
 
     import pathspec
 
+    from ..config import PreprocessMode
     from ..embeddings import EmbeddingModel
     from ..job_control import RunControl
     from ..progress import ProgressReporter
@@ -68,6 +74,7 @@ if TYPE_CHECKING:
         PreprocessContext,
         PreprocessRule,
     )
+    from ._resolved_policy import ResolvedIndexPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -97,26 +104,44 @@ BATCH_SIZE = 64
 # potentially one completed chunk result) per source path on large trees.
 _CHUNK_FUTURE_WINDOW_PER_WORKER = 2
 
+_DEFAULT_SCAN_SAMPLE_LIMIT = 100
+
+
+@dataclass(frozen=True, slots=True)
+class AdmissionCount:
+    """One stable content-kind/disposition count from a structured scan."""
+
+    kind: ContentKind | None
+    admitted: bool
+    reason: AdmissionReason
+    count: int
+
+
+@dataclass(frozen=True, slots=True)
+class AdmissionSample:
+    """One bounded, project-relative example from a structured scan."""
+
+    path: str
+    kind: ContentKind | None
+    admitted: bool
+    reason: AdmissionReason
+
+
+@dataclass(frozen=True, slots=True)
+class ContentScanResult:
+    """Structured discovery result and path-list compatibility authority."""
+
+    files: tuple[pathlib.Path, ...]
+    counts: tuple[AdmissionCount, ...]
+    samples: tuple[AdmissionSample, ...]
+    policy_fingerprint: str
+    preprocess_mode: PreprocessMode
+    preprocess_rule_count: int
+    hooks_will_run: bool
+
 
 class _UnsettledCodeConsumerError(RuntimeError):
     """The code consumer remained live after its bounded shutdown wait."""
-
-
-class _ScanInputs(NamedTuple):
-    """Ignore specs and preprocess config resolved in one pass.
-
-    The compiled specs (for the scan) and the raw pattern lists (for the
-    config epoch) come from a single ``.gitignore`` rglob, so the scoped
-    watcher path computes the epoch and scans without a second tree walk.
-    ``vaultragignore_patterns`` are the file-only patterns; CLI ``--exclude``
-    entries live in ``rag_spec`` but are kept out of the epoch inputs.
-    """
-
-    git_spec: pathspec.GitIgnoreSpec
-    rag_spec: pathspec.GitIgnoreSpec | None
-    gitignore_patterns: list[str]
-    vaultragignore_patterns: list[str]
-    preprocess_config: PreprocessConfig
 
 
 class _CodePipelineLimits(NamedTuple):
@@ -278,6 +303,7 @@ class CodebaseIndexer:
         *,
         gpu_lock: threading.Lock | None = None,
         extra_excludes: list[str] | None = None,
+        content_policy: RootContentPolicy | None = None,
     ) -> None:
         """Initialize the codebase indexer.
 
@@ -291,12 +317,17 @@ class CodebaseIndexer:
             extra_excludes: Additional gitignore-syntax exclusion
                 patterns (e.g. from CLI ``--exclude``). Merged into
                 the ``.vaultragignore`` spec.
+            content_policy: Caller-authored content ownership policy. The
+                versioned conventional source profile is used when omitted.
         """
         self.root_dir = root_dir
         self.model = model
         self.store = store
         self._gpu_lock = gpu_lock
         self._extra_excludes = extra_excludes or []
+        self._content_policy = content_policy or RootContentPolicy(
+            SourceProfileVersion.CONVENTIONAL_V1
+        )
         # Indexer-level writer lock that serializes full_index and
         # incremental_index against each other on the same instance
         # (#68 audit F6.6 - concurrent reindex race).
@@ -323,6 +354,22 @@ class CodebaseIndexer:
         # writer recomputes them as a fallback.
         self._membership_epoch: str | None = None
         self._content_epoch: str | None = None
+        self._resolved_policy: ResolvedIndexPolicy | None = None
+
+    def _resolve_operation_policy(self) -> ResolvedIndexPolicy:
+        """Resolve and validate one immutable snapshot before mutation authority.
+
+        Policy resolution performs only configuration and ignore-file reads. In
+        particular, it does not acquire the writer lock or touch collection,
+        manifest, metadata, preprocessing-cache, or embedding resources.
+        """
+        from ._resolved_policy import resolve_index_policy
+
+        return resolve_index_policy(
+            self.root_dir,
+            content_policy=self._content_policy,
+            extra_excludes=self._extra_excludes,
+        )
 
     def _collect_gitignore_patterns(self) -> list[str]:
         """Collect the hardcoded and ``.gitignore``-sourced exclusion patterns.
@@ -350,38 +397,13 @@ class CodebaseIndexer:
             self.root_dir, self._extra_excludes
         )
 
-    def _resolve_scan_inputs(self) -> _ScanInputs:
-        """Resolve ignore specs and preprocess config in a single tree walk.
-
-        The compiled specs drive the scan; the raw pattern lists and the
-        preprocess config drive the membership/content epochs. Sharing one
-        ``.gitignore`` rglob keeps the scoped path free of a second traversal.
-        """
-        import pathspec
-
-        git_patterns = self._collect_gitignore_patterns()
-        rag_patterns = self._collect_vaultragignore_patterns()
-        prep_config = self._build_preprocess_rules()
-
-        git_spec = pathspec.GitIgnoreSpec.from_lines(git_patterns)
-        extra_excludes: list[str] = getattr(self, "_extra_excludes", None) or []
-        rag_all = [*rag_patterns, *extra_excludes]
-        rag_spec = pathspec.GitIgnoreSpec.from_lines(rag_all) if rag_all else None
-        return _ScanInputs(
-            git_spec=git_spec,
-            rag_spec=rag_spec,
-            gitignore_patterns=git_patterns,
-            vaultragignore_patterns=rag_patterns,
-            preprocess_config=prep_config,
-        )
-
-    def _compute_code_epochs(self, inputs: _ScanInputs) -> tuple[str, str]:
-        """Compute the (membership, content) epoch pair from resolved inputs."""
-        return _code_meta.compute_code_epochs(
-            gitignore_patterns=inputs.gitignore_patterns,
-            vaultragignore_patterns=inputs.vaultragignore_patterns,
-            preprocess_rules=inputs.preprocess_config.rules,
-        )
+    def _compute_code_epochs(
+        self,
+        policy: ResolvedIndexPolicy,
+    ) -> tuple[str, str]:
+        """Project code membership and content epochs from one snapshot."""
+        fingerprints = policy.fingerprints_for(ContentKind.CODE)
+        return fingerprints.membership, fingerprints.content
 
     def _classify_config_drift(self, membership: str, content: str) -> str:
         """Classify config drift against the stored epochs.
@@ -399,35 +421,31 @@ class CodebaseIndexer:
     def _config_drift_dispatch(
         self,
         changed_paths: Iterable[pathlib.Path] | None,
+        policy: ResolvedIndexPolicy,
         *,
         run_control: RunControl = NO_RUN_CONTROL,
-    ) -> tuple[_ScanInputs, Iterable[pathlib.Path] | None, bool]:
-        """Resolve inputs, stamp the run's epochs, and classify config drift.
+    ) -> tuple[Iterable[pathlib.Path] | None, bool]:
+        """Stamp snapshot epochs and classify drift without reloading config.
 
-        Runs once at the incremental entry (D2): the ignore specs and
-        preprocess config are resolved a single time and returned so the scan
-        reuses them without a second tree walk. Returns the resolved inputs,
-        the possibly-nulled ``changed_paths`` (a membership mismatch, or a
-        legacy sidecar missing the keys, forces the unscoped incremental), and
-        whether a content mismatch requires a clean rebuild.
+        Returns the possibly-nulled ``changed_paths`` (a membership mismatch,
+        or a legacy sidecar missing the keys, forces the unscoped incremental)
+        and whether a content mismatch requires a clean rebuild.
         """
         run_control.checkpoint()
-        inputs = self._resolve_scan_inputs()
-        run_control.checkpoint()
-        membership, content = self._compute_code_epochs(inputs)
+        membership, content = self._compute_code_epochs(policy)
         run_control.checkpoint()
         self._membership_epoch = membership
         self._content_epoch = content
         drift = self._classify_config_drift(membership, content)
         if drift == "clean":
-            return inputs, changed_paths, True
+            return changed_paths, True
         if drift == "unscoped" and changed_paths is not None:
             logger.info(
                 "Codebase membership config changed; forcing an unscoped "
                 "incremental reconcile of the code collection",
             )
             changed_paths = None
-        return inputs, changed_paths, False
+        return changed_paths, False
 
     def _build_preprocess_rules(self) -> PreprocessConfig:
         """Resolve ``.vaultragpreprocess.toml`` into compiled preprocess rules.
@@ -448,20 +466,26 @@ class CodebaseIndexer:
         """Remove the preprocess output cache subtree for a clean rebuild (D7)."""
         _preprocess_glue.clear_preprocess_cache_for(self._data_root)
 
-    def _resolve_preprocess_context(self) -> PreprocessContext | None:
-        """Build the per-run preprocess context, or ``None`` when no rules apply."""
-        return _preprocess_glue.resolve_preprocess_context(
-            self.root_dir, self._data_root, self._build_preprocess_rules()
+    def _resolve_preprocess_context(
+        self,
+        policy: ResolvedIndexPolicy,
+    ) -> PreprocessContext | None:
+        """Build worker context from the operation snapshot without reloading."""
+        return _preprocess_glue.resolve_policy_preprocess_context(
+            self.root_dir,
+            self._data_root,
+            policy,
         )
 
     def _begin_preprocess_run(
         self,
+        policy: ResolvedIndexPolicy,
         *,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> None:
         """Reset per-run preprocess state at the start of a full/incremental run."""
         run_control.checkpoint()
-        self._prep_ctx = self._resolve_preprocess_context()
+        self._prep_ctx = self._resolve_preprocess_context(policy)
         self._prep_skips = []
         self._prep_ok = 0
         run_control.checkpoint()
@@ -488,60 +512,153 @@ class CodebaseIndexer:
 
     def _scan_codebase(
         self,
-        inputs: _ScanInputs | None = None,
+        policy: ResolvedIndexPolicy | None = None,
         *,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> list[pathlib.Path]:
-        """Scan codebase for supported source files.
+        """Project structured policy discovery to admitted code paths."""
+        resolved = policy or self._resolve_operation_policy()
+        return list(
+            self._scan_content(
+                resolved,
+                sample_limit=0,
+                run_control=run_control,
+            ).files
+        )
+
+    @staticmethod
+    def _is_ignored(policy: ResolvedIndexPolicy, rel_path: str) -> bool:
+        """Return ignore precedence from the resolved classifier snapshot."""
+        classified = policy.classify(rel_path)
+        return classified.disposition.reason is AdmissionReason.IGNORED
+
+    @staticmethod
+    def _active_transform(
+        policy: ResolvedIndexPolicy,
+        rel_path: str,
+    ) -> bool:
+        """Return whether this snapshot may execute a matched transform."""
+        return (
+            policy.execution_mode != "off"
+            and policy.match_preprocess(rel_path) is not None
+        )
+
+    def _classify_file(
+        self,
+        path: pathlib.Path,
+        rel_path: str,
+        policy: ResolvedIndexPolicy,
+    ) -> ClassifiedContent:
+        """Apply ownership first, then raw-code size and binary capability."""
+        classified = policy.classify(rel_path)
+        disposition = classified.disposition
+        if not (
+            disposition.admitted and disposition.kind is ContentKind.CODE
+        ) or self._active_transform(policy, rel_path):
+            return classified
+        try:
+            if path.stat().st_size > _MAX_FILE_SIZE:
+                return ClassifiedContent(
+                    AdmissionDisposition(
+                        ContentKind.CODE,
+                        False,
+                        AdmissionReason.SOURCE_TOO_LARGE,
+                    )
+                )
+            if _is_binary(path):
+                return ClassifiedContent(
+                    AdmissionDisposition(
+                        ContentKind.CODE,
+                        False,
+                        AdmissionReason.SOURCE_BINARY,
+                    )
+                )
+        except OSError:
+            return ClassifiedContent(
+                AdmissionDisposition(
+                    ContentKind.CODE,
+                    False,
+                    AdmissionReason.SOURCE_PROBE_FAILED,
+                )
+            )
+        return classified
+
+    def _scan_content(
+        self,
+        policy: ResolvedIndexPolicy,
+        *,
+        sample_limit: int,
+        run_control: RunControl = NO_RUN_CONTROL,
+    ) -> ContentScanResult:
+        """Scan through one immutable policy with bounded disposition samples.
 
         Walks the project tree using ``os.walk``, pruning directories
-        matched by ``.gitignore`` and ``.vaultragignore`` patterns via
-        ``pathspec``.  The two specs are independent - a file is
-        excluded if **either** matches (OR logic), so
-        ``.vaultragignore`` can never un-ignore ``.gitignore`` entries.
-        Skips binary files and files exceeding ``_MAX_FILE_SIZE``.
+        rejected by the snapshot's ignore rules. Every visited file is
+        classified by that same snapshot; only admitted code paths enter the
+        compatibility projection.
 
         Args:
-            inputs: Pre-resolved ignore specs. When ``None`` the specs are
-                built here; callers that already resolved them (to compute the
-                config epoch) pass them in to avoid a second tree walk.
+            policy: Exact operation snapshot used for every disposition.
+            sample_limit: Maximum number of deterministic path samples.
 
         Returns:
-            List of absolute paths to indexable source files.
+            Structured counts, bounded samples, and admitted code paths.
 
         Raises:
             OSError: If the root directory cannot be traversed.
+            ValueError: If ``sample_limit`` is negative.
         """
-        if inputs is None:
-            inputs = self._resolve_scan_inputs()
-        git_spec = inputs.git_spec
-        rag_spec = inputs.rag_spec
-
-        def _is_excluded(rel_path: str) -> bool:
-            if git_spec.match_file(rel_path):
-                return True
-            return rag_spec is not None and rag_spec.match_file(rel_path)
+        if sample_limit < 0:
+            raise ValueError("sample_limit must be non-negative")
 
         result: list[pathlib.Path] = []
+        counts: dict[tuple[ContentKind | None, bool, AdmissionReason], int] = {}
+        samples: list[AdmissionSample] = []
         root_str = str(self.root_dir)
         for dirpath, dirs, files in os.walk(self.root_dir, topdown=True):
             run_control.checkpoint()
             # Prune ignored directories in-place to avoid traversal
             rel_dir = os.path.relpath(dirpath, root_str).replace("\\", "/")
             if rel_dir == ".":
-                dirs[:] = [d for d in dirs if not _is_excluded(f"{d}/")]
+                dirs[:] = [d for d in dirs if not self._is_ignored(policy, f"{d}/")]
             else:
-                dirs[:] = [d for d in dirs if not _is_excluded(f"{rel_dir}/{d}/")]
+                dirs[:] = [
+                    d for d in dirs if not self._is_ignored(policy, f"{rel_dir}/{d}/")
+                ]
             self._process_scan_files(
                 dirpath,
                 files,
                 rel_dir,
-                _is_excluded,
+                policy,
                 result,
+                counts,
+                samples,
+                sample_limit,
                 run_control=run_control,
             )
             run_control.checkpoint()
-        return result
+        ordered_counts = tuple(
+            AdmissionCount(kind, admitted, reason, count)
+            for (kind, admitted, reason), count in sorted(
+                counts.items(),
+                key=lambda item: (
+                    item[0][0].value if item[0][0] is not None else "",
+                    item[0][1],
+                    item[0][2].value,
+                ),
+            )
+        )
+        return ContentScanResult(
+            files=tuple(result),
+            counts=ordered_counts,
+            samples=tuple(samples),
+            policy_fingerprint=policy.fingerprints.snapshot,
+            preprocess_mode=policy.execution_mode,
+            preprocess_rule_count=len(policy.preprocess_rules),
+            hooks_will_run=(
+                policy.execution_mode != "off" and bool(policy.preprocess_rules)
+            ),
+        )
 
     def _matches_preprocess_rule(self, rel: str) -> bool:
         """Return whether a preprocess rule matches this project-relative path.
@@ -560,8 +677,11 @@ class CodebaseIndexer:
         dirpath: str,
         files: list[str],
         rel_dir: str,
-        _is_excluded: Callable[[str], bool],
+        policy: ResolvedIndexPolicy,
         result: list[pathlib.Path],
+        counts: dict[tuple[ContentKind | None, bool, AdmissionReason], int],
+        samples: list[AdmissionSample],
+        sample_limit: int,
         *,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> None:
@@ -569,23 +689,31 @@ class CodebaseIndexer:
             run_control.checkpoint()
             p = pathlib.Path(dirpath) / fname
             rel = fname if rel_dir == "." else f"{rel_dir}/{fname}"
-            if _is_excluded(rel):
-                continue
-            # A preprocess-rule match relaxes the extension, size, and binary
-            # gates (D2, D10); ignore has already been applied above and wins.
-            if self._matches_preprocess_rule(rel):
+            classified = self._classify_file(p, rel, policy)
+            disposition = classified.disposition
+            key = (disposition.kind, disposition.admitted, disposition.reason)
+            counts[key] = counts.get(key, 0) + 1
+            if len(samples) < sample_limit:
+                samples.append(
+                    AdmissionSample(
+                        rel,
+                        disposition.kind,
+                        disposition.admitted,
+                        disposition.reason,
+                    )
+                )
+            if disposition.admitted and disposition.kind is ContentKind.CODE:
                 result.append(p)
-                continue
-            if p.suffix.lower() not in SUPPORTED_EXTENSIONS:
-                continue
-            if p.stat().st_size > _MAX_FILE_SIZE:
-                logger.debug("Skipping oversized file: %s", rel)
-                continue
-            if _is_binary(p):
-                logger.debug("Skipping binary file: %s", rel)
-                continue
-            result.append(p)
             run_control.checkpoint()
+
+    def scan_content(
+        self,
+        *,
+        sample_limit: int = _DEFAULT_SCAN_SAMPLE_LIMIT,
+    ) -> ContentScanResult:
+        """Return structured admission from one freshly resolved snapshot."""
+        policy = self._resolve_operation_policy()
+        return self._scan_content(policy, sample_limit=sample_limit)
 
     def scan_files(self) -> list[pathlib.Path]:
         """Return the list of files that would be indexed.
@@ -596,7 +724,7 @@ class CodebaseIndexer:
         Returns:
             List of absolute paths to indexable source files.
         """
-        return self._scan_codebase()
+        return list(self.scan_content(sample_limit=0).files)
 
     def _chunk_file(self, path: pathlib.Path) -> list[CodeChunk]:
         """Read a file and split it into AST-aware ``CodeChunk``s.
@@ -1632,21 +1760,20 @@ class CodebaseIndexer:
 
     def _prepare_full_paths(
         self,
+        policy: ResolvedIndexPolicy,
         reporter: ProgressReporter,
         *,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> list[pathlib.Path]:
         """Resolve full-run inputs and scan with bounded control checkpoints."""
-        self._begin_preprocess_run(run_control=run_control)
+        self._begin_preprocess_run(policy, run_control=run_control)
         run_control.checkpoint()
-        inputs = self._resolve_scan_inputs()
-        run_control.checkpoint()
-        self._membership_epoch, self._content_epoch = self._compute_code_epochs(inputs)
+        self._membership_epoch, self._content_epoch = self._compute_code_epochs(policy)
         run_control.checkpoint()
 
         reporter.phase_start("scan codebase", None)
         try:
-            paths = self._scan_codebase(inputs, run_control=run_control)
+            paths = self._scan_codebase(policy, run_control=run_control)
         finally:
             reporter.phase_end()
         run_control.checkpoint()
@@ -1750,7 +1877,7 @@ class CodebaseIndexer:
 
     def _scan_and_hash_incremental_inputs(
         self,
-        inputs: _ScanInputs,
+        policy: ResolvedIndexPolicy,
         reporter: ProgressReporter,
         *,
         run_control: RunControl = NO_RUN_CONTROL,
@@ -1758,7 +1885,7 @@ class CodebaseIndexer:
         """Scan and hash one unscoped incremental corpus cooperatively."""
         reporter.phase_start("scan codebase", None)
         try:
-            current_paths = self._scan_codebase(inputs, run_control=run_control)
+            current_paths = self._scan_codebase(policy, run_control=run_control)
             current_files: dict[str, pathlib.Path] = {}
             for path in current_paths:
                 run_control.checkpoint()
@@ -1808,7 +1935,10 @@ class CodebaseIndexer:
         F6.6).
         """
         run_control.checkpoint()
+        resolved_policy = self._resolve_operation_policy()
+        run_control.checkpoint()
         with self._writer_lock:
+            self._resolved_policy = resolved_policy
             run_control.checkpoint()
             log_event(
                 logger,
@@ -1829,6 +1959,7 @@ class CodebaseIndexer:
                 run_control.checkpoint()
                 result = self._full_index_locked(
                     clean=clean,
+                    policy=resolved_policy,
                     reporter=reporter,
                     run_control=run_control,
                 )
@@ -1873,6 +2004,7 @@ class CodebaseIndexer:
         self,
         clean: bool = False,
         *,
+        policy: ResolvedIndexPolicy,
         reporter: ProgressReporter,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
@@ -1901,7 +2033,11 @@ class CodebaseIndexer:
             OSError: If source files cannot be read or hashed.
         """
         start = time.time()
-        paths = self._prepare_full_paths(reporter, run_control=run_control)
+        paths = self._prepare_full_paths(
+            policy,
+            reporter,
+            run_control=run_control,
+        )
 
         # Failure-safe rebuild (mirrors VaultIndexer.full_index): snapshot the
         # existing chunk ids BEFORE streaming, keep the old chunks live, and
@@ -2024,7 +2160,10 @@ class CodebaseIndexer:
                 When ``None`` the full ``.gitignore``-aware scan runs.
         """
         run_control.checkpoint()
+        resolved_policy = self._resolve_operation_policy()
+        run_control.checkpoint()
         with self._writer_lock:
+            self._resolved_policy = resolved_policy
             run_control.checkpoint()
             mode = "scoped_incremental" if changed_paths is not None else "incremental"
             log_event(
@@ -2045,6 +2184,7 @@ class CodebaseIndexer:
                 self.store.touch_manifest_last_indexed()
                 run_control.checkpoint()
                 result = self._incremental_index_locked(
+                    policy=resolved_policy,
                     reporter=reporter,
                     changed_paths=changed_paths,
                     run_control=run_control,
@@ -2089,6 +2229,7 @@ class CodebaseIndexer:
     def _incremental_index_locked(
         self,
         *,
+        policy: ResolvedIndexPolicy,
         reporter: ProgressReporter,
         changed_paths: Iterable[pathlib.Path] | None = None,
         run_control: RunControl = NO_RUN_CONTROL,
@@ -2103,10 +2244,15 @@ class CodebaseIndexer:
                 "one-time clean rebuild of the code collection"
             )
             return self._full_index_locked(
-                clean=True, reporter=reporter, run_control=run_control
+                clean=True,
+                policy=policy,
+                reporter=reporter,
+                run_control=run_control,
             )
-        inputs, changed_paths, escalate_clean = self._config_drift_dispatch(
-            changed_paths, run_control=run_control
+        changed_paths, escalate_clean = self._config_drift_dispatch(
+            changed_paths,
+            policy,
+            run_control=run_control,
         )
         if escalate_clean:
             logger.info(
@@ -2114,23 +2260,28 @@ class CodebaseIndexer:
                 "one-time clean rebuild of the code collection"
             )
             return self._full_index_locked(
-                clean=True, reporter=reporter, run_control=run_control
+                clean=True,
+                policy=policy,
+                reporter=reporter,
+                run_control=run_control,
             )
         if changed_paths is not None:
             return self._scoped_incremental_locked(
                 changed_paths=changed_paths,
+                policy=policy,
                 reporter=reporter,
-                inputs=inputs,
                 run_control=run_control,
             )
 
         start = time.time()
-        self._begin_preprocess_run(run_control=run_control)
+        self._begin_preprocess_run(policy, run_control=run_control)
         run_control.checkpoint()
         previous_metadata = self._load_meta()
         run_control.checkpoint()
         current_files, current_hashes = self._scan_and_hash_incremental_inputs(
-            inputs, reporter, run_control=run_control
+            policy,
+            reporter,
+            run_control=run_control,
         )
         previous_files = set(previous_metadata)
         current_names = set(current_hashes)
@@ -2187,20 +2338,10 @@ class CodebaseIndexer:
         self,
         changed_paths: Iterable[pathlib.Path],
         reporter: ProgressReporter,
-        inputs: _ScanInputs | None = None,
+        policy: ResolvedIndexPolicy,
         *,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> tuple[dict[str, pathlib.Path], set[str]]:
-        if inputs is None:
-            inputs = self._resolve_scan_inputs()
-        git_spec = inputs.git_spec
-        rag_spec = inputs.rag_spec
-
-        def _is_excluded(rel_path: str) -> bool:
-            if git_spec.match_file(rel_path):
-                return True
-            return rag_spec is not None and rag_spec.match_file(rel_path)
-
         run_control.checkpoint()
         reporter.phase_start("scan changed", None)
         to_hash: dict[str, pathlib.Path] = {}
@@ -2210,7 +2351,7 @@ class CodebaseIndexer:
                 run_control.checkpoint()
                 self._process_changed_path(
                     path,
-                    _is_excluded,
+                    policy,
                     to_hash,
                     delete_files,
                     run_control=run_control,
@@ -2224,7 +2365,7 @@ class CodebaseIndexer:
     def _process_changed_path(
         self,
         path: pathlib.Path,
-        _is_excluded: Callable[[str], bool],
+        policy: ResolvedIndexPolicy,
         to_hash: dict[str, pathlib.Path],
         delete_files: set[str],
         *,
@@ -2235,21 +2376,10 @@ class CodebaseIndexer:
             rel = str(path.relative_to(self.root_dir)).replace("\\", "/")
         except ValueError:
             return
-        if path.is_file() and not _is_excluded(rel):
-            # A preprocess-rule match admits the file regardless of extension,
-            # size, or binary content (D2, D8, D10) - the preprocessor turns it
-            # into indexable text. Ignore was already applied above and wins.
-            if self._matches_preprocess_rule(rel):
-                to_hash[rel] = path
-                return
-            if path.suffix.lower() in SUPPORTED_EXTENSIONS:
-                try:
-                    too_big = path.stat().st_size > _MAX_FILE_SIZE
-                except OSError:
-                    return
-                if too_big or _is_binary(path):
-                    delete_files.add(rel)
-                    return
+        if path.is_file():
+            classified = self._classify_file(path, rel, policy)
+            disposition = classified.disposition
+            if disposition.admitted and disposition.kind is ContentKind.CODE:
                 to_hash[rel] = path
                 return
         delete_files.add(rel)
@@ -2287,20 +2417,20 @@ class CodebaseIndexer:
         self,
         *,
         changed_paths: Iterable[pathlib.Path],
+        policy: ResolvedIndexPolicy,
         reporter: ProgressReporter,
-        inputs: _ScanInputs | None = None,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Reconcile only changed paths through the weighted pipeline."""
         start = time.time()
-        self._begin_preprocess_run(run_control=run_control)
+        self._begin_preprocess_run(policy, run_control=run_control)
         run_control.checkpoint()
         previous_metadata = self._load_meta()
         run_control.checkpoint()
         to_hash, delete_files = self._scan_changed_paths(
             changed_paths,
             reporter,
-            inputs,
+            policy,
             run_control=run_control,
         )
         changed_hashes = self._hash_changed_paths(
@@ -2411,9 +2541,10 @@ class CodebaseIndexer:
         if (membership is None or content is None) and getattr(
             self, "root_dir", None
         ) is not None:
-            # Fallback for a direct call that did not resolve inputs this run;
-            # recompute from the current config so the epochs are still stamped.
-            membership, content = self._compute_code_epochs(self._resolve_scan_inputs())
+            # Fallback for a direct call outside an index operation. Normal
+            # publication always carries the entry-point snapshot epochs.
+            policy = self._resolved_policy or self._resolve_operation_policy()
+            membership, content = self._compute_code_epochs(policy)
         self._meta_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = self._meta_path.with_suffix(".tmp")
         stamped = {**meta, EMBED_SCHEMA_KEY: CODE_EMBED_SCHEMA}

@@ -141,6 +141,7 @@ def _handle_dry_run(
     target: pathlib.Path,
     exclude: list[str] | None,
     dry_run_limit: int,
+    no_preprocess: bool,
 ) -> None:
     if index_type not in ("code", "all"):
         message = "Dry run is available for source-code indexing only."
@@ -157,9 +158,12 @@ def _handle_dry_run(
         _cli.console.print("Run:", markup=False, highlight=False)
         _cli.console.print(f"  {remediation[0]}", markup=False, highlight=False)
         raise typer.Exit(code=2)
-    import vaultspec_rag
+    from ..api import scan_codebase
 
-    files = vaultspec_rag.scan_codebase_files(target, extra_excludes=exclude)
+    if no_preprocess:
+        _apply_preprocess_off_env()
+    scan = scan_codebase(target, extra_excludes=exclude)
+    files = list(scan.files)
     if dry_run_limit < 0:
         message = "Dry-run file limit must be zero or greater."
         if json_mode:
@@ -186,6 +190,31 @@ def _handle_dry_run(
                 "dry_run": True,
                 "count": len(files),
                 "files": [str(f.relative_to(target)) for f in sorted(files)],
+                "admission": {
+                    "policy_fingerprint": scan.policy_fingerprint,
+                    "counts": [
+                        {
+                            "kind": (
+                                count.kind.value if count.kind is not None else None
+                            ),
+                            "admitted": count.admitted,
+                            "reason": count.reason.value,
+                            "count": count.count,
+                        }
+                        for count in scan.counts
+                    ],
+                    "samples": [
+                        {
+                            "path": sample.path,
+                            "kind": (
+                                sample.kind.value if sample.kind is not None else None
+                            ),
+                            "admitted": sample.admitted,
+                            "reason": sample.reason.value,
+                        }
+                        for sample in scan.samples
+                    ],
+                },
             },
         )
         return
@@ -198,6 +227,16 @@ def _handle_dry_run(
         markup=False,
         highlight=False,
     )
+    if scan.counts:
+        _cli.console.print("Admission summary:", markup=False, highlight=False)
+        for count in scan.counts:
+            kind = count.kind.value if count.kind is not None else "unowned"
+            disposition = "admitted" if count.admitted else "rejected"
+            _cli.console.print(
+                f"  - {kind}/{disposition}/{count.reason.value}: {count.count}",
+                markup=False,
+                highlight=False,
+            )
     if shown_files:
         _cli.console.print("Files shown:", markup=False, highlight=False)
         for f in shown_files:
@@ -499,7 +538,14 @@ def handle_index(
     target = state.target
 
     if dry_run:
-        _handle_dry_run(index_type, json_mode, target, exclude, dry_run_limit)
+        _handle_dry_run(
+            index_type,
+            json_mode,
+            target,
+            exclude,
+            dry_run_limit,
+            no_preprocess,
+        )
         return
 
     if rebuild:
