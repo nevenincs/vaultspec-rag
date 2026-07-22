@@ -571,7 +571,12 @@ class VaultSearcher:
         Returns the surviving raw results and a per-domain drop count.
         """
         has_glob = bool(include_norm or exclude_norm)
-        if has_glob or policy.has_hard_filter:
+        # Domain hide/only constraints are already pushed into Qdrant. Start
+        # them at the ordinary rerank window and widen only when the legacy
+        # missing-domain fallback actually depletes the survivors. Path globs
+        # still run entirely in Python, so they retain the wider initial
+        # window that protects the common post-filter case.
+        if has_glob:
             base = max(top_k * GLOB_FETCH_MULTIPLIER, 50)
         else:
             base = max(top_k * 4, 20) if self._reranker_enabled else top_k * 2
