@@ -13,9 +13,12 @@ Three layers over real subprocesses and real temp dirs:
   itself writes.
 """
 
+import os
 import shlex
 import sys
 import textwrap
+import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -634,3 +637,120 @@ def test_chunk_paths_multi_worker_pool_over_batch_groups(
     again = indexer2._chunk_paths([*a_files, *b_files], reporter=NullProgressReporter())
     assert _spawn_count(log) == 2
     assert len([c for c in again if c.preprocessor_id == "counting"]) == 6
+
+
+def test_indexer_pool_propagates_batch_on_error_fail(tmp_path: Path) -> None:
+    """The production process-pool path preserves the fail policy."""
+    script = _script(tmp_path, _OMIT_FIRST_BODY, name="omit_first.py")
+    command = f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} {{paths}}"
+    rules = [
+        PreprocessRule(
+            pattern=pattern,
+            command=command,
+            entry_point=None,
+            priority=100,
+            on_error="fail",
+            timeout_s=30.0,
+            options={},
+            order=order,
+            batch=True,
+        )
+        for order, pattern in enumerate(("*.aaa", "*.bbb"))
+    ]
+    ctx = PreprocessContext(
+        config=PreprocessConfig(rules),
+        cache_root=preprocess_cache_dir(tmp_path),
+        max_emitted_bytes=_CAP,
+        project_root=tmp_path,
+    )
+    files = [tmp_path / "first.aaa", tmp_path / "second.bbb"]
+    for path in files:
+        path.write_bytes(path.name.encode())
+
+    indexer = _batch_indexer(tmp_path, ctx)
+    with pytest.raises(PreprocessAbortError):
+        indexer._chunk_paths(files, reporter=NullProgressReporter())
+
+
+def test_batch_pool_retains_only_one_worker_window(tmp_path: Path) -> None:
+    """Slow publication cannot let the pool preprocess the whole corpus ahead."""
+    previous_workers = os.environ.get(EnvVar.INDEX_CHUNK_WORKERS.value)
+    os.environ[EnvVar.INDEX_CHUNK_WORKERS.value] = "2"
+    reset_config()
+    try:
+        marker_dir = tmp_path / "window-markers"
+        marker_dir.mkdir()
+        window_body = """
+            import json, pathlib, sys
+            marker_dir, manifest = pathlib.Path(sys.argv[1]), sys.argv[2]
+            with open(manifest, encoding="utf-8") as fh:
+                paths = [line.rstrip("\\n") for line in fh if line.strip()]
+            marker = marker_dir / (pathlib.Path(paths[0]).suffix.lstrip(".") + ".done")
+            marker.write_text("done", encoding="utf-8")
+            print(json.dumps([
+                {"path": p, "schema_version": 1, "preprocessor_id": "window",
+                 "preprocessor_version": "1.0", "source_path": p,
+                 "units": [{"text": "unit for " + p}]}
+                for p in paths
+            ]))
+        """
+        script = _script(tmp_path, window_body, name="window_counting.py")
+        command = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} "
+            f"{shlex.quote(str(marker_dir))} {{paths}}"
+        )
+        rules = [_counting_rule(command, f"*.g{i}") for i in range(6)]
+        ctx = PreprocessContext(
+            config=PreprocessConfig(rules),
+            cache_root=preprocess_cache_dir(tmp_path),
+            max_emitted_bytes=_CAP,
+            project_root=tmp_path,
+        )
+        files = [tmp_path / f"doc.g{i}" for i in range(6)]
+        for path in files:
+            path.write_bytes(path.name.encode())
+
+        indexer = _batch_indexer(tmp_path, ctx)
+        batch_groups, singles = indexer._partition_batch_work(files)
+        assert singles == []
+        assert len(batch_groups) == 6
+
+        handler_started = threading.Event()
+        release_handler = threading.Event()
+        received: list[int] = []
+        failures: list[BaseException] = []
+
+        def _observe_window(results: list[_chunk_worker.FileChunkResult]) -> None:
+            received.append(len(results))
+            handler_started.set()
+            assert release_handler.wait(timeout=15)
+
+        def _run() -> None:
+            try:
+                indexer._run_batch_groups(
+                    batch_groups,
+                    NullProgressReporter(),
+                    _observe_window,
+                )
+            except BaseException as exc:
+                failures.append(exc)
+
+        worker = threading.Thread(target=_run, daemon=True)
+        worker.start()
+        try:
+            assert handler_started.wait(timeout=15)
+            time.sleep(1.0)
+            assert len(list(marker_dir.glob("*.done"))) <= 2
+        finally:
+            release_handler.set()
+            worker.join(timeout=30)
+        assert not worker.is_alive()
+        assert failures == []
+        assert sum(received) == 6
+        assert len(list(marker_dir.glob("*.done"))) == 6
+    finally:
+        if previous_workers is None:
+            os.environ.pop(EnvVar.INDEX_CHUNK_WORKERS.value, None)
+        else:
+            os.environ[EnvVar.INDEX_CHUNK_WORKERS.value] = previous_workers
+        reset_config()
