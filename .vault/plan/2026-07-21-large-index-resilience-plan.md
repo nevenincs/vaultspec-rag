@@ -14,16 +14,6 @@ related:
   - '[[2026-07-21-index-backpressure-storage-hygiene-plan]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 <!-- RETIRED: S04 -->
 
 # `large-index-resilience` plan
@@ -143,7 +133,7 @@ Publish generation, checkpoint, retry, circuit, memory, profile, and terminal st
 Bind the accepted job-control execution waves to ledger safe points without duplicating their runtime or API ownership.
 
 - [x] `W03.P10.S37` - Expose ledger commit units, protected spans, and typed safety signals through the run-policy safe-point contract; `src/vaultspec_rag/indexer/_run_policy.py`.
-- [ ] `W03.P10.S38` - Verify service-job-control cooperative indexing phases use ledger safe points and preserve one-unit replay; `src/vaultspec_rag/tests/integration/test_index_job_control.py`.
+- [x] `W03.P10.S38` - Verify service-job-control cooperative indexing phases use ledger safe points and preserve one-unit replay; `src/vaultspec_rag/tests/integration/test_index_job_control.py`.
 
 ### Phase `W03.P11` - operator visibility verification
 
