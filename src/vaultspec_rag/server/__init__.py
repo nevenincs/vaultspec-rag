@@ -116,6 +116,7 @@ from ._watcher import (
     _ensure_watcher_soon,
     _stop_all_watchers,
     _stop_watcher,
+    _wait_for_watcher_cleanup,
 )
 
 __all__ = [
@@ -165,6 +166,7 @@ __all__ = [
     "_unlink_status_file_silently",
     "_validate_query",
     "_validate_vault_root",
+    "_wait_for_watcher_cleanup",
     "_watcher_lock",
     "_watcher_stops",
     "_watcher_tasks",
