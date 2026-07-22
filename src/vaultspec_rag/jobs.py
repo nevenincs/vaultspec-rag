@@ -30,6 +30,7 @@ from .job_manager import (
 )
 from .job_models import (
     DesiredJobState,
+    IndexResilienceSnapshot,
     JobAttempt,
     JobCapabilities,
     JobInitiator,
@@ -76,6 +77,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "MAX_RECORDS",
     "DesiredJobState",
+    "IndexResilienceSnapshot",
     "JobAttempt",
     "JobAttemptContext",
     "JobCapabilities",
@@ -655,6 +657,7 @@ def _domain_job_snapshot(job: JobSnapshot, *, now: float) -> dict[str, object]:
         },
         "error_kind": job.error_kind,
         "progress": raw["progress"],
+        "resilience": raw["resilience"],
         "timestamps": {
             key: raw[key]
             for key in (

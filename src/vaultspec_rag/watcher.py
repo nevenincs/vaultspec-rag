@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
 from threading import RLock
@@ -31,6 +31,7 @@ from .indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
 from .indexer._route_migration import prior_stored_owners
 from .job_manager import JobAttemptContext, JobExecutionResult
 from .job_models import (
+    IndexResilienceSnapshot,
     JobInitiator,
     JobMode,
     JobOperation,
@@ -1347,11 +1348,23 @@ async def _finish_unstarted_watcher_failure(
         partial(manager.fail_unstarted, job_id, result=message),
     )
     failure = RuntimeError(message)
-    await _settle_retry_failure(
+    retry_state = await _settle_retry_failure(
         slot,
         failure,
         attempt=attempt,
         action=action,
+    )
+    failed = await _run_in_thread(manager.get, job_id)
+    await _run_in_thread(
+        partial(
+            manager.update_terminal_resilience,
+            job_id,
+            attempt=attempt,
+            resilience=_retry_resilience(
+                retry_state,
+                base=failed.resilience if failed is not None else None,
+            ),
+        )
     )
     failed = await _run_in_thread(manager.get, job_id)
     observed_terminal = (
@@ -1471,7 +1484,7 @@ async def _settle_managed_retry(
     snapshot: JobSnapshot,
     *,
     error: BaseException | None,
-) -> None:
+) -> WatcherRetryState:
     """Make durable retry truth follow one terminal managed-job outcome."""
     generation, _requires_unscoped = _retry_generation_for_attempt(
         slot,
@@ -1479,7 +1492,7 @@ async def _settle_managed_retry(
     )
     retry_source = WatcherSource(slot.source.value)
     if snapshot.state is JobState.SUCCEEDED:
-        _state, cancellation_requested = await _run_durable_retry_transaction(
+        state, cancellation_requested = await _run_durable_retry_transaction(
             lambda: slot.retry_policy.record_success(generation),
             source=retry_source,
             root_dir=slot.root,
@@ -1488,7 +1501,7 @@ async def _settle_managed_retry(
         )
     elif snapshot.state is JobState.FAILED:
         failure = error or RuntimeError(snapshot.result or "watcher indexing failed")
-        _state, cancellation_requested = await _run_durable_retry_transaction(
+        state, cancellation_requested = await _run_durable_retry_transaction(
             partial(slot.retry_policy.record_failure, failure, generation),
             source=retry_source,
             root_dir=slot.root,
@@ -1496,7 +1509,7 @@ async def _settle_managed_retry(
             cancellation_fallback=slot.retry_policy.write_recovery_marker,
         )
     else:
-        _state, cancellation_requested = await _run_durable_retry_transaction(
+        state, cancellation_requested = await _run_durable_retry_transaction(
             lambda: slot.retry_policy.record_interrupted(generation),
             source=retry_source,
             root_dir=slot.root,
@@ -1505,6 +1518,7 @@ async def _settle_managed_retry(
         )
     _clear_retry_generation(slot, generation)
     _raise_if_cancellation_requested(cancellation_requested)
+    return state
 
 
 async def _settle_and_observe_managed_job(
@@ -1515,7 +1529,18 @@ async def _settle_and_observe_managed_job(
     error: BaseException | None,
 ) -> None:
     """Settle durable retry truth before releasing the convergence slot."""
-    await _settle_managed_retry(slot, snapshot, error=error)
+    retry_state = await _settle_managed_retry(slot, snapshot, error=error)
+    manager = _jobs.get_job_manager()
+    settled = manager.get(snapshot.id)
+    base = settled.resilience if settled is not None else snapshot.resilience
+    await _run_in_thread(
+        partial(
+            manager.update_terminal_resilience,
+            snapshot.id,
+            attempt=snapshot.attempt.number,
+            resilience=_retry_resilience(retry_state, base=base),
+        )
+    )
     if _observe_managed_job(
         slot,
         snapshot,
@@ -1728,6 +1753,7 @@ def _run_managed_index_attempt(
         code_preflight=code_preflight,
         document_preflight=document_preflight,
     )
+    context.set_resilience(_watcher_attempt_resilience(slot))
     pipeline_active = slot.source in {JobSource.CODE, JobSource.DOCUMENT}
     registry = slot.registry
     registry.load_model()
@@ -1739,15 +1765,18 @@ def _run_managed_index_attempt(
                     writer_lock_held=True,
                     pipeline_active=pipeline_active,
                 )
-                result = _execute_project_incremental(
-                    project,
-                    slot,
-                    context,
-                    paths=paths,
-                    code_preflight=code_preflight,
-                    document_preflight=document_preflight,
-                    secondary_graph_cache=secondary_graph_cache,
-                )
+                try:
+                    result = _execute_project_incremental(
+                        project,
+                        slot,
+                        context,
+                        paths=paths,
+                        code_preflight=code_preflight,
+                        document_preflight=document_preflight,
+                        secondary_graph_cache=secondary_graph_cache,
+                    )
+                finally:
+                    _publish_watcher_index_resilience(slot, project, context)
             finally:
                 context.set_resources(
                     writer_lock_held=False,
@@ -1767,6 +1796,62 @@ def _run_managed_index_attempt(
         preprocess_skipped=result.preprocess_skipped,
         preprocess_failures=tuple(result.preprocess_failures),
     )
+
+
+def _retry_resilience(
+    state: WatcherRetryState,
+    *,
+    base: IndexResilienceSnapshot | None = None,
+) -> IndexResilienceSnapshot:
+    """Merge durable watcher retry truth into the canonical index account."""
+    current = base or IndexResilienceSnapshot()
+    return replace(
+        current,
+        circuit_state=state.circuit_state.value,
+        next_retry_at=state.next_retry_at if state.next_retry_at > 0.0 else None,
+        last_durable_progress_at=(
+            current.last_durable_progress_at or state.last_durable_progress_at
+        ),
+    )
+
+
+def _watcher_attempt_resilience(
+    slot: _WatcherConvergenceSlot,
+) -> IndexResilienceSnapshot:
+    """Project admission and retry truth before model acquisition."""
+    if slot.source in {JobSource.CODE, JobSource.DOCUMENT}:
+        from .job_dispatch import _admitted_resilience
+
+        base = _admitted_resilience(slot.source)
+    else:
+        base = IndexResilienceSnapshot()
+    return _retry_resilience(slot.retry_policy.state, base=base)
+
+
+def _publish_watcher_index_resilience(
+    slot: _WatcherConvergenceSlot,
+    project: ProjectSlot,
+    context: JobAttemptContext,
+) -> None:
+    """Publish checkpoint evidence for watcher-owned code and document work."""
+    from .job_dispatch import (
+        _code_resilience,
+        _document_resilience,
+        _publish_resilience,
+    )
+
+    if slot.source not in {JobSource.CODE, JobSource.DOCUMENT}:
+        return
+
+    def snapshot_factory() -> IndexResilienceSnapshot:
+        base = (
+            _code_resilience(project.code_indexer)
+            if slot.source is JobSource.CODE
+            else _document_resilience(project.document_indexer)
+        )
+        return _retry_resilience(slot.retry_policy.state, base=base)
+
+    _publish_resilience(context, snapshot_factory)
 
 
 def _sync_legacy_snapshot(

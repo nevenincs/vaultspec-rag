@@ -2,16 +2,26 @@
 
 from __future__ import annotations
 
+import logging
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .job_manager import JobAttemptContext, JobExecutionResult
-from .job_models import JobMode, JobOperation, JobOutcome, JobSource
+from .job_models import (
+    IndexResilienceSnapshot,
+    JobMode,
+    JobOperation,
+    JobOutcome,
+    JobSource,
+)
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from .indexer import CodebaseIndexer, DocumentIndexer
     from .indexer._codebase_indexer import CodeIndexPreflight
     from .indexer._document_indexer import DocumentIndexPreflight
     from .job_manager import JobManager
@@ -149,6 +159,7 @@ def _run_code_attempt(
 
     context.control.checkpoint()
     preflight = validate_code_job_admission(root)
+    context.set_resilience(_admitted_resilience(JobSource.CODE))
     context.control.checkpoint()
     registry.load_model()
     try:
@@ -165,18 +176,24 @@ def _run_code_attempt(
                     snapshot is not None
                     and snapshot.attempt.resumed_from_attempt is not None
                 )
-                if clean:
-                    result = slot.code_indexer.full_index(
-                        clean=not resumed,
-                        reporter=reporter,
-                        preflight=preflight,
-                        run_control=context.control,
-                    )
-                else:
-                    result = slot.code_indexer.incremental_index(
-                        reporter=reporter,
-                        preflight=preflight,
-                        run_control=context.control,
+                try:
+                    if clean:
+                        result = slot.code_indexer.full_index(
+                            clean=not resumed,
+                            reporter=reporter,
+                            preflight=preflight,
+                            run_control=context.control,
+                        )
+                    else:
+                        result = slot.code_indexer.incremental_index(
+                            reporter=reporter,
+                            preflight=preflight,
+                            run_control=context.control,
+                        )
+                finally:
+                    _publish_resilience(
+                        context,
+                        lambda: _code_resilience(slot.code_indexer),
                     )
             finally:
                 context.set_resources(
@@ -216,6 +233,7 @@ def _run_document_attempt(
         root,
         run_control=context.control,
     )
+    context.set_resilience(_admitted_resilience(JobSource.DOCUMENT))
     context.control.checkpoint()
     registry.load_model()
     try:
@@ -229,18 +247,24 @@ def _run_document_attempt(
                     snapshot is not None
                     and snapshot.attempt.resumed_from_attempt is not None
                 )
-                if clean:
-                    result = slot.document_indexer.full_index(
-                        clean=not resumed,
-                        reporter=reporter,
-                        preflight=preflight,
-                        run_control=context.control,
-                    )
-                else:
-                    result = slot.document_indexer.incremental_index(
-                        reporter=reporter,
-                        preflight=preflight,
-                        run_control=context.control,
+                try:
+                    if clean:
+                        result = slot.document_indexer.full_index(
+                            clean=not resumed,
+                            reporter=reporter,
+                            preflight=preflight,
+                            run_control=context.control,
+                        )
+                    else:
+                        result = slot.document_indexer.incremental_index(
+                            reporter=reporter,
+                            preflight=preflight,
+                            run_control=context.control,
+                        )
+                finally:
+                    _publish_resilience(
+                        context,
+                        lambda: _document_resilience(slot.document_indexer),
                     )
             finally:
                 context.set_resources(writer_lock_held=False, pipeline_active=False)
@@ -258,3 +282,87 @@ def _run_document_attempt(
         preprocess_skipped=result.preprocess_skipped,
         preprocess_failures=tuple(result.preprocess_failures),
     )
+
+
+def _admitted_resilience(source: JobSource) -> IndexResilienceSnapshot:
+    """Freeze the selected profile and domain ceilings before model loading."""
+    from .config import get_config
+    from .index_profiles import IndexDomain, get_index_support_profile
+
+    profile = get_index_support_profile(get_config().index_support_profile)
+    domain = IndexDomain.CODE if source is JobSource.CODE else IndexDomain.DOCUMENT
+    limits = profile.limits_for(domain)
+    mib = 1024**2
+    return IndexResilienceSnapshot(
+        rss_ceiling_mb=limits.rss_bytes / mib,
+        cuda_ceiling_mb=limits.cuda_bytes / mib,
+        support_profile=profile.name,
+    )
+
+
+def _checkpoint_resilience(
+    checkpoint: object,
+    admitted: IndexResilienceSnapshot,
+    *,
+    peak_rss_mb: float | None,
+    peak_cuda_reserved_mb: float | None,
+) -> IndexResilienceSnapshot:
+    """Project one concrete checkpoint without adapter policy recomputation."""
+    from .indexer._document_checkpoint import DocumentRunCheckpoint
+    from .indexer._run_checkpoint import CodeRunCheckpoint
+
+    if not isinstance(checkpoint, (CodeRunCheckpoint, DocumentRunCheckpoint)):
+        return admitted
+    generation = checkpoint.ledger.generation(checkpoint.generation_id)
+    run = checkpoint.run_policy.snapshot()
+    committed_units = checkpoint.ledger.committed_unit_count(checkpoint.generation_id)
+    return IndexResilienceSnapshot(
+        generation_id=checkpoint.generation_id,
+        committed_units=committed_units,
+        replayed_units=checkpoint.resumed_units,
+        checkpoint_compatible=True,
+        last_durable_progress_at=run.last_durable_progress_at,
+        no_progress_timeout_seconds=run.timeout_seconds,
+        no_progress_remaining_seconds=run.remaining_seconds,
+        peak_rss_mb=peak_rss_mb,
+        rss_ceiling_mb=admitted.rss_ceiling_mb,
+        peak_cuda_reserved_mb=peak_cuda_reserved_mb,
+        cuda_ceiling_mb=admitted.cuda_ceiling_mb,
+        support_profile=admitted.support_profile,
+        terminal_outcome=generation.terminal_state.value,
+    )
+
+
+def _code_resilience(indexer: CodebaseIndexer) -> IndexResilienceSnapshot:
+    admitted = _admitted_resilience(JobSource.CODE)
+    measurement = indexer.support_measurement
+    mib = 1024**2
+    return _checkpoint_resilience(
+        indexer.last_checkpoint,
+        admitted,
+        peak_rss_mb=measurement.rss_bytes / mib,
+        peak_cuda_reserved_mb=measurement.cuda_bytes / mib,
+    )
+
+
+def _document_resilience(indexer: DocumentIndexer) -> IndexResilienceSnapshot:
+    admitted = _admitted_resilience(JobSource.DOCUMENT)
+    return _checkpoint_resilience(
+        indexer.last_checkpoint,
+        admitted,
+        peak_rss_mb=None,
+        peak_cuda_reserved_mb=None,
+    )
+
+
+def _publish_resilience(
+    context: JobAttemptContext,
+    snapshot_factory: Callable[[], IndexResilienceSnapshot],
+) -> None:
+    """Publish operability evidence without masking the indexing outcome."""
+    try:
+        resilience = snapshot_factory()
+        if not context.set_resilience(resilience):
+            logger.warning("job resilience snapshot was not persisted")
+    except Exception:
+        logger.warning("job resilience snapshot failed", exc_info=True)

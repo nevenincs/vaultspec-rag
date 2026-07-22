@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from enum import StrEnum
@@ -9,6 +10,7 @@ from pathlib import Path
 
 __all__ = [
     "DesiredJobState",
+    "IndexResilienceSnapshot",
     "JobAttempt",
     "JobCapabilities",
     "JobInitiator",
@@ -213,6 +215,53 @@ class JobResourceSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class IndexResilienceSnapshot:
+    """Canonical service-owned checkpoint, liveness, and limit projection."""
+
+    generation_id: str | None = None
+    committed_units: int = 0
+    replayed_units: int = 0
+    checkpoint_compatible: bool | None = None
+    last_durable_progress_at: float | None = None
+    no_progress_timeout_seconds: float | None = None
+    no_progress_remaining_seconds: float | None = None
+    circuit_state: str | None = None
+    next_retry_at: float | None = None
+    peak_rss_mb: float | None = None
+    rss_ceiling_mb: float | None = None
+    peak_cuda_allocated_mb: float | None = None
+    peak_cuda_reserved_mb: float | None = None
+    cuda_ceiling_mb: float | None = None
+    support_profile: str | None = None
+    terminal_outcome: str | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("committed_units", "replayed_units"):
+            value = getattr(self, name)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+        for name in (
+            "last_durable_progress_at",
+            "no_progress_timeout_seconds",
+            "no_progress_remaining_seconds",
+            "next_retry_at",
+            "peak_rss_mb",
+            "rss_ceiling_mb",
+            "peak_cuda_allocated_mb",
+            "peak_cuda_reserved_mb",
+            "cuda_ceiling_mb",
+        ):
+            value = getattr(self, name)
+            if value is not None and (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not math.isfinite(value)
+                or value < 0.0
+            ):
+                raise ValueError(f"{name} must be a finite non-negative number")
+
+
+@dataclass(frozen=True, slots=True)
 class JobSnapshot:
     """Immutable exact-ID view of one canonical job resource."""
 
@@ -230,6 +279,7 @@ class JobSnapshot:
     initiator: JobInitiator
     runtime: JobRuntimeSnapshot
     resources: JobResourceSnapshot
+    resilience: IndexResilienceSnapshot | None = None
 
     def __post_init__(self) -> None:
         if self.revision < 1:
@@ -280,6 +330,7 @@ class JobSnapshot:
             },
             "runtime": _runtime_to_dict(self.runtime),
             "resources": _resources_to_dict(self.resources),
+            "resilience": _resilience_to_dict(self.resilience),
         }
 
 
@@ -349,6 +400,31 @@ def _resources_to_dict(resources: JobResourceSnapshot) -> dict[str, object]:
         "project_lease_held": resources.project_lease_held,
         "writer_lock_held": resources.writer_lock_held,
         "pipeline_active": resources.pipeline_active,
+    }
+
+
+def _resilience_to_dict(
+    resilience: IndexResilienceSnapshot | None,
+) -> dict[str, object] | None:
+    if resilience is None:
+        return None
+    return {
+        "generation_id": resilience.generation_id,
+        "committed_units": resilience.committed_units,
+        "replayed_units": resilience.replayed_units,
+        "checkpoint_compatible": resilience.checkpoint_compatible,
+        "last_durable_progress_at": resilience.last_durable_progress_at,
+        "no_progress_timeout_seconds": resilience.no_progress_timeout_seconds,
+        "no_progress_remaining_seconds": resilience.no_progress_remaining_seconds,
+        "circuit_state": resilience.circuit_state,
+        "next_retry_at": resilience.next_retry_at,
+        "peak_rss_mb": resilience.peak_rss_mb,
+        "rss_ceiling_mb": resilience.rss_ceiling_mb,
+        "peak_cuda_allocated_mb": resilience.peak_cuda_allocated_mb,
+        "peak_cuda_reserved_mb": resilience.peak_cuda_reserved_mb,
+        "cuda_ceiling_mb": resilience.cuda_ceiling_mb,
+        "support_profile": resilience.support_profile,
+        "terminal_outcome": resilience.terminal_outcome,
     }
 
 

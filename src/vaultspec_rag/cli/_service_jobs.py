@@ -840,6 +840,67 @@ def _render_job_resource_detail(job: dict[str, object]) -> None:
         _cli.console.print(f"Memory: {resource_summary}")
 
 
+def _resilience_summary_lines(job: dict[str, object]) -> tuple[str, ...]:
+    """Return adapter-ready lines from the canonical resilience object."""
+    resilience = job.get("resilience")
+    if not isinstance(resilience, dict):
+        return ()
+    data = cast("dict[str, object]", resilience)
+    lines: list[str] = []
+    if profile := data.get("support_profile"):
+        lines.append(f"Index profile: {profile}")
+    if generation := data.get("generation_id"):
+        lines.append(f"Checkpoint generation: {generation}")
+    compatible = data.get("checkpoint_compatible")
+    if compatible is not None:
+        lines.append(
+            "Checkpoint compatible: " + ("yes" if compatible is True else "no")
+        )
+    lines.append(
+        f"Checkpoint units: {data.get('committed_units', 0)} committed, "
+        f"{data.get('replayed_units', 0)} resumed"
+    )
+    deadline = data.get("no_progress_remaining_seconds")
+    if deadline is not None:
+        lines.append(f"No-progress budget remaining: {_format_seconds(deadline)}")
+    if circuit := data.get("circuit_state"):
+        lines.append(f"Retry circuit: {circuit}")
+    next_retry = data.get("next_retry_at")
+    if isinstance(next_retry, int | float):
+        lines.append(
+            "Next retry: "
+            + time.strftime(
+                "%Y-%m-%d %H:%M:%S UTC",
+                time.gmtime(float(next_retry)),
+            )
+        )
+    peak_rss = data.get("peak_rss_mb")
+    rss_ceiling = data.get("rss_ceiling_mb")
+    if peak_rss is not None or rss_ceiling is not None:
+        lines.append(
+            f"RSS high-water / ceiling: {_format_mb(peak_rss)} / "
+            f"{_format_mb(rss_ceiling)}"
+        )
+    peak_allocated = data.get("peak_cuda_allocated_mb")
+    if peak_allocated is not None:
+        lines.append(f"CUDA allocated high-water: {_format_mb(peak_allocated)}")
+    peak_reserved = data.get("peak_cuda_reserved_mb")
+    cuda_ceiling = data.get("cuda_ceiling_mb")
+    if peak_reserved is not None or cuda_ceiling is not None:
+        lines.append(
+            f"CUDA reserved high-water / ceiling: {_format_mb(peak_reserved)} / "
+            f"{_format_mb(cuda_ceiling)}"
+        )
+    if terminal := data.get("terminal_outcome"):
+        lines.append(f"Index outcome: {terminal}")
+    return tuple(lines)
+
+
+def _render_job_resilience_detail(job: dict[str, object]) -> None:
+    for line in _resilience_summary_lines(job):
+        _cli.console.print(line)
+
+
 def _render_job_result_detail(job: dict[str, object]) -> None:
     result = job.get("result")
     if not result:
@@ -868,6 +929,7 @@ def _render_job_detail(job: dict[str, object], *, port: int | None = None) -> No
     _render_job_initiator_detail(job)
     _render_job_runtime_detail(job)
     _render_job_resource_detail(job)
+    _render_job_resilience_detail(job)
     _render_job_result_detail(job)
 
 

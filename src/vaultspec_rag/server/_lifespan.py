@@ -17,7 +17,7 @@ import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 
@@ -770,6 +770,19 @@ async def health_handler(_request: Request) -> object:
         if failed_records
         else None
     )
+    resilience_records = [
+        record
+        for record in canonical_records
+        if isinstance(record.get("resilience"), dict)
+    ]
+    latest_resilience = (
+        max(
+            resilience_records,
+            key=lambda record: job_updated_timestamp(record) or float("-inf"),
+        )
+        if resilience_records
+        else None
+    )
     jobs_health: dict[str, object] = {
         "running": summary["running"],
         "queued": summary["queued"],
@@ -786,6 +799,20 @@ async def health_handler(_request: Request) -> object:
                 "finished_at": last_failed.get("finished_at"),
             }
             if last_failed is not None
+            else None
+        ),
+        "resilience": (
+            {
+                "job_id": latest_resilience.get("id"),
+                "source": cast("dict[str, object]", latest_resilience["spec"]).get(
+                    "source"
+                ),
+                **cast(
+                    "dict[str, object]",
+                    latest_resilience["resilience"],
+                ),
+            }
+            if latest_resilience is not None
             else None
         ),
     }

@@ -173,6 +173,12 @@ class DocumentIndexer:
 
         self._data_root = self.root_dir / get_config().data_dir
         self._meta_path = document_metadata_path(self.root_dir)
+        self._last_checkpoint: DocumentRunCheckpoint | None = None
+
+    @property
+    def last_checkpoint(self) -> DocumentRunCheckpoint | None:
+        """Return the latest run authority for service-domain projection."""
+        return self._last_checkpoint
 
     def resolve_policy_snapshot(self) -> ResolvedIndexPolicy:
         """Resolve the immutable admission and extraction policy for one run."""
@@ -472,7 +478,7 @@ class DocumentIndexer:
             sort_keys=True,
             separators=(",", ":"),
         )
-        return DocumentRunCheckpoint.open(
+        checkpoint = DocumentRunCheckpoint.open(
             data_root=self._data_root,
             root_dir=self.root_dir,
             policy=policy,
@@ -491,6 +497,8 @@ class DocumentIndexer:
                 encode_batch_size=int(config.embedding_encode_batch_size),
             ),
         )
+        self._last_checkpoint = checkpoint
+        return checkpoint
 
     @staticmethod
     def _checkpoint_files(

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Protocol, cast
 
 from .job_models import (
     DesiredJobState,
+    IndexResilienceSnapshot,
     JobAttempt,
     JobInitiator,
     JobMode,
@@ -500,6 +501,7 @@ def _job_snapshot_from_dict(value: object) -> JobSnapshot:
         initiator=_job_initiator_from_dict(raw.get("initiator")),
         runtime=_job_runtime_from_dict(raw.get("runtime")),
         resources=_job_resources_from_dict(raw.get("resources")),
+        resilience=_job_resilience_from_dict(raw.get("resilience")),
     )
 
 
@@ -592,6 +594,82 @@ def _process_resources_from_dict(value: object) -> ProcessResourceSnapshot | Non
         ),
         cuda_reserved_mb=_required_nonnegative_float(
             raw.get("cuda_reserved_mb"), "resource cuda_reserved_mb"
+        ),
+    )
+
+
+def _job_resilience_from_dict(value: object) -> IndexResilienceSnapshot | None:
+    if value is None:
+        return None
+    raw = _required_mapping(value, "job resilience")
+    checkpoint_compatible = raw.get("checkpoint_compatible")
+    if checkpoint_compatible is not None and not isinstance(
+        checkpoint_compatible, bool
+    ):
+        raise TypeError("resilience checkpoint_compatible must be boolean or null")
+    return IndexResilienceSnapshot(
+        generation_id=_optional_str(
+            raw.get("generation_id"),
+            "resilience generation_id",
+        ),
+        committed_units=_required_int(
+            raw.get("committed_units", 0),
+            "resilience committed_units",
+            minimum=0,
+        ),
+        replayed_units=_required_int(
+            raw.get("replayed_units", 0),
+            "resilience replayed_units",
+            minimum=0,
+        ),
+        checkpoint_compatible=checkpoint_compatible,
+        last_durable_progress_at=_optional_float(
+            raw.get("last_durable_progress_at"),
+            "resilience last_durable_progress_at",
+        ),
+        no_progress_timeout_seconds=_optional_float(
+            raw.get("no_progress_timeout_seconds"),
+            "resilience no_progress_timeout_seconds",
+        ),
+        no_progress_remaining_seconds=_optional_float(
+            raw.get("no_progress_remaining_seconds"),
+            "resilience no_progress_remaining_seconds",
+        ),
+        circuit_state=_optional_str(
+            raw.get("circuit_state"),
+            "resilience circuit_state",
+        ),
+        next_retry_at=_optional_float(
+            raw.get("next_retry_at"),
+            "resilience next_retry_at",
+        ),
+        peak_rss_mb=_optional_float(
+            raw.get("peak_rss_mb"),
+            "resilience peak_rss_mb",
+        ),
+        rss_ceiling_mb=_optional_float(
+            raw.get("rss_ceiling_mb"),
+            "resilience rss_ceiling_mb",
+        ),
+        peak_cuda_allocated_mb=_optional_float(
+            raw.get("peak_cuda_allocated_mb"),
+            "resilience peak_cuda_allocated_mb",
+        ),
+        peak_cuda_reserved_mb=_optional_float(
+            raw.get("peak_cuda_reserved_mb"),
+            "resilience peak_cuda_reserved_mb",
+        ),
+        cuda_ceiling_mb=_optional_float(
+            raw.get("cuda_ceiling_mb"),
+            "resilience cuda_ceiling_mb",
+        ),
+        support_profile=_optional_str(
+            raw.get("support_profile"),
+            "resilience support_profile",
+        ),
+        terminal_outcome=_optional_str(
+            raw.get("terminal_outcome"),
+            "resilience terminal_outcome",
         ),
     )
 

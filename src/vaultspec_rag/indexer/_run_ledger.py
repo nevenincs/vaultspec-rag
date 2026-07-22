@@ -713,6 +713,19 @@ class RunLedger:
             ).fetchone()
         return row is not None
 
+    def committed_unit_count(self, generation_id: str) -> int:
+        """Return the committed-unit count without materializing ledger rows."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS unit_count FROM commit_units
+                WHERE generation_id = ?
+                """,
+                (generation_id,),
+            ).fetchone()
+        assert row is not None
+        return int(row["unit_count"])
+
     def file_complete(self, generation_id: str, rel_path: str) -> bool:
         """Return whether every segment (or the deletion unit) is committed."""
         _validate_rel_path(rel_path)
