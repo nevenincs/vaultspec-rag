@@ -45,6 +45,7 @@ __all__ = [
     "VaultChunkPayload",
     "VaultDocPayload",
     "assert_compatible",
+    "collection_names",
     "describe_storage_schema",
     "effective_dense_dim",
 ]
@@ -101,6 +102,15 @@ CODE_CHUNK_ID_SCHEME = "chunk_id"
 DOCUMENT_CHUNK_ID_SCHEME = (
     "blake2b(normalized_source|locator_or_unit_ordinal|content_fingerprint)@v1"
 )
+
+
+def collection_names(prefix: str = "") -> tuple[str, str, str]:
+    """Return every collection in stable lifecycle order for one namespace."""
+    return (
+        prefix + VAULT_COLLECTION,
+        prefix + CODE_COLLECTION,
+        prefix + DOCUMENT_COLLECTION,
+    )
 
 
 class VaultDocPayload(TypedDict):

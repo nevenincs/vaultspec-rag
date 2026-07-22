@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from . import store_schema
 from .store import root_collection_prefix
 
 __all__ = [
@@ -101,6 +102,22 @@ class ManifestEntry:
     backend: str
     last_indexed: str = ""
     first_seen_orphaned: str = ""
+    storage_schema_version: int = store_schema.STORAGE_SCHEMA_VERSION
+    collections: tuple[str, ...] = ()
+
+
+def _declared_collections(prefix: str, backend: str) -> tuple[str, ...]:
+    """Return exact collection names for a manifest namespace."""
+    return store_schema.collection_names(prefix if backend == "server" else "")
+
+
+def _legacy_collections(prefix: str, backend: str) -> tuple[str, ...]:
+    """Infer the two collections known before document storage existed."""
+    collection_prefix = prefix if backend == "server" else ""
+    return (
+        collection_prefix + store_schema.VAULT_COLLECTION,
+        collection_prefix + store_schema.CODE_COLLECTION,
+    )
 
 
 def _status_dir_path() -> Path:
@@ -161,15 +178,31 @@ def load_manifest() -> dict[str, ManifestEntry]:
         root = record.get("root")
         if not isinstance(root, str):
             continue
+        backend = str(record.get("backend", ""))
+        raw_collections = record.get("collections")
+        collections = (
+            tuple(value for value in raw_collections if isinstance(value, str))
+            if isinstance(raw_collections, list)
+            else _legacy_collections(prefix, backend)
+        )
+        raw_schema_version = record.get("storage_schema_version", 1)
+        schema_version = (
+            raw_schema_version
+            if isinstance(raw_schema_version, int)
+            and not isinstance(raw_schema_version, bool)
+            else 1
+        )
         entries[prefix] = ManifestEntry(
             prefix=prefix,
             root=root,
-            backend=str(record.get("backend", "")),
+            backend=backend,
             last_indexed=str(record.get("last_indexed", "")),
             # Lenient: pre-upgrade manifests lack the field; absent means
             # "never observed orphaned", so the first reclaim can happen no
             # earlier than one full grace window after upgrade.
             first_seen_orphaned=str(record.get("first_seen_orphaned", "")),
+            storage_schema_version=schema_version,
+            collections=collections,
         )
     return entries
 
@@ -179,13 +212,15 @@ def _write_manifest(entries: dict[str, ManifestEntry]) -> Path:
     path = manifest_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "version": 1,
+        "version": 2,
         "roots": {
             entry.prefix: {
                 "root": entry.root,
                 "backend": entry.backend,
                 "last_indexed": entry.last_indexed,
                 "first_seen_orphaned": entry.first_seen_orphaned,
+                "storage_schema_version": entry.storage_schema_version,
+                "collections": list(entry.collections),
             }
             for entry in entries.values()
         },
@@ -222,6 +257,8 @@ def record_root(
         root=resolved,
         backend=backend,
         last_indexed=last_indexed,
+        storage_schema_version=store_schema.STORAGE_SCHEMA_VERSION,
+        collections=_declared_collections(prefix, backend),
     )
     with _LOCK:
         entries = load_manifest()
@@ -233,6 +270,8 @@ def record_root(
             existing is not None
             and existing.root == resolved
             and existing.backend == backend
+            and existing.storage_schema_version == entry.storage_schema_version
+            and existing.collections == entry.collections
             and not last_indexed
         ):
             return existing
@@ -376,6 +415,8 @@ def update_orphan_stamps(statuses: dict[str, str], *, now_iso: str) -> dict[str,
                         backend=entry.backend,
                         last_indexed=entry.last_indexed,
                         first_seen_orphaned=now_iso,
+                        storage_schema_version=entry.storage_schema_version,
+                        collections=entry.collections,
                     )
                     entries[prefix] = entry
                     changed = True
@@ -386,6 +427,8 @@ def update_orphan_stamps(statuses: dict[str, str], *, now_iso: str) -> dict[str,
                     backend=entry.backend,
                     last_indexed=entry.last_indexed,
                     first_seen_orphaned="",
+                    storage_schema_version=entry.storage_schema_version,
+                    collections=entry.collections,
                 )
                 entries[prefix] = entry
                 changed = True
@@ -423,6 +466,8 @@ def rekey_prefix(
         root=resolved,
         backend=backend,
         last_indexed=last_indexed,
+        storage_schema_version=store_schema.STORAGE_SCHEMA_VERSION,
+        collections=_declared_collections(new_prefix, backend),
     )
     with _LOCK:
         entries = load_manifest()
