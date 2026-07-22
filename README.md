@@ -33,9 +33,10 @@ by meaning, not by keyword.
 
 Search `"file lock concurrent write per-root"` and vaultspec-rag surfaces the decision that governs it, even when the document never uses those exact words. It is the retrieval layer of the project: it finds and ranks the grounding, and a client such as a coding agent reads it.
 
-Every terminal render on this page is real output against this repository's own vault,
-code, or document index. The [architecture overview](docs/architecture.md) explains how
-it works; the [glossary](docs/glossary.md) defines the terms used across the docs.
+The terminal renders on this page are real output from this repository's vault and code
+searches and its service diagnostics. The same runtime exposes independent document
+search for explicitly routed extractor output. The [architecture overview](docs/architecture.md)
+explains how it works; the [glossary](docs/glossary.md) defines the terms used across the docs.
 
 ## Getting started
 
