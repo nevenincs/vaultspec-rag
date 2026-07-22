@@ -24,6 +24,7 @@ related:
   - '[[2026-07-21-search-index-availability-plan]]'
   - '[[2026-07-21-search-index-availability-reference]]'
   - '[[2026-07-21-search-index-availability-research]]'
+  - '[[2026-07-22-search-index-availability-nonempty-contract-audit]]'
 ---
 
 # `search-index-availability` feature index
@@ -39,6 +40,7 @@ Auto-generated index of all documents tagged with `#search-index-availability`.
 ### audit
 
 - `2026-07-21-search-index-availability-code-review-audit` - `search-index-availability` audit: `search-index-availability code review`
+- `2026-07-22-search-index-availability-nonempty-contract-audit` - `search-index-availability` audit: `nonempty-result availability follow-up`
 
 ### exec
 
