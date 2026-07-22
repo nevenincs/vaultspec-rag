@@ -20,6 +20,7 @@ def _assert_empty_search_phase_timing(
     timing = cast("dict[str, object]", result["timing"])
     for key in (
         "search_seconds",
+        "index_state_seconds",
         "model_load_seconds",
         "project_lease_seconds",
         "queue_wait_seconds",
@@ -27,6 +28,7 @@ def _assert_empty_search_phase_timing(
         assert isinstance(timing[key], float)
     phases = cast("dict[str, object]", timing["phases"])
     assert phases == {
+        "indexed_count": 0,
         "model_load_seconds": 0.0,
         "project_lease_seconds": 0.0,
     }
@@ -74,6 +76,14 @@ def test_empty_service_search_reports_missing_index(
     assert isinstance(index_state, dict)
     assert index_state["source"] == "vault"
     assert index_state["indexed_count"] == 0
+    assert set(index_state) == {
+        "source",
+        "indexed_count",
+        "indexed_target_root",
+        "requested_target_root",
+        "target_matches",
+        "status",
+    }
     assert index_state["requested_target_root"] == str(root)
     assert index_state["target_matches"] is True
     empty = cast("dict[str, object]", result["empty"])
@@ -113,6 +123,14 @@ def test_direct_http_code_search_reports_code_index_state(
     assert isinstance(index_state, dict)
     assert index_state["source"] == "code"
     assert index_state["indexed_count"] == 0
+    assert set(index_state) == {
+        "source",
+        "indexed_count",
+        "indexed_target_root",
+        "requested_target_root",
+        "target_matches",
+        "status",
+    }
     empty = cast("dict[str, object]", result["empty"])
     assert isinstance(empty, dict)
     assert empty["reason"] == "index_missing"

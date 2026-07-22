@@ -12,13 +12,25 @@ from typing import TYPE_CHECKING, cast
 import pytest
 import uvicorn
 from starlette.applications import Starlette
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 from starlette.testclient import TestClient
+from typer.testing import CliRunner
 
 import vaultspec_rag.server as _m
 
+from ...cli import app
 from ...config import EnvVar, reset_config
+from ...logging_config import (
+    MANAGED_LOG_TRUNCATION_MARKER,
+    MAX_MANAGED_LOG_SOURCE_BYTES,
+)
 from ...server._routes import ROUTES
-from ...serviceclient._transport import _logs_route_path, _try_http_admin
+from ...serviceclient._transport import (
+    MAX_SERVICE_RESPONSE_BYTES,
+    _logs_route_path,
+    _try_http_admin,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -26,6 +38,7 @@ if TYPE_CHECKING:
     from typing import Protocol
 
     import httpx
+    from starlette.requests import Request
 
     class HTTPTestClient(Protocol):
         def get(
@@ -40,6 +53,7 @@ if TYPE_CHECKING:
 
 
 pytestmark = [pytest.mark.integration]
+runner = CliRunner()
 
 
 @pytest.fixture
@@ -280,6 +294,32 @@ def test_logs_route_clamps_each_source_to_maximum(
     assert groups[1]["lines"][0] == "qdrant-1"
 
 
+def test_live_and_offline_cli_share_byte_truncation_contract(
+    managed_log_app: tuple[HTTPTestClient, str, Path],
+) -> None:
+    client, token, status_dir = managed_log_app
+    (status_dir / "service.log").write_bytes(b"x" * (MAX_MANAGED_LOG_SOURCE_BYTES * 3))
+
+    live = client.get(
+        "/logs/json",
+        params={"source": "service", "lines": "1"},
+        headers=_auth(token),
+    )
+    offline = runner.invoke(
+        app,
+        ["server", "logs", "--source", "service", "--limit", "1", "--json"],
+    )
+
+    assert live.status_code == 200
+    assert offline.exit_code == 0, offline.output
+    offline_payload = json.loads(offline.output)["data"]
+    assert offline_payload == live.json()
+    group = offline_payload["groups"][0]
+    assert group["marker"] == MANAGED_LOG_TRUNCATION_MARKER
+    assert group["truncation"]["scanned_bytes"] == MAX_MANAGED_LOG_SOURCE_BYTES
+    assert group["truncation"]["returned_content_bytes"] <= MAX_MANAGED_LOG_SOURCE_BYTES
+
+
 def test_logs_transport_path_carries_source_and_filters() -> None:
     path = _logs_route_path(
         {
@@ -303,6 +343,44 @@ def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+async def _oversized_logs_response(_request: Request) -> JSONResponse:
+    """Serve a real JSON body one byte beyond the transport's hard ceiling."""
+    return JSONResponse({"blob": "x" * MAX_SERVICE_RESPONSE_BYTES})
+
+
+def test_admin_transport_rejects_oversized_http_response_before_json_decode() -> None:
+    port = _free_port()
+    server = uvicorn.Server(
+        uvicorn.Config(
+            Starlette(routes=[Route("/logs/json", _oversized_logs_response)]),
+            host="127.0.0.1",
+            port=port,
+            log_config=None,
+            lifespan="off",
+        )
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 5.0
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert server.started
+    try:
+        result = _try_http_admin(
+            "get_logs",
+            {"source": "service", "lines": 1},
+            port,
+        )
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5.0)
+
+    assert result is not None
+    assert result["ok"] is False
+    assert result["error"] == "http_call_failed"
+    assert "ServiceResponseTooLargeError" in str(result["message"])
 
 
 def test_admin_transport_preserves_live_structured_log_error(

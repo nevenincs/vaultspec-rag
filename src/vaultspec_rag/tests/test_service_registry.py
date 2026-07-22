@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
     from ..embeddings import EmbeddingModel
     from ..search import SearchResult
+    from ..store import VaultStore
 
 pytestmark = [pytest.mark.integration]
 
@@ -703,6 +704,224 @@ class TestLeaseApi:
             assert reg._projects[root].ref_count == 0
         finally:
             reg.close_all()
+
+    def test_store_lease_pins_warm_store_against_concurrent_eviction(
+        self,
+        embedding_model: EmbeddingModel,
+        tmp_path: Path,
+    ) -> None:
+        reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)
+        root = _make_vault_dir(tmp_path).resolve()
+        slot = reg.peek_project(root)
+        outcomes: list[tuple[bool, str]] = []
+        try:
+            with reg.lease_store(root) as store:
+                assert store is slot.store
+                assert slot.ref_count == 1
+                thread = threading.Thread(
+                    target=lambda: outcomes.append(reg.try_evict(root)),
+                    name="store-lease-eviction",
+                )
+                thread.start()
+                thread.join(timeout=10)
+                assert not thread.is_alive(), "concurrent eviction did not finish"
+                assert outcomes == [(False, "busy")]
+                assert store._client is not None
+
+            assert slot.ref_count == 0
+            assert reg.try_evict(root) == (True, "forced")
+            assert slot.store._client is None
+        finally:
+            reg.close_all()
+
+    def test_store_count_remains_leased_while_real_count_is_blocked(
+        self,
+        embedding_model: EmbeddingModel,
+        tmp_path: Path,
+    ) -> None:
+        reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)
+        root = _make_vault_dir(tmp_path).resolve()
+        slot = reg.peek_project(root)
+        slot.store.ensure_table()
+        collection_lock = slot.store._collection_locks[slot.store.TABLE_NAME]
+        results: list[int] = []
+        errors: list[BaseException] = []
+
+        def count() -> None:
+            try:
+                results.append(reg.vault_doc_count(root))
+            except BaseException as exc:  # pragma: no cover - reported below
+                errors.append(exc)
+
+        acquired = collection_lock.acquire(timeout=5)
+        thread = threading.Thread(target=count, name="leased-store-count")
+        assert acquired
+        try:
+            thread.start()
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                with reg._lock:
+                    if slot.ref_count == 1:
+                        break
+                time.sleep(0.01)
+            assert slot.ref_count == 1, "count never acquired its store lease"
+            assert thread.is_alive(), "count bypassed the held production store lock"
+            assert reg.try_evict(root) == (False, "busy")
+        finally:
+            collection_lock.release()
+            if thread.ident is not None:
+                thread.join(timeout=30)
+            reg.close_all()
+
+        assert not thread.is_alive()
+        assert errors == []
+        assert results == [0]
+
+    def test_store_lease_excludes_warm_slot_from_idle_sweep(
+        self,
+        embedding_model: EmbeddingModel,
+        tmp_path: Path,
+    ) -> None:
+        reg = self._reg(embedding_model, max_projects=4, idle_ttl=5.0)
+        root = _make_vault_dir(tmp_path / "leased").resolve()
+        trigger_root = _make_vault_dir(tmp_path / "trigger").resolve()
+        slot = reg.peek_project(root)
+        try:
+            with reg.lease_store(root):
+                with reg._lock:
+                    slot.last_access = time.monotonic() - 100.0
+                with reg.lease(trigger_root):
+                    pass
+                assert reg._projects[root] is slot
+                assert slot.store._client is not None
+
+            with reg.lease(trigger_root):
+                pass
+            assert root not in reg._projects
+            assert slot.store._client is None
+        finally:
+            reg.close_all()
+
+    def test_cold_store_lease_participates_in_bounded_shutdown_force_close(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        reg = ServiceRegistry()
+        root = _make_vault_dir(tmp_path).resolve()
+        leased = threading.Event()
+        release = threading.Event()
+        stores: list[VaultStore] = []
+        errors: list[BaseException] = []
+
+        def hold_cold_lease() -> None:
+            try:
+                with reg.lease_store(root) as store:
+                    stores.append(store)
+                    leased.set()
+                    assert release.wait(timeout=15), "lease release was never signalled"
+            except BaseException as exc:  # pragma: no cover - reported below
+                errors.append(exc)
+
+        thread = threading.Thread(target=hold_cold_lease, name="cold-store-lease")
+        thread.start()
+        assert leased.wait(timeout=10), "cold store lease was not established"
+        with reg._lock:
+            assert len(reg._transient_stores) == 1
+            assert reg._transient_store_constructions == 0
+
+        started = time.monotonic()
+        reg.close_all()
+        elapsed = time.monotonic() - started
+        release.set()
+        thread.join(timeout=10)
+
+        assert 4.5 < elapsed < 7.0, f"transient drain took {elapsed:.2f}s"
+        assert not thread.is_alive()
+        assert errors == []
+        assert len(stores) == 1
+        assert stores[0]._client is None
+        with reg._lock:
+            assert reg._transient_stores == set()
+            assert reg._transient_store_constructions == 0
+
+    def test_cold_store_construction_racing_shutdown_cannot_escape(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        reg = ServiceRegistry()
+        worker_count = 8
+        barrier = threading.Barrier(worker_count + 1)
+        release = threading.Event()
+        stores: list[VaultStore] = []
+        outcomes: list[str] = []
+        errors: list[BaseException] = []
+
+        def race(root: Path) -> None:
+            try:
+                barrier.wait(timeout=10)
+                with reg.lease_store(root) as store:
+                    stores.append(store)
+                    outcomes.append("leased")
+                    assert release.wait(timeout=15), "race lease was never released"
+            except RuntimeError as exc:
+                if "shut down" not in str(exc) and "shutting down" not in str(exc):
+                    errors.append(exc)
+                else:
+                    outcomes.append("shutdown")
+            except BaseException as exc:  # pragma: no cover - reported below
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(
+                target=race,
+                args=(_make_vault_dir(tmp_path / f"cold-{index}").resolve(),),
+                name=f"cold-construction-{index}",
+            )
+            for index in range(worker_count)
+        ]
+        for thread in threads:
+            thread.start()
+        barrier.wait(timeout=10)
+
+        deadline = time.monotonic() + 10.0
+        observed_construction = False
+        while time.monotonic() < deadline:
+            with reg._lock:
+                observed_construction = reg._transient_store_constructions > 0
+            if observed_construction:
+                break
+            time.sleep(0.001)
+        assert observed_construction, "no real cold-store construction was observed"
+
+        shutdown = threading.Thread(target=reg.close_all, name="registry-shutdown")
+        shutdown.start()
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            with reg._lock:
+                if reg._shutting_down:
+                    break
+            time.sleep(0.001)
+        assert reg._shutting_down
+        release.set()
+
+        for thread in threads:
+            thread.join(timeout=20)
+        shutdown.join(timeout=20)
+
+        assert not shutdown.is_alive()
+        assert all(not thread.is_alive() for thread in threads)
+        assert errors == []
+        assert len(outcomes) == worker_count
+        assert all(store._client is None for store in stores)
+        with reg._lock:
+            assert reg._transient_stores == set()
+            assert reg._transient_store_constructions == 0
+
+        with (
+            pytest.raises(RuntimeError, match="shutting down"),
+            reg.lease_store(tmp_path / "after-shutdown"),
+        ):
+            pass
 
     def test_peek_does_not_change_refcount(
         self,
