@@ -7,6 +7,7 @@ You MUST respect these rules at all times:
 @.claude/rules/broker-facing-cli-outcomes-are-structured-and-idempotent.md
 @.claude/rules/gpu-consumer-single-thread.md
 @.claude/rules/gpu-lock-wraps-forward-passes-only.md
+@.claude/rules/guard-tests-prove-they-can-fail.md
 @.claude/rules/index-workers-stay-cpu-only.md
 @.claude/rules/managed-singleton-paths-isolate-storage-dir-in-tests.md
 @.claude/rules/operator-views-are-bounded.md
