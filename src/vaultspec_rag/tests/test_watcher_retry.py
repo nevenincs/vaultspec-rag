@@ -109,17 +109,38 @@ def test_newer_convergence_generation_survives_older_success(tmp_path: Path) -> 
     assert reloaded.state == settled
 
 
-def test_retry_backoff_opens_and_half_open_probe_resets(tmp_path: Path) -> None:
+def _fail_once(
+    policy: WatcherRetryPolicy,
+    error: BaseException,
+    *,
+    now: float,
+    random_unit: float,
+) -> WatcherRetryState:
+    """Admit an attempt and fail it, returning the resulting state."""
+    admitted = policy.admit(now=now)
+    assert admitted.attempt_generation is not None
+    return policy.record_failure(
+        error,
+        admitted.attempt_generation,
+        now=now,
+        random_unit=random_unit,
+    )
+
+
+def _drive_to_open_circuit(policy: WatcherRetryPolicy) -> None:
+    """Fail three times, which is what opens the circuit."""
+    policy.mark_convergence_pending(now=0.0)
+    _fail_once(policy, TimeoutError("t"), now=0.0, random_unit=0.5)
+    _fail_once(policy, ConnectionError("c"), now=11.0, random_unit=1.0)
+    _fail_once(policy, TimeoutError("t"), now=35.0, random_unit=0.5)
+
+
+def test_retry_backoff_grows_and_gates_admission(tmp_path: Path) -> None:
     policy = _policy(tmp_path / "code.json", tmp_path)
     policy.mark_convergence_pending(now=0.0)
 
-    first = policy.admit(now=0.0)
-    assert first.attempt_generation is not None
-    state = policy.record_failure(
-        TimeoutError("qdrant timed out"),
-        first.attempt_generation,
-        now=1.0,
-        random_unit=0.5,
+    state = _fail_once(
+        policy, TimeoutError("qdrant timed out"), now=1.0, random_unit=0.5
     )
     assert state.consecutive_failures == 1
     assert state.last_error_kind is JobErrorKind.TIMEOUT
@@ -127,36 +148,47 @@ def test_retry_backoff_opens_and_half_open_probe_resets(tmp_path: Path) -> None:
     assert state.circuit_state is WatcherCircuitState.CLOSED
     assert not policy.admit(now=10.9).admitted
 
-    second = policy.admit(now=11.0)
-    assert second.attempt_generation is not None
-    state = policy.record_failure(
-        ConnectionError("qdrant unavailable"),
-        second.attempt_generation,
-        now=11.0,
-        random_unit=1.0,
+    state = _fail_once(
+        policy, ConnectionError("qdrant unavailable"), now=11.0, random_unit=1.0
     )
     assert state.next_retry_at == 35.0
     assert state.circuit_state is WatcherCircuitState.CLOSED
 
-    third = policy.admit(now=35.0)
-    assert third.attempt_generation is not None
-    state = policy.record_failure(
-        TimeoutError("timeout"),
-        third.attempt_generation,
-        now=35.0,
-        random_unit=0.5,
-    )
+
+def test_third_failure_opens_the_circuit(tmp_path: Path) -> None:
+    policy = _policy(tmp_path / "code.json", tmp_path)
+    policy.mark_convergence_pending(now=0.0)
+    _fail_once(policy, TimeoutError("t"), now=1.0, random_unit=0.5)
+    _fail_once(policy, ConnectionError("c"), now=11.0, random_unit=1.0)
+
+    state = _fail_once(policy, TimeoutError("timeout"), now=35.0, random_unit=0.5)
+
     assert state.next_retry_at == 60.0
     assert state.circuit_state is WatcherCircuitState.OPEN
     assert not policy.admit(now=59.9).admitted
 
+
+def test_half_open_probe_is_single_flight(tmp_path: Path) -> None:
+    policy = _policy(tmp_path / "code.json", tmp_path)
+    _drive_to_open_circuit(policy)
+
     half_open = policy.admit(now=60.0)
+
     assert half_open.admitted
     assert half_open.circuit_state is WatcherCircuitState.HALF_OPEN
     assert half_open.attempt_generation is not None
+    # Only one probe may be in flight while half-open.
     assert not policy.admit(now=60.0).admitted
 
+
+def test_successful_probe_resets_the_circuit(tmp_path: Path) -> None:
+    policy = _policy(tmp_path / "code.json", tmp_path)
+    _drive_to_open_circuit(policy)
+    half_open = policy.admit(now=60.0)
+    assert half_open.attempt_generation is not None
+
     settled = policy.record_success(half_open.attempt_generation, now=61.0)
+
     assert settled.consecutive_failures == 0
     assert settled.last_error_kind is None
     assert settled.last_failure_at is None

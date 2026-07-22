@@ -649,13 +649,14 @@ class WatcherRetryPolicy:
         self._state = state
         return state
 
-    def _apply_recovery_markers_unlocked(
+    def _load_recovery_markers(
         self,
-        state: WatcherRetryState,
-        timestamp: float,
-    ) -> WatcherRetryState:
-        """Consume bounded cancellation handoff markers under state authority."""
-        _cleanup_stale_recovery_temps(self._path, timestamp)
+    ) -> list[tuple[Path, _RecoveryMarker]]:
+        """Read every recovery marker on disk, enforcing the count bound.
+
+        Returns an empty list when there is nothing to consume so the
+        caller can return early without inspecting state.
+        """
         try:
             markers = sorted(
                 self._path.parent.glob(f"{self._path.stem}.recovery.*.json")
@@ -663,13 +664,13 @@ class WatcherRetryPolicy:
         except OSError as exc:
             raise _state_io_failure("list recovery markers", self._path, exc) from exc
         if not markers:
-            return state
+            return []
         if len(markers) > _MAX_RECOVERY_MARKERS:
             raise WatcherRetryStateError(
                 "watcher retry recovery marker count exceeds its bound"
             )
         try:
-            marker_pairs = [
+            return [
                 (
                     marker,
                     _read_recovery_marker(
@@ -684,6 +685,62 @@ class WatcherRetryPolicy:
             raise WatcherRetryStateError(
                 f"watcher retry recovery marker cannot be read: {exc}"
             ) from exc
+
+    def _recovered_state(
+        self,
+        state: WatcherRetryState,
+        *,
+        clears_active_attempt: bool,
+        clears_half_open: bool,
+        observed_generation: int,
+        timestamp: float,
+    ) -> WatcherRetryState:
+        """Rebuild state after consuming recovery markers.
+
+        A fenced attempt clears its ownership fields; a fenced half-open
+        probe reopens the circuit and re-arms its backoff.
+        """
+        cleared: dict[str, object] = (
+            {
+                "attempt_generation": None,
+                "attempt_token": None,
+                "attempt_started_at": None,
+                "attempt_owner_pid": None,
+                "attempt_owner_create_time": None,
+            }
+            if clears_active_attempt
+            else {}
+        )
+        reopened: dict[str, object] = (
+            {
+                "next_retry_at": max(
+                    state.next_retry_at, timestamp + self._base_seconds
+                ),
+                "circuit_state": WatcherCircuitState.OPEN,
+            }
+            if clears_half_open
+            else {}
+        )
+        return replace(
+            state,
+            convergence_pending=True,
+            unscoped_required=True,
+            convergence_generation=observed_generation + 1,
+            updated_at=timestamp,
+            **cleared,
+            **reopened,
+        )
+
+    def _apply_recovery_markers_unlocked(
+        self,
+        state: WatcherRetryState,
+        timestamp: float,
+    ) -> WatcherRetryState:
+        """Consume bounded cancellation handoff markers under state authority."""
+        _cleanup_stale_recovery_temps(self._path, timestamp)
+        marker_pairs = self._load_recovery_markers()
+        if not marker_pairs:
+            return state
         owned_policy_token = self._owned_admission_token()
         consumable = [
             (marker_path, marker_state)
@@ -712,33 +769,12 @@ class WatcherRetryPolicy:
             clears_active_attempt
             and state.circuit_state is WatcherCircuitState.HALF_OPEN
         )
-        state = replace(
+        state = self._recovered_state(
             state,
-            next_retry_at=(
-                max(state.next_retry_at, timestamp + self._base_seconds)
-                if clears_half_open
-                else state.next_retry_at
-            ),
-            circuit_state=(
-                WatcherCircuitState.OPEN if clears_half_open else state.circuit_state
-            ),
-            convergence_pending=True,
-            unscoped_required=True,
-            convergence_generation=observed_generation + 1,
-            attempt_generation=(
-                None if clears_active_attempt else state.attempt_generation
-            ),
-            attempt_token=None if clears_active_attempt else state.attempt_token,
-            attempt_started_at=(
-                None if clears_active_attempt else state.attempt_started_at
-            ),
-            attempt_owner_pid=(
-                None if clears_active_attempt else state.attempt_owner_pid
-            ),
-            attempt_owner_create_time=(
-                None if clears_active_attempt else state.attempt_owner_create_time
-            ),
-            updated_at=timestamp,
+            clears_active_attempt=clears_active_attempt,
+            clears_half_open=clears_half_open,
+            observed_generation=observed_generation,
+            timestamp=timestamp,
         )
         _write_state(self._path, state)
         owned_token = self._owned_admission_token()
