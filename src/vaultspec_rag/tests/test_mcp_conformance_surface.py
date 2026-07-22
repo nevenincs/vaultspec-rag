@@ -1,4 +1,4 @@
-"""MCP conformance: the narrowed search surface, its annotations, legible errors.
+"""MCP conformance: closed-domain adapters, annotations, and legible errors.
 
 Introspects the real FastMCP instance (no mocks) to assert the surface decided
 by the ``mcp-search-scope`` ADR - exactly the search, index-refresh, and
@@ -30,12 +30,18 @@ pytestmark = [pytest.mark.unit]
 _EXPECTED_TOOLS = {
     "search_vault",
     "search_codebase",
+    "search_documents",
+    "search_combined",
     "get_code_file",
     "reindex_vault",
     "reindex_codebase",
+    "reindex_documents",
+    "reindex_all",
+    "clean_documents",
+    "clean_all",
+    "get_index_status",
 }
 _REMOVED_TOOLS = {
-    "get_index_status",
     "list_projects",
     "evict_project",
     "get_watcher_state",
@@ -47,8 +53,21 @@ _REMOVED_TOOLS = {
     "get_jobs",
     "reconfigure_watcher",
 }
-_READ_ONLY_TOOLS = {"search_vault", "search_codebase", "get_code_file"}
-_REFRESH_TOOLS = {"reindex_vault", "reindex_codebase"}
+_READ_ONLY_TOOLS = {
+    "search_vault",
+    "search_codebase",
+    "search_documents",
+    "search_combined",
+    "get_code_file",
+    "get_index_status",
+}
+_REFRESH_TOOLS = {
+    "reindex_vault",
+    "reindex_codebase",
+    "reindex_documents",
+    "reindex_all",
+}
+_CLEAN_TOOLS = {"clean_documents", "clean_all"}
 
 
 def _tools() -> list[Tool]:
@@ -56,7 +75,7 @@ def _tools() -> list[Tool]:
 
 
 class TestNarrowedSurface:
-    """The MCP surface is exactly search + index-refresh + read-only retrieval."""
+    """The MCP surface exhaustively covers the public source domains."""
 
     def test_surface_is_exactly_the_search_and_refresh_tools(self) -> None:
         assert {t.name for t in _tools()} == _EXPECTED_TOOLS
@@ -81,6 +100,15 @@ class TestNarrowedSurface:
                 assert tool.annotations.idempotentHint is True
                 assert tool.annotations.openWorldHint is False
 
+    def test_clean_tools_are_explicitly_destructive_and_idempotent(self) -> None:
+        for tool in _tools():
+            if tool.name in _CLEAN_TOOLS:
+                assert tool.annotations is not None
+                assert tool.annotations.readOnlyHint is False
+                assert tool.annotations.destructiveHint is True
+                assert tool.annotations.idempotentHint is True
+                assert tool.annotations.openWorldHint is False
+
     def test_refresh_tools_expose_no_destructive_clean_input(self) -> None:
         for tool in _tools():
             if tool.name in _REFRESH_TOOLS:
@@ -102,7 +130,12 @@ class TestNarrowedSurface:
         # the constant or the introspected schema fails here rather than a magic
         # literal that cannot catch the divergence it claims to guard.
         assert _DEFAULT_TOP_K == 10
-        for name in ("search_vault", "search_codebase"):
+        for name in (
+            "search_vault",
+            "search_codebase",
+            "search_documents",
+            "search_combined",
+        ):
             tool = next(t for t in _tools() if t.name == name)
             props = tool.inputSchema.get("properties", {})
             assert props["top_k"].get("default") == _DEFAULT_TOP_K
@@ -114,7 +147,12 @@ class TestNarrowedSurface:
 
         model_props = set(SearchResults.model_json_schema().get("properties", {}))
         for tool in _tools():
-            if tool.name in {"search_vault", "search_codebase"}:
+            if tool.name in {
+                "search_vault",
+                "search_codebase",
+                "search_documents",
+                "search_combined",
+            }:
                 assert tool.outputSchema is not None, tool.name
                 props = set(tool.outputSchema.get("properties", {}))
                 assert {"results", "summary"} <= props, tool.name

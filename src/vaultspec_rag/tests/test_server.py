@@ -141,15 +141,22 @@ class TestToolRegistration:
         expected = {
             "search_vault",
             "search_codebase",
+            "search_documents",
+            "search_combined",
             "get_code_file",
             "reindex_vault",
             "reindex_codebase",
+            "reindex_documents",
+            "reindex_all",
+            "clean_documents",
+            "clean_all",
+            "get_index_status",
         }
         assert expected == tool_names
 
     def test_tool_count(self):
         tools = _run(mcp.list_tools())
-        assert len(tools) == 5
+        assert len(tools) == 12
 
     def test_all_tools_have_descriptions(self):
         tools = _run(mcp.list_tools())
@@ -162,9 +169,16 @@ class TestToolRegistration:
         tools_with_project_root = {
             "search_vault",
             "search_codebase",
+            "search_documents",
+            "search_combined",
             "get_code_file",
             "reindex_vault",
             "reindex_codebase",
+            "reindex_documents",
+            "reindex_all",
+            "clean_documents",
+            "clean_all",
+            "get_index_status",
         }
         for tool in tools:
             if tool.name in tools_with_project_root:
@@ -188,6 +202,17 @@ class TestToolRegistration:
         assert "path" in params
         # And the original four code filters stay exposed.
         assert {"language", "node_type", "function_name", "class_name"}.issubset(params)
+
+    def test_search_documents_exposes_provenance_filters(self):
+        tools = _run(mcp.list_tools())
+        search = next(t for t in tools if t.name == "search_documents")
+        params = set(search.inputSchema.get("properties", {}))
+        assert {
+            "source_path",
+            "extractor_id",
+            "extractor_version",
+            "locator_kind",
+        } <= params
 
     def test_search_codebase_exposes_glob_params(self):
         """search_codebase must expose include_paths/exclude_paths list[str]."""

@@ -26,6 +26,8 @@ import urllib.parse
 import urllib.request
 from typing import Any, Literal, NoReturn, cast
 
+from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -37,6 +39,7 @@ __all__ = [
     "_logs_route_path",
     "_timeout_diagnostics",
     "_try_http_admin",
+    "_try_http_clean",
     "_try_http_code_file",
     "_try_http_create_job",
     "_try_http_delete_job",
@@ -52,8 +55,9 @@ DEFAULT_SEARCH_TIMEOUT_SECONDS = 300.0
 DEFAULT_ADMIN_TIMEOUT_SECONDS = 30.0
 MAX_SERVICE_RESPONSE_BYTES = 8 * 1024 * 1024
 
-type ReindexType = Literal["vault", "codebase"]
+type ReindexType = PublicSourceType | str
 type ReindexInitiator = Literal["cli", "mcp"]
+type DocumentSearchFilters = dict[str, str | None]
 type HTTPMethod = Literal["GET", "POST", "PUT", "DELETE"]
 type JobSource = Literal["vault", "code"]
 type JobMode = Literal["incremental", "rebuild"]
@@ -337,8 +341,17 @@ def _try_http_reindex(
     initiator_kind: ReindexInitiator,
 ) -> dict[str, object] | None:
     try:
+        source = parse_source_type(reindex_type, allow_aliases=True)
+    except SourceTypeParseError as exc:
+        return {
+            "ok": False,
+            "error": exc.error_kind,
+            "message": str(exc),
+            **exc.as_payload(),
+        }
+    try:
         payload: dict[str, object] = {
-            "type": reindex_type,
+            "type": source.value,
             "clean": clean,
             "project_root": project_root,
             "initiator_kind": initiator_kind,
@@ -356,6 +369,41 @@ def _try_http_reindex(
             "ok": False,
             "error": "http_call_failed",
             "message": f"HTTP reindex on port {port} failed: {cls}: {exc}",
+        }
+
+
+def _try_http_clean(
+    clean_type: ReindexType,
+    port: int,
+    project_root: str,
+) -> dict[str, object] | None:
+    """Clean one canonical domain through the resident service."""
+    try:
+        source = parse_source_type(clean_type, allow_aliases=True)
+    except SourceTypeParseError as exc:
+        return {
+            "ok": False,
+            "error": exc.error_kind,
+            "message": str(exc),
+            **exc.as_payload(),
+        }
+    try:
+        result = _do_http_call(
+            port,
+            "/clean",
+            {"type": source.value, "project_root": project_root},
+            timeout=_get_admin_timeout(None),
+        )
+        return result if result is not None else {}
+    except Exception as exc:
+        if _is_connection_refused(exc):
+            logger.debug("HTTP clean on port %s: connection refused (%s)", port, exc)
+            return None
+        cls = exc.__class__.__name__
+        return {
+            "ok": False,
+            "error": "http_call_failed",
+            "message": f"HTTP clean on port {port} failed: {cls}: {exc}",
         }
 
 
@@ -862,28 +910,28 @@ def _build_http_search_payload(
     prefer: str | None,
     like_ids: list[str | int] | None,
     unlike_ids: list[str | int] | None,
+    document_filters: DocumentSearchFilters | None,
 ) -> dict[str, object]:
+    source = parse_source_type(search_type, allow_aliases=True)
     payload: dict[str, object] = {
         "query": query,
         "top_k": top_k,
         "project_root": project_root,
+        "type": source.value,
     }
     if like_ids:
         payload["like_ids"] = list(like_ids)
     if unlike_ids:
         payload["unlike_ids"] = list(unlike_ids)
-    if search_type == "code":
-        payload["type"] = "codebase"
-        code_filters = {
+    selected_filters: dict[str, object | None] = {}
+    if source is PublicSourceType.CODE:
+        selected_filters = {
             "language": language,
             "path": path,
             "node_type": node_type,
             "function_name": function_name,
             "class_name": class_name,
         }
-        for key, value in code_filters.items():
-            if value is not None:
-                payload[key] = value
         if include_paths:
             payload["include_paths"] = list(include_paths)
         if exclude_paths:
@@ -894,18 +942,19 @@ def _build_http_search_payload(
             payload["dedup_locales"] = bool(dedup_locales)
         if prefer is not None:
             payload["prefer"] = prefer
-    elif search_type == "vault":
-        payload["type"] = "vault"
-        vault_filters = {
+    elif source is PublicSourceType.VAULT:
+        selected_filters = {
             "doc_type": doc_type,
             "feature": feature,
             "date": date,
             "tag": tag,
             "intent": intent,
         }
-        for key, value in vault_filters.items():
-            if value is not None:
-                payload[key] = value
+    elif source is PublicSourceType.DOCUMENT:
+        selected_filters = dict(document_filters or {})
+    for key, value in selected_filters.items():
+        if value is not None:
+            payload[key] = value
     return payload
 
 
@@ -955,6 +1004,7 @@ def _try_http_search(
     prefer: str | None = None,
     like_ids: list[str | int] | None = None,
     unlike_ids: list[str | int] | None = None,
+    document_filters: DocumentSearchFilters | None = None,
 ) -> dict[str, object] | None:
     # Import the lightweight validator from the leaf module rather than the
     # ``..search`` package, whose __init__ pulls the heavy VaultSearcher (and
@@ -967,8 +1017,18 @@ def _try_http_search(
     )
 
     try:
+        source = parse_source_type(search_type, allow_aliases=True)
+    except SourceTypeParseError as exc:
+        return {
+            "ok": False,
+            "error": exc.error_kind,
+            "message": str(exc),
+            **exc.as_payload(),
+        }
+
+    try:
         validate_search_filters(
-            cast("Literal['vault', 'code']", search_type),
+            cast("Any", source.value),
             language=language,
             path=path,
             node_type=node_type,
@@ -982,6 +1042,10 @@ def _try_http_search(
             exclude_paths=exclude_paths,
             dedup_locales=dedup_locales,
             prefer=prefer,
+            source_path=(document_filters or {}).get("source_path"),
+            extractor_id=(document_filters or {}).get("extractor_id"),
+            extractor_version=(document_filters or {}).get("extractor_version"),
+            locator_kind=(document_filters or {}).get("locator_kind"),
         )
     except InvalidFilterForSearchTypeError as exc:
         return {
@@ -995,7 +1059,7 @@ def _try_http_search(
     timeout = _get_search_timeout(timeout)
     payload = _build_http_search_payload(
         query,
-        search_type,
+        source.value,
         top_k,
         project_root,
         language,
@@ -1014,6 +1078,7 @@ def _try_http_search(
         prefer,
         like_ids,
         unlike_ids,
+        document_filters,
     )
 
     try:

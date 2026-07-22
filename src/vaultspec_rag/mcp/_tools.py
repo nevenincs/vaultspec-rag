@@ -19,8 +19,11 @@ from typing import TYPE_CHECKING, Any, cast
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict
 
+from .._source_types import SourceTypeParseError, parse_source_type
 from ..serviceclient import (
     _default_service_port,
+    _try_http_admin,
+    _try_http_clean,
     _try_http_code_file,
     _try_http_reindex,
     _try_http_search,
@@ -71,6 +74,20 @@ _INDEX_REFRESH = ToolAnnotations(
     idempotentHint=True,
     openWorldHint=False,
 )
+_CLEAN = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+)
+
+
+def _canonical_tool_source(value: object) -> str:
+    """Return one closed-set source value or raise a structured tool error."""
+    try:
+        return parse_source_type(value, allow_aliases=True).value
+    except SourceTypeParseError as exc:
+        raise ValueError(f"{exc.error_kind}: {exc}") from None
 
 
 def _search_envelope_or_raise(
@@ -203,7 +220,7 @@ async def search_vault(
         partial(
             _try_http_search,
             query,
-            "vault",
+            _canonical_tool_source("vault"),
             top_k,
             port,
             project_root or "",
@@ -259,7 +276,7 @@ async def search_codebase(
         partial(
             _try_http_search,
             full_query,
-            "code",
+            _canonical_tool_source("codebase"),
             top_k,
             port,
             project_root or "",
@@ -272,6 +289,66 @@ async def search_codebase(
             exclude_paths=exclude_paths,
             dedup_locales=dedup_locales,
             prefer=prefer,
+            like_ids=like_ids,
+            unlike_ids=unlike_ids,
+        )
+    )
+    return SearchResults.model_validate(_search_envelope_or_raise(result))
+
+
+@mcp.tool(title="Search documents", annotations=_READ_ONLY)
+async def search_documents(
+    query: str,
+    top_k: int = _DEFAULT_TOP_K,
+    source_path: str | None = None,
+    extractor_id: str | None = None,
+    extractor_version: str | None = None,
+    locator_kind: str | None = None,
+    like_ids: list[str | int] | None = None,
+    unlike_ids: list[str | int] | None = None,
+    project_root: str | None = None,
+) -> SearchResults:
+    """Search independently indexed extracted-document content."""
+    port = _require_port()
+    result = await _delegate(
+        partial(
+            _try_http_search,
+            query,
+            _canonical_tool_source("document"),
+            top_k,
+            port,
+            project_root or "",
+            document_filters={
+                "source_path": source_path,
+                "extractor_id": extractor_id,
+                "extractor_version": extractor_version,
+                "locator_kind": locator_kind,
+            },
+            like_ids=like_ids,
+            unlike_ids=unlike_ids,
+        )
+    )
+    return SearchResults.model_validate(_search_envelope_or_raise(result))
+
+
+@mcp.tool(title="Search all index domains", annotations=_READ_ONLY)
+async def search_combined(
+    query: str,
+    top_k: int = _DEFAULT_TOP_K,
+    like_ids: list[str | int] | None = None,
+    unlike_ids: list[str | int] | None = None,
+    project_root: str | None = None,
+) -> SearchResults:
+    """Search vault, code, and document domains with partial outcomes intact."""
+    port = _require_port()
+    result = await _delegate(
+        partial(
+            _try_http_search,
+            query,
+            _canonical_tool_source("combined"),
+            top_k,
+            port,
+            project_root or "",
             like_ids=like_ids,
             unlike_ids=unlike_ids,
         )
@@ -299,17 +376,7 @@ async def reindex_vault(
     project_root: str | None = None,
 ) -> dict[str, Any]:
     """Re-index vault documentation incrementally."""
-    port = _require_port()
-    return await _delegate(
-        partial(
-            _try_http_reindex,
-            "vault",
-            False,
-            port,
-            project_root or "",
-            initiator_kind="mcp",
-        )
-    )
+    return await _reindex_source("vault", project_root)
 
 
 @mcp.tool(title="Reindex codebase", annotations=_INDEX_REFRESH)
@@ -317,14 +384,96 @@ async def reindex_codebase(
     project_root: str | None = None,
 ) -> dict[str, Any]:
     """Re-index the source codebase incrementally."""
+    return await _reindex_source("codebase", project_root)
+
+
+async def _reindex_source(
+    source: object,
+    project_root: str | None,
+) -> dict[str, Any]:
+    """Delegate one canonical incremental reindex without local fallback."""
     port = _require_port()
     return await _delegate(
         partial(
             _try_http_reindex,
-            "codebase",
+            _canonical_tool_source(source),
             False,
             port,
             project_root or "",
             initiator_kind="mcp",
         )
     )
+
+
+@mcp.tool(title="Reindex documents", annotations=_INDEX_REFRESH)
+async def reindex_documents(
+    project_root: str | None = None,
+) -> dict[str, Any]:
+    """Incrementally re-index extracted documents."""
+    return await _reindex_source("document", project_root)
+
+
+@mcp.tool(title="Reindex all index domains", annotations=_INDEX_REFRESH)
+async def reindex_all(
+    project_root: str | None = None,
+) -> dict[str, Any]:
+    """Incrementally re-index vault, code, and document domains."""
+    return await _reindex_source("combined", project_root)
+
+
+@mcp.tool(title="Get index status", annotations=_READ_ONLY)
+async def get_index_status(
+    project_root: str | None = None,
+) -> dict[str, Any]:
+    """Return count, policy, generation, and degraded-state service details."""
+    port = _require_port()
+    result = await _delegate(
+        partial(
+            _try_http_admin,
+            "get_service_state",
+            {"project_root": project_root or ""},
+            port,
+        )
+    )
+    if result.get("ok") is False:
+        error = str(result.get("error") or "status_failed")
+        message = str(result.get("message") or "The status request failed.")
+        raise RuntimeError(f"{error}: {message}")
+    return result
+
+
+async def _clean_source(
+    source: object,
+    project_root: str | None,
+) -> dict[str, Any]:
+    """Delegate one targeted clean and retain every domain outcome."""
+    port = _require_port()
+    result = await _delegate(
+        partial(
+            _try_http_clean,
+            _canonical_tool_source(source),
+            port,
+            project_root or "",
+        )
+    )
+    if result.get("ok") is False and result.get("partial") is not True:
+        error = str(result.get("error") or "clean_failed")
+        message = str(result.get("message") or "The clean request failed.")
+        raise RuntimeError(f"{error}: {message}")
+    return result
+
+
+@mcp.tool(title="Clean document index", annotations=_CLEAN)
+async def clean_documents(
+    project_root: str | None = None,
+) -> dict[str, Any]:
+    """Delete only independently indexed extracted-document content."""
+    return await _clean_source("document", project_root)
+
+
+@mcp.tool(title="Clean all index domains", annotations=_CLEAN)
+async def clean_all(
+    project_root: str | None = None,
+) -> dict[str, Any]:
+    """Delete vault, code, and document content with per-domain outcomes."""
+    return await _clean_source("combined", project_root)
