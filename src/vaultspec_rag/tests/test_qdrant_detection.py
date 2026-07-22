@@ -84,9 +84,7 @@ class TestPidLiveness:
 
 
 class TestClassification:
-    def _identity(
-        self, owner_pid: int, *, witnessed: bool = True
-    ) -> QdrantIdentity:
+    def _identity(self, owner_pid: int, *, witnessed: bool = True) -> QdrantIdentity:
         """Build an identity record, with or without the incarnation witness.
 
         A sidecar written by current code always carries the owner's start
