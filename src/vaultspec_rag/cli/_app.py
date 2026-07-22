@@ -2,8 +2,9 @@
 
 This submodule MUST be imported first by the package ``__init__`` so
 the ``app`` / ``server_root_app`` / ``server_app`` /
-``server_projects_app`` / ``server_watcher_app`` objects exist and are nested
-before any command submodule's ``@*.command()`` decorator runs.
+``server_job_app`` / ``server_projects_app`` / ``server_watcher_app`` objects
+exist and are nested before any command submodule's ``@*.command()`` decorator
+runs.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ __all__ = [
     "main",
     "preprocess_app",
     "server_app",
+    "server_job_app",
     "server_projects_app",
     "server_qdrant_app",
     "server_storage_app",
@@ -48,6 +50,11 @@ server_root_app = typer.Typer(
 )
 # Alias kept for backward-compatible decorator references in command modules.
 server_app = server_root_app
+server_job_app = typer.Typer(
+    help="Inspect and control one exact service job.",
+    rich_markup_mode=None,
+    no_args_is_help=False,
+)
 server_projects_app = typer.Typer(
     help="Inspect and unload projects held by the running search service.",
     rich_markup_mode=None,
@@ -75,6 +82,7 @@ preprocess_app = typer.Typer(
 )
 
 app.add_typer(server_root_app, name="server")
+server_root_app.add_typer(server_job_app, name="job")
 server_root_app.add_typer(server_projects_app, name="projects")
 server_root_app.add_typer(server_watcher_app, name="updates")
 server_root_app.add_typer(server_qdrant_app, name="qdrant")
@@ -97,6 +105,12 @@ def server_main(ctx: typer.Context) -> None:
 @server_projects_app.callback(invoke_without_command=True)
 def server_projects_main(ctx: typer.Context) -> None:
     """Show project command help when no project subcommand is provided."""
+    _show_group_help_if_no_command(ctx)
+
+
+@server_job_app.callback(invoke_without_command=True)
+def server_job_main(ctx: typer.Context) -> None:
+    """Show singular job command help when no subcommand is provided."""
     _show_group_help_if_no_command(ctx)
 
 
