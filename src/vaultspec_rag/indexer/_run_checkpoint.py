@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Final
 
 from .. import store_schema
@@ -25,15 +25,53 @@ from ._run_ledger import (
 from ._run_policy import DurableProgressKind, RunPolicy
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Iterable
     from pathlib import Path
 
     from ._resolved_policy import ResolvedIndexPolicy
     from ._streaming import CodeFileSegment
 
-__all__ = ["CODE_RUN_LEDGER_FILENAME", "CodeRunCheckpoint"]
+__all__ = [
+    "CODE_RUN_LEDGER_FILENAME",
+    "CodeRunCheckpoint",
+    "CodeRunConfiguration",
+]
 
 CODE_RUN_LEDGER_FILENAME: Final = "code_index_runs.sqlite3"
+
+
+@dataclass(frozen=True, slots=True)
+class CodeRunConfiguration:
+    """Closed compatibility inputs that shape code commit units and writes."""
+
+    segment_max_chunks: int
+    segment_max_bytes: int
+    queue_max_chunks: int
+    queue_max_bytes: int
+    slice_max_chunks: int
+    slice_max_bytes: int
+    sparse_enabled: bool
+    sparse_dimension: int
+    encode_batch_size: int
+    flush_slices: int
+
+    def __post_init__(self) -> None:
+        for name in (
+            "segment_max_chunks",
+            "segment_max_bytes",
+            "queue_max_chunks",
+            "queue_max_bytes",
+            "slice_max_chunks",
+            "slice_max_bytes",
+            "sparse_dimension",
+            "encode_batch_size",
+            "flush_slices",
+        ):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+        if not isinstance(self.sparse_enabled, bool):
+            raise TypeError("sparse_enabled must be a bool")
 
 
 @dataclass(slots=True)
@@ -57,7 +95,7 @@ class CodeRunCheckpoint:
         clean: bool,
         model_identity: str,
         dense_dimensions: int,
-        configuration: Mapping[str, object],
+        configuration: CodeRunConfiguration,
     ) -> CodeRunCheckpoint:
         """Open or resume the compatible code generation for one attempt."""
         kind_fingerprints = policy.fingerprints_for(ContentKind.CODE)
@@ -156,7 +194,7 @@ class CodeRunCheckpoint:
             source_digest=None,
             segment_ordinal=0,
             is_file_end=True,
-            point_ids=point_ids,
+            point_ids=tuple(sorted(point_ids)),
         )
         inserted = self.ledger.record_storage_confirmed_unit(
             self.generation_id,
@@ -168,6 +206,31 @@ class CodeRunCheckpoint:
                 label=f"code deletion {rel_path}",
             )
         self.ledger.record_path_deleted(self.generation_id, rel_path)
+        return inserted
+
+    def record_confirmed_stale_deletion(
+        self,
+        rel_path: str,
+        point_ids: tuple[str, ...],
+    ) -> bool:
+        """Checkpoint removal of superseded points while retaining the path."""
+        unit = CommitUnit(
+            rel_path=rel_path,
+            kind=CommitUnitKind.DELETE_STALE,
+            source_digest=None,
+            segment_ordinal=0,
+            is_file_end=True,
+            point_ids=tuple(sorted(point_ids)),
+        )
+        inserted = self.ledger.record_storage_confirmed_unit(
+            self.generation_id,
+            unit,
+        )
+        if inserted:
+            self.run_policy.record_durable_progress(
+                kind=DurableProgressKind.LEDGER_UNIT_COMMITTED,
+                label=f"stale code deletion {rel_path}",
+            )
         return inserted
 
     def publish_metadata(self, meta_path: Path) -> int:
@@ -219,11 +282,10 @@ class CodeRunCheckpoint:
         )
 
 
-def _configuration_fingerprint(configuration: Mapping[str, object]) -> str:
+def _configuration_fingerprint(configuration: CodeRunConfiguration) -> str:
     payload = json.dumps(
-        dict(configuration),
+        asdict(configuration),
         sort_keys=True,
         separators=(",", ":"),
-        default=str,
     )
     return hashlib.blake2b(payload.encode("utf-8")).hexdigest()
