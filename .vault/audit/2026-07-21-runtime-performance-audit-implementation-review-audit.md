@@ -5,7 +5,6 @@ tags:
 date: '2026-07-21'
 modified: '2026-07-22'
 related:
-  - "[[2026-07-21-runtime-performance-audit-codebase-hot-paths-reference]]"
   - "[[2026-07-21-large-index-resilience-plan]]"
 ---
 
