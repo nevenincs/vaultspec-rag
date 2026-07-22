@@ -132,6 +132,22 @@ def test_commit_units_are_atomic_idempotent_and_row_streamed(tmp_path: Path) -> 
     with pytest.raises(RunLedgerStateError, match="source digest"):
         ledger.record_storage_confirmed_unit(generation.generation_id, conflicting)
     assert list(ledger.iter_units(generation.generation_id)) == units
+    duplicate_point = CommitUnit(
+        rel_path="src/duplicate.py",
+        kind=CommitUnitKind.UPSERT,
+        source_digest=_digest("duplicate"),
+        segment_ordinal=0,
+        is_file_end=True,
+        point_ids=(units[0].point_ids[0],),
+    )
+    with pytest.raises(RunLedgerStateError, match="point identity"):
+        ledger.record_storage_confirmed_unit(
+            generation.generation_id,
+            duplicate_point,
+        )
+    assert list(ledger.iter_point_ids(generation.generation_id, batch_size=2)) == [
+        point_id for unit in units for point_id in unit.point_ids
+    ]
 
     deletion = CommitUnit(
         rel_path="src/removed.py",
@@ -169,8 +185,16 @@ def test_file_outcomes_and_finalization_are_immutable(tmp_path: Path) -> None:
         generation.generation_id,
         _unit("src/good.py", 0, 1, digest=indexed.content_hash),
     )
+    wrong_hash = replace(indexed, content_hash=_digest("different-good"))
+    with pytest.raises(RunLedgerStateError, match="hash differs"):
+        ledger.record_file_state(generation.generation_id, wrong_hash)
     for state in (indexed, rejected, failed):
         ledger.record_file_state(generation.generation_id, state)
+    with pytest.raises(RunLedgerStateError, match="path is indexed"):
+        ledger.record_storage_confirmed_unit(
+            generation.generation_id,
+            _unit("src/good.py", 1, 2, digest=indexed.content_hash),
+        )
 
     assert list(ledger.iter_file_states(generation.generation_id, batch_size=1)) == [
         rejected,
@@ -262,3 +286,18 @@ def test_schema_compatibility_and_corruption_fail_closed(tmp_path: Path) -> None
     corrupt.write_bytes(b"not a sqlite database")
     with pytest.raises(RunLedgerCorruptionError, match="cannot open"):
         RunLedger(corrupt)
+
+    logical = RunLedger(tmp_path / "logical.sqlite3")
+    generation = logical.start_generation(_signature(tmp_path))
+    connection = sqlite3.connect(logical.path)
+    connection.execute(
+        "UPDATE generations SET signature_json = ? WHERE generation_id = ?",
+        (
+            generation.signature.canonical_json.replace("content-v1", "tampered"),
+            generation.generation_id,
+        ),
+    )
+    connection.commit()
+    connection.close()
+    with pytest.raises(RunLedgerCorruptionError, match="signature"):
+        logical.start_generation(generation.signature)
