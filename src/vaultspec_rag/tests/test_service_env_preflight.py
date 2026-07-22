@@ -26,6 +26,7 @@ from ..cli._gpu_errors import (
 )
 from ..cli._process import _probe_daemon_cuda
 from ..cli._service_lifecycle import (
+    _caller_ephemeral_warning,
     _ephemeral_env_warning,
     _status_env_label,
     _tail_daemon_log,
@@ -207,3 +208,53 @@ class TestEphemeralEnvWarning:
         interpreter = scripts / "python.exe"
         interpreter.touch()
         assert _ephemeral_env_warning(str(interpreter)) == ()
+
+
+class TestCallerEphemeralWarning:
+    """The attach paths warn about the caller's own env, not a daemon's.
+
+    ``server start`` against a live service returns ``already_running`` before
+    any daemon interpreter is resolved, so the daemon-side warning cannot fire.
+    An operator invoking from a uvx cache env still walks into the
+    forced-reinstall trap, and for a long-lived daemon that attach outcome is
+    the common one - so the caller env is warned about on its own terms.
+    """
+
+    def test_warns_for_an_ephemeral_caller(self, tmp_path: Path) -> None:
+        scripts = tmp_path / "cache" / "archive-v0" / "aB3dEf" / "Scripts"
+        scripts.mkdir(parents=True)
+        interpreter = scripts / "python.exe"
+        interpreter.touch()
+        lines = _caller_ephemeral_warning(str(interpreter))
+        joined = "\n".join(lines)
+        assert "EPHEMERAL" in joined
+        assert "not the installed tool" in joined
+        assert str(interpreter) in joined
+        # The remediation must stay the single-sourced durable command, so the
+        # attach path cannot drift from the spawn path's guidance.
+        assert durable_tool_install_command() in joined
+
+    def test_names_the_caller_not_the_service(self, tmp_path: Path) -> None:
+        scripts = tmp_path / "cache" / "archive-v0" / "aB3dEf" / "Scripts"
+        scripts.mkdir(parents=True)
+        interpreter = scripts / "python.exe"
+        interpreter.touch()
+        joined = "\n".join(_caller_ephemeral_warning(str(interpreter)))
+        # The running service was started from some other env; claiming its
+        # interpreter is ephemeral would be false on the attach path.
+        assert "this command is running from" in joined
+        assert "service interpreter is" not in joined
+
+    def test_silent_for_a_tool_env_caller(self, tmp_path: Path) -> None:
+        scripts = tmp_path / "uv" / "tools" / "vaultspec-rag" / "Scripts"
+        scripts.mkdir(parents=True)
+        interpreter = scripts / "python.exe"
+        interpreter.touch()
+        assert _caller_ephemeral_warning(str(interpreter)) == ()
+
+    def test_silent_for_a_project_venv_caller(self, tmp_path: Path) -> None:
+        scripts = tmp_path / "myproject" / ".venv" / "Scripts"
+        scripts.mkdir(parents=True)
+        interpreter = scripts / "python.exe"
+        interpreter.touch()
+        assert _caller_ephemeral_warning(str(interpreter)) == ()

@@ -27,9 +27,11 @@ import pytest
 from .. import CodebaseIndexer
 from ..config import EnvVar, reset_config
 from ..indexer import _chunk_worker
+from ..indexer._content_policy import ContentKind
 from ..indexer._preprocess_cache import preprocess_cache_dir
 from ..indexer._preprocess_config import (
     PREPROCESS_CONFIG_FILENAME,
+    SUPPORTED_CONFIG_VERSION,
     OnError,
     PreprocessConfig,
     PreprocessConfigError,
@@ -76,6 +78,15 @@ def _isolate_status_dir_and_default_mode(  # pyright: ignore[reportUnusedFunctio
 
 
 def _write_config(root: Path, body: str) -> None:
+    """Write a rule config, supplying the schema version when the body omits it.
+
+    These fixtures exercise batch semantics, not schema versioning, so they
+    stay readable by declaring only the rule. Sourcing the version from
+    ``SUPPORTED_CONFIG_VERSION`` keeps them from going stale the next time the
+    schema is bumped.
+    """
+    if "version" not in body.split("[[rule]]")[0]:
+        body = f"version = {SUPPORTED_CONFIG_VERSION}\n{body}"
     (root / PREPROCESS_CONFIG_FILENAME).write_text(body, encoding="utf-8")
 
 
@@ -84,6 +95,8 @@ def test_batch_rule_with_paths_placeholder_loads(tmp_path: Path) -> None:
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         command = "extract {paths}"
         batch = true
@@ -100,6 +113,8 @@ def test_non_batch_rule_defaults_batch_false(tmp_path: Path) -> None:
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         command = "extract {path}"
         """,
@@ -114,6 +129,8 @@ def test_batch_command_lacking_paths_placeholder_is_dropped(tmp_path: Path) -> N
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         command = "extract {path}"
         batch = true
@@ -127,6 +144,8 @@ def test_batch_command_with_single_placeholder_is_dropped(tmp_path: Path) -> Non
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         command = "extract {paths} {path}"
         batch = true
@@ -140,6 +159,8 @@ def test_batch_with_entry_point_is_dropped(tmp_path: Path) -> None:
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         entry_point = "mod:call"
         batch = true
@@ -153,6 +174,8 @@ def test_non_batch_command_with_paths_placeholder_is_dropped(tmp_path: Path) -> 
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         command = "extract {paths}"
         """,
@@ -165,6 +188,8 @@ def test_non_boolean_batch_is_dropped(tmp_path: Path) -> None:
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         command = "extract {paths}"
         batch = "yes"
@@ -178,6 +203,8 @@ def test_batch_defect_raises_in_strict_mode(tmp_path: Path) -> None:
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         command = "extract {path}"
         batch = true
@@ -194,6 +221,8 @@ def test_batch_rule_is_picklable(tmp_path: Path) -> None:
         tmp_path,
         """
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         command = "extract {paths}"
         batch = true
@@ -283,6 +312,8 @@ def _batch_rule(
         command=" ".join(parts),
         entry_point=None,
         priority=100,
+        target=ContentKind.DOCUMENT,
+        extractor_version="1.0.0",
         on_error=on_error,
         timeout_s=timeout_s,
         options={},
@@ -471,6 +502,8 @@ def _counting_context(tmp_path: Path) -> tuple[PreprocessContext, Path]:
         command=command,
         entry_point=None,
         priority=100,
+        target=ContentKind.DOCUMENT,
+        extractor_version="1.0.0",
         on_error="skip",
         timeout_s=30.0,
         options={},
@@ -614,6 +647,8 @@ def _counting_rule(command: str, pattern: str) -> PreprocessRule:
         command=command,
         entry_point=None,
         priority=100,
+        target=ContentKind.DOCUMENT,
+        extractor_version="1.0.0",
         on_error="skip",
         timeout_s=30.0,
         options={},
@@ -679,6 +714,8 @@ def test_indexer_pool_propagates_batch_on_error_fail(tmp_path: Path) -> None:
             command=command,
             entry_point=None,
             priority=100,
+            target=ContentKind.DOCUMENT,
+            extractor_version="1.0.0",
             on_error="fail",
             timeout_s=30.0,
             options={},

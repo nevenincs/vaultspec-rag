@@ -108,7 +108,9 @@ def _config_with_rule(root: Path) -> None:
     # TOML triple-single-quoted literal: backslashes in Windows paths are not
     # escape sequences and the embedded single quotes from shlex.quote are safe.
     body = (
-        '[[rule]]\npattern = "*.pdf"\n'
+        'version = 2\n\n[[rule]]\npattern = "*.pdf"\n'
+        'target = "document"\n'
+        'extractor_version = "1.0.0"\n'
         f"command = '''{command}'''\n"
         'on_error = "skip"\n'
     )

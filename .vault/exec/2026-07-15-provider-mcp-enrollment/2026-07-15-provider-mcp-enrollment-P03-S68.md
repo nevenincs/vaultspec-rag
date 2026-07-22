@@ -54,8 +54,23 @@ publication failure cleanup, complete ordinary-orphan witness rejection, and
 forced-stop child-incarnation rejection.
 
 Repository Ruff, BasedPyright, Ty, and diff-integrity checks passed after the
-latest focused corrections. The fourth independent formal review is the
-remaining S68 closure gate; the complete platform release campaign remains
+latest focused corrections.
+
+The fourth independent formal review returned three actionable findings: one
+real defect (the pre-spawn orphan reap ran witness inspections with no time
+bound, able to wedge the daemon in warming under the machine singleton lock)
+and two red regressions the integration commit introduced alongside the
+hardening (the managed-running classifier happy-path test left stale by the
+incarnation-witness tightening, and a re-auth deadline regression that expired
+a stage early on a loaded host). All three were corrected: the reap now
+threads one whole-operation deadline through every inspection plus the reap
+with a named actionable timeout; the classifier test supplies the witness and
+gains a sibling pinning the tightening; the deadline test asserts the
+no-reset invariant rather than one timing-fragile stage. A fresh independent
+re-review confirmed all three findings closed with real-behaviour coverage
+and returned PASS, with one LOW informational note (a pathological
+split-response probe case, bounded and non-blocking) recorded as a follow-up.
+The S68 closure gate is met; the complete platform release campaign remains
 assigned to S69 and receives no carried runtime credit from this step.
 
 ## Notes
