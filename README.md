@@ -139,7 +139,7 @@ See [search and index](docs/search-and-index.md) for the full filter set, [MCP i
 - [Backends](docs/backends.md) - the managed Qdrant server versus local-only mode.
 - [MCP integration](docs/mcp.md) - wire search into Claude Code and other MCP clients.
 - [Automation](docs/automation.md) - JSON output and scripting.
-- [Preprocessing hooks](docs/preprocessing-hooks.md) - index PDFs, spreadsheets, and other formats.
+- [Preprocessing hooks](docs/preprocessing-hooks.md) - connect project-defined extractors for PDFs, spreadsheets, and other formats.
 
 ### Reference
 

@@ -1,4 +1,4 @@
-# Document preprocessing hooks
+# Project preprocessing hooks
 
 vaultspec-rag keeps vault records, conventional source code, and extracted documents in
 separate index domains. A project can contain other useful formats that the built-in
@@ -445,5 +445,5 @@ tag-path anchor; reach for `lxml` (BSD) only if you need XPath or source line nu
   clean the index that drives preprocessing.
 - [Run the background service](service-mode.md) - the resident watcher that re-extracts
   changed files automatically.
-- [Support and help](../README.md#support-and-help) - where to ask questions and file
+- [Support and help](../README.md#status-help-and-license) - where to ask questions and file
   issues.

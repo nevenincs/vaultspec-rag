@@ -252,4 +252,4 @@ For "my GPU is small" or "indexing is slow" tuning, see
 If indexing or retrieval behaves unexpectedly, the
 [backends guide](backends.md) covers backend selection and the managed server,
 and the [configuration reference](configuration.md) lists every knob. For more
-help, see [support and help](../README.md#support-and-help).
+help, see [support and help](../README.md#status-help-and-license).
