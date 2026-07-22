@@ -93,3 +93,32 @@ regression above undetected by S46's claimed failure-visibility coverage.
    a child that stays alive without advancing valid output.
 1. Add a two-run code extraction failure test proving that unchanged failed
    input is attempted again and never appears in converged hash metadata.
+
+## Remediation re-review
+
+Status: cleared on `main`.
+
+The exact remediation diffs `3257d2b2`, `c1329d87`, `2b4ebff7`, and
+`be196f7b` were re-reviewed against all six findings above.
+
+- Production document ingestion now streams raw and passthrough content in
+  bounded blocks, checkpoints reads, and verifies the source digest before
+  completing publication.
+- Failed or empty code preprocessing records an unresolved typed file state and
+  raises before metadata publication. The unchanged source is retried in the
+  same durable generation.
+- Document discovery, scoped normalization, policy classification, and support
+  measurement now consume the real run-control token and checkpoint within the
+  scan as well as on both sides of admission.
+- Named profiles, admission responses, and runtime document enforcement cover
+  source, extracted, chunk, weighted queue, RSS, and CUDA dimensions
+  independently.
+- Extractor polling consumes the production no-progress clock and terminates a
+  non-advancing child with a typed timeout.
+- Real-process coverage proves bounded raw-source memory, cooperative
+  cancellation, admission cancellation, child termination, independent runtime
+  ceilings, and two-run non-convergence after extraction failure.
+
+Verification completed with scoped Ruff and Ty checks plus the ten-test
+real-process P06 boundary. All ten tests passed. No high, medium, or low finding
+remains open from this audit.

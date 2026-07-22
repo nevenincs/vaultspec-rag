@@ -78,7 +78,7 @@ Represent ready, absent, and each live-holder degradation with preserved identit
 
 Move status derivation into the shared client domain and make CLI status and doctor render the same verdict.
 
-- [ ] `W02.P06.S13` - Define the canonical discovery status and health-composition model shared by operator adapters; `src/vaultspec_rag/serviceclient/_status.py`.
+- [x] `W02.P06.S13` - Define the canonical discovery status and health-composition model shared by operator adapters; `src/vaultspec_rag/serviceclient/_status.py`.
 - [ ] `W02.P06.S14` - Adapt server status rendering and exit semantics to ready, degraded, and absent discovery verdicts; `src/vaultspec_rag/cli/_status_render.py`.
 - [ ] `W02.P06.S15` - Adapt server doctor to the canonical discovery status without duplicating resolution logic; `src/vaultspec_rag/cli/_service_doctor.py`.
 - [ ] `W02.P06.S16` - Verify human and JSON status and doctor outcomes preserve typed discovery evidence; `src/vaultspec_rag/tests/test_cli_status.py`.
