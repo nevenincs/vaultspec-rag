@@ -29,6 +29,9 @@ __all__ = [
     "DEFAULT_DENSE_DIM",
     "DENSE_DISTANCE",
     "DENSE_VECTOR_NAME",
+    "DOCUMENT_COLLECTION",
+    "DOCUMENT_INTEGER_INDEXES",
+    "DOCUMENT_KEYWORD_INDEXES",
     "SERVER_SEGMENT_NUMBER",
     "SERVER_WAL_CAPACITY_MB",
     "SPARSE_VECTOR_NAME",
@@ -37,6 +40,7 @@ __all__ = [
     "VAULT_INTEGER_INDEXES",
     "VAULT_KEYWORD_INDEXES",
     "CodeChunkPayload",
+    "DocumentChunkPayload",
     "SchemaCompatibility",
     "VaultChunkPayload",
     "VaultDocPayload",
@@ -52,13 +56,14 @@ __all__ = [
 # that does not know a new field ignores it. The version names the shape
 # generation; the effective concrete values (dimension, models) are read live
 # in describe_storage_schema because they are config-derivable.
-STORAGE_SCHEMA_VERSION = 1
+STORAGE_SCHEMA_VERSION = 2
 
 # Collection names. These are the bare local-mode names; in server mode each
 # root's collections gain a stable per-root ``r{hash}_`` prefix, so a consumer
 # matches on the suffix, not the whole name.
 VAULT_COLLECTION = "vault_docs"
 CODE_COLLECTION = "codebase_docs"
+DOCUMENT_COLLECTION = "document_docs"
 
 # Vector layout. One named dense vector (cosine) and one named sparse vector.
 # A consumer scrolls the dense vector by DENSE_VECTOR_NAME; a rename here is a
@@ -93,6 +98,9 @@ SERVER_SEGMENT_NUMBER = 2
 VAULT_DOC_ID_SCHEME = "doc_id"
 VAULT_CHUNK_ID_SCHEME = "doc_id#c{ordinal}"
 CODE_CHUNK_ID_SCHEME = "chunk_id"
+DOCUMENT_CHUNK_ID_SCHEME = (
+    "blake2b(normalized_source|locator_or_unit_ordinal|content_fingerprint)@v1"
+)
 
 
 class VaultDocPayload(TypedDict):
@@ -166,6 +174,28 @@ class CodeChunkPayload(TypedDict):
     domain: str
 
 
+class DocumentChunkPayload(TypedDict):
+    """Payload of one independently owned document chunk."""
+
+    document_id: str
+    source_path: str
+    unit_ordinal: int
+    content_fingerprint: str
+    content: str
+    title: str | None
+    section: str | None
+    anchor: str | None
+    locator_kind: str | None
+    locator_value_int: int | None
+    locator_value_str: str | None
+    locator_end_int: int | None
+    locator_end_str: str | None
+    document_metadata: dict[str, object]
+    unit_metadata: dict[str, object]
+    extractor_id: str | None
+    extractor_version: str | None
+
+
 # Canonical payload index sets, per collection and qdrant schema type. store.py's
 # ``ensure_table`` / ``ensure_code_table`` create exactly these indexes; the
 # drift test asserts the live collection's indexed fields equal these tuples.
@@ -190,6 +220,18 @@ CODE_KEYWORD_INDEXES: tuple[str, ...] = (
     "domain",
 )
 CODE_INTEGER_INDEXES: tuple[str, ...] = ("line_start", "locator_value_int")
+DOCUMENT_KEYWORD_INDEXES: tuple[str, ...] = (
+    "source_path",
+    "content_fingerprint",
+    "extractor_id",
+    "extractor_version",
+    "locator_kind",
+    "locator_value_str",
+)
+DOCUMENT_INTEGER_INDEXES: tuple[str, ...] = (
+    "unit_ordinal",
+    "locator_value_int",
+)
 
 # Payload field names per collection, derived once from the TypedDicts so the
 # descriptor and the drift test share one source. ``__optional_keys__`` carries
@@ -197,6 +239,7 @@ CODE_INTEGER_INDEXES: tuple[str, ...] = ("line_start", "locator_value_int")
 _VAULT_DOC_FIELDS: tuple[str, ...] = tuple(VaultDocPayload.__annotations__)
 _VAULT_CHUNK_FIELDS: tuple[str, ...] = tuple(VaultChunkPayload.__annotations__)
 _CODE_CHUNK_FIELDS: tuple[str, ...] = tuple(CodeChunkPayload.__annotations__)
+_DOCUMENT_CHUNK_FIELDS: tuple[str, ...] = tuple(DocumentChunkPayload.__annotations__)
 
 
 def _effective_models() -> dict[str, Any]:
@@ -283,6 +326,16 @@ def describe_storage_schema() -> dict[str, Any]:
             },
             "id_scheme": {"chunk": CODE_CHUNK_ID_SCHEME},
         },
+        "document": {
+            "collection": DOCUMENT_COLLECTION,
+            "vectors": _vectors(),
+            "payload_fields": {"chunk": list(_DOCUMENT_CHUNK_FIELDS)},
+            "indexes": {
+                "keyword": list(DOCUMENT_KEYWORD_INDEXES),
+                "integer": list(DOCUMENT_INTEGER_INDEXES),
+            },
+            "id_scheme": {"chunk": DOCUMENT_CHUNK_ID_SCHEME},
+        },
         "models": _effective_models(),
     }
 
@@ -316,6 +369,7 @@ def assert_compatible(
     known_version: int,
     expected_dense_dim: int,
     dense_vector_name: str = DENSE_VECTOR_NAME,
+    required_domains: tuple[str, ...] = ("vault",),
 ) -> SchemaCompatibility:
     """Apply the consumer compatibility rules to a storage descriptor.
 
@@ -352,23 +406,39 @@ def assert_compatible(
                 f"known version {known_version}; the shape may have changed"
             ),
         }
-    # The dense vector descriptor lives under either collection; they share the
-    # same dense vector, so the vault block is the canonical place to read it.
-    vault_block = _as_str_dict(descriptor.get("vault"))
-    vectors = _as_str_dict(vault_block.get("vectors"))
-    dense = _as_str_dict(vectors.get("dense"))
-    if dense.get("name") != dense_vector_name:
+    known_domains = frozenset({"vault", "code", "document"})
+    unknown = tuple(
+        domain for domain in required_domains if domain not in known_domains
+    )
+    if unknown:
         return {
             "compatible": False,
-            "reason": f"no dense vector named {dense_vector_name!r} in the descriptor",
+            "reason": f"unknown required storage domain {unknown[0]!r}",
         }
-    actual_dim = dense.get("dim")
-    if actual_dim != expected_dense_dim:
-        return {
-            "compatible": False,
-            "reason": (
-                f"dense dimension {actual_dim} does not match the consumer's "
-                f"expected {expected_dense_dim}"
-            ),
-        }
+    for domain in required_domains:
+        block = _as_str_dict(descriptor.get(domain))
+        if not block:
+            return {
+                "compatible": False,
+                "reason": f"descriptor carries no {domain!r} storage domain",
+            }
+        vectors = _as_str_dict(block.get("vectors"))
+        dense = _as_str_dict(vectors.get("dense"))
+        if dense.get("name") != dense_vector_name:
+            return {
+                "compatible": False,
+                "reason": (
+                    f"no dense vector named {dense_vector_name!r} in the "
+                    f"{domain!r} storage domain"
+                ),
+            }
+        actual_dim = dense.get("dim")
+        if actual_dim != expected_dense_dim:
+            return {
+                "compatible": False,
+                "reason": (
+                    f"{domain!r} dense dimension {actual_dim} does not match "
+                    f"the consumer's expected {expected_dense_dim}"
+                ),
+            }
     return {"compatible": True, "reason": ""}
