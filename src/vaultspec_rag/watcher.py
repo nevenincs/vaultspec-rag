@@ -9,19 +9,32 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
+from threading import RLock
 from typing import TYPE_CHECKING
 
-from anyio.to_thread import run_sync as _run_in_thread
 from watchfiles import (
     Change,
     awatch,  # pyright: ignore[reportUnknownVariableType]  # watchfiles awatch return type is partially stubbed
 )
 
 from . import jobs as _jobs
-from .concurrency import get_index_limiter
 from .indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
+from .job_manager import JobAttemptContext, JobExecutionResult
+from .job_models import (
+    JobInitiator,
+    JobMode,
+    JobOperation,
+    JobOutcomeStatus,
+    JobSnapshot,
+    JobSource,
+    JobSpec,
+    JobState,
+)
 from .logging_config import log_event
+from .registry import get_registry
 
 if TYPE_CHECKING:
     import asyncio
@@ -92,6 +105,56 @@ _CONFIG_FILENAMES = frozenset(
 # watcher already wakes on this cadence to honour the stop event, so yielding the
 # timeout adds no extra wakeups.
 _WATCH_IDLE_TICK_MS = 1000
+
+# Operator cancellation deliberately leaves watcher convergence dirty. Retry
+# delay grows only across consecutive cancellations and is capped so automatic
+# freshness remains both non-thrashing and finite.
+_WATCH_REPLACEMENT_BACKOFF_BASE_SECONDS = 1.0
+_WATCH_REPLACEMENT_BACKOFF_MAX_SECONDS = 30.0
+
+
+@dataclass(slots=True)
+class _WatcherConvergenceSlot:
+    """Thread-safe ownership of one root/source convergence generation."""
+
+    source: JobSource
+    root: Path
+    lock: RLock = field(default_factory=RLock)
+    job_id: str | None = None
+    watcher_owned: bool = False
+    held_paths: set[Path] = field(default_factory=set)
+    pending_paths: set[Path] = field(default_factory=set)
+    attempt_paths: dict[int, frozenset[Path]] = field(default_factory=dict)
+    last_success: float = 0.0
+    replacement_not_before: float = 0.0
+    replacement_streak: int = 0
+    observed_state: JobState | None = None
+
+    @property
+    def command(self) -> str:
+        return f"watcher_{self.source.value}_index"
+
+    def add_dirty(self, path: Path) -> None:
+        """Record a new generation without merging it into a running attempt."""
+        with self.lock:
+            self.pending_paths.add(path)
+
+    def has_work(self) -> bool:
+        with self.lock:
+            return bool(self.held_paths or self.pending_paths)
+
+    def pending_count(self) -> int:
+        with self.lock:
+            return len(self.held_paths | self.pending_paths)
+
+    def capture_attempt(self, attempt: int) -> frozenset[Path]:
+        """Move the current pending generation into one immutable attempt batch."""
+        with self.lock:
+            self.held_paths.update(self.pending_paths)
+            self.pending_paths.clear()
+            captured = frozenset(self.held_paths)
+            self.attempt_paths[attempt] = captured
+            return captured
 
 
 def _is_vault_change(path: Path, vault_dir: Path) -> bool:
@@ -203,21 +266,18 @@ async def watch_and_reindex(
         debounce_ms=debounce,
         cooldown_seconds=f"{cooldown:.0f}",
     )
+    resolved_root = root_dir.resolve()
+    if (
+        vault_indexer.root_dir.resolve() != resolved_root
+        or code_indexer.root_dir.resolve() != resolved_root
+    ):
+        raise ValueError("watcher indexers must belong to the watched project root")
 
-    # Track last index times per source to enforce the cooldown window.
-    _last_vault_index: float = 0.0
-    _last_code_index: float = 0.0
-
-    # Paths observed but not yet reindexed (suppressed by cooldown, or
-    # dropped by a failed run). A scoped reindex only processes the paths it
-    # is handed, so - unlike the former full rescan, which re-discovered
-    # everything each run - these must be carried forward and merged into the
-    # next run or the edits would be lost (#151).
-    active_vault_job: str | None = None
-    active_code_job: str | None = None
-
-    pending_vault: set[Path] = set()
-    pending_code: set[Path] = set()
+    # Each source owns one convergence slot. Manager callbacks and attempt
+    # runners cross the event-loop/worker-thread boundary, so generation
+    # transfer is protected by the slot's real thread lock.
+    vault_slot = _WatcherConvergenceSlot(JobSource.VAULT, resolved_root)
+    code_slot = _WatcherConvergenceSlot(JobSource.CODE, resolved_root)
     # Resolved at watcher start so a watched change to a preprocessable file
     # (e.g. a .pdf) routes through the same debounce/cooldown machinery, and
     # re-resolved whenever the root preprocess config itself changes so a rule
@@ -258,237 +318,534 @@ async def watch_and_reindex(
                             rules=len(prep_config[0].rules),
                         )
                     if _is_vault_change(path, vault_dir):
-                        pending_vault.add(path)
+                        vault_slot.add_dirty(path)
                     elif _is_code_change(path, root_dir, vault_dir, prep_config[0]):
-                        pending_code.add(path)
+                        code_slot.add_dirty(path)
 
             now = time.monotonic()
 
-            if pending_vault:
-                (
-                    _last_vault_index,
-                    pending_vault,
-                    active_vault_job,
-                ) = await _process_vault_changes(
-                    pending_vault,
-                    _last_vault_index,
-                    cooldown,
-                    now,
-                    vault_indexer,
-                    graph_cache,
-                    active_vault_job,
-                )
-
-            if pending_code:
-                (
-                    _last_code_index,
-                    pending_code,
-                    active_code_job,
-                ) = await _process_code_changes(
-                    pending_code,
-                    _last_code_index,
-                    cooldown,
-                    now,
-                    code_indexer,
-                    active_code_job,
-                )
+            _reconcile_watcher_slot(
+                vault_slot,
+                cooldown=cooldown,
+                now=now,
+                secondary_graph_cache=graph_cache,
+            )
+            _reconcile_watcher_slot(
+                code_slot,
+                cooldown=cooldown,
+                now=now,
+            )
     finally:
-        if active_vault_job is not None:
-            _jobs.record_finish(
-                active_vault_job, phase="cancelled", error="watcher task stopped"
-            )
-        if active_code_job is not None:
-            _jobs.record_finish(
-                active_code_job, phase="cancelled", error="watcher task stopped"
-            )
+        # The manager, not this intake task, owns any admitted attempt. Watcher
+        # shutdown must not publish a false cancellation while a worker can
+        # still mutate storage; the service lifecycle joins that owner.
         log_event(logger, "service.watcher", "stopped", root=root_dir)
 
 
-async def _process_vault_changes(
-    pending_vault: set[Path],
-    _last_vault_index: float,
+def _reconcile_watcher_slot(
+    slot: _WatcherConvergenceSlot,
+    *,
     cooldown: float,
     now: float,
-    vault_indexer: VaultIndexer,
-    graph_cache: GraphCache,
-    active_vault_job: str | None,
-) -> tuple[float, set[Path], str | None]:
-    import asyncio
-    import time
+    secondary_graph_cache: GraphCache | None = None,
+) -> None:
+    """Observe the canonical owner, then admit one eligible convergence job."""
+    manager = _jobs.get_job_manager()
+    with slot.lock:
+        job_id = slot.job_id
 
-    if now - _last_vault_index < cooldown:
+    if job_id is not None:
+        snapshot = manager.get(job_id)
+        if snapshot is None:
+            _release_missing_job(slot, job_id, now=now)
+        else:
+            with slot.lock:
+                watcher_owned = slot.watcher_owned
+            if _observe_managed_job(slot, snapshot, now=now) and watcher_owned:
+                _sync_legacy_snapshot(snapshot, result=None, error=None)
+
+    with slot.lock:
+        if slot.job_id is not None or not (slot.held_paths or slot.pending_paths):
+            return
+        eligible_at = max(
+            slot.last_success + cooldown,
+            slot.replacement_not_before,
+        )
+        pending_count = len(slot.held_paths | slot.pending_paths)
+
+    if now < eligible_at:
         log_event(
             logger,
             "service.watcher",
             "reindex_suppressed",
             severity=logging.DEBUG,
-            source="vault",
-            cooldown_remaining_seconds=f"{cooldown - (now - _last_vault_index):.0f}",
-            pending_paths=len(pending_vault),
+            source=slot.source.value,
+            cooldown_remaining_seconds=f"{eligible_at - now:.0f}",
+            pending_paths=pending_count,
         )
-        return _last_vault_index, pending_vault, active_vault_job
+        return
 
-    batch = frozenset(pending_vault)
-    active_vault_job = _jobs.record_start(
-        "vault",
+    _submit_watcher_job(
+        slot,
+        now=now,
+        secondary_graph_cache=secondary_graph_cache,
+    )
+
+
+def _submit_watcher_job(
+    slot: _WatcherConvergenceSlot,
+    *,
+    now: float,
+    secondary_graph_cache: GraphCache | None,
+) -> None:
+    """Admit and bind one manager-owned watcher attempt, or coalesce on dedupe."""
+    manager = _jobs.get_job_manager()
+    outcome = manager.create(
+        JobSpec(
+            operation=JobOperation.INDEX,
+            source=slot.source,
+            project_root=str(slot.root),
+            mode=JobMode.INCREMENTAL,
+        ),
+        JobInitiator(
+            kind="watcher",
+            command=slot.command,
+            project_root=str(slot.root),
+        ),
+        job_id=uuid.uuid4().hex,
+    )
+    if outcome.status is JobOutcomeStatus.ERROR or outcome.job is None:
+        _schedule_replacement(
+            slot,
+            now=now,
+            reason="admission_failed",
+            error=outcome.message,
+        )
+        return
+
+    snapshot = outcome.job
+    created = outcome.code == "job_created"
+    with slot.lock:
+        slot.job_id = snapshot.id
+        slot.watcher_owned = created
+        slot.observed_state = snapshot.state
+
+    if not created:
+        # The equivalent job may have captured the filesystem before this
+        # watcher event. Let it retain the root/source slot, but keep every
+        # watcher path dirty for a conservative follow-up convergence.
+        log_event(
+            logger,
+            "service.watcher",
+            "reindex_coalesced",
+            source=slot.source.value,
+            job_id=snapshot.id,
+            state=snapshot.state.value,
+            pending_paths=slot.pending_count(),
+        )
+        return
+
+    job_id = snapshot.id
+    _jobs.record_start(
+        slot.source.value,
         "watcher",
-        project_root=vault_indexer.root_dir,
+        project_root=slot.root,
+        command=slot.command,
+        initiator_kind="watcher",
+        _record_id=job_id,
     )
-    log_event(
-        logger,
-        "service.watcher",
-        "reindex_started",
-        source="vault",
-        job_id=active_vault_job,
-        pending_paths=len(pending_vault),
+
+    def _run_attempt(context: JobAttemptContext) -> JobExecutionResult:
+        return _run_managed_index_attempt(
+            slot,
+            context,
+            secondary_graph_cache=secondary_graph_cache,
+        )
+
+    def _on_started(started: JobSnapshot) -> None:
+        _jobs.record_progress(started.id, "queued")
+
+    def _on_finished(
+        finished: JobSnapshot,
+        _duration_seconds: float,
+        result: JobExecutionResult | None,
+        error: BaseException | None,
+    ) -> None:
+        if _observe_managed_job(
+            slot,
+            finished,
+            now=time.monotonic(),
+            error=error,
+        ):
+            _sync_legacy_snapshot(
+                finished,
+                result=result,
+                error=error,
+            )
+
+    bound = manager.bind_dispatch(
+        job_id,
+        _run_attempt,
+        on_started=_on_started,
+        on_finished=_on_finished,
     )
-    _jobs.record_progress(active_vault_job, "queued")
-    try:
-        result = await _run_in_thread(
-            lambda paths=batch, job_id=active_vault_job: (
-                vault_indexer.incremental_index(
-                    reporter=_jobs.JobProgressReporter(job_id),
-                    changed_paths=paths,
+    if bound.status is JobOutcomeStatus.ERROR:
+        manager.fail_unstarted(job_id, result=bound.message)
+        failed = manager.get(job_id)
+        observed_terminal = (
+            failed is not None
+            and failed.state.is_terminal
+            and (
+                _observe_managed_job(
+                    slot,
+                    failed,
+                    now=time.monotonic(),
+                    error=RuntimeError(bound.message),
                 )
-            ),
-            limiter=get_index_limiter(),
+            )
         )
-        graph_cache.invalidate()
-        _last_vault_index = time.monotonic()
-        pending_vault = set()
-        _jobs.record_finish(
-            active_vault_job,
-            result=(
-                f"+{result.added} /{result.updated} "
-                f"-{result.removed} ({result.duration_ms}ms)"
-            ),
-        )
-        log_event(
-            logger,
-            "service.watcher",
-            "reindex_completed",
-            source="vault",
-            job_id=active_vault_job,
-            added=result.added,
-            updated=result.updated,
-            removed=result.removed,
-            duration_ms=result.duration_ms,
-        )
-    except Exception as exc:
-        _jobs.record_finish(active_vault_job, error=str(exc))
-        log_event(
-            logger,
-            "service.watcher",
-            "reindex_failed",
-            severity=logging.ERROR,
-            exc_info=True,
-            source="vault",
-            job_id=active_vault_job,
-            error=exc,
-        )
-    except asyncio.CancelledError:
-        _jobs.record_finish(
-            active_vault_job,
-            phase="cancelled",
-            error="watcher task cancelled",
-        )
-        raise
-    finally:
-        active_vault_job = None
-    return _last_vault_index, pending_vault, active_vault_job
+        if observed_terminal:
+            _jobs.record_finish(job_id, error=bound.message)
+        else:
+            _schedule_replacement(
+                slot,
+                now=time.monotonic(),
+                reason="dispatch_bind_failed",
+                error=bound.message,
+            )
+        return
 
-
-async def _process_code_changes(
-    pending_code: set[Path],
-    _last_code_index: float,
-    cooldown: float,
-    now: float,
-    code_indexer: CodebaseIndexer,
-    active_code_job: str | None,
-) -> tuple[float, set[Path], str | None]:
-    import asyncio
-    import time
-
-    if now - _last_code_index < cooldown:
-        log_event(
-            logger,
-            "service.watcher",
-            "reindex_suppressed",
-            severity=logging.DEBUG,
-            source="code",
-            cooldown_remaining_seconds=f"{cooldown - (now - _last_code_index):.0f}",
-            pending_paths=len(pending_code),
+    dispatched = manager.dispatch(job_id)
+    if dispatched.status is JobOutcomeStatus.ERROR:
+        manager.fail_unstarted(job_id, result=dispatched.message)
+        failed = manager.get(job_id)
+        observed_terminal = (
+            failed is not None
+            and failed.state.is_terminal
+            and (
+                _observe_managed_job(
+                    slot,
+                    failed,
+                    now=time.monotonic(),
+                    error=RuntimeError(dispatched.message),
+                )
+            )
         )
-        return _last_code_index, pending_code, active_code_job
+        if observed_terminal:
+            _jobs.record_finish(job_id, error=dispatched.message)
+        else:
+            _schedule_replacement(
+                slot,
+                now=time.monotonic(),
+                reason="dispatch_failed",
+                error=dispatched.message,
+            )
+        return
 
-    batch = frozenset(pending_code)
-    active_code_job = _jobs.record_start(
-        "code",
-        "watcher",
-        project_root=code_indexer.root_dir,
-    )
     log_event(
         logger,
         "service.watcher",
         "reindex_started",
-        source="code",
-        job_id=active_code_job,
-        pending_paths=len(pending_code),
+        source=slot.source.value,
+        job_id=job_id,
+        pending_paths=slot.pending_count(),
     )
-    _jobs.record_progress(active_code_job, "queued")
+
+
+def _run_managed_index_attempt(
+    slot: _WatcherConvergenceSlot,
+    context: JobAttemptContext,
+    *,
+    secondary_graph_cache: GraphCache | None,
+) -> JobExecutionResult:
+    """Run one watcher generation under manager and registry ownership."""
+    paths = slot.capture_attempt(context.attempt)
+    pipeline_active = slot.source is JobSource.CODE
+    registry = get_registry()
+    registry.load_model()
     try:
-        result = await _run_in_thread(
-            lambda paths=batch, job_id=active_code_job: code_indexer.incremental_index(
-                reporter=_jobs.JobProgressReporter(job_id),
-                changed_paths=paths,
-            ),
-            limiter=get_index_limiter(),
-        )
-        _last_code_index = time.monotonic()
-        pending_code = set()
-        skipped_suffix = (
-            f" ~{result.preprocess_skipped}" if result.preprocess_skipped else ""
-        )
+        with registry.lease(slot.root) as project:
+            context.set_resources(project_lease_held=True)
+            try:
+                context.set_resources(
+                    writer_lock_held=True,
+                    pipeline_active=pipeline_active,
+                )
+                reporter = _jobs.JobProgressReporter(
+                    context.job_id,
+                    context=context,
+                )
+                if slot.source is JobSource.VAULT:
+                    result = project.vault_indexer.incremental_index(
+                        reporter=reporter,
+                        changed_paths=paths,
+                        run_control=context.control,
+                    )
+                    project.graph_cache.invalidate()
+                    if (
+                        secondary_graph_cache is not None
+                        and secondary_graph_cache is not project.graph_cache
+                    ):
+                        secondary_graph_cache.invalidate()
+                else:
+                    result = project.code_indexer.incremental_index(
+                        reporter=reporter,
+                        changed_paths=paths,
+                        run_control=context.control,
+                    )
+            finally:
+                context.set_resources(
+                    writer_lock_held=False,
+                    pipeline_active=False,
+                )
+    finally:
+        context.set_resources(project_lease_held=False)
+    skipped_suffix = (
+        f" ~{result.preprocess_skipped}" if result.preprocess_skipped else ""
+    )
+    return JobExecutionResult(
+        summary=(
+            f"+{result.added} /{result.updated} "
+            f"-{result.removed} ({result.duration_ms}ms){skipped_suffix}"
+        ),
+        preprocess_ok=result.preprocess_ok,
+        preprocess_skipped=result.preprocess_skipped,
+        preprocess_failures=tuple(result.preprocess_failures),
+    )
+
+
+def _sync_legacy_snapshot(
+    snapshot: JobSnapshot,
+    *,
+    result: JobExecutionResult | None,
+    error: BaseException | None,
+) -> None:
+    """Project manager truth through the public bounded compatibility registry."""
+    if snapshot.state is JobState.SUCCEEDED:
         _jobs.record_finish(
-            active_code_job,
-            result=(
-                f"+{result.added} /{result.updated} "
-                f"-{result.removed} ({result.duration_ms}ms){skipped_suffix}"
+            snapshot.id,
+            result=snapshot.result,
+            preprocess_ok=result.preprocess_ok if result is not None else 0,
+            preprocess_skipped=result.preprocess_skipped if result is not None else 0,
+            preprocess_failures=(
+                list(result.preprocess_failures) if result is not None else None
             ),
-            preprocess_ok=result.preprocess_ok,
-            preprocess_skipped=result.preprocess_skipped,
-            preprocess_failures=result.preprocess_failures,
         )
+    elif snapshot.state is JobState.FAILED:
+        _jobs.record_finish(
+            snapshot.id,
+            error=snapshot.result or str(error or "job failed"),
+        )
+    elif snapshot.state is JobState.INTERRUPTED:
+        _jobs.record_finish(
+            snapshot.id,
+            result=snapshot.result,
+            phase="interrupted",
+        )
+    elif snapshot.state is JobState.CANCELLED:
+        _jobs.record_finish(
+            snapshot.id,
+            result=snapshot.result,
+            phase="cancelled",
+        )
+    elif snapshot.state in {JobState.PAUSED, JobState.QUEUED}:
+        _jobs.record_progress(snapshot.id, snapshot.state.value)
+
+
+def _schedule_replacement(
+    slot: _WatcherConvergenceSlot,
+    *,
+    now: float,
+    reason: str,
+    error: str | None = None,
+) -> None:
+    """Delay repeated orchestration failures with a finite exponential bound."""
+    with slot.lock:
+        slot.replacement_streak += 1
+        delay = min(
+            _WATCH_REPLACEMENT_BACKOFF_BASE_SECONDS
+            * (2 ** (slot.replacement_streak - 1)),
+            _WATCH_REPLACEMENT_BACKOFF_MAX_SECONDS,
+        )
+        slot.replacement_not_before = now + delay
+        pending_count = len(slot.held_paths | slot.pending_paths)
+    log_event(
+        logger,
+        "service.watcher",
+        "replacement_scheduled",
+        severity=logging.WARNING if error is None else logging.ERROR,
+        source=slot.source.value,
+        reason=reason,
+        error=error,
+        replacement_backoff_seconds=f"{delay:.0f}",
+        pending_paths=pending_count,
+    )
+
+
+def _observe_managed_job(
+    slot: _WatcherConvergenceSlot,
+    snapshot: JobSnapshot,
+    *,
+    now: float,
+    error: BaseException | None = None,
+) -> bool:
+    """Apply one exact manager snapshot once; return whether it changed the slot."""
+    terminal = snapshot.state.is_terminal
+    replacement_delay = 0.0
+    with slot.lock:
+        if slot.job_id != snapshot.id:
+            return False
+        previous_state = slot.observed_state
+        if not terminal:
+            slot.observed_state = snapshot.state
+            if snapshot.state is JobState.PAUSED:
+                slot.attempt_paths.pop(snapshot.attempt.number, None)
+            elif snapshot.state is JobState.QUEUED:
+                for attempt in tuple(slot.attempt_paths):
+                    if attempt < snapshot.attempt.number:
+                        slot.attempt_paths.pop(attempt, None)
+            changed = previous_state is not snapshot.state
+            pending_count = len(slot.held_paths | slot.pending_paths)
+            watcher_owned = slot.watcher_owned
+        else:
+            watcher_owned = slot.watcher_owned
+            captured = slot.attempt_paths.pop(snapshot.attempt.number, frozenset())
+            slot.attempt_paths.clear()
+            if watcher_owned and snapshot.state is JobState.SUCCEEDED:
+                slot.held_paths.difference_update(captured)
+                slot.last_success = now
+                slot.replacement_not_before = 0.0
+                slot.replacement_streak = 0
+            else:
+                slot.pending_paths.update(slot.held_paths)
+                slot.held_paths.clear()
+
+            if snapshot.state in {
+                JobState.CANCELLED,
+                JobState.FAILED,
+                JobState.INTERRUPTED,
+            }:
+                slot.replacement_streak += 1
+                replacement_delay = min(
+                    _WATCH_REPLACEMENT_BACKOFF_BASE_SECONDS
+                    * (2 ** (slot.replacement_streak - 1)),
+                    _WATCH_REPLACEMENT_BACKOFF_MAX_SECONDS,
+                )
+                slot.replacement_not_before = now + replacement_delay
+
+            slot.job_id = None
+            slot.watcher_owned = False
+            slot.observed_state = snapshot.state
+            pending_count = len(slot.held_paths | slot.pending_paths)
+            changed = True
+
+    if not changed:
+        return False
+
+    _log_managed_transition(
+        slot,
+        snapshot,
+        watcher_owned=watcher_owned,
+        pending_count=pending_count,
+        replacement_delay=replacement_delay,
+        error=error,
+    )
+    return True
+
+
+def _log_managed_transition(
+    slot: _WatcherConvergenceSlot,
+    snapshot: JobSnapshot,
+    *,
+    watcher_owned: bool,
+    pending_count: int,
+    replacement_delay: float,
+    error: BaseException | None,
+) -> None:
+    if snapshot.state is JobState.PAUSED:
+        log_event(
+            logger,
+            "service.watcher",
+            "reindex_paused",
+            source=slot.source.value,
+            job_id=snapshot.id,
+            pending_paths=pending_count,
+        )
+    elif snapshot.state is JobState.SUCCEEDED and watcher_owned:
         log_event(
             logger,
             "service.watcher",
             "reindex_completed",
-            source="code",
-            job_id=active_code_job,
-            added=result.added,
-            updated=result.updated,
-            removed=result.removed,
-            duration_ms=result.duration_ms,
+            source=slot.source.value,
+            job_id=snapshot.id,
+            result=snapshot.result,
+            pending_paths=pending_count,
         )
-    except Exception as exc:
-        _jobs.record_finish(active_code_job, error=str(exc))
+    elif snapshot.state is JobState.CANCELLED:
+        log_event(
+            logger,
+            "service.watcher",
+            "replacement_scheduled",
+            source=slot.source.value,
+            job_id=snapshot.id,
+            replacement_backoff_seconds=f"{replacement_delay:.0f}",
+            pending_paths=pending_count,
+        )
+    elif snapshot.state is JobState.SUCCEEDED:
+        log_event(
+            logger,
+            "service.watcher",
+            "coalesced_job_completed",
+            source=slot.source.value,
+            job_id=snapshot.id,
+            pending_paths=pending_count,
+        )
+    else:
         log_event(
             logger,
             "service.watcher",
             "reindex_failed",
             severity=logging.ERROR,
-            exc_info=True,
-            source="code",
-            job_id=active_code_job,
-            error=exc,
+            exc_info=error is not None,
+            source=slot.source.value,
+            job_id=snapshot.id,
+            state=snapshot.state.value,
+            error=error or snapshot.result,
+            pending_paths=pending_count,
         )
-    except asyncio.CancelledError:
-        _jobs.record_finish(
-            active_code_job,
-            phase="cancelled",
-            error="watcher task cancelled",
+
+
+def _release_missing_job(
+    slot: _WatcherConvergenceSlot,
+    job_id: str,
+    *,
+    now: float,
+) -> None:
+    """Recover conservatively when bounded terminal history lost an exact ID."""
+    with slot.lock:
+        if slot.job_id != job_id:
+            return
+        slot.pending_paths.update(slot.held_paths)
+        slot.held_paths.clear()
+        slot.job_id = None
+        slot.watcher_owned = False
+        slot.observed_state = None
+        slot.replacement_streak += 1
+        delay = min(
+            _WATCH_REPLACEMENT_BACKOFF_BASE_SECONDS
+            * (2 ** (slot.replacement_streak - 1)),
+            _WATCH_REPLACEMENT_BACKOFF_MAX_SECONDS,
         )
-        raise
-    finally:
-        active_code_job = None
-    return _last_code_index, pending_code, active_code_job
+        slot.replacement_not_before = now + delay
+        pending_count = len(slot.pending_paths)
+    log_event(
+        logger,
+        "service.watcher",
+        "replacement_scheduled",
+        severity=logging.WARNING,
+        source=slot.source.value,
+        job_id=job_id,
+        reason="job_snapshot_missing",
+        replacement_backoff_seconds=f"{delay:.0f}",
+        pending_paths=pending_count,
+    )
