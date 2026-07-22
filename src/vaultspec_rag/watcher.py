@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from .graph_cache import GraphCache
     from .indexer import CodebaseIndexer, VaultIndexer
     from .indexer._preprocess_config import PreprocessConfig
+    from .service import ServiceRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,7 @@ class _WatcherConvergenceSlot:
 
     source: JobSource
     root: Path
+    registry: ServiceRegistry
     lock: RLock = field(default_factory=RLock)
     job_id: str | None = None
     watcher_owned: bool = False
@@ -229,6 +231,7 @@ async def watch_and_reindex(
     graph_cache: GraphCache,
     debounce: int = 2000,
     cooldown: float = 30.0,
+    registry: ServiceRegistry | None = None,
 ) -> None:
     """Watch for file changes and trigger incremental re-indexing.
 
@@ -252,6 +255,9 @@ async def watch_and_reindex(
             completed run.
         graph_cache: GraphCache to invalidate after a successful vault
             reindex.
+        registry: Service registry that owns the watched project's stores.
+            Standalone callers default to the process singleton; the resident
+            server passes its rebindable registry explicitly.
 
     Raises:
         This coroutine does not propagate exceptions from indexing.
@@ -276,8 +282,17 @@ async def watch_and_reindex(
     # Each source owns one convergence slot. Manager callbacks and attempt
     # runners cross the event-loop/worker-thread boundary, so generation
     # transfer is protected by the slot's real thread lock.
-    vault_slot = _WatcherConvergenceSlot(JobSource.VAULT, resolved_root)
-    code_slot = _WatcherConvergenceSlot(JobSource.CODE, resolved_root)
+    owner_registry = registry if registry is not None else get_registry()
+    vault_slot = _WatcherConvergenceSlot(
+        JobSource.VAULT,
+        resolved_root,
+        owner_registry,
+    )
+    code_slot = _WatcherConvergenceSlot(
+        JobSource.CODE,
+        resolved_root,
+        owner_registry,
+    )
     # Resolved at watcher start so a watched change to a preprocessable file
     # (e.g. a .pdf) routes through the same debounce/cooldown machinery, and
     # re-resolved whenever the root preprocess config itself changes so a rule
@@ -561,7 +576,7 @@ def _run_managed_index_attempt(
     """Run one watcher generation under manager and registry ownership."""
     paths = slot.capture_attempt(context.attempt)
     pipeline_active = slot.source is JobSource.CODE
-    registry = get_registry()
+    registry = slot.registry
     registry.load_model()
     try:
         with registry.lease(slot.root) as project:
