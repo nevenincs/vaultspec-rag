@@ -31,6 +31,7 @@ def test_document_search_result_serializes_without_losing_native_fields() -> Non
     assert payload["section"] == "Setup"
     assert payload["document_metadata"] == {"owner": "docs"}
     assert payload["unit_metadata"] == {"language": "en"}
+    assert "rerank_text" not in payload
 
 
 def test_status_keeps_document_count_independent() -> None:
