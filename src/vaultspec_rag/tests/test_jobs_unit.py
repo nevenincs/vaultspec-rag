@@ -965,6 +965,37 @@ class TestManagedJobTransitions:
     """Revision and attempt identity make lifecycle races deterministic."""
 
     @pytest.mark.asyncio
+    async def test_shutdown_closes_the_attempt_claim_boundary(self) -> None:
+        manager = JobManager(max_nonterminal=1, state_path=None)
+        created = manager.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.CODE,
+                "Y:/project",
+                JobMode.INCREMENTAL,
+            ),
+            JobInitiator("service", "shutdown-race", "Y:/project"),
+        )
+        assert created.job is not None
+        task = asyncio.create_task(asyncio.Event().wait())
+        try:
+            assert manager.begin_shutdown() == ()
+            outcome = manager.start_attempt(
+                created.job.id,
+                task=task,
+                control=RunControlToken(),
+            )
+            assert outcome.code == "dispatch_stopped"
+            retained = manager.get(created.job.id)
+            assert retained is not None
+            assert retained.state is JobState.QUEUED
+            assert retained.runtime.task_active is False
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    @pytest.mark.asyncio
     async def test_pause_resume_race_requeues_after_delivered_unwind(self) -> None:
         manager = JobManager(max_nonterminal=2, state_path=None)
         job_id = _create_paused_vault_job(manager)

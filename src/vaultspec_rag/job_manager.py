@@ -1234,6 +1234,13 @@ class JobManager:
             managed = self._active.get(job_id)
             if managed is None:
                 return self._error(command, "job_not_found", "The job was not found.")
+            if not self._accepting_dispatch:
+                return self._error(
+                    command,
+                    "dispatch_stopped",
+                    "Managed dispatch is stopped for service shutdown.",
+                    managed,
+                )
             if (
                 managed.snapshot.state is not JobState.QUEUED
                 or managed.snapshot.desired_state is not DesiredJobState.RUNNING
