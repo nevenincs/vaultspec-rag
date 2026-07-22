@@ -85,6 +85,34 @@ def test_generation_transactions_resume_and_invalidate_drift(tmp_path: Path) -> 
     assert invalidated.terminal_state is RunTerminalState.INVALIDATED
     assert invalidated.terminal_detail == "generation signature changed"
 
+    unit = _unit("src/resume.py", 0, 1)
+    ledger.record_storage_confirmed_unit(replacement.generation_id, unit)
+    ledger.finish_generation(
+        replacement.generation_id,
+        RunTerminalState.CANCELLED,
+        detail="operator requested cancellation",
+    )
+    retry = ledger.start_generation(replacement.signature)
+    assert retry.generation_id == replacement.generation_id
+    assert retry.terminal_state is RunTerminalState.RUNNING
+    assert retry.terminal_detail is None
+    assert ledger.unit_committed(retry.generation_id, unit)
+
+    clean_signature = replace(
+        replacement.signature,
+        clean=True,
+        content_epoch="clean-replacement",
+    )
+    clean = ledger.start_generation(clean_signature)
+    ledger.finish_generation(
+        clean.generation_id,
+        RunTerminalState.REBUILD_INCOMPLETE,
+        detail="replacement interrupted",
+    )
+    resumed_clean = ledger.start_generation(clean_signature)
+    assert resumed_clean.generation_id == clean.generation_id
+    assert resumed_clean.destructive_intent
+
 
 def test_commit_units_are_atomic_idempotent_and_row_streamed(tmp_path: Path) -> None:
     ledger = RunLedger(tmp_path / "runs.sqlite3")
@@ -134,6 +162,12 @@ def test_file_outcomes_and_finalization_are_immutable(tmp_path: Path) -> None:
         ContentKind.CODE,
         "invalid source encoding",
         content_hash=_digest("bad"),
+    )
+    with pytest.raises(RunLedgerStateError, match="storage-confirmed"):
+        ledger.record_file_state(generation.generation_id, indexed)
+    ledger.record_storage_confirmed_unit(
+        generation.generation_id,
+        _unit("src/good.py", 0, 1, digest=indexed.content_hash),
     )
     for state in (indexed, rejected, failed):
         ledger.record_file_state(generation.generation_id, state)
@@ -197,13 +231,23 @@ def test_compaction_preserves_published_and_running_generations(tmp_path: Path) 
         collection_identity="document-v1",
     )
     running = ledger.start_generation(document)
+    for phase in (
+        FinalizationPhase.STALE_RECONCILED,
+        FinalizationPhase.METADATA_PUBLISHED,
+        FinalizationPhase.GENERATION_PUBLISHED,
+    ):
+        ledger.advance_finalization(running.generation_id, phase)
+    document_published = ledger.finish_generation(
+        running.generation_id,
+        RunTerminalState.SUCCEEDED,
+    )
     assert ledger.compact(second.generation_id) == 1
     with pytest.raises(KeyError):
         ledger.generation(first.generation_id)
     assert ledger.generation(second.generation_id).finalization_phase is (
         FinalizationPhase.COMPACTED
     )
-    assert ledger.generation(running.generation_id) == running
+    assert ledger.generation(running.generation_id) == document_published
 
 
 def test_schema_compatibility_and_corruption_fail_closed(tmp_path: Path) -> None:
