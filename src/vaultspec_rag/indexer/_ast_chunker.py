@@ -160,11 +160,13 @@ class ASTChunker:
         out: list[tuple[str, int, int, str | None, str | None, str | None]],
     ) -> None:
         node_start_line = node.start_point[0] + 1
+        line_cursor = node_start_line
         for i in range(0, len(text), self.chunk_size):
             chunk = text[i : i + self.chunk_size]
-            ls = node_start_line + text[:i].count("\n")
+            ls = line_cursor
             le = ls + chunk.count("\n")
             out.append((chunk, ls, le, None, function_name, class_name))
+            line_cursor = le
 
     def _collect_chunks(
         self,

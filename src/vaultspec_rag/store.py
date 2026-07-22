@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import threading
 import warnings
 from contextlib import contextmanager, nullcontext
@@ -25,7 +26,7 @@ from ._store_models import (
     root_collection_prefix,
 )
 from ._store_search import _VaultSearchMixin
-from ._store_writes import ensure_disk_headroom, run_write_with_retry
+from ._store_writes import StoreWritePolicy, ensure_disk_headroom, run_write_with_retry
 
 if TYPE_CHECKING:
     import pathlib
@@ -52,11 +53,6 @@ __all__ = [
 
 
 EMBEDDING_DIM = store_schema.DEFAULT_DENSE_DIM  # Qwen3-Embedding-0.6B default
-
-#: Server-mode request timeout. Bounded so a Qdrant server wedged on a
-#: full-disk WAL raises instead of blocking an upsert socket forever;
-#: generous enough for large batch upserts and slow scans.
-_SERVER_REQUEST_TIMEOUT_S = 120
 
 
 @contextmanager
@@ -218,7 +214,7 @@ class VaultStore(_VaultSearchMixin):
                 self._client = _QdrantClient(
                     url=cfg.qdrant_url,
                     api_key=cfg.qdrant_api_key,
-                    timeout=_SERVER_REQUEST_TIMEOUT_S,
+                    timeout=math.ceil(cfg.store_operation_timeout_seconds),
                 )
             except Exception as exc:
                 logger.error(
@@ -596,11 +592,18 @@ class VaultStore(_VaultSearchMixin):
             self._ensure_code_indexes()
             self._code_ensured = True
 
-    def upsert_documents(self, docs: list[VaultDocument]) -> None:
+    def upsert_documents(
+        self,
+        docs: list[VaultDocument],
+        *,
+        write_policy: StoreWritePolicy | None,
+    ) -> None:
         """Insert or update documents by ``id``.
 
         Args:
             docs: Documents to insert or replace.
+            write_policy: Caller-owned retry/deadline policy for managed runs;
+                direct store callers pass ``None``.
         """
         if not docs:
             return
@@ -627,10 +630,20 @@ class VaultStore(_VaultSearchMixin):
 
         self.ensure_table()
         with self._point_lock(self.TABLE_NAME):
-            self._guarded_upsert(self.TABLE_NAME, points, "vault documents")
+            self._guarded_upsert(
+                self.TABLE_NAME,
+                points,
+                "vault documents",
+                write_policy=write_policy,
+            )
         logger.info("Upserted %d document(s)", len(docs))
 
-    def upsert_document_chunks(self, chunks: list[VaultChunk]) -> None:
+    def upsert_document_chunks(
+        self,
+        chunks: list[VaultChunk],
+        *,
+        write_policy: StoreWritePolicy | None,
+    ) -> None:
         """Insert or update vault chunks keyed by ``doc_id#c{ordinal}``.
 
         The full document body travels only on the ordinal-0 chunk
@@ -639,6 +652,8 @@ class VaultStore(_VaultSearchMixin):
 
         Args:
             chunks: Vault chunks to insert or replace.
+            write_policy: Caller-owned retry/deadline policy for managed runs;
+                direct store callers pass ``None``.
         """
         if not chunks:
             return
@@ -665,14 +680,26 @@ class VaultStore(_VaultSearchMixin):
 
         self.ensure_table()
         with self._point_lock(self.TABLE_NAME):
-            self._guarded_upsert(self.TABLE_NAME, points, "vault chunks")
+            self._guarded_upsert(
+                self.TABLE_NAME,
+                points,
+                "vault chunks",
+                write_policy=write_policy,
+            )
         logger.info("Upserted %d vault chunk(s)", len(chunks))
 
-    def upsert_code_chunks(self, chunks: list[CodeChunk]) -> None:
+    def upsert_code_chunks(
+        self,
+        chunks: list[CodeChunk],
+        *,
+        write_policy: StoreWritePolicy | None,
+    ) -> None:
         """Insert or update codebase chunks by ``id``.
 
         Args:
             chunks: Code chunks to insert or replace.
+            write_policy: Caller-owned retry/deadline policy for managed runs;
+                direct store callers pass ``None``.
         """
         if not chunks:
             return
@@ -699,11 +726,21 @@ class VaultStore(_VaultSearchMixin):
 
         self.ensure_code_table()
         with self._point_lock(self.CODE_TABLE_NAME):
-            self._guarded_upsert(self.CODE_TABLE_NAME, points, "code chunks")
+            self._guarded_upsert(
+                self.CODE_TABLE_NAME,
+                points,
+                "code chunks",
+                write_policy=write_policy,
+            )
         logger.info("Upserted %d codebase chunk(s)", len(chunks))
 
     def _guarded_upsert(
-        self, collection_name: str, points: list[Any], description: str
+        self,
+        collection_name: str,
+        points: list[Any],
+        description: str,
+        *,
+        write_policy: StoreWritePolicy | None,
     ) -> None:
         """Upsert under the write-failure guards.
 
@@ -715,11 +752,13 @@ class VaultStore(_VaultSearchMixin):
         """
         ensure_disk_headroom(self._storage_probe_path)
         run_write_with_retry(
-            lambda: self.client.upsert(
+            lambda attempt_timeout: self.client.upsert(
                 collection_name=collection_name,
                 points=points,
+                timeout=attempt_timeout,
             ),
             description=f"upsert {description} into {collection_name}",
+            policy=write_policy,
         )
 
     def disk_headroom_preflight(self, new_points: int) -> None:

@@ -16,11 +16,11 @@ import os
 import pathlib
 import queue
 import time
+from collections import deque
 from concurrent.futures import (
     FIRST_COMPLETED,
     Future,
     ProcessPoolExecutor,
-    as_completed,
     wait,
 )
 from concurrent.futures.process import BrokenProcessPool
@@ -39,9 +39,13 @@ from ._code_meta import (
     EMBED_SCHEMA_KEY,
     MEMBERSHIP_EPOCH_KEY,
 )
+from ._preprocess_runner import PreprocessAbortError
 from ._streaming import (
-    _stream_encode_and_upsert_codebase,
+    CodeFileSegment,
+    _release_cuda_cache,
     encode_and_upsert_code_slice,
+    iter_code_file_segments,
+    iter_weighted_code_slices,
 )
 from ._vault_prep import IndexResult
 
@@ -81,12 +85,21 @@ _CHUNKS_PER_FILE_ESTIMATE = 12
 # amortised across the group instead of paid per file.
 BATCH_SIZE = 64
 
+# Keep one queued single-file task behind each active worker. This absorbs the
+# coordinator's result/accounting latency without retaining one Future (and
+# potentially one completed chunk result) per source path on large trees.
+_CHUNK_FUTURE_WINDOW_PER_WORKER = 2
+
+
+class _UnsettledCodeConsumerError(RuntimeError):
+    """The code consumer remained live after its bounded shutdown wait."""
+
 
 class _ScanInputs(NamedTuple):
     """Ignore specs and preprocess config resolved in one pass.
 
     The compiled specs (for the scan) and the raw pattern lists (for the
-    config epoch) come from a single ``.gitignore`` rglob, so the scoped
+    config epoch) come from a single pruned ``.gitignore`` walk, so the scoped
     watcher path computes the epoch and scans without a second tree walk.
     ``vaultragignore_patterns`` are the file-only patterns; CLI ``--exclude``
     entries live in ``rag_spec`` but are kept out of the epoch inputs.
@@ -97,6 +110,157 @@ class _ScanInputs(NamedTuple):
     gitignore_patterns: list[str]
     vaultragignore_patterns: list[str]
     preprocess_config: PreprocessConfig
+
+
+class _CodePipelineLimits(NamedTuple):
+    """Frozen weighted limits shared by code-index producers and consumer."""
+
+    segment_max_chunks: int
+    segment_max_bytes: int
+    queue_max_chunks: int
+    queue_max_bytes: int
+    slice_max_chunks: int
+    slice_max_bytes: int
+    dense_dimension: int
+    sparse_enabled: bool
+    sparse_dimension: int
+    encode_batch_size: int
+    flush_slices: int
+
+
+class _WeightedCodeSegmentQueue:
+    """Thread-safe queue bounded by the chunks and bytes awaiting a consumer.
+
+    Queue capacity and the active weighted-slice capacity are distinct bounds.
+    Removing a segment transfers its weight to the consumer; this is required
+    so the pull-based slice packer can receive the next segment that either
+    fills or flushes its active slice without producer/consumer deadlock.
+    """
+
+    __slots__ = (
+        "_condition",
+        "_items",
+        "_max_bytes",
+        "_max_chunks",
+        "_queued_bytes",
+        "_queued_chunks",
+    )
+
+    def __init__(self, *, max_chunks: int, max_bytes: int) -> None:
+        import threading
+
+        if isinstance(max_chunks, bool) or max_chunks <= 0:
+            raise ValueError("max_chunks must be a positive integer")
+        if isinstance(max_bytes, bool) or max_bytes <= 0:
+            raise ValueError("max_bytes must be a positive integer")
+        self._max_chunks = max_chunks
+        self._max_bytes = max_bytes
+        self._queued_chunks = 0
+        self._queued_bytes = 0
+        self._items: deque[CodeFileSegment | None] = deque()
+        self._condition = threading.Condition()
+
+    @property
+    def queued_chunks(self) -> int:
+        """Return the number of chunks waiting in the queue."""
+        with self._condition:
+            return self._queued_chunks
+
+    @property
+    def queued_bytes(self) -> int:
+        """Return the estimated bytes waiting in the queue."""
+        with self._condition:
+            return self._queued_bytes
+
+    def _can_admit(self, segment: CodeFileSegment) -> bool:
+        return (
+            self._queued_chunks + len(segment.chunks) <= self._max_chunks
+            and self._queued_bytes + segment.estimated_bytes <= self._max_bytes
+        )
+
+    def _wait_until_admitted(
+        self,
+        segment: CodeFileSegment,
+        *,
+        block: bool,
+        timeout: float | None,
+    ) -> None:
+        """Wait under the queue condition until one segment fits."""
+        if self._can_admit(segment):
+            return
+        if not block:
+            raise queue.Full
+        if timeout is None:
+            while not self._can_admit(segment):
+                self._condition.wait()
+            return
+
+        deadline = time.monotonic() + timeout
+        while not self._can_admit(segment):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise queue.Full
+            self._condition.wait(remaining)
+
+    def put(
+        self,
+        item: CodeFileSegment | None,
+        block: bool = True,
+        timeout: float | None = None,
+    ) -> None:
+        """Reserve and enqueue one segment, or append the shutdown sentinel."""
+        if timeout is not None and timeout < 0:
+            raise ValueError("timeout must be a non-negative number")
+        if item is not None and (
+            len(item.chunks) > self._max_chunks
+            or item.estimated_bytes > self._max_bytes
+        ):
+            raise ValueError(
+                f"segment {item.path!r}#{item.ordinal} exceeds queue capacity"
+            )
+
+        with self._condition:
+            if item is not None:
+                self._wait_until_admitted(item, block=block, timeout=timeout)
+                self._queued_chunks += len(item.chunks)
+                self._queued_bytes += item.estimated_bytes
+            self._items.append(item)
+            self._condition.notify_all()
+
+    def get(
+        self,
+        block: bool = True,
+        timeout: float | None = None,
+    ) -> CodeFileSegment | None:
+        """Remove one item and transfer its bounded weight to the consumer."""
+        if timeout is not None and timeout < 0:
+            raise ValueError("timeout must be a non-negative number")
+        with self._condition:
+            if not block and not self._items:
+                raise queue.Empty
+            if timeout is None:
+                while not self._items:
+                    self._condition.wait()
+            else:
+                deadline = time.monotonic() + timeout
+                while not self._items:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise queue.Empty
+                    self._condition.wait(remaining)
+            item = self._items.popleft()
+            if item is not None:
+                self._queued_chunks -= len(item.chunks)
+                self._queued_bytes -= item.estimated_bytes
+            self._condition.notify_all()
+            return item
+
+
+def _drain_code_chunks(chunks: list[CodeChunk]) -> Iterator[CodeChunk]:
+    """Yield a file's chunks in order while releasing its source list."""
+    chunks.reverse()
+    while chunks:
+        yield chunks.pop()
 
 
 class CodebaseIndexer:
@@ -168,7 +332,7 @@ class CodebaseIndexer:
         """Collect the hardcoded and ``.gitignore``-sourced exclusion patterns.
 
         Delegates to :func:`_ignore_specs.collect_gitignore_patterns`; kept as
-        a method so callers (and tests) can monkeypatch the single tree walk.
+        a method so callers can instrument the single tree walk.
         """
         return _ignore_specs.collect_gitignore_patterns(self.root_dir)
 
@@ -195,7 +359,8 @@ class CodebaseIndexer:
 
         The compiled specs drive the scan; the raw pattern lists and the
         preprocess config drive the membership/content epochs. Sharing one
-        ``.gitignore`` rglob keeps the scoped path free of a second traversal.
+        pruned ``.gitignore`` walk keeps the scoped path free of a second
+        traversal.
         """
         import pathspec
 
@@ -298,7 +463,7 @@ class CodebaseIndexer:
         """Return the number of preprocess rules active for the current run."""
         return _preprocess_glue.prep_rule_count(self._prep_ctx)
 
-    def _record_preprocess_result(self, res: FileChunkResult | None) -> None:
+    def _record_preprocess_result(self, res: FileChunkResult) -> None:
         """Accumulate a worker result's preprocess disposition (D11)."""
         self._prep_ok += _preprocess_glue.record_preprocess_result(
             res, self._prep_skips
@@ -556,7 +721,7 @@ class CodebaseIndexer:
         Each group is one :func:`_chunk_worker.chunk_batch_files` task: a single
         hook spawn over the group's manifest, then per-file chunking. ``handle_group``
         is invoked with each completed group's results as they arrive, so a
-        streaming caller never has to hold every group's chunks at once. Falls
+        streaming caller retains at most one worker window of results. Falls
         back to the serial in-process path when a single worker is resolved or
         the pool cannot start before any progress has been reported. The reporter
         is advanced once per file in each completed group.
@@ -574,31 +739,38 @@ class CodebaseIndexer:
         ctx = multiprocessing.get_context("spawn")
         try:
             with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
-                futures = {
-                    pool.submit(
+                group_iter = iter(batch_groups)
+                futures: dict[Future[list[FileChunkResult]], int] = {}
+
+                def _submit_one() -> bool:
+                    try:
+                        rule, group = next(group_iter)
+                    except StopIteration:
+                        return False
+                    future = pool.submit(
                         _chunk_worker.chunk_batch_files,
                         group,
                         self.root_dir,
                         rule,
                         prep,
-                    ): len(group)
-                    for rule, group in batch_groups
-                }
-                for future in as_completed(futures):
-                    group_len = futures[future]
-                    try:
-                        handle_group(future.result())
-                    except BrokenProcessPool:
-                        raise
-                    except Exception:
-                        logger.warning(
-                            "Batch worker failed for a group of %d files",
-                            group_len,
-                            exc_info=True,
+                    )
+                    futures[future] = len(group)
+                    return True
+
+                for _ in range(min(len(batch_groups), workers)):
+                    _submit_one()
+
+                while futures:
+                    done, _pending = wait(set(futures), return_when=FIRST_COMPLETED)
+                    while done:
+                        completed += self._process_batch_future(
+                            done.pop(), futures, reporter, handle_group
                         )
-                    for _ in range(group_len):
-                        reporter.advance()
-                    completed += group_len
+                        # Refill each released slot immediately. ``futures``
+                        # remains capped at ``workers`` while CPU preprocessing
+                        # overlaps sequential publication of the other
+                        # completed groups.
+                        _submit_one()
         except BrokenProcessPool:
             if completed:
                 logger.error(
@@ -610,6 +782,37 @@ class CodebaseIndexer:
                 "Batch process pool could not start; running batch groups serially"
             )
             self._run_batch_groups_serial(batch_groups, reporter, handle_group)
+
+    def _process_batch_future(
+        self,
+        future: Future[list[FileChunkResult]],
+        futures: dict[Future[list[FileChunkResult]], int],
+        reporter: ProgressReporter,
+        handle_group: Callable[[list[FileChunkResult]], None],
+    ) -> int:
+        """Publish one completed worker group, propagating fatal failures."""
+        group_len = futures.pop(future)
+        try:
+            results = future.result()
+        except BrokenProcessPool:
+            raise
+        except PreprocessAbortError:
+            raise
+        except Exception:
+            logger.error(
+                "Batch worker failed for a group of %d files",
+                group_len,
+                exc_info=True,
+            )
+            raise
+
+        # Publication errors are not worker failures. Let them abort the run
+        # so metadata/stale cleanup cannot publish a generation whose vectors
+        # were never stored.
+        handle_group(results)
+        for _ in range(group_len):
+            reporter.advance()
+        return group_len
 
     def _run_batch_groups_serial(
         self,
@@ -626,17 +829,7 @@ class CodebaseIndexer:
         if prep is None:
             return
         for rule, group in batch_groups:
-            try:
-                results = _chunk_worker.chunk_batch_files(
-                    group, self.root_dir, rule, prep
-                )
-            except Exception:
-                logger.warning(
-                    "Failed to run batch group of %d files",
-                    len(group),
-                    exc_info=True,
-                )
-                results = []
+            results = _chunk_worker.chunk_batch_files(group, self.root_dir, rule, prep)
             handle_group(results)
             for _ in range(len(group)):
                 reporter.advance()
@@ -690,7 +883,9 @@ class CodebaseIndexer:
         pool uses the ``spawn`` start method so no parent CUDA context is
         inherited (#155 ADR, rule ``index-workers-stay-cpu-only``). Falls back
         to the serial in-process path when a single worker is resolved, or when
-        the pool cannot start before any progress has been reported.
+        the pool cannot start before any progress has been reported. The submit
+        window retains at most two futures per worker and refills each released
+        slot immediately, bounding scheduler memory without starving workers.
         """
         all_chunks: list[CodeChunk] = []
         if not paths:
@@ -705,6 +900,11 @@ class CodebaseIndexer:
         prep = getattr(self, "_prep_ctx", None)
         try:
             with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+                paths_iter = iter(paths)
+                window = min(
+                    len(paths),
+                    _CHUNK_FUTURE_WINDOW_PER_WORKER * workers,
+                )
                 futures = {
                     pool.submit(
                         _chunk_worker.chunk_file_with_status,
@@ -712,25 +912,33 @@ class CodebaseIndexer:
                         self.root_dir,
                         prep,
                     ): p
-                    for p in paths
+                    for p in itertools.islice(paths_iter, window)
                 }
-                for future in as_completed(futures):
-                    try:
-                        res = future.result()
-                        all_chunks.extend(res.chunks)
-                        self._record_scoped_preprocess(futures[future], res)
-                    except BrokenProcessPool:
-                        # Pool-level fatal - propagate rather than mis-record
-                        # it as a single-file failure.
-                        raise
-                    except Exception:
-                        logger.warning(
-                            "Worker failed to chunk %s",
-                            futures[future],
-                            exc_info=True,
+                while futures:
+                    done, _pending = wait(futures, return_when=FIRST_COMPLETED)
+                    while done:
+                        future = done.pop()
+                        path = futures.pop(future)
+                        self._process_single_future(
+                            future,
+                            path,
+                            all_chunks,
+                            reporter,
                         )
-                    completed += 1
-                    reporter.advance()
+                        completed += 1
+
+                        # Refill after publication/accounting so completed
+                        # results cannot accumulate behind coordinator work.
+                        nxt = next(paths_iter, None)
+                        if nxt is not None:
+                            futures[
+                                pool.submit(
+                                    _chunk_worker.chunk_file_with_status,
+                                    nxt,
+                                    self.root_dir,
+                                    prep,
+                                )
+                            ] = nxt
         except BrokenProcessPool:
             if completed:
                 # Progress already reported for some files; re-chunking would
@@ -744,6 +952,34 @@ class CodebaseIndexer:
             logger.warning("Chunk process pool could not start; chunking serially")
             return self._chunk_singles_serial(paths, reporter)
         return all_chunks
+
+    def _process_single_future(
+        self,
+        future: Future[_chunk_worker.ScopedChunkResult],
+        path: pathlib.Path,
+        all_chunks: list[CodeChunk],
+        reporter: ProgressReporter,
+    ) -> None:
+        """Publish one completed single-file result and advance accounting."""
+        try:
+            res = future.result()
+        except BrokenProcessPool:
+            # Pool-level fatal - propagate rather than mis-record it as a
+            # recoverable single-file failure.
+            raise
+        except PreprocessAbortError:
+            raise
+        except Exception:
+            logger.warning("Worker failed to chunk %s", path, exc_info=True)
+            raise
+        else:
+            # Only worker execution belongs to the per-file recovery boundary.
+            # Coordinator publication failures abort the run so metadata cannot
+            # describe chunks that were never retained.
+            self._record_scoped_preprocess(path, res)
+            all_chunks.extend(res.chunks)
+        finally:
+            reporter.advance()
 
     def _chunk_paths_serial(
         self,
@@ -785,139 +1021,62 @@ class CodebaseIndexer:
         for p in paths:
             try:
                 res = _chunk_worker.chunk_file_with_status(p, self.root_dir, prep)
-                all_chunks.extend(res.chunks)
-                self._record_scoped_preprocess(p, res)
+            except PreprocessAbortError:
+                raise
             except Exception:
                 logger.warning("Failed to chunk %s", p, exc_info=True)
-            reporter.advance()
+                raise
+            else:
+                self._record_scoped_preprocess(p, res)
+                all_chunks.extend(res.chunks)
+            finally:
+                reporter.advance()
         return all_chunks
 
-    def _run_serial_chunk_and_embed(
+    def _run_serial_chunk_producer(
         self,
         paths: list[pathlib.Path],
-        meta: dict[str, str],
-        encode_batch_size: int,
-        flush_slices: int,
+        publish_result: Callable[[FileChunkResult], bool],
         reporter: ProgressReporter,
-        total_in: int,
-        new_ids: set[str],
-    ) -> tuple[int, int]:
-        from ..config import get_config
-
-        slice_size = max(1, get_config().embedding_batch_size)
-        total = total_in
+    ) -> int:
+        """Produce code-file results serially into the bounded queue."""
         advanced = 0
-        acc: list[CodeChunk] = []
-        state = [0]
-
-        def _encode_accumulated(force: bool) -> None:
-            nonlocal total
-            while len(acc) >= slice_size or (force and acc):
-                take = acc[:slice_size]
-                del acc[:slice_size]
-                state[0] += 1
-                is_final = force and not acc
-                release = is_final or state[0] % flush_slices == 0
-                encode_and_upsert_code_slice(
-                    take,
-                    model=self.model,
-                    store=self.store,
-                    gpu_lock=self._gpu_lock,
-                    release_cache=release,
-                    encode_batch_size=encode_batch_size,
-                )
-                new_ids.update(c.id for c in take)
-                total += len(take)
 
         for p in paths:
             try:
                 res = _chunk_worker.chunk_and_hash_file(
                     p, self.root_dir, self._prep_ctx
                 )
-                if res is not None:
-                    meta[res.rel_path] = res.content_hash
-                    acc.extend(res.chunks)
-                    self._record_preprocess_result(res)
+            except PreprocessAbortError:
+                raise
             except Exception:
                 logger.warning("Failed to chunk %s", p, exc_info=True)
+                raise
+            if not publish_result(res):
+                raise RuntimeError("code-index segment consumer terminated")
             advanced += 1
             reporter.advance()
-            _encode_accumulated(force=False)
-        _encode_accumulated(force=True)
-        return total, advanced
+        return advanced
 
-    def _chunk_embed_batch_groups(
+    def _produce_batch_groups(
         self,
         batch_groups: list[tuple[PreprocessRule, list[pathlib.Path]]],
-        meta: dict[str, str],
-        new_ids: set[str],
-        slice_size: int,
-        encode_batch_size: int,
-        flush_slices: int,
+        publish_result: Callable[[FileChunkResult], bool],
         reporter: ProgressReporter,
-    ) -> int:
-        """Chunk batch groups, stamp their meta, and embed their chunks (#241).
+    ) -> None:
+        """Produce batch-preprocessed file results into the weighted queue.
 
-        Runs the batch groups (one hook spawn per group) and, as each group
-        completes, records each file's content hash and preprocess disposition
-        and embeds that group's chunks through the same encode/upsert slice path
-        the singles pipeline uses. Embedding per group bounds peak memory to a
-        single group's chunks rather than every group's at once.
-
-        Returns:
-            The number of chunks embedded, for the run's total tally.
+        Each group still amortizes its hook spawn, but every returned file is
+        segmented and transferred through the same bounded consumer used by
+        ordinary code files.
         """
-        embedded = [0]
 
-        def _embed_group(results: list[FileChunkResult]) -> None:
-            chunks: list[CodeChunk] = []
+        def _publish_group(results: list[FileChunkResult]) -> None:
             for res in results:
-                meta[res.rel_path] = res.content_hash
-                self._record_preprocess_result(res)
-                chunks.extend(res.chunks)
-            embedded[0] += self._embed_chunks(
-                chunks, slice_size, flush_slices, encode_batch_size, new_ids
-            )
+                if not publish_result(res):
+                    raise RuntimeError("code-index segment consumer terminated")
 
-        self._run_batch_groups(batch_groups, reporter, _embed_group)
-        return embedded[0]
-
-    def _embed_chunks(
-        self,
-        chunks: list[CodeChunk],
-        slice_size: int,
-        flush_slices: int,
-        encode_batch_size: int,
-        new_ids: set[str],
-    ) -> int:
-        """Encode and upsert a chunk list in ``slice_size`` batches.
-
-        Mirrors :meth:`_do_encode_accumulated` for a fully-materialised chunk
-        list (the batch path chunks its files before embedding, so there is no
-        producer to overlap). Runs on the calling thread, which is the sole GPU
-        consumer here - no other thread touches the device concurrently.
-
-        Returns:
-            The number of chunks embedded.
-        """
-        total = 0
-        state = [0]
-        for start in range(0, len(chunks), slice_size):
-            take = chunks[start : start + slice_size]
-            state[0] += 1
-            is_final = start + slice_size >= len(chunks)
-            release = is_final or state[0] % flush_slices == 0
-            encode_and_upsert_code_slice(
-                take,
-                model=self.model,
-                store=self.store,
-                gpu_lock=self._gpu_lock,
-                release_cache=release,
-                encode_batch_size=encode_batch_size,
-            )
-            new_ids.update(c.id for c in take)
-            total += len(take)
-        return total
+        self._run_batch_groups(batch_groups, reporter, _publish_group)
 
     def _drain_pool(
         self,
@@ -925,8 +1084,7 @@ class CodebaseIndexer:
         ctx: BaseContext,
         paths_iter: Iterator[pathlib.Path],
         window: int,
-        meta: dict[str, str],
-        put_fn: Callable[[list[CodeChunk]], bool],
+        publish_result: Callable[[FileChunkResult], bool],
         reporter: ProgressReporter,
     ) -> tuple[bool, bool, int]:
         from concurrent.futures import ProcessPoolExecutor
@@ -952,7 +1110,12 @@ class CodebaseIndexer:
                     done, pending = wait(pending, return_when=FIRST_COMPLETED)
                     for fut in done:
                         died, advanced_inc = self._process_future(
-                            fut, pool, pending, paths_iter, meta, put_fn, reporter
+                            fut,
+                            pool,
+                            pending,
+                            paths_iter,
+                            publish_result,
+                            reporter,
                         )
                         _advanced_inc += advanced_inc
                         if died:
@@ -964,28 +1127,24 @@ class CodebaseIndexer:
 
     def _process_future(
         self,
-        fut: Future[FileChunkResult | None],
+        fut: Future[FileChunkResult],
         pool: ProcessPoolExecutor,
-        pending: set[Future[FileChunkResult | None]],
+        pending: set[Future[FileChunkResult]],
         paths_iter: Iterator[pathlib.Path],
-        meta: dict[str, str],
-        put_fn: Callable[[list[CodeChunk]], bool],
+        publish_result: Callable[[FileChunkResult], bool],
         reporter: ProgressReporter,
     ) -> tuple[bool, int]:
         try:
-            res: FileChunkResult | None = fut.result()
+            res = fut.result()
         except BrokenProcessPool:
+            raise
+        except PreprocessAbortError:
             raise
         except Exception:
             logger.warning("Worker failed to chunk a file", exc_info=True)
-            res = None
+            raise
 
-        died = False
-        if res is not None:
-            meta[res.rel_path] = res.content_hash
-            self._record_preprocess_result(res)
-            if res.chunks and not put_fn(res.chunks):
-                died = True
+        died = not publish_result(res)
 
         reporter.advance()
         nxt = next(paths_iter, None)
@@ -1000,31 +1159,69 @@ class CodebaseIndexer:
             )
         return died, 1
 
-    def _spawn_consumer(
+    def _spawn_weighted_consumer(
         self,
-        chunk_q: queue.Queue[list[CodeChunk] | None],
+        segment_q: _WeightedCodeSegmentQueue,
         consumer_exc: list[BaseException],
-        encode_fn: Callable[..., None],
+        limits: _CodePipelineLimits,
+        new_ids: set[str],
+        total: list[int],
     ) -> threading.Thread:
         import queue
         import threading
 
+        from ..memory_probe import MemoryProbe
+
+        def _segments() -> Iterator[CodeFileSegment]:
+            while True:
+                try:
+                    segment = segment_q.get(timeout=1.0)
+                except queue.Empty:
+                    continue
+                if segment is None:
+                    return
+                yield segment
+
         def _consumer_loop() -> None:
+            probe: MemoryProbe | None = None
             try:
-                acc: list[CodeChunk] = []
-                state = [0]
-                while True:
-                    try:
-                        batch = chunk_q.get(timeout=1.0)
-                    except queue.Empty:
-                        continue
-                    if batch is None:
-                        encode_fn(acc, state, force=True)
-                        break
-                    acc.extend(batch)
-                    encode_fn(acc, state, force=False)
+                probe = MemoryProbe(name="codebase-index")
+                with probe:
+                    slice_index = 0
+                    for weighted_slice in iter_weighted_code_slices(
+                        _segments(),
+                        max_chunks=limits.slice_max_chunks,
+                        max_bytes=limits.slice_max_bytes,
+                    ):
+                        slice_chunks = sorted(
+                            weighted_slice.chunks,
+                            key=lambda chunk: -len(chunk.content),
+                        )
+                        try:
+                            probe.checkpoint(f"slice-{slice_index}-before-encode")
+                            slice_index += 1
+                            encode_and_upsert_code_slice(
+                                slice_chunks,
+                                model=self.model,
+                                store=self.store,
+                                gpu_lock=self._gpu_lock,
+                                release_cache=(slice_index % limits.flush_slices == 0),
+                                encode_batch_size=limits.encode_batch_size,
+                            )
+                            new_ids.update(chunk.id for chunk in slice_chunks)
+                            total[0] += len(slice_chunks)
+                            probe.checkpoint(f"slice-{slice_index}-after-store")
+                        finally:
+                            del slice_chunks
             except BaseException as e:
                 consumer_exc.append(e)
+            finally:
+                try:
+                    _release_cuda_cache()
+                    if probe is not None and probe.samples:
+                        logger.info("%s", probe.report())
+                except BaseException as e:
+                    consumer_exc.append(e)
 
         consumer = threading.Thread(
             target=_consumer_loop, name="codebase-indexer-consumer"
@@ -1033,112 +1230,156 @@ class CodebaseIndexer:
         return consumer
 
     def _shutdown_consumer(
-        self, consumer: threading.Thread, chunk_q: queue.Queue[list[CodeChunk] | None]
+        self,
+        consumer: threading.Thread,
+        segment_q: _WeightedCodeSegmentQueue,
     ) -> bool:
-        import queue
         import time
 
         deadline = time.monotonic() + _CONSUMER_SHUTDOWN_TIMEOUT_S
         while consumer.is_alive():
-            try:
-                chunk_q.put(None, timeout=0.5)
-                break
-            except queue.Full:
-                if time.monotonic() >= deadline:
-                    break
+            segment_q.put(None, timeout=0.5)
+            break
         consumer.join(timeout=max(0.0, deadline - time.monotonic()))
         return consumer.is_alive()
 
-    def _handle_pipeline_errors(
-        self,
-        consumer_hung: bool,
-        consumer_exc: list[BaseException],
-        broke: bool,
-        advanced: int,
-        total: int,
-        run_serial_fn: Callable[[], None],
-    ) -> None:
-        from concurrent.futures.process import BrokenProcessPool
+    def _resolve_code_pipeline_limits(self) -> _CodePipelineLimits:
+        """Freeze code segment, queue, slice, and model limits."""
+        from ..config import get_config
 
-        if consumer_hung:
+        cfg = get_config()
+        return _CodePipelineLimits(
+            segment_max_chunks=int(cfg.index_segment_max_chunks),
+            segment_max_bytes=int(cfg.index_segment_max_bytes),
+            queue_max_chunks=int(cfg.index_queue_max_chunks),
+            queue_max_bytes=int(cfg.index_queue_max_bytes),
+            slice_max_chunks=int(cfg.index_queue_max_chunks),
+            slice_max_bytes=int(cfg.index_queue_max_bytes),
+            dense_dimension=int(cfg.embedding_dimension),
+            sparse_enabled=bool(cfg.sparse_enabled),
+            sparse_dimension=int(self.model.sparse_dimension),
+            encode_batch_size=int(cfg.embedding_code_encode_batch_size),
+            flush_slices=max(1, int(cfg.index_cache_flush_slices)),
+        )
+
+    def _enqueue_code_result(
+        self,
+        res: FileChunkResult,
+        *,
+        limits: _CodePipelineLimits,
+        segment_q: _WeightedCodeSegmentQueue,
+        consumer: threading.Thread,
+        consumer_exc: list[BaseException],
+        meta: dict[str, str],
+    ) -> bool:
+        """Drain one code file result into weighted queue segments."""
+        meta[res.rel_path] = res.content_hash
+        self._record_preprocess_result(res)
+        segments = iter_code_file_segments(
+            _drain_code_chunks(res.chunks),
+            max_chunks=limits.segment_max_chunks,
+            max_bytes=limits.segment_max_bytes,
+            dense_dimension=limits.dense_dimension,
+            sparse_enabled=limits.sparse_enabled,
+            sparse_dimension=limits.sparse_dimension,
+        )
+        for segment in segments:
+            while not consumer_exc and consumer.is_alive():
+                try:
+                    segment_q.put(segment, timeout=0.5)
+                except queue.Full:
+                    continue
+                break
+            else:
+                return False
+        return True
+
+    def _produce_code_singles(
+        self,
+        singles: list[pathlib.Path],
+        *,
+        publish_result: Callable[[FileChunkResult], bool],
+        reporter: ProgressReporter,
+        total: list[int],
+    ) -> int:
+        """Produce ordinary code files serially or through the CPU pool."""
+        workers = self._plan_chunk_workers(singles)
+        if workers <= 1:
+            return self._run_serial_chunk_producer(
+                singles,
+                publish_result,
+                reporter,
+            )
+
+        ctx = multiprocessing.get_context("spawn")
+        window = min(
+            len(singles),
+            max(1, _CHUNK_FUTURE_WINDOW_PER_WORKER * workers),
+        )
+        broke, _consumer_died, advanced = self._drain_pool(
+            workers,
+            ctx,
+            iter(singles),
+            window,
+            publish_result,
+            reporter,
+        )
+        if not broke:
+            return advanced
+        if advanced or total[0]:
+            logger.error(
+                "Chunk process pool broke after %d files (%d chunks embedded); "
+                "aborting. Set index_chunk_workers=1 to force the serial path.",
+                advanced,
+                total[0],
+            )
+            raise BrokenProcessPool("codebase chunk process pool broke mid-run")
+        logger.warning(
+            "Chunk process pool could not start; running chunk + embed serially",
+        )
+        return self._run_serial_chunk_producer(
+            singles,
+            publish_result,
+            reporter,
+        )
+
+    def _finish_weighted_consumer(
+        self,
+        consumer: threading.Thread,
+        segment_q: _WeightedCodeSegmentQueue,
+        consumer_exc: list[BaseException],
+    ) -> None:
+        """Stop the code-index consumer and surface its terminal state."""
+        if self._shutdown_consumer(consumer, segment_q):
             logger.error(
                 "GPU consumer thread did not terminate within %.0fs; "
                 "aborting (a CUDA or Qdrant call may be wedged)",
                 _CONSUMER_SHUTDOWN_TIMEOUT_S,
             )
-            raise RuntimeError(
-                "codebase index GPU consumer thread did not terminate",
+            raise _UnsettledCodeConsumerError(
+                "codebase index GPU consumer thread did not terminate"
             )
         if consumer_exc:
             raise consumer_exc[0]
-        if broke:
-            if advanced or total:
-                logger.error(
-                    "Chunk process pool broke after %d files (%d chunks "
-                    "embedded); aborting. Set index_chunk_workers=1 to "
-                    "force the serial path.",
-                    advanced,
-                    total,
-                )
-                raise BrokenProcessPool(
-                    "codebase chunk process pool broke mid-run",
-                )
-            logger.warning(
-                "Chunk process pool could not start; running chunk + embed serially",
-            )
-            run_serial_fn()
-
-    def _do_encode_accumulated(
-        self,
-        acc: list[CodeChunk],
-        state: list[int],
-        force: bool,
-        slice_size: int,
-        flush_slices: int,
-        encode_batch_size: int,
-        new_ids: set[str],
-    ) -> int:
-        consumed = 0
-        while len(acc) >= slice_size or (force and acc):
-            take = acc[:slice_size]
-            del acc[:slice_size]
-            state[0] += 1
-            is_final = force and not acc
-            release = is_final or state[0] % flush_slices == 0
-            encode_and_upsert_code_slice(
-                take,
-                model=self.model,
-                store=self.store,
-                gpu_lock=self._gpu_lock,
-                release_cache=release,
-                encode_batch_size=encode_batch_size,
-            )
-            new_ids.update(c.id for c in take)
-            consumed += len(take)
-        return consumed
 
     def _pipeline_chunk_and_embed(
         self,
         paths: list[pathlib.Path],
         *,
-        slice_size: int,
         reporter: ProgressReporter,
     ) -> tuple[set[str], int, dict[str, str]]:
         """Overlap process-pool chunking with GPU encode/upsert.
 
-        Worker processes read, hash, and chunk files in parallel while this
-        thread - the sole CUDA consumer - encodes and upserts completed chunks
-        in ``slice_size`` batches. A bounded submission window caps both
-        in-flight futures and buffered results, so peak memory is proportional
-        to the window rather than to the whole tree (#155 ADR P02, research
-        O7). Each file is read exactly once: the worker returns the content
-        hash alongside the chunks so no separate hash pass is needed (#155 P03,
-        finding C4). The upsert is idempotent by chunk id, so streaming
-        mid-rebuild preserves the failure-safe contract.
+        CPU-only workers emit one file result at a time. The producer drains
+        each result into file-local weighted segments and a chunk/byte-bounded
+        queue. One consumer packs those segments into a separately bounded
+        active slice, length-sorts only that slice, and synchronously stores it.
+        The producer submission window, queued segments, active slice, and one
+        pull-ahead non-vectorized segment are all fixed bounds independent of
+        corpus size.
 
         Args:
             paths: Absolute file paths to chunk and embed.
-            slice_size: Number of chunks per GPU encode/upsert batch.
             reporter: Progress reporter, advanced once per file chunked.
 
         Returns:
@@ -1146,29 +1387,9 @@ class CodebaseIndexer:
             the total number of chunks embedded, and the relative-path to
             blake2b content-hash metadata for every readable file.
         """
-        from ..config import get_config
-
-        cfg = get_config()
-        encode_batch_size = int(cfg.embedding_code_encode_batch_size)
-        flush_slices = max(1, int(cfg.index_cache_flush_slices))
-
         new_ids: set[str] = set()
         meta: dict[str, str] = {}
-        total = 0
-        advanced = 0
-
-        def _encode_accumulated(
-            acc: list[CodeChunk],
-            state: list[int],
-            *,
-            force: bool,
-        ) -> None:
-            nonlocal total
-            consumed = self._do_encode_accumulated(
-                acc, state, force, slice_size, flush_slices, encode_batch_size, new_ids
-            )
-            total += consumed
-
+        total = [0]
         # Chunk counts are unknown before the pool runs, so the pre-flight
         # estimates points from the file count with a conservative
         # chunks-per-file factor (a measured large tree averaged ~12);
@@ -1179,96 +1400,60 @@ class CodebaseIndexer:
         reporter.phase_start("chunk + embed", len(paths))
         try:
             if not paths:
-                return new_ids, total, meta
+                return new_ids, total[0], meta
 
-            # Batch-rule matches run as grouped hook spawns and are embedded
-            # up front; every other file keeps the per-file pipeline below (#241).
-            batch_groups, singles = self._partition_batch_work(paths)
-            if batch_groups:
-                total += self._chunk_embed_batch_groups(
-                    batch_groups,
-                    meta,
-                    new_ids,
-                    slice_size,
-                    encode_batch_size,
-                    flush_slices,
-                    reporter,
-                )
-            if not singles:
-                return new_ids, total, meta
-
-            def _run_serial() -> None:
-                nonlocal advanced, total
-                total, adv_inc = self._run_serial_chunk_and_embed(
-                    singles,
-                    meta,
-                    encode_batch_size,
-                    flush_slices,
-                    reporter,
-                    total,
-                    new_ids,
-                )
-                advanced += adv_inc
-
-            workers = self._plan_chunk_workers(singles)
-            if workers <= 1:
-                _run_serial()
-                return new_ids, total, meta
-
-            ctx = multiprocessing.get_context("spawn")
-            window = max(2 * slice_size, 8 * workers)
-
-            # Decoupled producer/consumer (#155 index-gpu-pipeline ADR): a
-            # single dedicated GPU consumer thread drains a bounded queue while
-            # this thread (the producer) drains the spawn pool and feeds it.
-            # torch releases the GIL during async CUDA, so the producer refills
-            # while the GPU runs - keeping the GPU saturated instead of idling
-            # during pool bookkeeping. The queue's maxsize is the sole
-            # backpressure + memory bound. The consumer owns the gpu_lock.
-            # ``None`` is the shutdown sentinel: it is never a legitimate
-            # payload because only non-empty chunk lists are ever enqueued.
-            chunk_q: queue.Queue[list[CodeChunk] | None] = queue.Queue(
-                maxsize=window,
+            limits = self._resolve_code_pipeline_limits()
+            segment_q = _WeightedCodeSegmentQueue(
+                max_chunks=limits.queue_max_chunks,
+                max_bytes=limits.queue_max_bytes,
             )
             consumer_exc: list[BaseException] = []
+            consumer = self._spawn_weighted_consumer(
+                segment_q,
+                consumer_exc,
+                limits,
+                new_ids,
+                total,
+            )
 
-            consumer = self._spawn_consumer(chunk_q, consumer_exc, _encode_accumulated)
-
-            def _put(chunks: list[CodeChunk]) -> bool:
-                """Enqueue chunks; return False if the consumer has died."""
-                while True:
-                    if consumer_exc or not consumer.is_alive():
-                        return False
-                    try:
-                        chunk_q.put(chunks, timeout=0.5)
-                        return True
-                    except queue.Full:
-                        continue
-
-            broke = False
-            consumer_hung = False
-            paths_iter = iter(singles)
+            def _publish_result(res: FileChunkResult) -> bool:
+                """Drain one file result into bounded ordered queue segments."""
+                return self._enqueue_code_result(
+                    res,
+                    limits=limits,
+                    segment_q=segment_q,
+                    consumer=consumer,
+                    consumer_exc=consumer_exc,
+                    meta=meta,
+                )
 
             try:
-                broke, _consumer_died, advanced_inc = self._drain_pool(
-                    workers,
-                    ctx,
-                    paths_iter,
-                    window,
-                    meta,
-                    _put,
-                    reporter,
-                )
-                advanced += advanced_inc
-            finally:
-                consumer_hung = self._shutdown_consumer(consumer, chunk_q)
+                # Batch-rule matches keep grouped hook spawns, but their file
+                # outputs now share the same segment queue and GPU consumer.
+                batch_groups, singles = self._partition_batch_work(paths)
+                if batch_groups:
+                    self._produce_batch_groups(
+                        batch_groups,
+                        _publish_result,
+                        reporter,
+                    )
 
-            self._handle_pipeline_errors(
-                consumer_hung, consumer_exc, broke, advanced, total, _run_serial
-            )
+                if singles:
+                    self._produce_code_singles(
+                        singles,
+                        publish_result=_publish_result,
+                        reporter=reporter,
+                        total=total,
+                    )
+            finally:
+                self._finish_weighted_consumer(
+                    consumer,
+                    segment_q,
+                    consumer_exc,
+                )
         finally:
             reporter.phase_end()
-        return new_ids, total, meta
+        return new_ids, total[0], meta
 
     def full_index(
         self,
@@ -1362,10 +1547,7 @@ class CodebaseIndexer:
         Raises:
             OSError: If source files cannot be read or hashed.
         """
-        from ..config import get_config
-
         start = time.time()
-        slice_size = max(1, get_config().embedding_batch_size)
         self._begin_preprocess_run()
 
         # Resolve the ignore specs and preprocess config once, then reuse them
@@ -1420,7 +1602,6 @@ class CodebaseIndexer:
         # from the same read, so ``meta`` needs no separate hash pass (P03).
         new_ids, total_chunks, meta = self._pipeline_chunk_and_embed(
             paths,
-            slice_size=slice_size,
             reporter=reporter,
         )
 
@@ -1589,38 +1770,33 @@ class CodebaseIndexer:
                 inputs=inputs,
             )
 
-        from ..config import get_config
-
         start = time.time()
-        slice_size = max(1, get_config().embedding_batch_size)
         self._begin_preprocess_run()
 
         prev_meta = self._load_meta()
 
         reporter.phase_start("scan codebase", None)
-        current_paths = self._scan_codebase(inputs)
-        current_files: dict[str, pathlib.Path] = {
-            str(p.relative_to(self.root_dir)).replace("\\", "/"): p
-            for p in current_paths
-        }
-        reporter.phase_end()
+        try:
+            current_paths = self._scan_codebase(inputs)
+            current_files: dict[str, pathlib.Path] = {
+                str(p.relative_to(self.root_dir)).replace("\\", "/"): p
+                for p in current_paths
+            }
+        finally:
+            reporter.phase_end()
 
         reporter.phase_start("hash files", len(current_files))
         current_hashes: dict[str, str] = {}
-        for rel, path in current_files.items():
-            try:
+        try:
+            for rel, path in current_files.items():
                 with open(path, "rb") as f:
                     current_hashes[rel] = hashlib.file_digest(
                         f,
                         "blake2b",
                     ).hexdigest()
-            except OSError:
-                logger.warning("Cannot hash file, skipping: %s", rel)
-            reporter.advance()
-        reporter.phase_end()
-
-        for rel in set(current_files) - set(current_hashes):
-            del current_files[rel]
+                reporter.advance()
+        finally:
+            reporter.phase_end()
 
         prev_files = set(prev_meta.keys())
         curr_files = set(current_hashes.keys())
@@ -1631,40 +1807,21 @@ class CodebaseIndexer:
         }
 
         to_index = new_files | modified_files
-        all_new_chunks: list[CodeChunk] = []
-
-        reporter.phase_start("chunk files", len(to_index))
-        if to_index:
-            paths_to_index = [current_files[f] for f in to_index]
-            all_new_chunks = self._chunk_paths(paths_to_index, reporter=reporter)
-        reporter.phase_end()
-
-        files_to_remove = modified_files | deleted_files
-        reporter.phase_start("delete removed", len(files_to_remove))
-        if files_to_remove:
-            old_chunk_ids = self._get_chunk_ids_for_files(files_to_remove)
-            if old_chunk_ids:
-                self.store.delete_code_chunks(old_chunk_ids)
-            reporter.advance(len(files_to_remove))
-        reporter.phase_end()
-
-        if all_new_chunks:
-            _stream_encode_and_upsert_codebase(
-                chunks=all_new_chunks,
-                slice_size=slice_size,
-                model=self.model,
-                store=self.store,
-                gpu_lock=self._gpu_lock,
-                reporter=reporter,
-            )
-        else:
-            reporter.phase_start("embed + upsert chunks", 0)
-            reporter.phase_end()
+        paths_to_index = [current_files[f] for f in sorted(to_index)]
+        attempted_paths = to_index | deleted_files
+        published_hashes = self._publish_incremental_paths(
+            paths=paths_to_index,
+            attempted_paths=attempted_paths,
+            reporter=reporter,
+        )
+        current_hashes.update(published_hashes)
 
         reporter.phase_start("write metadata", 1)
-        self._write_meta(current_hashes)
-        reporter.advance(1)
-        reporter.phase_end()
+        try:
+            self._write_meta(current_hashes)
+            reporter.advance(1)
+        finally:
+            reporter.phase_end()
 
         total = self.store.count_code()
         duration_ms = int((time.time() - start) * 1000)
@@ -1681,10 +1838,97 @@ class CodebaseIndexer:
             preprocess_failures=list(self._prep_skips),
         )
 
+    def _publish_incremental_paths(
+        self,
+        *,
+        paths: list[pathlib.Path],
+        attempted_paths: set[str],
+        reporter: ProgressReporter,
+    ) -> dict[str, str]:
+        """Stream changed paths before deleting their obsolete identities.
+
+        Existing identities are captured before the first bounded upsert. The
+        shared code producer returns hashes from the same reads that produced
+        the stored chunks, so the caller's final metadata publication cannot
+        describe a different file version. Any failure rolls back identities
+        introduced by this attempt and leaves metadata unpublished.
+        """
+        existing_ids: set[str] = (
+            set(self._get_chunk_ids_for_files(attempted_paths))
+            if attempted_paths
+            else set()
+        )
+
+        try:
+            published_ids, _total, published_hashes = self._pipeline_chunk_and_embed(
+                paths,
+                reporter=reporter,
+            )
+        except _UnsettledCodeConsumerError:
+            # The consumer may still complete a write after this stack unwinds.
+            # Querying and deleting concurrently would turn a bounded-shutdown
+            # failure into a destructive race. Durable run recovery owns
+            # convergence for this exceptional unsettled state.
+            raise
+        except BaseException:
+            self._discard_failed_incremental_additions(
+                attempted_paths=attempted_paths,
+                existing_ids=existing_ids,
+            )
+            raise
+
+        self._delete_obsolete_incremental_chunks(
+            existing_ids=existing_ids,
+            published_ids=published_ids,
+            files_count=len(attempted_paths),
+            reporter=reporter,
+        )
+        return published_hashes
+
+    def _discard_failed_incremental_additions(
+        self,
+        *,
+        attempted_paths: set[str],
+        existing_ids: set[str],
+    ) -> None:
+        """Best-effort rollback of identities introduced by a failed publish."""
+        if not attempted_paths:
+            return
+        try:
+            current_ids = set(self._get_chunk_ids_for_files(attempted_paths))
+            introduced_ids = sorted(current_ids - existing_ids)
+            if introduced_ids:
+                self.store.delete_code_chunks(introduced_ids)
+        except Exception:
+            # Preserve the publication exception. A later attempt snapshots
+            # every attempted path and converges; crash recovery belongs to
+            # the accepted durable run ledger.
+            logger.error(
+                "Failed to clean partial incremental code publication",
+                exc_info=True,
+            )
+
+    def _delete_obsolete_incremental_chunks(
+        self,
+        *,
+        existing_ids: set[str],
+        published_ids: set[str],
+        files_count: int,
+        reporter: ProgressReporter,
+    ) -> None:
+        """Delete snapshotted IDs that the completed publication did not retain."""
+        obsolete_ids = sorted(existing_ids - published_ids)
+        reporter.phase_start("delete removed", files_count)
+        try:
+            if obsolete_ids:
+                self.store.delete_code_chunks(obsolete_ids)
+            reporter.advance(files_count)
+        finally:
+            reporter.phase_end()
+
     def _scan_changed_paths(
         self,
         changed_paths: Iterable[pathlib.Path],
-        prev_meta: dict[str, str],
         reporter: ProgressReporter,
         inputs: _ScanInputs | None = None,
     ) -> tuple[dict[str, pathlib.Path], set[str]]:
@@ -1701,17 +1945,16 @@ class CodebaseIndexer:
         reporter.phase_start("scan changed", None)
         to_hash: dict[str, pathlib.Path] = {}
         delete_files: set[str] = set()
-        for path in changed_paths:
-            self._process_changed_path(
-                path, prev_meta, _is_excluded, to_hash, delete_files
-            )
-        reporter.phase_end()
+        try:
+            for path in changed_paths:
+                self._process_changed_path(path, _is_excluded, to_hash, delete_files)
+        finally:
+            reporter.phase_end()
         return to_hash, delete_files
 
     def _process_changed_path(
         self,
         path: pathlib.Path,
-        prev_meta: dict[str, str],
         _is_excluded: Callable[[str], bool],
         to_hash: dict[str, pathlib.Path],
         delete_files: set[str],
@@ -1733,13 +1976,11 @@ class CodebaseIndexer:
                 except OSError:
                     return
                 if too_big or _is_binary(path):
-                    if rel in prev_meta:
-                        delete_files.add(rel)
+                    delete_files.add(rel)
                     return
                 to_hash[rel] = path
                 return
-        if rel in prev_meta:
-            delete_files.add(rel)
+        delete_files.add(rel)
 
     def _hash_changed_paths(
         self,
@@ -1748,17 +1989,16 @@ class CodebaseIndexer:
     ) -> dict[str, str]:
         reporter.phase_start("hash files", len(to_hash))
         changed_hashes: dict[str, str] = {}
-        for rel, path in to_hash.items():
-            try:
+        try:
+            for rel, path in to_hash.items():
                 with open(path, "rb") as f:
                     changed_hashes[rel] = hashlib.file_digest(
                         f,
                         "blake2b",
                     ).hexdigest()
-            except OSError:
-                logger.warning("Cannot hash file, skipping: %s", rel)
-            reporter.advance()
-        reporter.phase_end()
+                reporter.advance()
+        finally:
+            reporter.phase_end()
         return changed_hashes
 
     def _scoped_incremental_locked(
@@ -1784,20 +2024,14 @@ class CodebaseIndexer:
             An ``IndexResult`` with added/updated/removed file counts and
             the post-reconcile total chunk count.
         """
-        from ..config import get_config
-
         start = time.time()
-        slice_size = max(1, get_config().embedding_batch_size)
         self._begin_preprocess_run()
         prev_meta = self._load_meta()
 
         to_hash, delete_files = self._scan_changed_paths(
-            changed_paths, prev_meta, reporter, inputs
+            changed_paths, reporter, inputs
         )
         changed_hashes = self._hash_changed_paths(to_hash, reporter)
-
-        for rel in set(to_hash) - set(changed_hashes):
-            to_hash.pop(rel, None)
 
         new_files = {r for r in changed_hashes if r not in prev_meta}
         modified_files = {
@@ -1807,46 +2041,25 @@ class CodebaseIndexer:
         }
         to_index = new_files | modified_files
 
-        all_new_chunks: list[CodeChunk] = []
-        reporter.phase_start("chunk files", len(to_index))
-        if to_index:
-            paths_to_index = [to_hash[r] for r in to_index]
-            all_new_chunks = self._chunk_paths(paths_to_index, reporter=reporter)
-        reporter.phase_end()
-
-        # Modified files have their old chunks dropped before re-upsert
-        # (chunk ids embed line ranges + content hash, so stale chunks
-        # would otherwise linger); vanished files are dropped outright.
-        files_to_remove = modified_files | delete_files
-        reporter.phase_start("delete removed", len(files_to_remove))
-        if files_to_remove:
-            old_chunk_ids = self._get_chunk_ids_for_files(files_to_remove)
-            if old_chunk_ids:
-                self.store.delete_code_chunks(old_chunk_ids)
-            reporter.advance(len(files_to_remove))
-        reporter.phase_end()
-
-        if all_new_chunks:
-            _stream_encode_and_upsert_codebase(
-                chunks=all_new_chunks,
-                slice_size=slice_size,
-                model=self.model,
-                store=self.store,
-                gpu_lock=self._gpu_lock,
-                reporter=reporter,
-            )
-        else:
-            reporter.phase_start("embed + upsert chunks", 0)
-            reporter.phase_end()
+        paths_to_index = [to_hash[r] for r in sorted(to_index)]
+        attempted_paths = to_index | delete_files
+        published_hashes = self._publish_incremental_paths(
+            paths=paths_to_index,
+            attempted_paths=attempted_paths,
+            reporter=reporter,
+        )
+        changed_hashes.update(published_hashes)
 
         new_meta = dict(prev_meta)
         new_meta.update(changed_hashes)
         for rel in delete_files:
             new_meta.pop(rel, None)
         reporter.phase_start("write metadata", 1)
-        self._write_meta(new_meta)
-        reporter.advance(1)
-        reporter.phase_end()
+        try:
+            self._write_meta(new_meta)
+            reporter.advance(1)
+        finally:
+            reporter.phase_end()
 
         total = self.store.count_code()
         duration_ms = int((time.time() - start) * 1000)
@@ -1854,7 +2067,7 @@ class CodebaseIndexer:
             total=total,
             added=len(new_files),
             updated=len(modified_files),
-            removed=len(delete_files),
+            removed=len(delete_files & set(prev_meta)),
             duration_ms=duration_ms,
             device=self.model.device,
             files=len(to_index),

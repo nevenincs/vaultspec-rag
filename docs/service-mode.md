@@ -100,13 +100,22 @@ To see recent and in-flight indexing work, run:
 uv run vaultspec-rag server jobs
 ```
 
-To read the recent service activity feed, run:
+To inspect recent service and Qdrant logs, run:
 
 ```
 uv run vaultspec-rag server logs
 ```
 
-Both commands accept `--json`.
+The command prints separate `[service]` and `[qdrant]` sections. To inspect one source, run:
+
+```
+uv run vaultspec-rag server logs --source service
+uv run vaultspec-rag server logs --source qdrant
+```
+
+If the service has stopped or crashed, run the same command. It reads retained logs from the configured status directory. Source selection, filters, limits, and JSON output work the same way.
+
+Both `server jobs` and `server logs` accept `--json`. The logs command returns source groups instead of combining the two timelines.
 
 A failed job carries a stable `error_kind` (`disk_full`, `timeout`, `unavailable`, or `other`) in `--json` and on `GET /jobs`, classified once by the service so every surface agrees; the human feed renders the matching remediation (for example "not enough disk space; free disk space and retry"). A running job whose progress has not moved for five minutes is flagged `stalled` on `/jobs`, in the `server status` current-job detail, and in the `/health` jobs rollup - "progress never moves" is a first-class signal, never something an operator has to infer. If the service process dies mid-job, the next startup restores the jobs it was running as `interrupted`, with their last progress and who started them, so killed work never silently vanishes from `server jobs`.
 
@@ -147,7 +156,7 @@ The running service exposes read-only HTTP routes on loopback for monitoring:
 
 - `GET /health` - service health. Ungated.
 - `GET /readiness` - dependency readiness. Requires the service token.
-- `GET /logs` - recent log lines. Requires the service token.
+- `GET /logs` and `GET /logs/json` - grouped service and Qdrant log lines. Require the service token.
 - `GET /jobs` - indexing activity. Requires the service token.
 - `GET /metrics` - Prometheus metrics. Requires the service token.
 

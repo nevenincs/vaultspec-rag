@@ -24,6 +24,7 @@ import hmac
 import logging
 import time
 import uuid
+from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
@@ -33,7 +34,12 @@ from starlette.routing import Route
 import vaultspec_rag.server as _m
 
 from ..concurrency import get_search_limiter
-from ..logging_config import log_event, read_service_log
+from ..logging_config import (
+    InvalidManagedLogSourceError,
+    log_event,
+    query_managed_logs,
+    render_managed_log_groups,
+)
 from ..service import RegistryFullError
 from ..store import VaultStoreLockedError
 from . import _jobs
@@ -47,12 +53,7 @@ from ._routes_jobs import (
     _parse_since_seconds,
     _prioritise_running_jobs,
 )
-from ._routes_logs import (
-    _MAX_LOG_LINES,
-    _clamp_lines,
-    _filter_log_lines,
-    _log_filters_from_request,
-)
+from ._routes_logs import _log_filters_from_request
 from ._routes_storage import (
     _clamp_survey_limit,
     _fetch_surveys,
@@ -160,11 +161,10 @@ def require_token(request: Request) -> JSONResponse | None:
 
 
 async def logs_route(request: Request) -> PlainTextResponse | JSONResponse:
-    """Token-gated read-only ``GET /logs`` returning recent log text.
+    """Token-gated read-only ``GET /logs`` returning grouped log text.
 
-    Returns the last ``?lines=N`` (default 200, clamped to 5000) lines
-    of the rotated service log as ``text/plain``, newest last - parity
-    with the ``get_logs`` MCP tool.
+    Returns bounded service, Qdrant, or all-source sections selected by
+    ``?source=``. ``all`` is grouped and never presented as a global timeline.
 
     Args:
         request: The incoming Starlette request.
@@ -176,40 +176,53 @@ async def logs_route(request: Request) -> PlainTextResponse | JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
-    lines = _clamp_lines(request.query_params.get("lines"))
+    result = await _managed_logs_for_request(request)
+    if isinstance(result, JSONResponse):
+        return result
+    groups = cast("list[Any]", result["groups"])
+    return PlainTextResponse(render_managed_log_groups(groups))
+
+
+async def _managed_logs_for_request(
+    request: Request,
+) -> dict[str, object] | JSONResponse:
+    """Read, filter, and shape one bounded managed-log request."""
+    lines = request.query_params.get("lines")
+    source = request.query_params.get("source", "all")
     filters = _log_filters_from_request(request)
-    read_limit = _MAX_LOG_LINES if filters else lines
-    # Rotated-set log reads can span megabytes; keep them off the loop.
-    body_lines = await _run_in_thread(read_service_log, read_limit)
-    if filters:
-        body_lines = _filter_log_lines(body_lines, **filters)
-        body_lines = body_lines[-lines:]
-    return PlainTextResponse("\n".join(body_lines))
+    try:
+        # Reading, filtering, and byte-bounded shaping are one service-domain
+        # operation and stay off the event loop for both live and offline parity.
+        return await _run_in_thread(
+            partial(query_managed_logs, lines, source=source, **filters)
+        )
+    except InvalidManagedLogSourceError as exc:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "invalid_log_source",
+                "message": str(exc),
+            },
+            status_code=400,
+        )
 
 
 def _search_index_state(
     *,
-    status: dict[str, Any],
+    indexed_count: int | float,
     requested_root: object,
     search_type: object,
 ) -> dict[str, object]:
-    indexed_target = str(status.get("target_dir", ""))
     requested_target = str(requested_root)
     source = "code" if search_type in ("code", "codebase") else "vault"
-    indexed_count = (
-        int(status.get("code_count", 0))
-        if source == "code"
-        else int(status.get("vault_count", 0))
-    )
+    count = int(indexed_count)
     return {
         "source": source,
-        "indexed_count": indexed_count,
-        "vault_count": int(status.get("vault_count", 0)),
-        "code_count": int(status.get("code_count", 0)),
-        "indexed_target_root": indexed_target,
+        "indexed_count": count,
+        "indexed_target_root": requested_target,
         "requested_target_root": requested_target,
-        "target_matches": indexed_target == requested_target,
-        "status": "missing" if indexed_count == 0 else "available",
+        "target_matches": True,
+        "status": "missing" if count == 0 else "available",
     }
 
 
@@ -403,8 +416,12 @@ async def search_route(request: Request) -> JSONResponse:
                 )
             search_seconds = time.perf_counter() - phase_started
             phase_started = time.perf_counter()
-            status = vaultspec_rag.get_status(root)
-            status_seconds = time.perf_counter() - phase_started
+            index_state = _search_index_state(
+                indexed_count=phase_timing["indexed_count"],
+                requested_root=root,
+                search_type=search_type,
+            )
+            index_state_seconds = time.perf_counter() - phase_started
             phase_started = time.perf_counter()
             from ._models import SearchResultItem
 
@@ -423,7 +440,7 @@ async def search_route(request: Request) -> JSONResponse:
                 # so the caller sees what the filter removed (never silent).
                 "filtered": notes.get("dropped_domains"),
                 "timing": {
-                    "status_seconds": status_seconds,
+                    "index_state_seconds": index_state_seconds,
                     "search_seconds": search_seconds,
                     "model_load_seconds": phase_timing.get("model_load_seconds"),
                     "project_lease_seconds": phase_timing.get("project_lease_seconds"),
@@ -439,11 +456,7 @@ async def search_route(request: Request) -> JSONResponse:
                     "timing_scope": "server_route",
                     "phases": phase_timing,
                 },
-                "index_state": _search_index_state(
-                    status=status,
-                    requested_root=root,
-                    search_type=search_type,
-                ),
+                "index_state": index_state,
             }
         except RegistryFullError as exc:
             return _m._registry_full_error_dict(exc)
@@ -909,15 +922,10 @@ async def logs_json_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
-    lines = _clamp_lines(request.query_params.get("lines"))
-    filters = _log_filters_from_request(request)
-    read_limit = _MAX_LOG_LINES if filters else lines
-    # Rotated-set log reads can span megabytes; keep them off the loop.
-    body = await _run_in_thread(read_service_log, read_limit)
-    if filters:
-        body = _filter_log_lines(body, **filters)
-        body = body[-lines:]
-    return JSONResponse({"lines": body, "total": len(body), "filters": filters})
+    result = await _managed_logs_for_request(request)
+    if isinstance(result, JSONResponse):
+        return result
+    return JSONResponse(result)
 
 
 async def vault_document_route(request: Request) -> JSONResponse:

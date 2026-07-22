@@ -76,7 +76,8 @@ def test_preproc_payload_persists_int_locator(store: VaultStore) -> None:
                 locator_kind="page",
                 value_int=1,
             )
-        ]
+        ],
+        write_policy=None,
     )
     payloads = _scroll_payloads(store)
     assert len(payloads) == 1
@@ -98,7 +99,8 @@ def test_preproc_payload_persists_str_locator(store: VaultStore) -> None:
                 locator_kind="sheet",
                 value_str="Summary",
             )
-        ]
+        ],
+        write_policy=None,
     )
     p = _scroll_payloads(store)[0]
     assert p["locator_kind"] == "sheet"
@@ -121,7 +123,8 @@ def test_purge_by_source_path(store: VaultStore) -> None:
                 locator_kind="page",
                 value_int=2,
             ),
-        ]
+        ],
+        write_policy=None,
     )
     assert store.count_code() == 2
     # Reconciliation drops every chunk belonging to the source by its path.
@@ -137,7 +140,7 @@ def test_range_locator_end_persists(store: VaultStore) -> None:
         value_int=10,
     )
     chunk.locator_end_int = 20
-    store.upsert_code_chunks([chunk])
+    store.upsert_code_chunks([chunk], write_policy=None)
     p = _scroll_payloads(store)[0]
     assert p["locator_value_int"] == 10
     assert p["locator_end_int"] == 20
@@ -155,7 +158,8 @@ def test_ordinary_code_chunk_has_null_preproc_fields(store: VaultStore) -> None:
                 line_end=3,
                 vector=[0.1, 0.2, 0.3, 0.4],
             )
-        ]
+        ],
+        write_policy=None,
     )
     p = _scroll_payloads(store)[0]
     assert p["source_path"] is None

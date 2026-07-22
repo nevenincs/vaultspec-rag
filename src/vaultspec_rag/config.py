@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from enum import StrEnum
 from pathlib import Path
@@ -25,8 +26,12 @@ logger = logging.getLogger(__name__)
 #: The two-state document-preprocessing mode (preprocess-sandbox-removal ADR).
 #: ``default`` runs a root's rules directly; ``off`` is the kill switch.
 PreprocessMode = Literal["default", "off"]
+IndexSupportProfile = Literal["managed-service", "embedded-local"]
 
 _VALID_PREPROCESS_MODES: frozenset[str] = frozenset({"default", "off"})
+_VALID_INDEX_SUPPORT_PROFILES: frozenset[str] = frozenset(
+    {"managed-service", "embedded-local"}
+)
 
 
 class EnvVar(StrEnum):
@@ -53,8 +58,32 @@ class EnvVar(StrEnum):
     LOG_LEVEL = "VAULTSPEC_RAG_LOG_LEVEL"
     SERVICE_IDLE_TTL_SECONDS = "VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS"
     SERVICE_MAX_PROJECTS = "VAULTSPEC_RAG_SERVICE_MAX_PROJECTS"
-    SERVICE_LOG_MAX_BYTES = "VAULTSPEC_RAG_SERVICE_LOG_MAX_BYTES"
-    SERVICE_LOG_BACKUP_COUNT = "VAULTSPEC_RAG_SERVICE_LOG_BACKUP_COUNT"
+    MANAGED_LOG_MAX_BYTES = "VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES"
+    MANAGED_LOG_BACKUP_COUNT = "VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT"
+    # Service-domain indexing job lifecycle bounds (service-job-control ADR).
+    JOB_MAX_NONTERMINAL = "VAULTSPEC_RAG_JOB_MAX_NONTERMINAL"
+    JOB_SHUTDOWN_TIMEOUT_SECONDS = "VAULTSPEC_RAG_JOB_SHUTDOWN_TIMEOUT_SECONDS"
+    # Existing operation-level storage timeout and bounded write retry.
+    STORE_OPERATION_TIMEOUT_SECONDS = "VAULTSPEC_RAG_STORE_OPERATION_TIMEOUT_SECONDS"
+    STORE_WRITE_RETRY_ATTEMPTS = "VAULTSPEC_RAG_STORE_WRITE_RETRY_ATTEMPTS"
+    STORE_WRITE_RETRY_BASE_SECONDS = "VAULTSPEC_RAG_STORE_WRITE_RETRY_BASE_SECONDS"
+    STORE_WRITE_RETRY_MAX_SECONDS = "VAULTSPEC_RAG_STORE_WRITE_RETRY_MAX_SECONDS"
+    # Resource-bounded indexing and watcher-retry policy.
+    INDEX_SEGMENT_MAX_CHUNKS = "VAULTSPEC_RAG_INDEX_SEGMENT_MAX_CHUNKS"
+    INDEX_SEGMENT_MAX_BYTES = "VAULTSPEC_RAG_INDEX_SEGMENT_MAX_BYTES"
+    INDEX_QUEUE_MAX_CHUNKS = "VAULTSPEC_RAG_INDEX_QUEUE_MAX_CHUNKS"
+    INDEX_QUEUE_MAX_BYTES = "VAULTSPEC_RAG_INDEX_QUEUE_MAX_BYTES"
+    INDEX_NO_PROGRESS_TIMEOUT_SECONDS = (
+        "VAULTSPEC_RAG_INDEX_NO_PROGRESS_TIMEOUT_SECONDS"
+    )
+    WATCH_RETRY_BASE_SECONDS = "VAULTSPEC_RAG_WATCH_RETRY_BASE_SECONDS"
+    WATCH_RETRY_MAX_SECONDS = "VAULTSPEC_RAG_WATCH_RETRY_MAX_SECONDS"
+    WATCH_RETRY_JITTER_FRACTION = "VAULTSPEC_RAG_WATCH_RETRY_JITTER_FRACTION"
+    WATCH_CIRCUIT_FAILURE_THRESHOLD = "VAULTSPEC_RAG_WATCH_CIRCUIT_FAILURE_THRESHOLD"
+    INDEX_RSS_CEILING_MB = "VAULTSPEC_RAG_INDEX_RSS_CEILING_MB"
+    INDEX_CUDA_CEILING_MB = "VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB"
+    INDEX_CUDA_ALLOCATOR_FRACTION = "VAULTSPEC_RAG_INDEX_CUDA_ALLOCATOR_FRACTION"
+    INDEX_SUPPORT_PROFILE = "VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE"
     # Wall-clock + memory tuning knobs introduced in #68 Track B.
     EMBEDDING_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_BATCH_SIZE"
     EMBEDDING_ENCODE_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE"
@@ -170,8 +199,27 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "log_level": EnvVar.LOG_LEVEL,
     "service_idle_ttl_seconds": EnvVar.SERVICE_IDLE_TTL_SECONDS,
     "service_max_projects": EnvVar.SERVICE_MAX_PROJECTS,
-    "service_log_max_bytes": EnvVar.SERVICE_LOG_MAX_BYTES,
-    "service_log_backup_count": EnvVar.SERVICE_LOG_BACKUP_COUNT,
+    "managed_log_max_bytes": EnvVar.MANAGED_LOG_MAX_BYTES,
+    "managed_log_backup_count": EnvVar.MANAGED_LOG_BACKUP_COUNT,
+    "job_max_nonterminal": EnvVar.JOB_MAX_NONTERMINAL,
+    "job_shutdown_timeout_seconds": EnvVar.JOB_SHUTDOWN_TIMEOUT_SECONDS,
+    "store_operation_timeout_seconds": EnvVar.STORE_OPERATION_TIMEOUT_SECONDS,
+    "store_write_retry_attempts": EnvVar.STORE_WRITE_RETRY_ATTEMPTS,
+    "store_write_retry_base_seconds": EnvVar.STORE_WRITE_RETRY_BASE_SECONDS,
+    "store_write_retry_max_seconds": EnvVar.STORE_WRITE_RETRY_MAX_SECONDS,
+    "index_segment_max_chunks": EnvVar.INDEX_SEGMENT_MAX_CHUNKS,
+    "index_segment_max_bytes": EnvVar.INDEX_SEGMENT_MAX_BYTES,
+    "index_queue_max_chunks": EnvVar.INDEX_QUEUE_MAX_CHUNKS,
+    "index_queue_max_bytes": EnvVar.INDEX_QUEUE_MAX_BYTES,
+    "index_no_progress_timeout_seconds": EnvVar.INDEX_NO_PROGRESS_TIMEOUT_SECONDS,
+    "watch_retry_base_seconds": EnvVar.WATCH_RETRY_BASE_SECONDS,
+    "watch_retry_max_seconds": EnvVar.WATCH_RETRY_MAX_SECONDS,
+    "watch_retry_jitter_fraction": EnvVar.WATCH_RETRY_JITTER_FRACTION,
+    "watch_circuit_failure_threshold": EnvVar.WATCH_CIRCUIT_FAILURE_THRESHOLD,
+    "index_rss_ceiling_mb": EnvVar.INDEX_RSS_CEILING_MB,
+    "index_cuda_ceiling_mb": EnvVar.INDEX_CUDA_CEILING_MB,
+    "index_cuda_allocator_fraction": EnvVar.INDEX_CUDA_ALLOCATOR_FRACTION,
+    "index_support_profile": EnvVar.INDEX_SUPPORT_PROFILE,
     # Performance tuning knobs (#68 audit F9.1) - surface them via
     # env vars too so deploy-time tuning does not require CLI flags
     # or config file edits.
@@ -522,8 +570,53 @@ class VaultSpecConfigWrapper:
         "log_level": "WARNING",
         "service_idle_ttl_seconds": 1800,
         "service_max_projects": 16,
-        "service_log_max_bytes": 10485760,
-        "service_log_backup_count": 5,
+        # Per-source retention policy for every operational log managed by the
+        # resident service. Service and Qdrant each receive this full budget;
+        # the values are not divided across sources.
+        "managed_log_max_bytes": 10485760,
+        "managed_log_backup_count": 5,
+        # Nonterminal records are exact-addressable and therefore cannot be
+        # evicted. Refuse excess admission at this bound instead of growing an
+        # unbounded active registry or silently losing controllable work.
+        "job_max_nonterminal": 64,
+        # Maximum time for service shutdown to wait for cooperative indexing
+        # unwind. This accommodates the code indexer's existing bounded
+        # producer/consumer drain while ensuring the daemon never waits
+        # indefinitely for acknowledgement.
+        "job_shutdown_timeout_seconds": 300.0,
+        # Preserve the current operation-level store behavior as explicit
+        # policy. Later run-policy integration clamps each attempt and sleep
+        # to the remaining durable no-progress budget.
+        "store_operation_timeout_seconds": 120.0,
+        "store_write_retry_attempts": 5,
+        "store_write_retry_base_seconds": 0.5,
+        "store_write_retry_max_seconds": 8.0,
+        # Resource-bounded indexing. A durable unit is one file segment; the
+        # weighted queue must admit at least one segment. Byte bounds include
+        # text, vector, sparse, payload, and Python-container estimates.
+        "index_segment_max_chunks": 64,
+        "index_segment_max_bytes": 8 * 1024 * 1024,
+        "index_queue_max_chunks": 512,
+        "index_queue_max_bytes": 128 * 1024 * 1024,
+        # Liveness is time since storage-confirmed durable progress, never a
+        # total run deadline. Fifteen minutes contains a failed write ladder
+        # while allowing healthy long-running indexes to continue indefinitely.
+        "index_no_progress_timeout_seconds": 900.0,
+        # Persistent watcher retry/circuit policy. Jitter is a symmetric
+        # fraction applied to the bounded exponential delay.
+        "watch_retry_base_seconds": 30.0,
+        "watch_retry_max_seconds": 1800.0,
+        "watch_retry_jitter_fraction": 0.1,
+        "watch_circuit_failure_threshold": 3,
+        # Absolute admitted process ceilings. The per-run budget may freeze a
+        # lower ceiling relative to its starting baseline. The allocator cap
+        # preserves device headroom for concurrent search before model load.
+        "index_rss_ceiling_mb": 16384.0,
+        "index_cuda_ceiling_mb": 12288.0,
+        "index_cuda_allocator_fraction": 0.8,
+        # Named profile definitions and corpus dimensions live in
+        # ``index_profiles``; this selects the service default.
+        "index_support_profile": "managed-service",
         # Filesystem-watcher / auto-reindex knobs (#143/#144). The
         # resident service auto-reindexes on file change; ``watch_enabled``
         # is the sole opt-out (``False`` => pull-only service). The
@@ -661,6 +754,298 @@ class VaultSpecConfigWrapper:
             None.
         """
         self._base = base
+
+    @property
+    def managed_log_max_bytes(self) -> int:
+        """Return the positive per-source rollover threshold in bytes.
+
+        A zero or negative threshold would make every managed source
+        unbounded, contradicting the managed-log retention contract.
+
+        Raises:
+            ValueError: If the configured value is not a positive integer.
+        """
+        value: object = self._resolve_rag_default("managed_log_max_bytes")
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            msg = f"managed_log_max_bytes must be a positive integer, got {value!r}"
+            raise ValueError(msg)
+        return value
+
+    @property
+    def managed_log_backup_count(self) -> int:
+        """Return the non-negative retained-backup count per source.
+
+        Zero remains useful as a bounded no-history mode: the active file is
+        truncated at each threshold instead of keeping numbered generations.
+
+        Raises:
+            ValueError: If the configured value is not a non-negative integer.
+        """
+        value: object = self._resolve_rag_default("managed_log_backup_count")
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            msg = (
+                "managed_log_backup_count must be a non-negative integer, "
+                f"got {value!r}"
+            )
+            raise ValueError(msg)
+        return value
+
+    @property
+    def job_max_nonterminal(self) -> int:
+        """Return the positive bound on retained nonterminal jobs.
+
+        Raises:
+            ValueError: If the configured value is not a positive integer.
+        """
+        value: object = self._resolve_rag_default("job_max_nonterminal")
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            msg = f"job_max_nonterminal must be a positive integer, got {value!r}"
+            raise ValueError(msg)
+        return value
+
+    @property
+    def job_shutdown_timeout_seconds(self) -> float:
+        """Return the finite positive cooperative job-shutdown window.
+
+        Raises:
+            ValueError: If the configured value is not a finite positive number.
+        """
+        value: object = self._resolve_rag_default("job_shutdown_timeout_seconds")
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+        ):
+            msg = (
+                "job_shutdown_timeout_seconds must be a finite positive number, "
+                f"got {value!r}"
+            )
+            raise ValueError(msg)
+        return float(value)
+
+    @staticmethod
+    def _positive_int(name: str, value: object) -> int:
+        """Return a positive integer config value."""
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            msg = f"{name} must be a positive integer, got {value!r}"
+            raise ValueError(msg)
+        return value
+
+    @staticmethod
+    def _finite_positive(name: str, value: object) -> float:
+        """Return a finite positive numeric config value."""
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+        ):
+            msg = f"{name} must be a finite positive number, got {value!r}"
+            raise ValueError(msg)
+        return float(value)
+
+    @property
+    def store_operation_timeout_seconds(self) -> float:
+        """Return the finite positive timeout for one store operation."""
+        return self._finite_positive(
+            "store_operation_timeout_seconds",
+            self._resolve_rag_default("store_operation_timeout_seconds"),
+        )
+
+    @property
+    def store_write_retry_attempts(self) -> int:
+        """Return the positive maximum attempt count for one store write."""
+        return self._positive_int(
+            "store_write_retry_attempts",
+            self._resolve_rag_default("store_write_retry_attempts"),
+        )
+
+    def _store_write_retry_bounds(self) -> tuple[float, float]:
+        base = self._finite_positive(
+            "store_write_retry_base_seconds",
+            self._resolve_rag_default("store_write_retry_base_seconds"),
+        )
+        maximum = self._finite_positive(
+            "store_write_retry_max_seconds",
+            self._resolve_rag_default("store_write_retry_max_seconds"),
+        )
+        if maximum < base:
+            msg = (
+                "store_write_retry_max_seconds must be greater than or equal to "
+                f"store_write_retry_base_seconds, got maximum={maximum}, base={base}"
+            )
+            raise ValueError(msg)
+        return base, maximum
+
+    @property
+    def store_write_retry_base_seconds(self) -> float:
+        """Return the finite positive initial store-write retry delay."""
+        return self._store_write_retry_bounds()[0]
+
+    @property
+    def store_write_retry_max_seconds(self) -> float:
+        """Return the finite positive maximum store-write retry delay."""
+        return self._store_write_retry_bounds()[1]
+
+    def _index_chunk_bounds(self) -> tuple[int, int]:
+        segment = self._positive_int(
+            "index_segment_max_chunks",
+            self._resolve_rag_default("index_segment_max_chunks"),
+        )
+        queue = self._positive_int(
+            "index_queue_max_chunks",
+            self._resolve_rag_default("index_queue_max_chunks"),
+        )
+        if queue < segment:
+            msg = (
+                "index_queue_max_chunks must be greater than or equal to "
+                f"index_segment_max_chunks, got queue={queue}, segment={segment}"
+            )
+            raise ValueError(msg)
+        return segment, queue
+
+    def _index_byte_bounds(self) -> tuple[int, int]:
+        segment = self._positive_int(
+            "index_segment_max_bytes",
+            self._resolve_rag_default("index_segment_max_bytes"),
+        )
+        queue = self._positive_int(
+            "index_queue_max_bytes",
+            self._resolve_rag_default("index_queue_max_bytes"),
+        )
+        if queue < segment:
+            msg = (
+                "index_queue_max_bytes must be greater than or equal to "
+                f"index_segment_max_bytes, got queue={queue}, segment={segment}"
+            )
+            raise ValueError(msg)
+        return segment, queue
+
+    @property
+    def index_segment_max_chunks(self) -> int:
+        """Return the positive chunk bound for one durable file segment."""
+        return self._index_chunk_bounds()[0]
+
+    @property
+    def index_queue_max_chunks(self) -> int:
+        """Return the queue chunk budget, never smaller than one segment."""
+        return self._index_chunk_bounds()[1]
+
+    @property
+    def index_segment_max_bytes(self) -> int:
+        """Return the positive byte bound for one durable file segment."""
+        return self._index_byte_bounds()[0]
+
+    @property
+    def index_queue_max_bytes(self) -> int:
+        """Return the queue byte budget, never smaller than one segment."""
+        return self._index_byte_bounds()[1]
+
+    @property
+    def index_no_progress_timeout_seconds(self) -> float:
+        """Return the finite positive durable no-progress deadline."""
+        return self._finite_positive(
+            "index_no_progress_timeout_seconds",
+            self._resolve_rag_default("index_no_progress_timeout_seconds"),
+        )
+
+    def _watch_retry_bounds(self) -> tuple[float, float]:
+        base = self._finite_positive(
+            "watch_retry_base_seconds",
+            self._resolve_rag_default("watch_retry_base_seconds"),
+        )
+        maximum = self._finite_positive(
+            "watch_retry_max_seconds",
+            self._resolve_rag_default("watch_retry_max_seconds"),
+        )
+        if maximum < base:
+            msg = (
+                "watch_retry_max_seconds must be greater than or equal to "
+                f"watch_retry_base_seconds, got maximum={maximum}, base={base}"
+            )
+            raise ValueError(msg)
+        return base, maximum
+
+    @property
+    def watch_retry_base_seconds(self) -> float:
+        """Return the finite positive initial watcher retry delay."""
+        return self._watch_retry_bounds()[0]
+
+    @property
+    def watch_retry_max_seconds(self) -> float:
+        """Return the finite positive maximum watcher retry delay."""
+        return self._watch_retry_bounds()[1]
+
+    @property
+    def watch_retry_jitter_fraction(self) -> float:
+        """Return the finite watcher jitter fraction in the closed unit interval."""
+        value: object = self._resolve_rag_default("watch_retry_jitter_fraction")
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not 0.0 <= value <= 1.0
+        ):
+            msg = (
+                "watch_retry_jitter_fraction must be a finite number between "
+                f"0 and 1, got {value!r}"
+            )
+            raise ValueError(msg)
+        return float(value)
+
+    @property
+    def watch_circuit_failure_threshold(self) -> int:
+        """Return failures admitted before the watcher circuit opens."""
+        return self._positive_int(
+            "watch_circuit_failure_threshold",
+            self._resolve_rag_default("watch_circuit_failure_threshold"),
+        )
+
+    @property
+    def index_rss_ceiling_mb(self) -> float:
+        """Return the finite positive absolute process RSS ceiling in MiB."""
+        return self._finite_positive(
+            "index_rss_ceiling_mb",
+            self._resolve_rag_default("index_rss_ceiling_mb"),
+        )
+
+    @property
+    def index_cuda_ceiling_mb(self) -> float:
+        """Return the finite positive CUDA allocated/reserved ceiling in MiB."""
+        return self._finite_positive(
+            "index_cuda_ceiling_mb",
+            self._resolve_rag_default("index_cuda_ceiling_mb"),
+        )
+
+    @property
+    def index_cuda_allocator_fraction(self) -> float:
+        """Return the process-wide CUDA allocator fraction in ``(0, 1]``."""
+        value = self._finite_positive(
+            "index_cuda_allocator_fraction",
+            self._resolve_rag_default("index_cuda_allocator_fraction"),
+        )
+        if value > 1.0:
+            msg = (
+                "index_cuda_allocator_fraction must be less than or equal to 1, "
+                f"got {value!r}"
+            )
+            raise ValueError(msg)
+        return value
+
+    @property
+    def index_support_profile(self) -> IndexSupportProfile:
+        """Return the selected named indexing support profile."""
+        value: object = self._resolve_rag_default("index_support_profile")
+        if not isinstance(value, str):
+            msg = f"index_support_profile must be a string, got {value!r}"
+            raise ValueError(msg)
+        normalized = value.strip().lower()
+        if normalized not in _VALID_INDEX_SUPPORT_PROFILES:
+            allowed = ", ".join(sorted(_VALID_INDEX_SUPPORT_PROFILES))
+            msg = f"index_support_profile must be one of {allowed}, got {value!r}"
+            raise ValueError(msg)
+        return cast("IndexSupportProfile", normalized)
 
     def _resolve_rag_default(self, name: str) -> Any:
         # 1. CLI override via base config

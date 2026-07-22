@@ -50,7 +50,7 @@ class FileChunkResult:
     """One file's chunks plus its content hash, returned from a worker.
 
     Carrying the blake2b hash back from the same read that produced the chunks
-    lets the full-index path skip the separate hash pass - the tree is read
+    lets the shared code producer skip a separate hash pass - the tree is read
     once, not twice (#155 P03 / finding C4). ``slots=True`` keeps the pickled
     payload that crosses the process boundary lean (research O3).
 
@@ -269,7 +269,7 @@ def _chunk_decoded(
 class ScopedChunkResult:
     """A scoped-path file's chunks plus its preprocess disposition.
 
-    The scoped/incremental path hashes separately, so (unlike the full-index
+    The scoped path hashes separately, so (unlike the shared weighted
     ``FileChunkResult``) this carries no content hash - only the chunks and the
     preprocess status/reason, so the orchestrator can surface skip counts on the
     incremental and watcher paths too (#185 D11, review VIS-001).
@@ -310,7 +310,7 @@ def chunk_file_with_status(
         raw = path.read_bytes()
     except OSError as e:
         logger.warning("Cannot read %s: %s", path, e)
-        return ScopedChunkResult([])
+        raise
     if prep is not None:
         content_hash = hashlib.blake2b(raw).hexdigest()
         outcome = preprocess_file(content_hash, path, root_dir, prep)
@@ -343,28 +343,30 @@ def chunk_and_hash_file(
     path: pathlib.Path,
     root_dir: pathlib.Path,
     prep: PreprocessContext | None = None,
-) -> FileChunkResult | None:
+) -> FileChunkResult:
     """Read a file once, returning both its content hash and its chunks.
 
-    The full-index path uses this so the tree is read a single time rather than
-    once for hashing and again for chunking (#155 P03). The blake2b hash is
-    computed over the raw bytes, matching ``hashlib.file_digest`` exactly, so
-    incremental-index change detection is unaffected. A file that is readable
-    but not valid UTF-8 still yields its hash (with no chunks) so it remains
-    tracked in the index metadata.
+    Code indexing uses this so a production pass reads each selected file once
+    rather than once for hashing and again for chunking (#155 P03). The blake2b
+    hash is computed over the raw bytes, matching ``hashlib.file_digest`` exactly.
+    A file that is readable but not valid UTF-8 still yields its hash (with no
+    chunks) so it remains tracked in metadata.
 
     Args:
         path: Absolute path to the source file.
         root_dir: Project root used to compute the relative path.
 
     Returns:
-        A :class:`FileChunkResult`, or ``None`` when the file cannot be read.
+        A :class:`FileChunkResult` for every successfully read file.
+
+    Raises:
+        OSError: If the source file cannot be read.
     """
     try:
         raw = path.read_bytes()
     except OSError as e:
         logger.warning("Cannot read %s: %s", path, e)
-        return None
+        raise
     content_hash = hashlib.blake2b(raw).hexdigest()
     rel_path = str(path.relative_to(root_dir)).replace("\\", "/")
     if prep is not None:
@@ -397,20 +399,14 @@ def _raw_file_result(
 ) -> FileChunkResult:
     """Chunk already-read raw bytes into a hash-carrying :class:`FileChunkResult`.
 
-    The hash is already computed, so a decode or chunk failure still returns a
-    result (with no chunks) rather than raising: that keeps the file present in
-    the index metadata, matching the pre-rework behaviour where hashing was an
-    independent pass. Dropping it would make every later incremental run
-    re-chunk the file.
+    An unsupported source encoding remains a valid zero-chunk result. Ordinary
+    chunking failures propagate so callers cannot publish a hash for vectors
+    that were never produced.
     """
     content = _decode_source(raw, path)
     if content is None:
         return FileChunkResult(rel_path, content_hash, [])
-    try:
-        chunks = _chunk_decoded(content, path, root_dir, _resolve_html_strip())
-    except Exception:
-        logger.warning("Chunking failed for %s; indexing hash only", rel_path)
-        return FileChunkResult(rel_path, content_hash, [])
+    chunks = _chunk_decoded(content, path, root_dir, _resolve_html_strip())
     return FileChunkResult(rel_path, content_hash, chunks)
 
 
@@ -452,7 +448,7 @@ def chunk_batch_files(
             raw = path.read_bytes()
         except OSError as e:
             logger.warning("Cannot read %s: %s", path, e)
-            continue
+            raise
         content_hash = hashlib.blake2b(raw).hexdigest()
         rel_path = str(path.relative_to(root_dir)).replace("\\", "/")
         cached = read_cached_output(prep.cache_root, content_hash, cache_token)
@@ -534,9 +530,13 @@ def _passthrough_batch_member(
         raw = member.path.read_bytes()
     except OSError as e:
         logger.warning("Cannot read %s: %s", member.path, e)
-        return FileChunkResult(member.rel_path, member.content_hash, [])
+        raise
     return _raw_file_result(
-        member.path, root_dir, member.rel_path, member.content_hash, raw
+        member.path,
+        root_dir,
+        member.rel_path,
+        hashlib.blake2b(raw).hexdigest(),
+        raw,
     )
 
 
@@ -604,22 +604,21 @@ def chunk_with_splitter(
 
     chunks: list[CodeChunk] = []
     search_offset = 0
+    line_cursor_offset = 0
+    line_cursor = 1
     for text in text_chunks:
         idx = content.find(text, search_offset)
         if idx != -1:
-            line_start = content.count("\n", 0, idx) + 1
+            chunk_offset = idx
             search_offset = idx + len(text)
         else:
-            # Chunk not found verbatim - happens when TextSplitter overlap
-            # is > 0 and prepended tail text shifts the chunk boundary.
-            logger.debug(
-                "Chunk not found verbatim in %s at offset %d; "
-                "line_start is approximate (chunk_overlap > 0?)",
-                rel_path,
-                search_offset,
+            raise RuntimeError(
+                "zero-overlap TextSplitter returned a chunk absent from "
+                f"{rel_path} at or after offset {search_offset}"
             )
-            line_start = content.count("\n", 0, search_offset) + 1
-            search_offset += len(text)
+        line_cursor += content.count("\n", line_cursor_offset, chunk_offset)
+        line_cursor_offset = chunk_offset
+        line_start = line_cursor
         line_end = line_start + text.count("\n")
 
         chunk_hash = hashlib.blake2b(

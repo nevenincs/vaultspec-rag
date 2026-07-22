@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import errno
 import logging
+import math
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -32,6 +34,7 @@ __all__ = [
     "BYTES_PER_POINT_ESTIMATE",
     "DISK_FLOOR_BYTES",
     "InsufficientDiskSpaceError",
+    "StoreWritePolicy",
     "classify_write_error",
     "ensure_disk_headroom",
     "run_write_with_retry",
@@ -45,10 +48,6 @@ _UNRECOVERABLE_MARKERS = (
     "no space left on device",
     "wal buffer size exceeds",
 )
-
-_WRITE_ATTEMPTS = 5
-_BASE_DELAY_S = 0.5
-_MAX_DELAY_S = 8.0
 
 #: Conservative per-point on-disk budget for the bulk-index estimate: a
 #: 1024-dim float32 dense vector (4 KiB) plus the sparse vector, payload,
@@ -64,6 +63,20 @@ DISK_FLOOR_BYTES = 1 * 1024 * 1024 * 1024
 
 class InsufficientDiskSpaceError(RuntimeError):
     """The store volume lacks headroom for the requested write or index."""
+
+
+@dataclass(frozen=True, slots=True)
+class StoreWritePolicy:
+    """Limited capabilities supplied by the indexing run policy.
+
+    The caller-owned indexing run policy owns the clock, durable-progress
+    resets, and interruptible waiting. This value binds only the two
+    capabilities the store may consume, keeping retry code independent of
+    indexer lifecycle state and preventing it from advancing the clock.
+    """
+
+    remaining_seconds: Callable[[], float]
+    wait: Callable[[float], None]
 
 
 def classify_write_error(err: BaseException) -> Literal["unrecoverable", "transient"]:
@@ -88,32 +101,62 @@ def classify_write_error(err: BaseException) -> Literal["unrecoverable", "transi
 
 
 def run_write_with_retry[T](
-    op: Callable[[], T],
+    op: Callable[[int], T],
     *,
     description: str,
-    attempts: int = _WRITE_ATTEMPTS,
-    sleep: Callable[[float], None] = time.sleep,
+    policy: StoreWritePolicy | None,
 ) -> T:
-    """Run a store write under a bounded retry with exponential backoff.
+    """Run a store write under configured retry and a caller-owned budget.
 
     An unrecoverable failure (storage exhaustion) raises immediately - a
     full disk does not drain, and every retried batch only burns more GPU
-    time upstream. A transient failure is retried up to ``attempts`` times
-    with capped exponential backoff, then raised, so a dead server can
-    never wedge a job silently. The original exception always propagates
-    unchanged, preserving the server's error text for the job record and
-    the CLI's friendly disk-full mapping.
+    time upstream. A transient failure consumes the configured attempt and
+    capped exponential-backoff policy. ``policy`` is supplied by the
+    run-policy layer: this store-domain helper neither starts nor resets the
+    durable no-progress clock. It checks that budget before admitting every
+    attempt and clamps every policy wait to the reported remainder. Direct
+    callers outside a managed index run explicitly pass ``None``.
+
+    The original operation exception propagates unchanged when storage is
+    unrecoverable or the configured attempt count is exhausted. Exhausting
+    the caller's durable no-progress budget instead raises the shared typed
+    ``no_progress_timeout`` outcome.
+
+    Args:
+        op: One synchronous storage mutation attempt. The argument is the
+            positive whole-second timeout admitted for that attempt.
+        description: Bounded operator context for diagnostics.
+        policy: Caller-owned durable no-progress policy, or ``None`` for a
+            direct store call outside a managed indexing run.
     """
-    delay = _BASE_DELAY_S
+    from .config import get_config
+
+    cfg = get_config()
+    attempts = cfg.store_write_retry_attempts
+    operation_timeout = cfg.store_operation_timeout_seconds
+    delay = cfg.store_write_retry_base_seconds
+    max_delay = cfg.store_write_retry_max_seconds
+
     for attempt in range(1, attempts + 1):
+        remaining = _remaining_or_raise(policy, description=description)
+        attempt_timeout = _attempt_timeout_seconds(
+            operation_timeout,
+            remaining,
+            description=description,
+        )
         try:
-            return op()
+            return op(attempt_timeout)
         except Exception as exc:
             if classify_write_error(exc) == "unrecoverable":
                 logger.error(
                     "unrecoverable store write failure in %s: %s", description, exc
                 )
                 raise
+
+            remaining = _remaining_or_raise(
+                policy,
+                description=description,
+            )
             if attempt == attempts:
                 logger.error(
                     "store write %s failed after %d attempts: %s",
@@ -122,19 +165,73 @@ def run_write_with_retry[T](
                     exc,
                 )
                 raise
+            wait_seconds = delay if remaining is None else min(delay, remaining)
             logger.warning(
                 "transient store write failure in %s (attempt %d/%d), "
                 "retrying in %.1fs: %s",
                 description,
                 attempt,
                 attempts,
-                delay,
+                wait_seconds,
                 exc,
             )
-            sleep(delay)
-            delay = min(delay * 2.0, _MAX_DELAY_S)
+            if policy is None:
+                time.sleep(wait_seconds)
+            else:
+                policy.wait(wait_seconds)
+            delay = min(delay * 2.0, max_delay)
     msg = "unreachable: retry loop must return or raise"  # pragma: no cover
     raise AssertionError(msg)  # pragma: no cover
+
+
+def _attempt_timeout_seconds(
+    configured_timeout: float,
+    remaining: float | None,
+    *,
+    description: str,
+) -> int:
+    """Return a whole-second attempt timeout that cannot exceed the budget."""
+    if remaining is None:
+        return math.ceil(configured_timeout)
+
+    timeout = math.floor(min(configured_timeout, remaining))
+    if timeout >= 1:
+        return timeout
+
+    from ._job_errors import JobError, JobErrorKind
+
+    raise JobError(
+        JobErrorKind.NO_PROGRESS_TIMEOUT,
+        "store write has less than one whole second of durable no-progress "
+        f"budget remaining: {description}",
+    )
+
+
+def _remaining_or_raise(
+    policy: StoreWritePolicy | None,
+    *,
+    description: str,
+) -> float | None:
+    """Return a finite remaining budget or raise its typed expiry outcome."""
+    if policy is None:
+        return None
+
+    remaining = policy.remaining_seconds()
+    if isinstance(remaining, bool) or not math.isfinite(remaining):
+        msg = (
+            "remaining durable no-progress budget must be a finite number, "
+            f"got {remaining!r}"
+        )
+        raise ValueError(msg)
+    if remaining > 0.0:
+        return remaining
+
+    from ._job_errors import JobError, JobErrorKind
+
+    raise JobError(
+        JobErrorKind.NO_PROGRESS_TIMEOUT,
+        f"store write made no durable progress before its deadline: {description}",
+    )
 
 
 def _free_bytes(storage_path: pathlib.Path) -> int | None:

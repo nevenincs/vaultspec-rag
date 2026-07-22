@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ... import server
-from ...config import EnvVar, reset_config
+from ...config import EnvVar, get_config, reset_config
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -102,3 +102,32 @@ async def test_watch_enabled_propagates_debounce_and_cooldown(
     finally:
         for var, prev in saved:
             _restore_env(var, prev)
+
+
+async def test_failed_watcher_task_is_removed_from_running_registry(
+    tmp_path: Path,
+    embedding_model: EmbeddingModel,
+    caplog: pytest.LogCaptureFixture,
+    _clean_watchers: None,
+) -> None:
+    root = _make_root(tmp_path)
+    server._registry._model = embedding_model
+    previous = _set_env(EnvVar.WATCH_ENABLED, "1")
+    try:
+        reset_config()
+        corrupt = root / get_config().data_dir / "watcher-retry" / "vault.json"
+        corrupt.parent.mkdir(parents=True, exist_ok=True)
+        corrupt.write_text("{not-json", encoding="utf-8")
+
+        with caplog.at_level(logging.INFO, logger="vaultspec_rag.server"):
+            assert server._ensure_watcher(root)
+            for _ in range(20):
+                await asyncio.sleep(0.05)
+                if root.resolve() not in server._watcher_tasks:
+                    break
+
+        assert root.resolve() not in server._watcher_tasks
+        assert root.resolve() not in server._watcher_stops
+        assert "service.watcher event=task_exited" in caplog.text
+    finally:
+        _restore_env(EnvVar.WATCH_ENABLED, previous)

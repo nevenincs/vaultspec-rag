@@ -10,6 +10,7 @@ ignore handling lives apart from the GPU chunk/embed pipeline; the
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -32,7 +33,7 @@ def collect_gitignore_patterns(root_dir: pathlib.Path) -> list[str]:
     from ..config import get_config
 
     cfg = get_config()
-    patterns: list[str] = [
+    fixed_patterns: list[str] = [
         # Always exclude these directories.
         ".venv/",
         ".git/",
@@ -45,15 +46,36 @@ def collect_gitignore_patterns(root_dir: pathlib.Path) -> list[str]:
         ".claude/worktrees/",
         f"{cfg.data_dir}/",
     ]
-    for gitignore in root_dir.rglob(".gitignore"):
+    patterns: list[str] = []
+    import pathspec
+
+    fixed_spec = pathspec.GitIgnoreSpec.from_lines(fixed_patterns)
+    root_str = str(root_dir)
+    for dirpath, dirs, files in os.walk(root_dir, topdown=True, followlinks=False):
+        rel_dir = os.path.relpath(dirpath, root_str).replace("\\", "/")
+        dirs.sort()
+        dirs[:] = [
+            dirname
+            for dirname in dirs
+            if not fixed_spec.match_file(
+                f"{dirname}/" if rel_dir == "." else f"{rel_dir}/{dirname}/"
+            )
+        ]
+        if ".gitignore" not in files:
+            continue
+        gitignore = root_dir / (
+            ".gitignore" if rel_dir == "." else f"{rel_dir}/.gitignore"
+        )
         try:
             lines = gitignore.read_text(encoding="utf-8").splitlines()
         except OSError as exc:
             logger.debug("gitignore %s unreadable; skipping: %s", gitignore, exc)
             continue
-        rel_dir = gitignore.parent.relative_to(root_dir)
-        process_gitignore_lines(lines, rel_dir, patterns)
-    return patterns
+        process_gitignore_lines(lines, gitignore.parent.relative_to(root_dir), patterns)
+    # Project-authored negations must not reopen directories declared above as
+    # always excluded. Keeping the fixed rules last makes that invariant true
+    # both for this pruned discovery walk and the final production scan spec.
+    return [*patterns, *fixed_patterns]
 
 
 def process_gitignore_lines(

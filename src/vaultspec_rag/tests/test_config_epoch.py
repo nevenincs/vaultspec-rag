@@ -346,7 +346,7 @@ class TestScopedEpochCost:
         # The scoped scan, handed the resolved inputs, adds no second walk.
         indexer._begin_preprocess_run()
         to_hash, _delete = indexer._scan_changed_paths(
-            [tmp_path / "a.py"], {}, NullProgressReporter(), inputs
+            [tmp_path / "a.py"], NullProgressReporter(), inputs
         )
         assert walks["n"] == 1
         assert "a.py" in to_hash
@@ -366,7 +366,5 @@ class TestScopedEpochCost:
 
         monkeypatch.setattr(indexer, "_collect_gitignore_patterns", _spy)
         indexer._begin_preprocess_run()
-        indexer._scan_changed_paths(
-            [tmp_path / "a.py"], {}, NullProgressReporter(), None
-        )
+        indexer._scan_changed_paths([tmp_path / "a.py"], NullProgressReporter(), None)
         assert walks["n"] == 1

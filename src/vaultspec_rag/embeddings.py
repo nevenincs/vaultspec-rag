@@ -21,6 +21,7 @@ from .config import EnvVar
 if TYPE_CHECKING:
     import numpy as np
     from sentence_transformers import SentenceTransformer
+    from torch import Tensor
 
 logger = logging.getLogger(__name__)
 
@@ -246,6 +247,7 @@ class EmbeddingModel:
         DEFAULT_BATCH_SIZE: Default encoding batch size.
         MAX_EMBED_CHARS: Maximum characters per document to embed.
         dimension: Actual embedding dimension.
+        sparse_dimension: Actual sparse-model output dimension.
     """
 
     MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
@@ -457,10 +459,25 @@ class EmbeddingModel:
         # it to 2048 causes a position-embedding shape mismatch at
         # forward time. The sparse path already truncates internally.
         sparse_max = int(getattr(self._sparse_model, "max_seq_length", 512))
+        sparse_dimension = self._sparse_model.get_embedding_dimension()
+        if sparse_dimension is None:
+            sparse_config = self._sparse_model.config
+            sparse_dimension = getattr(sparse_config, "vocab_size", None)
+        if (
+            not isinstance(sparse_dimension, int)
+            or isinstance(sparse_dimension, bool)
+            or sparse_dimension <= 0
+        ):
+            raise RuntimeError(
+                "Sparse model did not expose a positive output dimension required "
+                "for bounded indexing"
+            )
+        self.sparse_dimension = sparse_dimension
         logger.info(
-            "Sparse model loaded in %.2fs (max_seq_length=%d, native cap)",
+            "Sparse model loaded in %.2fs (max_seq_length=%d, dimension=%d)",
             time.perf_counter() - t0,
             sparse_max,
+            self.sparse_dimension,
         )
 
         self._device = "cuda"
@@ -473,11 +490,13 @@ class EmbeddingModel:
 
         gpu_name = torch.cuda.get_device_name(0)
         logger.info(
-            "Embedding models loaded on %s (dense=%s, sparse=%s, dim=%d)",
+            "Embedding models loaded on %s (dense=%s, sparse=%s, dense_dim=%d, "
+            "sparse_dim=%d)",
             gpu_name,
             dense_name,
             sparse_name,
             self.dimension,
+            self.sparse_dimension,
         )
 
     @property
@@ -517,6 +536,43 @@ class EmbeddingModel:
                 batch_size=1.
         """
         import numpy as np
+
+        embeddings = self._encode_documents_output(
+            texts,
+            batch_size=batch_size,
+            retain_on_device=False,
+        )
+        return np.asarray(embeddings, dtype=np.float32)
+
+    def encode_documents_on_device(
+        self,
+        texts: list[str],
+        *,
+        batch_size: int | None = None,
+    ) -> Tensor:
+        """Encode documents while retaining the bounded result on CUDA.
+
+        Index streaming calls this under ``gpu_lock`` and performs the single
+        device-to-host transfer immediately after releasing the lock. Other
+        callers use :meth:`encode_documents` and receive a CPU NumPy result.
+        """
+        return cast(
+            "Tensor",
+            self._encode_documents_output(
+                texts,
+                batch_size=batch_size,
+                retain_on_device=True,
+            ),
+        )
+
+    def _encode_documents_output(
+        self,
+        texts: list[str],
+        *,
+        batch_size: int | None,
+        retain_on_device: bool,
+    ) -> object:
+        """Run the finite dense OOM ladder with an explicit output lifetime."""
         import torch
 
         if batch_size is None:
@@ -527,13 +583,21 @@ class EmbeddingModel:
 
         while True:
             try:
-                embeddings = self._dense_model.encode(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers encode overloads are partially stubbed
+                if retain_on_device:
+                    return self._dense_model.encode(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers encode overloads are partially stubbed
+                        truncated,
+                        batch_size=batch_size,
+                        show_progress_bar=len(truncated) > 100,
+                        normalize_embeddings=True,
+                        convert_to_numpy=False,
+                        convert_to_tensor=True,
+                    )
+                return self._dense_model.encode(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers encode overloads are partially stubbed
                     truncated,
                     batch_size=batch_size,
                     show_progress_bar=len(truncated) > 100,
                     normalize_embeddings=True,
                 )
-                return np.asarray(embeddings, dtype=np.float32)
             except torch.cuda.OutOfMemoryError:
                 torch.cuda.empty_cache()
                 if batch_size <= 1:
@@ -602,8 +666,9 @@ class EmbeddingModel:
         texts: list[str],
         *,
         batch_size: int | None = None,
+        gpu_lock: threading.Lock | None = None,
     ) -> list[SparseResult]:
-        """Encode document texts as SPLADE sparse vectors on GPU.
+        """Encode documents in bounded SPLADE batches with forward-only locking.
 
         Args:
             texts: List of document texts.
@@ -612,6 +677,9 @@ class EmbeddingModel:
                 (config ``embedding_encode_batch_size``) so the
                 sparse path mirrors the dense path's length-uniform
                 sub-batching strategy.
+            gpu_lock: Optional process-wide GPU lock. Each bounded model
+                forward holds it independently; device-to-host transfer,
+                sparse conversion, and result mapping run after release.
 
         Returns:
             List of SparseResult objects with .indices and .values.
@@ -624,18 +692,68 @@ class EmbeddingModel:
 
         if batch_size is None:
             batch_size = self._default_encode_batch_size()
+        if batch_size <= 0:
+            raise ValueError(f"batch_size must be a positive integer, got {batch_size}")
 
         max_chars = self._default_max_embed_chars()
         truncated = [t[:max_chars] for t in texts]
 
         while True:
+            results: list[SparseResult] = []
             try:
-                sparse_tensor = self._sparse_model.encode_document(
-                    truncated,
-                    batch_size=batch_size,
-                )
-                return _sparse_tensor_to_results(sparse_tensor)
+                for start in range(0, len(truncated), batch_size):
+                    texts_batch = truncated[start : start + batch_size]
+                    accelerator_tensor = None
+                    cpu_tensor = None
+                    cpu_sparse_tensor = None
+                    try:
+                        if gpu_lock is None:
+                            accelerator_tensor = cast(
+                                "torch.Tensor",
+                                self._sparse_model.encode_document(
+                                    texts_batch,
+                                    batch_size=batch_size,
+                                    show_progress_bar=False,
+                                    convert_to_tensor=True,
+                                    convert_to_sparse_tensor=False,
+                                    save_to_cpu=False,
+                                ),
+                            )
+                        else:
+                            with gpu_lock:
+                                accelerator_tensor = cast(
+                                    "torch.Tensor",
+                                    self._sparse_model.encode_document(
+                                        texts_batch,
+                                        batch_size=batch_size,
+                                        show_progress_bar=False,
+                                        convert_to_tensor=True,
+                                        convert_to_sparse_tensor=False,
+                                        save_to_cpu=False,
+                                    ),
+                                )
+
+                        # Sentence Transformers 5.6.0 otherwise performs this
+                        # transfer inside encode when save_to_cpu=True. Keep
+                        # the returned dense tensor GPU-resident only until the
+                        # forward lock is released, then immediately transfer
+                        # and drop the accelerator reference before CPU sparse
+                        # conversion and Python result mapping.
+                        cpu_tensor = accelerator_tensor.cpu()
+                        del accelerator_tensor
+                        accelerator_tensor = None
+                        cpu_sparse_tensor = cpu_tensor.to_sparse().coalesce()
+                        del cpu_tensor
+                        cpu_tensor = None
+                        results.extend(_sparse_tensor_to_results(cpu_sparse_tensor))
+                    finally:
+                        del accelerator_tensor
+                        del cpu_tensor
+                        del cpu_sparse_tensor
+                        del texts_batch
+                return results
             except torch.cuda.OutOfMemoryError:
+                del results
                 torch.cuda.empty_cache()
                 if batch_size <= 1:
                     raise
