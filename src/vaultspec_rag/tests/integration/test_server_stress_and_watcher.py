@@ -9,23 +9,364 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
-from ... import CodebaseIndexer, VaultIndexer, VaultStore
+from ... import VaultStore, jobs, server
+from ...concurrency import reset_limiters
+from ...config import get_config
+from ...indexer._vault_prep import prepare_document
+from ...job_models import (
+    DesiredJobState,
+    JobOutcomeStatus,
+    JobSnapshot,
+    JobState,
+    ResumeStrategy,
+)
+from ...progress import NullProgressReporter
+from ...server import _watcher as watcher_lifecycle
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import AsyncGenerator, Callable
 
     from ...embeddings import EmbeddingModel
+    from ...job_manager import JobManager
+    from ...service import ProjectSlot, ServiceRegistry
 
-from ...graph_cache import GraphCache
-from ...progress import NullProgressReporter
 from ...store import VaultStoreLockedError
-from ...watcher import watch_and_reindex
 
 pytestmark = [pytest.mark.integration]
+
+_WATCHER_WAIT_SECONDS = 60.0
+_WATCHER_POLL_SECONDS = 0.02
+
+
+@pytest.fixture
+async def managed_watcher_runtime(
+    tmp_path: Path,
+    embedding_model: EmbeddingModel,
+    clean_config: None,
+) -> AsyncGenerator[tuple[ServiceRegistry, JobManager]]:
+    """Isolate the canonical manager, registry, and watcher ownership."""
+    del clean_config
+    jobs.reset()
+    reset_limiters()
+    get_config(
+        {
+            "status_dir": str(tmp_path / "status"),
+            "qdrant_url": None,
+            "qdrant_server": False,
+            "local_only": True,
+            "reranker_enabled": False,
+            "embedding_dimension": embedding_model.dimension,
+            "index_job_concurrency": 1,
+            "job_shutdown_timeout_seconds": _WATCHER_WAIT_SECONDS,
+            "watch_enabled": True,
+        }
+    )
+    registry = server._registry
+    registry.prepare_startup()
+    registry._model = embedding_model  # pyright: ignore[reportPrivateUsage]
+    assert (  # pyright: ignore[reportPrivateUsage]
+        registry.health()["project_count"],
+        bool(server._watcher_tasks),
+        bool(watcher_lifecycle._watcher_drains),
+    ) == (0, False, False)
+    manager = jobs.get_job_manager()
+
+    yield registry, manager
+
+    cleanup_tasks = server._stop_all_watchers()
+    if cleanup_tasks:
+        cleanup_results = await asyncio.gather(*cleanup_tasks)
+        assert all(cleanup_results)
+    assert await server._wait_for_watcher_cleanup(timeout_seconds=_WATCHER_WAIT_SECONDS)
+    for snapshot in manager.active():
+        outcome = manager.set_desired_state(
+            snapshot.id,
+            DesiredJobState.CANCELLED,
+        )
+        assert outcome.status is not JobOutcomeStatus.ERROR
+    for snapshot in manager.active():
+        if snapshot.runtime.task_active:
+            joined = await manager.wait_for_attempt(
+                snapshot.id,
+                timeout_seconds=_WATCHER_WAIT_SECONDS,
+            )
+            assert joined.code == "attempt_released"
+    assert not manager.active()
+    for project in registry.health()["projects"]:
+        registry.close_project(Path(project))
+    jobs.reset()
+    reset_limiters()
+
+
+def _watcher_jobs(manager: JobManager, root: Path) -> list[JobSnapshot]:
+    """Return exact watcher-origin snapshots for one production root."""
+    resolved = str(root.resolve())
+    return [
+        snapshot
+        for snapshot in manager.list_jobs()
+        if snapshot.initiator.kind == "watcher"
+        and snapshot.spec.project_root == resolved
+    ]
+
+
+def _watcher_attempt_owns_runtime(snapshot: JobSnapshot) -> bool:
+    """Observe the complete live ownership tuple without deriving state."""
+    return all(
+        (
+            snapshot.state is JobState.RUNNING,
+            snapshot.runtime.task_active,
+            snapshot.runtime.worker_active,
+            snapshot.resources.index_capacity_held,
+            snapshot.resources.project_lease_held,
+            snapshot.resources.writer_lock_held,
+        )
+    )
+
+
+async def _wait_for_watcher_job(
+    manager: JobManager,
+    root: Path,
+    predicate: Callable[[JobSnapshot], bool],
+    description: str,
+) -> JobSnapshot:
+    """Poll canonical snapshots until one real watcher job matches."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _WATCHER_WAIT_SECONDS
+    while loop.time() < deadline:
+        for snapshot in _watcher_jobs(manager, root):
+            if predicate(snapshot):
+                return snapshot
+        await asyncio.sleep(_WATCHER_POLL_SECONDS)
+    snapshots = _watcher_jobs(manager, root)
+    raise AssertionError(f"{description}; last snapshots={snapshots!r}")
+
+
+async def _start_watcher(root: Path, *, cooldown: float) -> None:
+    """Start the real server watcher and wait for watchfiles intake."""
+    resolved = root.resolve()
+    assert server._ensure_watcher(
+        resolved,
+        debounce_ms=50,
+        cooldown_s=cooldown,
+    )
+    assert resolved in server._watcher_tasks
+    await asyncio.sleep(0.3)
+
+
+async def _stop_watcher(root: Path) -> None:
+    """Explicitly disable intake and join its production cleanup owner."""
+    resolved = root.resolve()
+    cleanup = server._stop_watcher(resolved)
+    if cleanup is not None:
+        assert await asyncio.wait_for(
+            asyncio.shield(cleanup),
+            timeout=_WATCHER_WAIT_SECONDS,
+        )
+    assert await server._wait_for_watcher_cleanup(
+        resolved,
+        timeout_seconds=_WATCHER_WAIT_SECONDS,
+    )
+    _assert_watcher_intake_disabled(resolved)
+    assert resolved not in watcher_lifecycle._watcher_drains  # pyright: ignore[reportPrivateUsage]
+
+
+def _assert_watcher_intake_disabled(root: Path) -> None:
+    """Require the public enabled-intake bookkeeping to be empty."""
+    assert (root in server._watcher_tasks, root in server._watcher_stops) == (
+        False,
+        False,
+    )
+
+
+def _write_vault_document(path: Path, marker: str) -> str:
+    """Write one valid ADR and return its production document ID."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "---\n"
+        "tags: ['#adr', '#watcher-control']\n"
+        "---\n"
+        f"# {marker}\n\n"
+        f"alpha beta watcher control {marker}\n",
+        encoding="utf-8",
+    )
+    document = prepare_document(path, path.parents[2])
+    assert document is not None
+    return document.id
+
+
+def _assert_watcher_resources_released(
+    snapshot: JobSnapshot,
+    slot: ProjectSlot,
+) -> None:
+    """Require canonical and physical watcher attempt ownership to be clear."""
+    assert (
+        snapshot.runtime.task_active,
+        snapshot.runtime.worker_active,
+        snapshot.resources.index_capacity_held,
+        snapshot.resources.project_lease_held,
+        snapshot.resources.writer_lock_held,
+        snapshot.resources.pipeline_active,
+        slot.ref_count,
+    ) == (False, False, False, False, False, False, 0)
+    assert slot.vault_indexer._writer_lock.acquire(  # pyright: ignore[reportPrivateUsage]
+        blocking=False
+    )
+    slot.vault_indexer._writer_lock.release()  # pyright: ignore[reportPrivateUsage]
+
+
+async def _pause_blocked_watcher_attempt(
+    manager: JobManager,
+    root: Path,
+    slot: ProjectSlot,
+    path: Path,
+) -> tuple[JobSnapshot, str]:
+    """Pause attempt one while it waits on the real writer lock."""
+    writer_lock = slot.vault_indexer._writer_lock  # pyright: ignore[reportPrivateUsage]
+    assert writer_lock.acquire(blocking=False)
+    try:
+        document_id = _write_vault_document(path, "pause-first-generation")
+        running = await _wait_for_watcher_job(
+            manager,
+            root,
+            _watcher_attempt_owns_runtime,
+            "watcher attempt did not acquire its managed resources",
+        )
+        assert (running.attempt.number, slot.ref_count) == (1, 1)
+        pause = manager.set_desired_state(running.id, DesiredJobState.PAUSED)
+        assert pause.job is not None
+        assert (pause.status, pause.job.state) == (
+            JobOutcomeStatus.ACCEPTED,
+            JobState.PAUSING,
+        )
+    finally:
+        writer_lock.release()
+
+    joined = await manager.wait_for_attempt(
+        running.id,
+        timeout_seconds=_WATCHER_WAIT_SECONDS,
+    )
+    paused = manager.get(running.id)
+    assert paused is not None
+    assert (joined.code, paused.state, paused.desired_state) == (
+        "attempt_released",
+        JobState.PAUSED,
+        DesiredJobState.PAUSED,
+    )
+    _assert_watcher_resources_released(paused, slot)
+    assert slot.store.get_by_id(document_id) is None
+    return paused, document_id
+
+
+async def _resume_blocked_watcher_and_stop(
+    manager: JobManager,
+    root: Path,
+    slot: ProjectSlot,
+    job_id: str,
+) -> JobSnapshot:
+    """Prove explicit stop waits for a naturally completing resumed attempt."""
+    writer_lock = slot.vault_indexer._writer_lock  # pyright: ignore[reportPrivateUsage]
+    assert writer_lock.acquire(blocking=False)
+    cleanup: asyncio.Task[bool] | None = None
+    try:
+        resume = manager.set_desired_state(job_id, DesiredJobState.RUNNING)
+        assert resume.status is JobOutcomeStatus.ACCEPTED
+        resumed = await _wait_for_watcher_job(
+            manager,
+            root,
+            lambda snapshot: all(
+                (
+                    snapshot.id == job_id,
+                    snapshot.attempt.number == 2,
+                    _watcher_attempt_owns_runtime(snapshot),
+                )
+            ),
+            "resumed watcher attempt did not reacquire resources",
+        )
+        assert (
+            resumed.attempt.resumed_from_attempt,
+            resumed.attempt.resume_strategy,
+        ) == (1, ResumeStrategy.RECONCILE)
+
+        cleanup = server._stop_watcher(root)
+        assert cleanup is not None
+        _assert_watcher_intake_disabled(root)
+        await asyncio.sleep(0.1)
+        assert not cleanup.done()
+        still_running = manager.get(job_id)
+        assert still_running is not None
+        assert (still_running.state, still_running.desired_state) == (
+            JobState.RUNNING,
+            DesiredJobState.RUNNING,
+        )
+    finally:
+        writer_lock.release()
+
+    assert cleanup is not None
+    assert await asyncio.wait_for(
+        asyncio.shield(cleanup),
+        timeout=_WATCHER_WAIT_SECONDS,
+    )
+    assert await server._wait_for_watcher_cleanup(
+        root,
+        timeout_seconds=_WATCHER_WAIT_SECONDS,
+    )
+    succeeded = manager.get(job_id)
+    assert succeeded is not None
+    assert succeeded.state is JobState.SUCCEEDED
+    return succeeded
+
+
+async def _cancel_blocked_watcher_attempt(
+    manager: JobManager,
+    root: Path,
+    slot: ProjectSlot,
+    path: Path,
+) -> tuple[JobSnapshot, str, float]:
+    """Cancel attempt one while it waits on the real writer lock."""
+    writer_lock = slot.vault_indexer._writer_lock  # pyright: ignore[reportPrivateUsage]
+    assert writer_lock.acquire(blocking=False)
+    try:
+        document_id = _write_vault_document(path, "cancel-first-generation")
+        running = await _wait_for_watcher_job(
+            manager,
+            root,
+            _watcher_attempt_owns_runtime,
+            "watcher attempt did not reach the real writer boundary",
+        )
+        requested_at = time.time()
+        cancel = manager.set_desired_state(running.id, DesiredJobState.CANCELLED)
+        assert cancel.job is not None
+        assert (cancel.status, cancel.job.state) == (
+            JobOutcomeStatus.ACCEPTED,
+            JobState.CANCELLING,
+        )
+    finally:
+        writer_lock.release()
+
+    joined = await manager.wait_for_attempt(
+        running.id,
+        timeout_seconds=_WATCHER_WAIT_SECONDS,
+    )
+    cancelled = manager.get(running.id)
+    assert cancelled is not None
+    finished_at = cancelled.timestamps.finished_at
+    assert finished_at is not None
+    assert (
+        joined.code,
+        cancelled.state,
+        finished_at >= requested_at,
+    ) == ("attempt_released", JobState.CANCELLED, True)
+    _assert_watcher_resources_released(cancelled, slot)
+    assert slot.store.get_by_id(document_id) is None
+    assert root in server._watcher_tasks
+    assert not server._watcher_tasks[root].done()
+    assert not server._watcher_stops[root].is_set()
+    return cancelled, document_id, finished_at
 
 
 class TestLocalConcurrencyLocks:
@@ -94,7 +435,9 @@ class TestLocalConcurrencyLocks:
 
 @pytest.mark.asyncio
 async def test_watcher_detects_and_indexes_file(
-    tmp_path: Path, embedding_model: EmbeddingModel
+    tmp_path: Path,
+    embedding_model: EmbeddingModel,
+    managed_watcher_runtime: tuple[ServiceRegistry, JobManager],
 ) -> None:
     """Verify that writing a physical vault file triggers the watcher
 
@@ -119,35 +462,19 @@ async def test_watcher_detects_and_indexes_file(
     )
     init_file.write_text(init_text, encoding="utf-8")
 
-    # 2. Setup RAG components
-    store = VaultStore(tmp_path)
-    vault_indexer: VaultIndexer = VaultIndexer(tmp_path, embedding_model, store)
-    code_indexer: CodebaseIndexer = CodebaseIndexer(tmp_path, embedding_model, store)
-    graph_cache = GraphCache()
+    # 2. Setup the canonical registry-owned RAG components.
+    registry, _manager = managed_watcher_runtime
+    assert registry.model is embedding_model
+    slot = registry.peek_project(tmp_path)
+    store = slot.store
 
     # Build the initial index so the table exists
-    vault_indexer.full_index(reporter=NullProgressReporter())
+    slot.vault_indexer.full_index(reporter=NullProgressReporter())
 
-    stop_event = asyncio.Event()
-
-    # 3. Start the watcher task
-    watcher_task = asyncio.create_task(
-        watch_and_reindex(
-            root_dir=tmp_path,
-            vault_dir=vault_dir,
-            vault_indexer=vault_indexer,
-            code_indexer=code_indexer,
-            stop_event=stop_event,
-            graph_cache=graph_cache,
-            debounce=50,  # Fast debounce (50ms)
-            cooldown=0.1,  # Fast cooldown (100ms)
-        )
-    )
+    # 3. Start through the real server watcher owner.
+    await _start_watcher(tmp_path, cooldown=0.1)
 
     try:
-        # Give watcher a moment to startup
-        await asyncio.sleep(0.2)
-
         # Confirm we cannot find the new document yet
         q_vec = embedding_model.encode_query("concurrency adversarial stress").tolist()
         results = store.hybrid_search(
@@ -185,16 +512,14 @@ async def test_watcher_detects_and_indexes_file(
             )
 
     finally:
-        # Stop the watcher task gracefully
-        stop_event.set()
-        await watcher_task
-        store.close()
+        await _stop_watcher(tmp_path)
 
 
 def _build_watched_code_project(
-    tmp_path: Path, model: EmbeddingModel
-) -> tuple[VaultStore, VaultIndexer, CodebaseIndexer, Path, Path]:
-    """Index a minimal vault + two source files; return store, indexers, files."""
+    tmp_path: Path,
+    registry: ServiceRegistry,
+) -> tuple[ProjectSlot, Path, Path]:
+    """Index a minimal vault + two source files through the canonical slot."""
     vault_dir = tmp_path / ".vault"
     (vault_dir / "adr").mkdir(parents=True)
     (vault_dir / "adr" / "init.md").write_text(
@@ -212,17 +537,16 @@ def _build_watched_code_project(
         encoding="utf-8",
     )
 
-    store = VaultStore(tmp_path)
-    vault_indexer = VaultIndexer(tmp_path, model, store)
-    code_indexer = CodebaseIndexer(tmp_path, model, store)
-    vault_indexer.full_index(reporter=NullProgressReporter())
-    code_indexer.full_index(reporter=NullProgressReporter())
-    return store, vault_indexer, code_indexer, trigger, target
+    slot = registry.peek_project(tmp_path)
+    slot.vault_indexer.full_index(reporter=NullProgressReporter())
+    slot.code_indexer.full_index(reporter=NullProgressReporter())
+    return slot, trigger, target
 
 
 @pytest.mark.asyncio
 async def test_watcher_evicts_cooldown_suppressed_delete(
-    tmp_path: Path, embedding_model: EmbeddingModel
+    tmp_path: Path,
+    managed_watcher_runtime: tuple[ServiceRegistry, JobManager],
 ) -> None:
     """A deletion suppressed by the cooldown is reconciled on a quiet tree.
 
@@ -232,30 +556,15 @@ async def test_watcher_evicts_cooldown_suppressed_delete(
     cooldown elapses - without any further filesystem event. The poll window
     deliberately exceeds cooldown + idle-tick interval.
     """
-    import asyncio
-
     cooldown = 2.0
-    store, _vi, code_indexer, trigger, target = _build_watched_code_project(
-        tmp_path, embedding_model
-    )
+    registry, _manager = managed_watcher_runtime
+    slot, trigger, target = _build_watched_code_project(tmp_path, registry)
+    code_indexer = slot.code_indexer
     target_rel = str(target.relative_to(tmp_path)).replace("\\", "/")
     assert code_indexer._get_chunk_ids_for_files({target_rel}), "target not indexed"
 
-    stop_event = asyncio.Event()
-    watcher_task = asyncio.create_task(
-        watch_and_reindex(
-            root_dir=tmp_path,
-            vault_dir=tmp_path / ".vault",
-            vault_indexer=_vi,
-            code_indexer=code_indexer,
-            stop_event=stop_event,
-            graph_cache=GraphCache(),
-            debounce=50,
-            cooldown=cooldown,
-        )
-    )
+    await _start_watcher(tmp_path, cooldown=cooldown)
     try:
-        await asyncio.sleep(0.3)
         # Prime the cooldown with an unrelated edit so the deletion that
         # follows lands inside the cooldown window.
         trigger.write_text("def t():\n    return 2\n", encoding="utf-8")
@@ -271,14 +580,13 @@ async def test_watcher_evicts_cooldown_suppressed_delete(
                 break
         assert evicted, "idle tick did not flush the cooldown-suppressed deletion"
     finally:
-        stop_event.set()
-        await watcher_task
-        store.close()
+        await _stop_watcher(tmp_path)
 
 
 @pytest.mark.asyncio
 async def test_watcher_idle_tick_does_not_bypass_cooldown(
-    tmp_path: Path, embedding_model: EmbeddingModel
+    tmp_path: Path,
+    managed_watcher_runtime: tuple[ServiceRegistry, JobManager],
 ) -> None:
     """The idle tick must not reconcile a change before the cooldown elapses.
 
@@ -286,29 +594,14 @@ async def test_watcher_idle_tick_does_not_bypass_cooldown(
     that lands inside a long cooldown window stays pending (chunks still present)
     until the window elapses, even though idle ticks fire meanwhile.
     """
-    import asyncio
-
     cooldown = 6.0
-    store, _vi, code_indexer, trigger, target = _build_watched_code_project(
-        tmp_path, embedding_model
-    )
+    registry, _manager = managed_watcher_runtime
+    slot, trigger, target = _build_watched_code_project(tmp_path, registry)
+    code_indexer = slot.code_indexer
     target_rel = str(target.relative_to(tmp_path)).replace("\\", "/")
 
-    stop_event = asyncio.Event()
-    watcher_task = asyncio.create_task(
-        watch_and_reindex(
-            root_dir=tmp_path,
-            vault_dir=tmp_path / ".vault",
-            vault_indexer=_vi,
-            code_indexer=code_indexer,
-            stop_event=stop_event,
-            graph_cache=GraphCache(),
-            debounce=50,
-            cooldown=cooldown,
-        )
-    )
+    await _start_watcher(tmp_path, cooldown=cooldown)
     try:
-        await asyncio.sleep(0.3)
         trigger.write_text("def t():\n    return 2\n", encoding="utf-8")
         await asyncio.sleep(0.8)
         target.unlink()
@@ -319,6 +612,101 @@ async def test_watcher_idle_tick_does_not_bypass_cooldown(
             "idle tick bypassed the cooldown and reindexed early"
         )
     finally:
-        stop_event.set()
-        await watcher_task
-        store.close()
+        await _stop_watcher(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_watcher_pause_coalesces_and_explicit_stop_joins_cleanup(
+    tmp_path: Path,
+    managed_watcher_runtime: tuple[ServiceRegistry, JobManager],
+) -> None:
+    """Paused dirtiness stays on one job and stop joins its resumed attempt."""
+    registry, manager = managed_watcher_runtime
+    root = tmp_path.resolve()
+    slot = registry.peek_project(root)
+    first_path = root / ".vault" / "adr" / "first-paused.md"
+    second_path = root / ".vault" / "adr" / "second-paused.md"
+
+    await _start_watcher(root, cooldown=0.0)
+    paused, first_id = await _pause_blocked_watcher_attempt(
+        manager,
+        root,
+        slot,
+        first_path,
+    )
+
+    second_id = _write_vault_document(second_path, "pause-second-generation")
+    await asyncio.sleep(0.5)
+    active = [
+        snapshot
+        for snapshot in _watcher_jobs(manager, root)
+        if not snapshot.state.is_terminal
+    ]
+    assert [(snapshot.id, snapshot.state) for snapshot in active] == [
+        (paused.id, JobState.PAUSED)
+    ]
+
+    succeeded = await _resume_blocked_watcher_and_stop(
+        manager,
+        root,
+        slot,
+        paused.id,
+    )
+    assert (
+        succeeded.attempt.number,
+        succeeded.attempt.resumed_from_attempt,
+    ) == (2, 1)
+    _assert_watcher_resources_released(succeeded, slot)
+    assert (
+        slot.store.get_by_id(first_id) is not None,
+        slot.store.get_by_id(second_id) is not None,
+    ) == (True, True)
+    assert root not in watcher_lifecycle._watcher_drains  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.asyncio
+async def test_watcher_cancel_preserves_dirtiness_and_submits_replacement(
+    tmp_path: Path,
+    managed_watcher_runtime: tuple[ServiceRegistry, JobManager],
+) -> None:
+    """Cancellation leaves intake enabled and converges through a new job."""
+    registry, manager = managed_watcher_runtime
+    root = tmp_path.resolve()
+    slot = registry.peek_project(root)
+    first_path = root / ".vault" / "adr" / "first-cancelled.md"
+    second_path = root / ".vault" / "adr" / "second-cancelled.md"
+
+    await _start_watcher(root, cooldown=0.0)
+    cancelled, first_id, cancelled_finished_at = await _cancel_blocked_watcher_attempt(
+        manager,
+        root,
+        slot,
+        first_path,
+    )
+
+    second_id = _write_vault_document(second_path, "cancel-second-generation")
+    replacement = await _wait_for_watcher_job(
+        manager,
+        root,
+        lambda snapshot: (
+            snapshot.id != cancelled.id and snapshot.state is JobState.SUCCEEDED
+        ),
+        "watcher did not submit and complete a replacement convergence job",
+    )
+    assert (
+        replacement.initiator.kind,
+        replacement.spec,
+        replacement.timestamps.created_at >= cancelled_finished_at + 0.8,
+    ) == ("watcher", cancelled.spec, True)
+    assert {snapshot.id for snapshot in _watcher_jobs(manager, root)} == {
+        cancelled.id,
+        replacement.id,
+    }
+    _assert_watcher_resources_released(replacement, slot)
+    assert (
+        slot.store.get_by_id(first_id) is not None,
+        slot.store.get_by_id(second_id) is not None,
+        root in server._watcher_tasks,
+    ) == (True, True, True)
+
+    await _stop_watcher(root)
