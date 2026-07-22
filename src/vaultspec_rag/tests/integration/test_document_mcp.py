@@ -93,4 +93,6 @@ def test_document_tools_through_real_mcp_session(
     live_service: tuple[int, Path],
 ) -> None:
     port, root = live_service
+    (root / ".vault").mkdir(exist_ok=True)
+    (root / ".vaultspec").mkdir(exist_ok=True)
     asyncio.run(_exercise_document_tools(port, root))
