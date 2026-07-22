@@ -15,7 +15,12 @@ related:
   - '[[2026-07-21-search-index-availability-W02-P02-S19]]'
   - '[[2026-07-21-search-index-availability-W02-P02-S20]]'
   - '[[2026-07-21-search-index-availability-W02-P07-S21]]'
+  - '[[2026-07-21-search-index-availability-W03-P03-S22]]'
+  - '[[2026-07-21-search-index-availability-W03-P03-S23]]'
+  - '[[2026-07-21-search-index-availability-W03-P03-S24]]'
+  - '[[2026-07-21-search-index-availability-W03-P04-S25]]'
   - '[[2026-07-21-search-index-availability-adr]]'
+  - '[[2026-07-21-search-index-availability-code-review-audit]]'
   - '[[2026-07-21-search-index-availability-plan]]'
   - '[[2026-07-21-search-index-availability-reference]]'
   - '[[2026-07-21-search-index-availability-research]]'
@@ -31,6 +36,10 @@ Auto-generated index of all documents tagged with `#search-index-availability`.
 
 - `2026-07-21-search-index-availability-adr` - `search-index-availability` adr: `authoritative empty search responses during index work` | (**status:** `accepted`)
 
+### audit
+
+- `2026-07-21-search-index-availability-code-review-audit` - `search-index-availability` audit: `search-index-availability code review`
+
 ### exec
 
 - `2026-07-21-search-index-availability-W01-P01-S01` - Add the red real-service regression expecting structured HTTP 503 for an empty search during matching nonterminal index work and record the current HTTP 200 failure using Sol medium
@@ -42,6 +51,10 @@ Auto-generated index of all documents tagged with `#search-index-availability`.
 - `2026-07-21-search-index-availability-W02-P02-S19` - Implement bounded root and source job matching plus the structured unavailable response using Terra xhigh
 - `2026-07-21-search-index-availability-W02-P02-S20` - Integrate double job-state observation and HTTP 503 emission into the search route using Terra xhigh
 - `2026-07-21-search-index-availability-W02-P07-S21` - Map structured daemon search failures to recoverable MCP tool errors without synthesizing results using Terra xhigh
+- `2026-07-21-search-index-availability-W03-P03-S22` - Run the targeted subprocess-GPU regression and adjacent service search diagnostics under supervisor observation
+- `2026-07-21-search-index-availability-W03-P03-S23` - Run formatting lint typing unit integration client CLI and MCP checks under supervisor observation
+- `2026-07-21-search-index-availability-W03-P03-S24` - Validate research ADR plan and execution records with canonical vault checks
+- `2026-07-21-search-index-availability-W03-P04-S25` - Audit ADR conformance response safety campaign compatibility and test integrity and route required corrections to Terra xhigh
 
 ### plan
 
