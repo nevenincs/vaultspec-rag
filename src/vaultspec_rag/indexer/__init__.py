@@ -31,7 +31,6 @@ from ._chunking import (
 from ._codebase_indexer import CodebaseIndexer
 from ._streaming import (
     _release_cuda_cache,
-    _stream_encode_and_upsert_codebase,
     _stream_encode_and_upsert_vault,
 )
 from ._vault_indexer import VaultIndexer
@@ -59,7 +58,6 @@ __all__ = [
     "_extract_title",
     "_is_binary",
     "_release_cuda_cache",
-    "_stream_encode_and_upsert_codebase",
     "_stream_encode_and_upsert_vault",
     "prepare_document",
 ]

@@ -57,7 +57,7 @@ Remove whole-corpus and device-retention amplifiers across full and both increme
 - [x] `W01.P02.S07` - Define bounded file segments, weighted slices, CPU transfer, and immediate vector-field release; `src/vaultspec_rag/embeddings.py, src/vaultspec_rag/indexer/_streaming.py`.
 - [x] `W01.P02.S08` - Convert full indexing to weighted production without whole-corpus vector sorting or retention; `src/vaultspec_rag/indexer/_codebase_indexer.py, src/vaultspec_rag/indexer/_chunk_worker.py, src/vaultspec_rag/indexer/_preprocess_glue.py`.
 - [x] `W01.P02.S09` - Convert unscoped incremental indexing to bounded file-segment streaming; `src/vaultspec_rag/indexer/_codebase_indexer.py, src/vaultspec_rag/indexer/_chunk_worker.py`.
-- [ ] `W01.P02.S10` - Convert scoped incremental indexing to bounded file-segment streaming; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `W01.P02.S10` - Convert scoped incremental indexing to bounded file-segment streaming; `src/vaultspec_rag/indexer/_codebase_indexer.py, src/vaultspec_rag/indexer/_streaming.py`.
 - [ ] `W01.P02.S11` - Verify sparse CPU retention and bounded slice cleanup on real CUDA; `src/vaultspec_rag/tests/integration/test_embeddings.py`.
 
 ### Phase `W01.P03` - workflow retry and no-progress policy

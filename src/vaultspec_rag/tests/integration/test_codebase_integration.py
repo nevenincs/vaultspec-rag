@@ -116,60 +116,83 @@ class TestIncrementalPublicationRecovery:
         self,
         code_project: _CodeProject,
     ) -> None:
+        from ...indexer import _chunk_worker
+        from .test_indexer_progress_integration import CountingProgressReporter
+
         root = code_project["root"]
         store = code_project["store"]
         indexer = code_project["code_indexer"]
+        indexer.full_index(reporter=NullProgressReporter())
         rel_path = "src/new_partial.py"
         source = root / rel_path
         source.write_text("def current_value():\n    return 42\n", encoding="utf-8")
+        expected = _chunk_worker.chunk_and_hash_file(source, root)
         stale_id = f"{rel_path}:stale-attempt"
         store.upsert_code_chunks(
             [_stored_partial_chunk(rel_path, stale_id)],
             write_policy=None,
         )
 
+        reporter = CountingProgressReporter()
         indexer.incremental_index(
-            reporter=NullProgressReporter(),
+            reporter=reporter,
             changed_paths=[source],
         )
 
         ids = set(store.get_code_ids_by_paths({rel_path}))
-        assert ids
-        assert stale_id not in ids
-        assert rel_path in indexer._load_meta()  # pyright: ignore[reportPrivateUsage]
+        assert ids == {chunk.id for chunk in expected.chunks}
+        assert (
+            indexer._load_meta()[rel_path]  # pyright: ignore[reportPrivateUsage]
+            == expected.content_hash
+        )
+        assert "scan changed" in reporter.phase_names()
+        assert "prepare collection" not in reporter.phase_names()
 
     @pytest.mark.timeout(180)
     def test_unscoped_new_file_replaces_prior_partial_ids(
         self,
         code_project: _CodeProject,
     ) -> None:
+        from ...indexer import _chunk_worker
+        from .test_indexer_progress_integration import CountingProgressReporter
+
         root = code_project["root"]
         store = code_project["store"]
         indexer = code_project["code_indexer"]
+        indexer.full_index(reporter=NullProgressReporter())
         rel_path = "src/unscoped_partial.py"
         source = root / rel_path
         source.write_text("unscoped_value = 'current'\n", encoding="utf-8")
+        expected = _chunk_worker.chunk_and_hash_file(source, root)
         stale_id = f"{rel_path}:stale-attempt"
         store.upsert_code_chunks(
             [_stored_partial_chunk(rel_path, stale_id)],
             write_policy=None,
         )
 
-        indexer.incremental_index(reporter=NullProgressReporter())
+        reporter = CountingProgressReporter()
+        indexer.incremental_index(reporter=reporter)
 
         ids = set(store.get_code_ids_by_paths({rel_path}))
-        assert ids
-        assert stale_id not in ids
-        assert rel_path in indexer._load_meta()  # pyright: ignore[reportPrivateUsage]
+        assert ids == {chunk.id for chunk in expected.chunks}
+        assert (
+            indexer._load_meta()[rel_path]  # pyright: ignore[reportPrivateUsage]
+            == expected.content_hash
+        )
+        assert "chunk + embed" in reporter.phase_names()
+        assert "prepare collection" not in reporter.phase_names()
 
     @pytest.mark.timeout(180)
     def test_scoped_untracked_disappearance_removes_prior_partial_ids(
         self,
         code_project: _CodeProject,
     ) -> None:
+        from .test_indexer_progress_integration import CountingProgressReporter
+
         root = code_project["root"]
         store = code_project["store"]
         indexer = code_project["code_indexer"]
+        indexer.full_index(reporter=NullProgressReporter())
         rel_path = "src/disappeared_partial.py"
         missing = root / rel_path
         stale_id = f"{rel_path}:stale-attempt"
@@ -178,14 +201,17 @@ class TestIncrementalPublicationRecovery:
             write_policy=None,
         )
 
+        reporter = CountingProgressReporter()
         result = indexer.incremental_index(
-            reporter=NullProgressReporter(),
+            reporter=reporter,
             changed_paths=[missing],
         )
 
         assert store.get_code_ids_by_paths({rel_path}) == []
         assert rel_path not in indexer._load_meta()  # pyright: ignore[reportPrivateUsage]
         assert result.removed == 0
+        assert "scan changed" in reporter.phase_names()
+        assert "prepare collection" not in reporter.phase_names()
 
 
 class TestCodeEmbedFormatRebuild:
@@ -318,9 +344,11 @@ class TestCodebaseIncrementalIndex:
         assert store.count_code() > count_before
 
     @pytest.mark.timeout(180)
-    def test_unscoped_incremental_uses_weighted_segments(
+    @pytest.mark.parametrize("scoped", [False, True], ids=["unscoped", "scoped"])
+    def test_incremental_uses_weighted_segments(
         self,
         code_project: _CodeProject,
+        scoped: bool,
     ) -> None:
         from ...config import EnvVar, reset_config
         from ...indexer import _chunk_worker
@@ -357,7 +385,10 @@ class TestCodebaseIncrementalIndex:
             os.environ.update(overrides)
             reset_config()
             reporter = CountingProgressReporter()
-            result = indexer.incremental_index(reporter=reporter)
+            result = indexer.incremental_index(
+                reporter=reporter,
+                changed_paths=[source] if scoped else None,
+            )
         finally:
             for key, value in previous.items():
                 if value is None:
@@ -378,9 +409,11 @@ class TestCodebaseIncrementalIndex:
         assert "embed + upsert chunks" not in reporter.phase_names()
 
     @pytest.mark.timeout(240)
-    def test_unscoped_incremental_rolls_back_then_retries_real_failure(
+    @pytest.mark.parametrize("scoped", [False, True], ids=["unscoped", "scoped"])
+    def test_incremental_rolls_back_then_retries_real_failure(
         self,
         code_project: _CodeProject,
+        scoped: bool,
     ) -> None:
         import hashlib
         import shlex
@@ -453,7 +486,10 @@ class TestCodebaseIncrementalIndex:
             reset_config()
             failure_reporter = CountingProgressReporter()
             with pytest.raises(PreprocessAbortError):
-                indexer.incremental_index(reporter=failure_reporter)
+                indexer.incremental_index(
+                    reporter=failure_reporter,
+                    changed_paths=[good, failing] if scoped else None,
+                )
 
             _assert_phase_balanced(failure_reporter.events)
             assert "chunk + embed" in failure_reporter.phase_names()
@@ -465,7 +501,10 @@ class TestCodebaseIncrementalIndex:
 
             failing.write_text("SUCCEED\n", encoding="utf-8")
             retry_reporter = CountingProgressReporter()
-            result = indexer.incremental_index(reporter=retry_reporter)
+            result = indexer.incremental_index(
+                reporter=retry_reporter,
+                changed_paths=[good, failing] if scoped else None,
+            )
             _assert_phase_balanced(retry_reporter.events)
         finally:
             for key, value in previous.items():
