@@ -26,8 +26,7 @@ client-specific identifiers or directory-name heuristics in the Phase surface.
 ### preprocess-cli-outcomes | medium | Migration failures are not rendered exhaustively
 
 `preprocess list` calls `load_preprocess_rules` without handling `PreprocessPolicyError`, so
-a legacy configuration exits through an exception with no structured output. `preprocess
-check` catches the base configuration exception but collapses the stable
+a legacy configuration exits through an exception with no structured output. `preprocess check` catches the base configuration exception but collapses the stable
 `migration_required` and `admission_config_invalid` outcomes into the hard-coded
 `invalid-config` kind. `preprocess status` reduces the same defect to
 `config_valid=false` without the stable reason. A real `CliRunner` invocation against a

@@ -103,7 +103,7 @@ class TestEmptyQueryRejected:
         return client.post(
             "/search",
             json={
-                "type": "codebase",
+                "type": "code",
                 "query": query,
                 "top_k": 5,
                 "project_root": "Y:/nonexistent",

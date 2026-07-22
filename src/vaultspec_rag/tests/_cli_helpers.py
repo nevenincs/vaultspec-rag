@@ -214,7 +214,7 @@ def _expected_code_search_request(tmp_path: Path, query: str) -> dict[str, objec
         "query": query,
         "top_k": 2,
         "project_root": str(tmp_path),
-        "type": "codebase",
+        "type": "code",
     }
 
 

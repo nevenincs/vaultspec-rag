@@ -1041,10 +1041,12 @@ def get_readiness() -> dict[str, Any]:
 
     Returns:
         The JSON-serialisable :meth:`ReadinessReport.to_dict` view: a
-        top-level ``ready`` boolean, ``server_mode``, and a
-        ``dependencies`` list with one ``{name, status, detail, info}``
-        node per dependency. Designed to serve both a human render and
-        a JSON envelope.
+        top-level ``ready`` boolean, ``server_mode``, a ``dependencies``
+        list with one ``{name, status, detail, info}`` node per
+        dependency, the ``degraded_reasons`` detail strings of the
+        non-ready dimensions, the config-derived ``support_profile``,
+        and the bounded storage ``schema`` descriptor. Designed to serve
+        both a human render and a JSON envelope.
     """
     from ._readiness import compute_readiness
 

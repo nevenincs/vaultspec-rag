@@ -1,7 +1,8 @@
 """Worker-level integration of the preprocess hook (no GPU).
 
-Exercises D6: the spawn-worker chunk entrypoints run a matched command rule and
-turn its output into ``CodeChunk``s with anchor/locator payload, the
+Exercises D6: a document-targeted rule runs through the document worker and
+turns its output into ``DocumentChunk``s with anchor/locator payload, the code
+worker refuses that same rule rather than storing the extraction as source, the
 ``PreprocessContext`` is picklable (so it can cross the process boundary), and
 the worker import chain stays torch-free with the preprocess modules wired in
 (``index-workers-stay-cpu-only``).
@@ -71,45 +72,58 @@ def _context(tmp_path: Path, pattern: str = "*.pdf") -> PreprocessContext:
     )
 
 
-def test_chunk_file_produces_preproc_chunks(tmp_path: Path) -> None:
+def test_document_rule_produces_preproc_chunks(tmp_path: Path) -> None:
     source = tmp_path / "report.pdf"
     source.write_bytes(b"\x00\x01 not real pdf bytes")
     prep = _context(tmp_path)
-    chunks = _chunk_worker.chunk_file(source, tmp_path, prep)
+    chunks = _chunk_worker.chunk_document_and_hash_file(source, tmp_path, prep).chunks
     assert len(chunks) == 2
-    assert chunks[0].content == "first page body"
+    first, second = (chunk.payload for chunk in chunks)
+    assert first.content == "first page body"
     # The hook reads the original source path, so the anchor it echoes ends with
     # the real file's name.
-    assert chunks[0].anchor is not None
-    assert chunks[0].anchor.endswith("report.pdf#page=1")
-    assert chunks[0].locator_kind == "page"
-    assert chunks[0].locator_value_int == 1
-    assert chunks[0].source_path == "report.pdf"
-    assert chunks[0].preprocessor_id == "pdf-fake"
+    assert first.anchor is not None
+    assert first.anchor.endswith("report.pdf#page=1")
+    assert first.locator is not None
+    assert first.locator.kind == "page"
+    assert first.locator.value == 1
+    assert first.source_path == "report.pdf"
+    assert first.extractor_id == "pdf-fake"
+    assert second.content == "second page body"
     # Ids are unique per unit.
     assert chunks[0].id != chunks[1].id
 
 
-def test_chunk_and_hash_file_marks_status_ok(tmp_path: Path) -> None:
+def test_chunk_document_and_hash_file_marks_status_ok(tmp_path: Path) -> None:
     source = tmp_path / "report.pdf"
     source.write_bytes(b"\x00\x01binary")
     prep = _context(tmp_path)
-    result = _chunk_worker.chunk_and_hash_file(source, tmp_path, prep)
+    result = _chunk_worker.chunk_document_and_hash_file(source, tmp_path, prep)
     assert result is not None
     assert result.preprocess_status == "ok"
     assert len(result.chunks) == 2
     assert result.content_hash  # raw-bytes hash still computed
 
 
+def test_code_worker_refuses_a_document_targeted_rule(tmp_path: Path) -> None:
+    source = tmp_path / "report.pdf"
+    source.write_bytes(b"\x00\x01binary")
+    prep = _context(tmp_path)
+    with pytest.raises(ValueError, match="non-code extraction rule"):
+        _chunk_worker.chunk_file(source, tmp_path, prep)
+    with pytest.raises(ValueError, match="non-code extraction rule"):
+        _chunk_worker.chunk_and_hash_file(source, tmp_path, prep)
+
+
 def test_cache_hit_skips_second_invocation(tmp_path: Path) -> None:
     source = tmp_path / "report.pdf"
     source.write_bytes(b"\x00\x01binary")
     prep = _context(tmp_path)
-    first = _chunk_worker.chunk_file(source, tmp_path, prep)
+    first = _chunk_worker.chunk_document_and_hash_file(source, tmp_path, prep).chunks
     # Delete the extractor script: a cache hit must not need to re-run it.
     (tmp_path / "extractor.py").unlink()
-    second = _chunk_worker.chunk_file(source, tmp_path, prep)
-    assert [c.content for c in first] == [c.content for c in second]
+    second = _chunk_worker.chunk_document_and_hash_file(source, tmp_path, prep).chunks
+    assert [c.payload.content for c in first] == [c.payload.content for c in second]
 
 
 def test_unmatched_file_chunks_normally(tmp_path: Path) -> None:

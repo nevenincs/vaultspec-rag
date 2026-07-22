@@ -76,7 +76,7 @@ from ._utils import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from starlette.requests import Request
 
@@ -110,6 +110,13 @@ _BAD_REQUEST_EMPTY_QUERY = JSONResponse(
     status_code=400,
 )
 
+# The admissible desired-state control modes, mapped to themselves so a raw
+# request string resolves to the typed mode without an unchecked cast.
+_CONTROL_MODES: Mapping[str, Literal["graceful", "force"]] = {
+    "graceful": "graceful",
+    "force": "force",
+}
+
 
 def _bad_request_invalid_root(exc: ValueError) -> JSONResponse:
     return JSONResponse(
@@ -127,7 +134,12 @@ def _normalise_search_type(value: object) -> PublicSourceType | JSONResponse:
         return parse_source_type(value, allow_aliases=False)
     except SourceTypeParseError as exc:
         return JSONResponse(
-            {"ok": False, "error": exc.error_kind, **exc.as_payload()},
+            {
+                "ok": False,
+                "error": exc.error_kind,
+                "message": str(exc),
+                **exc.as_payload(),
+            },
             status_code=400,
         )
 
@@ -256,14 +268,10 @@ def _search_index_state(
     *,
     indexed_count: int | float,
     requested_root: object,
-    search_type: object,
+    search_type: PublicSourceType | str,
 ) -> dict[str, object]:
     requested_target = str(requested_root)
-    source = (
-        search_type.value
-        if isinstance(search_type, PublicSourceType)
-        else str(search_type)
-    )
+    source = parse_source_type(search_type, allow_aliases=True).value
     count = int(indexed_count)
     return {
         "source": source,
@@ -1000,7 +1008,8 @@ async def set_job_desired_state_route(request: Request) -> JSONResponse:
                 "invalid_desired_state",
                 "state must be 'running', 'paused', or 'cancelled'.",
             )
-        if mode not in {"graceful", "force"}:
+        control_mode = _CONTROL_MODES.get(mode)
+        if control_mode is None:
             raise _InvalidJobRequestError(
                 "invalid_control_mode",
                 "mode must be 'graceful' or 'force'.",
@@ -1016,7 +1025,7 @@ async def set_job_desired_state_route(request: Request) -> JSONResponse:
         str(request.path_params["job_id"]),
         DesiredJobState(state),
         expected_revision=expected_revision,
-        mode=cast("Literal['graceful', 'force']", mode),
+        mode=control_mode,
     )
     return _job_response(outcome, location=outcome.job is not None)
 
@@ -1649,7 +1658,12 @@ async def clean_route(request: Request) -> JSONResponse:
             )
         except SourceTypeParseError as exc:
             return JSONResponse(
-                {"ok": False, "error": exc.error_kind, **exc.as_payload()},
+                {
+                    "ok": False,
+                    "error": exc.error_kind,
+                    "message": str(exc),
+                    **exc.as_payload(),
+                },
                 status_code=400,
             )
         raw_root = _job_string(payload, "project_root")

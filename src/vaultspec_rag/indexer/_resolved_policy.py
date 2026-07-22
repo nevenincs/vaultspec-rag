@@ -206,11 +206,11 @@ def _thaw_option(value: CanonicalOption) -> object:
     if tag == "mapping":
         items = _mapping_payload(payload)
         return {key: _thaw_option(nested) for key, nested in items}
-    if tag in {"list", "tuple"}:
+    if tag in ("list", "tuple"):
         items = _sequence_payload(payload)
         values = tuple(_thaw_option(nested) for nested in items)
         return list(values) if tag == "list" else values
-    return _thaw_scalar(cast("_ScalarTag", tag), payload)
+    return _thaw_scalar(tag, payload)
 
 
 @dataclass(frozen=True, slots=True)

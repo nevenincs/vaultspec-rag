@@ -243,7 +243,10 @@ def _blocking_preprocess_context(
         command=command,
         entry_point=None,
         priority=100,
-        target=ContentKind.DOCUMENT,
+        # The scheduler under test is the code pool, so the rule it dispatches
+        # must be code-targeted: an explicit code route admitting unconventional
+        # source. A document target belongs to the document worker instead.
+        target=ContentKind.CODE,
         extractor_version="1.0.0",
         on_error="fail",
         timeout_s=30.0,
@@ -331,7 +334,9 @@ class TestSingleFileScheduler:
             command=command,
             entry_point=None,
             priority=100,
-            target=ContentKind.DOCUMENT,
+            # Fatal-abort propagation is being asserted for the code pool, so
+            # the rule stays on the code side of the boundary.
+            target=ContentKind.CODE,
             extractor_version="1.0.0",
             on_error="fail",
             timeout_s=30.0,

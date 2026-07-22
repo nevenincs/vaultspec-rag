@@ -113,6 +113,26 @@ def _stream_source(
     return digest.hexdigest(), bytes(retained) if retained is not None else None
 
 
+def _require_rule_target(
+    rule: PreprocessRule | None,
+    expected: ContentKind,
+    *,
+    batch: bool = False,
+) -> None:
+    """Fail closed when a worker is handed a rule routed to another content kind.
+
+    Content kind is decided once by the resolved policy; a worker never infers
+    it. A rule whose target is not ``expected`` means the caller crossed the
+    code/document split, so the run stops rather than storing the file under the
+    wrong domain. An unmatched file (``rule is None``) is not a crossing - the
+    default source profile owns that decision upstream.
+    """
+    if rule is None or rule.target is expected:
+        return
+    worker = f"{expected.value} batch worker" if batch else f"{expected.value} worker"
+    raise ValueError(f"{worker} received a non-{expected.value} extraction rule")
+
+
 def _limit_disposition(rule: PreprocessRule, error: _SourceLimitExceededError) -> str:
     """Map a pre-launch source refusal through the rule's declared policy."""
     if rule.on_error == "fail":
@@ -667,8 +687,7 @@ def stream_document_and_hash_file(
     rel_path = path.relative_to(root_dir).as_posix()
     run_control.checkpoint()
     rule = prep.config.match(rel_path) if prep is not None else None
-    if rule is not None and rule.target is not ContentKind.DOCUMENT:
-        raise ValueError("document worker received a non-document extraction rule")
+    _require_rule_target(rule, ContentKind.DOCUMENT)
     source_limit = _effective_source_limit(prep, rule)
     if rule is None:
         return _raw_document_stream(
@@ -829,8 +848,7 @@ def chunk_file_with_status(
     """
     rel_path = path.relative_to(root_dir).as_posix()
     rule = prep.config.match(rel_path) if prep is not None else None
-    if rule is not None and rule.target is not ContentKind.CODE:
-        raise ValueError("code worker received a non-code extraction rule")
+    _require_rule_target(rule, ContentKind.CODE)
     source_limit = _effective_source_limit(prep, rule)
     if rule is not None:
         try:
@@ -911,8 +929,7 @@ def chunk_and_hash_file(
     """
     rel_path = str(path.relative_to(root_dir)).replace("\\", "/")
     rule = prep.config.match(rel_path) if prep is not None else None
-    if rule is not None and rule.target is not ContentKind.CODE:
-        raise ValueError("code worker received a non-code extraction rule")
+    _require_rule_target(rule, ContentKind.CODE)
     source_limit = _effective_source_limit(prep, rule)
     if rule is not None:
         try:
@@ -1107,8 +1124,7 @@ def chunk_batch_files(
         PreprocessAbortError: If any file fails and ``on_error == "fail"`` -
             propagates out of the worker to abort the run.
     """
-    if rule.target is not ContentKind.CODE:
-        raise ValueError("code batch worker received a non-code extraction rule")
+    _require_rule_target(rule, ContentKind.CODE, batch=True)
     members: list[_BatchMember] = []
     misses: list[pathlib.Path] = []
     source_limit = _effective_source_limit(prep, rule)
