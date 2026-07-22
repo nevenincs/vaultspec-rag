@@ -35,6 +35,7 @@ from starlette.routing import Route
 
 import vaultspec_rag.server as _m
 
+from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from ..concurrency import get_search_limiter
 from ..job_models import JobOutcome
 from ..logging_config import (
@@ -120,22 +121,14 @@ def _bad_request_invalid_root(exc: ValueError) -> JSONResponse:
     )
 
 
-def _normalise_search_type(value: object) -> str | JSONResponse:
-    if value == "vault":
-        return "vault"
-    if value in ("code", "codebase"):
-        return "code"
-    return JSONResponse(
-        {
-            "ok": False,
-            "error": "bad_request",
-            "message": (
-                "type must be one of the allowed values: 'vault', 'code', or "
-                "'codebase'; 'codebase' is an alias for 'code'."
-            ),
-        },
-        status_code=400,
-    )
+def _normalise_search_type(value: object) -> PublicSourceType | JSONResponse:
+    try:
+        return parse_source_type(value, allow_aliases=True)
+    except SourceTypeParseError as exc:
+        return JSONResponse(
+            {"ok": False, "error": exc.error_kind, **exc.as_payload()},
+            status_code=400,
+        )
 
 
 def _extract_token(request: Request) -> str | None:
@@ -243,7 +236,11 @@ def _search_index_state(
     search_type: object,
 ) -> dict[str, object]:
     requested_target = str(requested_root)
-    source = "code" if search_type in ("code", "codebase") else "vault"
+    source = (
+        search_type.value
+        if isinstance(search_type, PublicSourceType)
+        else str(search_type)
+    )
     count = int(indexed_count)
     return {
         "source": source,
@@ -285,7 +282,7 @@ def _classify_search_result(
     *,
     job_snapshot_before: list[dict[str, object]],
     root: Path,
-    source: Literal["vault", "code"],
+    source: Literal["vault", "code", "document"],
     request_id: str,
     port: int | None,
 ) -> SearchResponseClassification:
@@ -314,7 +311,7 @@ def _classify_collection_disappearance(
     *,
     job_snapshot_before: list[dict[str, object]],
     root: Path,
-    source: Literal["vault", "code"],
+    source: Literal["vault", "code", "document"],
     request_id: str,
     port: int | None,
 ) -> SearchResponseClassification | None:
@@ -340,7 +337,7 @@ async def _run_search_with_availability(
     *,
     job_snapshot_before: list[dict[str, object]],
     root: Path,
-    source: Literal["vault", "code"],
+    source: Literal["vault", "code", "document"],
     request_id: str,
     port: int | None,
 ) -> tuple[dict[str, object], SearchResponseClassification | None]:
@@ -365,7 +362,7 @@ def _complete_classified_search(
     classification: SearchResponseClassification,
     *,
     root: Path,
-    source: Literal["vault", "code"],
+    source: Literal["vault", "code", "document"],
     request_id: str,
     total_seconds: float,
 ) -> tuple[dict[str, object], Literal[200, 503]]:
@@ -1009,6 +1006,142 @@ async def metrics_route(request: Request) -> PlainTextResponse | JSONResponse:
     )
 
 
+def _dispatch_public_search(
+    root: Path,
+    query: str,
+    top_k: int,
+    payload: dict[str, Any],
+    search_type: PublicSourceType,
+    notes: dict[str, object],
+) -> tuple[list[Any], dict[str, float], Any | None]:
+    """Dispatch one canonical source without adapter fallback."""
+    import vaultspec_rag
+
+    if search_type is PublicSourceType.VAULT:
+        results, timings = vaultspec_rag.search_vault_timed(
+            root,
+            query,
+            top_k=top_k,
+            doc_type=payload.get("doc_type"),
+            feature=payload.get("feature"),
+            date=payload.get("date"),
+            tag=payload.get("tag"),
+            intent=payload.get("intent"),
+            like_ids=payload.get("like_ids"),
+            unlike_ids=payload.get("unlike_ids"),
+        )
+        return results, timings, None
+    if search_type is PublicSourceType.CODE:
+        results, timings = vaultspec_rag.search_codebase_timed(
+            root,
+            query,
+            top_k=top_k,
+            language=payload.get("language"),
+            path=payload.get("path"),
+            node_type=payload.get("node_type"),
+            function_name=payload.get("function_name"),
+            class_name=payload.get("class_name"),
+            include_paths=payload.get("include_paths"),
+            exclude_paths=payload.get("exclude_paths"),
+            dedup_locales=payload.get("dedup_locales"),
+            prefer=payload.get("prefer"),
+            exclude_domains=payload.get("exclude_domains"),
+            only_domains=payload.get("only_domains"),
+            include_domains=payload.get("include_domains"),
+            like_ids=payload.get("like_ids"),
+            unlike_ids=payload.get("unlike_ids"),
+            notes=notes,
+        )
+        return results, timings, None
+    if search_type is PublicSourceType.DOCUMENT:
+        results, timings = vaultspec_rag.search_documents_timed(
+            root,
+            query,
+            top_k=top_k,
+            source_path=payload.get("source_path"),
+            extractor_id=payload.get("extractor_id"),
+            extractor_version=payload.get("extractor_version"),
+            locator_kind=payload.get("locator_kind"),
+        )
+        return results, timings, None
+    combined, timings = vaultspec_rag.search_combined_timed(
+        root,
+        query,
+        top_k=top_k,
+    )
+    return combined.results, timings, combined
+
+
+def _execute_search_request(
+    *,
+    root: Path,
+    query: str,
+    top_k: int,
+    payload: dict[str, Any],
+    search_type: PublicSourceType,
+    request_id: str,
+) -> dict[str, object]:
+    """Execute and serialize one search off the event loop."""
+    try:
+        notes: dict[str, object] = {}
+        phase_started = time.perf_counter()
+        results, phase_timing, combined = _dispatch_public_search(
+            root, query, top_k, payload, search_type, notes
+        )
+        search_seconds = time.perf_counter() - phase_started
+        phase_started = time.perf_counter()
+        indexed_count = (
+            sum(
+                int(phase_timing.get(f"{source}_indexed_count", 0.0))
+                for source in ("vault", "code", "document")
+            )
+            if search_type is PublicSourceType.COMBINED
+            else int(phase_timing["indexed_count"])
+        )
+        index_state = _search_index_state(
+            indexed_count=indexed_count,
+            requested_root=root,
+            search_type=search_type,
+        )
+        index_state_seconds = time.perf_counter() - phase_started
+        phase_started = time.perf_counter()
+        from ._models import SearchResultItem
+
+        items = [
+            SearchResultItem.model_validate(result, from_attributes=True).model_dump(
+                mode="json"
+            )
+            for result in results
+        ]
+        response: dict[str, object] = {
+            "request_id": request_id,
+            "results": items,
+            "summary": f"Found {len(results)} relevant items.",
+            "filtered": notes.get("dropped_domains"),
+            "timing": {
+                "index_state_seconds": index_state_seconds,
+                "search_seconds": search_seconds,
+                "embedding_seconds": phase_timing.get("embedding_seconds"),
+                "qdrant_seconds": phase_timing.get("qdrant_seconds"),
+                "rerank_seconds": phase_timing.get("rerank_seconds"),
+                "postprocess_seconds": phase_timing.get("postprocess_seconds"),
+                "serialization_seconds": time.perf_counter() - phase_started,
+                "queue_wait_seconds": phase_timing.get("queue_wait_seconds", 0.0),
+                "timing_scope": "server_route",
+                "phases": phase_timing,
+            },
+            "index_state": index_state,
+        }
+        if combined is not None:
+            response["partial"] = combined.partial
+            response["domains"] = combined.domain_status_payload()
+        return response
+    except RegistryFullError as exc:
+        return _m._registry_full_error_dict(exc)
+    except VaultStoreLockedError as exc:
+        return _m._local_store_locked_error_dict(exc)
+
+
 async def search_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
@@ -1039,111 +1172,39 @@ async def search_route(request: Request) -> JSONResponse:
         return _bad_request_invalid_root(exc)
 
     job_snapshot_before = _canonical_job_snapshot()
-    search_source = "code" if search_type == "code" else "vault"
-    notes: dict[str, object] = {}
-
-    def _run() -> dict[str, object]:
-        import vaultspec_rag
-
-        try:
-            phase_started = time.perf_counter()
-            if search_type == "vault":
-                results, phase_timing = vaultspec_rag.search_vault_timed(
-                    root,
-                    query,
-                    top_k=top_k,
-                    doc_type=payload.get("doc_type"),
-                    feature=payload.get("feature"),
-                    date=payload.get("date"),
-                    tag=payload.get("tag"),
-                    intent=payload.get("intent"),
-                    like_ids=payload.get("like_ids"),
-                    unlike_ids=payload.get("unlike_ids"),
-                )
-            else:
-                results, phase_timing = vaultspec_rag.search_codebase_timed(
-                    root,
-                    query,
-                    top_k=top_k,
-                    language=payload.get("language"),
-                    path=payload.get("path"),
-                    node_type=payload.get("node_type"),
-                    function_name=payload.get("function_name"),
-                    class_name=payload.get("class_name"),
-                    include_paths=payload.get("include_paths"),
-                    exclude_paths=payload.get("exclude_paths"),
-                    dedup_locales=payload.get("dedup_locales"),
-                    prefer=payload.get("prefer"),
-                    exclude_domains=payload.get("exclude_domains"),
-                    only_domains=payload.get("only_domains"),
-                    include_domains=payload.get("include_domains"),
-                    like_ids=payload.get("like_ids"),
-                    unlike_ids=payload.get("unlike_ids"),
-                    notes=notes,
-                )
-            search_seconds = time.perf_counter() - phase_started
-            phase_started = time.perf_counter()
-            index_state = _search_index_state(
-                indexed_count=phase_timing["indexed_count"],
-                requested_root=root,
-                search_type=search_type,
-            )
-            index_state_seconds = time.perf_counter() - phase_started
-            phase_started = time.perf_counter()
-            from ._models import SearchResultItem
-
-            items = [
-                SearchResultItem.model_validate(r, from_attributes=True).model_dump(
-                    mode="json"
-                )
-                for r in results
-            ]
-            serialization_seconds = time.perf_counter() - phase_started
-            return {
-                "request_id": request_id,
-                "results": items,
-                "summary": f"Found {len(results)} relevant items.",
-                # Per-domain counts of noise candidates dropped by the policy,
-                # so the caller sees what the filter removed (never silent).
-                "filtered": notes.get("dropped_domains"),
-                "timing": {
-                    "index_state_seconds": index_state_seconds,
-                    "search_seconds": search_seconds,
-                    "model_load_seconds": phase_timing.get("model_load_seconds"),
-                    "project_lease_seconds": phase_timing.get("project_lease_seconds"),
-                    "embedding_seconds": phase_timing.get("embedding_seconds"),
-                    "qdrant_seconds": phase_timing.get("qdrant_seconds"),
-                    "rerank_seconds": phase_timing.get("rerank_seconds"),
-                    "postprocess_seconds": phase_timing.get("postprocess_seconds"),
-                    "serialization_seconds": serialization_seconds,
-                    "queue_wait_seconds": phase_timing.get(
-                        "queue_wait_seconds",
-                        0.0,
-                    ),
-                    "timing_scope": "server_route",
-                    "phases": phase_timing,
-                },
-                "index_state": index_state,
-            }
-        except RegistryFullError as exc:
-            return _m._registry_full_error_dict(exc)
-        except VaultStoreLockedError as exc:
-            return _m._local_store_locked_error_dict(exc)
+    search_source = search_type.value
+    run = partial(
+        _execute_search_request,
+        root=root,
+        query=query,
+        top_k=top_k,
+        payload=cast("dict[str, Any]", payload),
+        search_type=search_type,
+        request_id=request_id,
+    )
 
     started = time.perf_counter()
-    result, classification = await _run_search_with_availability(
-        _run,
-        job_snapshot_before=job_snapshot_before,
-        root=root,
-        source=search_source,
-        request_id=request_id,
-        port=request.url.port,
-    )
+    if search_type is PublicSourceType.COMBINED:
+        result = await _run_in_thread(run, limiter=get_search_limiter())
+        classification = None
+    else:
+        result, classification = await _run_search_with_availability(
+            run,
+            job_snapshot_before=job_snapshot_before,
+            root=root,
+            source=cast('Literal["vault", "code", "document"]', search_source),
+            request_id=request_id,
+            port=request.url.port,
+        )
     total_seconds = time.perf_counter() - started
     _m.incr("search_total")
     _m.observe("search_last_duration_seconds", total_seconds)
     response_status = 200
-    if classification is None and "results" in result:
+    if (
+        classification is None
+        and "results" in result
+        and search_type is not PublicSourceType.COMBINED
+    ):
         result["request_id"] = request_id
         timing = result.get("timing")
         if isinstance(timing, dict):
@@ -1152,7 +1213,7 @@ async def search_route(request: Request) -> JSONResponse:
             result,
             job_snapshot_before=job_snapshot_before,
             root=root,
-            source=search_source,
+            source=cast('Literal["vault", "code", "document"]', search_source),
             request_id=request_id,
             port=request.url.port,
         )
@@ -1160,7 +1221,7 @@ async def search_route(request: Request) -> JSONResponse:
         result, response_status = _complete_classified_search(
             classification,
             root=root,
-            source=search_source,
+            source=cast('Literal["vault", "code", "document"]', search_source),
             request_id=request_id,
             total_seconds=total_seconds,
         )
