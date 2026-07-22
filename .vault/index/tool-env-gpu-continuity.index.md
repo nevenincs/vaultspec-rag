@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#tool-env-gpu-continuity'
-date: '2026-07-14'
-modified: '2026-07-21'
+date: '2026-07-22'
+modified: '2026-07-22'
 related:
   - '[[2026-07-14-tool-env-gpu-continuity-P01-S01]]'
   - '[[2026-07-14-tool-env-gpu-continuity-P01-S02]]'
@@ -18,6 +18,7 @@ related:
   - '[[2026-07-14-tool-env-gpu-continuity-P03-S10]]'
   - '[[2026-07-14-tool-env-gpu-continuity-P03-S11]]'
   - '[[2026-07-14-tool-env-gpu-continuity-P03-S12]]'
+  - '[[2026-07-14-tool-env-gpu-continuity-P04-S13]]'
   - '[[2026-07-14-tool-env-gpu-continuity-adr]]'
   - '[[2026-07-14-tool-env-gpu-continuity-plan]]'
   - '[[2026-07-14-tool-env-gpu-continuity-research]]'
@@ -47,6 +48,7 @@ Auto-generated index of all documents tagged with `#tool-env-gpu-continuity`.
 - `2026-07-14-tool-env-gpu-continuity-P03-S10` - Mention --json in the human jobs summary line and command help so scripted consumers are routed to the structured envelope instead of grepping the word active
 - `2026-07-14-tool-env-gpu-continuity-P03-S11` - Assert the jobs human summary carries the --json signpost and that the jobs --json envelope shape is unchanged
 - `2026-07-14-tool-env-gpu-continuity-P03-S12` - Document the canonical receipt-carrying tool install command with the upgrade contract, the --with wheel-URL fallback, and the ephemeral-env trap including stop-the-service-before-forced-reinstall
+- `2026-07-14-tool-env-gpu-continuity-P04-S13` - Run the full unit and integration suites with the machine service stopped and isolated status and storage dirs, fixing any regressions the new surfaces introduce
 
 ### plan
 

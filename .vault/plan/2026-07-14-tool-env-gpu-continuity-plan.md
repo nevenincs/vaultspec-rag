@@ -3,12 +3,14 @@ tags:
   - '#plan'
   - '#tool-env-gpu-continuity'
 date: '2026-07-14'
-modified: '2026-07-21'
+modified: '2026-07-22'
 tier: L2
 related:
   - '[[2026-07-14-tool-env-gpu-continuity-adr]]'
   - '[[2026-07-14-tool-env-gpu-continuity-research]]'
 ---
+
+<!-- RETIRED: S14 -->
 
 # `tool-env-gpu-continuity` plan
 
@@ -43,8 +45,7 @@ Signpost server jobs --json in the human summary and help, and document the cano
 
 Full-suite and on-box verification, including the execution-phase gate on the uv --index behaviour for uv tool installs on Windows and the manual persona pass mandated for CLI operability changes.
 
-- [ ] `P04.S13` - Run the full unit and integration suites with the machine service stopped and isolated status and storage dirs, fixing any regressions the new surfaces introduce; `src/vaultspec_rag/tests`.
-- [ ] `P04.S14` - Execute the on-box manual persona pass on the GPU machine: install via the receipt-carrying command, run uv tool upgrade, verify server start works with no manual torch step, gate the --index behaviour against the uv 11532 risk flipping docs to the --with fallback if it misresolves, and reproduce the uvx-ephemeral warning and warming status; `docs/verification`.
+- [x] `P04.S13` - Run the full unit and integration suites with the machine service stopped and isolated status and storage dirs, fixing any regressions the new surfaces introduce; `src/vaultspec_rag/tests`.
 
 ## Description
 
