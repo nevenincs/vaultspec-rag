@@ -70,9 +70,9 @@ Replace ambiguous optional-port discovery with one service-domain resolution and
 
 Represent ready, absent, and each live-holder degradation with preserved identity and freshness evidence.
 
-- [ ] `W02.P05.S10` - Define typed machine resolution with holder and pointer identity, freshness, source, and reasoned degraded states; `src/vaultspec_rag/serviceclient/_discovery.py`.
-- [ ] `W02.P05.S11` - Export typed discovery without widening the torch-free service-client import surface; `src/vaultspec_rag/serviceclient/__init__.py`.
-- [ ] `W02.P05.S12` - Verify ready, absent, missing, invalid, stale, foreign-PID, and legacy fallback resolution against real locks; `src/vaultspec_rag/tests/test_machine_discovery_resolution.py`.
+- [x] `W02.P05.S10` - Define typed machine resolution with holder and pointer identity, freshness, source, and reasoned degraded states; `src/vaultspec_rag/serviceclient/_discovery.py`.
+- [x] `W02.P05.S11` - Export typed discovery without widening the torch-free service-client import surface; `src/vaultspec_rag/serviceclient/__init__.py`.
+- [x] `W02.P05.S12` - Verify ready, absent, missing, invalid, stale, foreign-PID, and legacy fallback resolution against real locks; `src/vaultspec_rag/tests/test_machine_discovery_resolution.py`.
 
 ### Phase `W02.P06` - canonical status adapters
 

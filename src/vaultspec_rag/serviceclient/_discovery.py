@@ -15,6 +15,7 @@ import os
 import sys
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -47,11 +48,46 @@ SERVICE_PHASE_RUNNING = "running"
 #: tracks the writing daemon, not this consumer.
 _HEARTBEAT_STALENESS_FALLBACK_SECONDS = 60
 
+#: Resolution outcomes. ``ready`` carries a usable address; ``absent`` means no
+#: machine singleton is held, so nothing is running; ``degraded`` means a live
+#: holder owns the singleton but its published pointer cannot be trusted. The
+#: three are exhaustive and mutually exclusive, and ``degraded`` is deliberately
+#: distinct from ``absent`` so an operator surface never renders a live-but-
+#: unpublished daemon as stopped.
+DISCOVERY_STATE_READY = "ready"
+DISCOVERY_STATE_ABSENT = "absent"
+DISCOVERY_STATE_DEGRADED = "degraded"
+
+#: Why a live holder's pointer was refused. Each reason names the specific
+#: disagreement so a caller can report evidence instead of a bare failure.
+DISCOVERY_REASON_POINTER_MISSING = "pointer_missing"
+DISCOVERY_REASON_POINTER_INVALID = "pointer_invalid"
+DISCOVERY_REASON_POINTER_STALE = "pointer_stale"
+DISCOVERY_REASON_POINTER_FOREIGN = "pointer_foreign"
+DISCOVERY_REASON_PROBE_FAILED = "probe_failed"
+
+#: Which view supplied the resolved address.
+DISCOVERY_SOURCE_MACHINE_POINTER = "machine_pointer"
+DISCOVERY_SOURCE_STATUS_FILE = "status_file"
+DISCOVERY_SOURCE_NONE = "none"
+
 __all__ = [
+    "DISCOVERY_REASON_POINTER_FOREIGN",
+    "DISCOVERY_REASON_POINTER_INVALID",
+    "DISCOVERY_REASON_POINTER_MISSING",
+    "DISCOVERY_REASON_POINTER_STALE",
+    "DISCOVERY_REASON_PROBE_FAILED",
+    "DISCOVERY_SOURCE_MACHINE_POINTER",
+    "DISCOVERY_SOURCE_NONE",
+    "DISCOVERY_SOURCE_STATUS_FILE",
+    "DISCOVERY_STATE_ABSENT",
+    "DISCOVERY_STATE_DEGRADED",
+    "DISCOVERY_STATE_READY",
     "SERVICE_DISCOVERY_SCHEMA",
     "SERVICE_DISCOVERY_VERSION",
     "SERVICE_PHASE_RUNNING",
     "SERVICE_PHASE_WARMING",
+    "MachineResolution",
     "_default_service_port",
     "_delete_service_status",
     "_discovery_timestamp",
@@ -61,6 +97,7 @@ __all__ = [
     "_replace_service_status",
     "_status_dir",
     "_status_file",
+    "resolve_machine_service",
 ]
 
 
@@ -374,94 +411,244 @@ def _coerce_port(port: Any) -> int | None:
         return None
 
 
-def _discovery_is_stale(payload: dict[str, Any]) -> bool:
-    """Return whether *payload*'s heartbeat is past its staleness window.
-
-    The window is the payload's own ``stale_after_s`` (so it tracks the writing
-    daemon), falling back to ``_HEARTBEAT_STALENESS_FALLBACK_SECONDS``. A missing
-    or unparseable ``last_heartbeat`` is treated as *not* stale here: liveness is
-    already gated by the OS lock in :func:`_machine_service_resolution`, and a
-    pre-upgrade pointer without the field must not be rejected on staleness alone.
-    """
+def _heartbeat_age_seconds(payload: dict[str, Any]) -> float | None:
+    """Return the payload heartbeat's age in seconds, or ``None`` when absent."""
     from datetime import UTC, datetime
 
     raw = payload.get("last_heartbeat")
     if not isinstance(raw, str) or not raw:
-        return False
+        return None
     try:
         ts = datetime.fromisoformat(raw)
     except ValueError as exc:
         logger.debug("discovery last_heartbeat %r unparseable: %s", raw, exc)
-        return False
+        return None
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=UTC)
-    age = (datetime.now(UTC) - ts).total_seconds()
+    return (datetime.now(UTC) - ts).total_seconds()
+
+
+def _staleness_window_seconds(payload: dict[str, Any]) -> float:
+    """Return the payload's own staleness window, or the fallback."""
     threshold = payload.get("stale_after_s")
-    if not isinstance(threshold, (int, float)) or threshold <= 0:
-        threshold = _HEARTBEAT_STALENESS_FALLBACK_SECONDS
-    return age > float(threshold)
+    if not isinstance(threshold, (int, float)) or isinstance(threshold, bool):
+        return float(_HEARTBEAT_STALENESS_FALLBACK_SECONDS)
+    return (
+        float(threshold)
+        if threshold > 0
+        else float(_HEARTBEAT_STALENESS_FALLBACK_SECONDS)
+    )
 
 
-def _machine_service_resolution() -> dict[str, Any] | None:
-    """Resolve the one live machine service via the machine-global pointer.
+@dataclass(frozen=True, slots=True)
+class MachineResolution:
+    """One resolution of the machine singleton, with the evidence behind it.
 
-    Status-directory independent and re-read per call: the resident service is a
-    machine singleton, so a consumer locates it through machine-global state it
-    shares regardless of its own ``VAULTSPEC_RAG_STATUS_DIR``. The OS advisory
-    lock is the liveness authority (a dead daemon's lock is released by the OS),
-    and the machine-global pointer carries the address. The payload is accepted
-    only when a live lock holder exists *and* the pointer is fresh within its
-    staleness window - so an orphaned pointer left by a crashed daemon (a dead
-    pid, a days-old heartbeat) is treated as absence, not as a live service.
+    The OS advisory lock is the liveness authority and the machine-global
+    pointer carries the address, so the two can disagree.  Preserving both
+    identities plus the freshness evidence is what lets a caller distinguish
+    "nothing is running" from "something is running but has not published a
+    trustworthy address", and report which of the two it saw.
+    """
 
-    Returns the validated discovery payload (carrying ``port`` and, when written,
-    ``service_token``), or ``None`` when no live machine service resolves.
+    state: str
+    source: str
+    holder_pid: int = 0
+    pointer_pid: int | None = None
+    port: int | None = None
+    service_token: str | None = None
+    heartbeat_age_s: float | None = None
+    stale_after_s: float | None = None
+    reason: str | None = None
+    payload: dict[str, Any] | None = None
+
+    @property
+    def is_ready(self) -> bool:
+        """Whether this resolution carries a usable service address."""
+        return self.state == DISCOVERY_STATE_READY and self.port is not None
+
+    @property
+    def is_degraded(self) -> bool:
+        """Whether a live holder exists whose published pointer was refused."""
+        return self.state == DISCOVERY_STATE_DEGRADED
+
+    def evidence(self) -> str:
+        """Render a one-line operator-facing account of this resolution."""
+        if self.state == DISCOVERY_STATE_READY:
+            return (
+                f"service on port {self.port} "
+                f"(holder pid {self.holder_pid}, source {self.source})"
+            )
+        if self.state == DISCOVERY_STATE_ABSENT:
+            return "no machine singleton is held"
+        parts = [f"live holder pid {self.holder_pid}"]
+        if self.pointer_pid is not None:
+            parts.append(f"pointer pid {self.pointer_pid}")
+        if self.heartbeat_age_s is not None:
+            parts.append(f"heartbeat age {self.heartbeat_age_s:.1f}s")
+        if self.stale_after_s is not None:
+            parts.append(f"stale after {self.stale_after_s:.0f}s")
+        return f"{self.reason}: " + ", ".join(parts)
+
+
+def resolve_machine_service() -> MachineResolution:
+    """Resolve the machine singleton into one typed, evidence-carrying verdict.
+
+    A live OS-lock holder with an untrustworthy pointer resolves ``degraded``,
+    never ``absent`` and never through the status-file fallback: something owns
+    the singleton, so reporting it as stopped would invite a caller to start a
+    second daemon that must then lose the race, and accepting a status-file
+    address would point that caller at an address the owner never published.
+    The status file is consulted only when no holder exists at all, which is the
+    pre-pointer compatibility case.
     """
     from .._machine_lock import machine_lock_live_holder, read_machine_discovery
 
     try:
-        if machine_lock_live_holder() <= 0:
-            return None
+        holder = machine_lock_live_holder()
+    except Exception as exc:
+        # Broad except: discovery must never block the command path. A probe
+        # that cannot run is reported as such rather than silently becoming
+        # absence, which would read as "nothing is running".
+        logger.debug("machine lock holder probe raised: %s", exc, exc_info=True)
+        return MachineResolution(
+            state=DISCOVERY_STATE_DEGRADED,
+            source=DISCOVERY_SOURCE_NONE,
+            reason=DISCOVERY_REASON_PROBE_FAILED,
+        )
+
+    if holder <= 0:
+        return _status_file_resolution()
+
+    try:
         payload = read_machine_discovery()
     except Exception as exc:
-        # Broad except: discovery must never block the command path; any
-        # failure degrades to "no machine resolution" and the status-dir hint.
-        logger.debug("machine discovery probe raised: %s", exc, exc_info=True)
-        return None
-    if not payload or _coerce_port(payload.get("port")) is None:
-        return None
-    if _discovery_is_stale(payload):
-        logger.debug("machine discovery pointer is stale; treating as absent")
-        return None
-    return payload
+        logger.debug("machine discovery read raised: %s", exc, exc_info=True)
+        return MachineResolution(
+            state=DISCOVERY_STATE_DEGRADED,
+            source=DISCOVERY_SOURCE_MACHINE_POINTER,
+            holder_pid=holder,
+            reason=DISCOVERY_REASON_PROBE_FAILED,
+        )
+
+    if payload is None:
+        return MachineResolution(
+            state=DISCOVERY_STATE_DEGRADED,
+            source=DISCOVERY_SOURCE_MACHINE_POINTER,
+            holder_pid=holder,
+            reason=DISCOVERY_REASON_POINTER_MISSING,
+        )
+
+    port = _coerce_port(payload.get("port"))
+    raw_pid = payload.get("pid")
+    pointer_pid = (
+        raw_pid if isinstance(raw_pid, int) and not isinstance(raw_pid, bool) else None
+    )
+    token = payload.get("service_token")
+    age = _heartbeat_age_seconds(payload)
+    window = _staleness_window_seconds(payload)
+
+    def degraded(reason: str) -> MachineResolution:
+        return MachineResolution(
+            state=DISCOVERY_STATE_DEGRADED,
+            source=DISCOVERY_SOURCE_MACHINE_POINTER,
+            holder_pid=holder,
+            pointer_pid=pointer_pid,
+            port=port,
+            service_token=token if isinstance(token, str) else None,
+            heartbeat_age_s=age,
+            stale_after_s=window,
+            reason=reason,
+            payload=payload,
+        )
+
+    if port is None:
+        return degraded(DISCOVERY_REASON_POINTER_INVALID)
+    # The publisher refuses to write a payload whose pid is not the lease
+    # owner's, so a pointer naming anyone but the live holder is a leftover
+    # from a previous incarnation rather than this owner's publication.
+    if pointer_pid is not None and pointer_pid != holder:
+        return degraded(DISCOVERY_REASON_POINTER_FOREIGN)
+    if age is not None and age > window:
+        return degraded(DISCOVERY_REASON_POINTER_STALE)
+
+    return MachineResolution(
+        state=DISCOVERY_STATE_READY,
+        source=DISCOVERY_SOURCE_MACHINE_POINTER,
+        holder_pid=holder,
+        pointer_pid=pointer_pid,
+        port=port,
+        service_token=token if isinstance(token, str) else None,
+        heartbeat_age_s=age,
+        stale_after_s=window,
+        payload=payload,
+    )
+
+
+def _status_file_resolution() -> MachineResolution:
+    """Resolve through the per-status-directory file (no singleton is held).
+
+    Reached only when the OS lock reports no holder, so this cannot mask a live
+    owner's degraded publication.
+    """
+    try:
+        data = _read_service_status()
+    except Exception as exc:
+        # Broad except: status reads must never block the command path.
+        logger.debug("status read raised: %s", exc, exc_info=True)
+        return MachineResolution(
+            state=DISCOVERY_STATE_ABSENT,
+            source=DISCOVERY_SOURCE_NONE,
+        )
+    port = _coerce_port(data.get("port")) if data else None
+    if not data or port is None:
+        return MachineResolution(
+            state=DISCOVERY_STATE_ABSENT,
+            source=DISCOVERY_SOURCE_NONE,
+        )
+    raw_pid = data.get("pid")
+    token = data.get("service_token")
+    return MachineResolution(
+        state=DISCOVERY_STATE_READY,
+        source=DISCOVERY_SOURCE_STATUS_FILE,
+        pointer_pid=(
+            raw_pid
+            if isinstance(raw_pid, int) and not isinstance(raw_pid, bool)
+            else None
+        ),
+        port=port,
+        service_token=token if isinstance(token, str) else None,
+        payload=data,
+    )
+
+
+def _machine_service_resolution() -> dict[str, Any] | None:
+    """Return the live machine pointer payload, or ``None``.
+
+    Thin compatibility view over :func:`resolve_machine_service` for callers
+    that only need the payload of a trustworthy machine publication. A degraded
+    resolution (a live holder whose pointer is missing, invalid, foreign, or
+    stale) collapses to ``None`` here; callers that must distinguish degraded
+    from absent use the typed resolution directly.
+    """
+    resolution = resolve_machine_service()
+    if resolution.is_ready and resolution.source == DISCOVERY_SOURCE_MACHINE_POINTER:
+        return resolution.payload
+    return None
 
 
 def _default_service_port() -> int | None:
     """Return the port of the currently running service, or ``None``.
 
-    Resolution is authoritative on machine-global state: the machine-singleton
-    pointer, gated by the OS-lock live holder and heartbeat staleness, wins when
-    it resolves - so a stale or foreign per-status-directory ``service.json`` can
-    no longer mislead a long-lived consumer (the MCP) frozen onto the wrong
-    status directory. The per-status-directory ``service.json`` is consulted only
-    as a compatibility fallback when no live machine service resolves (older
-    daemons, or a deployment that does not write the pointer). ``None`` means no
-    live service, and callers emit the exit-3 "service down" path.
+    Resolution is authoritative on machine-global state: a live singleton
+    holder's own publication wins, so a stale or foreign per-status-directory
+    ``service.json`` can no longer mislead a long-lived consumer (the MCP)
+    frozen onto the wrong status directory. When a holder is live but its
+    pointer cannot be trusted, this returns ``None`` rather than falling back to
+    the status file - that fallback would hand out an address the owner never
+    published. The status file is consulted only when no singleton is held at
+    all (older daemons, or a deployment that does not write the pointer).
+    ``None`` means no usable address, and callers emit the exit-3 path.
     """
-    resolution = _machine_service_resolution()
-    if resolution is not None:
-        port = _coerce_port(resolution.get("port"))
-        if port is not None:
-            return port
-    try:
-        data = _read_service_status()
-    except Exception as exc:
-        # Broad except: status-file reads must never block the
-        # command path; failures fall through to the exit-3
-        # "service down" envelope. Debug-log so the swallow stays
-        # observable.
-        logger.debug("status read raised: %s", exc, exc_info=True)
-        return None
-    if not data:
-        return None
-    return _coerce_port(data.get("port"))
+    resolution = resolve_machine_service()
+    return resolution.port if resolution.is_ready else None
