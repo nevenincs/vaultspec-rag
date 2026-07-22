@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import fnmatch
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+from .._store_models import DocumentLocator, DocumentMetadata
 from ._postprocess import (
     PREFER_CATEGORIES,
     PREFER_SCORE_NUDGE,
@@ -21,7 +22,8 @@ from ._postprocess import (
 )
 
 if TYPE_CHECKING:
-    from ._models import ParsedQuery, SearchResult
+    from .._store_models import DocumentLocatorKind
+    from ._models import DocumentSearchResult, ParsedQuery, SearchResult
 
 
 def format_locator(payload: dict[str, object]) -> str | None:
@@ -196,6 +198,84 @@ def map_codebase_results(
             ),
         )
     return results
+
+
+def map_document_results(
+    raw_results: list[dict[str, object]],
+) -> list[DocumentSearchResult]:
+    """Shape independent document rows without collapsing native metadata."""
+    from ._models import DocumentSearchResult
+
+    results: list[DocumentSearchResult] = []
+    for row in raw_results:
+        content = str(row.get("content", ""))
+        source_path = str(row.get("source_path", ""))
+        raw_score = row.get("_relevance_score", 0.0)
+        score = float(raw_score) if isinstance(raw_score, (int, float)) else 0.0
+        raw_document_metadata = row.get("document_metadata", {})
+        raw_unit_metadata = row.get("unit_metadata", {})
+        if not isinstance(raw_document_metadata, dict) or not isinstance(
+            raw_unit_metadata, dict
+        ):
+            continue
+        document_metadata = cast("dict[str, object]", raw_document_metadata)
+        unit_metadata = cast("dict[str, object]", raw_unit_metadata)
+        locator = _document_locator(row)
+        results.append(
+            DocumentSearchResult(
+                id=str(row.get("id", "")),
+                path=source_path,
+                title=str(row.get("title") or source_path),
+                score=score,
+                snippet=content[:200].strip(),
+                section=(
+                    str(row["section"]) if row.get("section") is not None else None
+                ),
+                anchor=(
+                    str(row["anchor"]) if row.get("anchor") is not None else None
+                ),
+                locator=locator,
+                document_metadata=DocumentMetadata.from_mapping(document_metadata),
+                unit_metadata=DocumentMetadata.from_mapping(unit_metadata),
+                extractor_id=(
+                    str(row["extractor_id"])
+                    if row.get("extractor_id") is not None
+                    else None
+                ),
+                extractor_version=(
+                    str(row["extractor_version"])
+                    if row.get("extractor_version") is not None
+                    else None
+                ),
+                rerank_text=content or None,
+            )
+        )
+    return results
+
+
+def _document_locator(row: dict[str, object]) -> DocumentLocator | None:
+    """Materialize a valid native document locator from split payload fields."""
+    kind = row.get("locator_kind")
+    if not isinstance(kind, str) or kind not in {
+        "byte",
+        "page",
+        "sheet",
+        "line",
+        "char",
+        "none",
+    }:
+        return None
+    value: object = row.get("locator_value_int")
+    if isinstance(value, bool) or not isinstance(value, int):
+        value = row.get("locator_value_str")
+    if isinstance(value, bool) or not isinstance(value, (int, str)) or value == "":
+        return None
+    end: object = row.get("locator_end_int")
+    if isinstance(end, bool) or not isinstance(end, int):
+        end = row.get("locator_end_str")
+    if isinstance(end, bool) or not isinstance(end, (int, str)) or end == "":
+        end = None
+    return DocumentLocator(cast("DocumentLocatorKind", kind), value, end)
 
 
 def apply_prefer_nudge(results: list[SearchResult], prefer: str | None) -> None:
