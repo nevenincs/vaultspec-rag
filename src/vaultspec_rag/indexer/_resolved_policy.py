@@ -413,6 +413,13 @@ class ResolvedIndexPolicy:
             transform_kind=rule.target if rule is not None else None,
         )
 
+    def fingerprints_for(
+        self,
+        kind: ContentKind,
+    ) -> _config_epoch.ContentKindFingerprints:
+        """Return the independent membership/content identity for one kind."""
+        return self.fingerprints.per_kind.for_kind(kind)
+
 
 def compile_content_policy(config: RootContentPolicyConfig) -> RootContentPolicy:
     """Compile raw caller configuration into closed policy vocabulary."""
