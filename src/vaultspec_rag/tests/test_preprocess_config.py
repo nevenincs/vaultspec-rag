@@ -123,6 +123,56 @@ def test_options_and_entry_point_survive_real_loading_and_pickle(
     assert pickle.loads(pickle.dumps(rule)) == rule
 
 
+def test_toml_temporal_options_are_canonical_json_at_admission(
+    tmp_path: Path,
+) -> None:
+    _write_config(
+        tmp_path,
+        """
+        version = 2
+
+        [[rule]]
+        pattern = "*.rst"
+        entry_point = "project.extract:rst"
+        target = "document"
+        extractor_version = "2026.07"
+
+        [rule.options]
+        release_date = 2026-07-22
+        release_time = 14:30:15
+        generated_at = 2026-07-22T14:30:15Z
+        """,
+    )
+    rule = load_preprocess_rules(tmp_path, strict=True).match("guide.rst")
+    assert rule is not None
+    assert rule.options == {
+        "release_date": "2026-07-22",
+        "release_time": "14:30:15",
+        "generated_at": "2026-07-22T14:30:15+00:00",
+    }
+
+
+def test_non_finite_option_is_rejected_at_admission(tmp_path: Path) -> None:
+    _write_config(
+        tmp_path,
+        """
+        version = 2
+
+        [[rule]]
+        pattern = "*.rst"
+        entry_point = "project.extract:rst"
+        target = "document"
+        extractor_version = "2026.07"
+
+        [rule.options]
+        threshold = inf
+        """,
+    )
+    with pytest.raises(PreprocessConfigError, match="non-finite"):
+        load_preprocess_rules(tmp_path, strict=True)
+    assert load_preprocess_rules(tmp_path).rules == []
+
+
 def test_omitted_timeout_resolves_to_finite_ceiling(tmp_path: Path) -> None:
     _write_config(
         tmp_path,

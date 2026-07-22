@@ -16,10 +16,13 @@ the ``off`` kill switch skips hooks entirely.
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
+import subprocess
 import sys
 import textwrap
+from dataclasses import replace
 from typing import TYPE_CHECKING, TypedDict
 
 import pytest
@@ -134,6 +137,254 @@ def _sentinel_extractor(root: Path, sentinel: Path) -> Path:
     return script
 
 
+def test_real_extractor_receives_canonical_options_and_retains_metadata(
+    tmp_path: Path,
+) -> None:
+    from ...indexer._preprocess_config import load_preprocess_rules
+    from ...indexer._preprocess_runner import run_preprocessor
+
+    extractor = tmp_path / "envelope_extractor.py"
+    extractor.write_text(
+        textwrap.dedent("""
+            import json
+            import os
+
+            invocation = json.loads(os.environ["VAULTSPEC_PREPROCESS_INVOCATION"])
+            source_path = invocation["source_paths"][0]
+            print(json.dumps({
+                "schema_version": 1,
+                "preprocessor_id": "envelope",
+                "preprocessor_version": invocation["extractor_version"],
+                "source_path": source_path,
+                "metadata": {
+                    "language": invocation["options"]["language"],
+                    "release_date": invocation["options"]["release_date"],
+                },
+                "units": [{
+                    "text": "canonical extractor content",
+                    "title": "Handbook",
+                    "section": "Introduction",
+                    "anchor": source_path + "#page=1",
+                    "locator": {"kind": "page", "value": 1},
+                    "metadata": {"confidence": 0.98},
+                }],
+            }))
+        """),
+        encoding="utf-8",
+    )
+    _write_config(
+        tmp_path,
+        "version = 2\n\n"
+        '[[rule]]\npattern = "*.bin"\n'
+        f"command = '''{_command(extractor)}'''\n"
+        'target = "document"\n'
+        'extractor_version = "7"\n'
+        '[rule.options]\nlanguage = "en"\nrelease_date = 2026-07-22\n',
+    )
+    source = tmp_path / "manual.bin"
+    source.write_bytes(b"real source bytes")
+    rule = load_preprocess_rules(tmp_path, strict=True).match(source.name)
+    assert rule is not None
+
+    result = run_preprocessor(
+        source,
+        rule,
+        max_emitted_bytes=64 * 1024,
+        project_root=tmp_path,
+    )
+
+    assert result.status == "ok"
+    assert result.output is not None
+    assert result.output.metadata == {
+        "language": "en",
+        "release_date": "2026-07-22",
+    }
+    assert result.output.preprocessor_version == "7"
+    assert result.output.units is not None
+    assert result.output.units[0].model_dump(mode="json") == {
+        "text": "canonical extractor content",
+        "title": "Handbook",
+        "section": "Introduction",
+        "anchor": "manual.bin#page=1",
+        "locator": {"kind": "page", "value": 1, "end": None},
+        "metadata": {"confidence": 0.98},
+    }
+
+
+def test_real_extractor_source_redirection_is_rejected(tmp_path: Path) -> None:
+    from ...indexer._preprocess_config import load_preprocess_rules
+    from ...indexer._preprocess_runner import run_preprocessor
+
+    extractor = tmp_path / "redirecting_extractor.py"
+    extractor.write_text(
+        "import json\n"
+        "print(json.dumps({\"schema_version\": 1, "
+        "\"preprocessor_id\": \"redirect\", "
+        "\"preprocessor_version\": \"1\", "
+        "\"source_path\": \"another.bin\", \"text\": \"redirected\"}))\n",
+        encoding="utf-8",
+    )
+    _write_config(
+        tmp_path,
+        "version = 2\n\n"
+        '[[rule]]\npattern = "*.bin"\n'
+        f"command = '''{_command(extractor)}'''\n"
+        'target = "document"\n'
+        'extractor_version = "1"\n'
+        'on_error = "skip"\n',
+    )
+    source = tmp_path / "manual.bin"
+    source.write_bytes(b"real source bytes")
+    rule = load_preprocess_rules(tmp_path, strict=True).match(source.name)
+    assert rule is not None
+
+    result = run_preprocessor(
+        source,
+        rule,
+        max_emitted_bytes=64 * 1024,
+        project_root=tmp_path,
+    )
+
+    assert result.status == "skipped"
+    assert result.output is None
+    assert result.reason is not None
+    assert "does not match invoked source" in result.reason
+
+
+def test_real_extractor_cache_respects_version_path_and_output_cap(
+    tmp_path: Path,
+) -> None:
+    from ...indexer._preprocess_cache import (
+        PreprocessCacheIdentity,
+        preprocess_cache_dir,
+        read_cached_output,
+        write_cached_output,
+    )
+    from ...indexer._preprocess_config import load_preprocess_rules
+    from ...indexer._preprocess_runner import run_preprocessor
+
+    extractor = tmp_path / "cache_extractor.py"
+    extractor.write_text(
+        "import json, os\n"
+        "inv = json.loads(os.environ['VAULTSPEC_PREPROCESS_INVOCATION'])\n"
+        "print(json.dumps({'schema_version': 1, 'preprocessor_id': 'cache', "
+        "'preprocessor_version': inv['extractor_version'], "
+        "'source_path': inv['source_paths'][0], 'text': 'cached content'}))\n",
+        encoding="utf-8",
+    )
+    _write_config(
+        tmp_path,
+        "version = 2\n\n"
+        '[[rule]]\npattern = "*.bin"\n'
+        f"command = '''{_command(extractor)}'''\n"
+        'target = "document"\n'
+        'extractor_version = "1"\n',
+    )
+    first = tmp_path / "first.bin"
+    second = tmp_path / "second.bin"
+    first.write_bytes(b"identical")
+    second.write_bytes(b"identical")
+    rule = load_preprocess_rules(tmp_path, strict=True).match(first.name)
+    assert rule is not None
+    result = run_preprocessor(
+        first,
+        rule,
+        max_emitted_bytes=4096,
+        project_root=tmp_path,
+    )
+    assert result.output is not None
+    cache_root = preprocess_cache_dir(tmp_path)
+    first_identity = PreprocessCacheIdentity.from_rule(
+        source_path=first.name,
+        source_hash="same-content-hash",
+        rule=rule,
+        mode="single",
+        max_emitted_bytes=4096,
+    )
+    write_cached_output(cache_root, first_identity, result.output)
+
+    second_identity = PreprocessCacheIdentity.from_rule(
+        source_path=second.name,
+        source_hash="same-content-hash",
+        rule=rule,
+        mode="single",
+        max_emitted_bytes=4096,
+    )
+    version_identity = PreprocessCacheIdentity.from_rule(
+        source_path=first.name,
+        source_hash="same-content-hash",
+        rule=replace(rule, extractor_version="2"),
+        mode="single",
+        max_emitted_bytes=4096,
+    )
+    cap_identity = PreprocessCacheIdentity.from_rule(
+        source_path=first.name,
+        source_hash="same-content-hash",
+        rule=rule,
+        mode="single",
+        max_emitted_bytes=1024,
+    )
+    assert read_cached_output(cache_root, first_identity) is not None
+    assert read_cached_output(cache_root, second_identity) is None
+    assert read_cached_output(cache_root, version_identity) is None
+    assert read_cached_output(cache_root, cap_identity) is None
+
+
+@pytest.mark.parametrize(
+    ("config_body", "expected_kind"),
+    [
+        ("version = 1\n", "migration_required"),
+        (
+            "version = 2\n\n"
+            '[[rule]]\npattern = "*.bin"\ncommand = "extract {path}"\n'
+            'target = "unsupported"\nextractor_version = "1"\n',
+            "admission_config_invalid",
+        ),
+    ],
+)
+def test_preprocess_cli_structures_policy_failures_across_commands(
+    tmp_path: Path,
+    config_body: str,
+    expected_kind: str,
+) -> None:
+    (tmp_path / ".vaultspec").mkdir()
+    _write_config(tmp_path, config_body)
+    environment = os.environ.copy()
+    environment.pop(EnvVar.PREPROCESS.value, None)
+    environment[EnvVar.STATUS_DIR.value] = str(tmp_path / "status")
+
+    for command in ("list", "check", "status"):
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "vaultspec_rag",
+                "--target",
+                str(tmp_path),
+                "preprocess",
+                command,
+                "--json",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+        assert "Traceback" not in completed.stderr
+        payload = json.loads(completed.stdout)
+        if command == "status":
+            assert completed.returncode == 0
+            assert payload["ok"] is True
+            assert payload["data"]["config_valid"] is False
+            assert payload["data"]["config_error_kind"] == expected_kind
+            assert payload["data"]["config_error_message"]
+        else:
+            assert completed.returncode == 1
+            assert payload["ok"] is False
+            assert payload["error"] == expected_kind
+            assert payload["message"]
+
+
 @pytest.fixture
 def preproc_project(
     rag_components: RagComponentsWithManifest,
@@ -148,7 +399,10 @@ def preproc_project(
     script.write_text(textwrap.dedent(_PDF_EXTRACTOR), encoding="utf-8")
     _write_config(
         tmp_path,
+        "version = 2\n\n"
         f"[[rule]]\npattern = \"*.pdf\"\ncommand = '''{_command(script)}'''\n"
+        'target = "code"\n'
+        'extractor_version = "1"\n'
         'on_error = "skip"\n',
     )
     (tmp_path / "report.pdf").write_bytes(b"\x00\x01\x02 binary pdf bytes")
@@ -366,7 +620,10 @@ class TestPreprocessEndToEnd:
         script.write_text(_FAILING_EXTRACTOR, encoding="utf-8")
         _write_config(
             tmp_path,
+            "version = 2\n\n"
             f"[[rule]]\npattern = \"*.pdf\"\ncommand = '''{_command(script)}'''\n"
+            'target = "code"\n'
+            'extractor_version = "1"\n'
             'on_error = "skip"\n',
         )
         (tmp_path / "broken.pdf").write_bytes(b"\x00\x01 binary")
@@ -444,7 +701,10 @@ class TestPreprocessEndToEnd:
         script.write_text(_FAILING_EXTRACTOR, encoding="utf-8")
         _write_config(
             tmp_path,
+            "version = 2\n\n"
             f"[[rule]]\npattern = \"*.log\"\ncommand = '''{_command(script)}'''\n"
+            'target = "code"\n'
+            'extractor_version = "1"\n'
             'on_error = "passthrough"\n',
         )
         # .log is not a supported extension; the rule match admits it, and
@@ -495,7 +755,12 @@ class TestPreprocessEndToEnd:
         source.write_bytes(b"\x00\x01binary")
 
         def _config(command: str) -> str:
-            return f"[[rule]]\npattern = \"*.pdf\"\ncommand = '''{command}'''\n"
+            return (
+                "version = 2\n\n"
+                f"[[rule]]\npattern = \"*.pdf\"\ncommand = '''{command}'''\n"
+                'target = "code"\n'
+                'extractor_version = "1"\n'
+            )
 
         store = VaultStore(tmp_path)
         try:
@@ -536,7 +801,10 @@ class TestPreprocessEndToEnd:
         script.write_text(_FAILING_EXTRACTOR, encoding="utf-8")
         _write_config(
             tmp_path,
+            "version = 2\n\n"
             f"[[rule]]\npattern = \"*.pdf\"\ncommand = '''{_command(script)}'''\n"
+            'target = "code"\n'
+            'extractor_version = "1"\n'
             'on_error = "skip"\n',
         )
         broken = tmp_path / "broken.pdf"
