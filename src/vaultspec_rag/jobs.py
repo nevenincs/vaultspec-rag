@@ -98,6 +98,7 @@ __all__ = [
     "ProcessResourceSnapshot",
     "ResumeStrategy",
     "activate_index_job",
+    "active_index_support_profiles",
     "get_job_manager",
     "index_all_domains",
     "index_job_status",
@@ -122,6 +123,14 @@ __all__ = [
     "validate_scoped_code_index_policy",
     "validate_scoped_document_index_policy",
 ]
+
+
+def active_index_support_profiles() -> dict[str, object]:
+    """Return the configured code and document ceilings for service status."""
+    from .config import get_config
+    from .index_profiles import index_support_profile_status
+
+    return index_support_profile_status(get_config().index_support_profile)
 
 
 def index_all_domains(
