@@ -37,6 +37,10 @@ class SupportMeasurement:
     source_bytes: int
     generated_chunks: int = 0
     weighted_bytes: int = 0
+    extracted_bytes: int = 0
+    queue_bytes: int = 0
+    rss_bytes: int = 0
+    cuda_bytes: int = 0
 
     def __post_init__(self) -> None:
         for name in (
@@ -44,6 +48,10 @@ class SupportMeasurement:
             "source_bytes",
             "generated_chunks",
             "weighted_bytes",
+            "extracted_bytes",
+            "queue_bytes",
+            "rss_bytes",
+            "cuda_bytes",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -58,6 +66,10 @@ class SupportProfileLimits:
     source_bytes: int
     generated_chunks: int
     weighted_bytes: int
+    extracted_bytes: int
+    queue_bytes: int
+    rss_bytes: int
+    cuda_bytes: int
 
     def __post_init__(self) -> None:
         for name in (
@@ -65,6 +77,10 @@ class SupportProfileLimits:
             "source_bytes",
             "generated_chunks",
             "weighted_bytes",
+            "extracted_bytes",
+            "queue_bytes",
+            "rss_bytes",
+            "cuda_bytes",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -75,8 +91,12 @@ class SupportProfileLimits:
         for name in (
             "source_files",
             "source_bytes",
+            "extracted_bytes",
             "generated_chunks",
             "weighted_bytes",
+            "queue_bytes",
+            "rss_bytes",
+            "cuda_bytes",
         ):
             actual = getattr(measured, name)
             limit = getattr(self, name)
@@ -132,12 +152,20 @@ _PROFILES: Final = MappingProxyType(
                 source_bytes=128 * _GIB,
                 generated_chunks=5_000_000,
                 weighted_bytes=512 * _GIB,
+                extracted_bytes=128 * _GIB,
+                queue_bytes=512 * 1024**2,
+                rss_bytes=16 * _GIB,
+                cuda_bytes=12 * _GIB,
             ),
             document=SupportProfileLimits(
                 source_files=100_000,
                 source_bytes=512 * _GIB,
                 generated_chunks=5_000_000,
                 weighted_bytes=1024 * _GIB,
+                extracted_bytes=1024 * _GIB,
+                queue_bytes=512 * 1024**2,
+                rss_bytes=16 * _GIB,
+                cuda_bytes=12 * _GIB,
             ),
         ),
         "embedded-local": IndexSupportProfile(
@@ -150,12 +178,20 @@ _PROFILES: Final = MappingProxyType(
                 source_bytes=16 * _GIB,
                 generated_chunks=500_000,
                 weighted_bytes=64 * _GIB,
+                extracted_bytes=16 * _GIB,
+                queue_bytes=128 * 1024**2,
+                rss_bytes=8 * _GIB,
+                cuda_bytes=6 * _GIB,
             ),
             document=SupportProfileLimits(
                 source_files=10_000,
                 source_bytes=64 * _GIB,
                 generated_chunks=500_000,
                 weighted_bytes=128 * _GIB,
+                extracted_bytes=128 * _GIB,
+                queue_bytes=128 * 1024**2,
+                rss_bytes=8 * _GIB,
+                cuda_bytes=6 * _GIB,
             ),
         ),
     }
@@ -184,6 +220,10 @@ def index_support_profile_status(name: str) -> dict[str, object]:
             "source_bytes": limits.source_bytes,
             "generated_chunks": limits.generated_chunks,
             "weighted_bytes": limits.weighted_bytes,
+            "extracted_bytes": limits.extracted_bytes,
+            "queue_bytes": limits.queue_bytes,
+            "rss_bytes": limits.rss_bytes,
+            "cuda_bytes": limits.cuda_bytes,
         }
 
     return {

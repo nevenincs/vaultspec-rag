@@ -52,6 +52,7 @@ from ._content_policy import (
     RootContentPolicy,
     SourceProfileVersion,
 )
+from ._file_state import FileStateKind
 from ._preprocess_runner import PreprocessAbortError
 from ._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
 from ._run_ledger import (
@@ -430,6 +431,46 @@ class CodebaseIndexer:
             SupportMeasurement(
                 source_files=source_files,
                 source_bytes=source_bytes,
+                queue_bytes=int(get_config().index_queue_max_bytes),
+            )
+        )
+
+    def _record_extracted_bytes(self, extracted_bytes: int) -> None:
+        """Add extractor output bytes without retaining output beyond one file."""
+        if extracted_bytes <= 0:
+            return
+        current = self.support_measurement
+        self._set_support_measurement(
+            SupportMeasurement(
+                source_files=current.source_files,
+                source_bytes=current.source_bytes,
+                generated_chunks=current.generated_chunks,
+                weighted_bytes=current.weighted_bytes,
+                extracted_bytes=current.extracted_bytes + extracted_bytes,
+                queue_bytes=current.queue_bytes,
+                rss_bytes=current.rss_bytes,
+                cuda_bytes=current.cuda_bytes,
+            )
+        )
+
+    def _record_resource_measurement(
+        self,
+        *,
+        rss_bytes: int,
+        cuda_bytes: int,
+    ) -> None:
+        """Merge observed process and CUDA high-water dimensions."""
+        current = self.support_measurement
+        self._set_support_measurement(
+            SupportMeasurement(
+                source_files=current.source_files,
+                source_bytes=current.source_bytes,
+                generated_chunks=current.generated_chunks,
+                weighted_bytes=current.weighted_bytes,
+                extracted_bytes=current.extracted_bytes,
+                queue_bytes=current.queue_bytes,
+                rss_bytes=max(current.rss_bytes, rss_bytes),
+                cuda_bytes=max(current.cuda_bytes, cuda_bytes),
             )
         )
 
@@ -460,6 +501,10 @@ class CodebaseIndexer:
                     source_bytes=current.source_bytes,
                     generated_chunks=current.generated_chunks + len(segment.chunks),
                     weighted_bytes=current.weighted_bytes + segment.estimated_bytes,
+                    extracted_bytes=current.extracted_bytes,
+                    queue_bytes=current.queue_bytes,
+                    rss_bytes=current.rss_bytes,
+                    cuda_bytes=current.cuda_bytes,
                 )
             )
             yield segment
@@ -1804,7 +1849,7 @@ class CodebaseIndexer:
         import queue as queue_module
         import threading
 
-        from ..memory_probe import MemoryProbe
+        from ..memory_probe import MemoryProbe, current_cuda_mb, current_rss_mb
 
         def _segments() -> Iterator[CodeFileSegment]:
             while True:
@@ -1818,11 +1863,19 @@ class CodebaseIndexer:
                     return
                 yield segment
 
+        def _sample_support_resources() -> None:
+            _allocated_mb, reserved_mb = current_cuda_mb()
+            self._record_resource_measurement(
+                rss_bytes=int(current_rss_mb() * 1024**2),
+                cuda_bytes=int(reserved_mb * 1024**2),
+            )
+
         def _consumer_loop() -> None:
             probe: MemoryProbe | None = None
             try:
                 probe = MemoryProbe(name="codebase-index")
                 with probe:
+                    _sample_support_resources()
                     slice_index = 0
                     for weighted_slice in iter_weighted_code_slices(
                         _segments(),
@@ -1874,11 +1927,16 @@ class CodebaseIndexer:
                                 new_ids.update(chunk.id for chunk in slice_chunks)
                                 total[0] += len(slice_chunks)
                                 probe.checkpoint(f"slice-{slice_index}-after-store")
+                                _sample_support_resources()
                             finally:
                                 del slice_chunks
             except BaseException as exc:
                 consumer_exceptions.append(exc)
             finally:
+                try:
+                    _sample_support_resources()
+                except BaseException as exc:
+                    consumer_exceptions.append(exc)
                 try:
                     _release_cuda_cache()
                     if probe is not None and probe.samples:
@@ -2040,8 +2098,51 @@ class CodebaseIndexer:
     ) -> bool:
         """Drain one file result into bounded weighted segments."""
         run_control.checkpoint()
-        metadata[result.rel_path] = result.content_hash
         self._record_preprocess_result(result)
+        failure_state: FileStateKind | None = None
+        failure_kind: JobErrorKind | None = None
+        detail: str | None = None
+        if result.preprocess_status == "skipped":
+            failure_state = FileStateKind.EXTRACT_RETRYABLE
+            failure_kind = JobErrorKind.EXTRACTION_RETRYABLE
+            detail = result.preprocess_reason or "preprocessor skipped the file"
+        elif not result.chunks:
+            failure_state = (
+                FileStateKind.EXTRACT_RETRYABLE
+                if result.preprocess_status == "ok"
+                else FileStateKind.CHUNK_FAILED
+            )
+            failure_kind = (
+                JobErrorKind.EXTRACTION_RETRYABLE
+                if result.preprocess_status == "ok"
+                else JobErrorKind.CHUNK_FAILED
+            )
+            detail = "admitted code source produced no indexable chunks"
+        if (
+            failure_state is not None
+            and failure_kind is not None
+            and detail is not None
+        ):
+            if checkpoint is not None:
+                checkpoint.record_processing_failure(
+                    result.rel_path,
+                    failure_state,
+                    detail,
+                    content_hash=(
+                        result.content_hash
+                        if len(result.content_hash) == 128
+                        and all(
+                            char in "0123456789abcdef" for char in result.content_hash
+                        )
+                        else None
+                    ),
+                )
+            raise JobError(failure_kind, detail)
+        if result.preprocess_status == "ok":
+            self._record_extracted_bytes(
+                sum(len(chunk.content.encode("utf-8")) for chunk in result.chunks)
+            )
+        metadata[result.rel_path] = result.content_hash
         segments = iter_code_file_segments(
             _drain_code_chunks(result.chunks),
             max_chunks=limits.segment_max_chunks,

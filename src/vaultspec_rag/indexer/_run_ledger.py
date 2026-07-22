@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
 
 __all__ = [
+    "INDEX_RUN_LEDGER_FILENAME",
     "CommitUnit",
     "CommitUnitKind",
     "FinalizationPhase",
@@ -38,11 +39,14 @@ __all__ = [
     "RunOperation",
     "RunSignature",
     "RunTerminalState",
+    "index_run_ledger_path",
 ]
 
 _SCHEMA_VERSION: Final = 6
 _FETCH_BATCH: Final = 256
 _DIGEST_REPR_LENGTH: Final = 128
+INDEX_RUN_LEDGER_FILENAME: Final = "index_runs.sqlite3"
+_LEGACY_CODE_RUN_LEDGER_FILENAME: Final = "code_index_runs.sqlite3"
 _REQUIRED_SCHEMA: Final = {
     "generations": frozenset(
         {
@@ -90,6 +94,16 @@ _REQUIRED_SCHEMA: Final = {
         }
     ),
 }
+
+
+def index_run_ledger_path(data_root: Path) -> Path:
+    """Return one shared per-root ledger path with legacy continuity."""
+    root = Path(data_root)
+    current = root / INDEX_RUN_LEDGER_FILENAME
+    legacy = root / _LEGACY_CODE_RUN_LEDGER_FILENAME
+    if current.exists() or not legacy.is_file():
+        return current
+    return legacy
 
 
 class RunLedgerError(RuntimeError):
@@ -471,6 +485,30 @@ class RunLedger:
         if row is None:
             raise KeyError(generation_id)
         return self._generation_from_row(row)
+
+    def latest_generation(
+        self,
+        source_type: ContentKind,
+        *,
+        collection_identity: str | None = None,
+    ) -> RunGeneration | None:
+        """Return the latest typed generation without loading its file rows."""
+        parameters: tuple[object, ...] = (source_type.value,)
+        collection_clause = ""
+        if collection_identity is not None:
+            collection_clause = " AND collection_identity = ?"
+            parameters = (*parameters, collection_identity)
+        with self._connect() as connection:
+            row = connection.execute(
+                f"""
+                SELECT * FROM generations
+                WHERE source_type = ?{collection_clause}
+                ORDER BY updated_at DESC, created_at DESC
+                LIMIT 1
+                """,
+                parameters,
+            ).fetchone()
+        return self._generation_from_row(row) if row is not None else None
 
     def record_storage_confirmed_unit(
         self,
@@ -1091,8 +1129,7 @@ class RunLedger:
         ).fetchone()
         if unresolved is not None:
             raise RunLedgerStateError(
-                "cannot finalize unresolved file state for "
-                f"{unresolved['rel_path']}"
+                f"cannot finalize unresolved file state for {unresolved['rel_path']}"
             )
 
     def finish_generation(
@@ -1307,8 +1344,7 @@ class RunLedger:
             )
         for table, required_columns in _REQUIRED_SCHEMA.items():
             columns = {
-                str(row[1])
-                for row in connection.execute(f"PRAGMA table_info({table})")
+                str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
             }
             missing_columns = required_columns - columns
             if missing_columns:

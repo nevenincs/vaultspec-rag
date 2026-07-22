@@ -182,4 +182,8 @@ def test_clean_and_status_expose_document_domain_and_support_profile(
             "source_bytes",
             "generated_chunks",
             "weighted_bytes",
+            "extracted_bytes",
+            "queue_bytes",
+            "rss_bytes",
+            "cuda_bytes",
         }
