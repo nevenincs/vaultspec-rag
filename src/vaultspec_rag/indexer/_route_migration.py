@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from ..store import VaultStore
     from ._file_state import FileState
     from ._resolved_policy import ResolvedIndexPolicy
+    from ._run_policy import RunPolicy
 
 __all__ = [
     "RouteMigration",
@@ -38,6 +39,7 @@ __all__ = [
 ]
 
 _DEFAULT_PAGE_SIZE = 256
+_LEDGER_LOOKUP_BATCH = 256
 _MIGRATION_JOURNAL_FILENAME = "route_migrations.sqlite3"
 
 
@@ -46,6 +48,7 @@ class DestinationCheckpoint(Protocol):
 
     generation_id: str
     ledger: RunLedger
+    run_policy: RunPolicy
 
 
 class RouteMigrationPhase(StrEnum):
@@ -230,12 +233,15 @@ def iter_stored_route_pages(
     stored_kind: ContentKind,
     *,
     page_size: int = _DEFAULT_PAGE_SIZE,
+    run_policy: RunPolicy | None = None,
 ) -> Iterator[tuple[StoredRouteRow, ...]]:
     """Yield freshly classified store rows without trusting a sidecar."""
     if isinstance(page_size, bool) or page_size <= 0 or page_size > 1000:
         raise ValueError("route migration page size must be between 1 and 1000")
     offset: object | None = None
     while True:
+        if run_policy is not None:
+            run_policy.checkpoint(f"{stored_kind.value} route page before scroll")
         if stored_kind is ContentKind.CODE:
             rows, next_offset = store.scroll_code_content(
                 limit=page_size,
@@ -267,6 +273,8 @@ def iter_stored_route_pages(
             )
         if page:
             yield tuple(page)
+        if run_policy is not None:
+            run_policy.checkpoint(f"{stored_kind.value} route page after scroll")
         if next_offset is None:
             return
         offset = next_offset
@@ -313,6 +321,7 @@ def reconcile_origin_after_destination(
     journal = RouteMigrationJournal(
         checkpoint.ledger.path.parent / _MIGRATION_JOURNAL_FILENAME
     )
+    checkpoint.run_policy.checkpoint("route migration resume entry")
     removed = _resume_path_migrations(
         store,
         journal,
@@ -322,6 +331,7 @@ def reconcile_origin_after_destination(
         destination_generation_id=checkpoint.generation_id,
     )
     while point_ids := origin_point_ids(store, origin_kind, rel_path):
+        checkpoint.run_policy.checkpoint("route migration before journal")
         migration = journal.begin(
             rel_path=rel_path,
             origin_kind=origin_kind,
@@ -329,28 +339,64 @@ def reconcile_origin_after_destination(
             destination_generation_id=checkpoint.generation_id,
             point_ids=point_ids,
         )
+        checkpoint.run_policy.checkpoint("route migration before origin delete")
         _delete_origin_points(store, migration)
         journal.mark_origin_deleted(migration.migration_id)
         removed += len(migration.point_ids)
+        checkpoint.run_policy.checkpoint("route migration after origin delete")
     return removed
 
 
 def reconcile_checkpoint_routes(
     store: VaultStore,
     checkpoint: DestinationCheckpoint,
+    policy: ResolvedIndexPolicy,
     destination_kind: ContentKind,
+    *,
+    page_size: int = _DEFAULT_PAGE_SIZE,
 ) -> int:
-    """Reconcile every complete destination path, including resumed files."""
+    """Reconcile complete destinations through one bounded origin scan."""
+    origin_kind = (
+        ContentKind.DOCUMENT
+        if destination_kind is ContentKind.CODE
+        else ContentKind.CODE
+    )
+    journal = RouteMigrationJournal(
+        checkpoint.ledger.path.parent / _MIGRATION_JOURNAL_FILENAME
+    )
     removed = 0
-    for state in checkpoint.ledger.iter_file_states(checkpoint.generation_id):
-        if state.kind is not destination_kind or not state.converged:
-            continue
-        removed += reconcile_origin_after_destination(
-            store,
-            checkpoint,
-            destination_kind,
-            state.rel_path,
-        )
+    for page in iter_stored_route_pages(
+        store,
+        policy,
+        origin_kind,
+        page_size=page_size,
+        run_policy=checkpoint.run_policy,
+    ):
+        states = _file_states_for_rows(checkpoint, page)
+        point_ids_by_path: dict[str, list[str]] = {}
+        for row in page:
+            state = states.get(row.source_path)
+            if (
+                state is None
+                or state.kind is not destination_kind
+                or not state.converged
+            ):
+                continue
+            point_ids_by_path.setdefault(row.source_path, []).append(row.point_id)
+        for rel_path, point_ids in point_ids_by_path.items():
+            checkpoint.run_policy.checkpoint("route page before journal")
+            migration = journal.begin(
+                rel_path=rel_path,
+                origin_kind=origin_kind,
+                destination_kind=destination_kind,
+                destination_generation_id=checkpoint.generation_id,
+                point_ids=tuple(point_ids),
+            )
+            checkpoint.run_policy.checkpoint("route page before origin delete")
+            _delete_origin_points(store, migration)
+            journal.mark_origin_deleted(migration.migration_id)
+            removed += len(migration.point_ids)
+            checkpoint.run_policy.checkpoint("route page after origin delete")
     return removed
 
 
@@ -391,20 +437,26 @@ def purge_unpublished_rows(
         policy,
         stored_kind,
         page_size=page_size,
+        run_policy=checkpoint.run_policy,
     ):
+        states = _file_states_for_rows(checkpoint, page)
+        retained_ids = _retained_ids_for_rows(checkpoint, page)
         stale_ids = [
             row.point_id
             for row in page
             if not _stored_row_is_retained(
                 row,
                 stored_kind=stored_kind,
-                checkpoint=checkpoint,
+                state=states.get(row.source_path),
+                retained_ids=retained_ids,
             )
         ]
         if not stale_ids:
             continue
+        checkpoint.run_policy.checkpoint("route purge before stale delete")
         _delete_kind_points(store, stored_kind, stale_ids)
         removed += len(stale_ids)
+        checkpoint.run_policy.checkpoint("route purge after stale delete")
     return removed
 
 
@@ -415,18 +467,32 @@ def reconcile_generation_storage(
     destination_kind: ContentKind,
 ) -> tuple[int, int, int]:
     """Converge replay, same-kind storage, and cross-kind ownership in order."""
-    resumed = resume_pending_migrations(store, checkpoint.ledger.path.parent)
+    resumed = resume_pending_migrations(
+        store,
+        checkpoint.ledger.path.parent,
+        run_policy=checkpoint.run_policy,
+    )
     purged = purge_unpublished_rows(
         store,
         checkpoint,
         policy,
         destination_kind,
     )
-    migrated = reconcile_checkpoint_routes(store, checkpoint, destination_kind)
+    migrated = reconcile_checkpoint_routes(
+        store,
+        checkpoint,
+        policy,
+        destination_kind,
+    )
     return resumed, purged, migrated
 
 
-def resume_pending_migrations(store: VaultStore, data_root: Path) -> int:
+def resume_pending_migrations(
+    store: VaultStore,
+    data_root: Path,
+    *,
+    run_policy: RunPolicy | None = None,
+) -> int:
     """Replay every destination-confirmed cleanup after interruption."""
     journal_path = data_root.resolve() / _MIGRATION_JOURNAL_FILENAME
     if not journal_path.is_file():
@@ -434,9 +500,13 @@ def resume_pending_migrations(store: VaultStore, data_root: Path) -> int:
     journal = RouteMigrationJournal(journal_path)
     completed = 0
     for migration in journal.pending():
+        if run_policy is not None:
+            run_policy.checkpoint("route migration replay before origin delete")
         _delete_origin_points(store, migration)
         journal.mark_origin_deleted(migration.migration_id)
         completed += 1
+        if run_policy is not None:
+            run_policy.checkpoint("route migration replay after origin delete")
     return completed
 
 
@@ -445,12 +515,47 @@ def _ledger_file_state(
     generation_id: str,
     rel_path: str,
 ) -> FileState | None:
-    for state in ledger.iter_file_states(generation_id):
-        if state.rel_path == rel_path:
-            return state
-        if state.rel_path > rel_path:
-            return None
-    return None
+    return ledger.file_states_for_paths(generation_id, (rel_path,)).get(rel_path)
+
+
+def _file_states_for_rows(
+    checkpoint: DestinationCheckpoint,
+    rows: tuple[StoredRouteRow, ...],
+) -> dict[str, FileState]:
+    """Read one store page through bounded indexed ledger lookups."""
+    rel_paths = tuple(dict.fromkeys(row.source_path for row in rows))
+    states: dict[str, FileState] = {}
+    for start in range(0, len(rel_paths), _LEDGER_LOOKUP_BATCH):
+        checkpoint.run_policy.checkpoint("route page before ledger lookup")
+        batch = rel_paths[start : start + _LEDGER_LOOKUP_BATCH]
+        states.update(
+            checkpoint.ledger.file_states_for_paths(
+                checkpoint.generation_id,
+                batch,
+            )
+        )
+        checkpoint.run_policy.checkpoint("route page after ledger lookup")
+    return states
+
+
+def _retained_ids_for_rows(
+    checkpoint: DestinationCheckpoint,
+    rows: tuple[StoredRouteRow, ...],
+) -> frozenset[str]:
+    """Read retained IDs through bounded indexed ledger lookups."""
+    point_ids = tuple(dict.fromkeys(row.point_id for row in rows))
+    retained: set[str] = set()
+    for start in range(0, len(point_ids), _LEDGER_LOOKUP_BATCH):
+        checkpoint.run_policy.checkpoint("route page before retained-ID lookup")
+        batch = point_ids[start : start + _LEDGER_LOOKUP_BATCH]
+        retained.update(
+            checkpoint.ledger.retained_point_ids_for_candidates(
+                checkpoint.generation_id,
+                batch,
+            )
+        )
+        checkpoint.run_policy.checkpoint("route page after retained-ID lookup")
+    return frozenset(retained)
 
 
 def _delete_origin_points(store: VaultStore, migration: RouteMigration) -> None:
@@ -472,28 +577,18 @@ def _stored_row_is_retained(
     row: StoredRouteRow,
     *,
     stored_kind: ContentKind,
-    checkpoint: DestinationCheckpoint,
+    state: FileState | None,
+    retained_ids: frozenset[str],
 ) -> bool:
     if row.admitted and row.current_kind is not stored_kind:
         return True
     if not row.admitted or row.current_kind is not stored_kind:
         return False
-    state = _ledger_file_state(
-        checkpoint.ledger,
-        checkpoint.generation_id,
-        row.source_path,
-    )
     if state is None:
         return False
     if not state.converged:
         return True
-    return any(
-        point_id == row.point_id
-        for point_id in checkpoint.ledger.iter_retained_point_ids(
-            checkpoint.generation_id,
-            rel_path=row.source_path,
-        )
-    )
+    return row.point_id in retained_ids
 
 
 def _resume_path_migrations(

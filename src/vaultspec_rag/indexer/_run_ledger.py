@@ -989,6 +989,71 @@ class RunLedger:
                     yield state
             last_path = str(rows[-1]["rel_path"])
 
+    def file_states_for_paths(
+        self,
+        generation_id: str,
+        rel_paths: tuple[str, ...],
+    ) -> dict[str, FileState]:
+        """Return one bounded indexed file-state page keyed by relative path."""
+        if len(rel_paths) > _FETCH_BATCH:
+            raise ValueError(f"file-state lookup accepts at most {_FETCH_BATCH} paths")
+        if not rel_paths:
+            return {}
+        unique_paths = tuple(dict.fromkeys(rel_paths))
+        placeholders = ", ".join("?" for _path in unique_paths)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM file_states
+                WHERE generation_id = ? AND rel_path IN ({placeholders})
+                """,
+                (generation_id, *unique_paths),
+            ).fetchall()
+        return {
+            state.rel_path: state
+            for state in (_file_state_from_row(row) for row in rows)
+        }
+
+    def retained_point_ids_for_candidates(
+        self,
+        generation_id: str,
+        point_ids: tuple[str, ...],
+    ) -> frozenset[str]:
+        """Return retained identities from one bounded store-page candidate set."""
+        if len(point_ids) > _FETCH_BATCH:
+            raise ValueError(
+                f"retained-point lookup accepts at most {_FETCH_BATCH} IDs"
+            )
+        if not point_ids:
+            return frozenset()
+        unique_ids = tuple(dict.fromkeys(point_ids))
+        placeholders = ", ".join("?" for _point_id in unique_ids)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT points.point_id
+                FROM file_states AS states
+                JOIN commit_units AS units
+                  ON units.generation_id = states.evidence_generation_id
+                 AND units.rel_path = states.rel_path
+                 AND units.unit_kind = ?
+                 AND units.source_digest = states.content_hash
+                JOIN commit_point_ids AS points
+                  ON points.generation_id = units.generation_id
+                 AND points.unit_id = units.unit_id
+                WHERE states.generation_id = ?
+                  AND states.state = ?
+                  AND points.point_id IN ({placeholders})
+                """,
+                (
+                    CommitUnitKind.UPSERT.value,
+                    generation_id,
+                    FileStateKind.INDEXED.value,
+                    *unique_ids,
+                ),
+            ).fetchall()
+        return frozenset(str(row["point_id"]) for row in rows)
+
     def advance_finalization(
         self,
         generation_id: str,
