@@ -39,7 +39,8 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
     from ..job_manager import JobManager, JobShutdownResult
-    from ..qdrant_runtime import QdrantSupervisor
+    from ..qdrant_runtime import QdrantRuntimeState, QdrantSupervisor
+    from ..service import ServiceHealth
 
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -696,6 +697,118 @@ async def _shutdown_components(
         )
 
 
+def _service_health_status(
+    reg_health: ServiceHealth,
+    qdrant_state: QdrantRuntimeState,
+) -> tuple[str, list[str]]:
+    """Resolve service readiness and its infrastructure degradation reasons."""
+    if reg_health["model_loaded"]:
+        status = "ready"
+    elif _m._start_time > 0:
+        status = "degraded"
+    else:
+        status = "error"
+    degraded_reasons: list[str] = []
+    if not reg_health["model_loaded"]:
+        degraded_reasons.append("embedding models are not loaded")
+    if qdrant_state.mode == "server" and not qdrant_state.alive:
+        degraded_reasons.append("the configured vector service is not live")
+        if status == "ready":
+            status = "degraded"
+    return status, degraded_reasons
+
+
+def _health_job_records() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Merge canonical jobs with legacy-only records without duplicating IDs."""
+    from .. import jobs as _jobs_registry
+
+    canonical_records = [
+        snapshot.to_dict() for snapshot in _jobs_registry.get_job_manager().list_jobs()
+    ]
+    canonical_ids = {str(record.get("id", "")) for record in canonical_records}
+    legacy_only = [
+        record
+        for record in _jobs_registry.snapshot()
+        if str(record.get("id", "")) not in canonical_ids
+    ]
+    return canonical_records, [*canonical_records, *legacy_only]
+
+
+def _latest_job_record(
+    records: list[dict[str, object]],
+) -> dict[str, object] | None:
+    """Return the most recently updated record from a possibly empty list."""
+    if not records:
+        return None
+    from ._routes_jobs import job_updated_timestamp
+
+    return max(
+        records,
+        key=lambda record: job_updated_timestamp(record) or float("-inf"),
+    )
+
+
+def _failed_job_health(record: dict[str, object] | None) -> dict[str, object] | None:
+    """Project the bounded latest-failure health shape."""
+    if record is None:
+        return None
+    return {
+        "id": record.get("id"),
+        "error_kind": record.get("error_kind"),
+        "finished_at": record.get("finished_at"),
+    }
+
+
+def _resilience_job_health(
+    record: dict[str, object] | None,
+) -> dict[str, object] | None:
+    """Project the bounded latest-resilience health shape."""
+    if record is None:
+        return None
+    return {
+        "job_id": record.get("id"),
+        "source": cast("dict[str, object]", record["spec"]).get("source"),
+        **cast("dict[str, object]", record["resilience"]),
+    }
+
+
+def _jobs_health() -> tuple[dict[str, object], list[str]]:
+    """Build the bounded job rollup and its service degradation reasons."""
+    from ._routes_jobs import _job_summary, job_state
+
+    canonical_records, job_records = _health_job_records()
+    summary = _job_summary(job_records, now=time.time())
+    last_failed = _latest_job_record(
+        [record for record in job_records if job_state(record) == "failed"]
+    )
+    latest_resilience = _latest_job_record(
+        [
+            record
+            for record in canonical_records
+            if isinstance(record.get("resilience"), dict)
+        ]
+    )
+    jobs_health: dict[str, object] = {
+        "running": summary["running"],
+        "queued": summary["queued"],
+        "paused": summary["paused"],
+        "transitional": summary["transitional"],
+        "active": summary["active"],
+        "stalled": summary["stalled"],
+        "control_pending": summary["control_pending"],
+        "states": summary["states"],
+        "last_failed": _failed_job_health(last_failed),
+        "resilience": _resilience_job_health(latest_resilience),
+    }
+    degraded_reasons: list[str] = []
+    if summary["stalled"]:
+        degraded_reasons.append(f"{summary['stalled']} indexing job(s) are stalled")
+    if last_failed is not None:
+        failed_kind = last_failed.get("error_kind") or "unknown"
+        degraded_reasons.append(f"the latest indexing job failed: {failed_kind}")
+    return jobs_health, degraded_reasons
+
+
 async def health_handler(_request: Request) -> object:
     """Return service health as JSON.
 
@@ -712,107 +825,12 @@ async def health_handler(_request: Request) -> object:
 
     reg_health = _m._registry.health()
     uptime = time.monotonic() - _m._start_time if _m._start_time > 0 else 0.0
-
-    if reg_health["model_loaded"]:
-        status = "ready"
-    elif _m._start_time > 0:
-        status = "degraded"
-    else:
-        status = "error"
-
-    # A supervised qdrant child that has died (and exhausted its
-    # bounded restart) degrades the whole service: searches against
-    # server-mode stores will fail until it returns.
     from .. import qdrant_runtime as _qr
 
     qdrant_state = _qr.runtime_state()
-    if status == "ready" and qdrant_state.mode == "server" and not qdrant_state.alive:
-        status = "degraded"
-
-    degraded_reasons: list[str] = []
-    if not reg_health["model_loaded"]:
-        degraded_reasons.append("embedding models are not loaded")
-    if qdrant_state.mode == "server" and not qdrant_state.alive:
-        degraded_reasons.append("the configured vector service is not live")
-
-    # Bounded jobs-health rollup: canonical lifecycle counts and the most
-    # recent failure's classification, so a broker probing /health sees
-    # paused, transitional, wedged, or failing work without walking /jobs.
-    from .. import jobs as _jobs_registry
-    from ._routes_jobs import _job_summary, job_state, job_updated_timestamp
-
-    now = time.time()
-    canonical_records = [
-        snapshot.to_dict() for snapshot in _jobs_registry.get_job_manager().list_jobs()
-    ]
-    canonical_ids = {str(record.get("id", "")) for record in canonical_records}
-    legacy_only = [
-        record
-        for record in _jobs_registry.snapshot()
-        if str(record.get("id", "")) not in canonical_ids
-    ]
-    job_records = [*canonical_records, *legacy_only]
-    summary = _job_summary(job_records, now=now)
-    failed_records = [record for record in job_records if job_state(record) == "failed"]
-    last_failed = (
-        max(
-            failed_records,
-            key=lambda record: job_updated_timestamp(record) or float("-inf"),
-        )
-        if failed_records
-        else None
-    )
-    resilience_records = [
-        record
-        for record in canonical_records
-        if isinstance(record.get("resilience"), dict)
-    ]
-    latest_resilience = (
-        max(
-            resilience_records,
-            key=lambda record: job_updated_timestamp(record) or float("-inf"),
-        )
-        if resilience_records
-        else None
-    )
-    jobs_health: dict[str, object] = {
-        "running": summary["running"],
-        "queued": summary["queued"],
-        "paused": summary["paused"],
-        "transitional": summary["transitional"],
-        "active": summary["active"],
-        "stalled": summary["stalled"],
-        "control_pending": summary["control_pending"],
-        "states": summary["states"],
-        "last_failed": (
-            {
-                "id": last_failed.get("id"),
-                "error_kind": last_failed.get("error_kind"),
-                "finished_at": last_failed.get("finished_at"),
-            }
-            if last_failed is not None
-            else None
-        ),
-        "resilience": (
-            {
-                "job_id": latest_resilience.get("id"),
-                "source": cast("dict[str, object]", latest_resilience["spec"]).get(
-                    "source"
-                ),
-                **cast(
-                    "dict[str, object]",
-                    latest_resilience["resilience"],
-                ),
-            }
-            if latest_resilience is not None
-            else None
-        ),
-    }
-    if summary["stalled"]:
-        degraded_reasons.append(f"{summary['stalled']} indexing job(s) are stalled")
-    if last_failed is not None:
-        failed_kind = last_failed.get("error_kind") or "unknown"
-        degraded_reasons.append(f"the latest indexing job failed: {failed_kind}")
+    status, degraded_reasons = _service_health_status(reg_health, qdrant_state)
+    jobs_health, jobs_degraded_reasons = _jobs_health()
+    degraded_reasons.extend(jobs_degraded_reasons)
 
     from ..jobs import active_index_support_profiles
 
