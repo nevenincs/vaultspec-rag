@@ -57,6 +57,8 @@ class JobErrorKind(StrEnum):
     CORPUS_LIMIT_EXCEEDED = "corpus_limit_exceeded"
     DISK_PREFLIGHT_FAILED = "disk_preflight_failed"
     JOB_CAPACITY_EXCEEDED = "job_capacity_exceeded"
+    MIGRATION_REQUIRED = "migration_required"
+    ADMISSION_CONFIG_INVALID = "admission_config_invalid"
 
 
 _REMEDIATION: Final = MappingProxyType(
@@ -99,6 +101,14 @@ _REMEDIATION: Final = MappingProxyType(
         JobErrorKind.JOB_CAPACITY_EXCEEDED: (
             "the service is at its nonterminal job limit; wait for a job to finish "
             "before retrying"
+        ),
+        JobErrorKind.MIGRATION_REQUIRED: (
+            "the root policy uses an older schema; add explicit content targets and "
+            "extractor versions before retrying"
+        ),
+        JobErrorKind.ADMISSION_CONFIG_INVALID: (
+            "the root policy has invalid or conflicting content ownership; correct "
+            "the reported routes before retrying"
         ),
     }
 )

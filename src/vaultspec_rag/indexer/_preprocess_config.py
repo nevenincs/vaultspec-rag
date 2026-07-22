@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import pathspec
 
+from .._job_errors import JobErrorKind
 from ._content_policy import ContentKind
 
 if TYPE_CHECKING:
@@ -50,6 +51,7 @@ __all__ = [
     "PreprocessConfig",
     "PreprocessConfigError",
     "PreprocessContext",
+    "PreprocessPolicyError",
     "PreprocessRule",
     "load_preprocess_rules",
 ]
@@ -78,6 +80,16 @@ class PreprocessConfigError(ValueError):
     where a config defect is a hard error. The non-strict default degrades
     instead, per the D3 error policy.
     """
+
+
+class PreprocessPolicyError(PreprocessConfigError):
+    """Fail-closed routing or migration defect with a stable job error kind."""
+
+    error_kind: JobErrorKind
+
+    def __init__(self, error_kind: JobErrorKind, detail: str) -> None:
+        self.error_kind = error_kind
+        super().__init__(f"{error_kind.value}: {detail}")
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -151,6 +163,15 @@ class PreprocessConfig:
             schema_version: Declared policy schema version.
         """
         self._schema_version = schema_version
+        owners: dict[str, ContentKind] = {}
+        for rule in rules:
+            existing = owners.setdefault(rule.pattern, rule.target)
+            if existing is not rule.target:
+                raise PreprocessPolicyError(
+                    JobErrorKind.ADMISSION_CONFIG_INVALID,
+                    f"preprocess pattern {rule.pattern!r} targets both "
+                    f"{existing.value!r} and {rule.target.value!r}",
+                )
         ordered = sorted(rules, key=lambda r: (r.priority, r.order))
         self._compiled: list[tuple[pathspec.GitIgnoreSpec, PreprocessRule]] = [
             (pathspec.GitIgnoreSpec.from_lines([rule.pattern]), rule)
@@ -287,10 +308,13 @@ def load_preprocess_rules(
             f"{PREPROCESS_CONFIG_FILENAME}: config version {version} is newer than "
             f"supported ({SUPPORTED_CONFIG_VERSION}); upgrade vaultspec-rag"
         )
-        if strict:
-            raise PreprocessConfigError(message)
-        logger.warning("%s; ignoring preprocess rules", message)
-        return PreprocessConfig([])
+        raise PreprocessPolicyError(JobErrorKind.ADMISSION_CONFIG_INVALID, message)
+    if version < SUPPORTED_CONFIG_VERSION:
+        raise PreprocessPolicyError(
+            JobErrorKind.MIGRATION_REQUIRED,
+            f"{PREPROCESS_CONFIG_FILENAME}: config version {version} must be "
+            f"migrated to {SUPPORTED_CONFIG_VERSION}",
+        )
 
     raw_rules = data.get("rule", [])
     if not isinstance(raw_rules, list):
@@ -402,8 +426,8 @@ def _build_rule(
         raise reject("missing or non-string 'pattern'")
 
     command, entry_point = _resolve_invocation(rule_map, reject)
-    target = _resolve_target(rule_map, reject)
-    extractor_version = _resolve_extractor_version(rule_map, reject)
+    target = _resolve_target(rule_map, order)
+    extractor_version = _resolve_extractor_version(rule_map, order)
     on_error = _resolve_on_error(rule_map, reject)
     priority = _resolve_priority(rule_map, reject)
     timeout_s = _resolve_timeout(rule_map, reject)
@@ -431,26 +455,48 @@ def _build_rule(
 
 def _resolve_target(
     rule_map: dict[str, object],
-    reject: Callable[[str], _RuleRejectedError],
+    order: int,
 ) -> ContentKind:
     """Resolve the required content owner without applying fallback routing."""
     target_raw = rule_map.get("target")
+    if target_raw is None:
+        raise PreprocessPolicyError(
+            JobErrorKind.MIGRATION_REQUIRED,
+            f"{PREPROCESS_CONFIG_FILENAME}: rule #{order} is missing 'target'",
+        )
     if not isinstance(target_raw, str) or not target_raw:
-        raise reject("missing or non-string 'target'")
+        raise PreprocessPolicyError(
+            JobErrorKind.ADMISSION_CONFIG_INVALID,
+            f"{PREPROCESS_CONFIG_FILENAME}: rule #{order} has a non-string 'target'",
+        )
     try:
         return ContentKind(target_raw)
     except ValueError:
-        raise reject(f"unknown 'target' {target_raw!r}") from None
+        raise PreprocessPolicyError(
+            JobErrorKind.ADMISSION_CONFIG_INVALID,
+            f"{PREPROCESS_CONFIG_FILENAME}: rule #{order} has unknown "
+            f"'target' {target_raw!r}",
+        ) from None
 
 
 def _resolve_extractor_version(
     rule_map: dict[str, object],
-    reject: Callable[[str], _RuleRejectedError],
+    order: int,
 ) -> str:
     """Resolve the required caller-managed extractor semantic version."""
     version_raw = rule_map.get("extractor_version")
+    if version_raw is None:
+        raise PreprocessPolicyError(
+            JobErrorKind.MIGRATION_REQUIRED,
+            f"{PREPROCESS_CONFIG_FILENAME}: rule #{order} is missing "
+            "'extractor_version'",
+        )
     if not isinstance(version_raw, str) or not version_raw.strip():
-        raise reject("missing or empty 'extractor_version'")
+        raise PreprocessPolicyError(
+            JobErrorKind.ADMISSION_CONFIG_INVALID,
+            f"{PREPROCESS_CONFIG_FILENAME}: rule #{order} has an invalid "
+            "'extractor_version'",
+        )
     return version_raw.strip()
 
 
