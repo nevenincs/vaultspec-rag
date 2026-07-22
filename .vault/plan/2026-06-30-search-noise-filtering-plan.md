@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#search-noise-filtering'
 date: '2026-06-30'
-modified: '2026-07-03'
+modified: '2026-07-22'
 tier: L2
 related:
   - '[[2026-06-30-search-noise-filtering-adr]]'

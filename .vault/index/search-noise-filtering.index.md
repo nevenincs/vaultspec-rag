@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#search-noise-filtering'
-date: '2026-06-30'
-modified: '2026-07-03'
+date: '2026-07-22'
+modified: '2026-07-22'
 related:
   - '[[2026-06-30-search-noise-filtering-P01-S01]]'
   - '[[2026-06-30-search-noise-filtering-P01-S02]]'
@@ -19,6 +19,7 @@ related:
   - '[[2026-06-30-search-noise-filtering-adr]]'
   - '[[2026-06-30-search-noise-filtering-plan]]'
   - '[[2026-06-30-search-noise-filtering-research]]'
+  - '[[2026-07-22-search-noise-filtering-candidate-budget-audit]]'
 ---
 
 # `search-noise-filtering` feature index
@@ -30,6 +31,10 @@ Auto-generated index of all documents tagged with `#search-noise-filtering`.
 ### adr
 
 - `2026-06-30-search-noise-filtering-adr` - `search-noise-filtering` adr: `query-time domain noise filtering, ranking, and a persistent noise profile` | (**status:** `accepted`)
+
+### audit
+
+- `2026-07-22-search-noise-filtering-candidate-budget-audit` - `search-noise-filtering` audit: `candidate budget correction`
 
 ### exec
 
