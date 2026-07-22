@@ -13,7 +13,8 @@ tests import directly - is re-exported here unchanged.
 
 from __future__ import annotations
 
-from ._models import ParsedQuery, SearchResult
+from ._models import DocumentSearchResult, ParsedQuery, SearchResult
+from ._outcomes import CombinedSearchOutcome, SearchDomainOutcome
 from ._parsing import parse_query
 from ._postprocess import (
     _classify_chunk_type,  # pyright: ignore[reportPrivateUsage]  # deliberately re-exported as public API; tests import by this name
@@ -29,9 +30,12 @@ from ._validation import (
 )
 
 __all__ = [
+    "CombinedSearchOutcome",
+    "DocumentSearchResult",
     "InvalidFilterForSearchTypeError",
     "InvalidPreferValueError",
     "ParsedQuery",
+    "SearchDomainOutcome",
     "SearchResult",
     "VaultSearcher",
     "_classify_chunk_type",
