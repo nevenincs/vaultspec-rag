@@ -13,16 +13,6 @@ related:
   - '[[2026-07-21-large-index-resilience-plan]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 <!-- RETIRED: S02, S03, S04, S05, S10, S11, S12, S13, S14, S15, S16, S17 -->
 
 # `search-index-availability` plan

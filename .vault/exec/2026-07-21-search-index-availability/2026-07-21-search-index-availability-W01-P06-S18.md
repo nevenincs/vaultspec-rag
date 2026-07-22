@@ -30,5 +30,6 @@ is absent or cannot contain a `results` member.
 ## Notes
 
 Initialization and tool calls use explicit bounded timeouts, and failure evidence remains
-token-redacted and size-bounded. Formatting, lint, and strict BasedPyright checks passed;
-graphics processing unit acceptance remains deferred to the review gate.
+token-redacted and size-bounded. Formatting, lint, strict BasedPyright, and test collection
+passed. The focused graphics processing unit runtime was not run because the CUDA lane
+remained occupied; acceptance remains deferred to the review gate.
