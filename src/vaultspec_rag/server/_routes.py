@@ -124,7 +124,7 @@ def _bad_request_invalid_root(exc: ValueError) -> JSONResponse:
 
 def _normalise_search_type(value: object) -> PublicSourceType | JSONResponse:
     try:
-        return parse_source_type(value, allow_aliases=True)
+        return parse_source_type(value, allow_aliases=False)
     except SourceTypeParseError as exc:
         return JSONResponse(
             {"ok": False, "error": exc.error_kind, **exc.as_payload()},
@@ -1558,7 +1558,7 @@ async def reindex_route(request: Request) -> JSONResponse:
         try:
             source_type = parse_source_type(
                 payload.get("type", PublicSourceType.VAULT.value),
-                allow_aliases=True,
+                allow_aliases=False,
             )
         except SourceTypeParseError as exc:
             return JSONResponse(
@@ -1636,7 +1636,7 @@ async def clean_route(request: Request) -> JSONResponse:
         try:
             source_type = parse_source_type(
                 payload.get("type", PublicSourceType.COMBINED.value),
-                allow_aliases=True,
+                allow_aliases=False,
             )
         except SourceTypeParseError as exc:
             return JSONResponse(
