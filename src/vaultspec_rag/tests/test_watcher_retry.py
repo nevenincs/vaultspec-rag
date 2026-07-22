@@ -21,6 +21,7 @@ from ..watcher import (
 from ..watcher_retry import (
     WatcherCircuitState,
     WatcherRetryPolicy,
+    WatcherRetryState,
     WatcherRetryStateError,
     WatcherSource,
 )
