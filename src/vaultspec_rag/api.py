@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     import pathlib
 
     from .indexer import IndexResult
-    from .indexer._codebase_indexer import ContentScanResult
+    from .indexer._codebase_indexer import CodeIndexPreflight, ContentScanResult
     from .progress import ProgressReporter
     from .search import SearchResult
 
@@ -51,6 +51,24 @@ def _resolve(root_dir: pathlib.Path) -> pathlib.Path:
     from pathlib import Path
 
     return Path(root_dir).resolve()
+
+
+def _preflight_code_index(
+    root: pathlib.Path,
+    *,
+    extra_excludes: list[str] | None = None,
+    sample_limit: int = 100,
+) -> CodeIndexPreflight:
+    """Resolve policy and discovery without opening storage or loading models."""
+    from .indexer import CodebaseIndexer
+
+    indexer = CodebaseIndexer(
+        root,
+        model=cast("Any", None),
+        store=cast("Any", None),
+        extra_excludes=extra_excludes,
+    )
+    return indexer.preflight_content(sample_limit=sample_limit)
 
 
 def index(
@@ -122,14 +140,20 @@ def index_codebase(
     """
     root = _resolve(root_dir)
     rep = reporter if reporter is not None else NullProgressReporter()
+    preflight = _preflight_code_index(root, extra_excludes=extra_excludes)
     registry = get_registry()
     registry.load_model(model_name)
     with registry.lease(root) as slot:
-        if extra_excludes is not None:
-            slot.code_indexer._extra_excludes = extra_excludes  # pyright: ignore[reportPrivateUsage]  # api.py owns the slot and sets per-call excludes
         if full or clean:
-            return slot.code_indexer.full_index(clean=clean, reporter=rep)
-        return slot.code_indexer.incremental_index(reporter=rep)
+            return slot.code_indexer.full_index(
+                clean=clean,
+                reporter=rep,
+                preflight=preflight,
+            )
+        return slot.code_indexer.incremental_index(
+            reporter=rep,
+            preflight=preflight,
+        )
 
 
 def search_vault(
@@ -479,7 +503,7 @@ def get_related(
 def clean(
     root_dir: pathlib.Path,
     *,
-    clean_type: Literal["vault", "code", "all"] = "all",
+    clean_type: Literal["vault", "code", "document", "all"] = "all",
 ) -> list[str]:
     """Wipe the selected collections and their index metadata sidecars.
 
@@ -487,7 +511,7 @@ def clean(
 
     Args:
         root_dir: Workspace root directory.
-        clean_type: What to wipe: 'vault', 'code', or 'all'.
+        clean_type: What to wipe: 'vault', 'code', 'document', or 'all'.
 
     Returns:
         List of cleared source labels (e.g. ['vault', 'codebase']).
@@ -508,6 +532,7 @@ def clean(
     try:
         do_vault = clean_type in ("vault", "all")
         do_code = clean_type in ("code", "all")
+        do_document = clean_type in ("document", "all")
         if do_vault:
             store.drop_table()
             store.ensure_table()
@@ -516,6 +541,10 @@ def clean(
             store.drop_code_table()
             store.ensure_code_table()
             cleared.append("codebase")
+        if do_document:
+            store.drop_document_table()
+            store.ensure_document_table()
+            cleared.append("document")
     finally:
         store.close()
 
@@ -525,6 +554,11 @@ def clean(
         meta.unlink(missing_ok=True)
     if clean_type in ("code", "all"):
         meta = data_dir / cfg.code_index_metadata_file
+        meta.unlink(missing_ok=True)
+    if clean_type in ("document", "all"):
+        from .indexer._document_meta import DOCUMENT_META_FILENAME
+
+        meta = data_dir / DOCUMENT_META_FILENAME
         meta.unlink(missing_ok=True)
 
     return cleared
@@ -596,15 +630,11 @@ def scan_codebase(
     fingerprint. It does not require GPU or vector storage.
     """
     root = _resolve(root_dir)
-    from .indexer import CodebaseIndexer
-
-    indexer = CodebaseIndexer(
-        root_dir=root,
-        model=cast("Any", None),
-        store=cast("Any", None),
+    return _preflight_code_index(
+        root,
         extra_excludes=extra_excludes,
-    )
-    return indexer.scan_content(sample_limit=sample_limit)
+        sample_limit=sample_limit,
+    ).scan
 
 
 def scan_codebase_files(
