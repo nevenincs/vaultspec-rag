@@ -205,3 +205,163 @@ class TestDeleteRootAddressing:
         assert seen == ["rdeadbeef0000_"]
         envelope = json.loads(result.output)
         assert "queried_root" not in envelope["data"]
+
+
+class TestReconcileRendering:
+    """The reconcile verb's structured contract.
+
+    Reconcile is non-destructive, but it is still broker-facing: an
+    already-converged backend must read as success rather than as a fault,
+    and a still-converging collection must never carry a reclaim figure a
+    caller could bank on.
+    """
+
+    def test_json_without_yes_is_refused(self) -> None:
+        with pytest.raises(typer.Exit) as exc:
+            _require_yes_for_json("server.storage.reconcile", json_mode=True, yes=False)
+        assert exc.value.exit_code == 2
+
+    def test_converged_backend_renders_as_success(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._service_storage import _render_reconcile
+        from ..storage_ops import ReconcileBatch
+
+        _render_reconcile(
+            ReconcileBatch(
+                results=[], drifted_remaining=0, reclaimed_bytes=0, dry_run=False
+            ),
+            json_mode=True,
+        )
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is True
+        assert payload["data"]["status"] == "already_converged"
+        assert payload["data"]["results"] == []
+
+    def test_converging_entry_carries_no_reclaim_figure(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._service_storage import _render_reconcile
+        from ..storage_ops import ReconcileBatch, ReconcileResult
+
+        _render_reconcile(
+            ReconcileBatch(
+                results=[
+                    ReconcileResult(
+                        "rfeedfacefeed_vault_docs",
+                        "converging",
+                        segments_before=8,
+                        bytes_before=1_000_000,
+                        reason="convergence_budget_expired",
+                    )
+                ],
+                drifted_remaining=1,
+                reclaimed_bytes=0,
+                dry_run=False,
+            ),
+            json_mode=True,
+        )
+
+        entry = json.loads(capsys.readouterr().out)["data"]["results"][0]
+        assert entry["status"] == "converging"
+        assert entry["bytes_after"] is None
+        assert entry["reclaimed_bytes"] == 0
+
+    def test_preview_is_never_reported_as_applied(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A broker keys on `status`; a preview changed nothing."""
+        from ..cli._service_storage import _render_reconcile
+        from ..storage_ops import ReconcileBatch, ReconcileResult
+
+        _render_reconcile(
+            ReconcileBatch(
+                results=[
+                    ReconcileResult(
+                        "rfeedfacefeed_vault_docs",
+                        "would_reconcile",
+                        segments_before=8,
+                        bytes_before=1_000_000,
+                    )
+                ],
+                drifted_remaining=1,
+                reclaimed_bytes=0,
+                dry_run=True,
+            ),
+            json_mode=True,
+        )
+
+        data = json.loads(capsys.readouterr().out)["data"]
+        assert data["status"] == "preview"
+        assert data["dry_run"] is True
+
+    def test_unwaited_pass_reports_issued_not_applied(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Nothing converged, so nothing was reclaimed to claim."""
+        from ..cli._service_storage import _render_reconcile
+        from ..storage_ops import ReconcileBatch, ReconcileResult
+
+        _render_reconcile(
+            ReconcileBatch(
+                results=[
+                    ReconcileResult(
+                        "rfeedfacefeed_vault_docs",
+                        "converging",
+                        segments_before=8,
+                        bytes_before=1_000_000,
+                        reason="not_awaited",
+                    )
+                ],
+                drifted_remaining=1,
+                reclaimed_bytes=0,
+                dry_run=False,
+            ),
+            json_mode=True,
+        )
+
+        assert json.loads(capsys.readouterr().out)["data"]["status"] == "issued"
+
+    def test_human_mode_does_not_claim_reconciled_when_nothing_converged(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._service_storage import _render_reconcile
+        from ..storage_ops import ReconcileBatch, ReconcileResult
+
+        _render_reconcile(
+            ReconcileBatch(
+                results=[
+                    ReconcileResult(
+                        "rfeedfacefeed_vault_docs",
+                        "converging",
+                        segments_before=8,
+                        bytes_before=1_000_000,
+                        reason="not_awaited",
+                    )
+                ],
+                drifted_remaining=1,
+                reclaimed_bytes=0,
+                dry_run=False,
+            ),
+            json_mode=False,
+        )
+
+        out = capsys.readouterr().out
+        assert "Reconciled 1 collections" not in out
+        assert "Started reconcile on" in out
+
+    def test_human_mode_states_a_converged_backend_plainly(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._service_storage import _render_reconcile
+        from ..storage_ops import ReconcileBatch
+
+        _render_reconcile(
+            ReconcileBatch(
+                results=[], drifted_remaining=0, reclaimed_bytes=0, dry_run=False
+            ),
+            json_mode=False,
+        )
+
+        assert "already at the bounded geometry" in capsys.readouterr().out

@@ -386,17 +386,15 @@ class VaultStore(_VaultSearchMixin):
             if quantization_config is not None:
                 kwargs["quantization_config"] = quantization_config
             if self._server_mode:
-                # Bound per-collection preallocation: with server
-                # defaults an EMPTY namespace pair costs ~1.2 GiB on disk
-                # (WAL prealloc plus one segment per CPU); measured on the
-                # pinned 1.18.2, capping the WAL segment at 16 MiB and
-                # seeding two segments cuts that to ~336 MiB while keeping
-                # ingest and intra-collection search headroom. The
-                # optimizer still grows segments with real data. Local
-                # mode has no WAL/segment preallocation to bound.
-                kwargs["wal_config"] = models.WalConfigDiff(wal_capacity_mb=16)
+                # Bound per-collection preallocation. The geometry itself is
+                # declared in store_schema because the storage domain
+                # reconciles pre-existing collections toward the same target;
+                # local mode has no WAL/segment preallocation to bound.
+                kwargs["wal_config"] = models.WalConfigDiff(
+                    wal_capacity_mb=store_schema.SERVER_WAL_CAPACITY_MB
+                )
                 kwargs["optimizers_config"] = models.OptimizersConfigDiff(
-                    default_segment_number=2
+                    default_segment_number=store_schema.SERVER_SEGMENT_NUMBER
                 )
 
             self.client.create_collection(
