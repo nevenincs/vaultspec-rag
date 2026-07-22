@@ -64,26 +64,26 @@ Define generic content ownership, routing, migration, and fingerprint contracts 
 - [x] `W01.P01.S37` - Define indexed, policy-rejected, retryable-extraction, terminal-extraction, decode-failed, and chunk-failed file states; `src/vaultspec_rag/indexer/_file_state.py, src/vaultspec_rag/_job_errors.py`.
 - [x] `W01.P01.S47` - Derive per-kind membership and content signatures from source profile, ordered routes, targets, ignores, schema, and extractor semantics; `src/vaultspec_rag/indexer/_config_epoch.py, src/vaultspec_rag/indexer/_resolved_policy.py`.
 - [x] `W01.P01.S07` - Verify real configuration loading, route ordering, one-owner enforcement, and mutation-free migration refusal; `src/vaultspec_rag/tests/test_content_policy.py, src/vaultspec_rag/tests/test_preprocess_config.py`.
-- [x] `W01.P01.S88` - Gate index and job entry points on a valid resolved policy before acquiring store, ledger, cache, writer, or GPU mutation authority; `src/vaultspec_rag/indexer/_codebase_indexer.py, src/vaultspec_rag/jobs.py`.
-- [x] `W01.P01.S89` - Verify invalid routing leaves real collections, sidecars, ledger rows, and caches unchanged; `src/vaultspec_rag/tests/integration/test_content_policy_fail_closed.py`.
+- [ ] `W01.P01.S88` - Gate index and job entry points on a valid resolved policy before acquiring store, ledger, cache, writer, or GPU mutation authority; `src/vaultspec_rag/indexer/_codebase_indexer.py, src/vaultspec_rag/jobs.py`.
+- [ ] `W01.P01.S89` - Verify invalid routing leaves real collections, sidecars, ledger rows, and caches unchanged; `src/vaultspec_rag/tests/integration/test_content_policy_fail_closed.py`.
 
 ### Phase `W01.P02` - shared discovery and preflight
 
 Make full, scoped, watcher, API, CLI, and service discovery consume the same policy snapshot while preserving the public path-list compatibility projection.
 
-- [x] `W01.P02.S08` - Separate conventional source admission from the parser and chunker capability registry; `src/vaultspec_rag/indexer/_chunking.py, src/vaultspec_rag/indexer/_content_policy.py`.
-- [x] `W01.P02.S09` - Route full and unscoped discovery through the shared classifier and resolved policy snapshot; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
-- [x] `W01.P02.S10` - Route scoped discovery through the shared classifier and resolved policy snapshot; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
-- [x] `W01.P02.S11` - Add a bounded structured scan result and retain the public path-list scan as its compatibility projection; `src/vaultspec_rag/api.py, src/vaultspec_rag/indexer/_codebase_indexer.py`.
-- [x] `W01.P02.S12` - Make CLI dry-run apply the same preprocessing mode and return the structured admission summary; `src/vaultspec_rag/cli/_index.py`.
-- [x] `W01.P02.S13` - Make resident-service preflight consume the structured scan without independently reloading configuration; `src/vaultspec_rag/jobs.py, src/vaultspec_rag/server/_routes.py`.
+- [ ] `W01.P02.S08` - Separate conventional source admission from the parser and chunker capability registry; `src/vaultspec_rag/indexer/_chunking.py, src/vaultspec_rag/indexer/_content_policy.py`.
+- [ ] `W01.P02.S09` - Route full and unscoped discovery through the shared classifier and resolved policy snapshot; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [ ] `W01.P02.S10` - Route scoped discovery through the shared classifier and resolved policy snapshot; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [ ] `W01.P02.S11` - Add a bounded structured scan result and retain the public path-list scan as its compatibility projection; `src/vaultspec_rag/api.py, src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [ ] `W01.P02.S12` - Make CLI dry-run apply the same preprocessing mode and return the structured admission summary; `src/vaultspec_rag/cli/_index.py`.
+- [ ] `W01.P02.S13` - Make resident-service preflight consume the structured scan without independently reloading configuration; `src/vaultspec_rag/jobs.py, src/vaultspec_rag/server/_routes.py`.
 - [x] `W01.P02.S14` - Verify full, scoped, API, CLI, and service admission parity against one real temporary repository; `src/vaultspec_rag/tests/integration/test_content_admission.py`.
-- [x] `W01.P02.S90` - Thread the exact resolved snapshot through worker execution, epochs, ledger signatures, and metadata publication without a second configuration load; `src/vaultspec_rag/indexer/_codebase_indexer.py, src/vaultspec_rag/indexer/_preprocess_glue.py, src/vaultspec_rag/indexer/_chunk_worker.py`.
-- [x] `W01.P02.S91` - Verify an on-disk configuration edit during real extraction cannot change the active operation fingerprint or publication identity; `src/vaultspec_rag/tests/integration/test_policy_snapshot.py`.
+- [ ] `W01.P02.S90` - Thread the exact resolved snapshot through worker execution, epochs, ledger signatures, and metadata publication without a second configuration load; `src/vaultspec_rag/indexer/_codebase_indexer.py, src/vaultspec_rag/indexer/_preprocess_glue.py, src/vaultspec_rag/indexer/_chunk_worker.py`.
+- [ ] `W01.P02.S91` - Verify an on-disk configuration edit during real extraction cannot change the active operation fingerprint or publication identity; `src/vaultspec_rag/tests/integration/test_policy_snapshot.py`.
 - [x] `W01.P02.S92` - Route ordinary added and modified watcher paths through the shared disposition and active policy snapshot; `src/vaultspec_rag/watcher.py`.
 - [x] `W01.P02.S93` - Verify watcher classification matches full and scoped discovery for ordinary real file events; `src/vaultspec_rag/tests/integration/test_watcher_content_admission.py`.
 - [ ] `W01.P02.S94` - Retain resolved routing when preprocessing execution is disabled and mark affected work stale without deletion or reclassification; `src/vaultspec_rag/indexer/_preprocess_config.py, src/vaultspec_rag/indexer/_preprocess_glue.py, src/vaultspec_rag/indexer/_codebase_indexer.py`.
-- [x] `W01.P02.S95` - Verify the preprocessing kill switch suppresses real extractor execution while preserving ownership and stored points; `src/vaultspec_rag/tests/integration/test_preprocess_integration.py`.
+- [ ] `W01.P02.S95` - Verify the preprocessing kill switch suppresses real extractor execution while preserving ownership and stored points; `src/vaultspec_rag/tests/integration/test_preprocess_integration.py`.
 
 ## Wave `W02` - document storage and ingestion isolation
 
