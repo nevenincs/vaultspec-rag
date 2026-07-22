@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 from .._domain import DOMAINS
+from .._source_types import PublicSourceType, parse_source_type
 
 # The vault doc types that carry semantic content and are searchable. ``index``
 # is excluded: feature-index documents are auto-generated navigational
@@ -137,8 +136,12 @@ def _supplied_filters(
     exclude_domains: list[str] | None,
     only_domains: list[str] | None,
     include_domains: list[str] | None,
-) -> tuple[list[str], list[str], list[str], list[str]]:
-    """Return the (code, vault, glob, postproc) filter names actually supplied."""
+    source_path: str | None,
+    extractor_id: str | None,
+    extractor_version: str | None,
+    locator_kind: str | None,
+) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
+    """Return code, vault, document, glob, and postprocess filter names."""
     code_supplied = [
         name
         for name, val in (
@@ -157,6 +160,16 @@ def _supplied_filters(
             ("feature", feature),
             ("date", date),
             ("tag", tag),
+        )
+        if val is not None
+    ]
+    document_supplied = [
+        name
+        for name, val in (
+            ("source_path", source_path),
+            ("extractor_id", extractor_id),
+            ("extractor_version", extractor_version),
+            ("locator_kind", locator_kind),
         )
         if val is not None
     ]
@@ -179,7 +192,13 @@ def _supplied_filters(
         )
         if supplied
     ]
-    return code_supplied, vault_supplied, glob_supplied, postproc_supplied
+    return (
+        code_supplied,
+        vault_supplied,
+        document_supplied,
+        glob_supplied,
+        postproc_supplied,
+    )
 
 
 def _reject_code_filters_for_non_code(search_type: str, offending: list[str]) -> None:
@@ -210,8 +229,25 @@ def _reject_vault_filters_for_non_vault(
     )
 
 
+def _reject_document_filters_for_non_document(
+    search_type: str,
+    document_supplied: list[str],
+) -> None:
+    if not document_supplied:
+        return
+    offending_flags = _format_flags(document_supplied)
+    raise InvalidFilterForSearchTypeError(
+        (
+            f"document-search filters ({', '.join(sorted(offending_flags))}) "
+            f"require --type document; got --type {search_type}."
+        ),
+        filter_kind="document",
+        offending_filters=offending_flags,
+    )
+
+
 def validate_search_filters(
-    search_type: Literal["vault", "docs", "code"],
+    search_type: str | PublicSourceType,
     *,
     language: str | None = None,
     path: str | None = None,
@@ -229,6 +265,10 @@ def validate_search_filters(
     exclude_domains: list[str] | None = None,
     only_domains: list[str] | None = None,
     include_domains: list[str] | None = None,
+    source_path: str | None = None,
+    extractor_id: str | None = None,
+    extractor_version: str | None = None,
+    locator_kind: str | None = None,
 ) -> None:
     """Validate that the search filters match the requested search_type.
 
@@ -237,6 +277,8 @@ def validate_search_filters(
         InvalidFilterForSearchTypeError: If a filter is supplied that is
             incompatible with the search_type (including an unknown domain).
     """
+    canonical = parse_source_type(search_type, allow_aliases=True)
+    canonical_name = canonical.value
     _validate_prefer(prefer)
     _validate_doc_type(doc_type)
     _validate_domains(
@@ -245,7 +287,13 @@ def validate_search_filters(
         include_domains=include_domains,
     )
 
-    code_supplied, vault_supplied, glob_supplied, postproc_supplied = _supplied_filters(
+    (
+        code_supplied,
+        vault_supplied,
+        document_supplied,
+        glob_supplied,
+        postproc_supplied,
+    ) = _supplied_filters(
         language=language,
         path=path,
         node_type=node_type,
@@ -262,11 +310,20 @@ def validate_search_filters(
         exclude_domains=exclude_domains,
         only_domains=only_domains,
         include_domains=include_domains,
+        source_path=source_path,
+        extractor_id=extractor_id,
+        extractor_version=extractor_version,
+        locator_kind=locator_kind,
     )
 
-    if search_type != "code":
+    if canonical not in {PublicSourceType.CODE, PublicSourceType.COMBINED}:
         _reject_code_filters_for_non_code(
-            search_type, [*code_supplied, *glob_supplied, *postproc_supplied]
+            canonical_name, [*code_supplied, *glob_supplied, *postproc_supplied]
         )
-    if search_type not in {"vault", "docs"}:
-        _reject_vault_filters_for_non_vault(search_type, vault_supplied)
+    if canonical not in {PublicSourceType.VAULT, PublicSourceType.COMBINED}:
+        _reject_vault_filters_for_non_vault(canonical_name, vault_supplied)
+    if canonical not in {PublicSourceType.DOCUMENT, PublicSourceType.COMBINED}:
+        _reject_document_filters_for_non_document(
+            canonical_name,
+            document_supplied,
+        )
