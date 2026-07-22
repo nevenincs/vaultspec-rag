@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from ._domain import classify_domain
 
@@ -47,10 +47,12 @@ class DocumentLocator:
     end: int | str | None = None
 
     def __post_init__(self) -> None:
-        if isinstance(self.value, bool) or not isinstance(self.value, (int, str)):
+        value = cast("object", self.value)
+        end = cast("object", self.end)
+        if isinstance(value, bool) or not isinstance(value, (int, str)):
             raise TypeError("document locator value must be an integer or string")
-        if isinstance(self.end, bool) or (
-            self.end is not None and not isinstance(self.end, (int, str))
+        if isinstance(end, bool) or (
+            end is not None and not isinstance(end, (int, str))
         ):
             raise TypeError("document locator end must be an integer, string, or None")
 
@@ -92,10 +94,11 @@ class DocumentMetadata:
 
     def materialize(self) -> dict[str, object]:
         """Return a fresh JSON-compatible mapping for storage or transport."""
-        thawed = json.loads(self.canonical_json)
+        thawed: object = json.loads(self.canonical_json)
         if not isinstance(thawed, dict):
             raise TypeError("invalid canonical document metadata")
-        return {str(key): value for key, value in thawed.items()}
+        mapping = cast("dict[object, object]", thawed)
+        return {str(key): value for key, value in mapping.items()}
 
 
 @dataclass(frozen=True, slots=True)

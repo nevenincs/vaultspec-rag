@@ -70,8 +70,6 @@ class DocumentIndexMetadata:
             raise ValueError("unsupported document metadata schema version")
         if self.storage_schema_version != store_schema.STORAGE_SCHEMA_VERSION:
             raise ValueError("unsupported document storage schema version")
-        if not self.complete:
-            raise ValueError("published document metadata must certify completeness")
         if not all(
             (
                 self.membership_fingerprint,
@@ -189,7 +187,7 @@ def read_document_meta(meta_path: Path) -> DocumentIndexMetadata | None:
 
 
 def write_document_meta(meta_path: Path, metadata: DocumentIndexMetadata) -> None:
-    """Publish complete document metadata atomically beside its collection."""
+    """Publish document metadata and its explicit completeness state atomically."""
     meta_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = meta_path.with_name(f".{meta_path.name}.{os.getpid()}.tmp")
     encoded = json.dumps(

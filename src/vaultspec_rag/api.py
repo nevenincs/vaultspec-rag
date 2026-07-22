@@ -21,18 +21,21 @@ if TYPE_CHECKING:
     import pathlib
 
     from .indexer import IndexResult
-    from .indexer._content_policy import RootContentPolicy
-    from .indexer._document_indexer import DocumentIndexPreflight
     from .indexer._codebase_indexer import CodeIndexPreflight, ContentScanResult
+    from .indexer._content_policy import RootContentPolicy
+    from .indexer._document_indexer import (
+        DocumentIndexPreflight,
+        DocumentScopedPreflight,
+    )
     from .progress import ProgressReporter
     from .search import SearchResult
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "GraphCache",
     "AllIndexOutcomes",
     "DomainIndexOutcome",
+    "GraphCache",
     "clean",
     "get_readiness",
     "get_related",
@@ -120,6 +123,26 @@ def _preflight_document_index(
         content_policy=content_policy,
     )
     return indexer.preflight_content()
+
+
+def _preflight_document_scope(
+    root: pathlib.Path,
+    changed_paths: list[pathlib.Path],
+    *,
+    extra_excludes: list[str] | None = None,
+    content_policy: RootContentPolicy | None = None,
+) -> DocumentScopedPreflight:
+    """Resolve document policy against only the caller-selected paths."""
+    from .indexer import DocumentIndexer
+
+    indexer = DocumentIndexer(
+        root,
+        model=cast("Any", None),
+        store=cast("Any", None),
+        extra_excludes=extra_excludes,
+        content_policy=content_policy,
+    )
+    return indexer.preflight_changed_paths(changed_paths)
 
 
 def index(
@@ -223,10 +246,19 @@ def index_documents(
         raise ValueError("scoped document indexing cannot be full or clean")
     root = _resolve(root_dir)
     rep = reporter if reporter is not None else NullProgressReporter()
-    preflight = _preflight_document_index(
-        root,
-        extra_excludes=extra_excludes,
-        content_policy=content_policy,
+    preflight = (
+        _preflight_document_index(
+            root,
+            extra_excludes=extra_excludes,
+            content_policy=content_policy,
+        )
+        if changed_paths is None
+        else _preflight_document_scope(
+            root,
+            changed_paths,
+            extra_excludes=extra_excludes,
+            content_policy=content_policy,
+        )
     )
     registry = get_registry()
     registry.load_model(model_name)
@@ -235,7 +267,7 @@ def index_documents(
             return slot.document_indexer.full_index(
                 clean=clean,
                 reporter=rep,
-                preflight=preflight,
+                preflight=cast("DocumentIndexPreflight", preflight),
             )
         return slot.document_indexer.incremental_index(
             reporter=rep,

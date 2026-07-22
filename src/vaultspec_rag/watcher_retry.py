@@ -76,6 +76,7 @@ class WatcherSource(StrEnum):
 
     VAULT = "vault"
     CODE = "code"
+    DOCUMENT = "document"
 
 
 class WatcherCircuitState(StrEnum):

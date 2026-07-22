@@ -75,6 +75,8 @@ def resolve_policy_preprocess_context(
     root_dir: pathlib.Path,
     data_root: pathlib.Path,
     policy: ResolvedIndexPolicy,
+    *,
+    max_source_bytes: int | None = None,
 ) -> PreprocessContext | None:
     """Materialize worker execution state from one immutable policy snapshot."""
     if policy.execution_mode == "off" or not policy.preprocess_rules:
@@ -88,6 +90,7 @@ def resolve_policy_preprocess_context(
         cache_root=preprocess_cache_dir(data_root),
         max_emitted_bytes=policy.max_emitted_bytes,
         project_root=root_dir,
+        max_source_bytes=max_source_bytes,
     )
 
 
