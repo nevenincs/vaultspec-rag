@@ -12,7 +12,7 @@ import logging
 import threading
 import time
 from contextlib import contextmanager, nullcontext
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from ._intent_rank import apply_intent_prior, apply_status_filter, apply_type_cap
 from ._models import ParsedQuery, SearchResult
@@ -45,6 +45,7 @@ from ._result_shaping import (
 from ._result_shaping import (
     map_codebase_results as _map_codebase_results_impl,
 )
+from ._result_shaping import map_document_results as _map_document_results_impl
 from ._result_shaping import (
     merge_domain_tokens as _merge_domain_tokens,
 )
@@ -63,9 +64,18 @@ if TYPE_CHECKING:
 
     from ..embeddings import EmbeddingModel, SparseResult
     from ..store import VaultStore
+    from ._models import DocumentSearchResult
     from ._noise import NoisePolicy
 
 logger = logging.getLogger(__name__)
+
+
+class _Rerankable(Protocol):
+    """Small shared surface consumed by the content reranker."""
+
+    score: float
+    snippet: str
+    rerank_text: str | None
 
 
 class VaultGraphError(RuntimeError):
@@ -212,14 +222,14 @@ class VaultSearcher:
             )
             return self._reranker
 
-    def _rerank(
+    def _rerank[T: _Rerankable](
         self,
         query: str,
-        results: list[SearchResult],
+        results: list[T],
         top_k: int,
         *,
         timings: dict[str, float] | None = None,
-    ) -> list[SearchResult]:
+    ) -> list[T]:
         """Rerank results using CrossEncoder if enabled.
 
         When the reranker is disabled or there are fewer than two
@@ -974,6 +984,93 @@ class VaultSearcher:
             notes=notes,
         )
         return results
+
+    def search_document(
+        self,
+        raw_query: str,
+        top_k: int = 5,
+        *,
+        source_path: str | None = None,
+        extractor_id: str | None = None,
+        extractor_version: str | None = None,
+        locator_kind: str | None = None,
+    ) -> list[DocumentSearchResult]:
+        """Search only the independent document collection."""
+        results, _timings = self.search_document_timed(
+            raw_query,
+            top_k=top_k,
+            source_path=source_path,
+            extractor_id=extractor_id,
+            extractor_version=extractor_version,
+            locator_kind=locator_kind,
+        )
+        return results
+
+    def search_document_timed(
+        self,
+        raw_query: str,
+        top_k: int = 5,
+        *,
+        source_path: str | None = None,
+        extractor_id: str | None = None,
+        extractor_version: str | None = None,
+        locator_kind: str | None = None,
+    ) -> tuple[list[DocumentSearchResult], dict[str, float]]:
+        """Search documents and return phase timings for diagnostics."""
+        timings: dict[str, float] = {}
+        phase_started = time.perf_counter()
+        parsed, query_text, query_vector, sparse_vector = self._encode_query(
+            raw_query,
+            surface="document",
+            timings=timings,
+        )
+        timings["embedding_seconds"] = time.perf_counter() - phase_started
+        filters = {
+            key: value
+            for key, value in parsed.filters.items()
+            if key
+            in {
+                "source_path",
+                "extractor_id",
+                "extractor_version",
+                "locator_kind",
+                "locator_value_str",
+            }
+        }
+        for key, value in (
+            ("source_path", source_path),
+            ("extractor_id", extractor_id),
+            ("extractor_version", extractor_version),
+            ("locator_kind", locator_kind),
+        ):
+            if value is not None:
+                filters[key] = value
+
+        phase_started = time.perf_counter()
+        fetch_limit = max(top_k * 4, 20) if self._reranker_enabled else top_k * 2
+        raw_results = cast(
+            "list[dict[str, object]]",
+            self.store.hybrid_search_document(
+                query_vector=query_vector,
+                _query_text=query_text,
+                filters=filters or None,
+                limit=fetch_limit,
+                sparse_vector=sparse_vector,
+            ),
+        )
+        _record_seconds(timings, "qdrant_seconds", phase_started)
+
+        phase_started = time.perf_counter()
+        results = _map_document_results_impl(raw_results)
+        _record_seconds(timings, "result_mapping_seconds", phase_started)
+        phase_started = time.perf_counter()
+        results = self._rerank(query_text, results, top_k, timings=timings)
+        _record_seconds(timings, "rerank_seconds", phase_started)
+        timings["postprocess_seconds"] = (
+            timings.get("result_mapping_seconds", 0.0)
+            + timings.get("rerank_seconds", 0.0)
+        )
+        return results, timings
 
     def search_codebase_timed(
         self,
