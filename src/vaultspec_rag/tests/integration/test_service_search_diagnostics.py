@@ -939,6 +939,14 @@ def test_search_index_unavailable_during_matching_rebuild(
     token = health.get("service_token")
     assert isinstance(token, str) and token, health
 
+    baseline_job_id = _submit_clean_vault_rebuild(
+        port,
+        token,
+        root,
+        label="baseline-index",
+    )
+    _wait_for_succeeded_job(port, token, baseline_job_id)
+
     matching_empty_query = "type:nonexistent availability authority probe"
     search_payload: dict[str, object] = {
         "query": matching_empty_query,
