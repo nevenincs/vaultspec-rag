@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -15,7 +16,7 @@ from ..indexer._content_policy import (
 )
 from ..indexer._file_state import FileState, FileStateKind
 from ..indexer._resolved_policy import resolve_index_policy
-from ..indexer._run_checkpoint import CodeRunCheckpoint
+from ..indexer._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
 from ..indexer._run_ledger import (
     FinalizationPhase,
     RunLedgerCompatibilityError,
@@ -27,7 +28,6 @@ from ..indexer._run_policy import RunPolicy
 from ..indexer._streaming import CodeFileSegment
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
     from pathlib import Path
 
 
@@ -58,7 +58,7 @@ def _segments(path: str) -> tuple[CodeFileSegment, CodeFileSegment]:
 def _open(
     tmp_path: Path,
     *,
-    configuration: Mapping[str, object] | None = None,
+    configuration: CodeRunConfiguration | None = None,
     operation: RunOperation = RunOperation.FULL,
 ) -> CodeRunCheckpoint:
     policy = resolve_index_policy(
@@ -74,7 +74,22 @@ def _open(
         clean=False,
         model_identity="model-v1",
         dense_dimensions=8,
-        configuration=configuration or {"segment_chunks": 1, "queue_chunks": 2},
+        configuration=configuration or _configuration(),
+    )
+
+
+def _configuration() -> CodeRunConfiguration:
+    return CodeRunConfiguration(
+        segment_max_chunks=1,
+        segment_max_bytes=1024,
+        queue_max_chunks=2,
+        queue_max_bytes=2048,
+        slice_max_chunks=2,
+        slice_max_bytes=2048,
+        sparse_enabled=False,
+        sparse_dimension=1,
+        encode_batch_size=2,
+        flush_slices=4,
     )
 
 
@@ -116,7 +131,10 @@ def test_checkpoint_signature_drift_starts_a_new_generation(tmp_path: Path) -> N
     digest = _digest("example")
     first.record_confirmed_segment(first_segment, digest)
 
-    changed = _open(tmp_path, configuration={"segment_chunks": 2, "queue_chunks": 2})
+    changed = _open(
+        tmp_path,
+        configuration=replace(_configuration(), segment_max_chunks=2),
+    )
     assert changed.generation_id != first.generation_id
     invalidated = changed.ledger.generation(first.generation_id)
     assert invalidated.terminal_state is RunTerminalState.INVALIDATED

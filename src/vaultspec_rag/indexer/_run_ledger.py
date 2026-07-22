@@ -245,6 +245,10 @@ class CommitUnit:
             raise ValueError("point_ids must contain non-empty identifiers")
         if len(set(self.point_ids)) != len(self.point_ids):
             raise ValueError("point_ids must be unique within a commit unit")
+        if self.kind is not CommitUnitKind.UPSERT and self.point_ids != tuple(
+            sorted(self.point_ids)
+        ):
+            raise ValueError("deletion point_ids must be in canonical order")
         if self.kind is CommitUnitKind.UPSERT:
             if not _is_digest(self.source_digest):
                 raise ValueError("upsert units require a lowercase BLAKE2b-512 digest")
@@ -746,6 +750,76 @@ class RunLedger:
             last_key = (
                 str(last["rel_path"]),
                 str(last["unit_kind"]),
+                int(last["segment_ordinal"]),
+                int(last["point_ordinal"]),
+                str(last["point_id"]),
+            )
+
+    def iter_retained_point_ids(
+        self,
+        generation_id: str,
+        *,
+        rel_path: str | None = None,
+        batch_size: int = _FETCH_BATCH,
+    ) -> Iterator[str]:
+        """Yield exact point identities retained by the generation manifest.
+
+        Carried paths read their original evidence generation while replaced paths
+        read the current generation. Deletion units are deliberately excluded.
+        """
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+        if rel_path is not None:
+            _validate_rel_path(rel_path)
+        last_key: tuple[str, int, int, str] | None = None
+        while True:
+            condition = ""
+            parameters: tuple[object, ...] = (
+                CommitUnitKind.UPSERT.value,
+                generation_id,
+                FileStateKind.INDEXED.value,
+            )
+            path_condition = ""
+            if rel_path is not None:
+                path_condition = " AND states.rel_path = ?"
+                parameters = (*parameters, rel_path)
+            if last_key is not None:
+                condition = """
+                  AND (states.rel_path, units.segment_ordinal,
+                       points.point_ordinal, points.point_id) > (?, ?, ?, ?)
+                """
+                parameters = (*parameters, *last_key)
+            with self._connect() as connection:
+                rows = connection.execute(
+                    f"""
+                    SELECT points.point_id, points.point_ordinal,
+                           states.rel_path, units.segment_ordinal
+                    FROM file_states AS states
+                    JOIN commit_units AS units
+                      ON units.generation_id = states.evidence_generation_id
+                     AND units.rel_path = states.rel_path
+                     AND units.unit_kind = ?
+                     AND units.source_digest = states.content_hash
+                    JOIN commit_point_ids AS points
+                      ON points.generation_id = units.generation_id
+                     AND points.unit_id = units.unit_id
+                    WHERE states.generation_id = ?
+                      AND states.state = ?
+                    {path_condition}
+                    {condition}
+                    ORDER BY states.rel_path, units.segment_ordinal,
+                             points.point_ordinal, points.point_id
+                    LIMIT ?
+                    """,
+                    (*parameters, batch_size),
+                ).fetchall()
+            if not rows:
+                return
+            for row in rows:
+                yield str(row["point_id"])
+            last = rows[-1]
+            last_key = (
+                str(last["rel_path"]),
                 int(last["segment_ordinal"]),
                 int(last["point_ordinal"]),
                 str(last["point_id"]),
