@@ -6,12 +6,11 @@ import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypedDict, cast
+from typing import Literal, cast
 
 __all__ = [
-    "build_index_unavailable_response",
+    "SearchResponseClassification",
     "classify_search_response",
-    "matching_index_jobs",
 ]
 
 type IndexSource = Literal["vault", "code"]
@@ -23,20 +22,27 @@ _CANONICAL_NONTERMINAL_STATES = frozenset(
 _MAX_EXPOSED_JOBS = 8
 
 
-class MatchingIndexJobReference(TypedDict):
-    """Exact public correlation fields for one matching index job."""
+@dataclass(frozen=True, slots=True)
+class MatchingIndexJobReference:
+    """Immutable public correlation fields for one matching index job."""
 
     id: str
     state: str
     mode: JobMode
 
+    def to_dict(self) -> dict[str, object]:
+        """Return the exact public response shape."""
+        return {"id": self.id, "state": self.state, "mode": self.mode}
+
 
 @dataclass(frozen=True, slots=True)
-class MatchingIndexJobs:
-    """Bounded public evidence from one copied canonical job snapshot."""
+class SearchResponseClassification:
+    """One response decision and its bounded, causally merged job evidence."""
 
-    references: tuple[MatchingIndexJobReference, ...]
-    truncated: bool
+    response: dict[str, object]
+    status_code: Literal[200, 503]
+    matching_jobs: tuple[MatchingIndexJobReference, ...]
+    matching_jobs_truncated: bool
     rebuilding: bool
 
 
@@ -49,8 +55,8 @@ class _MatchingJob:
     mode: JobMode
 
     def to_reference(self) -> MatchingIndexJobReference:
-        """Return the exact public job-reference shape."""
-        return {"id": self.id, "state": self.state, "mode": self.mode}
+        """Return immutable public job-reference evidence."""
+        return MatchingIndexJobReference(id=self.id, state=self.state, mode=self.mode)
 
 
 def _normalized_root(value: object) -> str | None:
@@ -136,75 +142,49 @@ def _deduplicated_matches(matches: Sequence[_MatchingJob]) -> list[_MatchingJob]
     return unique
 
 
-def matching_index_jobs(
-    snapshot: Sequence[object],
-    *,
-    requested_root: Path,
-    source: IndexSource,
-) -> MatchingIndexJobs:
-    """Return bounded exact-job evidence from one canonical observation."""
-    normalized_root = _normalized_root(requested_root)
-    if normalized_root is None:
-        return MatchingIndexJobs(references=(), truncated=False, rebuilding=False)
-    matches = _deduplicated_matches(
-        _matching_jobs(
-            snapshot,
-            requested_root=normalized_root,
-            source=source,
-        )
-    )
-    return MatchingIndexJobs(
-        references=tuple(match.to_reference() for match in matches[:_MAX_EXPOSED_JOBS]),
-        truncated=len(matches) > _MAX_EXPOSED_JOBS,
-        rebuilding=any(match.mode == "rebuild" for match in matches),
-    )
-
-
-def build_index_unavailable_response(
-    *,
+def _combined_matches(
     before_snapshot: Sequence[object],
     after_snapshot: Sequence[object],
-    requested_root: Path,
+    *,
+    requested_root: str,
     source: IndexSource,
-    request_id: str,
-    index_state: Mapping[str, object],
-    port: int | None,
-) -> dict[str, object] | None:
-    """Build the exact temporary-unavailability body when either view matches."""
-    normalized_root = _normalized_root(requested_root)
-    if normalized_root is None:
-        return None
+) -> list[_MatchingJob]:
     ordered_matches = _matching_jobs(
         after_snapshot,
-        requested_root=normalized_root,
+        requested_root=requested_root,
         source=source,
     )
     ordered_matches.extend(
         _matching_jobs(
             before_snapshot,
-            requested_root=normalized_root,
+            requested_root=requested_root,
             source=source,
         )
     )
-    matches = _deduplicated_matches(ordered_matches)
-    if not matches:
-        return None
+    return _deduplicated_matches(ordered_matches)
 
+
+def _build_index_unavailable_response(
+    *,
+    requested_root: Path,
+    source: IndexSource,
+    request_id: str,
+    index_state: Mapping[str, object],
+    port: int | None,
+    matching_jobs: Sequence[MatchingIndexJobReference],
+    matching_jobs_truncated: bool,
+    rebuilding: bool,
+) -> dict[str, object]:
+    """Build the exact failure body from the classification's own evidence."""
     response_index_state: dict[str, object] = {
         "source": index_state["source"],
         "indexed_count": index_state["indexed_count"],
         "indexed_target_root": index_state["indexed_target_root"],
         "requested_target_root": index_state["requested_target_root"],
         "target_matches": index_state["target_matches"],
-        "status": (
-            "rebuilding"
-            if any(match.mode == "rebuild" for match in matches)
-            else "updating"
-        ),
-        "matching_jobs": [
-            match.to_reference() for match in matches[:_MAX_EXPOSED_JOBS]
-        ],
-        "matching_jobs_truncated": len(matches) > _MAX_EXPOSED_JOBS,
+        "status": "rebuilding" if rebuilding else "updating",
+        "matching_jobs": [job.to_dict() for job in matching_jobs],
+        "matching_jobs_truncated": matching_jobs_truncated,
     }
     port_suffix = f" --port {port}" if port is not None else ""
     return {
@@ -233,21 +213,46 @@ def classify_search_response(
     request_id: str,
     index_state: Mapping[str, object],
     port: int | None,
-) -> tuple[dict[str, object], int]:
-    """Classify one successful search body without suppressing usable results."""
-    results = result.get("results")
-    if not isinstance(results, list) or results:
-        return result, 200
-
-    unavailable = build_index_unavailable_response(
-        before_snapshot=before_snapshot,
-        after_snapshot=after_snapshot,
-        requested_root=requested_root,
-        source=source,
-        request_id=request_id,
-        index_state=index_state,
-        port=port,
+) -> SearchResponseClassification:
+    """Classify one response and preserve one bounded before/after evidence set."""
+    normalized_root = _normalized_root(requested_root)
+    matches = (
+        _combined_matches(
+            before_snapshot,
+            after_snapshot,
+            requested_root=normalized_root,
+            source=source,
+        )
+        if normalized_root is not None
+        else []
     )
-    if unavailable is not None:
-        return unavailable, 503
-    return result, 200
+    matching_jobs = tuple(match.to_reference() for match in matches[:_MAX_EXPOSED_JOBS])
+    matching_jobs_truncated = len(matches) > _MAX_EXPOSED_JOBS
+    rebuilding = any(match.mode == "rebuild" for match in matches)
+
+    results = result.get("results")
+    if isinstance(results, list) and not results and matches:
+        response = _build_index_unavailable_response(
+            requested_root=requested_root,
+            source=source,
+            request_id=request_id,
+            index_state=index_state,
+            port=port,
+            matching_jobs=matching_jobs,
+            matching_jobs_truncated=matching_jobs_truncated,
+            rebuilding=rebuilding,
+        )
+        return SearchResponseClassification(
+            response=response,
+            status_code=503,
+            matching_jobs=matching_jobs,
+            matching_jobs_truncated=matching_jobs_truncated,
+            rebuilding=rebuilding,
+        )
+    return SearchResponseClassification(
+        response=result,
+        status_code=200,
+        matching_jobs=matching_jobs,
+        matching_jobs_truncated=matching_jobs_truncated,
+        rebuilding=rebuilding,
+    )
