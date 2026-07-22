@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import getpass
 import logging
 import os
@@ -10,12 +11,19 @@ import threading
 import time
 import uuid
 from collections import OrderedDict, deque
+from collections.abc import Callable
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Any, Literal, cast
+
+from anyio.to_thread import run_sync as _run_in_thread
 
 from . import job_persistence as _job_persistence
+from ._job_errors import classify_error_text
+from .concurrency import get_index_limiter
 from .config import get_config
+from .job_control import CancelRequested, PauseRequested, RunControlToken
 from .job_models import (
     DesiredJobState,
     JobAttempt,
@@ -30,6 +38,7 @@ from .job_models import (
     JobSpec,
     JobState,
     JobTimestamps,
+    ProcessResourceSnapshot,
     ResumeStrategy,
 )
 from .job_models import (
@@ -42,15 +51,10 @@ from .job_models import (
     job_spec_error as _job_spec_error,
 )
 
-if TYPE_CHECKING:
-    import asyncio
-
-    from .job_control import RunControlToken
-
 # Preserve the established logger surface while the compatibility module remains public.
 logger = logging.getLogger(f"{__package__}.jobs")
 
-__all__ = ["MAX_RECORDS", "JobManager"]
+__all__ = ["MAX_RECORDS", "JobAttemptContext", "JobExecutionResult", "JobManager"]
 
 # Bounded ring buffer cap. Generous enough to retain a meaningful recent
 # history without unbounded growth; the oldest record is evicted past this.
@@ -66,12 +70,97 @@ _CONFIGURED_STATE_PATH = _ConfiguredStatePath()
 
 
 @dataclass(frozen=True, slots=True)
+class JobExecutionResult:
+    """Result returned by one synchronous managed execution attempt."""
+
+    summary: str
+    preprocess_ok: int = 0
+    preprocess_skipped: int = 0
+    preprocess_failures: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class JobAttemptContext:
+    """Exact manager-owned resources passed to a synchronous attempt runner."""
+
+    manager: JobManager
+    job_id: str
+    attempt: int
+    task: asyncio.Task[Any]
+    control: RunControlToken
+
+    def update_progress(
+        self,
+        step: str,
+        completed: int = 0,
+        total: int | None = None,
+    ) -> JobOutcome:
+        """Publish progress only if this context still owns the attempt."""
+        return self.manager.update_progress(
+            self.job_id,
+            attempt=self.attempt,
+            task=self.task,
+            step=step,
+            completed=completed,
+            total=total,
+        )
+
+    def set_resources(
+        self,
+        *,
+        started: ProcessResourceSnapshot | None | object = ...,
+        finished: ProcessResourceSnapshot | None | object = ...,
+        index_capacity_held: bool | None = None,
+        project_lease_held: bool | None = None,
+        writer_lock_held: bool | None = None,
+        pipeline_active: bool | None = None,
+    ) -> bool:
+        """Update this attempt's resource ownership without stale-task writes."""
+        return self.manager.update_execution_resources(
+            self.job_id,
+            task=self.task,
+            started=started,
+            finished=finished,
+            index_capacity_held=index_capacity_held,
+            project_lease_held=project_lease_held,
+            writer_lock_held=writer_lock_held,
+            pipeline_active=pipeline_active,
+        )
+
+
+type JobAttemptRunner = Callable[[JobAttemptContext], JobExecutionResult]
+type JobAttemptStartedCallback = Callable[[JobSnapshot], None]
+type JobAttemptFinishedCallback = Callable[
+    [JobSnapshot, float, JobExecutionResult | None, BaseException | None],
+    None,
+]
+
+
+@dataclass(frozen=True, slots=True)
+class _JobDispatchBinding:
+    runner: JobAttemptRunner
+    on_started: JobAttemptStartedCallback | None = None
+    on_finished: JobAttemptFinishedCallback | None = None
+    loop: asyncio.AbstractEventLoop | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _AttemptExit:
+    result: JobExecutionResult | None
+    control_signal: PauseRequested | CancelRequested | None
+    error: BaseException | None
+    duration_seconds: float
+    release_persisted: bool
+
+
+@dataclass(frozen=True, slots=True)
 class _JobRuntimeOwner:
     """Strong references to the live execution for one exact job ID."""
 
     task: asyncio.Task[Any] | None
     control: RunControlToken | None
     worker_active: bool = False
+    worker_thread: threading.Thread | None = None
 
 
 @dataclass(slots=True)
@@ -88,6 +177,7 @@ class _ManagerStateBackup:
     runtimes: dict[str, _JobRuntimeOwner]
     idempotency: OrderedDict[str, _job_persistence.IdempotencyBinding]
     job_idempotency_keys: dict[str, set[str]]
+    dispatchers: dict[str, _JobDispatchBinding]
     persistence_dirty: bool
 
 
@@ -136,6 +226,8 @@ class JobManager:
             OrderedDict()
         )
         self._job_idempotency_keys: dict[str, set[str]] = {}
+        self._dispatchers: dict[str, _JobDispatchBinding] = {}
+        self._retiring_tasks: set[asyncio.Task[Any]] = set()
         self._persistence_dirty = False
 
     @property
@@ -158,6 +250,408 @@ class JobManager:
         """Return whether the latest in-memory generation still needs flushing."""
         with self._lock:
             return self._persistence_dirty
+
+    def bind_dispatch(
+        self,
+        job_id: str,
+        runner: JobAttemptRunner,
+        *,
+        on_started: JobAttemptStartedCallback | None = None,
+        on_finished: JobAttemptFinishedCallback | None = None,
+    ) -> JobOutcome:
+        """Bind one in-process runner to a logical job across resume attempts."""
+        command = "bind_dispatch"
+        with self._lock:
+            managed = self._active.get(job_id)
+            if managed is None:
+                return self._error(command, "job_not_found", "The job was not found.")
+            if managed.runtime.task is not None:
+                return self._error(
+                    command,
+                    "runtime_already_owned",
+                    "A live attempt cannot replace its dispatch binding.",
+                    managed,
+                )
+            self._dispatchers[job_id] = _JobDispatchBinding(
+                runner=runner,
+                on_started=on_started,
+                on_finished=on_finished,
+            )
+            return JobOutcome(
+                command=command,
+                status=JobOutcomeStatus.OK,
+                code="dispatch_bound",
+                message="The job execution binding was attached.",
+                job=self._snapshot_locked(managed),
+            )
+
+    def dispatch(self, job_id: str) -> JobOutcome:
+        """Schedule one queued attempt and attach its exact task and control token."""
+        command = "dispatch"
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return self._error(
+                command,
+                "event_loop_required",
+                "Managed dispatch requires a running event loop.",
+            )
+
+        with self._lock:
+            managed = self._active.get(job_id)
+            if managed is None:
+                return self._error(command, "job_not_found", "The job was not found.")
+            binding = self._dispatchers.get(job_id)
+            if binding is None:
+                return self._error(
+                    command,
+                    "dispatch_not_bound",
+                    "The job has no execution binding.",
+                    managed,
+                )
+            if managed.runtime.task is not None:
+                return self._error(
+                    command,
+                    "runtime_already_owned",
+                    "The current attempt already has a runtime owner.",
+                    managed,
+                )
+            if (
+                managed.snapshot.state is not JobState.QUEUED
+                or managed.snapshot.desired_state is not DesiredJobState.RUNNING
+            ):
+                return self._error(
+                    command,
+                    "invalid_transition",
+                    "Only queued work with running desired state can dispatch.",
+                    managed,
+                )
+
+            if binding.loop is not loop:
+                binding = replace(binding, loop=loop)
+                self._dispatchers[job_id] = binding
+            attempt = managed.snapshot.attempt.number
+            control = RunControlToken()
+            task = loop.create_task(
+                self._run_attempt(
+                    job_id=job_id,
+                    attempt=attempt,
+                    control=control,
+                    binding=binding,
+                ),
+                name=f"vaultspec-job-{job_id}-attempt-{attempt}",
+            )
+            self._retiring_tasks.add(task)
+            task.add_done_callback(
+                partial(
+                    self._complete_attempt,
+                    job_id,
+                    attempt,
+                    binding=binding,
+                )
+            )
+            started = self.start_attempt(job_id, task=task, control=control)
+            latest = self._active.get(job_id)
+            owns_runtime = latest is not None and latest.runtime.task is task
+            if not owns_runtime:
+                task.cancel()
+                return started
+            assert latest is not None
+            started_snapshot = self._snapshot_locked(latest)
+
+        self._notify_started(binding, started_snapshot)
+        return started
+
+    async def wait_for_attempt(
+        self,
+        job_id: str,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> JobOutcome:
+        """Boundedly join the exact task without cancelling its worker thread."""
+        command = "wait_for_attempt"
+        timeout = (
+            get_config().job_shutdown_timeout_seconds
+            if timeout_seconds is None
+            else timeout_seconds
+        )
+        if timeout <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while True:
+            with self._lock:
+                managed = self._active.get(job_id)
+                terminal: _ManagedJob | None = None
+                if managed is None:
+                    terminal = self._get_terminal_locked(job_id)
+                    if terminal is None:
+                        return self._error(
+                            command,
+                            "job_not_found",
+                            "The job was not found.",
+                        )
+                    task = None
+                    snapshot = self._snapshot_locked(terminal)
+                else:
+                    task = managed.runtime.task
+                    snapshot = self._snapshot_locked(managed)
+            if task is None:
+                return JobOutcome(
+                    command=command,
+                    status=JobOutcomeStatus.OK,
+                    code="attempt_released",
+                    message="The attempt released its task and worker resources.",
+                    job=snapshot,
+                )
+
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=remaining)
+                # Let the task's synchronous done callback acknowledge control and
+                # install any resume-requeued replacement before checking ownership.
+                await asyncio.sleep(0)
+            except TimeoutError:
+                break
+
+        return JobOutcome(
+            command=command,
+            status=JobOutcomeStatus.ERROR,
+            code="attempt_join_timeout",
+            message=f"The attempt did not release within {timeout:g} seconds.",
+            job=self.get(job_id),
+        )
+
+    async def _run_attempt(
+        self,
+        *,
+        job_id: str,
+        attempt: int,
+        control: RunControlToken,
+        binding: _JobDispatchBinding,
+    ) -> _AttemptExit:
+        task = asyncio.current_task()
+        if task is None:
+            raise RuntimeError("managed attempt requires an asyncio task")
+        context = JobAttemptContext(
+            manager=self,
+            job_id=job_id,
+            attempt=attempt,
+            task=task,
+            control=control,
+        )
+        started = time.perf_counter()
+        result: JobExecutionResult | None = None
+        control_signal: PauseRequested | CancelRequested | None = None
+        error: BaseException | None = None
+        release_persisted = False
+        try:
+            result = await _run_in_thread(
+                self._run_worker_attempt,
+                context,
+                binding,
+                limiter=get_index_limiter(),
+            )
+        except (PauseRequested, CancelRequested) as exc:
+            control_signal = exc
+        except BaseException as exc:
+            error = exc
+        finally:
+            try:
+                # AnyIO has returned the synchronous call, so its worker and
+                # index-capacity token are physically released before the
+                # manager clears their ownership snapshot.
+                release_persisted = self.release_execution_resources(
+                    job_id,
+                    task=task,
+                    finished=self._process_resource_snapshot(),
+                )
+            except BaseException as exc:
+                # Application failures retain priority. A cleanup failure is
+                # still stronger than cooperative control because the manager
+                # cannot truthfully acknowledge a failed release.
+                if error is None:
+                    error = exc
+        return _AttemptExit(
+            result=result,
+            control_signal=control_signal,
+            error=error,
+            duration_seconds=time.perf_counter() - started,
+            release_persisted=release_persisted,
+        )
+
+    def _run_worker_attempt(
+        self,
+        context: JobAttemptContext,
+        binding: _JobDispatchBinding,
+    ) -> JobExecutionResult:
+        thread = threading.current_thread()
+        worker_persisted = self.set_worker_active(
+            context.job_id,
+            task=context.task,
+            active=True,
+            worker_thread=thread,
+        )
+        if not worker_persisted:
+            raise RuntimeError("could not publish managed worker ownership")
+        capacity_persisted = context.set_resources(
+            started=self._process_resource_snapshot(),
+            index_capacity_held=True,
+        )
+        if not capacity_persisted:
+            raise RuntimeError("could not publish managed index-capacity ownership")
+        return binding.runner(context)
+
+    def _complete_attempt(
+        self,
+        job_id: str,
+        attempt: int,
+        task: asyncio.Task[_AttemptExit],
+        binding: _JobDispatchBinding,
+    ) -> None:
+        try:
+            try:
+                exit_state = task.result()
+            except BaseException as exc:
+                exit_state = _AttemptExit(
+                    result=None,
+                    control_signal=None,
+                    error=exc,
+                    duration_seconds=0.0,
+                    release_persisted=False,
+                )
+
+            # Completion consumes the current control state and commits its
+            # transition under one RLock scope. A cross-thread resume/control
+            # request therefore cannot invalidate the branch between read and
+            # acknowledgement.
+            with self._lock:
+                current = self._active.get(job_id)
+                control_pending = current is not None and current.snapshot.state in {
+                    JobState.PAUSING,
+                    JobState.CANCELLING,
+                }
+                if exit_state.error is not None:
+                    terminal_state = (
+                        JobState.INTERRUPTED
+                        if isinstance(exit_state.error, asyncio.CancelledError)
+                        else JobState.FAILED
+                    )
+                    outcome = self.finish_attempt(
+                        job_id,
+                        attempt=attempt,
+                        task=task,
+                        state=terminal_state,
+                        result=str(exit_state.error),
+                        error_kind=(
+                            "interrupted"
+                            if terminal_state is JobState.INTERRUPTED
+                            else classify_error_text(str(exit_state.error))
+                        ),
+                    )
+                elif exit_state.control_signal is not None or control_pending:
+                    outcome = self.acknowledge_control(
+                        job_id,
+                        attempt=attempt,
+                        task=task,
+                    )
+                else:
+                    result = exit_state.result
+                    outcome = self.finish_attempt(
+                        job_id,
+                        attempt=attempt,
+                        task=task,
+                        state=JobState.SUCCEEDED,
+                        result=result.summary if result is not None else None,
+                    )
+
+            if outcome.code == "job_persistence_failed":
+                retried = self.flush_persistence()
+                if retried.status is not JobOutcomeStatus.ERROR:
+                    recovered = self.get(job_id)
+                    recovered_code = "completion_persistence_recovered"
+                    recovered_message = "Attempt completion became durable on retry."
+                    if (
+                        recovered is not None
+                        and recovered.state is JobState.QUEUED
+                        and recovered.desired_state is DesiredJobState.RUNNING
+                        and recovered.attempt.resumed_from_attempt == attempt
+                    ):
+                        recovered_code = "resume_requeued"
+                        recovered_message = (
+                            "The resumed reconciliation attempt became "
+                            "durable on retry."
+                        )
+                    outcome = JobOutcome(
+                        command="complete_attempt",
+                        status=JobOutcomeStatus.OK,
+                        code=recovered_code,
+                        message=recovered_message,
+                        job=recovered,
+                    )
+
+            snapshot = outcome.job or self.get(job_id)
+            completion_committed = outcome.status is not JobOutcomeStatus.ERROR and (
+                outcome.code
+                not in {
+                    "control_acknowledgement_ignored",
+                    "resources_still_owned",
+                    "stale_attempt_ignored",
+                }
+            )
+            if snapshot is not None and completion_committed:
+                self._notify_finished(
+                    binding,
+                    snapshot,
+                    exit_state.duration_seconds,
+                    exit_state.result,
+                    exit_state.error,
+                )
+            elif not completion_committed:
+                logger.error(
+                    "managed job %s attempt %s could not commit completion: %s",
+                    job_id,
+                    attempt,
+                    outcome.message,
+                )
+            if outcome.code == "resume_requeued":
+                resumed = self.dispatch(job_id)
+                if resumed.status is JobOutcomeStatus.ERROR:
+                    logger.error(
+                        "could not dispatch resumed job %s: %s",
+                        job_id,
+                        resumed.message,
+                    )
+        finally:
+            self._retiring_tasks.discard(task)
+
+    @staticmethod
+    def _notify_started(binding: _JobDispatchBinding, snapshot: JobSnapshot) -> None:
+        callback = binding.on_started
+        if callback is None:
+            return
+        try:
+            callback(snapshot)
+        except Exception:
+            logger.exception("managed job start callback failed")
+
+    @staticmethod
+    def _notify_finished(
+        binding: _JobDispatchBinding,
+        snapshot: JobSnapshot,
+        duration_seconds: float,
+        result: JobExecutionResult | None,
+        error: BaseException | None,
+    ) -> None:
+        callback = binding.on_finished
+        if callback is None:
+            return
+        try:
+            callback(snapshot, duration_seconds, result, error)
+        except Exception:
+            logger.exception("managed job completion callback failed")
 
     def create(  # noqa: C901, PLR0912 - admission/replay matrix
         self,
@@ -532,6 +1026,7 @@ class JobManager:
         *,
         task: asyncio.Task[Any],
         active: bool,
+        worker_thread: threading.Thread | None = None,
     ) -> bool:
         """Update worker ownership only for the currently attached attempt."""
         with self._lock:
@@ -539,13 +1034,112 @@ class JobManager:
             managed = self._active.get(job_id)
             if managed is None or managed.runtime.task is not task:
                 return False
-            managed.runtime = replace(managed.runtime, worker_active=active)
+            managed.runtime = replace(
+                managed.runtime,
+                worker_active=active,
+                worker_thread=worker_thread if active else None,
+            )
             persistence_error = self._persist_locked()
             if persistence_error is not None:
                 if not persistence_error.published:
                     self._restore_state_locked(backup)
                 return False
             return True
+
+    def update_execution_resources(
+        self,
+        job_id: str,
+        *,
+        task: asyncio.Task[Any],
+        started: ProcessResourceSnapshot | None | object = ...,
+        finished: ProcessResourceSnapshot | None | object = ...,
+        index_capacity_held: bool | None = None,
+        project_lease_held: bool | None = None,
+        writer_lock_held: bool | None = None,
+        pipeline_active: bool | None = None,
+    ) -> bool:
+        with self._lock:
+            backup = self._capture_state_locked()
+            managed = self._active.get(job_id)
+            if managed is None or managed.runtime.task is not task:
+                return False
+            previous = managed.snapshot.resources
+            managed.snapshot = replace(
+                managed.snapshot,
+                resources=replace(
+                    previous,
+                    started=(
+                        previous.started
+                        if started is ...
+                        else cast("ProcessResourceSnapshot | None", started)
+                    ),
+                    finished=(
+                        previous.finished
+                        if finished is ...
+                        else cast("ProcessResourceSnapshot | None", finished)
+                    ),
+                    index_capacity_held=(
+                        previous.index_capacity_held
+                        if index_capacity_held is None
+                        else index_capacity_held
+                    ),
+                    project_lease_held=(
+                        previous.project_lease_held
+                        if project_lease_held is None
+                        else project_lease_held
+                    ),
+                    writer_lock_held=(
+                        previous.writer_lock_held
+                        if writer_lock_held is None
+                        else writer_lock_held
+                    ),
+                    pipeline_active=(
+                        previous.pipeline_active
+                        if pipeline_active is None
+                        else pipeline_active
+                    ),
+                ),
+            )
+            persistence_error = self._persist_locked()
+            if persistence_error is not None:
+                if not persistence_error.published:
+                    self._restore_state_locked(backup)
+                return False
+            return True
+
+    def release_execution_resources(
+        self,
+        job_id: str,
+        *,
+        task: asyncio.Task[Any],
+        finished: ProcessResourceSnapshot,
+    ) -> bool:
+        """Atomically clear worker and physical ownership for one exact attempt."""
+        with self._lock:
+            managed = self._active.get(job_id)
+            if managed is None or managed.runtime.task is not task:
+                return False
+            managed.runtime = replace(
+                managed.runtime,
+                worker_active=False,
+                worker_thread=None,
+            )
+            managed.snapshot = replace(
+                managed.snapshot,
+                resources=replace(
+                    managed.snapshot.resources,
+                    finished=finished,
+                    index_capacity_held=False,
+                    project_lease_held=False,
+                    writer_lock_held=False,
+                    pipeline_active=False,
+                ),
+            )
+            persistence_error = self._persist_locked()
+            # Physical release is irreversible. Retaining truthful cleared
+            # ownership in memory lets finish/acknowledge immediately retry
+            # the complete generation instead of restoring stale held flags.
+            return persistence_error is None
 
     def set_execution_resources(
         self,
@@ -568,7 +1162,7 @@ class JobManager:
                 return False
             return True
 
-    def set_desired_state(  # noqa: PLR0912 - explicit lifecycle matrix
+    def set_desired_state(  # noqa: C901, PLR0911, PLR0912 - lifecycle matrix
         self,
         job_id: str,
         desired_state: DesiredJobState,
@@ -649,20 +1243,94 @@ class JobManager:
             if persistence_error is not None:
                 if not persistence_error.published:
                     self._restore_state_locked(backup)
-                    if (
-                        outcome.code == "pause_withdrawn"
-                        and managed.runtime.control is not None
-                    ):
-                        managed.runtime.control.request_pause()
                 else:
-                    self._apply_control_signal_locked(managed, outcome.code)
+                    resume_withdrawn = self._apply_control_signal_locked(
+                        managed,
+                        outcome.code,
+                    )
+                    if (
+                        outcome.code == "pause_withdrawal_pending"
+                        and not resume_withdrawn
+                    ):
+                        self._restore_delivered_pause_locked(managed)
                 return self._persistence_error(
                     command,
                     persistence_error,
                     self._get_locked(job_id),
                 )
-            self._apply_control_signal_locked(managed, outcome.code)
-            return outcome
+            resume_withdrawn = self._apply_control_signal_locked(
+                managed,
+                outcome.code,
+            )
+            if outcome.code == "pause_withdrawal_pending":
+                if resume_withdrawn:
+                    outcome = JobOutcome(
+                        command=command,
+                        status=JobOutcomeStatus.OK,
+                        code="pause_withdrawn",
+                        message="The undelivered pause request was withdrawn.",
+                        job=self._snapshot_locked(managed),
+                    )
+                else:
+                    # Delivery won the race while RUNNING was being made
+                    # durable. Restore truthful observed PAUSING state and let
+                    # cleanup queue a fresh reconciliation attempt.
+                    persistence_error = self._restore_delivered_pause_locked(managed)
+                    if persistence_error is not None:
+                        return self._persistence_error(
+                            command,
+                            persistence_error,
+                            self._get_locked(job_id),
+                        )
+                    outcome = JobOutcome(
+                        command=command,
+                        status=JobOutcomeStatus.ACCEPTED,
+                        code="resume_requested",
+                        message=(
+                            "The delivered pause will unwind before resume requeues."
+                        ),
+                        job=self._snapshot_locked(managed),
+                    )
+            dispatch_after_transition = (
+                managed.snapshot.state is JobState.QUEUED
+                and managed.snapshot.desired_state is DesiredJobState.RUNNING
+                and job_id in self._dispatchers
+            )
+        if dispatch_after_transition:
+            self._schedule_dispatch(job_id)
+        return outcome
+
+    def _schedule_dispatch(self, job_id: str) -> None:
+        """Dispatch now or hand execution back to the job's owning event loop."""
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+        with self._lock:
+            binding = self._dispatchers.get(job_id)
+            owner_loop = binding.loop if binding is not None else None
+        if owner_loop is None or owner_loop is current_loop:
+            if current_loop is not None:
+                self._dispatch_and_log(job_id)
+                return
+        elif owner_loop.is_running():
+            owner_loop.call_soon_threadsafe(self._dispatch_and_log, job_id)
+            return
+        if current_loop is None:
+            logger.error(
+                "could not schedule resumed job %s: no live event loop", job_id
+            )
+            return
+        logger.error("could not schedule resumed job %s: owner loop stopped", job_id)
+
+    def _dispatch_and_log(self, job_id: str) -> None:
+        dispatched = self.dispatch(job_id)
+        if dispatched.status is JobOutcomeStatus.ERROR:
+            logger.error(
+                "could not dispatch resumed job %s: %s",
+                job_id,
+                dispatched.message,
+            )
 
     def acknowledge_control(
         self,
@@ -850,6 +1518,62 @@ class JobManager:
                 status=JobOutcomeStatus.OK,
                 code="job_finished",
                 message=f"The job finished as {state.value}.",
+                job=self._snapshot_locked(managed),
+            )
+
+    def fail_unstarted(self, job_id: str, *, result: str) -> JobOutcome:
+        """Durably fail admitted work that could not acquire a runtime owner."""
+        command = "fail_unstarted"
+        with self._lock:
+            backup = self._capture_state_locked()
+            managed = self._active.get(job_id)
+            if managed is None:
+                terminal = self._get_terminal_locked(job_id)
+                if terminal is not None:
+                    return JobOutcome(
+                        command=command,
+                        status=JobOutcomeStatus.OK,
+                        code="terminal_state_preserved",
+                        message="The first terminal outcome was preserved.",
+                        job=self._snapshot_locked(terminal),
+                    )
+                return self._error(command, "job_not_found", "The job was not found.")
+            if (
+                managed.snapshot.state is not JobState.QUEUED
+                or managed.runtime.task is not None
+            ):
+                return self._error(
+                    command,
+                    "runtime_already_owned",
+                    "Only queued work without a runtime owner can fail admission.",
+                    managed,
+                )
+
+            now = time.time()
+            self._replace_snapshot_locked(
+                managed,
+                state=JobState.FAILED,
+                desired_state=managed.snapshot.desired_state,
+                now=now,
+                finished_at=now,
+                result=result,
+                error_kind=classify_error_text(result),
+            )
+            self._archive_terminal_locked(managed)
+            persistence_error = self._persist_locked()
+            if persistence_error is not None:
+                if not persistence_error.published:
+                    self._restore_state_locked(backup)
+                return self._persistence_error(
+                    command,
+                    persistence_error,
+                    self._get_locked(job_id),
+                )
+            return JobOutcome(
+                command=command,
+                status=JobOutcomeStatus.OK,
+                code="job_failed_before_dispatch",
+                message="The admitted job failed before execution started.",
                 job=self._snapshot_locked(managed),
             )
 
@@ -1171,7 +1895,10 @@ class JobManager:
             task = managed.runtime.task
             if task is None:
                 self._queue_resumed_attempt_locked(managed, now=now)
-            elif control is not None and control.request_resume():
+            elif control is not None:
+                # Persist RUNNING before withdrawing the token. If checkpoint
+                # delivery wins meanwhile, set_desired_state restores PAUSING
+                # and the finished attempt queues reconciliation.
                 self._replace_snapshot_locked(
                     managed,
                     state=JobState.RUNNING,
@@ -1180,7 +1907,7 @@ class JobManager:
                     control_requested_at=None,
                     control_acknowledged_at=None,
                 )
-                code = "pause_withdrawn"
+                code = "pause_withdrawal_pending"
             else:
                 # The old attempt has crossed its safe unwind boundary. Keep
                 # its pause request armed until cleanup acknowledges release,
@@ -1206,6 +1933,18 @@ class JobManager:
             message="The job was queued to reconcile.",
             job=self._snapshot_locked(managed),
         )
+
+    def _restore_delivered_pause_locked(
+        self,
+        managed: _ManagedJob,
+    ) -> _job_persistence.PersistenceWriteError | None:
+        self._replace_snapshot_locked(
+            managed,
+            state=JobState.PAUSING,
+            desired_state=DesiredJobState.RUNNING,
+            now=time.time(),
+        )
+        return self._persist_locked()
 
     def _queue_resumed_attempt_locked(
         self,
@@ -1361,6 +2100,7 @@ class JobManager:
             job_idempotency_keys={
                 job_id: set(keys) for job_id, keys in self._job_idempotency_keys.items()
             },
+            dispatchers=dict(self._dispatchers),
             persistence_dirty=self._persistence_dirty,
         )
 
@@ -1377,6 +2117,7 @@ class JobManager:
         self._terminal = backup.terminal
         self._idempotency = OrderedDict(backup.idempotency)
         self._job_idempotency_keys = backup.job_idempotency_keys
+        self._dispatchers = backup.dispatchers
         self._persistence_dirty = backup.persistence_dirty
 
     def _persist_locked(self) -> _job_persistence.PersistenceWriteError | None:
@@ -1425,12 +2166,18 @@ class JobManager:
         )
 
     @staticmethod
-    def _apply_control_signal_locked(managed: _ManagedJob, outcome_code: str) -> None:
+    def _apply_control_signal_locked(
+        managed: _ManagedJob,
+        outcome_code: str,
+    ) -> bool | None:
         owner = managed.runtime
         if outcome_code == "pause_requested" and owner.control is not None:
             owner.control.request_pause()
         elif outcome_code == "cancellation_requested" and owner.control is not None:
             owner.control.request_cancel()
+        elif outcome_code == "pause_withdrawal_pending" and owner.control is not None:
+            return owner.control.request_resume()
+        return None
 
     def _error(
         self,
@@ -1472,6 +2219,7 @@ class JobManager:
             raise ValueError("only terminal jobs may enter terminal history")
         self._active.pop(managed.snapshot.id, None)
         managed.runtime = _JobRuntimeOwner(task=None, control=None)
+        self._dispatchers.pop(managed.snapshot.id, None)
         self._terminal.append(managed)
         while len(self._terminal) > self._max_terminal_history:
             evicted = self._terminal.popleft()
@@ -1544,4 +2292,15 @@ class JobManager:
             prefix=sys.prefix,
             base_prefix=sys.base_prefix,
             virtual_env=os.environ.get("VIRTUAL_ENV"),
+        )
+
+    @staticmethod
+    def _process_resource_snapshot() -> ProcessResourceSnapshot:
+        from .memory_probe import current_cuda_mb, current_rss_mb
+
+        cuda_allocated_mb, cuda_reserved_mb = current_cuda_mb()
+        return ProcessResourceSnapshot(
+            rss_mb=round(current_rss_mb(), 1),
+            cuda_allocated_mb=round(cuda_allocated_mb, 1),
+            cuda_reserved_mb=round(cuda_reserved_mb, 1),
         )
