@@ -56,8 +56,11 @@ related:
 
 ## Outcome
 
-Options, extractor version, target, mode, and invocation changes invalidate cache entries deterministically.
+Options, extractor version, target, mode, emitted-byte cap, and invocation changes
+invalidate cache entries deterministically. Cache hits are revalidated against the
+active emitted-byte cap before reuse.
 
 ## Notes
 
 Successful cache entries remain an optimization and are revalidated on read.
+A real extractor/cache integration check proves version, path, and cap changes miss.

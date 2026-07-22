@@ -101,8 +101,11 @@ class PreprocessCacheIdentity:
         source_hash: str,
         rule: PreprocessRule,
         mode: PreprocessInvocationMode,
+        max_emitted_bytes: int,
     ) -> PreprocessCacheIdentity:
         """Bind one source to the rule's complete execution semantics."""
+        if isinstance(max_emitted_bytes, bool) or max_emitted_bytes <= 0:
+            raise ValueError("max_emitted_bytes must be a positive integer")
         execution = {
             "command": rule.command,
             "entry_point": rule.entry_point,
@@ -110,9 +113,15 @@ class PreprocessCacheIdentity:
             "extractor_version": rule.extractor_version,
             "target": rule.target.value,
             "mode": mode,
+            "max_emitted_bytes": max_emitted_bytes,
             "output_schema": SUPPORTED_SCHEMA_VERSION,
         }
-        encoded = json.dumps(execution, sort_keys=True, separators=(",", ":"))
+        encoded = json.dumps(
+            execution,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
         return cls(
             source_path=source_path,
             source_hash=source_hash,

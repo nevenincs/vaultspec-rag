@@ -24,7 +24,9 @@ calls :func:`load_preprocess_rules` with ``strict=True``.
 from __future__ import annotations
 
 import dataclasses
+import datetime
 import logging
+import math
 import tomllib
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -400,7 +402,13 @@ def _build_rule(
     options_raw = rule_map.get("options", {})
     if not isinstance(options_raw, dict):
         raise reject("'options' must be a table")
-    options = cast("dict[str, object]", options_raw)
+    try:
+        options_value = _normalize_json_option(options_raw)
+    except (TypeError, ValueError) as exc:
+        raise reject(f"'options' must contain canonical JSON values: {exc}") from exc
+    if not isinstance(options_value, dict):
+        raise reject("'options' must be a table")
+    options = cast("dict[str, object]", options_value)
 
     return PreprocessRule(
         pattern=pattern,
@@ -417,6 +425,37 @@ def _build_rule(
         path_independent=path_independent,
         max_source_bytes=max_source_bytes,
     )
+
+
+def _normalize_json_option(value: object) -> object:
+    """Return one TOML option as a deterministic JSON-compatible value.
+
+    TOML has native date/time scalars that JSON does not. The invocation
+    envelope and cache fingerprint are JSON contracts, so normalize those
+    scalars at policy admission rather than allowing serialization to fail in
+    a worker. Non-finite floats are rejected because they are not JSON values.
+    """
+    if isinstance(value, datetime.datetime):
+        return value.isoformat()
+    if isinstance(value, (datetime.date, datetime.time)):
+        return value.isoformat()
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("non-finite floats are not supported")
+        return value
+    if isinstance(value, list):
+        return [_normalize_json_option(item) for item in cast("list[object]", value)]
+    if isinstance(value, dict):
+        mapping = cast("dict[object, object]", value)
+        normalized: dict[str, object] = {}
+        for key, nested in mapping.items():
+            if not isinstance(key, str):
+                raise TypeError("mapping keys must be strings")
+            normalized[key] = _normalize_json_option(nested)
+        return normalized
+    raise TypeError(f"unsupported value type {type(value).__name__}")
 
 
 def _resolve_path_independent(

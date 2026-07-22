@@ -54,8 +54,12 @@ related:
 
 ## Outcome
 
-The preprocessing phase boundary passed real subprocess, cache, configuration, schema, batch, and CLI behavior.
+The preprocessing phase boundary passed real subprocess, cache, configuration, schema,
+batch, and CLI behavior. Dedicated integration checks now cover option propagation,
+extractor-version invalidation, source binding, metadata retention, path isolation, cap
+invalidation, and structured policy failures.
 
 ## Notes
 
-The focused gate completed 116 checks: 114 passed initially, then the two corrected kill-switch cases passed.
+The remediation gate passed seven dedicated real-behavior checks and the broader focused
+preprocess gate passed 99 checks. The module collects fourteen integration checks.

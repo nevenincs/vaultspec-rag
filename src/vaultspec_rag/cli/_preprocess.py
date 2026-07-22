@@ -29,6 +29,7 @@ from ..indexer._preprocess_config import (
     PREPROCESS_CONFIG_FILENAME,
     PreprocessConfig,
     PreprocessConfigError,
+    PreprocessPolicyError,
     load_preprocess_rules,
 )
 from ..indexer._preprocess_runner import PreprocessAbortError, run_preprocessor
@@ -38,6 +39,31 @@ from ._render import _emit_json, _emit_json_error_and_exit
 
 def _root(ctx: typer.Context) -> Path:
     return cast("CLIState", ctx.obj).target
+
+
+def _config_error_kind(exc: PreprocessConfigError) -> str:
+    """Return the stable structured kind for one config failure."""
+    if isinstance(exc, PreprocessPolicyError):
+        return exc.error_kind.value
+    return "invalid-config"
+
+
+def _report_config_error(
+    command: str,
+    exc: PreprocessConfigError,
+    *,
+    json_mode: bool,
+) -> None:
+    """Render one config failure without leaking an exception traceback."""
+    error_kind = _config_error_kind(exc)
+    if json_mode:
+        _emit_json_error_and_exit(command, error_kind, str(exc), 1)
+    _cli.console.print(
+        f"Preprocess config has a problem ({error_kind}): {exc}",
+        markup=False,
+        highlight=False,
+    )
+    raise typer.Exit(code=1) from exc
 
 
 def _format_timeout(timeout_s: object) -> str:
@@ -79,7 +105,11 @@ def handle_preprocess_list(
     ] = False,
 ) -> None:
     """Show the project's resolved preprocess rules in precedence order."""
-    config = load_preprocess_rules(_root(ctx))
+    try:
+        config = load_preprocess_rules(_root(ctx))
+    except PreprocessConfigError as exc:
+        _report_config_error("preprocess list", exc, json_mode=json_mode)
+        return
     rules = [
         {
             "pattern": r.pattern,
@@ -145,19 +175,8 @@ def handle_preprocess_check(
     try:
         config = load_preprocess_rules(_root(ctx), strict=True)
     except PreprocessConfigError as exc:
-        if json_mode:
-            _emit_json_error_and_exit(
-                "preprocess check",
-                "invalid-config",
-                str(exc),
-                1,
-            )
-        _cli.console.print(
-            f"Preprocess config has a problem: {exc}",
-            markup=False,
-            highlight=False,
-        )
-        raise typer.Exit(code=1) from exc
+        _report_config_error("preprocess check", exc, json_mode=json_mode)
+        return
     count = len(config.rules)
     if json_mode:
         _emit_json(
@@ -241,7 +260,11 @@ def handle_preprocess_run_one(
     from ..config import get_config
 
     root = _root(ctx)
-    config = load_preprocess_rules(root)
+    try:
+        config = load_preprocess_rules(root)
+    except PreprocessConfigError as exc:
+        _report_config_error("preprocess run-one", exc, json_mode=json_mode)
+        return
     src = Path(path)
     abs_path = src if src.is_absolute() else (root / src)
     try:
@@ -395,11 +418,15 @@ def handle_preprocess_status(
     extractor_versions: list[str] = []
     path_independent_rules = 0
     config_valid = True
+    config_error_kind: str | None = None
+    config_error_message: str | None = None
     if config_present:
         try:
             config = load_preprocess_rules(root, strict=True)
-        except PreprocessConfigError:
+        except PreprocessConfigError as exc:
             config_valid = False
+            config_error_kind = _config_error_kind(exc)
+            config_error_message = str(exc)
         else:
             rule_count = len(config.rules)
             schema_version = config.schema_version
@@ -422,6 +449,8 @@ def handle_preprocess_status(
                 "root": str(root),
                 "config_present": config_present,
                 "config_valid": config_valid,
+                "config_error_kind": config_error_kind,
+                "config_error_message": config_error_message,
                 "rule_count": rule_count,
                 "schema_version": schema_version,
                 "targets": targets,
@@ -440,6 +469,12 @@ def handle_preprocess_status(
         highlight=False,
     )
     _cli.console.print(f"Rules: {rule_count}", markup=False, highlight=False)
+    if config_error_kind is not None:
+        _cli.console.print(
+            f"Config error: {config_error_kind}: {config_error_message}",
+            markup=False,
+            highlight=False,
+        )
     if schema_version is not None:
         _cli.console.print(
             f"Schema: {schema_version}; targets: {', '.join(targets) or 'none'}; "

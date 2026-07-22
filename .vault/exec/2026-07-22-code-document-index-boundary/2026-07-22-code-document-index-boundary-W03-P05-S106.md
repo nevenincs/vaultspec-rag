@@ -54,8 +54,13 @@ related:
 
 ## Outcome
 
-Preprocessing CLI inspection now exposes the complete execution and migration contract in human and JSON forms.
+Preprocessing CLI inspection now exposes the complete execution and migration contract in
+human and JSON forms. List, check, run-one, and status preserve stable
+`migration_required` and `admission_config_invalid` outcomes without traceback or empty
+JSON output.
 
 ## Notes
 
 The disabled mode retains routing while suppressing execution, matching index behavior.
+Status remains a successful inspection command and reports invalid policy kind and detail
+inside its structured data envelope.

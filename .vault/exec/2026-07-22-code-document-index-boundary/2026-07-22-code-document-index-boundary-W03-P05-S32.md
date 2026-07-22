@@ -61,3 +61,5 @@ Source redirection is rejected and metadata remains a bounded payload component.
 ## Notes
 
 Real subprocess coverage verifies attempted redirection becomes an explicit failure.
+The remediation gate also verifies document metadata, unit metadata, titles, sections,
+anchors, and locators survive a real extractor process after bounded schema validation.
