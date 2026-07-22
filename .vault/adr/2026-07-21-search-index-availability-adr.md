@@ -57,7 +57,8 @@ counts and does not close the race between retrieval and response emission.
   establish the authority of a later empty result.
 - Canonical `JobManager` snapshots expose the root, source, mode, and nonterminal-state
   evidence required by the narrow guard.
-- The large-index generation ledger is accepted but still in flight.
+- Durable generation-ledger state is owned by the large-index-resilience feature and is not
+  consumed by this implementation.
 - Existing clients recognize structured failures through `ok: false`. The 503 body must omit
   `results` so no client can reinterpret the response as a successful empty search.
 - Indexing progress provides no credible completion estimate.
@@ -138,6 +139,12 @@ deduplicates the list, so the second observation's state wins. The classifier co
 availability status from every unique match before truncating response evidence.
 `matching_jobs_truncated` is true when more than eight unique matches existed.
 
+One frozen classification owns the response body, HTTP status, and `service.search` log
+evidence. This prevents a response-boundary job from appearing in the body while being absent
+from its correlated log. The log-only `availability_cause` distinguishes ordinary matching-job
+classification from recovery of a collection-disappearance race; it is not part of the public
+response envelope.
+
 ### HTTP response contract
 
 Search retrieval proceeds normally. A nonempty result keeps the existing HTTP 200 success
@@ -185,6 +192,16 @@ continues to distinguish a missing index from an available index with no match. 
 reads service-owned snapshots but never extends their schema, changes `jobs.py`, or owns a
 registry.
 
+### Collection-disappearance boundary
+
+Retrieval can race a destructive rebuild after collection existence was checked but before the
+selected-source count is read. A structured Qdrant collection-missing HTTP 404 is translated to
+the same canonical HTTP 503 response only when the frozen observations contain exact matching
+canonical nonterminal job evidence. The response uses an instantaneous zero count and the same
+bounded job evidence as the ordinary empty path. A non-404 response, malformed or non-collection
+404, or collection-missing 404 without exact matching evidence is not availability evidence and
+the original exception is re-raised.
+
 The MCP search adapters inspect the structured daemon body before Pydantic validation. Any
 body with `ok: false` raises an actionable `RuntimeError` containing the daemon error code,
 message, and remediation. FastMCP maps that recoverable exception to `isError: true`. A valid
@@ -196,54 +213,30 @@ is absent or has no `results` member.
 
 ### Deterministic regression handshake
 
-The regression uses the function-scoped real subprocess service and the existing synthetic
-corpus builder to create 256 well-formed vault documents with seed 252. It submits a real
-clean vault reindex, retains the returned job ID, and polls authenticated `/jobs` every 50
-milliseconds for at most 10 seconds until the submitted job is running. This handshake proves
-the real indexer entered before searches are admitted. The search query is
-`type:nonexistent availability authority probe`, an existing
-production filter behavior that guarantees no matching document without mirroring search
-logic in the test.
+The regression uses a function-scoped real subprocess service, real Qdrant, local GPU models,
+and a 256-document synthetic vault with seed 252. Its first phase initializes the official MCP
+session, submits a real clean rebuild, observes the exact running job, and then releases a
+five-party barrier. The parties are a raw matching-empty request, raw unrelated-root request,
+raw unrelated-source request, shared-client matching-empty call, and official MCP
+matching-empty call. The matching request returns the exact HTTP 503 envelope; unrelated work
+stays HTTP 200; both consumer paths preserve failure semantics. After the job succeeds, the
+same matching-empty request returns HTTP 200 with `empty.reason: no_match`.
 
-After the running-state handshake, a real thread executor admits every probe concurrently.
-This is required because production searches may wait for the project lease until indexing
-finishes; each route must capture its first observation before that wait. The final probe set
-contains raw matching-empty, unrelated-root-empty, unrelated-source-empty, and
-matching-nonempty HTTP requests, plus the shared-client and MCP matching-empty calls. The
-matching nonempty query uses a known needle from the generated corpus. No test double or
-production mutation controls the timing.
+The second phase stops the daemon, persists a real matching rebuild in `paused` state, and
+restarts the daemon against the same storage. A query for a known published document remains a
+nonempty HTTP 200. Its completed log names the exact paused job with bounded evidence, and the
+job revision remains unchanged, proving the search did not activate or mutate lifecycle state.
 
-Each request uses a 300-second deadline. Raw HTTP requests use the bearer token read from
-`/health`. The primary root is the 256-document corpus. The unrelated root is a second empty
-project containing only `.vault`. The unrelated-source probe searches code in the primary
-root with `include_paths: ["__availability_no_match__/**"]`. The matching nonempty probe uses
-the first corpus manifest needle. Both shared-client and MCP probes use the guaranteed
-matching-empty query and the primary root.
+The HTTP assertions require the declared key sets, exact job correlation, normalized roots,
+bounded diagnostics, and no `results` or `Retry-After` on failure. Timeout evidence reads the
+live token from `/health` and includes authenticated `/jobs`, `/metrics`, and recent response
+state. No fake, stub, mock, patch, monkeypatch, skip, expected failure, or mirrored policy is
+used.
 
-The HTTP 503 assertion requires the exact declared key sets. Dynamic fields are checked by
-contract: `request_id` is 32 lowercase hexadecimal characters, `indexed_count` is a
-nonnegative integer from the real search, roots equal their resolved strings, and the returned
-job reference contains the submitted job ID. A canonical rebuild reports `status: rebuilding`,
-`state: running`, and `mode: rebuild`.
-
-The concurrent assertion matrix is:
-
-| Probe                           | Request                                                                                     | Expected result                                                                                    |
-| ------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Raw matching empty              | Primary root, `vault`, guaranteed no-match query                                            | HTTP 503; exact failure key sets and dynamic predicates; submitted job reference; no `results`     |
-| Raw unrelated root              | Empty secondary root, `vault`, guaranteed no-match query                                    | HTTP 200 with `results: []`                                                                        |
-| Raw unrelated source            | Primary root, `code`, ordinary query plus `include_paths: ["__availability_no_match__/**"]` | HTTP 200 with `results: []`                                                                        |
-| Raw matching nonempty           | Primary root, `vault`, first manifest needle                                                | HTTP 200 with at least one result containing that needle's document identity                       |
-| Shared client matching empty    | Primary root, `vault`, guaranteed no-match query                                            | Dictionary with `ok: false`, `error: index_unavailable`, submitted job reference, and no `results` |
-| MCP matching empty              | Real stdio `search_vault` call for primary root and guaranteed no-match query               | `CallToolResult.isError is True`; actionable text; no structured `results`                         |
-| Post-convergence matching empty | Primary root, `vault`, same guaranteed no-match query                                       | HTTP 200 with `results: []` and `empty.reason: no_match`                                           |
-
-The test asserts every independent contract after all futures settle. It polls the same job
-every 100 milliseconds for at most 300 seconds until it succeeds. Any failure or cancellation
-fails the test with the job result and error evidence. It then repeats the raw matching-empty
-query and asserts the ordinary HTTP 200 empty contract. Timeout failures include the latest
-`/health`, exact `/jobs`, `/metrics`, and response evidence. Later test Steps append one probe
-at a time to this one service-and-job lifecycle; each invariant remains a separate commit.
+The green lifecycle run need not deterministically encounter Qdrant's narrow collection-drop
+window. That branch is established compositionally by the preserved real Qdrant red trace and
+focused tests that construct real `UnexpectedResponse` and `JobManager` objects and exercise
+both conversion and decline paths.
 
 When large-index-resilience publishes `rebuild_incomplete` for a destructive generation, it
 becomes an additional reason to apply this same contract to an otherwise-empty response. A

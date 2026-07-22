@@ -23,15 +23,14 @@ related:
 
 ## Outcome
 
-Ruff formatting and lint passed, and BasedPyright reported zero errors, warnings, or notes for
-the changed modules. The adjacent suite passed eighty-six tests. The latest focused consumer and
-classifier suite passed forty-eight tests, and the final no-substitute response-envelope suite
-passed all sixteen tests.
+Ruff formatting and lint passed. BasedPyright, invoked with the explicit main interpreter for
+the immutable snapshot, reported zero errors, warnings, or notes. The final focused classifier
+and HTTP contract suites passed 33 tests, and the final adjacent search, client, command-line,
+Model Context Protocol, and stdio suite passed 116 tests.
 
 ## Notes
 
-One early adjacent collection attempt encountered incomplete, unrelated indexer edits in the
-shared worktree. The same planned suite passed after those commits completed. Snapshot Ruff
-checks were clean; one snapshot-only BasedPyright invocation could not resolve the main virtual
-environment from the exported directory, while the canonical main-tree invocation and formal
-review typing gates were clean.
+Earlier intermediate gates passed 86 adjacent, 48 focused consumer/classifier, and 16 strict
+response-envelope tests. One snapshot-only BasedPyright invocation initially could not resolve
+the shared virtual environment; supplying its explicit Python interpreter produced the final
+zero-error, zero-warning, zero-note result.

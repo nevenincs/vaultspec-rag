@@ -18,7 +18,7 @@ related:
 ## Description
 
 - Invoke the production shared HTTP search client for the matching-root guaranteed-empty query.
-- Admit the client call through the same six-party barrier after the exact running-job handshake.
+- Admit the client call through the five-party barrier after the exact running-job handshake.
 - Assert the structured failure body, submitted job reference, and absence of a `results` member.
 
 ## Outcome
@@ -30,5 +30,5 @@ result from this transport boundary.
 ## Notes
 
 The assertion uses the production `_try_http_search` path without transport substitution.
-Formatting, lint, and strict BasedPyright checks passed; graphics processing unit acceptance
-remains deferred to the review gate.
+Final local graphics processing unit acceptance passed with one selected test and seven
+deselected.

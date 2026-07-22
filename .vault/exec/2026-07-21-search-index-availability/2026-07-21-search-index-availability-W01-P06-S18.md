@@ -18,7 +18,8 @@ related:
 ## Description
 
 - Start the production Model Context Protocol stdio entrypoint through the official client transport.
-- Initialize an official `ClientSession` before admitting its `search_vault` call through the common six-party barrier.
+- Initialize an official `ClientSession` before admitting its `search_vault` call through the
+  five-party barrier.
 - Assert a recoverable tool error with actionable unavailable-index text and no structured results.
 
 ## Outcome
@@ -30,6 +31,5 @@ is absent or cannot contain a `results` member.
 ## Notes
 
 Initialization and tool calls use explicit bounded timeouts, and failure evidence remains
-token-redacted and size-bounded. Formatting, lint, strict BasedPyright, and test collection
-passed. The focused graphics processing unit runtime was not run because the CUDA lane
-remained occupied; acceptance remains deferred to the review gate.
+token-redacted and size-bounded. Final local graphics processing unit acceptance passed with
+one selected test and seven deselected.

@@ -18,20 +18,23 @@ related:
 ## Description
 
 - Run the focused subprocess graphics processing unit regression against an immutable export of committed main.
-- Exercise a completed baseline index, a second matching rebuild, four raw HTTP probes, the shared service client, and the official Model Context Protocol stdio client.
-- Repeat acceptance after the final consumer-envelope commit.
+- Exercise a five-party barrier during a real clean rebuild: raw matching, unrelated-root and
+  unrelated-source requests, the shared client, and the official Model Context Protocol client.
+- Restart against the same storage with a real persisted paused rebuild and prove a known
+  nonempty result remains HTTP 200 without lifecycle mutation.
 
 ## Outcome
 
-The latest committed main snapshot passed the focused real-daemon regression: one test passed
-and six unrelated tests were deselected. The matching empty request returned the structured
-unavailable error, stable unrelated searches remained successful, an existing matching result
-remained usable, the shared client preserved failure data, and the stdio tool returned an error.
+The immutable `fe1e007b0abcbb92feeaa31bb9672978dc1e5bb3` snapshot passed the focused
+real-daemon regression: one test passed and seven were deselected in 59.90 seconds. Matching
+empty search returned the structured unavailable error, unrelated controls remained successful,
+the shared client and stdio tool preserved failure semantics, post-convergence empty search
+returned HTTP 200, and the separate persisted-paused phase preserved a known nonempty result.
 
 ## Notes
 
-Two earlier runs were diagnostic rather than acceptance. Shared uncommitted route work returned
-HTTP 500 before search, so committed main was tested from a non-worktree archive without altering
-the shared tree. The first archive then exposed that the nonempty probe lacked a baseline index;
-the test was corrected to finish a real clean index before starting the measured rebuild. The
-corrected snapshot passed twice, including after the last consumer-contract commit.
+Earlier runs were diagnostic rather than acceptance. One preserved run exposed the actual
+collection-disappearance race: after Qdrant dropped the selected collection, a structured
+collection-missing 404 escaped as HTTP 500. Commit `fe1e007b0abcbb92feeaa31bb9672978dc1e5bb3`
+converted only that evidenced race to the canonical 503. The green lifecycle is not timed to
+force the 404 branch; the real red trace and focused real-object tests provide that proof.

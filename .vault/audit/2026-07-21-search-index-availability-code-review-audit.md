@@ -62,3 +62,19 @@ review retained this as a non-blocking observation rather than expanding the bug
   loopback sockets.
 
 No critical, high, or medium finding remains unresolved.
+
+## Post-closeout collection-race addendum
+
+After the original review closed, immutable GPU diagnostics exposed a narrower production race:
+Qdrant dropped the selected collection between the existence check and count, and a structured
+collection-missing 404 escaped `POST /search` as HTTP 500. Commit
+`fe1e007b0abcbb92feeaa31bb9672978dc1e5bb3` recognizes only that structured failure and converts
+it to the canonical HTTP 503 when exact root/source nonterminal job evidence exists. Non-404,
+unrecognized 404, and no-matching-job cases preserve the original exception.
+
+The final independent review covered both `94b4600fdec57c6ba6ece013755fbe05b8cdfd63`
+and `fe1e007b0abcbb92feeaa31bb9672978dc1e5bb3`. Ruff was clean, BasedPyright reported zero
+errors, warnings, or notes, 33 focused and 116 adjacent tests passed, and local real-Qdrant/GPU
+acceptance passed with one selected test and seven deselected. The GPU lifecycle does not claim
+to deterministically hit the collection-drop window; the preserved real red trace and focused
+real-object tests establish that branch. No critical, high, or medium finding remains unresolved.

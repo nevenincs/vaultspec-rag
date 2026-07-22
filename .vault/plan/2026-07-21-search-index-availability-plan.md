@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#search-index-availability'
 date: '2026-07-21'
-modified: '2026-07-22'
+modified: '2026-07-21'
 tier: L3
 related:
   - '[[2026-07-21-search-index-availability-adr]]'
@@ -77,6 +77,8 @@ Verify the real-service regression, stable empty-success behavior, unrelated-job
 Audit the completed work against the ADR, repository rules, concurrent campaign boundaries, and test-integrity requirements before reporting completion.
 
 - [x] `W03.P04.S25` - Audit ADR conformance response safety campaign compatibility and test integrity and route required corrections to Terra xhigh; `.vault/audit/2026-07-21-search-index-availability-code-review-audit.md`.
+- [x] `W03.P04.S26` - Convert a matching rebuild collection-disappearance race into the canonical structured HTTP 503 response using Terra xhigh; `src/vaultspec_rag/server/_routes.py, src/vaultspec_rag/server/_search_availability.py, src/vaultspec_rag/tests/test_search_availability.py, src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
+- [x] `W03.P04.S27` - Perform final formal code review of the collection-disappearance fix and acceptance evidence under root supervision; `.vault/audit/2026-07-22-search-index-availability-final-code-review-audit.md`.
 
 ## Description
 
@@ -139,6 +141,12 @@ one clean-index lifecycle. Each invariant remains a distinct Step and commit.
   not alter the stable HTTP 200 empty-result contract.
 - A usable nonempty response remains HTTP 200 while matching work is
   nonterminal.
+- A structured Qdrant collection-missing HTTP 404 becomes the same canonical
+  HTTP 503 only with exact matching canonical nonterminal evidence. Non-404,
+  malformed or non-collection 404, and no-matching-job failures are re-raised.
+- One frozen classification drives the response body, HTTP status, watcher,
+  metrics, and bounded `service.search` evidence. The internal
+  `availability_cause` is log-only.
 - The shared service client preserves `index_unavailable` as a structured failure
   envelope and rejects malformed response envelopes as `invalid_service_response`. A real
   MCP stdio call returns `CallToolResult.isError is True` with actionable text
@@ -147,13 +155,13 @@ one clean-index lifecycle. Each invariant remains a distinct Step and commit.
 - The local graphics processing unit regression passes with
   `uv run pytest -m subprocess_gpu src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py -k search_index_unavailable_during_matching_rebuild -vv -s`.
 - Adjacent tests pass with
-  `uv run pytest src/vaultspec_rag/tests/test_service_search_diagnostics.py src/vaultspec_rag/tests/test_cli_search.py src/vaultspec_rag/tests/test_cli_search_safety.py src/vaultspec_rag/tests/test_mcp_conformance_surface.py src/vaultspec_rag/tests/test_mcp_no_local_fallback.py src/vaultspec_rag/tests/integration/test_stdio_lifetime_e2e.py -vv`.
+  `uv run pytest src/vaultspec_rag/tests/test_service_search_diagnostics.py src/vaultspec_rag/tests/test_cli_search.py src/vaultspec_rag/tests/test_cli_search_safety.py src/vaultspec_rag/tests/test_http_search_routing.py src/vaultspec_rag/tests/test_mcp_no_local_fallback.py src/vaultspec_rag/tests/test_stdio_lifetime.py src/vaultspec_rag/tests/test_search_service_first.py -q`.
 - Formatting passes with
-  `uv run ruff format --check src/vaultspec_rag/server/_search_availability.py src/vaultspec_rag/server/_routes.py src/vaultspec_rag/mcp/_tools.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
+  `uv run ruff format --check src/vaultspec_rag/server/_search_availability.py src/vaultspec_rag/server/_routes.py src/vaultspec_rag/tests/test_search_availability.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
 - Lint passes with
-  `uv run ruff check src/vaultspec_rag/server/_search_availability.py src/vaultspec_rag/server/_routes.py src/vaultspec_rag/mcp/_tools.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
+  `uv run ruff check src/vaultspec_rag/server/_search_availability.py src/vaultspec_rag/server/_routes.py src/vaultspec_rag/tests/test_search_availability.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
 - Strict typing passes with
-  `uv run basedpyright src/vaultspec_rag/server/_search_availability.py src/vaultspec_rag/server/_routes.py src/vaultspec_rag/mcp/_tools.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
+  `uv run basedpyright src/vaultspec_rag/server/_search_availability.py src/vaultspec_rag/server/_routes.py src/vaultspec_rag/tests/test_search_availability.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
 - `uv run vaultspec-core vault plan check .vault/plan/2026-07-21-search-index-availability-plan.md`
   and `uv run vaultspec-core vault check all --feature search-index-availability`
   pass.
