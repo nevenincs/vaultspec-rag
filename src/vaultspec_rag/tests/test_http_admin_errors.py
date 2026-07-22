@@ -29,6 +29,7 @@ from ..serviceclient._transport import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
@@ -243,3 +244,139 @@ class TestAdminErrorSurfacing:
         assert 0.100 <= elapsed < 0.280
         assert _AuthDeadlineHandler.requests[:2] == ["/projects", "/health"]
         assert len(_AuthDeadlineHandler.requests) <= 3
+
+
+class TestDegradedDiscoveryPropagation:
+    """Port resolution fails fast with evidence, never a guessed address.
+
+    Driven against a real held machine lock and real on-disk pointers, with
+    both managed singleton paths relocated under the test's own temp root.
+    """
+
+    @staticmethod
+    def _isolate(tmp_path: Path) -> None:
+        from ..config import reset_config
+
+        os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path / "status")
+        os.environ[EnvVar.QDRANT_STORAGE_DIR.value] = str(
+            tmp_path / "qdrant-server" / "storage"
+        )
+        (tmp_path / "status").mkdir(parents=True, exist_ok=True)
+        reset_config()
+
+    @staticmethod
+    def _restore() -> None:
+        from .._machine_lock import release_machine_lock
+        from ..config import reset_config
+
+        release_machine_lock()
+        os.environ.pop(EnvVar.STATUS_DIR.value, None)
+        os.environ.pop(EnvVar.QDRANT_STORAGE_DIR.value, None)
+        reset_config()
+
+    def test_absent_singleton_raises_without_a_holder(self, tmp_path: Path) -> None:
+        from ..serviceclient._transport import (
+            ServiceUnavailableError,
+            resolve_service_port,
+        )
+
+        self._isolate(tmp_path)
+        try:
+            with pytest.raises(ServiceUnavailableError) as caught:
+                resolve_service_port()
+            assert caught.value.is_degraded is False
+            assert caught.value.holder_pid == 0
+        finally:
+            self._restore()
+
+    @pytest.mark.parametrize(
+        ("pointer", "expected_reason"),
+        [
+            (None, "pointer_missing"),
+            ("{not json", "pointer_missing"),
+            ('{"pid": 1, "port": 0}', "pointer_foreign"),
+        ],
+    )
+    def test_degraded_resolution_carries_its_reason(
+        self,
+        tmp_path: Path,
+        pointer: str | None,
+        expected_reason: str,
+    ) -> None:
+        """Every degraded shape fails fast naming the holder and the reason."""
+        from .._machine_lock import acquire_machine_lock, machine_discovery_path
+        from ..serviceclient._transport import (
+            ServiceUnavailableError,
+            resolve_service_port,
+        )
+
+        self._isolate(tmp_path)
+        try:
+            acquired, _holder = acquire_machine_lock()
+            assert acquired
+            if pointer is not None:
+                path = machine_discovery_path()
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(pointer, encoding="utf-8")
+
+            with pytest.raises(ServiceUnavailableError) as caught:
+                resolve_service_port()
+
+            error = caught.value
+            assert error.is_degraded is True
+            assert error.reason == expected_reason
+            assert error.holder_pid == os.getpid()
+            # The message a caller surfaces carries the evidence itself.
+            assert str(os.getpid()) in str(error)
+        finally:
+            self._restore()
+
+    def test_stale_pointer_never_yields_a_guessed_address(self, tmp_path: Path) -> None:
+        """A stale pointer must not be accepted through any fallback.
+
+        A status file naming a different port is present, so a compatibility
+        fallback would resolve an address the singleton owner never published.
+        """
+        import json as _json
+        from datetime import UTC, datetime, timedelta
+
+        from .._machine_lock import acquire_machine_lock, machine_discovery_path
+        from ..serviceclient._discovery import _status_file
+        from ..serviceclient._transport import (
+            ServiceUnavailableError,
+            resolve_service_port,
+        )
+
+        self._isolate(tmp_path)
+        try:
+            acquired, _holder = acquire_machine_lock()
+            assert acquired
+            stamp = (datetime.now(UTC) - timedelta(hours=2)).isoformat(
+                timespec="seconds"
+            )
+            path = machine_discovery_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                _json.dumps(
+                    {
+                        "pid": os.getpid(),
+                        "port": 8801,
+                        "last_heartbeat": stamp,
+                        "stale_after_s": 60,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            _status_file().write_text(
+                _json.dumps({"pid": 4242, "port": 9999}), encoding="utf-8"
+            )
+
+            with pytest.raises(ServiceUnavailableError) as caught:
+                resolve_service_port()
+
+            assert caught.value.reason == "pointer_stale"
+            # Neither the refused pointer port nor the status file's port is
+            # handed back as a usable address.
+            assert "9999" not in str(caught.value)
+        finally:
+            self._restore()
