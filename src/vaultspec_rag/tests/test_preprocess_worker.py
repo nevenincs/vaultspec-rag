@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from ..indexer import _chunk_worker
+from ..indexer._content_policy import ContentKind
 from ..indexer._preprocess_cache import preprocess_cache_dir
 from ..indexer._preprocess_config import (
     PreprocessConfig,
@@ -55,6 +56,8 @@ def _context(tmp_path: Path, pattern: str = "*.pdf") -> PreprocessContext:
         command=command,
         entry_point=None,
         priority=100,
+        target=ContentKind.DOCUMENT,
+        extractor_version="1.0.0",
         on_error="skip",
         timeout_s=30.0,
         options={},

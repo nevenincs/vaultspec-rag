@@ -26,6 +26,7 @@ from ._gpu_errors import _handle_gpu_error
 
 __all__ = [
     "_address_line",
+    "_caller_ephemeral_warning",
     "_compute_state",
     "_ephemeral_env_warning",
     "_evaluate_service_signals",
@@ -175,6 +176,7 @@ def service_warmup() -> None:
 # the primitives above so the leaf modules can import those primitives from
 # here without an unresolved-name cycle.
 from ._service_start import (  # noqa: E402
+    _caller_ephemeral_warning,
     _ephemeral_env_warning,
     _existing_service_running,
     _fail_start,

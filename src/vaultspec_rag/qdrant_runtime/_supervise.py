@@ -47,6 +47,12 @@ __all__ = [
     "start_supervised_from_config",
 ]
 
+# Whole-operation budget for the pre-spawn orphan reap: five witness
+# inspections plus the reap itself. Generous enough that a healthy host never
+# reaches it, small enough that a wedged local inspection (a blocked Windows
+# ``tasklist``, a hung psutil probe) fails startup with a named cause instead
+# of holding the machine singleton lock indefinitely.
+_REAP_BUDGET_DEFAULT_SECONDS = 30.0
 _READY_TIMEOUT_DEFAULT_SECONDS = 300.0
 _READY_TIMEOUT_ENV = "VAULTSPEC_RAG_QDRANT_READY_TIMEOUT"
 _STOP_TIMEOUT_SECONDS = 10.0
@@ -881,6 +887,8 @@ def _reap_orphan_before_spawn(
     qport: int,
     identity: QdrantIdentity | None,
     reason: str,
+    *,
+    budget: float = _REAP_BUDGET_DEFAULT_SECONDS,
 ) -> None:
     """Reap a provably-dead managed qdrant orphan, then wait for port release.
 
@@ -890,6 +898,13 @@ def _reap_orphan_before_spawn(
     killed), reaps it, then polls for the port to free so the fresh child cannot
     lose a reap-to-spawn bind race. Raises with a named, actionable cause at each
     failure rather than spawning a doomed competitor.
+
+    Every witness inspection is bounded by ``budget`` as one whole-operation
+    deadline rather than a per-call timeout. These inspections are local but not
+    instantaneous - on Windows the image check shells out to ``tasklist``, which
+    can block for a long time on a loaded or filter-driver-wedged host - and
+    this runs inside daemon startup while the machine singleton lock is held, so
+    an unbounded inspection wedges the daemon in ``warming`` with no way out.
     """
     from ._resolve import (
         pid_image_is_qdrant,
@@ -908,7 +923,23 @@ def _reap_orphan_before_spawn(
     logger.warning("Reaping managed qdrant orphan on port %d: %s", qport, reason)
     from ._resolve import owner_pid_witness_state
 
-    owner_state = owner_pid_witness_state(identity, timeout=2.0)
+    deadline = time.monotonic() + max(0.0, budget)
+
+    def remaining(stage: str) -> float:
+        """Time left for ``stage``, or a named failure when the budget is spent."""
+        left = deadline - time.monotonic()
+        if left <= 0.0:
+            raise RuntimeError(
+                f"qdrant orphan on port {qport}: the {budget:.1f}s reap budget "
+                f"expired during {stage}; refusing to signal the managed child "
+                "on unproven witnesses. Stop the holder manually, then retry; "
+                "or run local-only: vaultspec-rag server start --local-only"
+            )
+        return left
+
+    owner_state = owner_pid_witness_state(
+        identity, timeout=remaining("the owner-death witness")
+    )
     if owner_state not in {"dead", "replaced"}:
         raise RuntimeError(
             f"qdrant orphan on port {qport}: recorded owner pid "
@@ -918,6 +949,7 @@ def _reap_orphan_before_spawn(
     if child_start_time <= 0.0 or not pid_matches_start_time(
         target,
         child_start_time,
+        timeout=remaining("the child process-start witness"),
     ):
         raise RuntimeError(
             f"qdrant orphan on port {qport}: recorded child pid {target} has "
@@ -929,12 +961,14 @@ def _reap_orphan_before_spawn(
 
     expected_storage = Path(str(get_config().qdrant_storage_dir)).expanduser().resolve()
     recorded_storage = Path(identity.storage_path).expanduser().resolve()
-    live_probe = probe_qdrant_endpoint(qport)
+    live_probe = probe_qdrant_endpoint(qport, timeout=remaining("the endpoint probe"))
     if (
         recorded_storage != expected_storage
         or identity.version != QDRANT_SERVER_VERSION
         or identity.http_port != qport
-        or not pid_listens_on_loopback_port(target, qport)
+        or not pid_listens_on_loopback_port(
+            target, qport, timeout=remaining("the loopback listener witness")
+        )
         or not live_probe.ready
         or live_probe.version != QDRANT_SERVER_VERSION
     ):
@@ -945,7 +979,9 @@ def _reap_orphan_before_spawn(
     # Confirm the recorded child pid is still a qdrant process before the hard
     # kill: the pid came from a dead owner's record and may have been recycled by
     # an unrelated process, which must never be killed.
-    if target <= 0 or not pid_image_is_qdrant(target):
+    if target <= 0 or not pid_image_is_qdrant(
+        target, timeout=remaining("the child image witness")
+    ):
         raise RuntimeError(
             f"qdrant orphan on port {qport}: recorded child pid {target} is "
             "not a live qdrant process (likely a dead/recycled pid); refusing "
@@ -955,6 +991,7 @@ def _reap_orphan_before_spawn(
     if not reap_qdrant_orphan(
         target,
         expected_start_time=child_start_time,
+        wait_seconds=remaining("the child reap"),
     ):
         raise RuntimeError(
             f"qdrant orphan holding port {qport} could not be reaped "

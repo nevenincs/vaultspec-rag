@@ -18,6 +18,7 @@ from ..qdrant_runtime._resolve import (
     QdrantIdentity,
     classify_qdrant_state,
     pid_alive,
+    pid_start_time,
     probe_qdrant_endpoint,
 )
 
@@ -83,9 +84,23 @@ class TestPidLiveness:
 
 
 class TestClassification:
-    def _identity(self, owner_pid: int) -> QdrantIdentity:
+    def _identity(self, owner_pid: int, *, witnessed: bool = True) -> QdrantIdentity:
+        """Build an identity record, with or without the incarnation witness.
+
+        A sidecar written by current code always carries the owner's start
+        time, because ``write_qdrant_identity`` resolves it from the live
+        owner. ``witnessed=False`` reproduces a pre-witness legacy record,
+        which must fail closed rather than be trusted.
+        """
+        start = pid_start_time(owner_pid) if witnessed else 0.0
         return QdrantIdentity(
-            storage_path="s", version="1.18.2", owner_pid=owner_pid, http_port=8765
+            storage_path="s",
+            version="1.18.2",
+            owner_pid=owner_pid,
+            http_port=8765,
+            qdrant_pid=owner_pid,
+            owner_start_time=start,
+            qdrant_start_time=start,
         )
 
     def test_absent_when_nothing_listening_and_no_identity(self) -> None:
@@ -116,3 +131,16 @@ class TestClassification:
             classify_qdrant_state(probe, self._identity(os.getpid()))
             == "managed_running"
         )
+
+    def test_owner_unverified_when_identity_carries_no_witness(self) -> None:
+        """A witness-less record never reads as managed, even when all else fits.
+
+        Pins the tightening itself: the owner is this live process and the
+        endpoint is listening, ready, and the pinned version, so only the
+        missing incarnation witness separates this from the case above. Without
+        it the owner cannot be proven to be the same incarnation that wrote the
+        record, and a recycled PID must not be mistaken for the managed child.
+        """
+        probe = QdrantEndpointProbe(listening=True, ready=True, version="1.18.2")
+        identity = self._identity(os.getpid(), witnessed=False)
+        assert classify_qdrant_state(probe, identity) == "owner_unverified"

@@ -1445,8 +1445,10 @@ class TestReindexPreprocessPreflight:
     def _write_config(root: Path) -> None:
         (root / ".vault").mkdir(parents=True)
         (root / ".vaultragpreprocess.toml").write_text(
-            "version = 1\n\n[[rule]]\n"
+            "version = 2\n\n[[rule]]\n"
             'pattern = "*.pdf"\n'
+            'target = "document"\n'
+            'extractor_version = "1.0.0"\n'
             'command = "extract {path}"\n'
             'on_error = "skip"\n',
             encoding="utf-8",

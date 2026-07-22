@@ -9,9 +9,11 @@ running Qdrant on 8765.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
+import typing
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -370,3 +372,52 @@ class TestNonReadyChildDiagnosis:
         # Either captured output or the explicit no-output note - never silent.
         assert "output" in msg.lower()
         assert not sup.is_alive()
+
+
+class TestOrphanReapIsDeadlineBounded:
+    """The pre-spawn orphan reap bounds its witness inspections as one budget.
+
+    The reap runs inside daemon startup while the machine singleton lock is
+    held, and its witnesses are local-but-not-instant inspections (on Windows
+    the image check shells out to ``tasklist``). An unbounded inspection there
+    wedges the daemon in ``warming`` with no way out, so the whole sequence
+    shares one deadline and fails with a named cause when it expires.
+    """
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_expired_budget_refuses_by_name_instead_of_inspecting(self) -> None:
+        """A spent budget refuses before touching any process, and says so."""
+        from ..qdrant_runtime._resolve import QdrantIdentity
+        from ..qdrant_runtime._supervise import _reap_orphan_before_spawn
+
+        # A fully-witnessed identity naming this live process: every witness
+        # would pass, so an expired budget is the only thing that can refuse.
+        identity = QdrantIdentity(
+            storage_path="s",
+            version="1.18.2",
+            owner_pid=os.getpid(),
+            http_port=59991,
+            qdrant_pid=os.getpid(),
+            owner_start_time=1.0,
+            qdrant_start_time=1.0,
+        )
+        started = time.monotonic()
+        with pytest.raises(RuntimeError) as excinfo:
+            _reap_orphan_before_spawn(59991, identity, "test", budget=0.0)
+        elapsed = time.monotonic() - started
+
+        message = str(excinfo.value)
+        assert "reap budget" in message
+        assert "expired during" in message
+        # Refused on the budget, not by doing the work slowly.
+        assert elapsed < 2.0, f"refusal was not immediate, took {elapsed:.2f}s"
+        # The refusal must be actionable, never a bare timeout.
+        assert "local-only" in message
+
+    def test_no_identity_refuses_without_signalling(self) -> None:
+        """A managed-orphan decision with no identity never signals anything."""
+        from ..qdrant_runtime._supervise import _reap_orphan_before_spawn
+
+        with pytest.raises(RuntimeError, match="no managed identity"):
+            _reap_orphan_before_spawn(59991, None, "test")
