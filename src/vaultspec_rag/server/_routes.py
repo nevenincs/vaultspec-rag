@@ -516,6 +516,8 @@ def _validated_initiator(
 def _validated_idempotency_key(
     request: Request,
     payload: dict[str, object],
+    *,
+    suffix: str | None = None,
 ) -> str | None:
     header_key = request.headers.get("Idempotency-Key")
     body_key = payload.get("idempotency_key")
@@ -529,12 +531,17 @@ def _validated_idempotency_key(
             "idempotency_key_conflict",
             "The header and body idempotency keys must match.",
         )
-    return header_key if header_key is not None else body_key
+    key = header_key if header_key is not None else body_key
+    if key is None or suffix is None:
+        return key
+    return f"{key}:{suffix}"
 
 
 async def _validated_index_request(
     request: Request,
     payload: dict[str, object],
+    *,
+    idempotency_suffix: str | None = None,
 ) -> tuple[
     JobSpec,
     JobInitiator,
@@ -552,10 +559,14 @@ async def _validated_index_request(
             "invalid_job_spec",
             "operation must be 'index'.",
         )
-    if source not in {JobSource.VAULT.value, JobSource.CODE.value}:
+    if source not in {
+        JobSource.VAULT.value,
+        JobSource.CODE.value,
+        JobSource.DOCUMENT.value,
+    }:
         raise _InvalidJobRequestError(
             "invalid_job_spec",
-            "source must be 'vault' or 'code'.",
+            "source must be 'vault', 'code', or 'document'.",
         )
     if mode not in {JobMode.INCREMENTAL.value, JobMode.REBUILD.value}:
         raise _InvalidJobRequestError(
@@ -589,7 +600,7 @@ async def _validated_index_request(
         spec,
         initiator,
         start_paused,
-        _validated_idempotency_key(request, payload),
+        _validated_idempotency_key(request, payload, suffix=idempotency_suffix),
         admission,
     )
 
@@ -1291,15 +1302,15 @@ async def reindex_route(request: Request) -> JSONResponse:
         return denied
     try:
         payload = await _job_payload(request, required=True)
-        reindex_type = payload.get("type", "vault")
-        if not isinstance(reindex_type, str) or reindex_type not in {
-            "vault",
-            "code",
-            "codebase",
-        }:
-            raise _InvalidJobRequestError(
-                "invalid_job_spec",
-                "type must be 'vault', 'code', or 'codebase'.",
+        try:
+            source_type = parse_source_type(
+                payload.get("type", PublicSourceType.VAULT.value),
+                allow_aliases=True,
+            )
+        except SourceTypeParseError as exc:
+            return JSONResponse(
+                {"ok": False, "error": exc.error_kind, **exc.as_payload()},
+                status_code=400,
             )
         clean = payload.get("clean", False)
         if type(clean) is not bool:
@@ -1307,22 +1318,40 @@ async def reindex_route(request: Request) -> JSONResponse:
                 "invalid_job_spec",
                 "clean must be a boolean when provided.",
             )
-        canonical_payload = dict(payload)
-        canonical_payload.update(
-            {
-                "operation": "index",
-                "source": "vault" if reindex_type == "vault" else "code",
-                "mode": "rebuild" if clean else "incremental",
-                "start_paused": False,
-            }
+        sources = (
+            (
+                PublicSourceType.VAULT,
+                PublicSourceType.CODE,
+                PublicSourceType.DOCUMENT,
+            )
+            if source_type is PublicSourceType.COMBINED
+            else (source_type,)
         )
-        (
-            spec,
-            initiator,
-            start_paused,
-            idempotency_key,
-            admission,
-        ) = await _validated_index_request(request, canonical_payload)
+        validated = []
+        for source in sources:
+            canonical_payload = dict(payload)
+            canonical_payload.update(
+                {
+                    "operation": "index",
+                    "source": source.value,
+                    "mode": "rebuild" if clean else "incremental",
+                    "start_paused": False,
+                }
+            )
+            validated.append(
+                (
+                    source,
+                    await _validated_index_request(
+                        request,
+                        canonical_payload,
+                        idempotency_suffix=(
+                            source.value
+                            if source_type is PublicSourceType.COMBINED
+                            else None
+                        ),
+                    ),
+                )
+            )
     except _InvalidJobRequestError as exc:
         return _job_error("create", exc.code, str(exc))
 
@@ -1330,39 +1359,144 @@ async def reindex_route(request: Request) -> JSONResponse:
     from ..jobs import get_job_manager
 
     manager = get_job_manager()
-    outcome = await _run_in_thread(
-        partial(
-            manager.create,
-            spec,
-            initiator,
-            start_paused=start_paused,
-            idempotency_key=idempotency_key,
+    domain_responses: dict[str, dict[str, object]] = {}
+    first_root: Path | None = None
+    first_admission = None
+    for source, request_parts in validated:
+        spec, initiator, start_paused, idempotency_key, admission = request_parts
+        outcome = await _run_in_thread(
+            partial(
+                manager.create,
+                spec,
+                initiator,
+                start_paused=start_paused,
+                idempotency_key=idempotency_key,
+            )
         )
-    )
-    outcome = await _activate_index_job(outcome, admission)
-    if outcome.status is JobOutcomeStatus.ERROR:
-        status_code = _job_outcome_status(outcome.code)
-        error_payload = outcome.to_dict()
-        error_payload.update({"ok": False, "error": outcome.code})
-        return JSONResponse(error_payload, status_code=status_code)
-
-    assert outcome.job is not None
-    root = Path(str(outcome.job.spec.project_root))
-
-    _m._ensure_watcher_soon(root)
-    return JSONResponse(
-        {
-            "ok": True,
-            "job_id": outcome.job.id,
-            "status": "queued",
-            "preprocess": _preprocess_preflight(root, admission),
-            **(
-                {"admission": _admission_preflight(admission)}
-                if admission is not None
-                else {}
-            ),
+        outcome = await _activate_index_job(outcome, admission)
+        ok = outcome.status is not JobOutcomeStatus.ERROR
+        domain: dict[str, object] = {
+            "ok": ok,
+            "job_id": outcome.job.id if outcome.job is not None else None,
+            "error_kind": None if ok else outcome.code,
+            "detail": outcome.message,
             "outcome": outcome.to_dict(),
         }
+        domain_responses[source.value] = domain
+        if outcome.job is not None:
+            first_root = Path(str(outcome.job.spec.project_root))
+        if (
+            first_admission is None
+            and source is PublicSourceType.CODE
+            and admission is not None
+        ):
+            first_admission = admission
+
+    if first_root is not None:
+        _m._ensure_watcher_soon(first_root)
+    if source_type is PublicSourceType.COMBINED:
+        successes = sum(bool(item["ok"]) for item in domain_responses.values())
+        return JSONResponse(
+            {
+                "ok": successes == len(domain_responses),
+                "partial": 0 < successes < len(domain_responses),
+                "status": (
+                    "queued"
+                    if successes == len(domain_responses)
+                    else "partial"
+                    if successes
+                    else "failed"
+                ),
+                "domains": domain_responses,
+            },
+            status_code=200 if successes else 409,
+        )
+
+    domain = domain_responses[source_type.value]
+    if not domain["ok"]:
+        outcome_payload = cast("dict[str, object]", domain["outcome"])
+        return JSONResponse(
+            {**outcome_payload, "ok": False, "error": domain["error_kind"]},
+            status_code=_job_outcome_status(str(domain["error_kind"])),
+        )
+    assert first_root is not None
+    response: dict[str, object] = {
+        "ok": True,
+        "job_id": domain["job_id"],
+        "status": "queued",
+        "preprocess": _preprocess_preflight(first_root, first_admission),
+        "outcome": domain["outcome"],
+    }
+    if first_admission is not None and source_type is PublicSourceType.CODE:
+        response["admission"] = _admission_preflight(first_admission)
+    return JSONResponse(response)
+
+
+async def clean_route(request: Request) -> JSONResponse:
+    """Clean one canonical index domain or all domains independently."""
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    try:
+        payload = await _job_payload(request, required=True)
+        try:
+            source_type = parse_source_type(
+                payload.get("type", PublicSourceType.COMBINED.value),
+                allow_aliases=True,
+            )
+        except SourceTypeParseError as exc:
+            return JSONResponse(
+                {"ok": False, "error": exc.error_kind, **exc.as_payload()},
+                status_code=400,
+            )
+        raw_root = _job_string(payload, "project_root")
+        root = _resolve_root(raw_root)
+    except (ProjectRootRequiredError, ValueError, _InvalidJobRequestError) as exc:
+        return JSONResponse(
+            {"ok": False, "error": "invalid_clean_request", "message": str(exc)},
+            status_code=400,
+        )
+
+    import vaultspec_rag
+
+    sources = (
+        (
+            PublicSourceType.VAULT,
+            PublicSourceType.CODE,
+            PublicSourceType.DOCUMENT,
+        )
+        if source_type is PublicSourceType.COMBINED
+        else (source_type,)
+    )
+    domains: dict[str, dict[str, object]] = {}
+    for source in sources:
+        try:
+            cleared = await _run_in_thread(
+                partial(vaultspec_rag.clean, root, clean_type=source.value)
+            )
+        except Exception as exc:
+            logger.exception("Index clean failed for %s", source.value)
+            domains[source.value] = {
+                "ok": False,
+                "cleared": [],
+                "error_kind": type(exc).__name__,
+                "detail": str(exc),
+            }
+        else:
+            domains[source.value] = {
+                "ok": True,
+                "cleared": cleared,
+                "error_kind": None,
+                "detail": None,
+            }
+    successes = sum(bool(item["ok"]) for item in domains.values())
+    return JSONResponse(
+        {
+            "ok": successes == len(domains),
+            "partial": 0 < successes < len(domains),
+            "domains": domains,
+        },
+        status_code=200 if successes else 409,
     )
 
 
@@ -1787,6 +1921,7 @@ ROUTES: list[Route] = [
     Route("/readiness", get_readiness_route, methods=["GET"]),
     Route("/search", search_route, methods=["POST"]),
     Route("/reindex", reindex_route, methods=["POST"]),
+    Route("/clean", clean_route, methods=["POST"]),
     Route("/projects", list_projects_route, methods=["GET"]),
     Route("/projects/evict", evict_project_route, methods=["POST"]),
     Route("/watcher", get_watcher_state_route, methods=["GET"]),

@@ -781,13 +781,18 @@ def get_status(root_dir: pathlib.Path) -> dict[str, object]:
         vram_gb = 0.0
 
     from .capabilities import backend_capabilities_dict
+    from .config import get_config
+    from .index_profiles import index_support_profile_status
     from .registry import get_registry
 
     registry = get_registry()
     with registry.lease_store(root) as store:
         vault_count = store.count()
         code_count = store.count_code()
+        document_count = store.count_document()
         storage_path = str(store.db_path)
+
+    support_profile = index_support_profile_status(get_config().index_support_profile)
 
     return {
         "cuda": cuda_available,
@@ -797,8 +802,11 @@ def get_status(root_dir: pathlib.Path) -> dict[str, object]:
         "storage_path": storage_path,
         "vault_documents": vault_count,
         "codebase_chunks": code_count,
+        "document_chunks": document_count,
         "vault_count": vault_count,
         "code_count": code_count,
+        "document_count": document_count,
+        "support_profile": support_profile,
         "target_dir": str(root),
         "backend_capabilities": backend_capabilities_dict(),
     }

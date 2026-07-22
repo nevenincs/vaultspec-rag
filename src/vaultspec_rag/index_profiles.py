@@ -15,6 +15,7 @@ __all__ = [
     "SupportMeasurement",
     "SupportProfileLimits",
     "get_index_support_profile",
+    "index_support_profile_status",
     "validate_profile_admission",
 ]
 
@@ -171,6 +172,30 @@ def get_index_support_profile(name: str) -> IndexSupportProfile:
             JobErrorKind.PROFILE_REQUIREMENTS_NOT_MET,
             f"unknown index support profile {name!r}; expected one of {allowed}",
         ) from exc
+
+
+def index_support_profile_status(name: str) -> dict[str, object]:
+    """Return the active profile as a stable, JSON-safe status descriptor."""
+    profile = get_index_support_profile(name)
+
+    def _limits(limits: SupportProfileLimits) -> dict[str, int]:
+        return {
+            "source_files": limits.source_files,
+            "source_bytes": limits.source_bytes,
+            "generated_chunks": limits.generated_chunks,
+            "weighted_bytes": limits.weighted_bytes,
+        }
+
+    return {
+        "name": profile.name,
+        "accepted_backends": sorted(profile.accepted_backends),
+        "minimum_ram_bytes": profile.minimum_ram_bytes,
+        "minimum_free_disk_bytes": profile.minimum_free_disk_bytes,
+        "domains": {
+            IndexDomain.CODE.value: _limits(profile.code),
+            IndexDomain.DOCUMENT.value: _limits(profile.document),
+        },
+    }
 
 
 def validate_profile_admission(
