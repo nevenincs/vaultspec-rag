@@ -108,6 +108,12 @@ class ServiceRegistry:
         cfg = get_config()
         self._model: EmbeddingModel | None = None
         self._projects: dict[Path, ProjectSlot] = {}
+        # Cold model-free store leases are not project slots, but they still
+        # own Qdrant clients and filesystem locks. Track both construction and
+        # active use so close_all() can drain or force-close every store the
+        # registry admitted, including a constructor racing shutdown.
+        self._transient_stores: set[VaultStore] = set()
+        self._transient_store_constructions = 0
         # Reentrant so eviction can call close_project() while still
         # holding the lock that selected the victim - closing without
         # releasing the lock first eliminates a TOCTOU window where a
@@ -281,18 +287,8 @@ class ServiceRegistry:
         without paying the model-load cost - and, on a CPU-only host,
         without requiring a GPU at all.
         """
-        root = root.resolve()
-        with self._lock:
-            slot = self._projects.get(root)
-        if slot is not None:
-            return slot.store.count_code() if code else slot.store.count()
-        from .store import VaultStore
-
-        store = VaultStore(root)
-        try:
+        with self.lease_store(root) as store:
             return store.count_code() if code else store.count()
-        finally:
-            store.close()
 
     def vault_doc_count(self, root: Path) -> int:
         """Indexed vault-doc count for *root*, model-free (see _store_count)."""
@@ -301,6 +297,86 @@ class ServiceRegistry:
     def code_chunk_count(self, root: Path) -> int:
         """Indexed code-chunk count for *root*, model-free (see _store_count)."""
         return self._store_count(root, code=True)
+
+    @contextlib.contextmanager
+    def lease_store(self, root: Path) -> Generator[VaultStore]:
+        """Lease only *root*'s store without loading or admitting GPU models.
+
+        A warm project slot is pinned through the registry's existing
+        ``ref_count`` so idle, LRU, forced, and shutdown teardown cannot close
+        its store while the caller is using it. A cold root uses one transient
+        store that is always closed on exit and is never added to the project
+        registry, preserving model-free empty-index probes and status reads.
+
+        Args:
+            root: Workspace root directory.
+
+        Yields:
+            A live ``VaultStore`` for the resolved root.
+
+        Raises:
+            RuntimeError: If the registry is shutting down.
+        """
+        resolved = root.resolve()
+        with self._lock:
+            if self._shutting_down:
+                msg = "ServiceRegistry is shutting down"
+                raise RuntimeError(msg)
+            slot = self._projects.get(resolved)
+            if slot is not None:
+                slot.last_access = time.monotonic()
+                slot.ref_count += 1
+            else:
+                # Register ownership before VaultStore performs any filesystem
+                # or Qdrant effect. close_all() observes this pending admission
+                # even if shutdown begins while construction is outside _lock.
+                self._transient_store_constructions += 1
+
+        if slot is not None:
+            try:
+                yield slot.store
+            finally:
+                self._release(slot)
+            return
+
+        from .store import VaultStore
+
+        try:
+            store = VaultStore(resolved)
+        except BaseException:
+            with self._lock:
+                self._transient_store_constructions -= 1
+            raise
+
+        with self._lock:
+            shutdown_won = self._shutting_down
+            if not shutdown_won:
+                self._transient_stores.add(store)
+                self._transient_store_constructions -= 1
+
+        if shutdown_won:
+            # Keep the pending-construction count live until close completes,
+            # so close_all() cannot observe a false zero and return while this
+            # late store still owns a client or local storage lock.
+            try:
+                store.close()
+            finally:
+                with self._lock:
+                    self._transient_store_constructions -= 1
+            msg = "ServiceRegistry shut down during store construction"
+            raise RuntimeError(msg)
+
+        try:
+            yield store
+        finally:
+            try:
+                store.close()
+            finally:
+                # Keep the lease visible to close_all() until resource release
+                # completes; removing it first would let shutdown return while
+                # the Qdrant client or local storage lock was still closing.
+                with self._lock:
+                    self._transient_stores.discard(store)
 
     # -- lease API ---------------------------------------------------------
 
@@ -653,8 +729,10 @@ class ServiceRegistry:
 
         Implements ADR D6 "graceful drain": sets ``_shutting_down``
         first so new :meth:`lease` calls raise, polls every 100ms for
-        busy slots to drain, and force-closes any still-busy slots
-        after a 5-second deadline (logging a warning for each).
+        busy slots and transient model-free stores to drain, and force-closes
+        any still-busy stores after a 5-second deadline (logging a warning for
+        each). A transient constructor racing shutdown closes its store before
+        unregistering its pending construction.
 
         The 5.0s constant is intentionally NOT configurable per
         ADR D6 - long enough for worst-case search latency, short
@@ -667,7 +745,11 @@ class ServiceRegistry:
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             with self._lock:
-                busy = any(s.ref_count > 0 for s in self._projects.values())
+                busy = (
+                    any(s.ref_count > 0 for s in self._projects.values())
+                    or bool(self._transient_stores)
+                    or self._transient_store_constructions > 0
+                )
             if not busy:
                 break
             time.sleep(0.1)
@@ -691,6 +773,20 @@ class ServiceRegistry:
                     )
                 slot.store.close()
                 logger.info("ProjectSlot closed for %s", root)
+            for store in tuple(self._transient_stores):
+                logger.warning(
+                    "Force-closing busy transient store %s",
+                    store.root_dir,
+                )
+                store.close()
+            self._transient_stores.clear()
+            if self._transient_store_constructions:
+                logger.warning(
+                    "ServiceRegistry shutdown deadline reached with %d store "
+                    "construction(s) still pending; each late constructor will "
+                    "close before returning",
+                    self._transient_store_constructions,
+                )
             self._projects.clear()
             self._root_locks.clear()
             self._model = None

@@ -14,15 +14,15 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
-from ..logging_config import ManagedLogGroup, ManagedLogSource, read_managed_logs
-from ..server._routes_logs import (
-    _DEFAULT_LOG_LINES,
-    _MAX_LOG_LINES,
-    _clamp_lines,
-    _filter_log_groups,
-    _managed_log_payload,
-    _render_plain_log_groups,
-    _tail_log_groups,
+from ..logging_config import (
+    DEFAULT_MANAGED_LOG_LINES,
+    ManagedLogGroup,
+    ManagedLogSource,
+    clamp_managed_log_lines,
+    managed_log_filters,
+    query_managed_logs,
+    render_managed_log_groups,
+    validate_managed_log_payload,
 )
 from ._app import server_app
 from ._http_search import _try_http_admin
@@ -38,21 +38,7 @@ def _cli_log_filters(
     contains: str | None,
 ) -> dict[str, str]:
     """Return the non-empty, trimmed filters forwarded by the CLI adapter."""
-    filters: dict[str, str] = {}
-    if job_id and job_id.strip():
-        filters["job_id"] = job_id.strip()
-    if contains and contains.strip():
-        filters["contains"] = contains.strip()
-    return filters
-
-
-def _group_source(raw: object) -> Literal["service", "qdrant"] | None:
-    """Narrow an untyped transport value to a concrete managed source."""
-    if raw == "service":
-        return "service"
-    if raw == "qdrant":
-        return "qdrant"
-    return None
+    return managed_log_filters(job_id=job_id, contains=contains)
 
 
 def _local_log_payload(
@@ -62,17 +48,11 @@ def _local_log_payload(
     filters: dict[str, str],
 ) -> dict[str, object]:
     """Read and shape retained logs through the production contract."""
-    limit = _clamp_lines(str(lines))
-    read_limit = _MAX_LOG_LINES if filters else limit
-    groups = read_managed_logs(read_limit, source=source)
-    if filters:
-        groups = _filter_log_groups(groups, **filters)
-    groups = _tail_log_groups(groups, limit)
-    return _managed_log_payload(
+    return query_managed_logs(
+        lines,
         source=source,
-        limit=limit,
-        groups=groups,
-        filters=filters,
+        job_id=filters.get("job_id"),
+        contains=filters.get("contains"),
     )
 
 
@@ -84,36 +64,12 @@ def _payload_groups(
     filters: dict[str, str],
 ) -> list[ManagedLogGroup] | None:
     """Validate and return groups from a live managed-log payload."""
-    if payload.get("source") != source or payload.get("limit") != limit:
-        return None
-    if payload.get("filters") != filters:
-        return None
-    raw_groups = payload.get("groups")
-    if not isinstance(raw_groups, list):
-        return None
-
-    groups: list[ManagedLogGroup] = []
-    for raw_group in cast("list[object]", raw_groups):
-        if not isinstance(raw_group, dict):
-            return None
-        group_data = cast("dict[str, object]", raw_group)
-        raw_source = _group_source(group_data.get("source"))
-        raw_lines = group_data.get("lines")
-        if raw_source is None or not isinstance(raw_lines, list):
-            return None
-        if any(not isinstance(line, str) for line in cast("list[object]", raw_lines)):
-            return None
-        groups.append(
-            {
-                "source": raw_source,
-                "lines": cast("list[str]", raw_lines),
-            }
-        )
-
-    expected_sources = ["service", "qdrant"] if source == "all" else [source]
-    if [group["source"] for group in groups] != expected_sources:
-        return None
-    return groups
+    return validate_managed_log_payload(
+        payload,
+        source=source,
+        limit=limit,
+        filters=filters,
+    )
 
 
 def _exit_live_log_error(
@@ -132,7 +88,7 @@ def _exit_live_log_error(
 
 def _render_log_groups(groups: list[ManagedLogGroup]) -> None:
     """Write labeled raw groups without Rich markup or record rewriting."""
-    rendered = _render_plain_log_groups(groups)
+    rendered = render_managed_log_groups(groups)
     if rendered:
         sys.stdout.write(rendered)
         sys.stdout.write("\n")
@@ -147,7 +103,7 @@ def service_logs(
             "--limit",
             help="Maximum recent lines returned per selected source.",
         ),
-    ] = _DEFAULT_LOG_LINES,
+    ] = DEFAULT_MANAGED_LOG_LINES,
     source: Annotated[
         Literal["service", "qdrant", "all"],
         typer.Option(
@@ -177,7 +133,7 @@ def service_logs(
 ) -> None:
     """Show grouped raw service and Qdrant logs live or offline."""
     filters = _cli_log_filters(job_id=job_id, contains=contains)
-    limit = _clamp_lines(str(lines))
+    limit = clamp_managed_log_lines(lines)
     resolved_port = port if port is not None else _default_service_port()
     result: dict[str, object] | None = None
     if resolved_port is not None:

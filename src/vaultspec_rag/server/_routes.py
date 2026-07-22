@@ -37,7 +37,8 @@ from ..concurrency import get_search_limiter
 from ..logging_config import (
     InvalidManagedLogSourceError,
     log_event,
-    read_managed_logs,
+    query_managed_logs,
+    render_managed_log_groups,
 )
 from ..service import RegistryFullError
 from ..store import VaultStoreLockedError
@@ -52,15 +53,7 @@ from ._routes_jobs import (
     _parse_since_seconds,
     _prioritise_running_jobs,
 )
-from ._routes_logs import (
-    _MAX_LOG_LINES,
-    _clamp_lines,
-    _filter_log_groups,
-    _log_filters_from_request,
-    _managed_log_payload,
-    _render_plain_log_groups,
-    _tail_log_groups,
-)
+from ._routes_logs import _log_filters_from_request
 from ._routes_storage import (
     _clamp_survey_limit,
     _fetch_surveys,
@@ -187,22 +180,21 @@ async def logs_route(request: Request) -> PlainTextResponse | JSONResponse:
     if isinstance(result, JSONResponse):
         return result
     groups = cast("list[Any]", result["groups"])
-    return PlainTextResponse(_render_plain_log_groups(groups))
+    return PlainTextResponse(render_managed_log_groups(groups))
 
 
 async def _managed_logs_for_request(
     request: Request,
 ) -> dict[str, object] | JSONResponse:
     """Read, filter, and shape one bounded managed-log request."""
-    lines = _clamp_lines(request.query_params.get("lines"))
+    lines = request.query_params.get("lines")
     source = request.query_params.get("source", "all")
     filters = _log_filters_from_request(request)
-    read_limit = _MAX_LOG_LINES if filters else lines
     try:
-        # Sparse rotated reads can cross several files; keep filesystem work
-        # off the event loop while preserving the production reader contract.
-        groups = await _run_in_thread(
-            partial(read_managed_logs, read_limit, source=source)
+        # Reading, filtering, and byte-bounded shaping are one service-domain
+        # operation and stay off the event loop for both live and offline parity.
+        return await _run_in_thread(
+            partial(query_managed_logs, lines, source=source, **filters)
         )
     except InvalidManagedLogSourceError as exc:
         return JSONResponse(
@@ -213,40 +205,24 @@ async def _managed_logs_for_request(
             },
             status_code=400,
         )
-    if filters:
-        groups = _filter_log_groups(groups, **filters)
-    groups = _tail_log_groups(groups, lines)
-    return _managed_log_payload(
-        source=source,
-        limit=lines,
-        groups=groups,
-        filters=filters,
-    )
 
 
 def _search_index_state(
     *,
-    status: dict[str, Any],
+    indexed_count: int | float,
     requested_root: object,
     search_type: object,
 ) -> dict[str, object]:
-    indexed_target = str(status.get("target_dir", ""))
     requested_target = str(requested_root)
     source = "code" if search_type in ("code", "codebase") else "vault"
-    indexed_count = (
-        int(status.get("code_count", 0))
-        if source == "code"
-        else int(status.get("vault_count", 0))
-    )
+    count = int(indexed_count)
     return {
         "source": source,
-        "indexed_count": indexed_count,
-        "vault_count": int(status.get("vault_count", 0)),
-        "code_count": int(status.get("code_count", 0)),
-        "indexed_target_root": indexed_target,
+        "indexed_count": count,
+        "indexed_target_root": requested_target,
         "requested_target_root": requested_target,
-        "target_matches": indexed_target == requested_target,
-        "status": "missing" if indexed_count == 0 else "available",
+        "target_matches": True,
+        "status": "missing" if count == 0 else "available",
     }
 
 
@@ -440,8 +416,12 @@ async def search_route(request: Request) -> JSONResponse:
                 )
             search_seconds = time.perf_counter() - phase_started
             phase_started = time.perf_counter()
-            status = vaultspec_rag.get_status(root)
-            status_seconds = time.perf_counter() - phase_started
+            index_state = _search_index_state(
+                indexed_count=phase_timing["indexed_count"],
+                requested_root=root,
+                search_type=search_type,
+            )
+            index_state_seconds = time.perf_counter() - phase_started
             phase_started = time.perf_counter()
             from ._models import SearchResultItem
 
@@ -460,7 +440,7 @@ async def search_route(request: Request) -> JSONResponse:
                 # so the caller sees what the filter removed (never silent).
                 "filtered": notes.get("dropped_domains"),
                 "timing": {
-                    "status_seconds": status_seconds,
+                    "index_state_seconds": index_state_seconds,
                     "search_seconds": search_seconds,
                     "model_load_seconds": phase_timing.get("model_load_seconds"),
                     "project_lease_seconds": phase_timing.get("project_lease_seconds"),
@@ -476,11 +456,7 @@ async def search_route(request: Request) -> JSONResponse:
                     "timing_scope": "server_route",
                     "phases": phase_timing,
                 },
-                "index_state": _search_index_state(
-                    status=status,
-                    requested_root=root,
-                    search_type=search_type,
-                ),
+                "index_state": index_state,
             }
         except RegistryFullError as exc:
             return _m._registry_full_error_dict(exc)
