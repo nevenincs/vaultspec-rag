@@ -15,9 +15,11 @@ import json
 import os
 import re
 import select
+import signal
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 
@@ -49,7 +51,10 @@ from ._helpers import (
 from .conftest import _live_service_context
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Generator
     from pathlib import Path
+
+    from ...job_models import JobSnapshot
 
 runner = CliRunner()
 
@@ -207,6 +212,161 @@ def _wait_for_listeners_closed(*ports: int, timeout: float = 10.0) -> bool:
             return True
         time.sleep(0.1)
     return not any(_port_is_listening(port) for port in ports)
+
+
+def _wait_for_persisted_job(
+    state_path: Path,
+    job_id: str,
+    predicate: Callable[[JobSnapshot], bool],
+    description: str,
+    *,
+    timeout: float = 90.0,
+) -> JobSnapshot:
+    """Poll canonical durable state through the production decoder."""
+    from ...job_persistence import load_persisted_state
+
+    deadline = time.monotonic() + timeout
+    last: JobSnapshot | None = None
+    while time.monotonic() < deadline:
+        try:
+            persisted = load_persisted_state(state_path)
+        except OSError:
+            time.sleep(0.01)
+            continue
+        last = next((job for job in persisted.jobs if job.id == job_id), None)
+        if last is not None and predicate(last):
+            return last
+        time.sleep(0.01)
+    raise AssertionError(
+        f"{description} within {timeout:g}s; last canonical snapshot={last!r}"
+    )
+
+
+def _signal_service_shutdown(pid: int) -> None:
+    """Request the daemon's real graceful signal path without early escalation."""
+    if sys.platform == "win32":
+        os.kill(pid, signal.CTRL_BREAK_EVENT)
+    else:
+        os.kill(pid, signal.SIGTERM)
+
+
+def _mirror_host_qdrant(status_dir: Path) -> None:
+    """Bridge suite-wide status isolation to the pinned host install."""
+    from pathlib import Path
+
+    from ...qdrant_runtime._constants import MANIFEST_FILENAME, QDRANT_SERVER_VERSION
+    from ...qdrant_runtime._resolve import binary_filename
+    from ._helpers import _mirror_managed_qdrant_binary
+
+    source_dir = (
+        Path.home() / ".vaultspec-rag" / "bin" / "qdrant" / QDRANT_SERVER_VERSION
+    )
+    source = source_dir / binary_filename()
+    manifest = source_dir / MANIFEST_FILENAME
+    assert source.is_file() and manifest.is_file(), (
+        f"pinned Qdrant install is incomplete at {source_dir}"
+    )
+    _mirror_managed_qdrant_binary(status_dir, (source, manifest))
+
+
+@contextmanager
+def _signalable_live_service(tmp_path: Path) -> Generator[tuple[int, int]]:
+    """Run the real daemon in a Windows-signalable process group."""
+    from ...cli import _write_service_status
+    from ...cli._process import _service_child_env
+    from .conftest import _cleanup_service_process
+
+    offline_env = {
+        EnvVar.HF_HUB_OFFLINE.value: "1",
+        EnvVar.TRANSFORMERS_OFFLINE.value: "1",
+    }
+    with _service_env(tmp_path, env_overrides=offline_env):
+        port = _get_ephemeral_port()
+        log_path = tmp_path / "service.log"
+        command = [
+            sys.executable,
+            "-m",
+            "vaultspec_rag.server",
+            "--port",
+            str(port),
+        ]
+        child_env = _service_child_env(watch=False)
+        creationflags = (
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            if sys.platform == "win32"
+            else 0
+        )
+        with log_path.open("ab") as output:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                env=child_env,
+                cwd=tmp_path,
+                creationflags=creationflags,
+                start_new_session=sys.platform != "win32",
+            )
+        try:
+            _write_service_status(process.pid, port)
+            _poll_health(port, timeout=model_setup_timeout_seconds())
+            yield port, process.pid
+        finally:
+            _cleanup_service_process(
+                pid=process.pid,
+                port=port,
+                log_path=log_path,
+                timeout=30.0,
+            )
+
+
+def _job_owns_full_pipeline(job: JobSnapshot) -> bool:
+    """Observe every manager-tracked owner on one real code attempt."""
+    from ...job_models import JobState
+
+    return job.state is JobState.RUNNING and all(
+        (
+            job.runtime.task_active,
+            job.runtime.worker_active,
+            job.resources.index_capacity_held,
+            job.resources.project_lease_held,
+            job.resources.writer_lock_held,
+            job.resources.pipeline_active,
+        )
+    )
+
+
+def _assert_interrupted_after_release(job: JobSnapshot) -> None:
+    """Require interruption to carry complete worker-release evidence."""
+    assert job.runtime.task_active is False
+    assert job.runtime.worker_active is False
+    assert job.resources.started is not None
+    assert job.resources.finished is not None
+    assert job.resources.index_capacity_held is False
+    assert job.resources.project_lease_held is False
+    assert job.resources.writer_lock_held is False
+    assert job.resources.pipeline_active is False
+    assert job.timestamps.finished_at is not None
+    assert job.error_kind == "interrupted"
+
+
+def _assert_shutdown_log_order(
+    output: str,
+    *,
+    job_id: str,
+    qdrant_pid: int,
+) -> None:
+    """Require attempt release before stores and stores before Qdrant."""
+    finished_at = output.index(f"service.job event=finished job_id={job_id}")
+    assert "phase=interrupted" in output[finished_at : finished_at + 600]
+    slot_closed_at = output.index("ProjectSlot closed for", finished_at)
+    registry_closed_at = output.index("ServiceRegistry shut down", slot_closed_at)
+    qdrant_closed_at = output.index(
+        f"qdrant child pid={qdrant_pid} stopped",
+        registry_closed_at,
+    )
+    assert finished_at < slot_closed_at < registry_closed_at < qdrant_closed_at
+    assert "Service shutdown complete" in output[qdrant_closed_at:]
 
 
 def _cleanup_forced_stop_harness(
@@ -1054,6 +1214,209 @@ def test_start_health_stop(request: pytest.FixtureRequest, tmp_path: Path) -> No
         _terminate_pid(pid)
         assert _wait_for_exit(pid), f"PID {pid} did not exit after terminate"
         assert not _is_pid_alive(pid)
+
+
+@pytest.mark.subprocess_gpu
+@pytest.mark.timeout(600)
+def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
+    tmp_path: Path,
+) -> None:
+    """Two real daemon lives retain exact durable queued and paused intent."""
+    from ...job_manager import JobManager
+    from ...job_models import (
+        DesiredJobState,
+        JobInitiator,
+        JobMode,
+        JobOperation,
+        JobSource,
+        JobSpec,
+        JobState,
+    )
+    from ...synthetic import build_synthetic_vault
+
+    queued_root = tmp_path / "queued-vault"
+    paused_root = tmp_path / "paused-vault"
+    _mirror_host_qdrant(tmp_path)
+    build_synthetic_vault(queued_root, n_docs=24, seed=2201)
+    paused_root.mkdir()
+    state_path = tmp_path / "jobs-state.json"
+    seed_manager = JobManager(state_path=state_path)
+    queued = seed_manager.create(
+        JobSpec(
+            JobOperation.INDEX,
+            JobSource.VAULT,
+            str(queued_root.resolve()),
+            JobMode.INCREMENTAL,
+        ),
+        JobInitiator("integration", "restart queued probe", str(queued_root)),
+    )
+    paused = seed_manager.create(
+        JobSpec(
+            JobOperation.INDEX,
+            JobSource.VAULT,
+            str(paused_root.resolve()),
+            JobMode.INCREMENTAL,
+        ),
+        JobInitiator("integration", "restart paused probe", str(paused_root)),
+        start_paused=True,
+    )
+    assert queued.job is not None
+    assert paused.job is not None
+    queued_id = queued.job.id
+    paused_id = paused.job.id
+
+    with _signalable_live_service(tmp_path):
+        completed = _wait_for_persisted_job(
+            state_path,
+            queued_id,
+            lambda job: job.state is JobState.SUCCEEDED,
+            "restored queued intent did not execute",
+        )
+        dormant = _wait_for_persisted_job(
+            state_path,
+            paused_id,
+            lambda job: job.state is JobState.PAUSED,
+            "paused intent was not retained",
+        )
+        assert completed.attempt.number == 1
+        assert completed.desired_state is DesiredJobState.RUNNING
+        assert dormant.attempt.number == 1
+        assert dormant.desired_state is DesiredJobState.PAUSED
+        assert dormant.runtime.task_active is False
+        assert dormant.runtime.worker_active is False
+
+    stopped_paused = _wait_for_persisted_job(
+        state_path,
+        paused_id,
+        lambda job: job.state is JobState.PAUSED,
+        "clean shutdown did not preserve paused intent",
+    )
+    assert stopped_paused.desired_state is DesiredJobState.PAUSED
+
+    with _signalable_live_service(tmp_path):
+        restored_paused = _wait_for_persisted_job(
+            state_path,
+            paused_id,
+            lambda job: job.state is JobState.PAUSED,
+            "second daemon life did not restore paused intent",
+        )
+        restored_completed = _wait_for_persisted_job(
+            state_path,
+            queued_id,
+            lambda job: job.state is JobState.SUCCEEDED,
+            "completed queued work was lost on the second daemon life",
+        )
+        assert restored_paused.id == paused_id
+        assert restored_paused.attempt.number == 1
+        assert restored_paused.desired_state is DesiredJobState.PAUSED
+        assert restored_paused.runtime.task_active is False
+        assert restored_completed.id == queued_id
+        assert restored_completed.attempt.number == 1
+
+    output = (tmp_path / "service.log").read_text(encoding="utf-8", errors="replace")
+    assert all(
+        marker in output
+        for marker in (
+            "Canonical job manager ready: bound=2 dispatched=1",
+            "Canonical job manager ready: bound=1 dispatched=0",
+        )
+    )
+
+
+@pytest.mark.subprocess_gpu
+@pytest.mark.timeout(600)
+def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
+    tmp_path: Path,
+) -> None:
+    """Graceful daemon stop releases every owner before store teardown."""
+    import httpx
+
+    from ...job_models import JobState
+
+    root = tmp_path / "live-code"
+    _mirror_host_qdrant(tmp_path)
+    source_dir = root / "src"
+    source_dir.mkdir(parents=True)
+    (root / ".vault").mkdir()
+    for ordinal in range(512):
+        (source_dir / f"shutdown_probe_{ordinal:04d}.py").write_text(
+            f"def shutdown_probe_{ordinal:04d}() -> str:\n"
+            f"    return 'worker release probe {ordinal:04d}'\n",
+            encoding="utf-8",
+        )
+
+    state_path = tmp_path / "jobs-state.json"
+    with _signalable_live_service(tmp_path) as (port, shutdown_pid):
+        health = _poll_health(port)
+        service_pid = int(health["pid"])
+        status = _read_service_status()
+        assert status is not None
+        qdrant_pid = int(status["qdrant_pid"])
+        qdrant_port = int(status["qdrant_port"])
+        response = httpx.post(
+            f"http://127.0.0.1:{port}/reindex",
+            headers={"Authorization": f"Bearer {health['service_token']}"},
+            json={
+                "type": "code",
+                "clean": False,
+                "project_root": str(root),
+            },
+            timeout=30.0,
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["ok"] is True
+        job_id = str(payload["job_id"])
+
+        live = _wait_for_persisted_job(
+            state_path,
+            job_id,
+            _job_owns_full_pipeline,
+            "real code attempt never published complete worker ownership",
+        )
+        assert live.resources.started is not None
+        assert live.resources.finished is None
+
+        _signal_service_shutdown(shutdown_pid)
+        interrupted = _wait_for_persisted_job(
+            state_path,
+            job_id,
+            lambda job: job.state is JobState.INTERRUPTED,
+            "shutdown-signalled attempt did not become interrupted",
+        )
+        _assert_interrupted_after_release(interrupted)
+
+        assert _wait_for_exit(service_pid, timeout=90.0)
+        assert _wait_for_exit(qdrant_pid, timeout=30.0)
+        assert _wait_for_listeners_closed(port, qdrant_port, timeout=30.0)
+
+    output = (tmp_path / "service.log").read_text(encoding="utf-8", errors="replace")
+    _assert_shutdown_log_order(output, job_id=job_id, qdrant_pid=qdrant_pid)
+
+    with _signalable_live_service(tmp_path) as (restart_port, _shutdown_pid):
+        restarted_health = _poll_health(restart_port)
+        restarted_status = _read_service_status()
+        assert restarted_status is not None
+        assert int(restarted_status["qdrant_pid"]) != qdrant_pid
+        restored = _wait_for_persisted_job(
+            state_path,
+            job_id,
+            lambda job: job.state is JobState.INTERRUPTED,
+            "interrupted result was not retained after daemon restart",
+        )
+        assert restored.runtime.task_active is False
+        search = httpx.post(
+            f"http://127.0.0.1:{restart_port}/search",
+            headers={"Authorization": f"Bearer {restarted_health['service_token']}"},
+            json={
+                "type": "code",
+                "query": "worker release probe",
+                "top_k": 1,
+                "project_root": str(root),
+            },
+            timeout=30.0,
+        )
+        assert search.status_code == 200, search.text
 
 
 @pytest.mark.subprocess_gpu
