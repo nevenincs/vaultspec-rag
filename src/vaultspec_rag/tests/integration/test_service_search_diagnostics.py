@@ -32,10 +32,8 @@ type RawSearchPayloads = tuple[
     dict[str, object],
     dict[str, object],
     dict[str, object],
-    dict[str, object],
 ]
 type ConcurrentProbeResponses = tuple[
-    RawSearchResponse,
     RawSearchResponse,
     RawSearchResponse,
     RawSearchResponse,
@@ -347,18 +345,19 @@ def _wait_for_succeeded_job(
     )
 
 
-def _submit_clean_vault_rebuild(
+def _submit_vault_index(
     port: int,
     token: str,
     root: Path,
     *,
+    clean: bool,
     label: str,
 ) -> str:
     try:
         response = _do_http_call(
             port,
             "/reindex",
-            {"type": "vault", "clean": True, "project_root": str(root)},
+            {"type": "vault", "clean": clean, "project_root": str(root)},
             timeout=30,
         )
     except Exception as exc:
@@ -620,7 +619,6 @@ def _run_concurrent_search_probes(
         search_payload,
         unrelated_payload,
         unrelated_source_payload,
-        matching_nonempty_payload,
     ) = raw_payloads
     search_future = executor.submit(
         _search_after_concurrent_admission,
@@ -652,16 +650,6 @@ def _run_concurrent_search_probes(
         label="unrelated-source empty search request",
         last_job=last_job,
     )
-    matching_nonempty_future = executor.submit(
-        _search_after_concurrent_admission,
-        admission,
-        port,
-        token,
-        job_id,
-        matching_nonempty_payload,
-        label="matching nonempty search request",
-        last_job=last_job,
-    )
     shared_client_future = executor.submit(
         _shared_search_after_concurrent_admission,
         admission,
@@ -688,7 +676,6 @@ def _run_concurrent_search_probes(
         search_future.result(timeout=330),
         unrelated_future.result(timeout=330),
         unrelated_source_future.result(timeout=330),
-        matching_nonempty_future.result(timeout=330),
         shared_client_future.result(timeout=330),
         mcp_response,
     )
@@ -702,7 +689,7 @@ def _run_probes_during_matching_rebuild(
     matching_empty_query: str,
     raw_payloads: RawSearchPayloads,
 ) -> RebuildProbeRun:
-    admission = threading.Barrier(6)
+    admission = threading.Barrier(5)
     initialized = threading.Event()
     with ThreadPoolExecutor(max_workers=6) as executor:
         mcp_future = executor.submit(
@@ -715,10 +702,11 @@ def _run_probes_during_matching_rebuild(
             matching_empty_query,
         )
         _wait_for_mcp_initialization(initialized, mcp_future, port, token)
-        job_id = _submit_clean_vault_rebuild(
+        job_id = _submit_vault_index(
             port,
             token,
             root,
+            clean=True,
             label="matching-rebuild",
         )
         running_job = _wait_for_running_job(port, token, job_id)
@@ -972,10 +960,11 @@ def test_search_index_unavailable_during_matching_rebuild(
     token = health.get("service_token")
     assert isinstance(token, str) and token, health
 
-    baseline_job_id = _submit_clean_vault_rebuild(
+    baseline_job_id = _submit_vault_index(
         port,
         token,
         root,
+        clean=True,
         label="baseline-index",
     )
     _wait_for_succeeded_job(port, token, baseline_job_id)
@@ -1002,6 +991,45 @@ def test_search_index_unavailable_during_matching_rebuild(
         "top_k": 5,
         "project_root": str(root),
     }
+    incremental_job_id = _submit_vault_index(
+        port,
+        token,
+        root,
+        clean=False,
+        label="matching-incremental-index",
+    )
+    incremental_running_job = _wait_for_running_job(
+        port,
+        token,
+        incremental_job_id,
+    )
+    matching_nonempty_response = _search_with_failure_evidence(
+        port,
+        token,
+        incremental_job_id,
+        matching_nonempty_payload,
+        label="matching nonempty search request",
+        last_job=incremental_running_job,
+    )
+    matching_nonempty_evidence = _bounded_failure_evidence(
+        port,
+        token,
+        incremental_job_id,
+        last_job=incremental_running_job,
+        last_response=matching_nonempty_response,
+    )
+    _assert_matching_nonempty_response(
+        matching_nonempty_response,
+        expected_doc_id=known_doc.doc_id,
+        evidence=matching_nonempty_evidence,
+    )
+    _wait_for_succeeded_job(
+        port,
+        token,
+        incremental_job_id,
+        last_response=matching_nonempty_response,
+    )
+
     job_id, running_job, probe_responses = _run_probes_during_matching_rebuild(
         port,
         token,
@@ -1012,14 +1040,12 @@ def test_search_index_unavailable_during_matching_rebuild(
             search_payload,
             unrelated_payload,
             unrelated_source_payload,
-            matching_nonempty_payload,
         ),
     )
     (
         search_response,
         unrelated_response,
         unrelated_source_response,
-        matching_nonempty_response,
         shared_client_response,
         mcp_response,
     ) = probe_responses
@@ -1073,18 +1099,6 @@ def test_search_index_unavailable_during_matching_rebuild(
         root=root,
         source="code",
         evidence=unrelated_source_evidence,
-    )
-    matching_nonempty_evidence = _bounded_failure_evidence(
-        port,
-        token,
-        job_id,
-        last_job=running_job,
-        last_response=matching_nonempty_response,
-    )
-    _assert_matching_nonempty_response(
-        matching_nonempty_response,
-        expected_doc_id=known_doc.doc_id,
-        evidence=matching_nonempty_evidence,
     )
     shared_client_evidence = (
         _bounded_failure_evidence(
