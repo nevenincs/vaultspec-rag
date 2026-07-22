@@ -73,24 +73,22 @@ _INDEX_REFRESH = ToolAnnotations(
 )
 
 
-def _as_envelope(result: dict[str, Any] | list[dict[str, Any]]) -> dict[str, Any]:
-    """Return a stable dict envelope, wrapping a bare hit list under ``results``.
-
-    The daemon normally returns a dict envelope (hits plus index-state and
-    empty-result diagnostics); a bare list is the legacy shape. Normalising to
-    one dict shape gives clients a single result schema to validate against.
-    """
-    if isinstance(result, list):
-        return {"results": result}
-    return result
-
-
 def _search_envelope_or_raise(
-    result: dict[str, Any] | list[dict[str, Any]],
+    result: object,
 ) -> dict[str, Any]:
     """Return a successful search envelope or raise the daemon's failure."""
-    envelope = _as_envelope(result)
+    if not isinstance(result, dict):
+        raise RuntimeError(
+            "invalid_service_response: The search service returned an invalid "
+            "response; expected a JSON object envelope."
+        )
+    envelope = cast("dict[str, Any]", result)
     if envelope.get("ok") is not False:
+        if not isinstance(envelope.get("results"), list):
+            raise RuntimeError(
+                "invalid_service_response: The search service returned an invalid "
+                "response; expected a success envelope containing a results list."
+            )
         return envelope
 
     error_code = str(envelope.get("error") or "search_failed")
