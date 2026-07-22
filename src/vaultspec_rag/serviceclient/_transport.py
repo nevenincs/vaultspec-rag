@@ -351,17 +351,26 @@ def _do_http_call(
     keeps the happy path a single request while letting ``--port`` authenticate
     against a service started out-of-band (missing status file) or restarted
     (rotated token), without an extra round-trip when the first call succeeds.
+
+    An omitted or ``None`` timeout resolves through the administrative timeout
+    policy rather than to no bound at all, so the operator override applies here
+    exactly as it does to the admin helpers. An unbounded network call has no
+    defensible use here: it can wait forever on a wedged peer, and because these
+    requests carry the service bearer credential, an unbounded wait is also an
+    unbounded window in which that credential is in flight. A caller needing a
+    different bound passes one explicitly; there is deliberately no way to ask
+    for none, and a non-finite or non-positive request resolves to the default
+    rather than to an immediately-expired deadline.
     """
-    deadline = time.monotonic() + timeout if timeout is not None else None
+    resolved_timeout = _get_admin_timeout(timeout)
+    deadline = time.monotonic() + resolved_timeout
     started = time.monotonic()
 
-    def remaining(stage: str) -> float | None:
-        if deadline is None or timeout is None:
-            return timeout
+    def remaining(stage: str) -> float:
         value = deadline - time.monotonic()
         if value <= 0:
             raise TimeoutError(
-                f"whole HTTP call deadline={timeout:.3f}s exceeded "
+                f"whole HTTP call deadline={resolved_timeout:.3f}s exceeded "
                 f"during {stage}; elapsed={time.monotonic() - started:.3f}s "
                 "remaining=0.000s"
             )
@@ -384,7 +393,7 @@ def _do_http_call(
             _raise_deadline_exhausted(
                 exc,
                 stage=stage,
-                timeout=timeout,
+                timeout=resolved_timeout,
                 started=started,
                 deadline=deadline,
             )
@@ -400,7 +409,7 @@ def _do_http_call(
             _raise_deadline_exhausted(
                 exc,
                 stage="health-token request",
-                timeout=timeout,
+                timeout=resolved_timeout,
                 started=started,
                 deadline=deadline,
             )
