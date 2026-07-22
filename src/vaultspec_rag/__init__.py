@@ -35,6 +35,13 @@ except PackageNotFoundError:
 if TYPE_CHECKING:
     # Eager view for static type checkers and IDEs; never executed at runtime,
     # so it does not defeat the lazy loading the runtime path provides.
+    from ._public_index import DocumentScanResult, scan_documents
+    from ._public_search import (
+        search_combined,
+        search_combined_timed,
+        search_documents,
+        search_documents_timed,
+    )
     from .api import (
         GraphCache,
         clean,
@@ -65,7 +72,10 @@ if TYPE_CHECKING:
         prepare_document,
     )
     from .search import (
+        CombinedSearchOutcome,
+        DocumentSearchResult,
         ParsedQuery,
+        SearchDomainOutcome,
         SearchResult,
         VaultSearcher,
         parse_query,
@@ -76,6 +86,12 @@ if TYPE_CHECKING:
 # Maps each lazily-exported public name to the submodule that defines it.
 # Accessing ``vaultspec_rag.<name>`` imports the owning submodule on demand.
 _LAZY_EXPORTS: dict[str, str] = {
+    "DocumentScanResult": "_public_index",
+    "scan_documents": "_public_index",
+    "search_combined": "_public_search",
+    "search_combined_timed": "_public_search",
+    "search_documents": "_public_search",
+    "search_documents_timed": "_public_search",
     "GraphCache": "api",
     "clean": "api",
     "get_readiness": "api",
@@ -103,6 +119,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "VaultIndexer": "indexer",
     "prepare_document": "indexer",
     "ParsedQuery": "search",
+    "CombinedSearchOutcome": "search",
+    "DocumentSearchResult": "search",
+    "SearchDomainOutcome": "search",
     "SearchResult": "search",
     "VaultSearcher": "search",
     "parse_query": "search",
@@ -115,11 +134,15 @@ _LAZY_EXPORTS: dict[str, str] = {
 __all__ = [
     "CodeChunk",
     "CodebaseIndexer",
+    "CombinedSearchOutcome",
     "DocumentIndexer",
+    "DocumentScanResult",
+    "DocumentSearchResult",
     "EmbeddingModel",
     "GraphCache",
     "IndexResult",
     "ParsedQuery",
+    "SearchDomainOutcome",
     "SearchResult",
     "SparseResult",
     "VaultDocument",
@@ -144,8 +167,13 @@ __all__ = [
     "run_quality_probe",
     "scan_codebase",
     "scan_codebase_files",
+    "scan_documents",
     "search_codebase",
     "search_codebase_timed",
+    "search_combined",
+    "search_combined_timed",
+    "search_documents",
+    "search_documents_timed",
     "search_vault",
     "search_vault_timed",
 ]
