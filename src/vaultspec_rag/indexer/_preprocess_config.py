@@ -30,6 +30,8 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import pathspec
 
+from ._content_policy import ContentKind
+
 if TYPE_CHECKING:
     import pathlib
     from collections.abc import Callable, Mapping
@@ -58,7 +60,7 @@ PREPROCESS_CONFIG_FILENAME = ".vaultragpreprocess.toml"
 #: The config-schema major this loader understands. A file declaring a higher
 #: top-level ``version`` is rejected (degrade in the default mode) so a future
 #: incompatible config shape is never silently half-read (review CONFIG-001).
-SUPPORTED_CONFIG_VERSION = 1
+SUPPORTED_CONFIG_VERSION = 2
 
 #: Default rule priority when a rule omits ``priority``. Lower sorts first
 #: (higher precedence); the shared default makes file order the tie-breaker.
@@ -96,6 +98,9 @@ class PreprocessRule:
             by the runner (the safe form of D9). Exactly one of
             ``command``/``entry_point`` is set.
         priority: Lower sorts first (higher precedence).
+        target: Content domain that owns the extracted output.
+        extractor_version: Caller-managed semantic version for cache and
+            content-fingerprint invalidation.
         on_error: Disposition when preprocessing fails: ``skip`` (drop the
             file), ``fail`` (abort the index run), or ``passthrough`` (index
             the raw file unprocessed).
@@ -115,6 +120,8 @@ class PreprocessRule:
     command: str | None
     entry_point: str | None
     priority: int
+    target: ContentKind
+    extractor_version: str
     on_error: OnError
     timeout_s: float | None
     options: Mapping[str, object]
@@ -130,14 +137,20 @@ class PreprocessConfig:
     :meth:`match` is a deterministic first-match scan (D2).
     """
 
-    __slots__ = ("_compiled",)
+    __slots__ = ("_compiled", "_schema_version")
 
-    def __init__(self, rules: list[PreprocessRule]) -> None:
+    def __init__(
+        self,
+        rules: list[PreprocessRule],
+        schema_version: int = SUPPORTED_CONFIG_VERSION,
+    ) -> None:
         """Compile and order the given rules.
 
         Args:
             rules: Validated rules in source-file order.
+            schema_version: Declared policy schema version.
         """
+        self._schema_version = schema_version
         ordered = sorted(rules, key=lambda r: (r.priority, r.order))
         self._compiled: list[tuple[pathspec.GitIgnoreSpec, PreprocessRule]] = [
             (pathspec.GitIgnoreSpec.from_lines([rule.pattern]), rule)
@@ -152,6 +165,11 @@ class PreprocessConfig:
     def rules(self) -> list[PreprocessRule]:
         """Return the resolved rules in precedence order."""
         return [rule for _, rule in self._compiled]
+
+    @property
+    def schema_version(self) -> int:
+        """Return the declared root policy schema version."""
+        return self._schema_version
 
     def match(self, rel_path: str) -> PreprocessRule | None:
         """Return the highest-precedence rule whose pattern matches.
@@ -169,14 +187,16 @@ class PreprocessConfig:
                 return rule
         return None
 
-    def __reduce__(self) -> tuple[type[PreprocessConfig], tuple[list[PreprocessRule]]]:
+    def __reduce__(
+        self,
+    ) -> tuple[type[PreprocessConfig], tuple[list[PreprocessRule], int]]:
         """Pickle by re-running the constructor over the picklable rules.
 
         The compiled ``pathspec`` matchers are rebuilt on unpickle rather than
         serialised, so this config can be threaded into a spawn chunk worker
         (D6) without depending on ``pathspec`` internals being picklable.
         """
-        return (PreprocessConfig, (self.rules,))
+        return (PreprocessConfig, (self.rules, self.schema_version))
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -253,7 +273,7 @@ def load_preprocess_rules(
         logger.warning("%s; ignoring preprocess rules", message)
         return PreprocessConfig([])
 
-    version = data.get("version", SUPPORTED_CONFIG_VERSION)
+    version = data.get("version", 1)
     if not isinstance(version, int) or isinstance(version, bool):
         message = (
             f"{PREPROCESS_CONFIG_FILENAME}: top-level 'version' must be an integer"
@@ -285,7 +305,7 @@ def load_preprocess_rules(
         rule = _resolve_rule(raw_rule, order, strict=strict)
         if rule is not None:
             rules.append(rule)
-    resolved = PreprocessConfig(rules)
+    resolved = PreprocessConfig(rules, schema_version=version)
 
     # Strict mode backs the ``preprocess check`` CLI verb: it validates the
     # config file itself and must report defects regardless of the host's
@@ -382,6 +402,8 @@ def _build_rule(
         raise reject("missing or non-string 'pattern'")
 
     command, entry_point = _resolve_invocation(rule_map, reject)
+    target = _resolve_target(rule_map, reject)
+    extractor_version = _resolve_extractor_version(rule_map, reject)
     on_error = _resolve_on_error(rule_map, reject)
     priority = _resolve_priority(rule_map, reject)
     timeout_s = _resolve_timeout(rule_map, reject)
@@ -397,12 +419,39 @@ def _build_rule(
         command=command,
         entry_point=entry_point,
         priority=priority,
+        target=target,
+        extractor_version=extractor_version,
         on_error=on_error,
         timeout_s=timeout_s,
         options=options,
         order=order,
         batch=batch,
     )
+
+
+def _resolve_target(
+    rule_map: dict[str, object],
+    reject: Callable[[str], _RuleRejectedError],
+) -> ContentKind:
+    """Resolve the required content owner without applying fallback routing."""
+    target_raw = rule_map.get("target")
+    if not isinstance(target_raw, str) or not target_raw:
+        raise reject("missing or non-string 'target'")
+    try:
+        return ContentKind(target_raw)
+    except ValueError:
+        raise reject(f"unknown 'target' {target_raw!r}") from None
+
+
+def _resolve_extractor_version(
+    rule_map: dict[str, object],
+    reject: Callable[[str], _RuleRejectedError],
+) -> str:
+    """Resolve the required caller-managed extractor semantic version."""
+    version_raw = rule_map.get("extractor_version")
+    if not isinstance(version_raw, str) or not version_raw.strip():
+        raise reject("missing or empty 'extractor_version'")
+    return version_raw.strip()
 
 
 def _resolve_invocation(
