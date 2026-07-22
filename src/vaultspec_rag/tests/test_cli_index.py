@@ -250,8 +250,7 @@ class TestIndexRebuild:
         assert "- alpha.py" in lines
         assert "- beta.py" in lines
         assert lines[-1] == (
-            "1 more file not shown. Use --dry-run-limit 3 "
-            "or --json for the full list."
+            "1 more file not shown. Use --dry-run-limit 3 or --json for the full list."
         )
         assert "gamma.py" not in result.output
 

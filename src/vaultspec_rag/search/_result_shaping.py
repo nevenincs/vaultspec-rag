@@ -233,9 +233,7 @@ def map_document_results(
                 section=(
                     str(row["section"]) if row.get("section") is not None else None
                 ),
-                anchor=(
-                    str(row["anchor"]) if row.get("anchor") is not None else None
-                ),
+                anchor=(str(row["anchor"]) if row.get("anchor") is not None else None),
                 locator=locator,
                 document_metadata=DocumentMetadata.from_mapping(document_metadata),
                 unit_metadata=DocumentMetadata.from_mapping(unit_metadata),

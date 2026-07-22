@@ -79,8 +79,7 @@ def _support_profile_lines(status: dict[str, object]) -> list[str]:
     lines.extend(
         (
             f"Minimum RAM bytes: {profile.get('minimum_ram_bytes', 0)}",
-            "Minimum free disk bytes: "
-            f"{profile.get('minimum_free_disk_bytes', 0)}",
+            f"Minimum free disk bytes: {profile.get('minimum_free_disk_bytes', 0)}",
         )
     )
     domains = profile.get("domains")

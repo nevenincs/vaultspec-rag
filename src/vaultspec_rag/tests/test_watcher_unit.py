@@ -57,8 +57,7 @@ def test_root_control_files_are_admitted(project: tuple[Path, Path]) -> None:
 def test_nested_gitignore_is_admitted(project: tuple[Path, Path]) -> None:
     root, vault = project
     assert (
-        _is_code_change(root / "pkg" / "sub" / ".gitignore", root, vault, None)
-        is True
+        _is_code_change(root / "pkg" / "sub" / ".gitignore", root, vault, None) is True
     )
 
 
@@ -69,8 +68,7 @@ def test_markdown_outside_vault_is_not_conventional_code(
     root, vault = project
     assert _is_code_change(root / "README.md", root, vault, code_policy) is False
     assert (
-        _is_code_change(root / "docs" / "guide.md", root, vault, code_policy)
-        is False
+        _is_code_change(root / "docs" / "guide.md", root, vault, code_policy) is False
     )
 
 
@@ -91,10 +89,7 @@ def test_path_outside_root_is_rejected(
         _is_code_change(tmp_path / "elsewhere" / ".gitignore", root, vault, None)
         is False
     )
-    assert (
-        _is_code_change(tmp_path / "elsewhere" / "a.py", root, vault, None)
-        is False
-    )
+    assert _is_code_change(tmp_path / "elsewhere" / "a.py", root, vault, None) is False
 
 
 def test_unrelated_extension_still_rejected(

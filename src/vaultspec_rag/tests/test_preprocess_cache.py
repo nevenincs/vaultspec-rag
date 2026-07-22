@@ -71,10 +71,13 @@ def test_different_source_hash_misses(tmp_path: Path) -> None:
 def test_path_dependent_cache_does_not_alias_identical_files(tmp_path: Path) -> None:
     root = preprocess_cache_dir(tmp_path)
     write_cached_output(root, _identity(), _output())
-    assert read_cached_output(
-        root,
-        _identity(source_path="docs/b.pdf"),
-    ) is None
+    assert (
+        read_cached_output(
+            root,
+            _identity(source_path="docs/b.pdf"),
+        )
+        is None
+    )
 
 
 def test_path_independent_cache_reuse_requires_explicit_identity(
@@ -93,8 +96,7 @@ def test_command_change_invalidates(tmp_path: Path) -> None:
     write_cached_output(root, original, _output("old"))
     # Same source, bumped extractor command -> a fresh key -> a miss.
     assert (
-        read_cached_output(root, _identity(execution_fingerprint="extract-v2"))
-        is None
+        read_cached_output(root, _identity(execution_fingerprint="extract-v2")) is None
     )
     # The original entry still hits on its own command.
     assert read_cached_output(root, original) is not None

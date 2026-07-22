@@ -43,17 +43,20 @@ def test_document_result_retains_identity_locator_metadata_and_rerank_text() -> 
 
 
 def test_invalid_document_metadata_does_not_escape_as_mis_shaped_hit() -> None:
-    assert map_document_results(
-        [
-            {
-                "id": "chunk-1",
-                "source_path": "manuals/guide.bin",
-                "content": "content",
-                "document_metadata": "invalid",
-                "unit_metadata": {},
-            }
-        ]
-    ) == []
+    assert (
+        map_document_results(
+            [
+                {
+                    "id": "chunk-1",
+                    "source_path": "manuals/guide.bin",
+                    "content": "content",
+                    "document_metadata": "invalid",
+                    "unit_metadata": {},
+                }
+            ]
+        )
+        == []
+    )
 
 
 def test_combined_selection_is_stable_across_equal_domain_scores() -> None:

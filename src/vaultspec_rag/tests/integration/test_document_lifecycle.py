@@ -38,7 +38,7 @@ def _write_document_extractor_route(
         "version = 2\n\n"
         "[[rule]]\n"
         'pattern = "*.blob"\n'
-        f"command = '\"{python}\" \"{command}\" {{path}}'\n"
+        f'command = \'"{python}" "{command}" {{path}}\'\n'
         'target = "document"\n'
         'extractor_version = "1"\n'
         'on_error = "fail"\n',
