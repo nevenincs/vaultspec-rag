@@ -120,7 +120,7 @@ Make stale reconciliation, metadata publication, and clean-rebuild recovery rest
 
 Interrupt real work and prove one-unit replay, exact final state, and safe signature invalidation.
 
-- [ ] `W02.P08.S29` - Interrupt and restart a real multi-segment index and prove replay is limited to the last unrecorded unit; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
+- [x] `W02.P08.S29` - Interrupt and restart a real multi-segment index and prove replay is limited to the last unrecorded unit; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
 - [ ] `W02.P08.S30` - Invalidate incompatible checkpoints on model, schema, content, membership, preprocessing, and configuration drift; `src/vaultspec_rag/tests/test_config_epoch.py`.
 - [ ] `W02.P08.S31` - Interrupt each finalization phase and prove restart converges to exact point IDs and metadata; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
 
