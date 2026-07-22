@@ -163,7 +163,11 @@ class TestCodebaseIndexerProgress:
         try:
             code_indexer = CodebaseIndexer(root, embedding_model, store)
             reporter = CountingProgressReporter()
-            result = code_indexer.full_index(clean=True, reporter=reporter)
+            result = code_indexer.full_index(
+                clean=True,
+                reporter=reporter,
+                preflight=code_indexer.preflight_content(),
+            )
 
             names = reporter.phase_names()
             # The codebase full index reads each file once (#155 P03): the

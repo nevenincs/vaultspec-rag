@@ -30,7 +30,7 @@ from ._vault_prep import IndexResult, prepare_document
 if TYPE_CHECKING:
     import pathlib
     import threading
-    from collections.abc import Generator, Iterable
+    from collections.abc import Generator, Iterable, Iterator
 
     from ..embeddings import EmbeddingModel
     from ..job_control import RunControl
@@ -73,6 +73,46 @@ def _controlled_phase(
     finally:
         reporter.phase_end()
     run_control.checkpoint()
+
+
+def _fill_document_window(
+    path_iter: Iterator[pathlib.Path],
+    pending: set[Future[VaultDocument | None]],
+    pool: ThreadPoolExecutor,
+    root_dir: pathlib.Path,
+    run_control: RunControl,
+    *,
+    max_in_flight: int,
+    exhausted: bool,
+) -> bool:
+    """Fill one bounded preparation window and return iterator exhaustion."""
+    while not exhausted and len(pending) < max_in_flight:
+        run_control.checkpoint()
+        try:
+            path = next(path_iter)
+        except StopIteration:
+            exhausted = True
+        else:
+            pending.add(pool.submit(prepare_document, path, root_dir))
+    return exhausted
+
+
+def _collect_prepared_document(
+    future: Future[VaultDocument | None],
+    docs: list[VaultDocument],
+    *,
+    skip_errors: bool,
+) -> None:
+    """Collect one completed preparation result under the caller's error policy."""
+    try:
+        doc = future.result()
+    except Exception:
+        if not skip_errors:
+            raise
+        logger.warning("Worker failed to prepare document", exc_info=True)
+        return
+    if doc is not None:
+        docs.append(doc)
 
 
 class VaultIndexer:
@@ -713,19 +753,16 @@ class VaultIndexer:
         exhausted = False
         pool = ThreadPoolExecutor(max_workers=max_workers)
 
-        def _fill_window() -> None:
-            nonlocal exhausted
-            while not exhausted and len(pending) < max_in_flight:
-                run_control.checkpoint()
-                try:
-                    path = next(path_iter)
-                except StopIteration:
-                    exhausted = True
-                    break
-                pending.add(pool.submit(prepare_document, path, self.root_dir))
-
         try:
-            _fill_window()
+            exhausted = _fill_document_window(
+                path_iter,
+                pending,
+                pool,
+                self.root_dir,
+                run_control,
+                max_in_flight=max_in_flight,
+                exhausted=exhausted,
+            )
             while pending:
                 run_control.checkpoint()
                 done, _not_done = wait(
@@ -736,21 +773,22 @@ class VaultIndexer:
                 run_control.checkpoint()
                 for future in done:
                     pending.remove(future)
-                    try:
-                        doc = future.result()
-                    except Exception:
-                        if not skip_errors:
-                            raise
-                        logger.warning(
-                            "Worker failed to prepare document",
-                            exc_info=True,
-                        )
-                    else:
-                        if doc is not None:
-                            docs.append(doc)
+                    _collect_prepared_document(
+                        future,
+                        docs,
+                        skip_errors=skip_errors,
+                    )
                     reporter.advance()
                     run_control.checkpoint()
-                _fill_window()
+                exhausted = _fill_document_window(
+                    path_iter,
+                    pending,
+                    pool,
+                    self.root_dir,
+                    run_control,
+                    max_in_flight=max_in_flight,
+                    exhausted=exhausted,
+                )
         except BaseException:
             for future in pending:
                 future.cancel()

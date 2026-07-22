@@ -52,6 +52,17 @@ related:
   - '[[2026-07-21-service-job-control-W04-P13-summary]]'
   - '[[2026-07-21-service-job-control-W04-P14-S29]]'
   - '[[2026-07-21-service-job-control-W04-P14-S30]]'
+  - '[[2026-07-21-service-job-control-W04-P14-S31]]'
+  - '[[2026-07-21-service-job-control-W04-P14-summary]]'
+  - '[[2026-07-21-service-job-control-W04-P15-S32]]'
+  - '[[2026-07-21-service-job-control-W04-P15-summary]]'
+  - '[[2026-07-21-service-job-control-W05-P16-S33]]'
+  - '[[2026-07-21-service-job-control-W05-P16-S34]]'
+  - '[[2026-07-21-service-job-control-W05-P16-S35]]'
+  - '[[2026-07-21-service-job-control-W05-P16-S36]]'
+  - '[[2026-07-21-service-job-control-W05-P16-summary]]'
+  - '[[2026-07-21-service-job-control-W05-P17-S37]]'
+  - '[[2026-07-21-service-job-control-W05-P17-summary]]'
   - '[[2026-07-21-service-job-control-adr]]'
   - '[[2026-07-21-service-job-control-plan]]'
   - '[[2026-07-21-service-job-control-reference]]'
@@ -86,6 +97,13 @@ related:
   - '[[2026-07-22-service-job-control-s28-client-real-server-transport-audit]]'
   - '[[2026-07-22-service-job-control-s29-cli-job-registration-audit]]'
   - '[[2026-07-22-service-job-control-s30-cli-job-controls-audit]]'
+  - '[[2026-07-22-service-job-control-s31-cli-job-control-verification-audit]]'
+  - '[[2026-07-22-service-job-control-s32-reindex-mcp-compatibility-audit]]'
+  - '[[2026-07-22-service-job-control-s33-large-corpus-lifecycle-audit]]'
+  - '[[2026-07-22-service-job-control-s34-restart-lifecycle-audit]]'
+  - '[[2026-07-22-service-job-control-s35-watcher-shutdown-lifecycle-audit]]'
+  - '[[2026-07-22-service-job-control-s36-http-transport-cli-matrix-audit]]'
+  - '[[2026-07-22-service-job-control-s37-architecture-safety-audit]]'
 ---
 
 # `service-job-control` feature index
@@ -130,6 +148,13 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-22-service-job-control-s28-client-real-server-transport-audit` - `service-job-control` audit: `s28 client real server transport`
 - `2026-07-22-service-job-control-s29-cli-job-registration-audit` - `service-job-control` audit: `s29 cli job registration`
 - `2026-07-22-service-job-control-s30-cli-job-controls-audit` - `service-job-control` audit: `s30 cli job controls`
+- `2026-07-22-service-job-control-s31-cli-job-control-verification-audit` - `service-job-control` audit: `s31 cli job control verification`
+- `2026-07-22-service-job-control-s32-reindex-mcp-compatibility-audit` - `service-job-control` audit: `s32 reindex mcp compatibility`
+- `2026-07-22-service-job-control-s33-large-corpus-lifecycle-audit` - `service-job-control` audit: `s33 large corpus lifecycle`
+- `2026-07-22-service-job-control-s34-restart-lifecycle-audit` - `service-job-control` audit: `s34 restart lifecycle`
+- `2026-07-22-service-job-control-s35-watcher-shutdown-lifecycle-audit` - `service-job-control` audit: `s35 watcher shutdown lifecycle`
+- `2026-07-22-service-job-control-s36-http-transport-cli-matrix-audit` - `service-job-control` audit: `s36 http transport cli matrix`
+- `2026-07-22-service-job-control-s37-architecture-safety-audit` - `service-job-control` audit: `s37 architecture safety`
 
 ### exec
 
@@ -179,6 +204,17 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-21-service-job-control-W04-P13-summary` - `service-job-control` `W04.P13` summary
 - `2026-07-21-service-job-control-W04-P14-S29` - Register the singular server job command group while preserving the server jobs collection command using vaultspec-low-executor
 - `2026-07-21-service-job-control-W04-P14-S30` - Implement show, pause, resume, stop, retry, and delete commands with unique-prefix resolution before exact mutation using vaultspec-standard-executor
+- `2026-07-21-service-job-control-W04-P14-S31` - Verify human and JSON CLI controls, ambiguous prefixes, idempotent requests, stable errors, retry, deletion, and force rejection against a real server using vaultspec-standard-executor
+- `2026-07-21-service-job-control-W04-P14-summary` - `service-job-control` `W04.P14` summary
+- `2026-07-21-service-job-control-W04-P15-S32` - Verify reindex compatibility and the unchanged MCP incremental-refresh-only administration boundary using vaultspec-standard-executor
+- `2026-07-21-service-job-control-W04-P15-summary` - `service-job-control` `W04.P15` summary
+- `2026-07-21-service-job-control-W05-P16-S33` - Exercise a real large-corpus pause, resume, and cancel lifecycle proving convergence, attempt lineage, resource release, and no post-cancellation writes using vaultspec-high-executor
+- `2026-07-21-service-job-control-W05-P16-S34` - Exercise a real restart lifecycle proving durable queued dispatch, persistent pause, interrupted attempts, linked retry, and terminal-history deletion using vaultspec-high-executor
+- `2026-07-21-service-job-control-W05-P16-S35` - Exercise a real watcher and shutdown lifecycle proving dirtiness coalescing, replacement scheduling, separate watcher control, and safe store closure using vaultspec-high-executor
+- `2026-07-21-service-job-control-W05-P16-S36` - Exercise the end-to-end HTTP, transport, and CLI outcome matrix for exact IDs, stale revisions, already-satisfied requests, conflicts, and force rejection using vaultspec-standard-executor
+- `2026-07-21-service-job-control-W05-P16-summary` - `service-job-control` `W05.P16` summary
+- `2026-07-21-service-job-control-W05-P17-S37` - Audit ADR conformance, truthful acknowledgement, bounded views, GPU ownership, storage safety, shutdown ordering, MCP scope, and test integrity and apply required corrections using vaultspec-code-reviewer
+- `2026-07-21-service-job-control-W05-P17-summary` - `service-job-control` `W05.P17` summary
 
 ### plan
 

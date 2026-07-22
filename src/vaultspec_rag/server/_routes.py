@@ -79,7 +79,7 @@ if TYPE_CHECKING:
 
     from starlette.requests import Request
 
-    from ..indexer._codebase_indexer import ContentScanResult
+    from ..indexer._codebase_indexer import CodeIndexPreflight
     from ..job_models import JobInitiator, JobSpec
 
 logger = logging.getLogger("vaultspec_rag.server")
@@ -543,7 +543,7 @@ async def _validated_index_request(
     JobInitiator,
     bool,
     str | None,
-    ContentScanResult | None,
+    CodeIndexPreflight | None,
 ]:
     from ..job_models import JobMode, JobOperation, JobSource, JobSpec
 
@@ -597,16 +597,16 @@ async def _validated_index_request(
     )
 
 
-async def _validate_code_job_spec(spec: JobSpec) -> ContentScanResult | None:
+async def _validate_code_job_spec(spec: JobSpec) -> CodeIndexPreflight | None:
     """Scan code admission before durable job mutation; vault jobs need none."""
     from ..job_models import JobSource
-    from ..jobs import scan_code_index_preflight
+    from ..jobs import validate_code_index_policy
 
     if spec.source is not JobSource.CODE or spec.project_root is None:
         return None
     try:
         return await _run_in_thread(
-            scan_code_index_preflight,
+            validate_code_index_policy,
             Path(spec.project_root),
         )
     except ValueError as exc:
@@ -616,8 +616,9 @@ async def _validate_code_job_spec(spec: JobSpec) -> ContentScanResult | None:
         ) from exc
 
 
-def _admission_preflight(scan: ContentScanResult) -> dict[str, object]:
+def _admission_preflight(preflight: CodeIndexPreflight) -> dict[str, object]:
     """Project one bounded structured scan onto the HTTP response surface."""
+    scan = preflight.scan
     return {
         "count": len(scan.files),
         "policy_fingerprint": scan.policy_fingerprint,
@@ -705,10 +706,13 @@ def _job_response(
     return JSONResponse(payload, status_code=status_code, headers=headers)
 
 
-async def _activate_index_job(outcome: JobOutcome) -> JobOutcome:
+async def _activate_index_job(
+    outcome: JobOutcome,
+    code_preflight: CodeIndexPreflight | None,
+) -> JobOutcome:
     from ..jobs import activate_index_job
 
-    return await activate_index_job(outcome)
+    return await activate_index_job(outcome, code_preflight=code_preflight)
 
 
 def _normalise_controllable_filter(raw: str | None) -> bool | None:
@@ -838,7 +842,7 @@ async def create_job_route(request: Request) -> JSONResponse:
             idempotency_key=idempotency_key,
         )
     )
-    outcome = await _activate_index_job(outcome)
+    outcome = await _activate_index_job(outcome, admission)
     return _job_response(
         outcome,
         location=True,
@@ -954,7 +958,7 @@ async def retry_job_route(request: Request) -> JSONResponse:
             initiator=initiator,
         )
     )
-    outcome = await _activate_index_job(outcome)
+    outcome = await _activate_index_job(outcome, admission)
     return _job_response(
         outcome,
         location=True,
@@ -1143,7 +1147,7 @@ async def search_route(request: Request) -> JSONResponse:
         result["request_id"] = request_id
         timing = result.get("timing")
         if isinstance(timing, dict):
-            timing["server_total_seconds"] = total_seconds
+            cast("dict[str, object]", timing)["server_total_seconds"] = total_seconds
         classification = _classify_search_result(
             result,
             job_snapshot_before=job_snapshot_before,
@@ -1165,7 +1169,7 @@ async def search_route(request: Request) -> JSONResponse:
 
 def _preprocess_preflight(
     root: Path,
-    admission: ContentScanResult | None = None,
+    admission: CodeIndexPreflight | None = None,
 ) -> dict[str, object]:
     """Report whether *root*'s preprocess hooks will run, before indexing.
 
@@ -1186,11 +1190,12 @@ def _preprocess_preflight(
 
     config_present = (root / PREPROCESS_CONFIG_FILENAME).is_file()
     if admission is not None:
+        scan = admission.scan
         return {
             "config_present": config_present,
-            "rule_count": admission.preprocess_rule_count,
-            "mode": admission.preprocess_mode,
-            "hooks_will_run": admission.hooks_will_run,
+            "rule_count": scan.preprocess_rule_count,
+            "mode": scan.preprocess_mode,
+            "hooks_will_run": scan.hooks_will_run,
         }
 
     from ..config import get_config
@@ -1273,7 +1278,7 @@ async def reindex_route(request: Request) -> JSONResponse:
             idempotency_key=idempotency_key,
         )
     )
-    outcome = await _activate_index_job(outcome)
+    outcome = await _activate_index_job(outcome, admission)
     if outcome.status is JobOutcomeStatus.ERROR:
         status_code = _job_outcome_status(outcome.code)
         error_payload = outcome.to_dict()

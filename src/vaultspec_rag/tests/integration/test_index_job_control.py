@@ -13,6 +13,7 @@ import multiprocessing
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -85,6 +86,11 @@ def cpu_embedding_model(clean_config: None) -> EmbeddingModel:
             "embedding_dimension": dimension,
             "embedding_encode_batch_size": 1,
             "index_chunk_workers": 2,
+            # Force more than one durable weighted slice so pause/cancel can
+            # be observed between production publication checkpoints. The
+            # batch-size setting intentionally does not cap segment capacity.
+            "index_segment_max_chunks": 8,
+            "index_queue_max_chunks": 16,
             "qdrant_url": None,
             "sparse_enabled": False,
             "vault_chunk_chars": 10_000,
@@ -247,6 +253,264 @@ def _assert_manager_resources_released(
     indexer._writer_lock.release()  # pyright: ignore[reportPrivateUsage]
     if code:
         _assert_code_resources_released()
+
+
+def _vault_attempt_published(snapshot: JobSnapshot, *, slot: ProjectSlot) -> bool:
+    return (
+        snapshot.state is JobState.RUNNING
+        and snapshot.runtime.task_active
+        and snapshot.runtime.worker_active
+        and snapshot.resources.index_capacity_held
+        and snapshot.resources.project_lease_held
+        and snapshot.resources.writer_lock_held
+        and slot.store.count() > 0
+    )
+
+
+def _code_pipeline_resources_live(snapshot: JobSnapshot) -> bool:
+    return (
+        snapshot.state is JobState.RUNNING
+        and snapshot.runtime.task_active
+        and snapshot.runtime.worker_active
+        and snapshot.resources.index_capacity_held
+        and snapshot.resources.project_lease_held
+        and snapshot.resources.writer_lock_held
+        and snapshot.resources.pipeline_active
+        and bool(_code_consumer_threads())
+        and bool(multiprocessing.active_children())
+    )
+
+
+def _code_pipeline_published(snapshot: JobSnapshot, *, slot: ProjectSlot) -> bool:
+    return (
+        snapshot.state is JobState.RUNNING
+        and snapshot.resources.pipeline_active
+        and slot.store.count_code() > 0
+    )
+
+
+def _attempt_is_active(snapshot: JobSnapshot, *, attempt: int) -> bool:
+    return snapshot.attempt.number == attempt and snapshot.runtime.task_active
+
+
+def _code_attempt_reached_embedding_boundary(snapshot: JobSnapshot) -> bool:
+    progress = snapshot.progress
+    return (
+        progress is not None
+        and progress.step == "embed + upsert chunks"
+        and progress.completed == 0
+        and snapshot.resources.pipeline_active
+    )
+
+
+def _assert_reconciliation_lineage(snapshot: JobSnapshot, job_id: str) -> None:
+    assert snapshot.id == job_id
+    assert snapshot.attempt.number == 2
+    assert snapshot.attempt.resumed_from_attempt == 1
+    assert snapshot.attempt.resume_strategy is ResumeStrategy.RECONCILE
+
+
+async def _pause_managed_attempt(
+    manager: JobManager,
+    job_id: str,
+) -> tuple[asyncio.Task[object], JobSnapshot]:
+    first_task = _attempt_task(job_id, 1)
+    assert first_task is not None
+    pause = manager.set_desired_state(job_id, DesiredJobState.PAUSED)
+    assert pause.status is JobOutcomeStatus.ACCEPTED
+    assert pause.job is not None
+    assert pause.job.state is JobState.PAUSING
+    joined = await manager.wait_for_attempt(
+        job_id,
+        timeout_seconds=_MANAGED_WAIT_SECONDS,
+    )
+    assert joined.code == "attempt_released"
+    paused = manager.get(job_id)
+    assert paused is not None
+    assert paused.id == job_id
+    assert paused.state is JobState.PAUSED
+    assert paused.attempt.number == 1
+    assert paused.timestamps.control_requested_at is not None
+    assert paused.timestamps.control_acknowledged_at is not None
+    assert (
+        paused.timestamps.control_acknowledged_at
+        >= paused.timestamps.control_requested_at
+    )
+    assert first_task.done()
+    assert _attempt_task(job_id, 1) is None
+    return first_task, paused
+
+
+async def _resume_managed_attempt(
+    manager: JobManager,
+    job_id: str,
+    first_task: asyncio.Task[object],
+    description: str,
+) -> JobSnapshot:
+    resume = manager.set_desired_state(job_id, DesiredJobState.RUNNING)
+    assert resume.status is JobOutcomeStatus.ACCEPTED
+    resumed = await _wait_for_managed_job(
+        manager,
+        job_id,
+        partial(_attempt_is_active, attempt=2),
+        description,
+    )
+    second_task = _attempt_task(job_id, 2)
+    assert second_task is not None
+    assert second_task is not first_task
+    _assert_reconciliation_lineage(resumed, job_id)
+
+    completed = await manager.wait_for_attempt(
+        job_id,
+        timeout_seconds=_MANAGED_WAIT_SECONDS,
+    )
+    assert completed.code == "attempt_released"
+    succeeded = manager.get(job_id)
+    assert succeeded is not None
+    assert succeeded.state is JobState.SUCCEEDED
+    _assert_reconciliation_lineage(succeeded, job_id)
+    return succeeded
+
+
+async def _cancel_managed_attempt(
+    manager: JobManager,
+    job_id: str,
+) -> JobSnapshot:
+    cancel = manager.set_desired_state(job_id, DesiredJobState.CANCELLED)
+    assert cancel.status is JobOutcomeStatus.ACCEPTED
+    assert cancel.job is not None
+    assert cancel.job.state is JobState.CANCELLING
+    joined = await manager.wait_for_attempt(
+        job_id,
+        timeout_seconds=_MANAGED_WAIT_SECONDS,
+    )
+    assert joined.code == "attempt_released"
+    cancelled = manager.get(job_id)
+    assert cancelled is not None
+    assert cancelled.state is JobState.CANCELLED
+    assert cancelled.timestamps.control_requested_at is not None
+    assert cancelled.timestamps.control_acknowledged_at is not None
+    return cancelled
+
+
+async def _assert_cancelled_vault_stops_writes(
+    manager: JobManager,
+    job_id: str,
+    cancelled: JobSnapshot,
+    slot: ProjectSlot,
+    root: Path,
+) -> None:
+    metadata_path = root / get_config().data_dir / get_config().index_metadata_file
+    metadata = metadata_path.read_bytes() if metadata_path.exists() else None
+    metadata_mtime = (
+        metadata_path.stat().st_mtime_ns if metadata_path.exists() else None
+    )
+    point_ids = slot.store.get_all_ids()
+    point_count = slot.store.count()
+    payloads = {point_id: slot.store.get_by_id(point_id) for point_id in point_ids}
+    await asyncio.sleep(0.25)
+
+    assert manager.get(job_id) == cancelled
+    assert slot.store.get_all_ids() == point_ids
+    assert slot.store.count() == point_count
+    current_payloads = {
+        point_id: slot.store.get_by_id(point_id) for point_id in point_ids
+    }
+    assert current_payloads == payloads
+    current_metadata = metadata_path.read_bytes() if metadata_path.exists() else None
+    assert current_metadata == metadata
+    current_mtime = metadata_path.stat().st_mtime_ns if metadata_path.exists() else None
+    assert current_mtime == metadata_mtime
+
+
+def _assert_cancelled_job_is_absorbing(manager: JobManager, job_id: str) -> None:
+    replay = manager.set_desired_state(job_id, DesiredJobState.CANCELLED)
+    assert replay.status is JobOutcomeStatus.OK
+    assert replay.code == "already_satisfied"
+    rejected = manager.set_desired_state(job_id, DesiredJobState.RUNNING)
+    assert rejected.status is JobOutcomeStatus.ERROR
+    assert rejected.code == "invalid_transition"
+
+
+def _prepare_dimension_failure(
+    registry: ServiceRegistry,
+    root: Path,
+    *,
+    file_count: int,
+) -> ProjectSlot:
+    registry.close_project(root)
+    with VaultStore(
+        root, embedding_dim=registry.model.dimension + 1
+    ) as mismatched_store:
+        mismatched_store.drop_code_table()
+        mismatched_store.ensure_code_table()
+    _write_code_files(root, file_count, "dimension-failure")
+    return registry.peek_project(root)
+
+
+async def _request_cancel_during_failed_upsert(
+    manager: JobManager,
+    registry: ServiceRegistry,
+    root: Path,
+    slot: ProjectSlot,
+) -> str:
+    point_lock = slot.store._collection_locks[slot.store.CODE_TABLE_NAME]  # pyright: ignore[reportPrivateUsage]
+    gpu_lock = registry.gpu_lock
+    gpu_lock.acquire()
+    try:
+        failed_id = jobs.start_reindex_codebase(root, clean=False)
+        embedding = await _wait_for_managed_job(
+            manager,
+            failed_id,
+            _code_attempt_reached_embedding_boundary,
+            "incremental job did not enter the real embedding pipeline",
+        )
+        assert embedding.state is JobState.RUNNING
+        point_lock.acquire()
+    finally:
+        gpu_lock.release()
+
+    try:
+        # The real point lock remains held while the production model completes
+        # its small four-file slice. At this boundary the worker is blocked in
+        # the protected Qdrant upsert, after the post-GPU control checkpoint.
+        await asyncio.sleep(2.0)
+        blocked = manager.get(failed_id)
+        assert blocked is not None
+        assert blocked.state is JobState.RUNNING
+        assert blocked.progress is not None
+        assert blocked.progress.step == "embed + upsert chunks"
+        assert blocked.progress.completed == 0
+        assert registry.gpu_lock.locked() is False
+        cancel = manager.set_desired_state(failed_id, DesiredJobState.CANCELLED)
+        assert cancel.status is JobOutcomeStatus.ACCEPTED
+        assert cancel.job is not None
+        assert cancel.job.state is JobState.CANCELLING
+    finally:
+        point_lock.release()
+    return failed_id
+
+
+async def _assert_failure_wins_over_cancel(
+    manager: JobManager,
+    failed_id: str,
+    slot: ProjectSlot,
+) -> None:
+    joined = await manager.wait_for_attempt(
+        failed_id,
+        timeout_seconds=_MANAGED_WAIT_SECONDS,
+    )
+    assert joined.code == "attempt_released"
+    failed = manager.get(failed_id)
+    assert failed is not None
+    assert failed.state is JobState.FAILED
+    assert failed.desired_state is DesiredJobState.CANCELLED
+    assert failed.timestamps.control_requested_at is not None
+    assert failed.timestamps.control_acknowledged_at is None
+    assert failed.error_kind is not None
+    assert failed.result is not None
+    assert "cancel" not in failed.result.lower()
+    _assert_manager_resources_released(failed, slot, code=True)
 
 
 @pytest.fixture(scope="module")
@@ -523,6 +787,7 @@ def test_code_pipeline_control_unwinds_and_reconciliation_converges(
             with pytest.raises(signal_type):
                 indexer.full_index(
                     reporter=NullProgressReporter(),
+                    preflight=indexer.preflight_content(),
                     run_control=token,
                 )
             requester.result(timeout=_CONTROL_WAIT_SECONDS)
@@ -540,6 +805,7 @@ def test_code_pipeline_control_unwinds_and_reconciliation_converges(
 
         reconciled = indexer.full_index(
             reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
             run_control=RunControlToken(),
         )
         assert reconciled.files == len(paths)
@@ -564,7 +830,11 @@ def test_code_clean_rebuild_defers_pause_until_publication_is_current(
             store,
             gpu_lock=gpu_lock,
         )
-        indexer.full_index(clean=True, reporter=NullProgressReporter())
+        indexer.full_index(
+            clean=True,
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
         _assert_current_code_state(indexer, store, paths, "seed")
         metadata_before = indexer._load_meta()
         paths = _write_code_files(tmp_path, len(paths), "clean-current")
@@ -576,6 +846,7 @@ def test_code_clean_rebuild_defers_pause_until_publication_is_current(
                     indexer.full_index,
                     True,
                     reporter=NullProgressReporter(),
+                    preflight=indexer.preflight_content(),
                     run_control=token,
                 )
                 deadline = time.monotonic() + _CONTROL_WAIT_SECONDS
@@ -633,7 +904,11 @@ def test_code_scoped_replacement_defers_pause_until_data_and_metadata_are_curren
             store,
             gpu_lock=gpu_lock,
         )
-        indexer.full_index(clean=True, reporter=NullProgressReporter())
+        indexer.full_index(
+            clean=True,
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
         changed_path = paths[0]
         rel_path = str(changed_path.relative_to(tmp_path)).replace("\\", "/")
         old_ids = set(store.get_code_ids_by_paths({rel_path}))
@@ -648,6 +923,7 @@ def test_code_scoped_replacement_defers_pause_until_data_and_metadata_are_curren
                     indexer.incremental_index,
                     reporter=NullProgressReporter(),
                     changed_paths=paths,
+                    preflight=indexer.preflight_changed_paths(paths),
                     run_control=token,
                 )
                 deadline = time.monotonic() + _CONTROL_WAIT_SECONDS
@@ -710,80 +986,21 @@ async def test_managed_vault_pause_releases_resources_and_resume_reconciles(
     live = await _wait_for_managed_job(
         managed_job_manager,
         job_id,
-        lambda snapshot: (
-            snapshot.state is JobState.RUNNING
-            and snapshot.runtime.task_active
-            and snapshot.runtime.worker_active
-            and snapshot.resources.index_capacity_held
-            and snapshot.resources.project_lease_held
-            and snapshot.resources.writer_lock_held
-            and slot.store.count() > 0
-        ),
+        partial(_vault_attempt_published, slot=slot),
         "vault attempt did not publish while owning its execution resources",
     )
     assert live.attempt.number == 1
     assert slot.ref_count == 1
     assert limiter_stats()["index"]["borrowed_tokens"] == 1
-    first_task = _attempt_task(job_id, 1)
-    assert first_task is not None
-
-    pause = managed_job_manager.set_desired_state(
-        job_id,
-        DesiredJobState.PAUSED,
-    )
-    assert pause.status is JobOutcomeStatus.ACCEPTED
-    assert pause.job is not None
-    assert pause.job.state is JobState.PAUSING
-    joined = await managed_job_manager.wait_for_attempt(
-        job_id,
-        timeout_seconds=_MANAGED_WAIT_SECONDS,
-    )
-    assert joined.code == "attempt_released"
-    paused = managed_job_manager.get(job_id)
-    assert paused is not None
-    assert paused.id == job_id
-    assert paused.state is JobState.PAUSED
-    assert paused.attempt.number == 1
-    assert paused.timestamps.control_requested_at is not None
-    assert paused.timestamps.control_acknowledged_at is not None
-    assert (
-        paused.timestamps.control_acknowledged_at
-        >= paused.timestamps.control_requested_at
-    )
-    assert first_task.done()
-    assert _attempt_task(job_id, 1) is None
+    first_task, paused = await _pause_managed_attempt(managed_job_manager, job_id)
     _assert_manager_resources_released(paused, slot, code=False)
 
-    resume = managed_job_manager.set_desired_state(
-        job_id,
-        DesiredJobState.RUNNING,
-    )
-    assert resume.status is JobOutcomeStatus.ACCEPTED
-    resumed = await _wait_for_managed_job(
+    succeeded = await _resume_managed_attempt(
         managed_job_manager,
         job_id,
-        lambda snapshot: snapshot.attempt.number == 2 and snapshot.runtime.task_active,
+        first_task,
         "fresh reconciliation attempt did not start",
     )
-    second_task = _attempt_task(job_id, 2)
-    assert second_task is not None
-    assert second_task is not first_task
-    assert resumed.id == job_id
-    assert resumed.attempt.resumed_from_attempt == 1
-    assert resumed.attempt.resume_strategy is ResumeStrategy.RECONCILE
-
-    completed = await managed_job_manager.wait_for_attempt(
-        job_id,
-        timeout_seconds=_MANAGED_WAIT_SECONDS,
-    )
-    assert completed.code == "attempt_released"
-    succeeded = managed_job_manager.get(job_id)
-    assert succeeded is not None
-    assert succeeded.state is JobState.SUCCEEDED
-    assert succeeded.id == job_id
-    assert succeeded.attempt.number == 2
-    assert succeeded.attempt.resumed_from_attempt == 1
-    assert succeeded.attempt.resume_strategy is ResumeStrategy.RECONCILE
     assert slot.store.get_all_ids() == expected_ids
     assert set(slot.vault_indexer._load_meta()) == expected_ids
     _assert_manager_resources_released(succeeded, slot, code=False)
@@ -804,89 +1021,30 @@ async def test_managed_code_pause_releases_pipeline_and_resume_reconciles(
     pipeline = await _wait_for_managed_job(
         managed_job_manager,
         job_id,
-        lambda snapshot: (
-            snapshot.state is JobState.RUNNING
-            and snapshot.runtime.task_active
-            and snapshot.runtime.worker_active
-            and snapshot.resources.index_capacity_held
-            and snapshot.resources.project_lease_held
-            and snapshot.resources.writer_lock_held
-            and snapshot.resources.pipeline_active
-            and bool(_code_consumer_threads())
-            and bool(multiprocessing.active_children())
-        ),
+        _code_pipeline_resources_live,
         "code producer processes and sole consumer were never simultaneously live",
     )
     assert pipeline.attempt.number == 1
     live = await _wait_for_managed_job(
         managed_job_manager,
         job_id,
-        lambda snapshot: (
-            snapshot.state is JobState.RUNNING
-            and snapshot.resources.pipeline_active
-            and slot.store.count_code() > 0
-        ),
+        partial(_code_pipeline_published, slot=slot),
         "code pipeline did not publish before pause",
     )
     assert live.attempt.number == 1
     assert slot.ref_count == 1
     assert limiter_stats()["index"]["borrowed_tokens"] == 1
 
-    first_task = _attempt_task(job_id, 1)
-    assert first_task is not None
-    pause = managed_job_manager.set_desired_state(
-        job_id,
-        DesiredJobState.PAUSED,
-    )
-    assert pause.status is JobOutcomeStatus.ACCEPTED
-    assert pause.job is not None
-    assert pause.job.state is JobState.PAUSING
-    joined = await managed_job_manager.wait_for_attempt(
-        job_id,
-        timeout_seconds=_MANAGED_WAIT_SECONDS,
-    )
-    assert joined.code == "attempt_released"
-    paused = managed_job_manager.get(job_id)
-    assert paused is not None
-    assert paused.id == job_id
-    assert paused.state is JobState.PAUSED
-    assert paused.attempt.number == 1
-    assert paused.timestamps.control_requested_at is not None
-    assert paused.timestamps.control_acknowledged_at is not None
-    assert first_task.done()
-    assert _attempt_task(job_id, 1) is None
+    first_task, paused = await _pause_managed_attempt(managed_job_manager, job_id)
     _assert_manager_resources_released(paused, slot, code=True)
     _assert_current_code_state(slot.code_indexer, slot.store, paths, "initial")
 
-    resume = managed_job_manager.set_desired_state(
-        job_id,
-        DesiredJobState.RUNNING,
-    )
-    assert resume.status is JobOutcomeStatus.ACCEPTED
-    resumed = await _wait_for_managed_job(
+    succeeded = await _resume_managed_attempt(
         managed_job_manager,
         job_id,
-        lambda snapshot: snapshot.attempt.number == 2 and snapshot.runtime.task_active,
+        first_task,
         "fresh code reconciliation attempt did not start",
     )
-    second_task = _attempt_task(job_id, 2)
-    assert second_task is not None
-    assert second_task is not first_task
-    assert resumed.id == job_id
-    assert resumed.attempt.resumed_from_attempt == 1
-    assert resumed.attempt.resume_strategy is ResumeStrategy.RECONCILE
-    completed = await managed_job_manager.wait_for_attempt(
-        job_id,
-        timeout_seconds=_MANAGED_WAIT_SECONDS,
-    )
-    assert completed.code == "attempt_released"
-    succeeded = managed_job_manager.get(job_id)
-    assert succeeded is not None
-    assert succeeded.state is JobState.SUCCEEDED
-    assert succeeded.id == job_id
-    assert succeeded.attempt.number == 2
-    assert succeeded.attempt.resumed_from_attempt == 1
-    assert succeeded.attempt.resume_strategy is ResumeStrategy.RECONCILE
     _assert_manager_resources_released(succeeded, slot, code=True)
     _assert_current_code_state(slot.code_indexer, slot.store, paths, "initial")
 
@@ -906,69 +1064,20 @@ async def test_managed_vault_cancel_is_absorbing_and_stops_all_writes(
     live = await _wait_for_managed_job(
         managed_job_manager,
         job_id,
-        lambda snapshot: (
-            snapshot.state is JobState.RUNNING
-            and snapshot.runtime.task_active
-            and snapshot.runtime.worker_active
-            and snapshot.resources.index_capacity_held
-            and snapshot.resources.project_lease_held
-            and snapshot.resources.writer_lock_held
-            and slot.store.count() > 0
-        ),
+        partial(_vault_attempt_published, slot=slot),
         "vault attempt did not publish before cancellation",
     )
     assert live.attempt.number == 1
-    cancel = managed_job_manager.set_desired_state(
-        job_id,
-        DesiredJobState.CANCELLED,
-    )
-    assert cancel.status is JobOutcomeStatus.ACCEPTED
-    assert cancel.job is not None
-    assert cancel.job.state is JobState.CANCELLING
-    joined = await managed_job_manager.wait_for_attempt(
-        job_id,
-        timeout_seconds=_MANAGED_WAIT_SECONDS,
-    )
-    assert joined.code == "attempt_released"
-    cancelled = managed_job_manager.get(job_id)
-    assert cancelled is not None
-    assert cancelled.state is JobState.CANCELLED
-    assert cancelled.timestamps.control_requested_at is not None
-    assert cancelled.timestamps.control_acknowledged_at is not None
+    cancelled = await _cancel_managed_attempt(managed_job_manager, job_id)
     _assert_manager_resources_released(cancelled, slot, code=False)
-
-    metadata_path = root / get_config().data_dir / get_config().index_metadata_file
-    metadata = metadata_path.read_bytes() if metadata_path.exists() else None
-    metadata_mtime = (
-        metadata_path.stat().st_mtime_ns if metadata_path.exists() else None
-    )
-    point_ids = slot.store.get_all_ids()
-    point_count = slot.store.count()
-    payloads = {point_id: slot.store.get_by_id(point_id) for point_id in point_ids}
-    await asyncio.sleep(0.25)
-
-    assert managed_job_manager.get(job_id) == cancelled
-    assert slot.store.get_all_ids() == point_ids
-    assert slot.store.count() == point_count
-    assert {
-        point_id: slot.store.get_by_id(point_id) for point_id in point_ids
-    } == payloads
-    assert (metadata_path.read_bytes() if metadata_path.exists() else None) == metadata
-    assert (
-        metadata_path.stat().st_mtime_ns if metadata_path.exists() else None
-    ) == metadata_mtime
-    replay = managed_job_manager.set_desired_state(
+    await _assert_cancelled_vault_stops_writes(
+        managed_job_manager,
         job_id,
-        DesiredJobState.CANCELLED,
+        cancelled,
+        slot,
+        root,
     )
-    assert replay.status is JobOutcomeStatus.OK
-    assert replay.code == "already_satisfied"
-    rejected = managed_job_manager.set_desired_state(
-        job_id,
-        DesiredJobState.RUNNING,
-    )
-    assert rejected.status is JobOutcomeStatus.ERROR
-    assert rejected.code == "invalid_transition"
+    _assert_cancelled_job_is_absorbing(managed_job_manager, job_id)
     assert managed_job_manager.get(job_id) == cancelled
 
 
@@ -991,70 +1100,15 @@ async def test_managed_application_failure_wins_over_pending_cancel(
     assert initial is not None
     assert initial.state is JobState.SUCCEEDED
 
-    managed_facade_registry.close_project(root)
-    with VaultStore(
+    slot = _prepare_dimension_failure(
+        managed_facade_registry,
         root,
-        embedding_dim=managed_facade_registry.model.dimension + 1,
-    ) as mismatched_store:
-        mismatched_store.drop_code_table()
-        mismatched_store.ensure_code_table()
-    _write_code_files(root, len(paths), "dimension-failure")
-    slot = managed_facade_registry.peek_project(root)
-    point_lock = slot.store._collection_locks[slot.store.CODE_TABLE_NAME]  # pyright: ignore[reportPrivateUsage]
-    gpu_lock = managed_facade_registry.gpu_lock
-    gpu_lock.acquire()
-    try:
-        failed_id = jobs.start_reindex_codebase(root, clean=False)
-        embedding = await _wait_for_managed_job(
-            managed_job_manager,
-            failed_id,
-            lambda snapshot: (
-                snapshot.progress is not None
-                and snapshot.progress.step == "embed + upsert chunks"
-                and snapshot.progress.completed == 0
-                and snapshot.resources.pipeline_active
-            ),
-            "incremental job did not enter the real embedding pipeline",
-        )
-        assert embedding.state is JobState.RUNNING
-        point_lock.acquire()
-    finally:
-        gpu_lock.release()
-
-    try:
-        # The real point lock remains held while the production model completes
-        # its small four-file slice. At this boundary the worker is blocked in
-        # the protected Qdrant upsert, after the post-GPU control checkpoint.
-        await asyncio.sleep(2.0)
-        blocked = managed_job_manager.get(failed_id)
-        assert blocked is not None
-        assert blocked.state is JobState.RUNNING
-        assert blocked.progress is not None
-        assert blocked.progress.step == "embed + upsert chunks"
-        assert blocked.progress.completed == 0
-        assert managed_facade_registry.gpu_lock.locked() is False
-        cancel = managed_job_manager.set_desired_state(
-            failed_id,
-            DesiredJobState.CANCELLED,
-        )
-        assert cancel.status is JobOutcomeStatus.ACCEPTED
-        assert cancel.job is not None
-        assert cancel.job.state is JobState.CANCELLING
-    finally:
-        point_lock.release()
-
-    joined = await managed_job_manager.wait_for_attempt(
-        failed_id,
-        timeout_seconds=_MANAGED_WAIT_SECONDS,
+        file_count=len(paths),
     )
-    assert joined.code == "attempt_released"
-    failed = managed_job_manager.get(failed_id)
-    assert failed is not None
-    assert failed.state is JobState.FAILED
-    assert failed.desired_state is DesiredJobState.CANCELLED
-    assert failed.timestamps.control_requested_at is not None
-    assert failed.timestamps.control_acknowledged_at is None
-    assert failed.error_kind is not None
-    assert failed.result is not None
-    assert "cancel" not in failed.result.lower()
-    _assert_manager_resources_released(failed, slot, code=True)
+    failed_id = await _request_cancel_during_failed_upsert(
+        managed_job_manager,
+        managed_facade_registry,
+        root,
+        slot,
+    )
+    await _assert_failure_wins_over_cancel(managed_job_manager, failed_id, slot)

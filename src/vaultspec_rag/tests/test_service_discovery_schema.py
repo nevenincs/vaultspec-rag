@@ -22,8 +22,10 @@ import pytest
 
 import vaultspec_rag.server as _m
 
+from .._machine_lock import acquire_machine_lock_lease, release_machine_lock_lease
 from ..cli._service_status import _write_service_status
-from ..config import EnvVar
+from ..config import EnvVar, reset_config
+from ..server._lifecycle import _DiscoveryPublisher
 from ..server._state import (
     _HEARTBEAT_INTERVAL_SECONDS,
     _HEARTBEAT_STALENESS_SECONDS,
@@ -55,19 +57,52 @@ def _is_second_precision_offset_iso(value: str) -> bool:
 @pytest.fixture
 def status_dir(tmp_path: Path) -> Iterator[Path]:
     """Point the discovery file at an isolated temp status dir."""
-    key = EnvVar.STATUS_DIR.value
-    previous = os.environ.get(key)
-    os.environ[key] = str(tmp_path)
+    status_key = EnvVar.STATUS_DIR.value
+    storage_key = EnvVar.QDRANT_STORAGE_DIR.value
+    previous = {
+        status_key: os.environ.get(status_key),
+        storage_key: os.environ.get(storage_key),
+    }
+    os.environ[status_key] = str(tmp_path / "status")
+    os.environ[storage_key] = str(tmp_path / "qdrant" / "storage")
+    reset_config()
     try:
-        yield tmp_path
+        yield tmp_path / "status"
     finally:
-        if previous is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = previous
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        reset_config()
 
 
-@pytest.mark.usefixtures("status_dir")
+@pytest.fixture
+def owner_publisher(status_dir: Path) -> Iterator[_DiscoveryPublisher]:
+    """Retain the real isolated machine owner for daemon publications."""
+    assert status_dir == _status_file().parent
+    prior_port = _m._service_port
+    prior_token = _m._SERVICE_TOKEN
+    prior_launch = _m._launch_token
+    _m._service_port = 8766
+    _m._SERVICE_TOKEN = "test-token"
+    _m._launch_token = "test-launch-token"
+    lease, holder = acquire_machine_lock_lease()
+    assert lease is not None
+    assert holder == os.getpid()
+    publisher = _DiscoveryPublisher(lease)
+    try:
+        yield publisher
+    finally:
+        publisher.quiesce()
+        publisher.cleanup()
+        release_machine_lock_lease(lease)
+        _m._service_port = prior_port
+        _m._SERVICE_TOKEN = prior_token
+        _m._launch_token = prior_launch
+
+
+@pytest.mark.usefixtures("owner_publisher")
 class TestDiscoverySchema:
     def test_parent_write_carries_schema_version_and_second_precision_timestamp(
         self,
@@ -78,14 +113,12 @@ class TestDiscoverySchema:
         assert data["version"] == SERVICE_DISCOVERY_VERSION
         assert _is_second_precision_offset_iso(data["started_at"])
 
-    def test_heartbeat_preserves_version_and_matches_timestamp_format(self) -> None:
+    def test_heartbeat_preserves_version_and_matches_timestamp_format(
+        self,
+        owner_publisher: _DiscoveryPublisher,
+    ) -> None:
         _write_service_status(os.getpid(), 8766)
-        token_prev = _m._SERVICE_TOKEN
-        _m._SERVICE_TOKEN = "test-token"
-        try:
-            _m._heartbeat_tick_sync()
-        finally:
-            _m._SERVICE_TOKEN = token_prev
+        _m._heartbeat_tick_sync(owner_publisher)
         data = json.loads(_status_file().read_text(encoding="utf-8"))
         assert data["schema"] == SERVICE_DISCOVERY_SCHEMA
         assert data["version"] == SERVICE_DISCOVERY_VERSION
@@ -211,7 +244,10 @@ class TestDiscoverySchema:
                 proc.kill()
             proc.wait(timeout=5.0)
 
-    def test_unversioned_file_is_upgraded_on_first_heartbeat_tick(self) -> None:
+    def test_unversioned_file_is_upgraded_on_first_heartbeat_tick(
+        self,
+        owner_publisher: _DiscoveryPublisher,
+    ) -> None:
         # A file written by an older parent (no schema/version) must gain the
         # discriminator on the first tick (ADR D2). Seed a bare legacy file
         # directly, then tick.
@@ -221,12 +257,7 @@ class TestDiscoverySchema:
             "started_at": "2026-06-24T10:23:52+00:00",
         }
         _status_file().write_text(json.dumps(legacy), encoding="utf-8")
-        token_prev = _m._SERVICE_TOKEN
-        _m._SERVICE_TOKEN = "test-token"
-        try:
-            _m._heartbeat_tick_sync()
-        finally:
-            _m._SERVICE_TOKEN = token_prev
+        _m._heartbeat_tick_sync(owner_publisher)
         data = json.loads(_status_file().read_text(encoding="utf-8"))
         assert data["schema"] == SERVICE_DISCOVERY_SCHEMA
         assert data["version"] == SERVICE_DISCOVERY_VERSION

@@ -330,6 +330,8 @@ def _delete_service_status(
         absent.
     """
     path = path or _status_file()
+    if not path.parent.exists():
+        return False
     with _status_write_lock(path, timeout=timeout):
         try:
             path.unlink()

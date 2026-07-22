@@ -22,7 +22,7 @@ import sys
 import textwrap
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -876,97 +876,104 @@ class TestManagedJobAdmission:
         assert deduplicated.job == created.job
 
 
+def _create_paused_vault_job(manager: JobManager) -> str:
+    spec = JobSpec(
+        JobOperation.INDEX,
+        JobSource.VAULT,
+        "Y:/project",
+        JobMode.INCREMENTAL,
+    )
+    initiator = JobInitiator("cli", "server job create", "Y:/project")
+    created = manager.create(spec, initiator)
+    assert created.job is not None
+    job_id = created.job.id
+
+    stale_change = manager.set_desired_state(
+        job_id,
+        DesiredJobState.PAUSED,
+        expected_revision=0,
+    )
+    assert stale_change.code == "revision_conflict"
+
+    paused = manager.set_desired_state(
+        job_id,
+        DesiredJobState.PAUSED,
+        expected_revision=1,
+    )
+    assert paused.job is not None
+    assert paused.job.state is JobState.PAUSED
+    assert paused.job.revision == 2
+    replay = manager.set_desired_state(
+        job_id,
+        DesiredJobState.PAUSED,
+        expected_revision=1,
+    )
+    assert replay.code == "already_satisfied"
+    conflict = manager.set_desired_state(
+        job_id,
+        DesiredJobState.RUNNING,
+        expected_revision=1,
+    )
+    assert conflict.code == "revision_conflict"
+    return job_id
+
+
+def _resume_paused_job(manager: JobManager, job_id: str) -> None:
+    resumed = manager.set_desired_state(
+        job_id,
+        DesiredJobState.RUNNING,
+        expected_revision=2,
+    )
+    assert resumed.job is not None
+    assert resumed.job.attempt.number == 2
+    assert resumed.job.state is JobState.QUEUED
+
+
+def _assert_delivered_pause_requeues_resume(
+    manager: JobManager,
+    job_id: str,
+    task: asyncio.Task[Any],
+    control: RunControlToken,
+) -> None:
+    started = manager.start_attempt(job_id, task=task, control=control)
+    assert started.job is not None
+    assert started.job.state is JobState.RUNNING
+    pause = manager.set_desired_state(job_id, DesiredJobState.PAUSED)
+    assert pause.code == "pause_requested"
+    with pytest.raises(PauseRequested):
+        control.checkpoint()
+
+    committed_resume = manager.set_desired_state(job_id, DesiredJobState.RUNNING)
+    assert committed_resume.job is not None
+    assert committed_resume.job.state is JobState.PAUSING
+    assert committed_resume.job.desired_state is DesiredJobState.RUNNING
+
+    acknowledged = manager.acknowledge_control(
+        job_id,
+        attempt=2,
+        task=task,
+    )
+    assert acknowledged.code == "resume_requeued"
+    assert acknowledged.job is not None
+    assert acknowledged.job.state is JobState.QUEUED
+    assert acknowledged.job.attempt.number == 3
+    stale = manager.acknowledge_control(job_id, attempt=2, task=task)
+    assert stale.code == "stale_attempt_ignored"
+
+
 class TestManagedJobTransitions:
     """Revision and attempt identity make lifecycle races deterministic."""
 
     @pytest.mark.asyncio
     async def test_pause_resume_race_requeues_after_delivered_unwind(self) -> None:
         manager = JobManager(max_nonterminal=2, state_path=None)
-        spec = JobSpec(
-            JobOperation.INDEX,
-            JobSource.VAULT,
-            "Y:/project",
-            JobMode.INCREMENTAL,
-        )
-        initiator = JobInitiator("cli", "server job create", "Y:/project")
-        created = manager.create(spec, initiator)
-        assert created.job is not None
-        job_id = created.job.id
-
-        stale_change = manager.set_desired_state(
-            job_id,
-            DesiredJobState.PAUSED,
-            expected_revision=0,
-        )
-        assert stale_change.code == "revision_conflict"
-
-        paused = manager.set_desired_state(
-            job_id,
-            DesiredJobState.PAUSED,
-            expected_revision=1,
-        )
-        assert paused.job is not None
-        assert paused.job.state is JobState.PAUSED
-        assert paused.job.revision == 2
-        assert (
-            manager.set_desired_state(
-                job_id,
-                DesiredJobState.PAUSED,
-                expected_revision=1,
-            ).code
-            == "already_satisfied"
-        )
-        assert (
-            manager.set_desired_state(
-                job_id,
-                DesiredJobState.RUNNING,
-                expected_revision=1,
-            ).code
-            == "revision_conflict"
-        )
-
-        resumed = manager.set_desired_state(
-            job_id,
-            DesiredJobState.RUNNING,
-            expected_revision=2,
-        )
-        assert resumed.job is not None
-        assert resumed.job.attempt.number == 2
-        assert resumed.job.state is JobState.QUEUED
+        job_id = _create_paused_vault_job(manager)
+        _resume_paused_job(manager, job_id)
 
         task = asyncio.create_task(asyncio.Event().wait())
         control = RunControlToken()
         try:
-            started = manager.start_attempt(job_id, task=task, control=control)
-            assert started.job is not None
-            assert started.job.state is JobState.RUNNING
-            assert (
-                manager.set_desired_state(job_id, DesiredJobState.PAUSED).code
-                == "pause_requested"
-            )
-            with pytest.raises(PauseRequested):
-                control.checkpoint()
-
-            committed_resume = manager.set_desired_state(
-                job_id, DesiredJobState.RUNNING
-            )
-            assert committed_resume.job is not None
-            assert committed_resume.job.state is JobState.PAUSING
-            assert committed_resume.job.desired_state is DesiredJobState.RUNNING
-
-            acknowledged = manager.acknowledge_control(
-                job_id,
-                attempt=2,
-                task=task,
-            )
-            assert acknowledged.code == "resume_requeued"
-            assert acknowledged.job is not None
-            assert acknowledged.job.state is JobState.QUEUED
-            assert acknowledged.job.attempt.number == 3
-            assert (
-                manager.acknowledge_control(job_id, attempt=2, task=task).code
-                == "stale_attempt_ignored"
-            )
+            _assert_delivered_pause_requeues_resume(manager, job_id, task, control)
         finally:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):

@@ -943,27 +943,38 @@ if sys.platform != "win32":
     ) -> None:
         import vaultspec_rag.server as server_state
 
+        from ..._machine_lock import (
+            acquire_machine_lock_lease,
+            release_machine_lock_lease,
+        )
         from ...qdrant_runtime import (
             set_active_supervisor,
             start_supervised_from_config,
         )
+        from ...server._lifecycle import _DiscoveryPublisher
         from ...server._lifespan import _stamp_qdrant_identity
 
         with _service_env(tmp_path):
             first = start_supervised_from_config()
             original_port = server_state._service_port
+            original_token = server_state._SERVICE_TOKEN
+            lease, holder = acquire_machine_lock_lease()
+            assert lease is not None
+            assert holder == os.getpid()
+            discovery = _DiscoveryPublisher(lease)
             try:
                 attached = start_supervised_from_config()
                 assert attached.pid is None
                 server_state._service_port = _get_ephemeral_port()
-                _stamp_qdrant_identity(attached)
+                server_state._SERVICE_TOKEN = "attached-qdrant-test-token"
+                _stamp_qdrant_identity(attached, discovery)
                 status = _read_service_status()
                 assert status is not None
                 assert status["qdrant_pid"] == first.pid
                 assert float(status["qdrant_start_time"]) > 0.0
                 published_identity = status["qdrant_identity"]
 
-                server_state._heartbeat_tick_sync()
+                server_state._heartbeat_tick_sync(discovery)
 
                 after_heartbeat = _read_service_status()
                 assert after_heartbeat is not None
@@ -973,7 +984,11 @@ if sys.platform != "win32":
                     after_heartbeat["qdrant_start_time"] == status["qdrant_start_time"]
                 )
             finally:
+                discovery.quiesce()
+                discovery.cleanup()
+                release_machine_lock_lease(lease)
                 server_state._service_port = original_port
+                server_state._SERVICE_TOKEN = original_token
                 first.stop()
                 set_active_supervisor(None)
 

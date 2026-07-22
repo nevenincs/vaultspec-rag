@@ -16,7 +16,7 @@ import uuid
 from collections import deque
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 
@@ -53,7 +53,12 @@ from .registry import get_registry
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from .indexer._codebase_indexer import ContentScanResult
+    from .indexer import CodebaseIndexer
+    from .indexer._codebase_indexer import (
+        CodeIndexPreflight,
+        CodeScopedPreflight,
+        ContentScanResult,
+    )
     from .service import ServiceRegistry
 
 logger = logging.getLogger(__name__)
@@ -97,6 +102,7 @@ __all__ = [
     "start_reindex_codebase",
     "start_reindex_vault",
     "validate_code_index_policy",
+    "validate_scoped_code_index_policy",
 ]
 
 
@@ -663,22 +669,34 @@ def _admit_index_job(
     return manager, job_id, created
 
 
-def validate_code_index_policy(root: Path) -> None:
-    """Resolve the default code policy before a job can mutate durable state."""
-    from .indexer._content_policy import RootContentPolicy, SourceProfileVersion
-    from .indexer._resolved_policy import resolve_index_policy
+def _code_policy_indexer(root: Path) -> CodebaseIndexer:
+    """Build a model-free indexer used only for policy preflight."""
+    from .indexer import CodebaseIndexer
 
-    resolve_index_policy(
-        root.resolve(),
-        content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1),
+    resolved_root = root.resolve()
+    return CodebaseIndexer(
+        resolved_root,
+        model=cast("Any", None),
+        store=cast("Any", None),
     )
+
+
+def validate_scoped_code_index_policy(
+    root: Path,
+    changed_paths: tuple[Path, ...] | frozenset[Path],
+) -> CodeScopedPreflight:
+    """Validate one exact scoped path set without a full-tree discovery."""
+    return _code_policy_indexer(root).preflight_changed_paths(changed_paths)
+
+
+def validate_code_index_policy(root: Path) -> CodeIndexPreflight:
+    """Resolve and discover code work before a job mutates durable state."""
+    return _code_policy_indexer(root).preflight_content()
 
 
 def scan_code_index_preflight(root: Path) -> ContentScanResult:
     """Return bounded admission from the production structured scanner."""
-    from .api import scan_codebase
-
-    return scan_codebase(root)
+    return validate_code_index_policy(root).scan
 
 
 def _sync_legacy_started(snapshot: JobSnapshot) -> None:
@@ -743,6 +761,7 @@ def _bind_index_dispatch(
     manager: JobManager,
     job_id: str,
     *,
+    code_preflight: CodeIndexPreflight | None,
     registry: ServiceRegistry | None = None,
 ) -> JobOutcome:
     """Attach one logical job to the production indexing implementation."""
@@ -752,6 +771,7 @@ def _bind_index_dispatch(
         manager,
         job_id,
         registry=get_registry() if registry is None else registry,
+        code_preflight=code_preflight,
         on_started=_sync_legacy_started,
         on_finished=_sync_legacy_finished,
     )
@@ -760,12 +780,11 @@ def _bind_index_dispatch(
 def _prepare_index_job_activation(
     manager: JobManager,
     snapshot: JobSnapshot,
+    code_preflight: CodeIndexPreflight | None,
     registry: ServiceRegistry | None,
 ) -> JobOutcome:
     """Publish legacy observability and bind execution outside the event loop."""
     root = Path(snapshot.spec.project_root) if snapshot.spec.project_root else None
-    if snapshot.spec.source is JobSource.CODE and root is not None:
-        validate_code_index_policy(root)
     source = "vault" if snapshot.spec.source is JobSource.VAULT else "code"
     trigger: Trigger = (
         cast("Trigger", snapshot.initiator.kind)
@@ -781,7 +800,12 @@ def _prepare_index_job_activation(
         _record_id=snapshot.id,
     )
     record_progress(snapshot.id, snapshot.state.value)
-    return _bind_index_dispatch(manager, snapshot.id, registry=registry)
+    return _bind_index_dispatch(
+        manager,
+        snapshot.id,
+        code_preflight=code_preflight,
+        registry=registry,
+    )
 
 
 def _fail_index_job_activation(
@@ -797,13 +821,16 @@ def _fail_index_job_activation(
 async def activate_index_job(
     outcome: JobOutcome,
     *,
+    code_preflight: CodeIndexPreflight | None,
     registry: ServiceRegistry | None = None,
 ) -> JobOutcome:
     """Bind and dispatch one newly admitted job without blocking its event loop.
 
     Replayed or deduplicated creation outcomes already refer to an activated
     resource and are returned unchanged. Newly created paused jobs are bound
-    but remain inert until their desired state changes to ``running``.
+    but remain inert until their desired state changes to ``running``. Code
+    admission must be validated before durable creation, and the binding keeps
+    that exact discovery authority through the runnable attempt.
     """
     snapshot = outcome.job
     if (
@@ -813,11 +840,14 @@ async def activate_index_job(
     ):
         return outcome
 
+    if snapshot.spec.source is JobSource.CODE and code_preflight is None:
+        raise RuntimeError("code job activation requires its validated preflight")
     manager = get_job_manager()
     bound = await _run_in_thread(
         _prepare_index_job_activation,
         manager,
         snapshot,
+        code_preflight,
         registry,
     )
     if bound.status is JobOutcomeStatus.ERROR:
@@ -854,12 +884,13 @@ def restore_managed_jobs(*, registry: ServiceRegistry) -> tuple[int, int]:
     manager = get_job_manager()
     restored = manager.active()
     for snapshot in restored:
-        if (
-            snapshot.spec.source is JobSource.CODE
-            and snapshot.spec.project_root is not None
-        ):
-            validate_code_index_policy(Path(snapshot.spec.project_root))
-        bound = _bind_index_dispatch(manager, snapshot.id, registry=registry)
+        code_preflight = None
+        bound = _bind_index_dispatch(
+            manager,
+            snapshot.id,
+            code_preflight=code_preflight,
+            registry=registry,
+        )
         if bound.status is JobOutcomeStatus.ERROR:
             raise RuntimeError(bound.message)
     dispatched = 0
@@ -888,7 +919,7 @@ def start_reindex_vault(
     if not created:
         return job_id
 
-    bound = _bind_index_dispatch(manager, job_id)
+    bound = _bind_index_dispatch(manager, job_id, code_preflight=None)
     if bound.status is JobOutcomeStatus.ERROR:
         manager.fail_unstarted(job_id, result=bound.message)
         record_finish(job_id, error=bound.message)
@@ -910,7 +941,7 @@ def start_reindex_codebase(
     initiator_kind: str = "service",
 ) -> str:
     """Start a background codebase reindexing task and return the job_id."""
-    validate_code_index_policy(root)
+    code_preflight = validate_code_index_policy(root)
     manager, job_id, created = _admit_index_job(
         root,
         source=JobSource.CODE,
@@ -920,7 +951,11 @@ def start_reindex_codebase(
     if not created:
         return job_id
 
-    bound = _bind_index_dispatch(manager, job_id)
+    bound = _bind_index_dispatch(
+        manager,
+        job_id,
+        code_preflight=code_preflight,
+    )
     if bound.status is JobOutcomeStatus.ERROR:
         manager.fail_unstarted(job_id, result=bound.message)
         record_finish(job_id, error=bound.message)
