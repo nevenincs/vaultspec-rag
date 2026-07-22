@@ -517,11 +517,12 @@ class RunLedger:
         collection_identity: str,
         rel_path: str,
     ) -> FileState | None:
-        """Return the newest durable state for a path across generations.
+        """Return the newest indexed ownership state across generations.
 
         A newer incomplete clean generation carries no prior manifest. Looking
         only at that generation would therefore hide points still certified by
-        an older generation and still present in storage.
+        an older generation and still present in storage. Rejections and
+        failures do not certify stored ownership and cannot mask that evidence.
         """
         _validate_rel_path(rel_path)
         with self._connect() as connection:
@@ -533,11 +534,19 @@ class RunLedger:
                 WHERE generations.source_type = ?
                   AND generations.collection_identity = ?
                   AND states.rel_path = ?
+                  AND states.state = ?
+                  AND states.content_kind = ?
                 ORDER BY generations.updated_at DESC,
                          generations.created_at DESC
                 LIMIT 1
                 """,
-                (source_type.value, collection_identity, rel_path),
+                (
+                    source_type.value,
+                    collection_identity,
+                    rel_path,
+                    FileStateKind.INDEXED.value,
+                    source_type.value,
+                ),
             ).fetchone()
         return _file_state_from_row(row) if row is not None else None
 

@@ -11,6 +11,8 @@ from watchfiles import Change
 from ... import store_schema
 from ...config import get_config
 from ...indexer._content_policy import (
+    AdmissionDisposition,
+    AdmissionReason,
     ContentKind,
     ContentRoute,
     RootContentPolicy,
@@ -106,6 +108,35 @@ def _record_prior_code_owner(root: Path, rel_path: str) -> None:
     )
 
 
+def _start_incomplete_clean_code_generation(root: Path, rel_path: str) -> None:
+    ledger = RunLedger(index_run_ledger_path(root / get_config().data_dir))
+    generation = ledger.start_generation(
+        RunSignature(
+            root_identity=str(root.resolve()),
+            collection_identity=store_schema.CODE_COLLECTION,
+            source_type=ContentKind.CODE,
+            operation=RunOperation.FULL,
+            clean=True,
+            model_identity="watcher-incomplete-clean-test",
+            dense_dimensions=4,
+            embedding_schema=1,
+            payload_schema=store_schema.STORAGE_SCHEMA_VERSION,
+            content_epoch="new-content",
+            membership_epoch="new-membership",
+            preprocessing_identity="new-preprocessing",
+            configuration_fingerprint="new-configuration",
+            policy_fingerprint="new-policy",
+        )
+    )
+    ledger.record_file_state(
+        generation.generation_id,
+        FileState.policy_rejected(
+            rel_path,
+            AdmissionDisposition(None, False, AdmissionReason.NOT_ROUTED),
+        ),
+    )
+
+
 def test_deleted_path_uses_prior_ledger_owner_not_current_route(
     clean_config: None,
     tmp_path: Path,
@@ -114,6 +145,36 @@ def test_deleted_path_uses_prior_ledger_owner_not_current_route(
     rel_path = "removed.txt"
     deleted = tmp_path / rel_path
     _record_prior_code_owner(tmp_path, rel_path)
+    registry = ServiceRegistry()
+    try:
+        vault, code, document = _slots(tmp_path, registry)
+
+        observed = _record_watcher_changes(
+            [(Change.deleted, str(deleted))],
+            root_dir=tmp_path,
+            vault_dir=tmp_path / ".vault",
+            policy=_policy(tmp_path),
+            vault_slot=vault,
+            code_slot=code,
+            document_slot=document,
+        )
+
+        assert observed == (False, True, False)
+        assert code.dirty_paths() == frozenset({deleted})
+        assert document.dirty_paths() == frozenset()
+    finally:
+        registry.close_all()
+
+
+def test_deleted_path_keeps_prior_owner_across_an_incomplete_clean(
+    clean_config: None,
+    tmp_path: Path,
+) -> None:
+    del clean_config
+    rel_path = "removed.txt"
+    deleted = tmp_path / rel_path
+    _record_prior_code_owner(tmp_path, rel_path)
+    _start_incomplete_clean_code_generation(tmp_path, rel_path)
     registry = ServiceRegistry()
     try:
         vault, code, document = _slots(tmp_path, registry)
