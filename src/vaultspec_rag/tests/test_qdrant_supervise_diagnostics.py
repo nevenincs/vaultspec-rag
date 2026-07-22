@@ -239,7 +239,7 @@ class TestSupervisorOutputCapture:
                 supervisor._drain_thread is old_drain  # pyright: ignore[reportPrivateUsage]
             )
             assert old_drain.is_alive()
-            assert supervisor._proc is None  # pyright: ignore[reportPrivateUsage]
+            assert supervisor._proc is process  # pyright: ignore[reportPrivateUsage]
 
             release_path.touch()
             old_drain.join(timeout=10.0)
@@ -248,10 +248,11 @@ class TestSupervisorOutputCapture:
 
             # A later stop reaps the completed reference, after which a new
             # real child and its drain may start normally.
-            supervisor.stop(timeout=0.1)
+            assert supervisor.stop(timeout=0.1) is True
             assert (
                 supervisor._drain_thread is None  # pyright: ignore[reportPrivateUsage]
             )
+            assert supervisor._proc is None  # pyright: ignore[reportPrivateUsage]
             supervisor.spawn()
         finally:
             release_path.touch(exist_ok=True)

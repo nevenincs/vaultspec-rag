@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from .graph_cache import GraphCache
-    from .indexer import CodebaseIndexer, VaultIndexer
+    from .indexer import CodebaseIndexer, DocumentIndexer, VaultIndexer
     from .indexer._codebase_indexer import CodeExecutionPreflight
     from .indexer._resolved_policy import ResolvedIndexPolicy
     from .service import ServiceRegistry
@@ -633,6 +633,7 @@ async def watch_and_reindex(
     code_indexer: CodebaseIndexer,
     stop_event: asyncio.Event,
     graph_cache: GraphCache,
+    document_indexer: DocumentIndexer | None = None,
     debounce: int = 2000,
     cooldown: float = 30.0,
     registry: ServiceRegistry | None = None,
@@ -652,6 +653,9 @@ async def watch_and_reindex(
         vault_indexer: Initialized VaultIndexer for doc re-indexing.
         code_indexer: Initialized CodebaseIndexer for source
             re-indexing.
+        document_indexer: Managed document indexer bound to the same project.
+            Document job dispatch is introduced independently; carrying it here
+            prevents watcher construction from inventing a second lifecycle.
         stop_event: Set this event to stop the watcher gracefully.
         debounce: Milliseconds to wait for additional changes
             before processing.
@@ -710,6 +714,10 @@ async def watch_and_reindex(
     if (
         vault_indexer.root_dir.resolve() != resolved_root
         or code_indexer.root_dir.resolve() != resolved_root
+        or (
+            document_indexer is not None
+            and document_indexer.root_dir.resolve() != resolved_root
+        )
     ):
         raise ValueError("watcher indexers must belong to the watched project root")
 

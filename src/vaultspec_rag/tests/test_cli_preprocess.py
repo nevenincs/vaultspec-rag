@@ -181,6 +181,9 @@ def test_list_shows_rule(tmp_path: Path) -> None:
     assert len(rules) == 1
     assert rules[0]["pattern"] == "*.pdf"
     assert rules[0]["on_error"] == "skip"
+    assert rules[0]["target"] == "document"
+    assert rules[0]["extractor_version"] == "1.0.0"
+    assert rules[0]["path_independent"] is False
 
 
 def test_list_human_output_uses_plain_labels(tmp_path: Path) -> None:
@@ -193,7 +196,10 @@ def test_list_human_output_uses_plain_labels(tmp_path: Path) -> None:
     assert "Failure handling: skip file on failure" in result.output
     # H1: an omitted timeout_s now resolves to the bounded default, not "none".
     assert "Timeout: 120s" in result.output
-    assert "Command:" in result.output
+    assert "Target: document" in result.output
+    assert "Extractor version: 1.0.0" in result.output
+    assert "Cross-path cache reuse: disabled" in result.output
+    assert "Invocation:" in result.output
     assert "pattern=" not in result.output
     assert "on_error" not in result.output
     assert "timeout_s" not in result.output
@@ -209,6 +215,10 @@ def test_check_valid(tmp_path: Path) -> None:
     data = _json(result.output)["data"]
     assert data["valid"] is True
     assert data["rule_count"] == 1
+    assert data["schema_version"] == 2
+    assert data["targets"] == ["document"]
+    assert data["extractor_versions"] == ["1.0.0"]
+    assert data["path_independent_rules"] == 0
 
 
 def test_check_valid_human_output_is_user_facing(tmp_path: Path) -> None:
@@ -346,6 +356,10 @@ def test_status_default_mode_reports_would_run(tmp_path: Path) -> None:
     assert data["config_present"] is True
     assert data["config_valid"] is True
     assert data["rule_count"] == 1
+    assert data["schema_version"] == 2
+    assert data["targets"] == ["document"]
+    assert data["extractor_versions"] == ["1.0.0"]
+    assert data["path_independent_rules"] == 0
     assert data["would_run"] is True
     # The removed sandbox and trust surfaces must not resurface in the envelope.
     assert "sandbox_backend" not in data
@@ -362,6 +376,7 @@ def test_status_no_config_reports_no_rules(tmp_path: Path) -> None:
     data = _json(result.output)["data"]
     assert data["config_present"] is False
     assert data["rule_count"] == 0
+    assert data["schema_version"] is None
     assert data["would_run"] is False
 
 

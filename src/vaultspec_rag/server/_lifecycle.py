@@ -222,22 +222,23 @@ class _DiscoveryPublisher:
         from .._machine_lock import delete_machine_discovery
         from ..serviceclient._discovery import _delete_service_status
 
-        status_path = _m._status_file_path()
         with self._guard:
             if self._cleaned:
                 return True
             self._stopping = True
             status_clean = False
             pointer_clean = False
+            status_path: Path | None = None
             try:
+                status_path = _m._status_file_path()
                 _delete_service_status(path=status_path)
-            except (OSError, RuntimeError, TimeoutError) as exc:
+            except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
                 log_event(
                     logger,
                     "service.lifecycle",
                     "cleanup_failed",
                     severity=logging.WARNING,
-                    path=status_path,
+                    path=status_path or "unresolved service status path",
                     error=exc,
                 )
             else:
@@ -267,10 +268,10 @@ class _DiscoveryPublisher:
             phase=self.phase,
             started_at=self.started_at,
         )
-        status_path = _m._status_file_path()
         try:
+            status_path = _m._status_file_path()
             _replace_service_status(snapshot, path=status_path)
-        except (OSError, RuntimeError, TimeoutError) as exc:
+        except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
             logger.debug(
                 "service status snapshot publication skipped: %s",
                 exc,
