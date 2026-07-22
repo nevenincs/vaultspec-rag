@@ -82,6 +82,13 @@ class FileState:
     detail: str | None = None
 
     def __post_init__(self) -> None:
+        self._validate_enum_fields()
+        self._validate_path()
+        self._validate_scalar_evidence()
+        self._validate_state_shape()
+
+    def _validate_enum_fields(self) -> None:
+        """Require every supplied discriminator to use its closed enum."""
         if not isinstance(self.state, FileStateKind):
             raise TypeError("state must be a FileStateKind")
         if self.kind is not None and not isinstance(self.kind, ContentKind):
@@ -95,6 +102,8 @@ class FileState:
         ):
             raise TypeError("error_kind must be a JobErrorKind when provided")
 
+    def _validate_path(self) -> None:
+        """Require canonical project-relative POSIX path syntax."""
         path = PurePosixPath(self.rel_path)
         if (
             not self.rel_path
@@ -107,6 +116,9 @@ class FileState:
             or path.as_posix() != self.rel_path
         ):
             raise ValueError("rel_path must be canonical project-relative POSIX syntax")
+
+    def _validate_scalar_evidence(self) -> None:
+        """Validate optional hash and detail evidence independently of state."""
         if (
             self.content_hash is not None
             and _CONTENT_HASH_RE.fullmatch(self.content_hash) is None
@@ -115,6 +127,8 @@ class FileState:
         if self.detail is not None and not self.detail.strip():
             raise ValueError("detail must not be empty when provided")
 
+    def _validate_state_shape(self) -> None:
+        """Dispatch the state-specific invariant set."""
         expected_error = _FAILURE_ERROR_KIND.get(self.state)
         if expected_error is not None:
             self._validate_failure(expected_error)
