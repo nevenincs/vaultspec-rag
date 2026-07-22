@@ -142,13 +142,13 @@ def test_success_returns_validated_output(tmp_path: Path) -> None:
 
 
 _CWD_PROBE_BODY = """
-    import json, os
+    import json, os, sys
     print(json.dumps({
         "schema_version": 1,
         "preprocessor_id": "cwd-probe",
         "preprocessor_version": "1.0",
-        "source_path": os.getcwd(),
-        "text": "",
+        "source_path": sys.argv[1],
+        "text": os.getcwd(),
     }))
 """
 
@@ -163,7 +163,7 @@ def test_hook_runs_with_the_project_root_as_cwd(tmp_path: Path) -> None:
     source.write_bytes(b"x")
     result = _run(source, _rule(script), max_emitted_bytes=_CAP)
     assert result.output is not None
-    assert Path(result.output.source_path or "") == tmp_path
+    assert Path(result.output.text or "") == tmp_path
 
 
 def test_hook_receives_the_original_source_path(tmp_path: Path) -> None:

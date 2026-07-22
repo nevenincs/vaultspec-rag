@@ -47,8 +47,7 @@ def boom(source_path):
 @pytest.fixture
 def entry_modpath(tmp_path: Path) -> Generator[Path]:
     """Write an importable extractor module and expose it to child processes."""
-    pkg_dir = tmp_path / "entrypkg"
-    pkg_dir.mkdir()
+    pkg_dir = tmp_path
     (pkg_dir / "extractor_mod.py").write_text(
         textwrap.dedent(_EXTRACTOR_MODULE), encoding="utf-8"
     )
