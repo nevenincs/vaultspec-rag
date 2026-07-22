@@ -1,10 +1,8 @@
-"""Unit tests for DaemonRotatingFileHandler and install helper."""
+"""Managed-log query and daemon capture tests."""
 
 from __future__ import annotations
 
-import contextlib
 import logging
-import os
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -13,10 +11,8 @@ from ..logging_config import (
     MANAGED_LOG_TRUNCATION_MARKER,
     MAX_MANAGED_LOG_RECORD_BYTES,
     MAX_MANAGED_LOG_SOURCE_BYTES,
-    DaemonRotatingFileHandler,
     InvalidManagedLogSourceError,
     ManagedLogGroup,
-    install_daemon_log_rotation,
     log_event,
     query_managed_logs,
     read_managed_logs,
@@ -308,161 +304,6 @@ def test_log_event_emits_parseable_message_and_extra_fields(
     assert record.__dict__["vaultspec_event_fields"]["request_id"] == "abc123"
 
 
-def _clear_root_handlers() -> list[logging.Handler]:
-    """Detach and return existing root handlers so tests can restore them."""
-    root = logging.getLogger()
-    saved = list(root.handlers)
-    for h in saved:
-        root.removeHandler(h)
-    return saved
-
-
-def _restore_root_handlers(saved: list[logging.Handler]) -> None:
-    root = logging.getLogger()
-    for h in list(root.handlers):
-        root.removeHandler(h)
-        with contextlib.suppress(Exception):
-            h.close()
-    for h in saved:
-        root.addHandler(h)
-
-
-def test_daemon_rotating_handler_do_rollover_re_dups_stdio(tmp_path: Path) -> None:
-    """After doRollover, fds 1 and 2 point at the fresh (active) log file.
-
-    Verification uses cross-platform marker bytes: we write directly to
-    fds 1/2 via ``os.write`` and then read the file contents with
-    ``Path.read_bytes``.  The original fds 1/2 are saved via
-    ``os.dup`` and restored in ``finally`` so pytest's own captures
-    keep working.
-    """
-    log_path = tmp_path / "service.log"
-    saved_root = _clear_root_handlers()
-    saved_stdout = os.dup(1)
-    saved_stderr = os.dup(2)
-    try:
-        handler = DaemonRotatingFileHandler(
-            str(log_path),
-            maxBytes=64,
-            backupCount=2,
-            encoding="utf-8",
-        )
-        handler.setFormatter(logging.Formatter("%(message)s"))
-        root = logging.getLogger()
-        root.addHandler(handler)
-        root.setLevel(logging.DEBUG)
-
-        # Initial dup2 so raw writes land in the active file.
-        assert handler.stream is not None
-        os.dup2(handler.stream.fileno(), 1)
-        os.dup2(handler.stream.fileno(), 2)
-
-        # Force at least one rollover by emitting a long record.
-        logging.getLogger("test").warning("A" * 200)
-        logging.getLogger("test").warning("B" * 200)
-        handler.flush()
-
-        # After rollover, write marker bytes directly to fds 1 and 2.
-        os.write(1, b"__POST_ROLLOVER_MARKER__\n")
-        os.write(2, b"__POST_ROLLOVER_STDERR__\n")
-        # Flush OS buffers and handler.
-        os.fsync(1)
-        os.fsync(2)
-        handler.flush()
-
-        active = log_path.read_bytes()
-        rotated_path = log_path.with_name(log_path.name + ".1")
-        assert rotated_path.exists(), "Expected a rotated backup file"
-        rotated = rotated_path.read_bytes()
-
-        assert b"__POST_ROLLOVER_MARKER__" in active
-        assert b"__POST_ROLLOVER_STDERR__" in active
-        assert b"__POST_ROLLOVER_MARKER__" not in rotated
-        assert b"__POST_ROLLOVER_STDERR__" not in rotated
-    finally:
-        os.dup2(saved_stdout, 1)
-        os.dup2(saved_stderr, 2)
-        os.close(saved_stdout)
-        os.close(saved_stderr)
-        _restore_root_handlers(saved_root)
-
-
-def test_daemon_rotating_handler_rolls_when_active_file_is_pinned(
-    tmp_path: Path,
-) -> None:
-    """Rollover succeeds even when another real file handle pins the log."""
-    log_path = tmp_path / "service.log"
-    saved_root = _clear_root_handlers()
-    try:
-        handler = DaemonRotatingFileHandler(
-            str(log_path),
-            maxBytes=64,
-            backupCount=2,
-            encoding="utf-8",
-        )
-        handler.setFormatter(logging.Formatter("%(message)s"))
-        root = logging.getLogger()
-        root.addHandler(handler)
-        root.setLevel(logging.DEBUG)
-
-        logging.getLogger("test").warning("before rollover")
-        handler.flush()
-
-        with log_path.open("a", encoding="utf-8") as pinned:
-            pinned.write("pinned handle\n")
-            pinned.flush()
-            handler.doRollover()
-
-        logging.getLogger("test").warning("__AFTER_PINNED_ROLLOVER__")
-        handler.flush()
-
-        active = log_path.read_text(encoding="utf-8")
-        rotated_path = log_path.with_name(log_path.name + ".1")
-        assert rotated_path.exists(), "Expected a rotated backup file"
-        rotated = rotated_path.read_text(encoding="utf-8")
-
-        assert "__AFTER_PINNED_ROLLOVER__" in active
-        assert "before rollover" in rotated
-    finally:
-        _restore_root_handlers(saved_root)
-
-
-def test_install_attaches_to_root_logger_is_idempotent(tmp_path: Path) -> None:
-    """First call attaches exactly one handler; second call leaves count at one."""
-    log_path = tmp_path / "service.log"
-    saved_root = _clear_root_handlers()
-    saved_stdout = os.dup(1)
-    saved_stderr = os.dup(2)
-    try:
-        h1 = install_daemon_log_rotation(
-            log_path,
-            max_bytes=4096,
-            backup_count=2,
-        )
-        root = logging.getLogger()
-        daemon_handlers = [
-            h for h in root.handlers if isinstance(h, DaemonRotatingFileHandler)
-        ]
-        assert len(daemon_handlers) == 1
-
-        h2 = install_daemon_log_rotation(
-            log_path,
-            max_bytes=4096,
-            backup_count=2,
-        )
-        daemon_handlers = [
-            h for h in root.handlers if isinstance(h, DaemonRotatingFileHandler)
-        ]
-        assert len(daemon_handlers) == 1
-        assert h1 is h2
-    finally:
-        os.dup2(saved_stdout, 1)
-        os.dup2(saved_stderr, 2)
-        os.close(saved_stdout)
-        os.close(saved_stderr)
-        _restore_root_handlers(saved_root)
-
-
 def test_daemon_install_replaces_console_sink_without_duplicate_records(
     tmp_path: Path,
 ) -> None:
@@ -477,28 +318,24 @@ import os
 import sys
 from pathlib import Path
 
-from vaultspec_rag.logging_config import configure_logging, install_daemon_log_rotation
+from vaultspec_rag.logging_config import configure_logging, install_daemon_log_capture
 
 log_path = Path(sys.argv[1])
-saved_stdout = os.dup(1)
-saved_stderr = os.dup(2)
+capture = None
 try:
     configure_logging(level="INFO")
     root = logging.getLogger()
     assert root.handlers, "configure_logging must install its normal sink"
-    handler = install_daemon_log_rotation(log_path, max_bytes=4096, backup_count=2)
-    assert root.handlers == [handler]
+    capture = install_daemon_log_capture(log_path, max_bytes=4096, backup_count=2)
+    assert root.handlers == [capture.handler]
     logging.getLogger("vaultspec_rag.test").info("__ONE_CANONICAL_RECORD__")
     logging.getLogger("httpx").info("__ROUTINE_HTTP_NOISE__")
     os.write(2, b"__RAW_STDERR_RECORD__\n")
-    handler.flush()
     assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
     assert logging.getLogger("httpcore").getEffectiveLevel() >= logging.WARNING
 finally:
-    os.dup2(saved_stdout, 1)
-    os.dup2(saved_stderr, 2)
-    os.close(saved_stdout)
-    os.close(saved_stderr)
+    if capture is not None and not capture.close(timeout=10.0):
+        os._exit(71)
 """
     try:
         result = subprocess.run(
@@ -515,3 +352,67 @@ finally:
     assert rendered.count("__ONE_CANONICAL_RECORD__") == 1
     assert "__ROUTINE_HTTP_NOISE__" not in rendered
     assert rendered.count("__RAW_STDERR_RECORD__") == 1
+
+
+def test_raw_stdio_alone_drives_live_bounded_rollover(tmp_path: Path) -> None:
+    """Raw fd writes rotate live without any later Python logging record."""
+    import subprocess
+    import sys
+
+    log_path = tmp_path / "service.log"
+    max_bytes = 512
+    code = r"""
+import os
+import sys
+import time
+from pathlib import Path
+
+from vaultspec_rag.logging_config import configure_logging, install_daemon_log_capture
+
+log_path = Path(sys.argv[1])
+capture = None
+try:
+    configure_logging(level="INFO")
+    capture = install_daemon_log_capture(log_path, max_bytes=512, backup_count=2)
+    for index in range(400):
+        fd = 1 if index % 2 == 0 else 2
+        payload = f"raw-only-{index:04d}-".encode() + (b"x" * 48) + b"\n"
+        os.write(fd, payload)
+    deadline = time.monotonic() + 5.0
+    while (
+        time.monotonic() < deadline
+        and not log_path.with_name("service.log.1").exists()
+    ):
+        time.sleep(0.01)
+    if not log_path.with_name("service.log.1").exists():
+        os._exit(72)
+    os.write(1, b"__FINAL_RAW_STDOUT_MARKER__\n")
+    os.write(2, b"__FINAL_RAW_STDERR_MARKER__\n")
+finally:
+    if capture is not None and not capture.close(timeout=10.0):
+        os._exit(73)
+if capture is None or capture.persistence_error is not None:
+    os._exit(74)
+"""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", code, str(log_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"raw daemon log probe exceeded 20 seconds: {exc}")
+
+    assert result.returncode == 0, result.stderr
+    generations = sorted(tmp_path.glob("service.log*"))
+    assert {path.name for path in generations} == {
+        "service.log",
+        "service.log.1",
+        "service.log.2",
+    }
+    assert all(path.stat().st_size <= max_bytes for path in generations)
+    retained = b"".join(path.read_bytes() for path in generations)
+    assert retained.count(b"__FINAL_RAW_STDOUT_MARKER__") == 1
+    assert retained.count(b"__FINAL_RAW_STDERR_MARKER__") == 1

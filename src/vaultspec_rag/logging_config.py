@@ -14,11 +14,10 @@ import json
 import logging
 import os
 import re
-import shutil
+import sys
 import threading
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict, cast, override
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict, cast
 
 from vaultspec_core.logging_config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
     configure_logging as _core_configure_logging,
@@ -28,20 +27,22 @@ from vaultspec_core.logging_config import (  # pyright: ignore[reportMissingType
     reset_logging,
 )
 
+from ._managed_log_sink import RawRotatingLogSink
+
 __all__ = [
     "DEFAULT_MANAGED_LOG_LINES",
     "MANAGED_LOG_TRUNCATION_MARKER",
     "MAX_MANAGED_LOG_LINES",
     "MAX_MANAGED_LOG_RECORD_BYTES",
     "MAX_MANAGED_LOG_SOURCE_BYTES",
-    "DaemonRotatingFileHandler",
+    "DaemonLogCapture",
     "InvalidManagedLogSourceError",
     "ManagedLogGroup",
     "ManagedLogSource",
     "clamp_managed_log_lines",
     "configure_logging",
     "get_console",
-    "install_daemon_log_rotation",
+    "install_daemon_log_capture",
     "log_event",
     "managed_log_filters",
     "query_managed_logs",
@@ -56,7 +57,6 @@ _daemon_logging_install_lock = threading.RLock()
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from io import TextIOWrapper
 
 _EVENT_TOKEN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
 _FIELD_TOKEN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -775,303 +775,6 @@ def _contained_daemon_log_path(
     return _canonical_daemon_log_path(path)
 
 
-def _validate_daemon_rotation_settings(max_bytes: int, backup_count: int) -> None:
-    """Reject rotation settings that the handler cannot apply consistently."""
-    if (
-        isinstance(max_bytes, bool)
-        or not isinstance(  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
-            max_bytes, int
-        )
-        or max_bytes < 0
-    ):
-        raise ValueError("max_bytes must be a non-negative integer")
-    if (
-        isinstance(backup_count, bool)
-        or not isinstance(backup_count, int)  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
-        or backup_count < 0
-    ):
-        raise ValueError("backup_count must be a non-negative integer")
-
-
-class DaemonRotatingFileHandler(RotatingFileHandler):
-    """RotatingFileHandler that re-``dup2``s stdout/stderr after rollover.
-
-    The daemon is spawned with its ``stdout``/``stderr`` already ``dup2``'d
-    onto the open ``service.log`` FD by the parent CLI.  On first rotation,
-    :class:`RotatingFileHandler` renames the log file and opens a fresh
-    stream - but fds 1/2 still reference the *original* kernel inode,
-    which ``os.rename`` has just moved to ``service.log.1``.  Without a
-    re-``dup2``, stdout/stderr get stuck writing to the rotated file
-    forever and the backup-count accounting silently goes wrong.
-
-    This subclass overrides :meth:`doRollover` to ``os.dup2`` the
-    freshly-opened stream's FD onto both 1 and 2 immediately after
-    :meth:`RotatingFileHandler.doRollover` swaps the stream.  Python's
-    :class:`logging.Handler` acquires a reentrant lock
-    (``threading.RLock``) around every :meth:`emit` call, so the
-    acquire/release inside :meth:`doRollover` is a defensive no-op in
-    the common path and safe against reentrant calls.
-    """
-
-    @override
-    def __init__(
-        self,
-        filename: str | os.PathLike[str],
-        mode: str = "a",
-        maxBytes: int = 0,
-        backupCount: int = 0,
-        encoding: str | None = None,
-        delay: bool = False,
-        errors: str | None = None,
-    ) -> None:
-        """Guard the active filename before ``FileHandler`` can open it."""
-        _enforce_daemon_log_containment(
-            filename,
-            operation="open daemon log",
-        )
-        super().__init__(
-            filename,
-            mode=mode,
-            maxBytes=maxBytes,
-            backupCount=backupCount,
-            encoding=encoding,
-            delay=delay,
-            errors=errors,
-        )
-
-    def _contained_base_filename(self, *, operation: str) -> Path:
-        """Validate and canonicalize the handler's current active filename."""
-        return _contained_daemon_log_path(
-            self.baseFilename,
-            operation=operation,
-        )
-
-    @override
-    def _open(self) -> TextIOWrapper:
-        """Guard delayed and rollover reopens at the actual effect boundary."""
-        self._contained_base_filename(operation="open daemon log")
-        return super()._open()
-
-    @override
-    def rotation_filename(self, default_name: str) -> str:
-        """Require custom-namer output to remain in pytest containment."""
-        rotated = super().rotation_filename(default_name)
-        _enforce_daemon_log_containment(
-            rotated,
-            operation="resolve rotated daemon log",
-        )
-        return rotated
-
-    @override
-    def rotate(self, source: str, dest: str) -> None:
-        """Guard both sides of the rollover filesystem mutation."""
-        _enforce_daemon_log_containment(
-            source,
-            operation="rotate daemon log source",
-        )
-        _enforce_daemon_log_containment(
-            dest,
-            operation="rotate daemon log destination",
-        )
-        super().rotate(source, dest)
-
-    @override
-    def shouldRollover(self, record: logging.LogRecord) -> int:
-        """Decide rollover from on-disk file size, not the handler's own writes.
-
-        :class:`RotatingFileHandler.shouldRollover` measures
-        ``self.stream.tell()`` which only reflects bytes the handler itself
-        wrote. In the daemon, raw ``print()`` calls and third-party writes to
-        redirected stdout/stderr bypass the handler's stream and grow the file
-        directly. Without this override, the handler under-counts the file size
-        and never triggers rollover after the on-disk log passes ``maxBytes``.
-        """
-        if self.stream is None:
-            self.stream = self._open()
-        if self.maxBytes > 0:
-            size = self._safe_stream_size()
-            msg = f"{self.format(record)}\n"
-            if size + len(msg) >= self.maxBytes:
-                return 1
-        return 0
-
-    def _safe_stream_size(self) -> int:
-        """Best-effort current size of the active log file.
-
-        ``shouldRollover`` is called from inside ``emit`` and must never
-        propagate an exception, otherwise the handler's error path
-        triggers and the rollover never fires.  Both ``fileno()`` and
-        ``tell()`` raise ``ValueError`` on a closed stream, and ``fstat``
-        can fail with ``OSError`` on some platforms - fall back through
-        all three to ``0`` rather than letting any of them escape.
-        """
-        if self.stream is None:
-            return 0
-        try:
-            return os.fstat(self.stream.fileno()).st_size
-        except (OSError, ValueError) as exc:
-            logger.debug("log fstat fell through to tell(): %s", exc)
-        try:
-            return self.stream.tell()
-        except (OSError, ValueError) as exc:
-            logger.debug("log tell() fell through to 0: %s", exc)
-            return 0
-
-    @override
-    def doRollover(self) -> None:
-        """Rotate the log file, then re-``dup2`` fds 1 and 2 onto the stream.
-
-        On Windows, any open handle to the active log file blocks the
-        rename inside :meth:`RotatingFileHandler.doRollover`.  Because
-        the daemon has ``dup2``'d fds 1 and 2 onto the log file during
-        :func:`install_daemon_log_rotation`, those fds would otherwise
-        pin the file open.  The fix is to redirect fds 1 and 2 to
-        ``os.devnull`` for the duration of the rename, then re-``dup2``
-        them onto the freshly-opened stream once the parent class has
-        swapped files.
-
-        If anything in the rollover sequence raises (e.g. transient
-        Windows file-lock conflict, or ``self.stream is None`` because
-        the handler is in ``delay=True`` mode), fds 1 and 2 are
-        restored to *whatever ``self.baseFilename`` currently points
-        at* by opening it fresh and ``dup2``-ing the new fd onto 1 and
-        2.  This prevents the silent-log-loss failure mode where a
-        partial rollover leaves stdout/stderr permanently pinned to
-        ``/dev/null``.  Note that we do **not** save the original fds
-        1 / 2 before redirecting to ``/dev/null`` because those fds
-        point at the active log file and would themselves block the
-        Windows rename inside ``super().doRollover()``.
-        """
-        self._contained_base_filename(operation="rotate daemon log")
-        # logging.Handler.acquire() returns a reentrant RLock so it is
-        # safe even when emit() already holds it on our behalf.
-        self.acquire()
-        try:
-            devnull_fd = os.open(os.devnull, os.O_WRONLY)
-            try:
-                os.dup2(devnull_fd, 1)
-                os.dup2(devnull_fd, 2)
-            finally:
-                os.close(devnull_fd)
-            try:
-                super().doRollover()
-            except PermissionError:
-                if os.name != "nt":
-                    self._rebind_fds_to_basefile()
-                    raise
-                self._copytruncate_rollover()
-            except Exception:
-                self._rebind_fds_to_basefile()
-                raise
-            # ``self.stream is None`` is the expected state when
-            # ``delay=True`` is configured: the parent class defers the
-            # next ``_open()`` until the following emit().  Treat it as
-            # a valid no-op and rebind fds 1/2 to the (newly empty)
-            # ``baseFilename`` so subsequent stdout/stderr writes still
-            # land in the active log file rather than ``/dev/null``.
-            if self.stream is None:
-                self._rebind_fds_to_basefile()
-                return
-            fd = self.stream.fileno()
-            os.dup2(fd, 1)
-            os.dup2(fd, 2)
-        finally:
-            self.release()
-
-    def _copytruncate_rollover(self) -> None:
-        """Rotate by copying and truncating when Windows blocks rename.
-
-        Some Windows handles inherited by the detached service can keep
-        the active log path non-renamable even after fds 1 and 2 are
-        redirected.  In that case, preserve the normal bounded-backup
-        contract by shifting existing backups, copying the active file
-        into ``.1``, and truncating the active file in place.
-        """
-        self._contained_base_filename(operation="copy-truncate daemon log")
-        if self.stream is not None:
-            self.stream.close()
-            self.stream = None
-
-        if self.backupCount > 0:
-            self._shift_backups()
-            self._copy_base_to_first_backup()
-
-        with open(self.baseFilename, "w", encoding=self.encoding):
-            pass
-
-        if not self.delay:
-            self.stream = self._open()
-
-    def _shift_backups(self) -> None:
-        self._contained_base_filename(operation="shift daemon log backups")
-        for i in range(self.backupCount - 1, 0, -1):
-            src = self.rotation_filename(f"{self.baseFilename}.{i}")
-            dst = self.rotation_filename(f"{self.baseFilename}.{i + 1}")
-            if os.path.exists(src):
-                if os.path.exists(dst):
-                    os.remove(dst)
-                os.replace(src, dst)
-
-    def _copy_base_to_first_backup(self) -> None:
-        self._contained_base_filename(operation="copy daemon log backup")
-        first_backup = self.rotation_filename(f"{self.baseFilename}.1")
-        if os.path.exists(first_backup):
-            os.remove(first_backup)
-        if os.path.exists(self.baseFilename):
-            shutil.copyfile(self.baseFilename, first_backup)
-
-    def _rebind_fds_to_basefile(self) -> None:
-        """Best-effort: re-``dup2`` fds 1 and 2 onto ``self.baseFilename``.
-
-        Used by :meth:`doRollover`'s recovery path and the ``delay=True``
-        no-op path.  Failures are swallowed because the caller is
-        already mid-recovery - the original error (if any) still
-        propagates with its traceback intact.
-        """
-        self._contained_base_filename(operation="rebind daemon log file descriptors")
-        try:
-            recovery_fd = os.open(
-                self.baseFilename,
-                os.O_WRONLY | os.O_APPEND | os.O_CREAT,
-                0o644,
-            )
-        except OSError as exc:
-            logger.debug(
-                "fd rebind: log open(%s) failed: %s",
-                self.baseFilename,
-                exc,
-            )
-            return
-        try:
-            with contextlib.suppress(OSError):
-                os.dup2(recovery_fd, 1)
-                os.dup2(recovery_fd, 2)
-        finally:
-            with contextlib.suppress(OSError):
-                os.close(recovery_fd)
-
-
-def _matching_daemon_handler(
-    root: logging.Logger,
-    *,
-    requested_log_path: Path,
-    max_bytes: int,
-    backup_count: int,
-) -> DaemonRotatingFileHandler | None:
-    """Return the one open handler that exactly matches an install request."""
-    for handler in tuple(root.handlers):
-        if not isinstance(handler, DaemonRotatingFileHandler):
-            continue
-        stream = handler.stream
-        if stream is None or stream.closed:
-            continue
-        if _canonical_daemon_log_path(handler.baseFilename) != requested_log_path:
-            continue
-        if handler.maxBytes == max_bytes and handler.backupCount == backup_count:
-            return handler
-    return None
-
-
 def _close_detached_handler(
     handler: logging.Handler,
     failures: list[tuple[logging.Handler, Exception]],
@@ -1090,7 +793,7 @@ def _close_detached_handler(
 def _queue_injected_handlers(
     root: logging.Logger,
     *,
-    daemon_handler: DaemonRotatingFileHandler,
+    daemon_handler: logging.Handler,
     pending: list[logging.Handler],
     closed_ids: set[int],
 ) -> None:
@@ -1106,7 +809,7 @@ def _queue_injected_handlers(
 
 def _replace_root_handlers(
     root: logging.Logger,
-    daemon_handler: DaemonRotatingFileHandler,
+    daemon_handler: logging.Handler,
 ) -> list[tuple[logging.Handler, Exception]]:
     """Make the daemon handler authoritative despite hostile close callbacks."""
     pending = [
@@ -1145,62 +848,232 @@ def _report_handler_close_failures(
         )
 
 
-def install_daemon_log_rotation(
+_SERVICE_LOG_DRAIN_CHUNK_BYTES = 64 * 1024
+_SERVICE_LOG_DRAIN_JOIN_SECONDS = 3.0
+_active_daemon_capture: DaemonLogCapture | None = None
+
+
+class DaemonLogCapture:
+    """Lifecycle owner for the daemon's single-writer stdio log pipeline."""
+
+    def __init__(
+        self,
+        log_path: Path,
+        *,
+        max_bytes: int,
+        backup_count: int,
+        handler: logging.StreamHandler[Any],
+    ) -> None:
+        self.log_path = log_path
+        self.max_bytes = max_bytes
+        self.backup_count = backup_count
+        self.handler = handler
+        self._read_fd = -1
+        self._drain_thread: threading.Thread | None = None
+        self._close_lock = threading.Lock()
+        self._closed = False
+        self._persistence_error: BaseException | None = None
+
+    @property
+    def persistence_error(self) -> BaseException | None:
+        """Return the first sink/drain failure without logging recursively."""
+        return self._persistence_error
+
+    @property
+    def drain_alive(self) -> bool:
+        """Return whether the sole file-writer thread is still running."""
+        thread = self._drain_thread
+        return thread is not None and thread.is_alive()
+
+    def _record_drain_error(self, exc: BaseException) -> None:
+        if self._persistence_error is None:
+            self._persistence_error = exc
+
+    def _drain(self) -> None:
+        """Copy fixed-size raw pipe chunks into the sole rotating file sink."""
+        sink = RawRotatingLogSink(
+            self.log_path,
+            max_bytes=self.max_bytes,
+            backup_count=self.backup_count,
+        )
+        read_size = min(_SERVICE_LOG_DRAIN_CHUNK_BYTES, self.max_bytes)
+        try:
+            while True:
+                try:
+                    payload = os.read(self._read_fd, read_size)
+                except OSError as exc:
+                    self._record_drain_error(exc)
+                    break
+                if not payload:
+                    break
+                try:
+                    sink.write(payload)
+                except (OSError, ValueError) as exc:
+                    self._record_drain_error(exc)
+                    with contextlib.suppress(OSError, ValueError):
+                        sink.close()
+                    # Persistence is degraded, but the pipe must keep draining
+                    # so noisy producers cannot deadlock the service.
+                    while True:
+                        try:
+                            if not os.read(self._read_fd, read_size):
+                                break
+                        except OSError:
+                            break
+                    break
+        finally:
+            with contextlib.suppress(OSError, ValueError):
+                sink.close()
+            read_fd = self._read_fd
+            self._read_fd = -1
+            if read_fd >= 0:
+                with contextlib.suppress(OSError):
+                    os.close(read_fd)
+
+    def start(self) -> None:
+        """Create the pipe, start its drain, and atomically replace fds 1/2."""
+        read_fd, write_fd = os.pipe()
+        saved_stdout = os.dup(1)
+        saved_stderr = os.dup(2)
+        self._read_fd = read_fd
+        thread = threading.Thread(
+            target=self._drain,
+            name="service-log-drain",
+            daemon=True,
+        )
+        self._drain_thread = thread
+        thread.start()
+        try:
+            os.dup2(write_fd, 1)
+            os.dup2(write_fd, 2)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.dup2(saved_stdout, 1)
+            with contextlib.suppress(OSError):
+                os.dup2(saved_stderr, 2)
+            raise
+        finally:
+            os.close(write_fd)
+            os.close(saved_stdout)
+            os.close(saved_stderr)
+
+    @staticmethod
+    def _flush_producers() -> None:
+        """Flush Python producers before their pipe writers are detached."""
+        root = logging.getLogger()
+        for handler in tuple(root.handlers):
+            with contextlib.suppress(Exception):
+                handler.flush()
+        for stream in (sys.stdout, sys.stderr):
+            with contextlib.suppress(Exception):
+                stream.flush()
+
+    @staticmethod
+    def _detach_stdio() -> None:
+        """Close both pipe writers by rebinding stdout/stderr to null."""
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull_fd, 1)
+            os.dup2(devnull_fd, 2)
+        finally:
+            os.close(devnull_fd)
+
+    def close(self, *, timeout: float = _SERVICE_LOG_DRAIN_JOIN_SECONDS) -> bool:
+        """Flush producers, detach writers, and join the sole sink owner."""
+        global _active_daemon_capture
+
+        with self._close_lock:
+            if self._closed:
+                return not self.drain_alive
+            self._flush_producers()
+            root = logging.getLogger()
+            if self.handler in root.handlers:
+                root.removeHandler(self.handler)
+            with contextlib.suppress(Exception):
+                self.handler.close()
+            self._detach_stdio()
+            thread = self._drain_thread
+            if thread is not None:
+                thread.join(timeout=max(0.0, timeout))
+            completed = thread is None or not thread.is_alive()
+            if completed:
+                self._drain_thread = None
+                self._closed = True
+                with _daemon_logging_install_lock:
+                    if _active_daemon_capture is self:
+                        _active_daemon_capture = None
+            return completed
+
+
+def _validate_daemon_capture_settings(max_bytes: int, backup_count: int) -> None:
+    """Reject settings that cannot preserve bounded managed-log retention."""
+    if (
+        isinstance(max_bytes, bool)
+        or not isinstance(max_bytes, int)  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
+        or max_bytes <= 0
+    ):
+        raise ValueError("max_bytes must be a positive integer")
+    if (
+        isinstance(backup_count, bool)
+        or not isinstance(backup_count, int)  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
+        or backup_count < 0
+    ):
+        raise ValueError("backup_count must be a non-negative integer")
+
+
+def install_daemon_log_capture(
     log_path: Path,
     *,
     max_bytes: int,
     backup_count: int,
-) -> DaemonRotatingFileHandler:
-    """Install the daemon's single canonical root logging sink.
+) -> DaemonLogCapture:
+    """Install the daemon's one pipe and one exclusive rotating-log writer.
 
-    Idempotent when the attached handler is open and its path and rotation
-    settings exactly match this request. A closed or stale handler is replaced.
-    Every other root handler is atomically detached before close callbacks run;
-    the final ``finally`` postcondition restores exactly one canonical sink even
-    if a hostile or failing ``close()`` mutates ``root.handlers``. Stdout and
-    stderr are then rebound to the canonical handler's live stream.
+    Root logging, Uvicorn stream handlers, ``print``, direct ``os.write`` calls,
+    and native stdout/stderr all enter the same pipe. Only the bounded binary
+    drain touches ``service.log``, so every byte participates in rollover.
 
     Args:
         log_path: Absolute path to the active ``service.log`` file.
             The parent directory is created if missing.
-        max_bytes: Rollover threshold in bytes.  ``0`` disables
-            rotation (handler still installs but never rolls).
+        max_bytes: Positive rollover threshold in bytes.
         backup_count: Number of rotated backups to keep.  ``0`` rolls
             and truncates without keeping history.
 
     Returns:
-        The installed (or pre-existing)
-        :class:`DaemonRotatingFileHandler` instance.
+        An explicit lifecycle handle which must be closed after all producers.
     """
-    _validate_daemon_rotation_settings(max_bytes, backup_count)
+    global _active_daemon_capture
+
+    _validate_daemon_capture_settings(max_bytes, backup_count)
     requested_log_path = _contained_daemon_log_path(
         log_path,
-        operation="install daemon log rotation",
+        operation="install daemon log capture",
     )
     formatter = logging.Formatter(
         "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )
 
     with _daemon_logging_install_lock:
+        if _active_daemon_capture is not None:
+            raise RuntimeError("daemon log capture is already active")
         root = logging.getLogger()
-        daemon_handler = _matching_daemon_handler(
-            root,
-            requested_log_path=requested_log_path,
+        requested_log_path.parent.mkdir(parents=True, exist_ok=True)
+        daemon_handler = logging.StreamHandler(sys.stderr)
+        daemon_handler.setFormatter(formatter)
+        capture = DaemonLogCapture(
+            requested_log_path,
             max_bytes=max_bytes,
             backup_count=backup_count,
+            handler=daemon_handler,
         )
-
-        if daemon_handler is None:
-            requested_log_path.parent.mkdir(parents=True, exist_ok=True)
-            daemon_handler = DaemonRotatingFileHandler(
-                str(requested_log_path),
-                maxBytes=max_bytes,
-                backupCount=backup_count,
-                encoding="utf-8",
-            )
-        daemon_handler.setFormatter(formatter)
-
-        close_failures = _replace_root_handlers(root, daemon_handler)
+        capture.start()
+        try:
+            close_failures = _replace_root_handlers(root, daemon_handler)
+        except BaseException:
+            capture.close()
+            raise
+        _active_daemon_capture = capture
 
         # Routine Qdrant HTTP requests are already represented by the service's
         # structured operation summaries. Keeping client wire chatter at INFO
@@ -1208,15 +1081,5 @@ def install_daemon_log_rotation(
         logging.getLogger("httpx").setLevel(logging.WARNING)
         logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-        stream = daemon_handler.stream
-        if stream is None or stream.closed:
-            # A handler retained above must be open; a newly constructed handler
-            # is non-delayed. Treat any contrary state as a failed install.
-            raise RuntimeError("canonical daemon log handler has no live stream")
-        fd = stream.fileno()
-        os.dup2(fd, 1)
-        os.dup2(fd, 2)
-
         _report_handler_close_failures(close_failures)
-
-        return daemon_handler
+        return capture
