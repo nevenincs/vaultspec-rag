@@ -747,7 +747,13 @@ def _job_outcome_status(code: str) -> int:
     return 500
 
 
-def _job_error(command: str, code: str, message: str) -> JSONResponse:
+def _job_error(
+    command: str,
+    code: str,
+    message: str,
+    *,
+    extra: dict[str, object] | None = None,
+) -> JSONResponse:
     from ..job_models import JobOutcomeStatus
 
     return _job_response(
@@ -756,7 +762,8 @@ def _job_error(command: str, code: str, message: str) -> JSONResponse:
             status=JobOutcomeStatus.ERROR,
             code=code,
             message=message,
-        )
+        ),
+        extra=extra,
     )
 
 
@@ -1561,9 +1568,11 @@ async def reindex_route(request: Request) -> JSONResponse:
                 allow_aliases=False,
             )
         except SourceTypeParseError as exc:
-            return JSONResponse(
-                {"ok": False, "error": exc.error_kind, **exc.as_payload()},
-                status_code=400,
+            return _job_error(
+                "create",
+                "invalid_job_spec",
+                str(exc),
+                extra={"error": exc.error_kind, **exc.as_payload()},
             )
         clean = payload.get("clean", False)
         if type(clean) is not bool:
