@@ -50,24 +50,21 @@ related:
 
 ## Description
 
-- Add one lazy process-wide manager with exact active, terminal, runtime, and control ownership.
-- Refuse admission at the configured nonterminal bound without evicting controllable work.
-- Deduplicate active work by resolved root and source identity and reject conflicting modes or desired states.
-- Retain bounded idempotency replay records and return structured conflicts for reused keys.
-- Hold strong task and worker references and revise immutable runtime snapshots on ownership changes.
-- Guard terminal retention until every runtime and execution-resource flag is released.
+- Add one thread-safe `JobManager` with independent active and terminal ownership.
+- Keep nonterminal jobs exact-addressable and refuse admission at the configured bound.
+- Replay idempotent creates, reject key reuse with changed input, and deduplicate equivalent active work before capacity checks.
+- Retain task and cooperative-control references by exact job ID and release them only when the owning task identity matches.
+- Bound terminal history independently and expire its associated idempotency bindings on eviction.
 
 ## Outcome
 
-The service domain now owns an exact-addressable, bounded job registry that cannot lose
-nonterminal work to history eviction. Equivalent root aliases converge on one active slot,
-create retries are idempotent, and runtime ownership remains strongly held until explicit
-release.
+The service domain now owns canonical job resources through an admission-safe manager.
+Controllable work cannot be evicted by history growth, repeated submissions resolve to
+the same logical resource, and stale attempt cleanup cannot detach a newer runtime.
 
 ## Notes
 
-Independent review first found two High defects: lexical root aliases could bypass
-deduplication, and maintenance could be admitted paused despite having no control
-capabilities. Both were corrected; root-resolution errors are also structured instead of
-escaping admission. Final review passed. Ruff, ty, BasedPyright, diff checks, real threaded
-and asyncio probes, and 49 focused tests passed.
+Ruff and `ty` passed, as did a real concurrent submission probe covering exact-ID
+lookup and active-work deduplication. The existing focused suites passed 56 tests; two
+live-service fixture setups were unavailable because this worktree has no provisioned
+Qdrant server binary, before either job-registry test body ran.

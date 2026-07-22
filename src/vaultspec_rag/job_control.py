@@ -27,6 +27,7 @@ __all__ = [
     "RunControlSignal",
     "RunControlSnapshot",
     "RunControlToken",
+    "ShutdownRequested",
 ]
 
 
@@ -35,6 +36,7 @@ class ControlRequest(StrEnum):
 
     PAUSE = "pause"
     CANCEL = "cancel"
+    SHUTDOWN = "shutdown"
 
 
 class RunControlSignal(BaseException):
@@ -64,6 +66,12 @@ class CancelRequested(RunControlSignal):
     request = ControlRequest.CANCEL
 
 
+class ShutdownRequested(RunControlSignal):
+    """Raised when daemon shutdown cooperatively interrupts an attempt."""
+
+    request = ControlRequest.SHUTDOWN
+
+
 @runtime_checkable
 class RunControl(Protocol):
     """Control surface consumed by synchronous indexing code."""
@@ -89,9 +97,10 @@ class RunControlToken:
     """Thread-safe cooperative control token for one indexing attempt.
 
     Pause is reversible until orchestration decides how to reconcile the
-    attempt. Cancellation is absorbing: once requested, neither pause nor
-    resume can weaken it. A request remains pending after signal delivery so
-    every cooperating thread that reaches a checkpoint also unwinds.
+    attempt. Cancellation is absorbing for operator control, while daemon
+    shutdown is the highest-priority absorbing request. A request remains
+    pending after signal delivery so every cooperating thread that reaches a
+    checkpoint also unwinds.
     """
 
     def __init__(self) -> None:
@@ -103,16 +112,25 @@ class RunControlToken:
     def request_pause(self) -> bool:
         """Request pause, returning whether the desired request changed."""
         with self._lock:
-            if self._desired is ControlRequest.CANCEL:
+            if self._desired in {ControlRequest.CANCEL, ControlRequest.SHUTDOWN}:
                 return False
             changed = self._desired is not ControlRequest.PAUSE
             self._desired = ControlRequest.PAUSE
             return changed
 
     def request_resume(self) -> bool:
-        """Withdraw a pause request unless cancellation is already desired."""
+        """Withdraw an undelivered pause request.
+
+        Once a checkpoint has delivered pause, the attempt must finish its
+        cooperative unwind. Returning ``False`` tells orchestration to queue a
+        reconciliation attempt after acknowledgement instead of pretending the
+        current stack can continue.
+        """
         with self._lock:
-            if self._desired is not ControlRequest.PAUSE:
+            if (
+                self._desired is not ControlRequest.PAUSE
+                or self._delivered is ControlRequest.PAUSE
+            ):
                 return False
             self._desired = None
             return True
@@ -120,8 +138,17 @@ class RunControlToken:
     def request_cancel(self) -> bool:
         """Request absorbing cancellation, returning whether state changed."""
         with self._lock:
+            if self._desired is ControlRequest.SHUTDOWN:
+                return False
             changed = self._desired is not ControlRequest.CANCEL
             self._desired = ControlRequest.CANCEL
+            return changed
+
+    def request_shutdown(self) -> bool:
+        """Request a distinct absorbing daemon-shutdown interruption."""
+        with self._lock:
+            changed = self._desired is not ControlRequest.SHUTDOWN
+            self._desired = ControlRequest.SHUTDOWN
             return changed
 
     def snapshot(self) -> RunControlSnapshot:
@@ -182,6 +209,8 @@ class RunControlToken:
         if request is None:
             return None
         self._delivered = request
+        if request is ControlRequest.SHUTDOWN:
+            return ShutdownRequested()
         if request is ControlRequest.CANCEL:
             return CancelRequested()
         return PauseRequested()

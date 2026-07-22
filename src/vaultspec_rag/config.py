@@ -722,7 +722,11 @@ class VaultSpecConfigWrapper:
         )
         return demote - self.code_noise_hide_domains
 
-    def __init__(self, base: BaseConfig) -> None:
+    def __init__(
+        self,
+        base: BaseConfig,
+        rag_overrides: dict[str, Any] | None = None,
+    ) -> None:
         """Initialise the wrapper around an existing config.
 
         Args:
@@ -732,6 +736,11 @@ class VaultSpecConfigWrapper:
             None.
         """
         self._base = base
+        self._rag_overrides = {
+            key: value
+            for key, value in (rag_overrides or {}).items()
+            if key in self._RAG_DEFAULTS
+        }
 
     @property
     def managed_log_max_bytes(self) -> int:
@@ -1026,6 +1035,8 @@ class VaultSpecConfigWrapper:
         return cast("IndexSupportProfile", normalized)
 
     def _resolve_rag_default(self, name: str) -> Any:
+        if name in self._rag_overrides:
+            return self._rag_overrides[name]
         # 1. CLI override via base config
         try:
             return getattr(self._base, name)
@@ -1165,7 +1176,7 @@ class VaultSpecConfigWrapper:
             A new ``VaultSpecConfigWrapper`` instance.
         """
         base = get_base_config(overrides)
-        return cls(base)
+        return cls(base, overrides)
 
 
 _cached_config: VaultSpecConfigWrapper | None = None
@@ -1191,7 +1202,7 @@ def get_config(
     global _cached_config
     if overrides is not None:
         base = get_base_config(overrides)
-        _cached_config = VaultSpecConfigWrapper(base)
+        _cached_config = VaultSpecConfigWrapper(base, overrides)
         return _cached_config
     if _cached_config is None:
         base = get_base_config()

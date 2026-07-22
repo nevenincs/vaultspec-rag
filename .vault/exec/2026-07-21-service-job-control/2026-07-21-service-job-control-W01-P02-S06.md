@@ -50,29 +50,21 @@ related:
 
 ## Description
 
-- Add revisioned pause, resume, cancellation, retry, and terminal-deletion commands.
-- Bind runtime ownership and observed-state acknowledgements to the exact task and attempt.
-- Make cancellation absorbing and protect terminal state with first-terminal-writer-wins.
-- Gate retry and deletion on complete runtime and execution-resource release.
-- Serialize dispatch, control delivery, withdrawal, completion, and replacement races.
+- Apply optimistic revisions only when desired state changes; treat same-target retries as successful replays.
+- Transition queued and live work through truthful pause, resume, and graceful cancellation states.
+- Distinguish a retractable pause from a delivered unwind and requeue reconciliation without exposing a false paused state.
+- Bind attempt start, control acknowledgement, and terminal completion to the exact task and attempt number.
+- Preserve the first terminal writer, create linked retries for retryable outcomes, and restrict deletion to terminal history.
+- Reject force termination explicitly while the thread runtime cannot provide it.
 
 ## Outcome
 
-The durable job manager now exposes deterministic lifecycle transitions over immutable
-snapshots. Stale revisions, tasks, and attempt generations cannot mutate replacement work;
-pause withdrawal and delivery have one atomic ordering; cancellation cannot be reversed; and
-terminal completion, retry, and deletion preserve resource-release and retention invariants.
+The manager now provides the complete revisioned lifecycle state machine. Pause and
+cancellation acknowledge only through the unwind boundary, stale attempt callbacks cannot
+rewrite newer work, and retries and deletion preserve immutable terminal history.
 
 ## Notes
 
-Independent review found two High defects: a stale dispatcher could claim queued work after a
-pause committed, and a stale attempt generation could seize or release a replacement runtime.
-Both were corrected with atomic dispatch-state gating and exact task-plus-attempt ownership.
-Final review found no unresolved findings at any severity. Forty-nine focused tests, exact
-production probes, two 200-iteration threaded race probes, Ruff, ty, BasedPyright, and diff
-checks passed.
-
-The legacy live-service registry tests were also attempted. Their 49 unit assertions passed,
-but the live fixture stopped before job assertions because the Windows Qdrant process-image
-witness exhausted its bounded inspection path. That fixture-level failure is separate from
-this Step and remains visible for follow-up verification.
+Ruff, formatting, `ty`, and strict BasedPyright passed. All 49 focused unit tests passed,
+and a real asyncio probe exercised immediate pause, pre-delivery resume, post-delivery
+resume, cancellation acknowledgement, first-terminal-writer-wins, retry, and deletion.

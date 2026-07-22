@@ -31,7 +31,13 @@ from .graph_cache import GraphCache
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["ProjectSlot", "RegistryFullError", "ServiceHealth", "ServiceRegistry"]
+__all__ = [
+    "ProjectBusyError",
+    "ProjectSlot",
+    "RegistryFullError",
+    "ServiceHealth",
+    "ServiceRegistry",
+]
 
 
 class ServiceHealth(TypedDict):
@@ -55,6 +61,14 @@ class RegistryFullError(Exception):
             f"ServiceRegistry is full ({max_projects} slots, all busy)",
         )
         self.max_projects = max_projects
+
+
+class ProjectBusyError(RuntimeError):
+    """Raised when explicit project closure would invalidate a live lease."""
+
+    def __init__(self, root: Path) -> None:
+        super().__init__(f"Project is busy and cannot be closed: {root}")
+        self.root = root
 
 
 @dataclass
@@ -123,8 +137,9 @@ class ServiceRegistry:
         self._gpu_lock = threading.Lock()
         self._reranker: CrossEncoder | None = None
         self._reranker_lock = threading.Lock()
-        self._on_close_project: Callable[[Path], None] | None = None
+        self._on_close_project: Callable[[Path], object] | None = None
         self._shutting_down = False
+        self._shutdown_complete = False
         self._idle_ttl_seconds: float = float(cfg.service_idle_ttl_seconds)
         self._max_projects: int = int(cfg.service_max_projects)
 
@@ -141,6 +156,37 @@ class ServiceRegistry:
         return self._idle_ttl_seconds
 
     # -- model lifecycle ---------------------------------------------------
+
+    def prepare_startup(self) -> bool:
+        """Reopen this exact registry after one fully completed shutdown.
+
+        Returns:
+            ``True`` when a closed registry was reopened; ``False`` for its
+            initial service life.
+
+        Raises:
+            RuntimeError: If teardown is incomplete or retained state makes
+                reopening unsafe.
+        """
+        with self._lock:
+            if not self._shutting_down:
+                return False
+            if not self._shutdown_complete:
+                raise RuntimeError(
+                    "ServiceRegistry cannot reopen before shutdown completes"
+                )
+            if (
+                self._projects
+                or self._root_locks
+                or self._model is not None
+                or self._reranker is not None
+            ):
+                raise RuntimeError(
+                    "ServiceRegistry cannot reopen while owned state remains"
+                )
+            self._shutting_down = False
+            self._shutdown_complete = False
+            return True
 
     def load_model(self, model_name: str | None = None) -> None:
         """Eagerly load GPU models into ``_model``.
@@ -705,24 +751,27 @@ class ServiceRegistry:
     def close_project(self, root: Path) -> None:
         """Close and remove the project slot for *root*.
 
-        Invokes ``_on_close_project`` callback (if set) to stop the
-        project's filesystem watcher before closing the store.
+        Signals the watcher-stop callback, then uses the same atomic busy check
+        as explicit eviction before closing the unleased store. A live lease
+        fails closed instead of invalidating storage beneath its worker.
 
         Args:
             root: Workspace root directory.
+
+        Raises:
+            ProjectBusyError: If the project has one or more active leases.
         """
         root = root.resolve()
-        # Stop the watcher BEFORE closing the store to prevent
-        # incremental_index() running against a closed store.
+        # Signal intake even when the slot is not present yet: a deferred cold
+        # watcher warm may be between registration and peek_project(), and a
+        # not-found eviction must not let that stale watcher generation publish
+        # later. Successful try_evict teardown repeats the safe stop signal
+        # after atomically removing the unleased slot.
         if self._on_close_project is not None:
             self._on_close_project(root)
-        with self._lock:
-            slot = self._projects.pop(root, None)
-            self._root_locks.pop(root, None)
-        if slot is not None:
-            slot.graph_cache.invalidate()
-            slot.store.close()
-            logger.info("ProjectSlot closed for %s", root)
+        _evicted, reason = self.try_evict(root)
+        if reason == "busy":
+            raise ProjectBusyError(root)
 
     def close_all(self) -> None:
         """Shut down the registry with a bounded 5-second busy drain.
@@ -740,6 +789,7 @@ class ServiceRegistry:
         """
         with self._lock:
             self._shutting_down = True
+            self._shutdown_complete = False
 
         # ADR D6: bounded drain.  5.0 seconds is intentionally hardcoded.
         deadline = time.monotonic() + 5.0
@@ -791,6 +841,7 @@ class ServiceRegistry:
             self._root_locks.clear()
             self._model = None
             self._reranker = None
+            self._shutdown_complete = True
         logger.info("ServiceRegistry shut down")
 
     # -- introspection -----------------------------------------------------

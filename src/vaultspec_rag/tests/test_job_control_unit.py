@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from ..config import EnvVar
+from ..config import EnvVar, get_config, reset_config
 from ..job_control import (
     NO_RUN_CONTROL,
     CancelRequested,
@@ -145,6 +145,16 @@ def test_pause_is_reversible_before_a_safe_checkpoint() -> None:
     assert snapshot.protected_depth == 0
 
 
+def test_pause_cannot_be_withdrawn_after_checkpoint_delivery() -> None:
+    token = RunControlToken()
+    assert token.request_pause() is True
+    with pytest.raises(PauseRequested):
+        token.checkpoint()
+
+    assert token.request_resume() is False
+    assert token.snapshot().desired is ControlRequest.PAUSE
+
+
 def test_cancellation_is_absorbing_and_reaches_every_checkpoint() -> None:
     token = RunControlToken()
 
@@ -237,6 +247,21 @@ def test_job_control_config_parses_environment_values() -> None:
         )
         == "VALUE|float|12.5"
     )
+
+
+def test_job_control_config_honors_public_overrides() -> None:
+    reset_config()
+    try:
+        config = get_config(
+            {
+                "job_max_nonterminal": 9,
+                "job_shutdown_timeout_seconds": 17.5,
+            }
+        )
+        assert config.job_max_nonterminal == 9
+        assert config.job_shutdown_timeout_seconds == 17.5
+    finally:
+        reset_config()
 
 
 @pytest.mark.parametrize("raw_value", ["0", "-1", "1.5"])

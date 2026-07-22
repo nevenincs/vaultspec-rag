@@ -13,11 +13,14 @@ from dataclasses import dataclass
 from itertools import chain, pairwise
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
+from ..job_control import NO_RUN_CONTROL
+
 if TYPE_CHECKING:
     import threading
     from collections.abc import Callable, Iterable, Iterator, Sequence
 
     from ..embeddings import EmbeddingModel
+    from ..job_control import RunControl
     from ..memory_probe import MemoryProbe
     from ..progress import ProgressReporter
     from ..store import CodeChunk, VaultChunk, VaultDocument, VaultStore
@@ -28,6 +31,7 @@ __all__ = [
     "CodeFileSegment",
     "WeightedCodeSlice",
     "_release_cuda_cache",
+    "_stream_encode_and_upsert_codebase",
     "_stream_encode_and_upsert_vault",
     "encode_and_upsert_code_slice",
     "estimate_code_chunk_bytes",
@@ -323,6 +327,7 @@ def _encode_and_upsert_vault_slice(
     gpu_lock: threading.Lock | None,
     sparse_enabled: bool,
     probe: MemoryProbe,
+    run_control: RunControl = NO_RUN_CONTROL,
 ) -> None:
     """Encode, synchronously store, and release one vault chunk slice."""
 
@@ -331,6 +336,7 @@ def _encode_and_upsert_vault_slice(
 
     probe.checkpoint(f"slice-{slice_index}-before-encode")
     try:
+        run_control.checkpoint()
         _encode_slice_vector_fields(
             chunks=slice_chunks,
             slice_texts=[f"{chunk.title}\n\n{chunk.text}" for chunk in slice_chunks],
@@ -340,6 +346,7 @@ def _encode_and_upsert_vault_slice(
             encode_batch_size=None,
             after_encode=_after_encode,
         )
+        run_control.checkpoint()
         store.upsert_document_chunks(slice_chunks, write_policy=None)
     finally:
         _release_vector_fields(slice_chunks)
@@ -354,6 +361,7 @@ def _stream_encode_and_upsert_vault(
     store: VaultStore,
     gpu_lock: threading.Lock | None,
     reporter: ProgressReporter,
+    run_control: RunControl = NO_RUN_CONTROL,
 ) -> dict[str, int]:
     """Encode dense + sparse vectors and upsert per-slice.
 
@@ -413,6 +421,7 @@ def _stream_encode_and_upsert_vault(
                     gpu_lock=gpu_lock,
                     sparse_enabled=sparse_enabled,
                     probe=probe,
+                    run_control=run_control,
                 )
                 probe.checkpoint(f"slice-{i}-after-empty-cache")
                 reporter.advance(len(slice_chunks))
@@ -635,6 +644,7 @@ def iter_code_file_segments(
     dense_dimension: int | None = None,
     sparse_enabled: bool | None = None,
     sparse_dimension: int | None = None,
+    run_control: RunControl = NO_RUN_CONTROL,
 ) -> Iterator[CodeFileSegment]:
     """Yield ordered file-local segments within configured chunk/byte bounds.
 
@@ -644,6 +654,7 @@ def iter_code_file_segments(
     single overweight chunk is rejected because silently admitting it would
     make the configured memory ceiling non-enforceable.
     """
+    run_control.checkpoint()
     limits = _resolve_code_segment_limits(
         max_chunks=max_chunks,
         max_bytes=max_bytes,
@@ -662,6 +673,7 @@ def iter_code_file_segments(
     segment_bytes = 0
 
     for chunk in chain((first_chunk,), chunk_iterator):
+        run_control.checkpoint()
         chunk_bytes = _file_chunk_weight(
             chunk,
             path=path,
@@ -680,13 +692,16 @@ def iter_code_file_segments(
                 estimated_bytes=segment_bytes,
                 is_file_end=False,
             )
+            run_control.checkpoint()
             ordinal += 1
             segment_chunks.clear()
             segment_bytes = 0
 
         segment_chunks.append(chunk)
         segment_bytes += chunk_bytes
+        run_control.checkpoint()
 
+    run_control.checkpoint()
     yield CodeFileSegment(
         path=path,
         ordinal=ordinal,
@@ -694,6 +709,7 @@ def iter_code_file_segments(
         estimated_bytes=segment_bytes,
         is_file_end=True,
     )
+    run_control.checkpoint()
 
 
 def iter_weighted_code_slices(
@@ -701,6 +717,7 @@ def iter_weighted_code_slices(
     *,
     max_chunks: int | None = None,
     max_bytes: int | None = None,
+    run_control: RunControl = NO_RUN_CONTROL,
 ) -> Iterator[WeightedCodeSlice]:
     """Pack ordered file segments into bounded encode/upsert slices.
 
@@ -711,6 +728,7 @@ def iter_weighted_code_slices(
     """
     from ..config import get_config
 
+    run_control.checkpoint()
     configured_chunks = _selected_int(
         max_chunks,
         lambda: int(get_config().index_queue_max_chunks),
@@ -734,6 +752,7 @@ def iter_weighted_code_slices(
     previous_segment: CodeFileSegment | None = None
 
     for segment in segments:
+        run_control.checkpoint()
         if previous_segment is not None:
             _validate_segment_transition(previous_segment, segment)
         previous_segment = segment
@@ -754,6 +773,7 @@ def iter_weighted_code_slices(
                 chunks=tuple(slice_chunks),
                 estimated_bytes=slice_bytes,
             )
+            run_control.checkpoint()
             slice_segments.clear()
             slice_chunks.clear()
             slice_bytes = 0
@@ -761,13 +781,16 @@ def iter_weighted_code_slices(
         slice_segments.append(segment)
         slice_chunks.extend(segment.chunks)
         slice_bytes += segment.estimated_bytes
+        run_control.checkpoint()
 
     if slice_segments:
+        run_control.checkpoint()
         yield WeightedCodeSlice(
             segments=tuple(slice_segments),
             chunks=tuple(slice_chunks),
             estimated_bytes=slice_bytes,
         )
+        run_control.checkpoint()
 
 
 def encode_and_upsert_code_slice(
@@ -778,6 +801,7 @@ def encode_and_upsert_code_slice(
     gpu_lock: threading.Lock | None,
     release_cache: bool = True,
     encode_batch_size: int | None = None,
+    run_control: RunControl = NO_RUN_CONTROL,
 ) -> None:
     """Encode dense + sparse vectors for one slice of code chunks and upsert it.
 
@@ -800,6 +824,8 @@ def encode_and_upsert_code_slice(
             model default. The codebase path passes the larger
             ``embedding_code_encode_batch_size`` (#155 P03) since code chunks
             are short and length-uniform.
+        run_control: Cooperative control checked outside the GPU lock before
+            and after this bounded slice.
     """
     from ..config import get_config
 
@@ -808,6 +834,7 @@ def encode_and_upsert_code_slice(
     if not slice_chunks:
         return
     try:
+        run_control.checkpoint()
         _encode_slice_vector_fields(
             chunks=slice_chunks,
             slice_texts=[_code_embed_text(chunk) for chunk in slice_chunks],
@@ -816,6 +843,7 @@ def encode_and_upsert_code_slice(
             sparse_enabled=bool(cfg.sparse_enabled),
             encode_batch_size=encode_batch_size,
         )
+        run_control.checkpoint()
         store.upsert_code_chunks(slice_chunks, write_policy=None)
     finally:
         # A successful synchronous upsert is the durable boundary. Failed or
@@ -824,3 +852,53 @@ def encode_and_upsert_code_slice(
         _release_vector_fields(slice_chunks)
         if release_cache:
             _release_cuda_cache()
+
+
+def _stream_encode_and_upsert_codebase(
+    *,
+    chunks: list[CodeChunk],
+    slice_size: int,
+    model: EmbeddingModel,
+    store: VaultStore,
+    gpu_lock: threading.Lock | None,
+    reporter: ProgressReporter,
+    run_control: RunControl = NO_RUN_CONTROL,
+) -> None:
+    """Encode and publish an in-memory code chunk set in bounded slices."""
+    from ..config import get_config
+    from ..memory_probe import MemoryProbe
+
+    cfg = get_config()
+    encode_batch_size = int(cfg.embedding_code_encode_batch_size)
+    flush_slices = max(1, int(cfg.index_cache_flush_slices))
+    sorted_chunks = sorted(chunks, key=lambda chunk: -len(chunk.content))
+    store.disk_headroom_preflight(len(sorted_chunks))
+
+    with MemoryProbe(name="codebase-full-index") as probe:
+        reporter.phase_start("embed + upsert chunks", len(sorted_chunks))
+        try:
+            for slice_index, offset in enumerate(
+                range(0, len(sorted_chunks), slice_size)
+            ):
+                run_control.checkpoint()
+                slice_chunks = sorted_chunks[offset : offset + slice_size]
+                probe.checkpoint(f"slice-{offset}-before-encode")
+                is_last = offset + slice_size >= len(sorted_chunks)
+                release = is_last or (slice_index + 1) % flush_slices == 0
+                encode_and_upsert_code_slice(
+                    slice_chunks,
+                    model=model,
+                    store=store,
+                    gpu_lock=gpu_lock,
+                    release_cache=release,
+                    encode_batch_size=encode_batch_size,
+                    run_control=run_control,
+                )
+                probe.checkpoint(f"slice-{offset}-after-empty-cache")
+                reporter.advance(len(slice_chunks))
+                run_control.checkpoint()
+        finally:
+            reporter.phase_end()
+
+    if probe.samples:
+        logger.info("%s", probe.report())
