@@ -16,6 +16,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from ...serviceclient import (
+    _do_http_call,
     _try_http_get_job,
     _try_http_reindex,
     _try_http_search,
@@ -244,5 +245,21 @@ def test_document_tools_through_real_mcp_session(
     assert rejected_feedback is not None
     assert rejected_feedback["ok"] is False
     assert rejected_feedback["error"] == "unsupported_feedback_for_search_type"
+
+    direct_rejection = _do_http_call(
+        port,
+        "/search",
+        {
+            "query": phrase,
+            "type": "combined",
+            "top_k": 5,
+            "project_root": str(root),
+            "like_ids": ["unsupported-point"],
+        },
+        timeout=30.0,
+    )
+    assert direct_rejection is not None
+    assert direct_rejection["ok"] is False
+    assert direct_rejection["error"] == "unsupported_feedback_for_search_type"
 
     asyncio.run(_exercise_document_tools(port, root, source_path, phrase))

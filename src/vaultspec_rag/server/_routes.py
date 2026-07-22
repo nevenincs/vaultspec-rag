@@ -132,6 +132,28 @@ def _normalise_search_type(value: object) -> PublicSourceType | JSONResponse:
         )
 
 
+def _unsupported_search_feedback(
+    search_type: PublicSourceType,
+    payload: dict[str, object],
+) -> JSONResponse | None:
+    """Reject feedback where no cross-collection identity contract exists."""
+    if search_type not in {PublicSourceType.DOCUMENT, PublicSourceType.COMBINED}:
+        return None
+    if not (payload.get("like_ids") or payload.get("unlike_ids")):
+        return None
+    return JSONResponse(
+        {
+            "ok": False,
+            "error": "unsupported_feedback_for_search_type",
+            "message": (
+                f"feedback point ids are not supported for {search_type.value} "
+                "search; omit like_ids and unlike_ids"
+            ),
+        },
+        status_code=400,
+    )
+
+
 def _extract_token(request: Request) -> str | None:
     """Pull the presented token from the bearer header or ``?token=``.
 
@@ -1269,6 +1291,9 @@ async def search_route(request: Request) -> JSONResponse:
     search_type = _normalise_search_type(payload.get("type", "vault"))
     if isinstance(search_type, JSONResponse):
         return search_type
+    unsupported_feedback = _unsupported_search_feedback(search_type, payload)
+    if unsupported_feedback is not None:
+        return unsupported_feedback
     query = payload.get("query", "")
     top_k = payload.get("top_k", 5)
     project_root = payload.get("project_root")
