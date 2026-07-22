@@ -106,7 +106,7 @@ Move watcher convergence and daemon shutdown onto the manager lifecycle after co
 
 Route automatic indexing through the manager, coalesce later dirtiness into paused work, and retain replacement intent after cancellation.
 
-- [ ] `W03.P08.S18` - Submit watcher indexing through JobManager, retain paused convergence slots, coalesce later dirtiness, and schedule cancelled replacements with bounded backoff using vaultspec-high-executor; `src/vaultspec_rag/watcher.py`.
+- [x] `W03.P08.S18` - Submit watcher indexing through JobManager, retain paused convergence slots, coalesce later dirtiness, and schedule cancelled replacements with bounded backoff using vaultspec-high-executor; `src/vaultspec_rag/watcher.py`.
 - [ ] `W03.P08.S19` - Keep watcher enablement separate from job cancellation and wait for manager-owned cleanup on watcher stop using vaultspec-high-executor; `src/vaultspec_rag/server/_watcher.py`.
 
 ### Phase `W03.P10` - shutdown resource ordering
