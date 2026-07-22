@@ -8,10 +8,14 @@ modules depend on this one instead.
 from __future__ import annotations
 
 import threading
+from typing import TYPE_CHECKING
 
 from .service import ServiceRegistry
 
-__all__ = ["get_registry", "reset_registry"]
+if TYPE_CHECKING:
+    from pathlib import Path
+
+__all__ = ["document_chunk_count", "get_registry", "reset_registry"]
 
 _registry: ServiceRegistry | None = None
 _REGISTRY_LOCK = threading.Lock()
@@ -33,6 +37,11 @@ def get_registry() -> ServiceRegistry:
         if _registry is None:
             _registry = ServiceRegistry()
         return _registry
+
+
+def document_chunk_count(root: Path) -> int:
+    """Return the managed document count without loading embedding models."""
+    return get_registry().document_chunk_count(root)
 
 
 def reset_registry() -> None:

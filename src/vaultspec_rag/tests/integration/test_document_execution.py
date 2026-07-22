@@ -35,6 +35,7 @@ from ...indexer._preprocess_config import (
 from ...indexer._preprocess_runner import run_preprocessor
 from ...indexer._streaming import iter_weighted_document_slices
 from ...job_control import CancelRequested, RunControlToken
+from ...job_models import JobMode, JobOperation, JobSource, JobSpec, job_spec_error
 from ...watcher_retry import WatcherRetryPolicy, WatcherSource
 
 if TYPE_CHECKING:
@@ -261,6 +262,17 @@ def test_document_retry_state_and_resource_profile_are_independent(
 
     assert code.state == code_before
     assert document.state.consecutive_failures == 1
+    assert (
+        job_spec_error(
+            JobSpec(
+                operation=JobOperation.INDEX,
+                source=JobSource.DOCUMENT,
+                mode=JobMode.INCREMENTAL,
+                project_root=str(tmp_path),
+            )
+        )
+        is None
+    )
     profile = get_index_support_profile("embedded-local")
     with pytest.raises(JobError) as caught:
         validate_profile_admission(
