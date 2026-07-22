@@ -89,7 +89,7 @@ Per-command exit lines below note the codes each command can return.
 
 `vaultspec-rag index`
 
-Build or update the vault and code index.
+Build or update the vault, code, and extracted-document search indexes.
 
 Arguments: none.
 
@@ -97,9 +97,9 @@ Options:
 
 | Flag               | Type               | Default | Description                                                                                                                                                                |
 | ------------------ | ------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--type`           | `vault\|code\|all` | `all`   | What to index. `--rebuild` scopes to this type.                                                                                                                            |
+| `--type`           | `vault\|code\|document\|combined` | `all`   | What to index: vault documentation, source code, extracted documents, or all three with `combined`. Aliases: `docs`→`vault`, `codebase`→`code`, `all`→`combined`. `--rebuild` scopes to this type. |
 | `--rebuild`        | flag               | off     | Delete the selected index data before rebuilding. Requires an explicit `--type`; a bare `index --rebuild` is rejected.                                                     |
-| `--dry-run`        | flag               | off     | List the source-code files that would be indexed without indexing them. Valid only with `--type code` or the default `--type all`.                                         |
+| `--dry-run`        | flag               | off     | List the files that would be indexed without indexing them. Available for `--type code`, `--type document`, and `--type combined`; rejected for `--type vault`.            |
 | `--dry-run-limit`  | integer            | `50`    | Maximum file paths shown in human dry-run output. JSON output always lists all paths. Negative values are rejected.                                                        |
 | `--model`          | text               | unset   | Override the embedding model name.                                                                                                                                         |
 | `--exclude`        | text               | unset   | Ad-hoc exclusion pattern in gitignore syntax. Repeatable. Ignored when delegating to the service.                                                                          |
@@ -111,11 +111,11 @@ Options:
 
 With `--port` unset, the command auto-detects a running service and delegates with fallback. Service delegation queues an async reindex job and prints `Check progress with: vaultspec-rag server jobs`. In-process indexing is incremental unless `--rebuild` is set.
 
-Exit/JSON: `0` on success; `1` on GPU error, a busy index, a service-reported reindex error, or an unreachable `--port` without `--allow-fallback`; `2` for `rebuild_requires_explicit_type`, `dry_run_requires_code`, `invalid_dry_run_limit`, or `preprocess_flags_conflict`. With `--json`, the result is one envelope on stdout.
+Exit/JSON: `0` on success; `1` on GPU error, a busy index, a service-reported reindex error, or an unreachable `--port` without `--allow-fallback`; `2` for `rebuild_requires_explicit_type`, `dry_run_requires_supported_type`, `invalid_dry_run_limit`, or `preprocess_flags_conflict`. With `--json`, the result is one envelope on stdout.
 
 ## clean
 
-`vaultspec-rag clean <vault|code|all>`
+`vaultspec-rag clean <vault|code|document|combined>`
 
 Delete index data without rebuilding it. Does not load models or touch the GPU; it drops and re-creates the selected collections and removes their metadata sidecars.
 
@@ -123,7 +123,7 @@ Arguments:
 
 | Name         | Required | Description                                   |
 | ------------ | -------- | --------------------------------------------- |
-| `clean_type` | yes      | One of `vault`, `code`, or `all`. No default. |
+| `clean_type` | yes      | One of `vault`, `code`, `document`, or `combined`. Aliases: `docs`→`vault`, `codebase`→`code`, `all`→`combined`. No default, so nothing is deleted by accident. |
 
 Options:
 
@@ -138,7 +138,7 @@ Exit/JSON: `0` on success; `1` on a clean failure or a busy index; `2` when `--j
 
 `vaultspec-rag search <query>`
 
-Run a hybrid search over vault documents or source code.
+Run a hybrid search over vault documents, source code, or extracted documents.
 
 Arguments:
 
@@ -150,7 +150,7 @@ Options:
 
 | Flag                       | Type                               | Default | Description                                                                     |
 | -------------------------- | ---------------------------------- | ------- | ------------------------------------------------------------------------------- |
-| `--type`                   | `vault\|code\|docs`                | `vault` | Search source. `docs` is an alias for `vault`.                                  |
+| `--type`                   | `vault\|code\|document\|combined`  | `vault` | Search source: vault documentation, source code, extracted documents, or all three with `combined`. Aliases: `docs`→`vault`, `codebase`→`code`, `all`→`combined`. |
 | `--max-results`, `--limit` | integer                            | `10`    | Maximum number of results to return.                                            |
 | `--scores`                 | flag                               | off     | Show numeric relevance scores on each result.                                   |
 | `--language`               | text                               | unset   | Code filter: programming language.                                              |

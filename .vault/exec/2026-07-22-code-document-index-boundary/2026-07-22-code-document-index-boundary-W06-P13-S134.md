@@ -72,7 +72,6 @@ alternative - asserting only the bare lowercase word - would collide with the
 ordinary prose of the arguments' own help text and stop distinguishing the
 naming contract from an incidental substring match.
 
-
 A name collision hid a second failure carrying this Step's apparent shape, and
 the distinction matters enough to record. The Step's scope named a file that
 does not exist in the tree; a test *function* of that same name lives inside the
