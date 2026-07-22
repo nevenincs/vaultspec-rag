@@ -223,9 +223,9 @@ class TestPreprocessEndToEnd:
     def test_off_kill_switch_skips_hooks(
         self, rag_components: RagComponentsWithManifest, tmp_path: Path
     ) -> None:
-        # The kill switch disables execution without erasing ownership. A real
-        # baseline code index is therefore unchanged when a document-owned
-        # path arrives through the scoped watcher/indexing boundary.
+        # The kill switch disables execution without erasing ownership. A
+        # previously extracted code-owned path therefore remains published as
+        # stale when its source changes while execution is off.
         from ... import CodebaseIndexer, VaultStore
         from ...config import get_config
         from ...indexer._content_policy import (
@@ -242,7 +242,7 @@ class TestPreprocessEndToEnd:
             "version = 2\n\n"
             '[[rule]]\npattern = "*.pdf"\n'
             f"command = '''{_command(extractor)}'''\n"
-            'target = "document"\n'
+            'target = "code"\n'
             'extractor_version = "1"\n'
             'on_error = "skip"\n',
         )
@@ -252,33 +252,21 @@ class TestPreprocessEndToEnd:
         )
         source = tmp_path / "doc.pdf"
         source.write_bytes(b"\x00\x01 binary")
-        (tmp_path / "existing.py").write_text(
-            "preserved_code_point = True\n",
-            encoding="utf-8",
-        )
 
         key = EnvVar.PREPROCESS.value
         prev = os.environ.get(key)
-        os.environ[key] = "off"
+        os.environ.pop(key, None)
         reset_config()
         store = VaultStore(tmp_path)
         try:
             indexer = CodebaseIndexer(tmp_path, model, store)
-            scan = indexer.scan_content()
-            sample = next(item for item in scan.samples if item.path == "doc.pdf")
-            assert scan.preprocess_mode == "off"
-            assert scan.preprocess_rule_count == 1
-            assert not scan.hooks_will_run
-            assert sample.kind is ContentKind.DOCUMENT
-            assert sample.admitted
-            assert sample.reason is AdmissionReason.EXPLICIT_ROUTE
-            assert source not in scan.files
-
-            baseline = indexer.full_index(reporter=NullProgressReporter())
-            assert baseline.preprocess_ok == 0
-            assert not sentinel.exists(), (
-                "preprocess command executed under the off kill switch"
+            baseline = indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
             )
+            assert baseline.preprocess_ok == 1
+            assert sentinel.exists()
+            sentinel.unlink()
 
             cfg = get_config()
             data_root = tmp_path / cfg.data_dir
@@ -287,20 +275,50 @@ class TestPreprocessEndToEnd:
             cache_root.mkdir(parents=True, exist_ok=True)
             (cache_root / "preserved.json").write_bytes(b'{"preserved":true}')
             before_ids = store.get_all_code_ids()
+            before_path_ids = store.get_code_ids_by_paths({"doc.pdf"})
             before_metadata = metadata_path.read_bytes()
             before_cache = _file_tree_bytes(cache_root)
             assert before_ids
-            assert store.get_code_ids_by_paths({"doc.pdf"}) == []
+            assert before_path_ids
+
+            os.environ[key] = "off"
+            reset_config()
+            source.write_bytes(b"\x00\x02 changed binary")
+            scan = indexer.scan_content()
+            sample = next(item for item in scan.samples if item.path == "doc.pdf")
+            assert (
+                scan.preprocess_mode,
+                scan.preprocess_rule_count,
+                scan.hooks_will_run,
+                sample.kind,
+                sample.admitted,
+                sample.reason,
+                source in scan.files,
+            ) == (
+                "off",
+                1,
+                False,
+                ContentKind.CODE,
+                True,
+                AdmissionReason.EXPLICIT_ROUTE,
+                True,
+            )
 
             result = indexer.incremental_index(
                 reporter=NullProgressReporter(),
                 changed_paths=[source],
+                preflight=indexer.preflight_changed_paths([source]),
             )
 
             assert (result.added, result.updated, result.removed) == (0, 0, 0)
+            assert result.preprocess_ok == 0
+            assert result.preprocess_skipped == 1
+            assert result.preprocess_failures == [
+                "doc.pdf: preprocessing disabled; retained work as stale"
+            ]
             assert not sentinel.exists()
             assert store.get_all_code_ids() == before_ids
-            assert store.get_code_ids_by_paths({"doc.pdf"}) == []
+            assert store.get_code_ids_by_paths({"doc.pdf"}) == before_path_ids
             assert metadata_path.read_bytes() == before_metadata
             assert _file_tree_bytes(cache_root) == before_cache
         finally:
