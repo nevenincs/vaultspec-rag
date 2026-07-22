@@ -109,6 +109,57 @@ class _AuthDeadlineHandler(BaseHTTPRequestHandler):
         """Silence the default stderr request logging."""
 
 
+class _RedirectSinkHandler(BaseHTTPRequestHandler):
+    """Stand in for the host a redirect names; record everything it receives.
+
+    Answers with a body that would be mistaken for a genuine service response if
+    a caller ever followed a redirect here, so a test that reaches this handler
+    fails on the value it returns as well as on the request it recorded.
+    """
+
+    received: ClassVar[list[dict[str, str]]] = []
+
+    def do_GET(self) -> None:
+        type(self).received.append(
+            {
+                "path": self.path,
+                "authorization": self.headers.get("Authorization", ""),
+            }
+        )
+        body = b'{"service_token": "sink-token-never-legitimate"}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    do_POST = do_GET
+
+    def log_message(self, *_args: object, **_kwargs: object) -> None:
+        """Silence the default stderr request logging."""
+
+
+class _RedirectingHandler(BaseHTTPRequestHandler):
+    """Answer every request with a 302 pointing at the sink server."""
+
+    sink_port: ClassVar[int] = 0
+    seen_authorization: ClassVar[list[str]] = []
+
+    def do_GET(self) -> None:
+        type(self).seen_authorization.append(self.headers.get("Authorization", ""))
+        self.send_response(302)
+        self.send_header(
+            "Location", f"http://127.0.0.1:{type(self).sink_port}/redirected"
+        )
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    do_POST = do_GET
+
+    def log_message(self, *_args: object, **_kwargs: object) -> None:
+        """Silence the default stderr request logging."""
+
+
 def _serve(handler: type[BaseHTTPRequestHandler]) -> tuple[ThreadingHTTPServer, int]:
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     port = server.server_address[1]
@@ -380,3 +431,76 @@ class TestDegradedDiscoveryPropagation:
             assert "9999" not in str(caught.value)
         finally:
             self._restore()
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+class TestRedirectsAreRefused:
+    """The transport declines 3xx on every path rather than following it.
+
+    A redirect means something other than the intended loopback service
+    answered. Following one lets that responder choose the destination, and
+    because the standard library copies request headers onto the redirect
+    target without comparing hosts, a redirected credential-bearing call would
+    carry the bearer token off-host. Both handlers below are real servers on
+    loopback; the sink records anything that reaches it.
+    """
+
+    def _serve_pair(self) -> tuple[ThreadingHTTPServer, ThreadingHTTPServer, int]:
+        _RedirectSinkHandler.received.clear()
+        _RedirectingHandler.seen_authorization.clear()
+        sink, sink_port = _serve(_RedirectSinkHandler)
+        _RedirectingHandler.sink_port = sink_port
+        redirector, redirector_port = _serve(_RedirectingHandler)
+        return sink, redirector, redirector_port
+
+    def test_health_token_fetch_refuses_a_redirect(self) -> None:
+        from ..serviceclient._transport import _fetch_health_token
+
+        sink, redirector, port = self._serve_pair()
+        try:
+            token = _fetch_health_token(port, timeout=5.0)
+        finally:
+            for server in (redirector, sink):
+                server.shutdown()
+                server.server_close()
+
+        # The redirect was declined, so no token was obtained at all - and in
+        # particular not the sink's, which would have been taken as genuine.
+        assert token == ""
+        assert _RedirectSinkHandler.received == []
+
+    def test_credential_bearing_call_refuses_a_redirect_and_withholds_the_token(
+        self,
+    ) -> None:
+        import json as _json
+
+        from ..serviceclient._discovery import _status_file
+        from ..serviceclient._transport import _try_http_admin
+
+        token = "loopback-bearer-token"
+        _status_file().write_text(
+            _json.dumps({"pid": os.getpid(), "port": 1, "service_token": token}),
+            encoding="utf-8",
+        )
+
+        sink, redirector, port = self._serve_pair()
+        try:
+            result = _try_http_admin("list_projects", {}, port, timeout=5.0)
+        finally:
+            for server in (redirector, sink):
+                server.shutdown()
+                server.server_close()
+
+        # Guard against a vacuous pass: the call must genuinely have carried the
+        # credential, or "the token did not leak" would prove nothing.
+        assert any(
+            sent == f"Bearer {token}"
+            for sent in _RedirectingHandler.seen_authorization
+        )
+
+        # The credential never reached the redirect target.
+        assert _RedirectSinkHandler.received == []
+
+        # And the sink's body was never adopted as a service response.
+        assert result is not None
+        assert "sink-token-never-legitimate" not in str(result)
