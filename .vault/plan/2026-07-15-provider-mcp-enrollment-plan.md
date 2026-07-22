@@ -3,12 +3,22 @@ tags:
   - '#plan'
   - '#provider-mcp-enrollment'
 date: '2026-07-15'
-modified: '2026-07-16'
+modified: '2026-07-22'
 tier: L2
 related:
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-research]]'
 ---
+
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
 
 # `provider-mcp-enrollment` plan
 
@@ -93,7 +103,7 @@ Verify provider-native behavior, package metadata, installed artifacts, and the 
 - [x] `P03.S65` - Repeat every platform-aware release gate from zero after real index auto-delegation coverage and stop on the first failure; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md; no carried credit; Windows 2,271 total and unique, 1,834 campaign, 437 excluded; POSIX 2,259 total and unique, 1,835 campaign, 424 excluded; named zero-overlap M/P/J/F proof; real search and index machine-global precedence and status fallback with exact HTTP routes and initiator_kind=cli payload; direct scikit-learn import and RECORD payload preflight; complete S56 full-corpus, 600-second, cache, repair, offline, cleanup, and ranking contract; all runtime, static, package, public Core 0.1.45, fresh Claude and Codex, idempotence, selective unenrollment, and uninstall gates`.
 - [x] `P03.S66` - Make real service fixtures prepare every eager model under one bounded startup deadline and launch cache-only, then repair the adjacent real-job terminal wait; `src/vaultspec_rag/config.py, src/vaultspec_rag/service.py, src/vaultspec_rag/tests/_model_setup.py, src/vaultspec_rag/tests/integration/conftest.py, src/vaultspec_rag/tests/integration/test_service_jobs.py, real slow/504/cache-incomplete regressions, repeated failed selector, full jobs and service groups, S56 intent ranking, static gates, and formal review`.
 - [x] `P03.S67` - Repeat every platform-aware release gate from zero after the model-aware service-startup correction and stop on the first failure; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md; no carried credit; exact clean-candidate corpus and platform ledgers; S54 job deadlines; S56 bounded full-corpus model contract; S66 all-model preflight, cold online repair, offline daemon readiness, metadata-request exclusion, stage diagnostics, and cleanup; all runtime, static, package, public Core, installed Claude and Codex, idempotence, selective unenrollment, and uninstall gates`.
-- [ ] `P03.S68` - Close every S67 review finding with strict shared deadlines, race-safe startup publication, and child-incarnation proof; `service environment, HTTP transport, service discovery, startup fixture, managed Qdrant identity and teardown, real Windows and POSIX regressions, focused gates, documentation, and formal review`.
+- [x] `P03.S68` - Close every S67 review finding with strict shared deadlines, race-safe startup publication, and child-incarnation proof; `service environment, HTTP transport, service discovery, startup fixture, managed Qdrant identity and teardown, real Windows and POSIX regressions, focused gates, documentation, and formal review`.
 - [ ] `P03.S69` - Repeat every platform-aware release gate from zero after the S68 corrections and stop on the first failure; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md; no carried credit; exact clean-candidate corpus and platform ledgers; every S54, S56, S66, and S68 contract; all runtime, static, package, public Core, installed Claude and Codex, idempotence, selective unenrollment, uninstall, and release gates`.
 
 ## Description
