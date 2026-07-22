@@ -10,15 +10,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import PurePosixPath
 
 __all__ = [
     "AdmissionDisposition",
     "AdmissionPolicyError",
     "AdmissionReason",
+    "ClassifiedContent",
     "ContentKind",
     "ContentRoute",
     "RootContentPolicy",
     "SourceProfileVersion",
+    "classify_content",
 ]
 
 
@@ -106,3 +109,92 @@ class AdmissionDisposition:
     def __post_init__(self) -> None:
         if self.admitted and self.kind is None:
             raise ValueError("an admitted path must have a content kind")
+
+
+@dataclass(frozen=True, slots=True)
+class ClassifiedContent:
+    """One admission outcome plus parser capability chosen after admission."""
+
+    disposition: AdmissionDisposition
+    language: str | None = None
+    grammar: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.disposition.admitted and self.language is None:
+            raise ValueError("admitted content must have a parser selection")
+        if not self.disposition.admitted and (
+            self.language is not None or self.grammar is not None
+        ):
+            raise ValueError("rejected content must not select a parser")
+
+
+def _matched_explicit_kind(
+    policy: RootContentPolicy,
+    rel_path: str,
+    transform_kind: ContentKind | None,
+) -> ContentKind | None:
+    matched = [
+        route.kind
+        for route in policy.routes
+        if PurePosixPath(rel_path).full_match(route.pattern)
+    ]
+    if transform_kind is not None:
+        matched.append(transform_kind)
+    if not matched:
+        return None
+    owner = matched[0]
+    if any(kind is not owner for kind in matched[1:]):
+        raise AdmissionPolicyError(
+            f"path {rel_path!r} matches conflicting explicit content targets"
+        )
+    return owner
+
+
+def classify_content(
+    *,
+    rel_path: str,
+    ignored: bool,
+    policy: RootContentPolicy,
+    transform_kind: ContentKind | None = None,
+) -> ClassifiedContent:
+    """Classify one path through the shared deterministic admission order."""
+    from ._chunking import CONVENTIONAL_SOURCE_EXTENSIONS, select_parser
+
+    if ignored:
+        return ClassifiedContent(
+            AdmissionDisposition(None, False, AdmissionReason.IGNORED)
+        )
+
+    explicit_kind = _matched_explicit_kind(policy, rel_path, transform_kind)
+    suffix = PurePosixPath(rel_path).suffix.lower()
+    if explicit_kind is not None:
+        parser = select_parser(suffix)
+        return ClassifiedContent(
+            AdmissionDisposition(
+                explicit_kind,
+                True,
+                AdmissionReason.EXPLICIT_ROUTE,
+            ),
+            parser.language,
+            parser.grammar,
+        )
+
+    if policy.source_profile is SourceProfileVersion.EXPLICIT_ONLY_V1:
+        return ClassifiedContent(
+            AdmissionDisposition(None, False, AdmissionReason.NOT_ROUTED)
+        )
+    if suffix not in CONVENTIONAL_SOURCE_EXTENSIONS:
+        return ClassifiedContent(
+            AdmissionDisposition(
+                ContentKind.CODE,
+                False,
+                AdmissionReason.SOURCE_PROFILE_EXCLUDED,
+            )
+        )
+
+    parser = select_parser(suffix)
+    return ClassifiedContent(
+        AdmissionDisposition(ContentKind.CODE, True, AdmissionReason.SOURCE_PROFILE),
+        parser.language,
+        parser.grammar,
+    )

@@ -21,6 +21,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def is_ignored(
+    rel_path: str,
+    git_spec: pathspec.GitIgnoreSpec,
+    rag_spec: pathspec.GitIgnoreSpec | None,
+) -> bool:
+    """Apply the shared ignore precedence for one project-relative path."""
+    if git_spec.match_file(rel_path):
+        return True
+    return rag_spec is not None and rag_spec.match_file(rel_path)
+
+
 def collect_gitignore_patterns(root_dir: pathlib.Path) -> list[str]:
     """Collect the hardcoded and ``.gitignore``-sourced exclusion patterns.
 
