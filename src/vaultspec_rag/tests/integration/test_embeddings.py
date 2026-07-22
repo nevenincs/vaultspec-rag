@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
+    from ...embeddings import EmbeddingModel, SparseResult
     from ..conftest import RagComponentsWithManifest
 
 pytestmark = [pytest.mark.integration]
@@ -83,6 +84,60 @@ class TestEmbeddingModel:
         assert len(sparse_vecs) == 1
         assert hasattr(sparse_vecs[0], "indices")
         assert hasattr(sparse_vecs[0], "values")
+
+    @pytest.mark.cuda
+    @pytest.mark.timeout(180)
+    def test_sparse_document_slices_release_cuda_outputs(
+        self,
+        embedding_model: EmbeddingModel,
+    ) -> None:
+        """Sparse output retention stays on CPU and bounded by one slice."""
+        from ..._gpu import load_torch
+
+        torch = load_torch()
+        mib = 1024**2
+
+        def _measure(
+            text_count: int,
+        ) -> tuple[list[SparseResult], float, float, float]:
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            baseline_allocated = float(torch.cuda.memory_allocated() / mib)
+            torch.cuda.reset_peak_memory_stats()
+            outputs = embedding_model.encode_documents_sparse(
+                [
+                    f"bounded sparse encoder slice {ordinal} alpha beta gamma"
+                    for ordinal in range(text_count)
+                ],
+                batch_size=2,
+            )
+            torch.cuda.synchronize()
+            retained_allocated = float(torch.cuda.memory_allocated() / mib)
+            peak_allocated = float(torch.cuda.max_memory_allocated() / mib)
+            peak_reserved = float(torch.cuda.max_memory_reserved() / mib)
+            assert retained_allocated <= baseline_allocated + 32.0
+            return outputs, retained_allocated, peak_allocated, peak_reserved
+
+        one_slice, _one_retained, one_peak_allocated, one_peak_reserved = _measure(2)
+        many_slices, _many_retained, many_peak_allocated, many_peak_reserved = _measure(
+            12
+        )
+
+        assert len(one_slice) == 2
+        assert len(many_slices) == 12
+        for output in [*one_slice, *many_slices]:
+            indices = output.indices
+            values = output.values
+            assert isinstance(indices, list)
+            assert isinstance(values, list)
+            assert not isinstance(indices, torch.Tensor)
+            assert not isinstance(values, torch.Tensor)
+
+        # Six sequential sub-batches may reuse a larger allocator block, but
+        # cannot retain output in proportion to the number of slices.
+        assert many_peak_allocated <= one_peak_allocated + 64.0
+        assert many_peak_reserved <= one_peak_reserved + 128.0
 
     def test_encode_query_sparse(
         self, rag_components: RagComponentsWithManifest
