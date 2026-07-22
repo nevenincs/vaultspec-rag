@@ -45,6 +45,7 @@ class ServiceHealth(TypedDict):
 
     model_loaded: bool
     reranker_loaded: bool
+    cuda: bool
     project_count: int
     projects: list[str]
 
@@ -875,6 +876,10 @@ class ServiceRegistry:
         return {
             "model_loaded": self._model is not None,
             "reranker_loaded": self._reranker is not None,
+            "cuda": (
+                self._model is not None
+                and getattr(self._model, "device", None) == "cuda"
+            ),
             "project_count": count,
             "projects": project_list,
         }

@@ -710,14 +710,6 @@ async def health_handler(_request: Request) -> object:
 
     from .. import store_schema
 
-    try:
-        import torch
-
-        cuda = torch.cuda.is_available()
-    except ImportError as exc:
-        logger.debug("torch unavailable for /health: %s", exc)
-        cuda = False
-
     reg_health = _m._registry.health()
     uptime = time.monotonic() - _m._start_time if _m._start_time > 0 else 0.0
 
@@ -838,7 +830,7 @@ async def health_handler(_request: Request) -> object:
             "prefix": sys.prefix,
             "base_prefix": sys.base_prefix,
             "virtual_env": os.environ.get("VIRTUAL_ENV"),
-            "cuda": cuda,
+            "cuda": reg_health["cuda"],
             "models_loaded": reg_health["model_loaded"],
             "reranker_loaded": reg_health["reranker_loaded"],
             "project_count": reg_health["project_count"],
