@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..indexer._content_policy import ContentKind
 from ..indexer._preprocess_config import OnError, PreprocessRule
 from ..indexer._preprocess_entry import main, resolve_entry_point
 from ..indexer._preprocess_runner import PreprocessResult, run_preprocessor
@@ -73,6 +74,8 @@ def _entry_rule(ref: str, *, on_error: OnError = "skip") -> PreprocessRule:
         command=None,
         entry_point=ref,
         priority=100,
+        target=ContentKind.DOCUMENT,
+        extractor_version="1.0.0",
         on_error=on_error,
         timeout_s=30.0,
         options={},

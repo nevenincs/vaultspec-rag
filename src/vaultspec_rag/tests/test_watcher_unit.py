@@ -136,9 +136,11 @@ def test_preprocessable_file_admitted_via_resolved_rule_no_trust(
     root.mkdir(parents=True, exist_ok=True)
     (root / PREPROCESS_CONFIG_FILENAME).write_text(
         """
-        version = 1
+        version = 2
 
         [[rule]]
+        target = "document"
+        extractor_version = "1.0.0"
         pattern = "*.pdf"
         command = "extract {path}"
         on_error = "skip"
