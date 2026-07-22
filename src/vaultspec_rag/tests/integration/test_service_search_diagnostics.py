@@ -268,7 +268,7 @@ def _wait_for_succeeded_job(
     token: str,
     job_id: str,
     *,
-    last_response: RawSearchResponse,
+    last_response: RawSearchResponse | None = None,
 ) -> dict[str, object]:
     deadline = time.monotonic() + 300.0
     last_job: dict[str, object] | None = None
@@ -312,6 +312,46 @@ def _wait_for_succeeded_job(
             last_response=last_response,
         )
     )
+
+
+def _submit_clean_vault_rebuild(
+    port: int,
+    token: str,
+    root: Path,
+    *,
+    label: str,
+) -> str:
+    try:
+        response = _do_http_call(
+            port,
+            "/reindex",
+            {"type": "vault", "clean": True, "project_root": str(root)},
+            timeout=30,
+        )
+    except Exception as exc:
+        pytest.fail(
+            f"{label} submission failed: {exc}\n"
+            + _bounded_failure_evidence(
+                port,
+                token,
+                f"{label}-not-submitted",
+            )
+        )
+    evidence = (
+        _bounded_failure_evidence(
+            port,
+            token,
+            f"{label}-not-submitted",
+        )[:16000]
+        + "\nsubmission_response="
+        + json.dumps(response, default=str)[:8000]
+    )
+    if not isinstance(response, dict) or response.get("ok") is not True:
+        pytest.fail(f"{label} submission was rejected\n{evidence}")
+    job_id = response.get("job_id")
+    if not isinstance(job_id, str) or not job_id:
+        pytest.fail(f"{label} submission omitted its job ID\n{evidence}")
+    return job_id
 
 
 def _search_with_failure_evidence(
@@ -642,15 +682,12 @@ def _run_probes_during_matching_rebuild(
             matching_empty_query,
         )
         _wait_for_mcp_initialization(initialized, mcp_future, port, token)
-        reindex = _do_http_call(
+        job_id = _submit_clean_vault_rebuild(
             port,
-            "/reindex",
-            {"type": "vault", "clean": True, "project_root": str(root)},
-            timeout=30,
+            token,
+            root,
+            label="matching-rebuild",
         )
-        assert isinstance(reindex, dict) and reindex.get("ok") is True, reindex
-        job_id = reindex.get("job_id")
-        assert isinstance(job_id, str) and job_id, reindex
         running_job = _wait_for_running_job(port, token, job_id)
         responses = _run_concurrent_search_probes(
             executor,
@@ -667,17 +704,14 @@ def _run_probes_during_matching_rebuild(
     return job_id, running_job, responses
 
 
-def _assert_unavailable_search_response(
-    response: RawSearchResponse,
+def _assert_unavailable_response_envelope(
+    status: int,
+    headers: dict[str, str],
+    body: dict[str, object],
     *,
     root: Path,
-    port: int,
-    job_id: str,
-    expected_job_mode: str | None,
-    expected_index_status: str,
     evidence: str,
-) -> None:
-    status, headers, body = response
+) -> dict[str, object]:
     assert status == 503, evidence
     assert "retry-after" not in headers, evidence
     assert set(body) == {
@@ -700,7 +734,15 @@ def _assert_unavailable_search_response(
 
     raw_index_state = body["index_state"]
     assert isinstance(raw_index_state, dict), evidence
-    index_state = cast("dict[str, object]", raw_index_state)
+    return cast("dict[str, object]", raw_index_state)
+
+
+def _assert_unavailable_index_identity(
+    index_state: dict[str, object],
+    *,
+    root: Path,
+    evidence: str,
+) -> None:
     assert set(index_state) == {
         "source",
         "indexed_count",
@@ -721,6 +763,13 @@ def _assert_unavailable_search_response(
     assert index_state["requested_target_root"] == str(root), evidence
     assert index_state["target_matches"] is True, evidence
 
+
+def _assert_matching_job_diagnostics(
+    index_state: dict[str, object],
+    *,
+    job_id: str,
+    evidence: str,
+) -> None:
     raw_matching_jobs = index_state["matching_jobs"]
     assert isinstance(raw_matching_jobs, list), evidence
     matching_jobs = cast("list[object]", raw_matching_jobs)
@@ -738,13 +787,37 @@ def _assert_unavailable_search_response(
             "paused",
             "cancelling",
         }, evidence
-        assert job["mode"] in {None, "incremental", "rebuild"}, evidence
+        assert job["mode"] in {"incremental", "rebuild"}, evidence
         if job["id"] == job_id:
             submitted_job = job
     assert submitted_job is not None, evidence
     assert submitted_job["state"] == "running", evidence
-    assert submitted_job["mode"] == expected_job_mode, evidence
-    assert index_state["status"] == expected_index_status, evidence
+    assert submitted_job["mode"] == "rebuild", evidence
+
+
+def _assert_unavailable_search_response(
+    response: RawSearchResponse,
+    *,
+    root: Path,
+    port: int,
+    job_id: str,
+    evidence: str,
+) -> None:
+    status, headers, body = response
+    index_state = _assert_unavailable_response_envelope(
+        status,
+        headers,
+        body,
+        root=root,
+        evidence=evidence,
+    )
+    _assert_unavailable_index_identity(index_state, root=root, evidence=evidence)
+    _assert_matching_job_diagnostics(
+        index_state,
+        job_id=job_id,
+        evidence=evidence,
+    )
+    assert index_state["status"] == "rebuilding", evidence
     assert body["remediation"] == [
         f"vaultspec-rag server jobs --state active --index vault --port {port}",
         "Retry the search after the matching index job reaches a terminal state.",
@@ -909,16 +982,6 @@ def test_search_index_unavailable_during_matching_rebuild(
         shared_client_response,
         mcp_response,
     ) = probe_responses
-    if "spec" in running_job:
-        raw_spec = running_job["spec"]
-        assert isinstance(raw_spec, dict), running_job
-        spec = cast("dict[str, object]", raw_spec)
-        assert spec.get("mode") == "rebuild", running_job
-        expected_job_mode: str | None = "rebuild"
-        expected_index_status = "rebuilding"
-    else:
-        expected_job_mode = None
-        expected_index_status = "updating"
     evidence = _bounded_failure_evidence(
         port,
         token,
@@ -931,8 +994,6 @@ def test_search_index_unavailable_during_matching_rebuild(
         root=root,
         port=port,
         job_id=job_id,
-        expected_job_mode=expected_job_mode,
-        expected_index_status=expected_index_status,
         evidence=evidence,
     )
     unrelated_evidence = _bounded_failure_evidence(
