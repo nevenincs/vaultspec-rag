@@ -190,6 +190,8 @@ def resolved_policy_fingerprints(
                 "priority": rule.priority,
                 "order": rule.order,
                 "batch": rule.batch,
+                "path_independent": rule.path_independent,
+                "max_source_bytes": rule.max_source_bytes,
             }
             for rule in preprocess_rules
         ],
@@ -276,6 +278,8 @@ def _per_kind_fingerprints(
                     "priority": rule.priority,
                     "order": rule.order,
                     "batch": rule.batch,
+                    "path_independent": rule.path_independent,
+                    "max_source_bytes": rule.max_source_bytes,
                 }
                 for rule in rules
             ],

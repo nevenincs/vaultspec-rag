@@ -141,6 +141,50 @@ def test_omitted_timeout_resolves_to_finite_ceiling(tmp_path: Path) -> None:
     assert rule.timeout_s == 120.0
 
 
+def test_rule_source_ceiling_is_positive_and_survives_resolution(
+    tmp_path: Path,
+) -> None:
+    _write_config(
+        tmp_path,
+        """
+        version = 2
+
+        [[rule]]
+        pattern = "*.bin"
+        command = "extract {path}"
+        target = "document"
+        extractor_version = "1"
+        max_source_bytes = 4096
+        """,
+    )
+    rule = load_preprocess_rules(tmp_path, strict=True).match("payload.bin")
+    assert rule is not None
+    assert rule.max_source_bytes == 4096
+
+
+@pytest.mark.parametrize("value", [0, -1, True, "4096"])
+def test_invalid_rule_source_ceiling_is_rejected(
+    tmp_path: Path,
+    value: object,
+) -> None:
+    rendered = str(value).lower() if isinstance(value, bool) else repr(value)
+    _write_config(
+        tmp_path,
+        f"""
+        version = 2
+
+        [[rule]]
+        pattern = "*.bin"
+        command = "extract {{path}}"
+        target = "document"
+        extractor_version = "1"
+        max_source_bytes = {rendered}
+        """,
+    )
+    with pytest.raises(PreprocessConfigError):
+        load_preprocess_rules(tmp_path, strict=True)
+
+
 def test_invalid_invocation_is_dropped_non_strict_and_rejected_strict(
     tmp_path: Path,
 ) -> None:

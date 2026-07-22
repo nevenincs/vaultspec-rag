@@ -115,12 +115,12 @@ class PreprocessResult:
     reason: str | None
 
 
-def _emitted_text_length(output: PreprocOutput) -> int:
-    """Return the total emitted character count for the cap check (D10)."""
+def _emitted_text_bytes(output: PreprocOutput) -> int:
+    """Return the aggregate UTF-8 byte count of all emitted text."""
     if output.text is not None:
-        return len(output.text)
+        return len(output.text.encode("utf-8"))
     if output.units is not None:
-        return sum(len(unit.text) for unit in output.units)
+        return sum(len(unit.text.encode("utf-8")) for unit in output.units)
     return 0
 
 
@@ -403,9 +403,9 @@ def _validate_output(
         msg = f"preprocessor output failed validation: {exc}"
         raise _PreprocessSkipError(msg) from exc
 
-    emitted = _emitted_text_length(output)
+    emitted = _emitted_text_bytes(output)
     if emitted > max_emitted_bytes:
-        msg = f"emitted text {emitted} exceeds cap {max_emitted_bytes}"
+        msg = f"emitted text bytes {emitted} exceeds cap {max_emitted_bytes}"
         raise _PreprocessSkipError(msg)
 
     return output
@@ -620,9 +620,11 @@ def _split_batch_output(
         except _PreprocessSkipError as exc:
             failures[key] = str(exc)
             continue
-        emitted = _emitted_text_length(output)
+        emitted = _emitted_text_bytes(output)
         if emitted > max_emitted_bytes:
-            failures[key] = f"emitted text {emitted} exceeds cap {max_emitted_bytes}"
+            failures[key] = (
+                f"emitted text bytes {emitted} exceeds cap {max_emitted_bytes}"
+            )
             continue
         outputs[key] = output
     return _BatchParse(outputs, failures)
