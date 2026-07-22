@@ -98,7 +98,7 @@ Create document-native identity, payload, collection, metadata, lock, lifecycle,
 - [x] `W02.P03.S17` - Add the document collection, payload indexes, schema-version contract, descriptor entry, and direct-consumer compatibility behavior; `src/vaultspec_rag/store_schema.py`.
 - [x] `W02.P03.S18` - Add document collection locks, upsert, delete, scroll, and count operations; `src/vaultspec_rag/store.py, src/vaultspec_rag/_store_locks.py`.
 - [x] `W02.P03.S19` - Add independent document metadata publication and compatibility markers; `src/vaultspec_rag/indexer/_document_meta.py`.
-- [ ] `W02.P03.S20` - Add targeted document clean semantics without evicting code state or unrelated extraction cache entries; `src/vaultspec_rag/api.py, src/vaultspec_rag/store.py`.
+- [x] `W02.P03.S20` - Add targeted document clean semantics without evicting code state or unrelated extraction cache entries; `src/vaultspec_rag/api.py, src/vaultspec_rag/store.py`.
 - [ ] `W02.P03.S21` - Add the document collection to storage manifest recording and schema compatibility; `src/vaultspec_rag/storage_manifest.py, src/vaultspec_rag/store_schema.py`.
 - [ ] `W02.P03.S22` - Verify document identities, schema, locks, and lifecycle against real local and server Qdrant stores; `src/vaultspec_rag/tests/integration/test_document_store.py`.
 - [ ] `W02.P03.S96` - Include document collections and bounded counts in storage survey output; `src/vaultspec_rag/storage_survey.py`.
