@@ -186,3 +186,20 @@ class TestRAGAPI:
 
         status_after = vaultspec_rag.get_status(tmp_path)
         assert status_after["vault_documents"] == 0
+
+    def test_clean_rejects_an_unknown_source_before_storage_mutation(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from typing import Any, cast
+
+        from ..._source_types import SourceTypeParseError
+        from ...api import clean
+
+        (tmp_path / ".vault").mkdir()
+
+        with pytest.raises(SourceTypeParseError) as raised:
+            clean(tmp_path, clean_type=cast("Any", "unsupported"))
+
+        assert raised.value.error_kind == "unknown_source_type"
+        assert list(tmp_path.rglob("*")) == [tmp_path / ".vault"]
