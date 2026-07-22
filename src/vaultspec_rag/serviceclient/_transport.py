@@ -730,6 +730,19 @@ def _build_http_search_payload(
     return payload
 
 
+def _invalid_search_service_response(port: int) -> dict[str, object]:
+    """Return the stable failure envelope for a malformed search response."""
+    return {
+        "ok": False,
+        "error": "invalid_service_response",
+        "message": (
+            f"HTTP search on port {port} returned an invalid service response; "
+            "expected a non-empty JSON object envelope containing results or "
+            "a structured error."
+        ),
+    }
+
+
 def _try_http_search(
     query: str,
     search_type: str,
@@ -754,7 +767,7 @@ def _try_http_search(
     prefer: str | None = None,
     like_ids: list[str | int] | None = None,
     unlike_ids: list[str | int] | None = None,
-) -> list[dict[str, object]] | dict[str, object] | None:
+) -> dict[str, object] | None:
     # Import the lightweight validator from the leaf module rather than the
     # ``..search`` package, whose __init__ pulls the heavy VaultSearcher (and
     # thus store/embeddings). ``_validation`` imports only stdlib, so this keeps
@@ -816,12 +829,12 @@ def _try_http_search(
     )
 
     try:
-        res = _do_http_call(port, "/search", payload, timeout=timeout)
-        if res and res.get("ok") is False:
-            return res
-        if res and "results" in res:
-            return res
-        return []
+        response: object = _do_http_call(port, "/search", payload, timeout=timeout)
+        if isinstance(response, dict) and response:
+            envelope = response
+            if envelope.get("ok") is False or isinstance(envelope.get("results"), list):
+                return envelope
+        return _invalid_search_service_response(port)
     except TimeoutError:
         logger.debug("HTTP search on port %s timed out after %ss", port, timeout)
         return _timeout_diagnostics(port, timeout)
@@ -834,6 +847,8 @@ def _try_http_search(
         if _is_connection_refused(exc):
             logger.debug("HTTP search on port %s: connection refused (%s)", port, exc)
             return None
+        if isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError)):
+            return _invalid_search_service_response(port)
         cls = exc.__class__.__name__
         return {
             "ok": False,
