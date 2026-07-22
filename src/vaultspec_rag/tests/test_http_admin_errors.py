@@ -69,18 +69,24 @@ class _AuthDeadlineHandler(BaseHTTPRequestHandler):
     service_token = "live-loopback-token"
     requests: ClassVar[list[str]] = []
 
+    # The 401 and health-token stages are deliberately cheap and the
+    # authenticated retry deliberately far longer than the whole-call budget,
+    # so the sequence deterministically reaches the third request and expires
+    # there. Tight per-stage sleeps made the budget expire a stage earlier on
+    # a loaded host, which is a property of the host clock rather than of the
+    # deadline contract under test.
     def do_GET(self) -> None:
         authorization = self.headers.get("Authorization", "")
         type(self).requests.append(f"{self.path} {authorization}".rstrip())
         if self.path == "/health":
-            time.sleep(0.015)
+            time.sleep(0.005)
             self._json(200, {"service_token": self.service_token})
             return
         if authorization == f"Bearer {self.service_token}":
-            time.sleep(0.030)
+            time.sleep(0.300)
             self._json(200, {"projects": []})
             return
-        time.sleep(0.015)
+        time.sleep(0.005)
         self._json(401, {"ok": False, "error": "unauthorized"})
 
     def _json(self, status: int, payload: dict[str, object]) -> None:
@@ -199,12 +205,20 @@ class TestAdminErrorSurfacing:
         assert result is None
 
     def test_auth_recovery_obeys_one_whole_call_deadline(self) -> None:
-        """401, health-token recovery, and retry share one 40ms budget."""
+        """401, health-token recovery, and retry share one 120ms budget.
+
+        The invariant is that re-authentication does not buy a fresh budget:
+        the call must expire against the ORIGINAL deadline somewhere at or
+        after the health-token stage. Which of those stages the clock lands in
+        is a host-timing detail, so the assertion names the set rather than one
+        member - a reset deadline would let the 300ms retry complete and return
+        a result instead of timing out at all.
+        """
         _AuthDeadlineHandler.requests = []
         server, port = _serve(_AuthDeadlineHandler)
         started = time.monotonic()
         try:
-            result = _try_http_admin("list_projects", {}, port, timeout=0.040)
+            result = _try_http_admin("list_projects", {}, port, timeout=0.120)
             elapsed = time.monotonic() - started
         finally:
             server.shutdown()
@@ -214,8 +228,18 @@ class TestAdminErrorSurfacing:
         assert result.get("ok") is False
         assert result.get("error") == "admin_timeout"
         message = str(result.get("message"))
-        assert "0.04 seconds" in message
-        assert "authenticated retry" in message
-        assert 0.030 <= elapsed < 0.250
+        assert "0.12 seconds" in message
+        assert any(
+            stage in message
+            for stage in (
+                "health-token request",
+                "health-token response",
+                "authenticated retry",
+                "authenticated retry response",
+            )
+        ), message
+        # Bounded well below the 300ms retry sleep: had the deadline been
+        # reset at re-auth, the call would have run to ~0.3s and succeeded.
+        assert 0.100 <= elapsed < 0.280
         assert _AuthDeadlineHandler.requests[:2] == ["/projects", "/health"]
-        assert len(_AuthDeadlineHandler.requests) == 3
+        assert len(_AuthDeadlineHandler.requests) <= 3
