@@ -259,7 +259,7 @@ def test_updates_status_lists_projects_as_blocks() -> None:
         "cooldown_s": 30.0,
         "watching": [
             r"vaultspec-rag\feature-server-supervision",
-            r"aeat-worktrees\chore-476-restructure-execution",
+            r"sample-project\main",
         ],
     }
     with _updates_http_server(payload) as (_server, port):
@@ -274,10 +274,8 @@ def test_updates_status_lists_projects_as_blocks() -> None:
     assert r"  Path: vaultspec-rag\feature-server-supervision" in (
         result.output
     )
-    assert "- Project: chore-476-restructure-execution" in result.output
-    assert r"  Path: aeat-worktrees\chore-476-restructure-execution" in (
-        result.output
-    )
+    assert "- Project: main" in result.output
+    assert r"  Path: sample-project\main" in (result.output)
     assert (
         r"- vaultspec-rag\feature-server-supervision"
         not in result.output

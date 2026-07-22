@@ -12,7 +12,7 @@ Run standalone (service must be running):
 
     uv run python -m vaultspec_rag.tests.benchmarks.bench_concurrency \
         --root vaultspec-rag/main \
-        --root aeat-worktrees/chore-476-restructure-execution \
+        --root another-project/main \
         --requests 32 --concurrency 8 --json results.json
 
 Not collected by pytest (no ``test_`` functions): saturating a live

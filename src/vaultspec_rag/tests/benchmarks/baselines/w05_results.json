@@ -1,7 +1,7 @@
 {
   "port": 8766,
   "roots": [
-    "aeat-worktrees\\chore-476-restructure-execution",
+    "sample-project\\main",
     "vaultspec-rag\\main"
   ],
   "requests": 8,
