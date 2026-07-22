@@ -3,7 +3,7 @@ tags:
   - '#audit'
   - '#search-index-availability'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-22'
 related:
   - "[[2026-07-21-search-index-availability-adr]]"
   - "[[2026-07-21-search-index-availability-plan]]"

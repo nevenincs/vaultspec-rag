@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#search-index-availability'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-22'
 tier: L3
 related:
   - '[[2026-07-21-search-index-availability-adr]]'

@@ -8,30 +8,9 @@ related:
   - "[[2026-07-21-machine-discovery-recovery-plan]]"
 ---
 
-<!-- FRONTMATTER RULES:
-     tags: one directory tag (hardcoded #audit) and one feature tag.
-     Replace machine-discovery-recovery with a kebab-case feature tag, e.g. #foo-bar.
-     Additional tags may be appended below the required pair.
-
-     Related: use wiki-links as '[[yyyy-mm-dd-foo-bar]]'.
-
-     modified: CLI-maintained last-modified stamp; set at scaffold time,
-     refreshed by mutating CLI verbs and vault check fix; never hand-edit.
-
-     DO NOT add fields beyond those scaffolded; metadata lives
-     only in the frontmatter. -->
-
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the related: field above.
-     - NEVER use [[wiki-links]] or markdown links in the document body.
-     - NEVER reference file paths in the body. If you must name a source file,
-       class, or function, use inline backtick code: `src/module.py`. -->
-
 # `machine-discovery-recovery` audit: `s07 lifecycle lease`
 
 ## Scope
-
-<!-- What was audited and why -->
 
 Audited W01.P03.S07 against the approved ADR, research, reference, and plan. The
 review covered retained `MachineLockLease` ownership from startup through
@@ -52,15 +31,6 @@ and makes later ticks inert. Owner cleanup occurs while the retained lease is
 live, and store teardown exceptions no longer release that lease.
 
 ## Findings
-
-<!-- A rolling log of findings: append one subsection per finding, grouped or ordered by
-     severity, using the heading form
-
-       ### s07 lifecycle lease | {level} | {summary}
-
-     followed by a paragraph carrying the detail. s07 lifecycle lease is a concise kebab-case slug,
-     {level} is the severity (critical, high, medium, low), and {summary} is a one-line
-     statement. Append continuously as findings surface; do not rewrite settled entries. -->
 
 ### s07 lifecycle lease | high | Qdrant stop can report success while the owned child survives
 
@@ -109,8 +79,6 @@ highest-risk S07 ordering guarantees can regress while the happy path remains
 green.
 
 ## Recommendations
-
-<!-- Actionable recommendations -->
 
 Make `QdrantSupervisor.stop` return or raise an authoritative convergence
 outcome: do not clear `_proc` when the child is still alive, treat a surviving
