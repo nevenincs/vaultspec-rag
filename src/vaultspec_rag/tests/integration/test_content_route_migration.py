@@ -149,6 +149,8 @@ def test_store_survey_is_bounded_and_freshly_classified(
             ],
             write_policy=None,
         )
+        assert store.code_content_ids_exist(("code-current", "code-moved"))
+        assert not store.code_content_ids_exist(("code-current", "code-missing"))
 
         code_pages = list(
             iter_stored_route_pages(
@@ -230,6 +232,47 @@ def test_interrupted_destination_first_flip_resumes_idempotently(
         assert store.count_code() == 0
         assert store.get_all_document_content_ids() == {destination.id}
         assert list(journal.pending()) == []
+    finally:
+        store.close()
+
+
+def test_stale_destination_confirmation_retains_the_last_origin(
+    clean_config: None,
+    tmp_path: Path,
+) -> None:
+    del clean_config
+    rel_path = "guide.txt"
+    origin = _code_chunk("last-confirmed-origin", rel_path)
+    destination = _document_chunk(rel_path, "replacement destination")
+    store = VaultStore(tmp_path, embedding_dim=4)
+    try:
+        store.upsert_code_chunks([origin], write_policy=None)
+        store.upsert_document_content_chunks([destination], write_policy=None)
+        checkpoint = _document_checkpoint(tmp_path, rel_path, destination.id)
+        journal = RouteMigrationJournal(
+            tmp_path / get_config().data_dir / "route_migrations.sqlite3"
+        )
+        journal.begin(
+            rel_path=rel_path,
+            origin_kind=ContentKind.CODE,
+            destination_kind=ContentKind.DOCUMENT,
+            destination_generation_id=checkpoint.generation_id,
+            point_ids=(origin.id,),
+        )
+
+        store.drop_document_table()
+        store.ensure_document_table()
+
+        assert (
+            resume_pending_migrations(
+                store,
+                tmp_path / get_config().data_dir,
+            )
+            == 0
+        )
+        assert store.get_all_code_ids() == {origin.id}
+        assert store.count_document() == 0
+        assert len(list(journal.pending())) == 1
     finally:
         store.close()
 

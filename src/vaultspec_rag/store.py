@@ -1136,6 +1136,13 @@ class VaultStore(_VaultSearchMixin):
         ]
         return rows, next_offset
 
+    def code_content_ids_exist(self, ids: Sequence[str]) -> bool:
+        """Return whether every requested code identity is currently stored."""
+        if not ids:
+            return False
+        self.ensure_code_table()
+        return self._content_ids_exist(self.CODE_TABLE_NAME, ids)
+
     def get_all_document_content_ids(self) -> set[str]:
         """Return every deterministic ID in the document collection."""
         self.ensure_document_table()
@@ -1194,6 +1201,30 @@ class VaultStore(_VaultSearchMixin):
             for record in records
         ]
         return rows, next_offset
+
+    def document_content_ids_exist(self, ids: Sequence[str]) -> bool:
+        """Return whether every requested document identity is currently stored."""
+        if not ids:
+            return False
+        self.ensure_document_table()
+        return self._content_ids_exist(self.DOCUMENT_TABLE_NAME, ids)
+
+    def _content_ids_exist(
+        self,
+        collection: str,
+        ids: Sequence[str],
+    ) -> bool:
+        """Check one bounded identity batch without scanning a collection."""
+        point_ids = [self._stable_id(value) for value in ids]
+        expected = {str(point_id) for point_id in point_ids}
+        with self._point_lock(collection):
+            records = self.client.retrieve(
+                collection_name=collection,
+                ids=point_ids,
+                with_payload=False,
+                with_vectors=False,
+            )
+        return {str(record.id) for record in records} == expected
 
     def _scroll_all_ids(self, collection: str, id_field: str) -> set[str]:
         """Scroll through all points and collect the id field from payloads.
