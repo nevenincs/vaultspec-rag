@@ -23,15 +23,17 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ..store import (
+from .._store_models import (
     CodeChunk,
     DocumentChunk,
     DocumentLocator,
     DocumentMetadata,
     DocumentPayload,
 )
+from ..job_control import NO_RUN_CONTROL
 from ._ast_chunker import ASTChunker
 from ._chunking import LANGUAGE_MAP, TextSplitter
+from ._content_policy import ContentKind
 from ._document_identity import document_point_id
 from ._preprocess_cache import (
     PreprocessCacheIdentity,
@@ -43,17 +45,76 @@ from ._preprocess_runner import run_preprocessor, run_preprocessor_batch
 if TYPE_CHECKING:
     import pathlib
 
+    from ..job_control import RunControl
     from ._preprocess_config import PreprocessContext, PreprocessRule
     from ._preprocess_runner import PreprocessResult
     from ._preprocess_schema import PreprocOutput
 
 logger = logging.getLogger(__name__)
+_SOURCE_READ_BLOCK_BYTES = 1024 * 1024
 
 # Per-worker reusable chunker. ``ASTChunker`` itself is cheap to build, but the
 # tree-sitter parsers it drives are cached inside ``tree_sitter_language_pack``
 # across calls, so a single instance per process avoids repeated lookups over
 # tens of thousands of files (research O3).
 _CHUNKER: ASTChunker | None = None
+
+
+class _SourceLimitExceededError(ValueError):
+    """One source crossed its effective pre-extraction byte ceiling."""
+
+
+def _effective_source_limit(
+    prep: PreprocessContext | None,
+    rule: PreprocessRule | None,
+) -> int | None:
+    """Return the strictest positive context and rule source ceiling."""
+    candidates = (
+        getattr(prep, "max_source_bytes", None),
+        getattr(rule, "max_source_bytes", None),
+    )
+    limits = [
+        value
+        for value in candidates
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0
+    ]
+    return min(limits) if limits else None
+
+
+def _stream_source(
+    path: pathlib.Path,
+    *,
+    max_source_bytes: int | None,
+    retain_bytes: bool,
+) -> tuple[str, bytes | None]:
+    """Hash one source incrementally and optionally retain bounded raw bytes."""
+    digest = hashlib.blake2b()
+    retained = bytearray() if retain_bytes else None
+    total = 0
+    try:
+        with path.open("rb") as stream:
+            while block := stream.read(_SOURCE_READ_BLOCK_BYTES):
+                total += len(block)
+                if max_source_bytes is not None and total > max_source_bytes:
+                    raise _SourceLimitExceededError(
+                        f"source exceeds max_source_bytes={max_source_bytes}"
+                    )
+                digest.update(block)
+                if retained is not None:
+                    retained.extend(block)
+    except OSError as exc:
+        logger.warning("Cannot read %s: %s", path, exc)
+        raise
+    return digest.hexdigest(), bytes(retained) if retained is not None else None
+
+
+def _limit_disposition(rule: PreprocessRule, error: _SourceLimitExceededError) -> str:
+    """Map a pre-launch source refusal through the rule's declared policy."""
+    if rule.on_error == "fail":
+        from ._preprocess_runner import PreprocessAbortError
+
+        raise PreprocessAbortError(str(error)) from error
+    return "skipped"
 
 
 @dataclass(slots=True)
@@ -112,6 +173,16 @@ def _split_locator_value(value: int | str | None) -> tuple[int | None, str | Non
     if isinstance(value, str):
         return None, value
     return None, None
+
+
+def _cached_output_within_cap(output: PreprocOutput, cap: int) -> bool:
+    """Revalidate cached emitted text against the current operation ceiling."""
+    texts = (
+        (unit.text for unit in output.units)
+        if output.units is not None
+        else (output.text or "",)
+    )
+    return sum(len(text.encode("utf-8")) for text in texts) <= cap
 
 
 def _chunks_from_output(output: PreprocOutput, rel_path: str) -> list[CodeChunk]:
@@ -192,8 +263,14 @@ def preprocess_file(
         source_hash=content_hash,
         rule=rule,
         mode="batch" if rule.batch else "single",
+        max_emitted_bytes=prep.max_emitted_bytes,
     )
     cached = read_cached_output(prep.cache_root, cache_identity)
+    if cached is not None and not _cached_output_within_cap(
+        cached,
+        prep.max_emitted_bytes,
+    ):
+        cached = None
     if cached is not None:
         if rule.path_independent:
             cached = cached.model_copy(update={"source_path": rel_path})
@@ -276,7 +353,7 @@ def _document_chunks_from_text(
     *,
     rel_path: str,
     content_hash: str,
-    document_metadata: DocumentMetadata = DocumentMetadata(),
+    document_metadata: DocumentMetadata | None = None,
     extractor_id: str | None = None,
     extractor_version: str | None = None,
 ) -> list[DocumentChunk]:
@@ -291,7 +368,7 @@ def _document_chunks_from_text(
             unit_ordinal=ordinal,
             content_fingerprint=content_hash,
             content=content,
-            document_metadata=document_metadata,
+            document_metadata=document_metadata or DocumentMetadata(),
             extractor_id=extractor_id,
             extractor_version=extractor_version,
         )
@@ -367,6 +444,7 @@ def _document_preprocess_output(
     path: pathlib.Path,
     root_dir: pathlib.Path,
     prep: PreprocessContext,
+    run_control: RunControl,
 ) -> tuple[str, PreprocOutput | None, str | None]:
     """Run one document extractor while retaining cache and error disposition."""
     rel_path = path.relative_to(root_dir).as_posix()
@@ -378,8 +456,14 @@ def _document_preprocess_output(
         source_hash=content_hash,
         rule=rule,
         mode="batch" if rule.batch else "single",
+        max_emitted_bytes=prep.max_emitted_bytes,
     )
     output = read_cached_output(prep.cache_root, identity)
+    if output is not None and not _cached_output_within_cap(
+        output,
+        prep.max_emitted_bytes,
+    ):
+        output = None
     if output is not None:
         if rule.path_independent:
             output = output.model_copy(update={"source_path": rel_path})
@@ -390,6 +474,7 @@ def _document_preprocess_output(
             rule,
             max_emitted_bytes=prep.max_emitted_bytes,
             project_root=prep.project_root,
+            checkpoint=run_control.checkpoint,
         )[str(path)]
     else:
         result = run_preprocessor(
@@ -397,6 +482,7 @@ def _document_preprocess_output(
             rule,
             max_emitted_bytes=prep.max_emitted_bytes,
             project_root=prep.project_root,
+            checkpoint=run_control.checkpoint,
         )
     if result.status == "ok" and result.output is not None:
         write_cached_output(prep.cache_root, identity, result.output)
@@ -409,21 +495,44 @@ def chunk_document_and_hash_file(
     root_dir: pathlib.Path,
     prep: PreprocessContext | None = None,
     execution_policy: ChunkExecutionPolicy = _DEFAULT_EXECUTION_POLICY,
+    run_control: RunControl = NO_RUN_CONTROL,
 ) -> DocumentFileChunkResult:
     """Read and chunk one explicitly admitted document without code models."""
-    try:
-        raw = path.read_bytes()
-    except OSError as exc:
-        logger.warning("Cannot read %s: %s", path, exc)
-        raise
-    content_hash = hashlib.blake2b(raw).hexdigest()
     rel_path = path.relative_to(root_dir).as_posix()
-    if prep is not None:
+    run_control.checkpoint()
+    rule = prep.config.match(rel_path) if prep is not None else None
+    if rule is not None and rule.target is not ContentKind.DOCUMENT:
+        raise ValueError("document worker received a non-document extraction rule")
+    source_limit = _effective_source_limit(prep, rule)
+    if rule is not None:
+        try:
+            content_hash, _raw = _stream_source(
+                path,
+                max_source_bytes=source_limit,
+                retain_bytes=False,
+            )
+        except _SourceLimitExceededError as exc:
+            return DocumentFileChunkResult(
+                rel_path,
+                "unpublished",
+                [],
+                preprocess_status=_limit_disposition(rule, exc),
+                preprocess_reason=str(exc),
+            )
+    else:
+        content_hash, raw = _stream_source(
+            path,
+            max_source_bytes=source_limit,
+            retain_bytes=True,
+        )
+        assert raw is not None
+    if prep is not None and rule is not None:
         status, output, reason = _document_preprocess_output(
             content_hash=content_hash,
             path=path,
             root_dir=root_dir,
             prep=prep,
+            run_control=run_control,
         )
         if status == "ok" and output is not None:
             return DocumentFileChunkResult(
@@ -445,6 +554,21 @@ def chunk_document_and_hash_file(
                 preprocess_reason=reason,
             )
         # No extractor or an explicit passthrough continues in document kind.
+        try:
+            _passthrough_hash, raw = _stream_source(
+                path,
+                max_source_bytes=source_limit,
+                retain_bytes=True,
+            )
+        except _SourceLimitExceededError as exc:
+            return DocumentFileChunkResult(
+                rel_path,
+                content_hash,
+                [],
+                preprocess_status="skipped",
+                preprocess_reason=str(exc),
+            )
+        assert raw is not None
     text = _decode_source(raw, path, execution_policy)
     if text is None:
         return DocumentFileChunkResult(rel_path, content_hash, [])
@@ -528,19 +652,43 @@ def chunk_file_with_status(
     Returns:
         A :class:`ScopedChunkResult` with the chunks and the preprocess status.
     """
-    try:
-        raw = path.read_bytes()
-    except OSError as e:
-        logger.warning("Cannot read %s: %s", path, e)
-        raise
-    if prep is not None:
-        content_hash = hashlib.blake2b(raw).hexdigest()
+    rel_path = path.relative_to(root_dir).as_posix()
+    rule = prep.config.match(rel_path) if prep is not None else None
+    if rule is not None and rule.target is not ContentKind.CODE:
+        raise ValueError("code worker received a non-code extraction rule")
+    source_limit = _effective_source_limit(prep, rule)
+    if rule is not None:
+        try:
+            content_hash, _raw = _stream_source(
+                path,
+                max_source_bytes=source_limit,
+                retain_bytes=False,
+            )
+        except _SourceLimitExceededError as exc:
+            return ScopedChunkResult([], _limit_disposition(rule, exc), str(exc))
+    else:
+        content_hash, raw = _stream_source(
+            path,
+            max_source_bytes=source_limit,
+            retain_bytes=True,
+        )
+        assert raw is not None
+    if prep is not None and rule is not None:
         outcome = preprocess_file(content_hash, path, root_dir, prep)
         if outcome.status == "ok":
             return ScopedChunkResult(outcome.chunks, "ok")
         if outcome.status == "skipped":
             return ScopedChunkResult([], "skipped", outcome.reason)
         # "passthrough" / "none" fall through to ordinary chunking below.
+        try:
+            _passthrough_hash, raw = _stream_source(
+                path,
+                max_source_bytes=source_limit,
+                retain_bytes=True,
+            )
+        except _SourceLimitExceededError as exc:
+            return ScopedChunkResult([], "skipped", str(exc))
+        assert raw is not None
     content = _decode_source(raw, path, execution_policy)
     if content is None:
         return ScopedChunkResult([])
@@ -586,14 +734,34 @@ def chunk_and_hash_file(
     Raises:
         OSError: If the source file cannot be read.
     """
-    try:
-        raw = path.read_bytes()
-    except OSError as e:
-        logger.warning("Cannot read %s: %s", path, e)
-        raise
-    content_hash = hashlib.blake2b(raw).hexdigest()
     rel_path = str(path.relative_to(root_dir)).replace("\\", "/")
-    if prep is not None:
+    rule = prep.config.match(rel_path) if prep is not None else None
+    if rule is not None and rule.target is not ContentKind.CODE:
+        raise ValueError("code worker received a non-code extraction rule")
+    source_limit = _effective_source_limit(prep, rule)
+    if rule is not None:
+        try:
+            content_hash, _raw = _stream_source(
+                path,
+                max_source_bytes=source_limit,
+                retain_bytes=False,
+            )
+        except _SourceLimitExceededError as exc:
+            return FileChunkResult(
+                rel_path,
+                "unpublished",
+                [],
+                preprocess_status=_limit_disposition(rule, exc),
+                preprocess_reason=str(exc),
+            )
+    else:
+        content_hash, raw = _stream_source(
+            path,
+            max_source_bytes=source_limit,
+            retain_bytes=True,
+        )
+        assert raw is not None
+    if prep is not None and rule is not None:
         outcome = preprocess_file(content_hash, path, root_dir, prep)
         if outcome.status == "ok":
             return FileChunkResult(
@@ -611,6 +779,21 @@ def chunk_and_hash_file(
                 preprocess_reason=outcome.reason,
             )
         # "passthrough" / "none" fall through to ordinary chunking below.
+        try:
+            _passthrough_hash, raw = _stream_source(
+                path,
+                max_source_bytes=source_limit,
+                retain_bytes=True,
+            )
+        except _SourceLimitExceededError as exc:
+            return FileChunkResult(
+                rel_path,
+                content_hash,
+                [],
+                preprocess_status="skipped",
+                preprocess_reason=str(exc),
+            )
+        assert raw is not None
     return _raw_file_result(
         path,
         root_dir,
@@ -650,6 +833,82 @@ class _BatchMember:
     rel_path: str
     content_hash: str
     cached: PreprocOutput | None
+    source_limit: int | None = None
+    limit_reason: str | None = None
+
+
+def _prepare_batch_member(
+    path: pathlib.Path,
+    root_dir: pathlib.Path,
+    rule: PreprocessRule,
+    prep: PreprocessContext,
+    source_limit: int | None,
+) -> tuple[_BatchMember, bool]:
+    """Hash, bound, and consult cache for one batch member."""
+    rel_path = str(path.relative_to(root_dir)).replace("\\", "/")
+    try:
+        content_hash, _raw = _stream_source(
+            path,
+            max_source_bytes=source_limit,
+            retain_bytes=False,
+        )
+    except _SourceLimitExceededError as exc:
+        _limit_disposition(rule, exc)
+        return (
+            _BatchMember(
+                path,
+                rel_path,
+                "unpublished",
+                None,
+                source_limit,
+                str(exc),
+            ),
+            False,
+        )
+    identity = PreprocessCacheIdentity.from_rule(
+        source_path=rel_path,
+        source_hash=content_hash,
+        rule=rule,
+        mode="batch",
+        max_emitted_bytes=prep.max_emitted_bytes,
+    )
+    cached = read_cached_output(prep.cache_root, identity)
+    if cached is not None and not _cached_output_within_cap(
+        cached, prep.max_emitted_bytes
+    ):
+        cached = None
+    if cached is not None and rule.path_independent:
+        cached = cached.model_copy(update={"source_path": rel_path})
+    return (
+        _BatchMember(path, rel_path, content_hash, cached, source_limit),
+        cached is None,
+    )
+
+
+def _cache_batch_successes(
+    members: list[_BatchMember],
+    batch_results: dict[str, PreprocessResult],
+    rule: PreprocessRule,
+    prep: PreprocessContext,
+) -> None:
+    """Persist successful cache misses after one bounded batch invocation."""
+    for member in members:
+        if member.cached is not None or member.limit_reason is not None:
+            continue
+        result = batch_results.get(str(member.path))
+        if result is None or result.status != "ok" or result.output is None:
+            continue
+        write_cached_output(
+            prep.cache_root,
+            PreprocessCacheIdentity.from_rule(
+                source_path=member.rel_path,
+                source_hash=member.content_hash,
+                rule=rule,
+                mode="batch",
+                max_emitted_bytes=prep.max_emitted_bytes,
+            ),
+            result.output,
+        )
 
 
 def chunk_batch_files(
@@ -673,27 +932,17 @@ def chunk_batch_files(
         PreprocessAbortError: If any file fails and ``on_error == "fail"`` -
             propagates out of the worker to abort the run.
     """
+    if rule.target is not ContentKind.CODE:
+        raise ValueError("code batch worker received a non-code extraction rule")
     members: list[_BatchMember] = []
     misses: list[pathlib.Path] = []
+    source_limit = _effective_source_limit(prep, rule)
     for path in paths:
-        try:
-            raw = path.read_bytes()
-        except OSError as e:
-            logger.warning("Cannot read %s: %s", path, e)
-            raise
-        content_hash = hashlib.blake2b(raw).hexdigest()
-        rel_path = str(path.relative_to(root_dir)).replace("\\", "/")
-        cache_identity = PreprocessCacheIdentity.from_rule(
-            source_path=rel_path,
-            source_hash=content_hash,
-            rule=rule,
-            mode="batch",
+        member, needs_run = _prepare_batch_member(
+            path, root_dir, rule, prep, source_limit
         )
-        cached = read_cached_output(prep.cache_root, cache_identity)
-        if cached is not None and rule.path_independent:
-            cached = cached.model_copy(update={"source_path": rel_path})
-        members.append(_BatchMember(path, rel_path, content_hash, cached))
-        if cached is None:
+        members.append(member)
+        if needs_run:
             misses.append(path)
 
     batch_results: dict[str, PreprocessResult] = {}
@@ -704,25 +953,7 @@ def chunk_batch_files(
             max_emitted_bytes=prep.max_emitted_bytes,
             project_root=prep.project_root,
         )
-        for member in members:
-            if member.cached is not None:
-                continue
-            result = batch_results.get(str(member.path))
-            if (
-                result is not None
-                and result.status == "ok"
-                and result.output is not None
-            ):
-                write_cached_output(
-                    prep.cache_root,
-                    PreprocessCacheIdentity.from_rule(
-                        source_path=member.rel_path,
-                        source_hash=member.content_hash,
-                        rule=rule,
-                        mode="batch",
-                    ),
-                    result.output,
-                )
+        _cache_batch_successes(members, batch_results, rule, prep)
 
     results: list[FileChunkResult] = []
     for member in members:
@@ -744,6 +975,14 @@ def _batch_member_result(
     execution_policy: ChunkExecutionPolicy,
 ) -> FileChunkResult:
     """Turn one batch member's disposition into a :class:`FileChunkResult`."""
+    if member.limit_reason is not None:
+        return FileChunkResult(
+            member.rel_path,
+            member.content_hash,
+            [],
+            preprocess_status="skipped",
+            preprocess_reason=member.limit_reason,
+        )
     output = member.cached
     if output is None:
         result = batch_results.get(str(member.path))
@@ -780,15 +1019,25 @@ def _passthrough_batch_member(
     status (the file is indexed as ordinary source).
     """
     try:
-        raw = member.path.read_bytes()
-    except OSError as e:
-        logger.warning("Cannot read %s: %s", member.path, e)
-        raise
+        content_hash, raw = _stream_source(
+            member.path,
+            max_source_bytes=member.source_limit,
+            retain_bytes=True,
+        )
+    except _SourceLimitExceededError as exc:
+        return FileChunkResult(
+            member.rel_path,
+            member.content_hash,
+            [],
+            preprocess_status="skipped",
+            preprocess_reason=str(exc),
+        )
+    assert raw is not None
     return _raw_file_result(
         member.path,
         root_dir,
         member.rel_path,
-        hashlib.blake2b(raw).hexdigest(),
+        content_hash,
         raw,
         execution_policy,
     )
