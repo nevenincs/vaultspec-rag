@@ -17,7 +17,7 @@ __all__ = [
     "classify_search_response",
 ]
 
-type IndexSource = Literal["vault", "code"]
+type IndexSource = Literal["vault", "code", "document"]
 type JobMode = Literal["incremental", "rebuild"]
 
 _CANONICAL_NONTERMINAL_STATES = frozenset(
