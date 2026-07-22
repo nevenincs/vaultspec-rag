@@ -34,7 +34,10 @@ import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +155,7 @@ def _require_active_lease(
 
 def publish_machine_discovery(
     lease: MachineLockLease,
-    payload: dict[str, object],
+    payload: Mapping[str, object],
 ) -> None:
     """Atomically publish *payload* while *lease* proves owner authority.
 

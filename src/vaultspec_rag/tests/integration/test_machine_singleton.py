@@ -12,6 +12,15 @@ import json
 import os
 from typing import TYPE_CHECKING
 
+import pytest
+
+from ..._machine_lock import (
+    acquire_machine_lock_lease,
+    delete_machine_discovery,
+    machine_discovery_path,
+    publish_machine_discovery,
+    release_machine_lock_lease,
+)
 from ...cli._process import (
     acquire_machine_lock,
     machine_lock_live_holder,
@@ -99,3 +108,65 @@ class TestMachineLock:
         assert evidence.lock_released is True
         assert evidence.launcher_alive_at_release is True
         assert machine_lock_live_holder() == 0
+
+    def test_pointer_mutation_requires_retained_owner_lease(
+        self, isolated_lock: Path
+    ) -> None:
+        lease, holder = acquire_machine_lock_lease()
+        assert lease is not None
+        assert holder == os.getpid()
+        pointer = machine_discovery_path()
+        assert pointer.parent == isolated_lock.parent
+        original = {
+            "schema_version": 1,
+            "pid": lease.pid,
+            "port": 18_701,
+        }
+        publish_machine_discovery(lease, original)
+        assert json.loads(pointer.read_text(encoding="utf-8")) == original
+        release_machine_lock_lease(lease)
+
+        storage = os.environ[EnvVar.QDRANT_STORAGE_DIR.value]
+        foreign_holder = spawn_foreign_machine_lock_holder(storage)
+        try:
+            refused_lease, refused_holder = acquire_machine_lock_lease()
+            assert refused_lease is None
+            assert refused_holder == foreign_holder.holder_pid
+
+            replacement = {
+                "schema_version": 1,
+                "pid": lease.pid,
+                "port": 18_702,
+            }
+            with pytest.raises(PermissionError, match="active machine-lock lease"):
+                publish_machine_discovery(lease, replacement)
+            with pytest.raises(PermissionError, match="active machine-lock lease"):
+                delete_machine_discovery(lease)
+            assert json.loads(pointer.read_text(encoding="utf-8")) == original
+        finally:
+            evidence = foreign_holder.stop()
+        assert evidence.lock_released is True
+
+        owner_lease, owner_pid = acquire_machine_lock_lease()
+        assert owner_lease is not None
+        assert owner_pid == os.getpid()
+        try:
+            with pytest.raises(ValueError, match="payload PID"):
+                publish_machine_discovery(
+                    owner_lease,
+                    {"schema_version": 1, "pid": foreign_holder.holder_pid},
+                )
+            assert json.loads(pointer.read_text(encoding="utf-8")) == original
+
+            replacement = {
+                "schema_version": 1,
+                "pid": owner_lease.pid,
+                "port": 18_703,
+            }
+            publish_machine_discovery(owner_lease, replacement)
+            assert json.loads(pointer.read_text(encoding="utf-8")) == replacement
+            assert not tuple(pointer.parent.glob(f".{pointer.name}.*.tmp"))
+            delete_machine_discovery(owner_lease)
+            assert not pointer.exists()
+        finally:
+            release_machine_lock_lease(owner_lease)

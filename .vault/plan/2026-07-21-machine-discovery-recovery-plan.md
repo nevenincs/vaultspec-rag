@@ -56,7 +56,7 @@ Make both managed singleton paths unconditionally test-owned and prove ambient v
 Introduce retained ownership and atomic pointer mutation primitives before lifecycle writers are migrated.
 
 - [x] `W01.P02.S04` - Define a retained machine-lock lease and owner-checked atomic pointer publish and delete primitives; `src/vaultspec_rag/_machine_lock.py`.
-- [ ] `W01.P02.S05` - Verify a real foreign lock holder blocks pointer publication and deletion while the retained owner succeeds; `src/vaultspec_rag/tests/integration/test_machine_singleton.py`.
+- [x] `W01.P02.S05` - Verify a real foreign lock holder blocks pointer publication and deletion while the retained owner succeeds; `src/vaultspec_rag/tests/integration/test_machine_singleton.py`.
 
 ### Phase `W01.P03` - heartbeat and shutdown convergence
 
