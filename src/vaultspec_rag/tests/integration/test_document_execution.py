@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shlex
 import sys
 import textwrap
 import threading
 import time
+import tracemalloc
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -26,6 +28,7 @@ from ...indexer._chunk_worker import (
     DocumentFileChunkResult,
     chunk_document_and_hash_file,
     chunk_file_with_status,
+    stream_document_and_hash_file,
 )
 from ...indexer._preprocess_config import (
     PreprocessConfig,
@@ -33,9 +36,20 @@ from ...indexer._preprocess_config import (
     load_preprocess_rules,
 )
 from ...indexer._preprocess_runner import run_preprocessor
+from ...indexer._run_policy import RunPolicy
 from ...indexer._streaming import iter_weighted_document_slices
 from ...job_control import CancelRequested, RunControlToken
-from ...job_models import JobMode, JobOperation, JobSource, JobSpec, job_spec_error
+from ...job_dispatch import _run_document_attempt
+from ...job_manager import JobAttemptContext, JobManager
+from ...job_models import (
+    JobInitiator,
+    JobMode,
+    JobOperation,
+    JobSource,
+    JobSpec,
+    job_spec_error,
+)
+from ...service import ServiceRegistry
 from ...watcher_retry import WatcherRetryPolicy, WatcherSource
 
 if TYPE_CHECKING:
@@ -172,6 +186,38 @@ def test_document_passthrough_stays_document_owned_and_code_worker_fails_closed(
     assert not marker.exists()
 
 
+def test_raw_document_stream_is_memory_bounded_and_cooperatively_cancelled(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "large.txt"
+    block = b"bounded raw document content\n" * 32_768
+    with source.open("wb") as stream:
+        for _ in range(24):
+            stream.write(block)
+    source_bytes = source.stat().st_size
+
+    tracemalloc.start()
+    try:
+        result = stream_document_and_hash_file(source, tmp_path)
+        chunk_count = sum(1 for _chunk in result.chunks)
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert chunk_count > 1_000
+    assert peak < source_bytes
+
+    control = RunControlToken()
+    cancelled = stream_document_and_hash_file(
+        source,
+        tmp_path,
+        run_control=control,
+    )
+    control.request_cancel()
+    with pytest.raises(CancelRequested):
+        next(iter(cancelled.chunks))
+
+
 def test_real_extractor_cancellation_terminates_child(tmp_path: Path) -> None:
     started = tmp_path / "started.pid"
     finished = tmp_path / "finished.txt"
@@ -222,6 +268,80 @@ def test_real_extractor_cancellation_terminates_child(tmp_path: Path) -> None:
     while psutil.pid_exists(child_pid) and time.monotonic() < deadline:
         time.sleep(0.02)
     assert not psutil.pid_exists(child_pid)
+
+
+def test_real_extractor_no_progress_watchdog_terminates_child(tmp_path: Path) -> None:
+    started = tmp_path / "watchdog-started.pid"
+    finished = tmp_path / "watchdog-finished.txt"
+    extractor = tmp_path / "watchdog_sleep.py"
+    extractor.write_text(
+        textwrap.dedent(f"""
+            import os, pathlib, time
+            pathlib.Path({str(started)!r}).write_text(str(os.getpid()))
+            time.sleep(30)
+            pathlib.Path({str(finished)!r}).write_text("finished")
+        """),
+        encoding="utf-8",
+    )
+    source = tmp_path / "watchdog.blob"
+    source.write_bytes(b"source")
+    _write_rule(tmp_path, command=_command(extractor))
+    rule = load_preprocess_rules(tmp_path, strict=True).match(source.name)
+    assert rule is not None
+    policy = RunPolicy(no_progress_timeout_seconds=0.2)
+
+    with pytest.raises(JobError) as caught:
+        run_preprocessor(
+            source,
+            rule,
+            max_emitted_bytes=4096,
+            project_root=tmp_path,
+            checkpoint=lambda: policy.checkpoint("extractor watchdog"),
+        )
+
+    assert caught.value.error_kind is JobErrorKind.NO_PROGRESS_TIMEOUT
+    assert started.exists()
+    assert not finished.exists()
+    child_pid = int(started.read_text())
+    deadline = time.monotonic() + 3
+    while psutil.pid_exists(child_pid) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert not psutil.pid_exists(child_pid)
+
+
+@pytest.mark.asyncio
+async def test_document_attempt_honors_cancellation_before_admission(
+    tmp_path: Path,
+) -> None:
+    manager = JobManager(max_nonterminal=1, state_path=None)
+    created = manager.create(
+        JobSpec(
+            JobOperation.INDEX,
+            JobSource.DOCUMENT,
+            str(tmp_path),
+            JobMode.INCREMENTAL,
+        ),
+        JobInitiator("integration", "cancel before admission", str(tmp_path)),
+    )
+    assert created.job is not None
+    task = asyncio.current_task()
+    assert task is not None
+    control = RunControlToken()
+    control.request_cancel()
+    context = JobAttemptContext(manager, created.job.id, 1, task, control)
+    registry = ServiceRegistry()
+    try:
+        with pytest.raises(CancelRequested):
+            _run_document_attempt(
+                context,
+                manager=manager,
+                job_id=created.job.id,
+                root=tmp_path,
+                clean=False,
+                registry=registry,
+            )
+    finally:
+        registry.close_all()
 
 
 def test_document_retry_state_and_resource_profile_are_independent(

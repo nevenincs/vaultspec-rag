@@ -18,6 +18,7 @@ chunk-identity parity between serial and parallel runs).
 
 from __future__ import annotations
 
+import codecs
 import hashlib
 import logging
 from dataclasses import dataclass
@@ -44,6 +45,7 @@ from ._preprocess_runner import run_preprocessor, run_preprocessor_batch
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Callable, Iterable, Iterator
 
     from ..job_control import RunControl
     from ._preprocess_config import PreprocessContext, PreprocessRule
@@ -86,6 +88,7 @@ def _stream_source(
     *,
     max_source_bytes: int | None,
     retain_bytes: bool,
+    run_control: RunControl = NO_RUN_CONTROL,
 ) -> tuple[str, bytes | None]:
     """Hash one source incrementally and optionally retain bounded raw bytes."""
     digest = hashlib.blake2b()
@@ -94,6 +97,7 @@ def _stream_source(
     try:
         with path.open("rb") as stream:
             while block := stream.read(_SOURCE_READ_BLOCK_BYTES):
+                run_control.checkpoint()
                 total += len(block)
                 if max_source_bytes is not None and total > max_source_bytes:
                     raise _SourceLimitExceededError(
@@ -102,6 +106,7 @@ def _stream_source(
                 digest.update(block)
                 if retained is not None:
                     retained.extend(block)
+            run_control.checkpoint()
     except OSError as exc:
         logger.warning("Cannot read %s: %s", path, exc)
         raise
@@ -148,6 +153,17 @@ class DocumentFileChunkResult:
     rel_path: str
     content_hash: str
     chunks: list[DocumentChunk]
+    preprocess_status: str | None = None
+    preprocess_reason: str | None = None
+
+
+@dataclass(slots=True)
+class DocumentFileChunkStreamResult:
+    """One document source whose chunks may be consumed incrementally."""
+
+    rel_path: str
+    content_hash: str
+    chunks: Iterable[DocumentChunk]
     preprocess_status: str | None = None
     preprocess_reason: str | None = None
 
@@ -356,11 +372,15 @@ def _document_chunks_from_text(
     document_metadata: DocumentMetadata | None = None,
     extractor_id: str | None = None,
     extractor_version: str | None = None,
+    start_ordinal: int = 0,
 ) -> list[DocumentChunk]:
     """Split decoded text into document-native chunks with stable identities."""
     splitter = TextSplitter(language="text", chunk_overlap=0)
     chunks: list[DocumentChunk] = []
-    for ordinal, content in enumerate(splitter.split_text(text)):
+    for ordinal, content in enumerate(
+        splitter.split_text(text),
+        start=start_ordinal,
+    ):
         if not content.strip():
             continue
         payload = DocumentPayload(
@@ -383,6 +403,116 @@ def _document_chunks_from_text(
             )
         )
     return chunks
+
+
+def _validated_text_identity(
+    path: pathlib.Path,
+    *,
+    max_source_bytes: int | None,
+    execution_policy: ChunkExecutionPolicy,
+    run_control: RunControl,
+) -> tuple[str, bool]:
+    """Hash and validate raw text without retaining source bytes or text."""
+    digest = hashlib.blake2b()
+    decoder = codecs.getincrementaldecoder(execution_policy.encoding)(
+        errors=execution_policy.errors
+    )
+    total = 0
+    try:
+        with path.open("rb") as stream:
+            while block := stream.read(_SOURCE_READ_BLOCK_BYTES):
+                run_control.checkpoint()
+                total += len(block)
+                if max_source_bytes is not None and total > max_source_bytes:
+                    raise _SourceLimitExceededError(
+                        f"source exceeds max_source_bytes={max_source_bytes}"
+                    )
+                digest.update(block)
+                decoder.decode(block, final=False)
+            decoder.decode(b"", final=True)
+            run_control.checkpoint()
+    except UnicodeDecodeError as exc:
+        logger.warning("Cannot decode %s: %s", path, exc)
+        return digest.hexdigest(), False
+    return digest.hexdigest(), True
+
+
+def _normalize_decoded_block(
+    text: str,
+    pending_cr: str,
+    *,
+    normalize_newlines: bool,
+    final: bool,
+) -> tuple[str, str]:
+    """Normalize newlines across bounded decoder-block boundaries."""
+    if not normalize_newlines:
+        return text, ""
+    combined = pending_cr + text
+    next_pending = ""
+    if not final and combined.endswith("\r"):
+        combined = combined[:-1]
+        next_pending = "\r"
+    return combined.replace("\r\n", "\n").replace("\r", "\n"), next_pending
+
+
+def _iter_raw_document_chunks(
+    path: pathlib.Path,
+    *,
+    rel_path: str,
+    content_hash: str,
+    max_source_bytes: int | None,
+    execution_policy: ChunkExecutionPolicy,
+    run_control: RunControl,
+) -> Iterator[DocumentChunk]:
+    """Decode and chunk raw document input with bounded live source memory."""
+    digest = hashlib.blake2b()
+    decoder = codecs.getincrementaldecoder(execution_policy.encoding)(
+        errors=execution_policy.errors
+    )
+    total = 0
+    ordinal = 0
+    pending_cr = ""
+    with path.open("rb") as stream:
+        while block := stream.read(_SOURCE_READ_BLOCK_BYTES):
+            run_control.checkpoint()
+            total += len(block)
+            if max_source_bytes is not None and total > max_source_bytes:
+                raise _SourceLimitExceededError(
+                    f"source exceeds max_source_bytes={max_source_bytes}"
+                )
+            digest.update(block)
+            decoded = decoder.decode(block, final=False)
+            decoded, pending_cr = _normalize_decoded_block(
+                decoded,
+                pending_cr,
+                normalize_newlines=execution_policy.normalize_newlines,
+                final=False,
+            )
+            chunks = _document_chunks_from_text(
+                decoded,
+                rel_path=rel_path,
+                content_hash=content_hash,
+                start_ordinal=ordinal,
+            )
+            ordinal += len(chunks)
+            yield from chunks
+        decoded = decoder.decode(b"", final=True)
+        decoded, pending_cr = _normalize_decoded_block(
+            decoded,
+            pending_cr,
+            normalize_newlines=execution_policy.normalize_newlines,
+            final=True,
+        )
+        assert not pending_cr
+        yield from _document_chunks_from_text(
+            decoded,
+            rel_path=rel_path,
+            content_hash=content_hash,
+            start_ordinal=ordinal,
+        )
+        run_control.checkpoint()
+    if digest.hexdigest() != content_hash:
+        raise RuntimeError(f"document source changed while streaming: {rel_path}")
 
 
 def _document_chunks_from_output(
@@ -445,6 +575,7 @@ def _document_preprocess_output(
     root_dir: pathlib.Path,
     prep: PreprocessContext,
     run_control: RunControl,
+    preprocess_checkpoint: Callable[[], None] | None = None,
 ) -> tuple[str, PreprocOutput | None, str | None]:
     """Run one document extractor while retaining cache and error disposition."""
     rel_path = path.relative_to(root_dir).as_posix()
@@ -474,7 +605,7 @@ def _document_preprocess_output(
             rule,
             max_emitted_bytes=prep.max_emitted_bytes,
             project_root=prep.project_root,
-            checkpoint=run_control.checkpoint,
+            checkpoint=preprocess_checkpoint or run_control.checkpoint,
         )[str(path)]
     else:
         result = run_preprocessor(
@@ -482,12 +613,123 @@ def _document_preprocess_output(
             rule,
             max_emitted_bytes=prep.max_emitted_bytes,
             project_root=prep.project_root,
-            checkpoint=run_control.checkpoint,
+            checkpoint=preprocess_checkpoint or run_control.checkpoint,
         )
     if result.status == "ok" and result.output is not None:
         write_cached_output(prep.cache_root, identity, result.output)
         return "ok", result.output, None
     return result.status, None, result.reason
+
+
+def _raw_document_stream(
+    path: pathlib.Path,
+    *,
+    rel_path: str,
+    expected_hash: str | None,
+    source_limit: int | None,
+    execution_policy: ChunkExecutionPolicy,
+    run_control: RunControl,
+) -> DocumentFileChunkStreamResult:
+    """Validate raw decoding, then return a bounded second-pass chunk stream."""
+    content_hash, decodable = _validated_text_identity(
+        path,
+        max_source_bytes=source_limit,
+        execution_policy=execution_policy,
+        run_control=run_control,
+    )
+    if expected_hash is not None and content_hash != expected_hash:
+        raise RuntimeError(f"document source changed during fallback: {rel_path}")
+    if not decodable:
+        return DocumentFileChunkStreamResult(rel_path, content_hash, ())
+    return DocumentFileChunkStreamResult(
+        rel_path,
+        content_hash,
+        _iter_raw_document_chunks(
+            path,
+            rel_path=rel_path,
+            content_hash=content_hash,
+            max_source_bytes=source_limit,
+            execution_policy=execution_policy,
+            run_control=run_control,
+        ),
+    )
+
+
+def stream_document_and_hash_file(
+    path: pathlib.Path,
+    root_dir: pathlib.Path,
+    prep: PreprocessContext | None = None,
+    execution_policy: ChunkExecutionPolicy = _DEFAULT_EXECUTION_POLICY,
+    run_control: RunControl = NO_RUN_CONTROL,
+    preprocess_checkpoint: Callable[[], None] | None = None,
+) -> DocumentFileChunkStreamResult:
+    """Hash and incrementally chunk one explicitly admitted document."""
+    rel_path = path.relative_to(root_dir).as_posix()
+    run_control.checkpoint()
+    rule = prep.config.match(rel_path) if prep is not None else None
+    if rule is not None and rule.target is not ContentKind.DOCUMENT:
+        raise ValueError("document worker received a non-document extraction rule")
+    source_limit = _effective_source_limit(prep, rule)
+    if rule is None:
+        return _raw_document_stream(
+            path,
+            rel_path=rel_path,
+            expected_hash=None,
+            source_limit=source_limit,
+            execution_policy=execution_policy,
+            run_control=run_control,
+        )
+    try:
+        content_hash, _raw = _stream_source(
+            path,
+            max_source_bytes=source_limit,
+            retain_bytes=False,
+            run_control=run_control,
+        )
+    except _SourceLimitExceededError as exc:
+        return DocumentFileChunkStreamResult(
+            rel_path,
+            "unpublished",
+            (),
+            preprocess_status=_limit_disposition(rule, exc),
+            preprocess_reason=str(exc),
+        )
+    assert prep is not None
+    status, output, reason = _document_preprocess_output(
+        content_hash=content_hash,
+        path=path,
+        root_dir=root_dir,
+        prep=prep,
+        run_control=run_control,
+        preprocess_checkpoint=preprocess_checkpoint,
+    )
+    if status == "ok" and output is not None:
+        return DocumentFileChunkStreamResult(
+            rel_path=rel_path,
+            content_hash=content_hash,
+            chunks=_document_chunks_from_output(
+                output,
+                rel_path=rel_path,
+                content_hash=content_hash,
+            ),
+            preprocess_status="ok",
+        )
+    if status == "skipped":
+        return DocumentFileChunkStreamResult(
+            rel_path,
+            content_hash,
+            (),
+            preprocess_status="skipped",
+            preprocess_reason=reason,
+        )
+    return _raw_document_stream(
+        path,
+        rel_path=rel_path,
+        expected_hash=content_hash,
+        source_limit=source_limit,
+        execution_policy=execution_policy,
+        run_control=run_control,
+    )
 
 
 def chunk_document_and_hash_file(
@@ -496,90 +738,23 @@ def chunk_document_and_hash_file(
     prep: PreprocessContext | None = None,
     execution_policy: ChunkExecutionPolicy = _DEFAULT_EXECUTION_POLICY,
     run_control: RunControl = NO_RUN_CONTROL,
+    preprocess_checkpoint: Callable[[], None] | None = None,
 ) -> DocumentFileChunkResult:
-    """Read and chunk one explicitly admitted document without code models."""
-    rel_path = path.relative_to(root_dir).as_posix()
-    run_control.checkpoint()
-    rule = prep.config.match(rel_path) if prep is not None else None
-    if rule is not None and rule.target is not ContentKind.DOCUMENT:
-        raise ValueError("document worker received a non-document extraction rule")
-    source_limit = _effective_source_limit(prep, rule)
-    if rule is not None:
-        try:
-            content_hash, _raw = _stream_source(
-                path,
-                max_source_bytes=source_limit,
-                retain_bytes=False,
-            )
-        except _SourceLimitExceededError as exc:
-            return DocumentFileChunkResult(
-                rel_path,
-                "unpublished",
-                [],
-                preprocess_status=_limit_disposition(rule, exc),
-                preprocess_reason=str(exc),
-            )
-    else:
-        content_hash, raw = _stream_source(
-            path,
-            max_source_bytes=source_limit,
-            retain_bytes=True,
-        )
-        assert raw is not None
-    if prep is not None and rule is not None:
-        status, output, reason = _document_preprocess_output(
-            content_hash=content_hash,
-            path=path,
-            root_dir=root_dir,
-            prep=prep,
-            run_control=run_control,
-        )
-        if status == "ok" and output is not None:
-            return DocumentFileChunkResult(
-                rel_path,
-                content_hash,
-                _document_chunks_from_output(
-                    output,
-                    rel_path=rel_path,
-                    content_hash=content_hash,
-                ),
-                preprocess_status="ok",
-            )
-        if status == "skipped":
-            return DocumentFileChunkResult(
-                rel_path,
-                content_hash,
-                [],
-                preprocess_status="skipped",
-                preprocess_reason=reason,
-            )
-        # No extractor or an explicit passthrough continues in document kind.
-        try:
-            _passthrough_hash, raw = _stream_source(
-                path,
-                max_source_bytes=source_limit,
-                retain_bytes=True,
-            )
-        except _SourceLimitExceededError as exc:
-            return DocumentFileChunkResult(
-                rel_path,
-                content_hash,
-                [],
-                preprocess_status="skipped",
-                preprocess_reason=str(exc),
-            )
-        assert raw is not None
-    text = _decode_source(raw, path, execution_policy)
-    if text is None:
-        return DocumentFileChunkResult(rel_path, content_hash, [])
+    """Materialize the document stream for compatibility callers."""
+    result = stream_document_and_hash_file(
+        path,
+        root_dir,
+        prep,
+        execution_policy,
+        run_control,
+        preprocess_checkpoint,
+    )
     return DocumentFileChunkResult(
-        rel_path,
-        content_hash,
-        _document_chunks_from_text(
-            text,
-            rel_path=rel_path,
-            content_hash=content_hash,
-        ),
+        result.rel_path,
+        result.content_hash,
+        list(result.chunks),
+        result.preprocess_status,
+        result.preprocess_reason,
     )
 
 
