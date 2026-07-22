@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 from typing import TYPE_CHECKING
 
 import pytest
@@ -10,9 +11,10 @@ import pytest
 from ...progress import NullProgressReporter
 from ..benchmarks.bench_large_index_resilience import (
     CorpusSpec,
-    ResourceHighWater,
+    MeasuredIndexRun,
     measure_full_index,
     prepare_corpus,
+    retain_benchmark_evidence,
 )
 
 if TYPE_CHECKING:
@@ -108,7 +110,7 @@ class TestLargeCodeIndexHighWater:
         from ...config import get_config
         from ...index_profiles import get_index_support_profile
 
-        def _run(files: int) -> tuple[ResourceHighWater, int]:
+        def _run(files: int) -> MeasuredIndexRun:
             root = tmp_path_factory.mktemp(f"large-code-{files}")
             spec = CorpusSpec(files=files, chunks_per_file=3)
             prepare_corpus(root, spec)
@@ -124,28 +126,83 @@ class TestLargeCodeIndexHighWater:
                 assert indexer.support_measurement.generated_chunks == (
                     spec.expected_chunks
                 )
-                return measured.resources, measured.result.total
+                return measured
             finally:
                 store.close()
 
-        n_resources, n_chunks = _run(192)
-        two_n_resources, two_n_chunks = _run(384)
+        n_run = _run(192)
+        two_n_run = _run(384)
+        n_resources = n_run.resources
+        two_n_resources = two_n_run.resources
+        n_chunks = n_run.result.total
+        two_n_chunks = two_n_run.result.total
+        growth_allowance_mb = {
+            "rss": 512.0,
+            "cuda_allocated": 256.0,
+            "cuda_reserved": 512.0,
+        }
+        limits = get_index_support_profile(get_config().index_support_profile).code
+        mib = 1024**2
+        checks = {
+            "chunk_count_doubled": two_n_chunks == n_chunks * 2,
+            "rss_growth_bounded": two_n_resources.rss_growth_mb
+            <= n_resources.rss_growth_mb + growth_allowance_mb["rss"],
+            "cuda_allocated_growth_bounded": (
+                two_n_resources.cuda_allocated_growth_mb
+                <= n_resources.cuda_allocated_growth_mb
+                + growth_allowance_mb["cuda_allocated"]
+            ),
+            "cuda_reserved_growth_bounded": (
+                two_n_resources.cuda_reserved_growth_mb
+                <= n_resources.cuda_reserved_growth_mb
+                + growth_allowance_mb["cuda_reserved"]
+            ),
+            "n_rss_within_profile": n_resources.peak_rss_mb * mib <= limits.rss_bytes,
+            "two_n_rss_within_profile": two_n_resources.peak_rss_mb * mib
+            <= limits.rss_bytes,
+            "n_cuda_within_profile": n_resources.peak_cuda_reserved_mb * mib
+            <= limits.cuda_bytes,
+            "two_n_cuda_within_profile": (
+                two_n_resources.peak_cuda_reserved_mb * mib <= limits.cuda_bytes
+            ),
+        }
+        retain_benchmark_evidence(
+            "n-two-n-high-water",
+            {
+                "n": {
+                    "files": 192,
+                    "chunks": n_chunks,
+                    "wall_seconds": n_run.wall_seconds,
+                    "resources": asdict(n_resources),
+                },
+                "two_n": {
+                    "files": 384,
+                    "chunks": two_n_chunks,
+                    "wall_seconds": two_n_run.wall_seconds,
+                    "resources": asdict(two_n_resources),
+                },
+                "growth_allowance_mb": growth_allowance_mb,
+                "profile_ceilings_mb": {
+                    "rss": limits.rss_bytes / mib,
+                    "cuda_reserved": limits.cuda_bytes / mib,
+                },
+                "checks": checks,
+            },
+        )
         assert two_n_chunks == n_chunks * 2
 
         # The active queue and GPU slice are bounded independently of corpus
         # cardinality. Doubling past the 512-chunk slice boundary may move the
         # allocator to its next block, but cannot retain corpus-proportional
         # process or device memory.
-        assert two_n_resources.rss_growth_mb <= n_resources.rss_growth_mb + 512.0
+        assert checks["rss_growth_bounded"]
         assert two_n_resources.cuda_allocated_growth_mb <= (
-            n_resources.cuda_allocated_growth_mb + 256.0
+            n_resources.cuda_allocated_growth_mb + growth_allowance_mb["cuda_allocated"]
         )
         assert two_n_resources.cuda_reserved_growth_mb <= (
-            n_resources.cuda_reserved_growth_mb + 512.0
+            n_resources.cuda_reserved_growth_mb + growth_allowance_mb["cuda_reserved"]
         )
 
-        limits = get_index_support_profile(get_config().index_support_profile).code
-        mib = 1024**2
         for resources in (n_resources, two_n_resources):
             assert resources.peak_rss_mb * mib <= limits.rss_bytes
             assert resources.peak_cuda_reserved_mb * mib <= limits.cuda_bytes

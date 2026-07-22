@@ -20,8 +20,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import os
+import tempfile
 import threading
 import time
+import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
@@ -40,6 +44,8 @@ _DEFAULT_FILES: Final = 83_624
 _DEFAULT_CHUNKS_PER_FILE: Final = 3
 _DEFAULT_EXPECTED_CHUNKS: Final = 250_872
 _DOCSTRING_PADDING: Final = 760
+_EVIDENCE_DIR_ENV: Final = "VAULTSPEC_RAG_BENCHMARK_REPORT_DIR"
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,9 +230,7 @@ def _function_source(_file_index: int, chunk_index: int) -> str:
     # into an accidental long-context model benchmark.
     docstring = f"{' ' * _DOCSTRING_PADDING}unit {chunk_index}"
     return (
-        f"def f{chunk_index}(x):\n"
-        f'    """{docstring}"""\n'
-        f"    return x + {chunk_index}\n"
+        f'def f{chunk_index}(x):\n    """{docstring}"""\n    return x + {chunk_index}\n'
     )
 
 
@@ -262,9 +266,57 @@ def _marker_payload(spec: CorpusSpec, state: str) -> dict[str, object]:
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            json.dump(payload, stream, indent=2)
+            stream.write("\n")
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def retain_benchmark_evidence(
+    name: str,
+    payload: dict[str, object],
+    *,
+    report_dir: Path | None = None,
+) -> Path | None:
+    """Log exact benchmark evidence and optionally retain it as atomic JSON."""
+    if not name or any(
+        character not in "abcdefghijklmnopqrstuvwxyz0123456789-" for character in name
+    ):
+        raise ValueError(
+            "benchmark evidence name must use lowercase letters, digits, and hyphens"
+        )
+    report = {
+        **payload,
+        "schema_version": _SCHEMA_VERSION,
+        "evidence": name,
+    }
+    rendered = json.dumps(report, sort_keys=True)
+    _LOG.info("large-index benchmark evidence: %s", rendered)
+    destination_dir = report_dir
+    if destination_dir is None:
+        configured_dir = os.environ.get(_EVIDENCE_DIR_ENV)
+        if configured_dir:
+            destination_dir = Path(configured_dir)
+    if destination_dir is None:
+        return None
+    destination = destination_dir / (f"{name}-{os.getpid()}-{uuid.uuid4().hex}.json")
+    _write_json(destination, report)
+    _LOG.info("retained large-index benchmark evidence at %s", destination)
+    return destination
 
 
 def _load_marker(root: Path) -> dict[str, object] | None:
