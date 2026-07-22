@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from anyio.to_thread import run_sync as _run_in_thread
 
 from ._job_errors import STALL_THRESHOLD_SECONDS, classify_error_text
+from .job_control import NO_RUN_CONTROL
 from .job_manager import (
     MAX_RECORDS,
     JobAttemptContext,
@@ -66,6 +67,7 @@ if TYPE_CHECKING:
         DocumentIndexPreflight,
         DocumentScopedPreflight,
     )
+    from .job_control import RunControl
     from .progress import ProgressReporter
     from .service import ServiceRegistry
 
@@ -894,22 +896,33 @@ def _document_policy_indexer(root: Path):
     )
 
 
-def validate_document_index_policy(root: Path) -> DocumentIndexPreflight:
+def validate_document_index_policy(
+    root: Path,
+    *,
+    run_control: RunControl = NO_RUN_CONTROL,
+) -> DocumentIndexPreflight:
     """Resolve and discover document work before durable mutation."""
-    return _document_policy_indexer(root).preflight_content()
+    return _document_policy_indexer(root).preflight_content(run_control=run_control)
 
 
 def validate_scoped_document_index_policy(
     root: Path,
     changed_paths: tuple[Path, ...] | frozenset[Path],
+    *,
+    run_control: RunControl = NO_RUN_CONTROL,
 ) -> DocumentScopedPreflight:
     """Validate one exact document watcher scope without full discovery."""
-    return _document_policy_indexer(root).preflight_changed_paths(changed_paths)
+    return _document_policy_indexer(root).preflight_changed_paths(
+        changed_paths,
+        run_control=run_control,
+    )
 
 
 def validate_document_support_profile(
     root: Path,
     preflight: DocumentIndexPreflight | DocumentScopedPreflight,
+    *,
+    run_control: RunControl = NO_RUN_CONTROL,
 ) -> None:
     """Enforce the named document profile before any model or mutable resource."""
     import shutil
@@ -929,11 +942,20 @@ def validate_document_support_profile(
         if isinstance(preflight, DocumentIndexPreflight)
         else preflight.changed_paths
     )
-    existing = tuple(path for path in paths if path.is_file())
+    run_control.checkpoint()
+    source_files = 0
+    source_bytes = 0
+    for path in paths:
+        run_control.checkpoint()
+        if path.is_file():
+            source_files += 1
+            source_bytes += path.stat().st_size
+        run_control.checkpoint()
+    run_control.checkpoint()
     cfg = get_config()
     measurement = SupportMeasurement(
-        source_files=len(existing),
-        source_bytes=sum(path.stat().st_size for path in existing),
+        source_files=source_files,
+        source_bytes=source_bytes,
         queue_bytes=int(cfg.index_queue_max_bytes),
         rss_bytes=int(psutil.Process(os.getpid()).memory_info().rss),
     )
@@ -947,10 +969,14 @@ def validate_document_support_profile(
     )
 
 
-def validate_document_job_admission(root: Path) -> DocumentIndexPreflight:
+def validate_document_job_admission(
+    root: Path,
+    *,
+    run_control: RunControl = NO_RUN_CONTROL,
+) -> DocumentIndexPreflight:
     """Return document authority only after policy and profile admission."""
-    preflight = validate_document_index_policy(root)
-    validate_document_support_profile(root, preflight)
+    preflight = validate_document_index_policy(root, run_control=run_control)
+    validate_document_support_profile(root, preflight, run_control=run_control)
     return preflight
 
 

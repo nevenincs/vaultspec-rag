@@ -212,7 +212,10 @@ def _run_document_attempt(
     from .jobs import JobProgressReporter, validate_document_job_admission
 
     context.control.checkpoint()
-    preflight = validate_document_job_admission(root)
+    preflight = validate_document_job_admission(
+        root,
+        run_control=context.control,
+    )
     context.control.checkpoint()
     registry.load_model()
     try:
