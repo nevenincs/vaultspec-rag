@@ -26,6 +26,7 @@ from concurrent.futures import (
 )
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
+from functools import partial
 from typing import TYPE_CHECKING, NamedTuple
 
 from .._job_errors import JobError, JobErrorKind
@@ -65,6 +66,7 @@ from ._run_ledger import (
 from ._run_policy import RunPolicy
 from ._streaming import (
     CodeFileSegment,
+    WeightedCodeSlice,
     _release_cuda_cache,
     encode_and_upsert_code_slice,
     iter_code_file_segments,
@@ -82,7 +84,7 @@ if TYPE_CHECKING:
     from ..config import PreprocessMode
     from ..embeddings import EmbeddingModel
     from ..job_control import RunControl
-    from ..memory_probe import MemoryBudget, MemoryBudgetSnapshot
+    from ..memory_probe import MemoryBudget, MemoryBudgetSnapshot, MemoryProbe
     from ..progress import ProgressReporter
     from ..store import CodeChunk, VaultStore
     from ._chunk_worker import FileChunkResult
@@ -1876,6 +1878,154 @@ class CodebaseIndexer:
             run_control.checkpoint()
         return False, 1
 
+    def _iter_consumer_segments(
+        self,
+        segment_queue: _WeightedCodeSegmentQueue,
+        *,
+        run_control: RunControl = NO_RUN_CONTROL,
+    ) -> Iterator[CodeFileSegment]:
+        """Yield queued segments until the producer supplies its sentinel."""
+        while True:
+            run_control.checkpoint()
+            try:
+                segment = segment_queue.get(timeout=_CONTROL_POLL_SECONDS)
+            except queue.Empty:
+                self._sample_memory_budget("code consumer queue wait")
+                continue
+            run_control.checkpoint()
+            if segment is None:
+                return
+            yield segment
+
+    @staticmethod
+    def _record_confirmed_slice(
+        checkpoint: CodeRunCheckpoint,
+        segments: tuple[CodeFileSegment, ...],
+        metadata: dict[str, str],
+    ) -> None:
+        """Persist the file units covered by one confirmed store mutation."""
+        checkpoint.record_confirmed_segments(segments, metadata)
+
+    def _consume_weighted_slice(
+        self,
+        weighted_slice: WeightedCodeSlice,
+        *,
+        slice_index: int,
+        limits: _CodePipelineLimits,
+        new_ids: set[str],
+        total: list[int],
+        metadata: dict[str, str],
+        checkpoint: CodeRunCheckpoint | None,
+        probe: MemoryProbe,
+        run_control: RunControl,
+    ) -> None:
+        """Encode, store, and account for one bounded weighted slice."""
+        run_control.checkpoint()
+        self._sample_memory_budget(f"slice-{slice_index}-before-encode")
+        slice_chunks = sorted(
+            weighted_slice.chunks,
+            key=lambda chunk: -len(chunk.content),
+        )
+        try:
+            probe.checkpoint(f"slice-{slice_index}-before-encode")
+            completed_slice_index = slice_index + 1
+            on_storage_confirmed = (
+                partial(
+                    self._record_confirmed_slice,
+                    checkpoint,
+                    weighted_slice.segments,
+                    metadata,
+                )
+                if checkpoint is not None
+                else None
+            )
+            encode_and_upsert_code_slice(
+                slice_chunks,
+                model=self.model,
+                store=self.store,
+                gpu_lock=self._gpu_lock,
+                release_cache=(completed_slice_index % limits.flush_slices == 0),
+                encode_batch_size=limits.encode_batch_size,
+                write_policy=(
+                    checkpoint.run_policy.store_write_policy
+                    if checkpoint is not None
+                    else None
+                ),
+                on_storage_confirmed=on_storage_confirmed,
+                run_control=run_control,
+            )
+            run_control.checkpoint()
+            new_ids.update(chunk.id for chunk in slice_chunks)
+            total[0] += len(slice_chunks)
+            probe.checkpoint(f"slice-{completed_slice_index}-after-store")
+            self._sample_memory_budget(f"slice-{completed_slice_index}-after-store")
+        finally:
+            del slice_chunks
+
+    def _finish_consumer_probe(
+        self,
+        probe: MemoryProbe | None,
+        consumer_exceptions: list[BaseException],
+    ) -> None:
+        """Release consumer resources while retaining every cleanup failure."""
+        try:
+            self._sample_memory_budget("code consumer cleanup")
+        except BaseException as exc:
+            consumer_exceptions.append(exc)
+        try:
+            _release_cuda_cache()
+            if probe is not None and probe.samples:
+                logger.info("%s", probe.report())
+        except BaseException as exc:
+            consumer_exceptions.append(exc)
+
+    def _run_weighted_consumer(
+        self,
+        segment_queue: _WeightedCodeSegmentQueue,
+        consumer_exceptions: list[BaseException],
+        limits: _CodePipelineLimits,
+        new_ids: set[str],
+        total: list[int],
+        metadata: dict[str, str],
+        checkpoint: CodeRunCheckpoint | None,
+        run_control: RunControl,
+    ) -> None:
+        """Run the sole weighted consumer and retain failures for the producer."""
+        from ..memory_probe import MemoryProbe
+
+        probe: MemoryProbe | None = None
+        try:
+            probe = MemoryProbe(name="codebase-index")
+            with probe:
+                self._sample_memory_budget("code consumer start")
+                segments = self._iter_consumer_segments(
+                    segment_queue,
+                    run_control=run_control,
+                )
+                for slice_index, weighted_slice in enumerate(
+                    iter_weighted_code_slices(
+                        segments,
+                        max_chunks=limits.slice_max_chunks,
+                        max_bytes=limits.slice_max_bytes,
+                        run_control=run_control,
+                    )
+                ):
+                    self._consume_weighted_slice(
+                        weighted_slice,
+                        slice_index=slice_index,
+                        limits=limits,
+                        new_ids=new_ids,
+                        total=total,
+                        metadata=metadata,
+                        checkpoint=checkpoint,
+                        probe=probe,
+                        run_control=run_control,
+                    )
+        except BaseException as exc:
+            consumer_exceptions.append(exc)
+        finally:
+            self._finish_consumer_probe(probe, consumer_exceptions)
+
     def _spawn_weighted_consumer(
         self,
         segment_queue: _WeightedCodeSegmentQueue,
@@ -1889,102 +2039,21 @@ class CodebaseIndexer:
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> threading.Thread:
         """Start the sole GPU consumer for weighted file segments."""
-        import queue as queue_module
         import threading
 
-        from ..memory_probe import MemoryProbe
-
-        def _segments() -> Iterator[CodeFileSegment]:
-            while True:
-                run_control.checkpoint()
-                try:
-                    segment = segment_queue.get(timeout=_CONTROL_POLL_SECONDS)
-                except queue_module.Empty:
-                    self._sample_memory_budget("code consumer queue wait")
-                    continue
-                run_control.checkpoint()
-                if segment is None:
-                    return
-                yield segment
-
-        def _consumer_loop() -> None:
-            probe: MemoryProbe | None = None
-            try:
-                probe = MemoryProbe(name="codebase-index")
-                with probe:
-                    self._sample_memory_budget("code consumer start")
-                    slice_index = 0
-                    for weighted_slice in iter_weighted_code_slices(
-                        _segments(),
-                        max_chunks=limits.slice_max_chunks,
-                        max_bytes=limits.slice_max_bytes,
-                        run_control=run_control,
-                    ):
-                        run_control.checkpoint()
-                        self._sample_memory_budget(f"slice-{slice_index}-before-encode")
-                        slice_chunks = sorted(
-                            weighted_slice.chunks,
-                            key=lambda chunk: -len(chunk.content),
-                        )
-                        try:
-                            probe.checkpoint(f"slice-{slice_index}-before-encode")
-                            slice_index += 1
-
-                            def _record_storage_confirmed(
-                                confirmed_segments: tuple[CodeFileSegment, ...] = (
-                                    weighted_slice.segments
-                                ),
-                            ) -> None:
-                                assert checkpoint is not None
-                                checkpoint.record_confirmed_segments(
-                                    confirmed_segments,
-                                    metadata,
-                                )
-
-                            encode_and_upsert_code_slice(
-                                slice_chunks,
-                                model=self.model,
-                                store=self.store,
-                                gpu_lock=self._gpu_lock,
-                                release_cache=(slice_index % limits.flush_slices == 0),
-                                encode_batch_size=limits.encode_batch_size,
-                                write_policy=(
-                                    checkpoint.run_policy.store_write_policy
-                                    if checkpoint is not None
-                                    else None
-                                ),
-                                on_storage_confirmed=(
-                                    _record_storage_confirmed
-                                    if checkpoint is not None
-                                    else None
-                                ),
-                                run_control=run_control,
-                            )
-                            run_control.checkpoint()
-                            new_ids.update(chunk.id for chunk in slice_chunks)
-                            total[0] += len(slice_chunks)
-                            probe.checkpoint(f"slice-{slice_index}-after-store")
-                            self._sample_memory_budget(
-                                f"slice-{slice_index}-after-store"
-                            )
-                        finally:
-                            del slice_chunks
-            except BaseException as exc:
-                consumer_exceptions.append(exc)
-            finally:
-                try:
-                    self._sample_memory_budget("code consumer cleanup")
-                except BaseException as exc:
-                    consumer_exceptions.append(exc)
-                try:
-                    _release_cuda_cache()
-                    if probe is not None and probe.samples:
-                        logger.info("%s", probe.report())
-                except BaseException as exc:
-                    consumer_exceptions.append(exc)
-
         consumer = threading.Thread(
-            target=_consumer_loop, name="codebase-indexer-consumer"
+            target=self._run_weighted_consumer,
+            args=(
+                segment_queue,
+                consumer_exceptions,
+                limits,
+                new_ids,
+                total,
+                metadata,
+                checkpoint,
+                run_control,
+            ),
+            name="codebase-indexer-consumer",
         )
         consumer.start()
         return consumer
@@ -2164,6 +2233,80 @@ class CodebaseIndexer:
             preprocess_failures=list(self._prep_skips),
         )
 
+    @staticmethod
+    def _code_result_failure(
+        result: FileChunkResult,
+    ) -> tuple[FileStateKind, JobErrorKind, str] | None:
+        """Return the durable state and typed error for a failed file result."""
+        if result.preprocess_status == "skipped":
+            return (
+                FileStateKind.EXTRACT_RETRYABLE,
+                JobErrorKind.EXTRACTION_RETRYABLE,
+                result.preprocess_reason or "preprocessor skipped the file",
+            )
+        if result.chunks:
+            return None
+        if result.preprocess_status == "ok":
+            return (
+                FileStateKind.EXTRACT_RETRYABLE,
+                JobErrorKind.EXTRACTION_RETRYABLE,
+                "admitted code source produced no indexable chunks",
+            )
+        return (
+            FileStateKind.CHUNK_FAILED,
+            JobErrorKind.CHUNK_FAILED,
+            "admitted code source produced no indexable chunks",
+        )
+
+    @staticmethod
+    def _checkpoint_content_hash(content_hash: str) -> str | None:
+        """Return a content hash only when it has the checkpoint wire shape."""
+        if len(content_hash) == 128 and all(
+            char in "0123456789abcdef" for char in content_hash
+        ):
+            return content_hash
+        return None
+
+    def _raise_code_result_failure(
+        self,
+        result: FileChunkResult,
+        checkpoint: CodeRunCheckpoint | None,
+    ) -> None:
+        """Record and raise a typed failure for a non-indexable file result."""
+        failure = self._code_result_failure(result)
+        if failure is None:
+            return
+        failure_state, failure_kind, detail = failure
+        if checkpoint is not None:
+            checkpoint.record_processing_failure(
+                result.rel_path,
+                failure_state,
+                detail,
+                content_hash=self._checkpoint_content_hash(result.content_hash),
+            )
+        raise JobError(failure_kind, detail)
+
+    def _enqueue_code_segment(
+        self,
+        segment: CodeFileSegment,
+        *,
+        segment_queue: _WeightedCodeSegmentQueue,
+        consumer: threading.Thread,
+        consumer_exceptions: list[BaseException],
+        run_control: RunControl,
+    ) -> bool:
+        """Place one segment on the bounded queue while the consumer is live."""
+        while not consumer_exceptions and consumer.is_alive():
+            run_control.checkpoint()
+            try:
+                segment_queue.put(segment, timeout=_CONTROL_POLL_SECONDS)
+            except queue.Full:
+                self._sample_memory_budget("code producer queue wait")
+                continue
+            run_control.checkpoint()
+            return True
+        return False
+
     def _enqueue_code_result(
         self,
         result: FileChunkResult,
@@ -2179,45 +2322,7 @@ class CodebaseIndexer:
         """Drain one file result into bounded weighted segments."""
         run_control.checkpoint()
         self._record_preprocess_result(result)
-        failure_state: FileStateKind | None = None
-        failure_kind: JobErrorKind | None = None
-        detail: str | None = None
-        if result.preprocess_status == "skipped":
-            failure_state = FileStateKind.EXTRACT_RETRYABLE
-            failure_kind = JobErrorKind.EXTRACTION_RETRYABLE
-            detail = result.preprocess_reason or "preprocessor skipped the file"
-        elif not result.chunks:
-            failure_state = (
-                FileStateKind.EXTRACT_RETRYABLE
-                if result.preprocess_status == "ok"
-                else FileStateKind.CHUNK_FAILED
-            )
-            failure_kind = (
-                JobErrorKind.EXTRACTION_RETRYABLE
-                if result.preprocess_status == "ok"
-                else JobErrorKind.CHUNK_FAILED
-            )
-            detail = "admitted code source produced no indexable chunks"
-        if (
-            failure_state is not None
-            and failure_kind is not None
-            and detail is not None
-        ):
-            if checkpoint is not None:
-                checkpoint.record_processing_failure(
-                    result.rel_path,
-                    failure_state,
-                    detail,
-                    content_hash=(
-                        result.content_hash
-                        if len(result.content_hash) == 128
-                        and all(
-                            char in "0123456789abcdef" for char in result.content_hash
-                        )
-                        else None
-                    ),
-                )
-            raise JobError(failure_kind, detail)
+        self._raise_code_result_failure(result, checkpoint)
         if result.preprocess_status == "ok":
             self._record_extracted_bytes(
                 sum(len(chunk.content.encode("utf-8")) for chunk in result.chunks)
@@ -2239,16 +2344,13 @@ class CodebaseIndexer:
             else measured_segments
         )
         for segment in pending_segments:
-            while not consumer_exceptions and consumer.is_alive():
-                run_control.checkpoint()
-                try:
-                    segment_queue.put(segment, timeout=_CONTROL_POLL_SECONDS)
-                except queue.Full:
-                    self._sample_memory_budget("code producer queue wait")
-                    continue
-                run_control.checkpoint()
-                break
-            else:
+            if not self._enqueue_code_segment(
+                segment,
+                segment_queue=segment_queue,
+                consumer=consumer,
+                consumer_exceptions=consumer_exceptions,
+                run_control=run_control,
+            ):
                 return False
         return True
 
