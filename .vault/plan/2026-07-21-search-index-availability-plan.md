@@ -67,15 +67,15 @@ The supervisor, the primary architect, runs local GPU acceptance and mandatory r
 
 Verify the real-service regression, stable empty-success behavior, unrelated-job isolation, and adjacent search diagnostics on local hardware.
 
-- [ ] `W03.P03.S22` - Run the targeted subprocess-GPU regression and adjacent service search diagnostics under supervisor observation; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
-- [ ] `W03.P03.S23` - Run formatting lint typing unit integration client CLI and MCP checks under supervisor observation; `src/vaultspec_rag`.
-- [ ] `W03.P03.S24` - Validate research ADR plan and execution records with canonical vault checks; `.vault`.
+- [x] `W03.P03.S22` - Run the targeted subprocess-GPU regression and adjacent service search diagnostics under supervisor observation; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
+- [x] `W03.P03.S23` - Run formatting lint typing unit integration client CLI and MCP checks under supervisor observation; `src/vaultspec_rag`.
+- [x] `W03.P03.S24` - Validate research ADR plan and execution records with canonical vault checks; `.vault`.
 
 ### Phase `W03.P04` - mandatory code review
 
 Audit the completed work against the ADR, repository rules, concurrent campaign boundaries, and test-integrity requirements before reporting completion.
 
-- [ ] `W03.P04.S25` - Audit ADR conformance response safety campaign compatibility and test integrity and route required corrections to Terra xhigh; `.vault/audit/2026-07-21-search-index-availability-code-review-audit.md`.
+- [x] `W03.P04.S25` - Audit ADR conformance response safety campaign compatibility and test integrity and route required corrections to Terra xhigh; `.vault/audit/2026-07-21-search-index-availability-code-review-audit.md`.
 
 ## Description
 
