@@ -19,7 +19,13 @@ force rejection, isolation, and prohibited-test-double compliance.
 
 ## Findings
 
-No findings. Review status: pass.
+### s31-cli-job-control-verification | medium | retry lineage was described but not asserted
+
+Resolved. The human CLI scenario now inspects the real manager after retry and
+proves exactly one new attempt links to the cancelled parent under a different
+job identifier.
+
+Review status: pass.
 
 The assertions cover exit status, exact identifiers, resource states,
 structured outcome and error codes, retry lineage, and deletion visibility
