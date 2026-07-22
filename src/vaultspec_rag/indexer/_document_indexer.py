@@ -270,42 +270,38 @@ class DocumentIndexer:
         run_control: RunControl,
     ) -> tuple[DocumentFileMetadata | None, int, str | None]:
         """Chunk and publish one document, returning durable file evidence."""
+        from ._run_policy import RunPolicy
+
         run_control.checkpoint()
-        result = _chunk_worker.chunk_document_and_hash_file(
+        extractor_policy = RunPolicy.from_config(run_control=run_control)
+        result = _chunk_worker.stream_document_and_hash_file(
             path,
             self.root_dir,
             prep,
             self._execution_policy(policy),
             run_control,
+            lambda: extractor_policy.checkpoint("document extractor polling"),
         )
         if result.preprocess_status == "skipped":
             reason = result.preprocess_reason or "document extraction skipped"
             return None, 0, f"{result.rel_path}: {reason}"
-        chunks = result.chunks
-        if not chunks:
-            return None, 0, f"{result.rel_path}: document produced no decodable content"
-
         from ..config import get_config
 
         cfg = get_config()
         slice_size = max(1, int(cfg.embedding_batch_size))
-        weighted_slices = tuple(
-            iter_weighted_document_slices(
-                chunks,
-                max_chunks=slice_size,
-                run_control=run_control,
-            )
+        weighted_slices = iter_weighted_document_slices(
+            result.chunks,
+            max_chunks=slice_size,
+            run_control=run_control,
         )
-        budget.reserve(
-            len(chunks),
-            sum(weighted.estimated_bytes for weighted in weighted_slices),
-        )
-        self.store.disk_headroom_preflight(len(chunks))
-        reporter.phase_start("embed + upsert document chunks", len(chunks))
+        point_ids: list[str] = []
+        reporter.phase_start("embed + upsert document chunks", None)
         try:
             for weighted in weighted_slices:
                 run_control.checkpoint()
                 selected = list(weighted.chunks)
+                budget.reserve(len(selected), weighted.estimated_bytes)
+                self.store.disk_headroom_preflight(len(selected))
                 encode_and_upsert_document_slice(
                     selected,
                     model=self.model,
@@ -314,16 +310,19 @@ class DocumentIndexer:
                     encode_batch_size=int(cfg.embedding_encode_batch_size),
                     run_control=run_control,
                 )
+                point_ids.extend(chunk.id for chunk in selected)
                 reporter.advance(len(selected))
         finally:
             reporter.phase_end()
+        if not point_ids:
+            return None, 0, f"{result.rel_path}: document produced no decodable content"
         return (
             DocumentFileMetadata(
                 result.rel_path,
                 result.content_hash,
-                tuple(chunk.id for chunk in chunks),
+                tuple(point_ids),
             ),
-            len(chunks),
+            len(point_ids),
             None,
         )
 

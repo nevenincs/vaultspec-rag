@@ -211,7 +211,9 @@ def _run_document_attempt(
     """Run one document attempt with independent policy and storage state."""
     from .jobs import JobProgressReporter, validate_document_job_admission
 
+    context.control.checkpoint()
     preflight = validate_document_job_admission(root)
+    context.control.checkpoint()
     registry.load_model()
     try:
         with registry.lease(root) as slot:
