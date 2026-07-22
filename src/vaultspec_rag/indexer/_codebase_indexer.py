@@ -432,16 +432,22 @@ class CodebaseIndexer:
     def _begin_memory_budget(self) -> None:
         """Freeze and sample one production memory budget before dispatch."""
         from ..config import get_config
-        from ..memory_probe import MemoryBudget
+        from ..memory_probe import MemoryBudget, reset_cuda_peak_memory_stats
 
         config = get_config()
+        limits = self._support_limits
+        mib = 1024**2
+        rss_ceiling_mb = config.index_rss_ceiling_mb
+        cuda_ceiling_mb = config.index_cuda_ceiling_mb
+        if limits is not None:
+            rss_ceiling_mb = min(rss_ceiling_mb, limits.rss_bytes / mib)
+            cuda_ceiling_mb = min(cuda_ceiling_mb, limits.cuda_bytes / mib)
+        uses_cuda = getattr(self.model, "device", None) == "cuda"
+        if uses_cuda:
+            reset_cuda_peak_memory_stats()
         self._memory_budget = MemoryBudget(
-            rss_ceiling_mb=config.index_rss_ceiling_mb,
-            cuda_ceiling_mb=(
-                config.index_cuda_ceiling_mb
-                if getattr(self.model, "device", None) == "cuda"
-                else None
-            ),
+            rss_ceiling_mb=rss_ceiling_mb,
+            cuda_ceiling_mb=cuda_ceiling_mb if uses_cuda else None,
         )
         self._sample_memory_budget("before code dispatch")
 
@@ -456,6 +462,13 @@ class CodebaseIndexer:
             cuda_bytes=int(snapshot.peak_cuda_reserved_mb * 1024**2),
         )
         return snapshot
+
+    def _fail_cuda_oom(self, label: str, exc: BaseException) -> None:
+        """Translate allocator exhaustion through the admitted budget latch."""
+        budget = self._memory_budget
+        if budget is None:
+            raise RuntimeError("code memory budget was not admitted") from exc
+        budget.fail_cuda_oom(label=label, detail=str(exc))
 
     def _begin_support_measurement(
         self,
@@ -1939,6 +1952,20 @@ class CodebaseIndexer:
                 if checkpoint is not None
                 else None
             )
+
+            def _after_forward(kind: str) -> None:
+                run_control.checkpoint()
+                self._sample_memory_budget(
+                    f"slice-{completed_slice_index}-after-{kind}-forward"
+                )
+                run_control.checkpoint()
+
+            def _on_cuda_oom(exc: BaseException) -> None:
+                self._fail_cuda_oom(
+                    f"slice-{completed_slice_index}-allocator-oom",
+                    exc,
+                )
+
             encode_and_upsert_code_slice(
                 slice_chunks,
                 model=self.model,
@@ -1952,6 +1979,8 @@ class CodebaseIndexer:
                     else None
                 ),
                 on_storage_confirmed=on_storage_confirmed,
+                after_forward=_after_forward,
+                on_cuda_oom=_on_cuda_oom,
                 run_control=run_control,
             )
             run_control.checkpoint()
@@ -2654,6 +2683,53 @@ class CodebaseIndexer:
                 result[unit.rel_path].update(unit.point_ids)
         return result
 
+    def _reopen_digest_drifted_paths(
+        self,
+        checkpoint: CodeRunCheckpoint,
+        current_digests: dict[str, str],
+    ) -> int:
+        """Supersede resumed indexed evidence for paths that changed since.
+
+        A resumed generation carries the indexed paths of the attempt that
+        failed. Any of those whose source changed in the meantime cannot be
+        recognised as already committed, because commit-unit identity binds
+        the source digest, and cannot be written over an indexed path either.
+        Superseding them here - before any segment is dispatched - is what
+        turns a resumed attempt over a moving tree into an ordinary one.
+
+        Deleting the published points is not optional. Chunk identity embeds
+        the line span and a content hash, so re-ingesting changed content
+        mints new identities rather than overwriting the old ones; leaving
+        them would replace a visible failure with silently duplicated
+        content.
+
+        The points are dropped from storage first and the units that claim
+        them are removed immediately after. No separate deletion unit is
+        recorded, because a point identity may belong to only one commit
+        unit: while the superseded upsert still claims these points, nothing
+        else can, and once it is gone the ledger holds no claim on them at
+        all - which is exactly what their removal from storage means. An
+        interruption between the two steps replays cleanly, because the path
+        is still recorded indexed under the old digest and is simply
+        re-opened again, finding no points left to drop.
+
+        Returns:
+            The number of paths re-opened.
+        """
+        drifted = checkpoint.drifted_indexed_paths(current_digests)
+        for rel_path, superseded_digest in sorted(drifted.items()):
+            stale_ids = sorted(self._get_chunk_ids_for_files({rel_path}))
+            if stale_ids:
+                self.store.delete_code_chunks(stale_ids)
+            checkpoint.reopen_drifted_path(rel_path, superseded_digest)
+        if drifted:
+            logger.info(
+                "Re-opened %d resumed code path(s) whose source changed since "
+                "the interrupted attempt indexed them",
+                len(drifted),
+            )
+        return len(drifted)
+
     def _incremental_prior_ids_by_path(
         self,
         checkpoint: CodeRunCheckpoint,
@@ -3351,6 +3427,13 @@ class CodebaseIndexer:
         if resumed_publication is not None:
             return resumed_publication
         run_control.checkpoint()
+        # Scoped to the paths this run re-ingests: re-opening anything else
+        # would drop its points without republishing them.
+        self._reopen_digest_drifted_paths(
+            checkpoint,
+            {rel: current_hashes[rel] for rel in to_index},
+        )
+        run_control.checkpoint()
         prior_ids_by_path = self._incremental_prior_ids_by_path(
             checkpoint,
             attempted_paths,
@@ -3547,6 +3630,13 @@ class CodebaseIndexer:
         )
         if resumed_publication is not None:
             return resumed_publication
+        run_control.checkpoint()
+        # Scoped to the paths this run re-ingests: re-opening anything else
+        # would drop its points without republishing them.
+        self._reopen_digest_drifted_paths(
+            checkpoint,
+            {rel: changed_hashes[rel] for rel in to_index},
+        )
         run_control.checkpoint()
         prior_ids_by_path = self._incremental_prior_ids_by_path(
             checkpoint,

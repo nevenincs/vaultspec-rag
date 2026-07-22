@@ -738,6 +738,153 @@ class TestCodebaseIncrementalIndex:
         assert "delete removed" in retry_reporter.phase_names()
         assert "write metadata" in retry_reporter.phase_names()
 
+    @pytest.mark.timeout(240)
+    @pytest.mark.parametrize("scoped", [False, True], ids=["unscoped", "scoped"])
+    def test_incremental_recovers_when_an_indexed_file_changes_after_a_failure(
+        self,
+        code_project: _CodeProject,
+        scoped: bool,
+    ) -> None:
+        """A failed attempt does not trap later attempts over a moving tree.
+
+        The sibling rollback test edits the file that caused the failure. This
+        one edits a file the failed attempt had already finished indexing,
+        which is what a watcher on a live working tree actually does. The
+        resumed generation then carries that path as indexed under a digest
+        the source no longer has, and its fresh segments can neither be
+        recognised as already committed nor written over an indexed path.
+
+        Asserting only that the ledger refuses a mismatched unit would have
+        passed throughout the outage this covers; the property under test is
+        that the second attempt succeeds.
+        """
+        import hashlib
+        import shlex
+        import sys
+        import textwrap
+
+        from ...config import EnvVar, reset_config
+        from ...indexer import _chunk_worker
+        from ...indexer._preprocess_runner import PreprocessAbortError
+
+        indexer = code_project["code_indexer"]
+        store = code_project["store"]
+        root = code_project["root"]
+        src_dir = code_project["src_dir"]
+
+        script = root / "conditional_preprocessor.py"
+        script.write_text(
+            textwrap.dedent(
+                """
+                import json
+                import pathlib
+                import sys
+
+                source = pathlib.Path(sys.argv[1])
+                content = source.read_text(encoding="utf-8")
+                if "FAIL" in content:
+                    sys.exit(7)
+                print(json.dumps({
+                    "schema_version": 1,
+                    "preprocessor_id": "conditional",
+                    "preprocessor_version": "1",
+                    "source_path": str(source),
+                    "text": "successful conditional extraction",
+                }))
+                """
+            ),
+            encoding="utf-8",
+        )
+        command = f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} {{path}}"
+        (root / ".vaultragpreprocess.toml").write_text(
+            "version = 2\n"
+            "[[rule]]\n"
+            'pattern = "*.fatal"\n'
+            'target = "code"\n'
+            'extractor_version = "1"\n'
+            f"command = '''{command}'''\n"
+            'on_error = "fail"\n',
+            encoding="utf-8",
+        )
+        indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
+
+        # "a_" sorts before "z_", so the good file is indexed before the
+        # preprocessor aborts the attempt on the failing one.
+        good = src_dir / "a_good.py"
+        failing = src_dir / "z_fail.fatal"
+        good.write_text(
+            "def stored_before_failure():\n    return True\n", encoding="utf-8"
+        )
+        failing.write_text("FAIL\n", encoding="utf-8")
+        changed = [good, failing]
+
+        overrides = {
+            EnvVar.INDEX_SEGMENT_MAX_CHUNKS.value: "1",
+            EnvVar.INDEX_QUEUE_MAX_CHUNKS.value: "2",
+            EnvVar.INDEX_CHUNK_WORKERS.value: "1",
+        }
+        previous = {key: os.environ.get(key) for key in overrides}
+        try:
+            os.environ.update(overrides)
+            reset_config()
+            with pytest.raises(PreprocessAbortError):
+                indexer.incremental_index(
+                    reporter=NullProgressReporter(),
+                    changed_paths=changed if scoped else None,
+                    preflight=(
+                        indexer.preflight_changed_paths(changed)
+                        if scoped
+                        else indexer.preflight_content()
+                    ),
+                )
+
+            # The edit that poisons the resumed generation: the already-indexed
+            # file changes, so its recorded digest no longer describes it.
+            good.write_text(
+                "def stored_before_failure():\n"
+                "    return True\n"
+                "\n\n"
+                "def added_after_the_failure():\n"
+                "    return 'recovered'\n",
+                encoding="utf-8",
+            )
+            failing.write_text("SUCCEED\n", encoding="utf-8")
+            expected = _chunk_worker.chunk_and_hash_file(good, root)
+            expected_ids = {chunk.id for chunk in expected.chunks}
+
+            result = indexer.incremental_index(
+                reporter=NullProgressReporter(),
+                changed_paths=changed if scoped else None,
+                preflight=(
+                    indexer.preflight_changed_paths(changed)
+                    if scoped
+                    else indexer.preflight_content()
+                ),
+            )
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            reset_config()
+
+        assert result.added >= 1
+        # Replaced, not duplicated. Chunk identity embeds the line span and a
+        # content hash, so a re-open that cleared the ledger without dropping
+        # the published points would leave both generations of points here and
+        # this exact-set assertion is the only thing that would catch it.
+        stored = store.get_code_ids_by_paths({"src/a_good.py"})
+        assert set(stored) == expected_ids
+        assert len(stored) == len(expected_ids)
+        assert (
+            indexer._load_meta()["src/a_good.py"]  # pyright: ignore[reportPrivateUsage]
+            == hashlib.blake2b(good.read_bytes()).hexdigest()
+        )
+
 
 class TestCodebaseSearch:
     """Tests for searching indexed codebase chunks."""

@@ -29,7 +29,7 @@ from ._run_ledger import (
 from ._run_policy import DurableProgressKind, RunPolicy
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterable
+    from collections.abc import Generator, Iterable, Mapping
     from pathlib import Path
 
     from ._resolved_policy import ResolvedIndexPolicy
@@ -294,6 +294,42 @@ class CodeRunCheckpoint:
                 label=f"stale code deletion {rel_path}",
             )
         return inserted
+
+    def drifted_indexed_paths(
+        self,
+        current_digests: Mapping[str, str],
+    ) -> dict[str, str]:
+        """Return resumed indexed paths whose source has since changed.
+
+        Maps each affected path to the digest recorded when it was indexed,
+        which is the evidence the caller must supersede. A path is reported
+        only when this generation recorded it indexed and the digest observed
+        now differs, so a fresh generation reports nothing and a faithful
+        resume reports only what actually moved.
+        """
+        recorded = self.ledger.indexed_digests_for_paths(
+            self.generation_id,
+            tuple(current_digests),
+        )
+        return {
+            rel_path: digest
+            for rel_path, digest in recorded.items()
+            if current_digests[rel_path] != digest
+        }
+
+    def reopen_drifted_path(self, rel_path: str, superseded_digest: str) -> int:
+        """Clear stale indexed evidence so one path can be ingested again."""
+        removed = self.ledger.reopen_drifted_path(
+            self.generation_id,
+            rel_path,
+            superseded_digest=superseded_digest,
+        )
+        if removed:
+            self.run_policy.record_durable_progress(
+                kind=DurableProgressKind.LEDGER_UNIT_COMMITTED,
+                label=f"code re-open {rel_path} superseding {removed} unit(s)",
+            )
+        return removed
 
     def record_processing_failure(
         self,
