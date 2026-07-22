@@ -65,13 +65,13 @@ Define generic content ownership, routing, migration, and fingerprint contracts 
 - [x] `W01.P01.S47` - Derive per-kind membership and content signatures from source profile, ordered routes, targets, ignores, schema, and extractor semantics; `src/vaultspec_rag/indexer/_config_epoch.py, src/vaultspec_rag/indexer/_resolved_policy.py`.
 - [x] `W01.P01.S07` - Verify real configuration loading, route ordering, one-owner enforcement, and mutation-free migration refusal; `src/vaultspec_rag/tests/test_content_policy.py, src/vaultspec_rag/tests/test_preprocess_config.py`.
 - [x] `W01.P01.S88` - Gate index and job entry points on a valid resolved policy before acquiring store, ledger, cache, writer, or GPU mutation authority; `src/vaultspec_rag/indexer/_codebase_indexer.py, src/vaultspec_rag/jobs.py`.
-- [ ] `W01.P01.S89` - Verify invalid routing leaves real collections, sidecars, ledger rows, and caches unchanged; `src/vaultspec_rag/tests/integration/test_content_policy_fail_closed.py`.
+- [x] `W01.P01.S89` - Verify invalid routing leaves real collections, sidecars, ledger rows, and caches unchanged; `src/vaultspec_rag/tests/integration/test_content_policy_fail_closed.py`.
 
 ### Phase `W01.P02` - shared discovery and preflight
 
 Make full, scoped, watcher, API, CLI, and service discovery consume the same policy snapshot while preserving the public path-list compatibility projection.
 
-- [ ] `W01.P02.S08` - Separate conventional source admission from the parser and chunker capability registry; `src/vaultspec_rag/indexer/_chunking.py, src/vaultspec_rag/indexer/_content_policy.py`.
+- [x] `W01.P02.S08` - Separate conventional source admission from the parser and chunker capability registry; `src/vaultspec_rag/indexer/_chunking.py, src/vaultspec_rag/indexer/_content_policy.py`.
 - [ ] `W01.P02.S09` - Route full and unscoped discovery through the shared classifier and resolved policy snapshot; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [ ] `W01.P02.S10` - Route scoped discovery through the shared classifier and resolved policy snapshot; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [ ] `W01.P02.S11` - Add a bounded structured scan result and retain the public path-list scan as its compatibility projection; `src/vaultspec_rag/api.py, src/vaultspec_rag/indexer/_codebase_indexer.py`.
