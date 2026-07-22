@@ -41,10 +41,10 @@ from ._code_meta import (
     EMBED_SCHEMA_KEY,
     MEMBERSHIP_EPOCH_KEY,
 )
+from ._preprocess_runner import PreprocessAbortError
 from ._streaming import (
     CodeFileSegment,
     _release_cuda_cache,
-    _stream_encode_and_upsert_codebase,
     encode_and_upsert_code_slice,
     iter_code_file_segments,
     iter_weighted_code_slices,
@@ -470,7 +470,7 @@ class CodebaseIndexer:
         """Return the number of preprocess rules active for the current run."""
         return _preprocess_glue.prep_rule_count(self._prep_ctx)
 
-    def _record_preprocess_result(self, res: FileChunkResult | None) -> None:
+    def _record_preprocess_result(self, res: FileChunkResult) -> None:
         """Accumulate a worker result's preprocess disposition (D11)."""
         self._prep_ok += _preprocess_glue.record_preprocess_result(
             res, self._prep_skips
@@ -913,9 +913,7 @@ class CodebaseIndexer:
             return
         for rule, group in batch_groups:
             run_control.checkpoint()
-            results = _chunk_worker.chunk_batch_files(
-                group, self.root_dir, rule, prep
-            )
+            results = _chunk_worker.chunk_batch_files(group, self.root_dir, rule, prep)
             handle_group(results)
             run_control.checkpoint()
             for _ in range(len(group)):
@@ -986,9 +984,7 @@ class CodebaseIndexer:
             return all_chunks
         workers = self._plan_chunk_workers(paths)
         if workers <= 1:
-            return self._chunk_singles_serial(
-                paths, reporter, run_control=run_control
-            )
+            return self._chunk_singles_serial(paths, reporter, run_control=run_control)
 
         completed = 0
         ctx = multiprocessing.get_context("spawn")
@@ -996,9 +992,7 @@ class CodebaseIndexer:
         try:
             with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
                 paths_iter = iter(paths)
-                window = min(
-                    len(paths), _CHUNK_FUTURE_WINDOW_PER_WORKER * workers
-                )
+                window = min(len(paths), _CHUNK_FUTURE_WINDOW_PER_WORKER * workers)
                 futures: dict[
                     Future[_chunk_worker.ScopedChunkResult], pathlib.Path
                 ] = {}
@@ -1054,9 +1048,7 @@ class CodebaseIndexer:
                 )
                 raise
             logger.warning("Chunk process pool could not start; chunking serially")
-            return self._chunk_singles_serial(
-                paths, reporter, run_control=run_control
-            )
+            return self._chunk_singles_serial(paths, reporter, run_control=run_control)
         return all_chunks
 
     def _process_single_future(
@@ -1140,9 +1132,7 @@ class CodebaseIndexer:
         for path in paths:
             run_control.checkpoint()
             try:
-                result = _chunk_worker.chunk_file_with_status(
-                    path, self.root_dir, prep
-                )
+                result = _chunk_worker.chunk_file_with_status(path, self.root_dir, prep)
             except PreprocessAbortError:
                 raise
             except Exception:
@@ -1179,6 +1169,7 @@ class CodebaseIndexer:
                 raise
             run_control.checkpoint()
             if not publish_result(result):
+                run_control.checkpoint()
                 raise RuntimeError("code-index segment consumer terminated")
             advanced += 1
             reporter.advance()
@@ -1199,6 +1190,7 @@ class CodebaseIndexer:
             for result in results:
                 run_control.checkpoint()
                 if not publish_result(result):
+                    run_control.checkpoint()
                     raise RuntimeError("code-index segment consumer terminated")
                 run_control.checkpoint()
 
@@ -1353,6 +1345,7 @@ class CodebaseIndexer:
                         _segments(),
                         max_chunks=limits.slice_max_chunks,
                         max_bytes=limits.slice_max_bytes,
+                        run_control=run_control,
                     ):
                         run_control.checkpoint()
                         slice_chunks = sorted(
@@ -1367,9 +1360,7 @@ class CodebaseIndexer:
                                 model=self.model,
                                 store=self.store,
                                 gpu_lock=self._gpu_lock,
-                                release_cache=(
-                                    slice_index % limits.flush_slices == 0
-                                ),
+                                release_cache=(slice_index % limits.flush_slices == 0),
                                 encode_batch_size=limits.encode_batch_size,
                                 run_control=run_control,
                             )
@@ -1453,6 +1444,7 @@ class CodebaseIndexer:
             dense_dimension=limits.dense_dimension,
             sparse_enabled=limits.sparse_enabled,
             sparse_dimension=limits.sparse_dimension,
+            run_control=run_control,
         )
         for segment in segments:
             while not consumer_exceptions and consumer.is_alive():
@@ -1561,9 +1553,7 @@ class CodebaseIndexer:
         new_ids: set[str] = set()
         metadata: dict[str, str] = {}
         total = [0]
-        self.store.disk_headroom_preflight(
-            len(paths) * _CHUNKS_PER_FILE_ESTIMATE
-        )
+        self.store.disk_headroom_preflight(len(paths) * _CHUNKS_PER_FILE_ESTIMATE)
         run_control.checkpoint()
         reporter.phase_start("chunk + embed", len(paths))
         try:
@@ -1632,7 +1622,6 @@ class CodebaseIndexer:
         run_control.checkpoint()
         return new_ids, total[0], metadata
 
-
     def _prepare_full_paths(
         self,
         reporter: ProgressReporter,
@@ -1655,59 +1644,100 @@ class CodebaseIndexer:
         run_control.checkpoint()
         return paths
 
-    def _publish_incremental_replacement(
+    def _publish_incremental_paths(
         self,
         *,
-        chunks: list[CodeChunk],
-        files_to_remove: set[str],
-        old_chunk_ids: list[str],
+        paths: list[pathlib.Path],
+        attempted_paths: set[str],
+        existing_ids: set[str],
+        reporter: ProgressReporter,
+        run_control: RunControl = NO_RUN_CONTROL,
+    ) -> tuple[set[str], dict[str, str]]:
+        """Stream changed paths and roll back attempt-introduced IDs."""
+        try:
+            published_ids, _total, published_hashes = self._pipeline_chunk_and_embed(
+                paths,
+                reporter=reporter,
+                run_control=run_control,
+            )
+        except _UnsettledCodeConsumerError:
+            raise
+        except BaseException:
+            self._discard_failed_incremental_additions(
+                attempted_paths=attempted_paths,
+                existing_ids=existing_ids,
+            )
+            raise
+        return published_ids, published_hashes
+
+    def _discard_failed_incremental_additions(
+        self,
+        *,
+        attempted_paths: set[str],
+        existing_ids: set[str],
+    ) -> None:
+        """Best-effort rollback after every consumer has settled."""
+        if not attempted_paths:
+            return
+        try:
+            current_ids = set(self._get_chunk_ids_for_files(attempted_paths))
+            introduced_ids = sorted(current_ids - existing_ids)
+            if introduced_ids:
+                self.store.delete_code_chunks(introduced_ids)
+        except Exception:
+            logger.error(
+                "Failed to clean partial incremental code publication",
+                exc_info=True,
+            )
+
+    def _commit_incremental_replacement(
+        self,
+        *,
+        existing_ids: set[str],
+        published_ids: set[str],
         metadata: dict[str, str],
-        slice_size: int,
+        files_count: int,
+        protect_replacement: bool,
         reporter: ProgressReporter,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> None:
-        """Publish one incremental change set without exposing invalid files.
-
-        The code pipeline batches chunks across changed files. When any old
-        file state must be removed, the protected span conservatively covers
-        the whole batched delete-and-replacement interval. This preserves GPU
-        batching while ensuring every individual file replacement is valid at
-        each cooperative safe edge. New-only publication remains interruptible.
-        """
-        run_control.checkpoint()
-        replacement_span = (
-            run_control.protected() if files_to_remove else contextlib.nullcontext()
-        )
-        with replacement_span:
-            reporter.phase_start("delete removed", len(files_to_remove))
-            try:
-                if files_to_remove:
-                    if old_chunk_ids:
-                        self.store.delete_code_chunks(old_chunk_ids)
-                    reporter.advance(len(files_to_remove))
-            finally:
-                reporter.phase_end()
-
-            if chunks:
-                _stream_encode_and_upsert_codebase(
-                    chunks=chunks,
-                    slice_size=slice_size,
-                    model=self.model,
-                    store=self.store,
-                    gpu_lock=self._gpu_lock,
-                    reporter=reporter,
-                    run_control=run_control,
-                )
-            else:
-                reporter.phase_start("embed + upsert chunks", 0)
-                reporter.phase_end()
-
-            reporter.phase_start("write metadata", 1)
-            try:
-                self._write_meta(metadata)
-                reporter.advance(1)
-            finally:
-                reporter.phase_end()
+        """Delete obsolete IDs and publish metadata at one safe control edge."""
+        commit_started = False
+        try:
+            run_control.checkpoint()
+            publication_span = (
+                run_control.protected()
+                if protect_replacement
+                else contextlib.nullcontext()
+            )
+            with publication_span:
+                commit_started = True
+                obsolete_ids = sorted(existing_ids - published_ids)
+                reporter.phase_start("delete removed", files_count)
+                try:
+                    if obsolete_ids:
+                        self.store.delete_code_chunks(obsolete_ids)
+                    reporter.advance(files_count)
+                finally:
+                    reporter.phase_end()
+                reporter.phase_start("write metadata", 1)
+                try:
+                    self._write_meta(metadata)
+                    reporter.advance(1)
+                finally:
+                    reporter.phase_end()
+        except RunControlSignal:
+            if not commit_started:
+                introduced_ids = sorted(published_ids - existing_ids)
+                try:
+                    if introduced_ids:
+                        self.store.delete_code_chunks(introduced_ids)
+                except Exception:
+                    logger.error(
+                        "Failed to roll back code publication before commit",
+                        exc_info=True,
+                    )
+            raise
         run_control.checkpoint()
 
     def _scan_and_hash_incremental_inputs(
@@ -2055,53 +2085,29 @@ class CodebaseIndexer:
         changed_paths: Iterable[pathlib.Path] | None = None,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
-        """Locked implementation of :meth:`incremental_index`.
-
-        Uses blake2b content hashing to detect changes (not mtime). Emits
-        phase events through ``reporter``.
-
-        Args:
-            reporter: Required progress reporter.
-            changed_paths: When provided, delegates to
-                :meth:`_scoped_incremental_locked`. When ``None`` the full
-                codebase scan below runs.
-
-        Returns:
-            An ``IndexResult`` with counts for newly added, updated, and
-            removed chunks since the last index run.
-
-        Raises:
-            OSError: If source files cannot be read or hashed.
-        """
+        """Locked implementation of cooperative incremental indexing."""
         run_control.checkpoint()
         needs_embed_rebuild = self._needs_embed_rebuild()
         run_control.checkpoint()
         if needs_embed_rebuild:
             logger.info(
                 "Codebase embedding input format changed; running a "
-                "one-time clean rebuild of the code collection",
+                "one-time clean rebuild of the code collection"
             )
             return self._full_index_locked(
-                clean=True,
-                reporter=reporter,
-                run_control=run_control,
+                clean=True, reporter=reporter, run_control=run_control
             )
-
         inputs, changed_paths, escalate_clean = self._config_drift_dispatch(
-            changed_paths,
-            run_control=run_control,
+            changed_paths, run_control=run_control
         )
         if escalate_clean:
             logger.info(
                 "Codebase content-shaping config changed; running a "
-                "one-time clean rebuild of the code collection",
+                "one-time clean rebuild of the code collection"
             )
             return self._full_index_locked(
-                clean=True,
-                reporter=reporter,
-                run_control=run_control,
+                clean=True, reporter=reporter, run_control=run_control
             )
-
         if changed_paths is not None:
             return self._scoped_incremental_locked(
                 changed_paths=changed_paths,
@@ -2110,63 +2116,50 @@ class CodebaseIndexer:
                 run_control=run_control,
             )
 
-        from ..config import get_config
-
         start = time.time()
-        slice_size = max(1, get_config().embedding_batch_size)
         self._begin_preprocess_run(run_control=run_control)
-
         run_control.checkpoint()
-        prev_meta = self._load_meta()
+        previous_metadata = self._load_meta()
         run_control.checkpoint()
-
         current_files, current_hashes = self._scan_and_hash_incremental_inputs(
-            inputs,
-            reporter,
-            run_control=run_control,
+            inputs, reporter, run_control=run_control
         )
-
-        prev_files = set(prev_meta.keys())
-        curr_files = set(current_hashes.keys())
-        new_files = curr_files - prev_files
-        deleted_files = prev_files - curr_files
+        previous_files = set(previous_metadata)
+        current_names = set(current_hashes)
+        new_files = current_names - previous_files
+        deleted_files = previous_files - current_names
         modified_files = {
-            f for f in curr_files & prev_files if current_hashes[f] != prev_meta.get(f)
+            rel
+            for rel in current_names & previous_files
+            if current_hashes[rel] != previous_metadata.get(rel)
         }
-
         to_index = new_files | modified_files
-        all_new_chunks: list[CodeChunk] = []
-
-        reporter.phase_start("chunk files", len(to_index))
-        try:
-            if to_index:
-                paths_to_index = [current_files[f] for f in to_index]
-                all_new_chunks = self._chunk_paths(
-                    paths_to_index,
-                    reporter=reporter,
-                    run_control=run_control,
-                )
-        finally:
-            reporter.phase_end()
+        paths_to_index = [current_files[rel] for rel in sorted(to_index)]
+        attempted_paths = to_index | deleted_files
         run_control.checkpoint()
-
-        files_to_remove = modified_files | deleted_files
-        old_chunk_ids: list[str] = []
-        if files_to_remove:
-            run_control.checkpoint()
-            old_chunk_ids = self._get_chunk_ids_for_files(files_to_remove)
-            run_control.checkpoint()
-
-        self._publish_incremental_replacement(
-            chunks=all_new_chunks,
-            files_to_remove=files_to_remove,
-            old_chunk_ids=old_chunk_ids,
-            metadata=current_hashes,
-            slice_size=slice_size,
+        existing_ids: set[str] = (
+            set(self._get_chunk_ids_for_files(attempted_paths))
+            if attempted_paths
+            else set()
+        )
+        run_control.checkpoint()
+        published_ids, published_hashes = self._publish_incremental_paths(
+            paths=paths_to_index,
+            attempted_paths=attempted_paths,
+            existing_ids=existing_ids,
             reporter=reporter,
             run_control=run_control,
         )
-
+        current_hashes.update(published_hashes)
+        self._commit_incremental_replacement(
+            existing_ids=existing_ids,
+            published_ids=published_ids,
+            metadata=current_hashes,
+            files_count=len(attempted_paths),
+            protect_replacement=bool(modified_files or deleted_files),
+            reporter=reporter,
+            run_control=run_control,
+        )
         total = self.store.count_code()
         duration_ms = int((time.time() - start) * 1000)
         return IndexResult(
@@ -2185,12 +2178,14 @@ class CodebaseIndexer:
     def _scan_changed_paths(
         self,
         changed_paths: Iterable[pathlib.Path],
-        prev_meta: dict[str, str],
         reporter: ProgressReporter,
         inputs: _ScanInputs | None = None,
         *,
+        prev_meta: dict[str, str] | None = None,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> tuple[dict[str, pathlib.Path], set[str]]:
+        if prev_meta is None:
+            prev_meta = self._load_meta()
         if inputs is None:
             inputs = self._resolve_scan_inputs()
         git_spec = inputs.git_spec
@@ -2295,94 +2290,63 @@ class CodebaseIndexer:
         inputs: _ScanInputs | None = None,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
-        """Reconcile only ``changed_paths`` against the code index (#151).
-
-        Applies the same ``.gitignore``/``.vaultragignore``, extension,
-        size, and binary filters as the full scan, then re-chunks the
-        added/modified files, deletes chunks for vanished or
-        no-longer-indexable files, and persists a partial read-modify-write
-        of the hash metadata. Work is proportional to the change set.
-
-        Args:
-            changed_paths: Filesystem paths reported as changed.
-            reporter: Required progress reporter.
-
-        Returns:
-            An ``IndexResult`` with added/updated/removed file counts and
-            the post-reconcile total chunk count.
-        """
-        from ..config import get_config
-
+        """Reconcile only changed paths through the weighted pipeline."""
         start = time.time()
-        slice_size = max(1, get_config().embedding_batch_size)
         self._begin_preprocess_run(run_control=run_control)
         run_control.checkpoint()
-        prev_meta = self._load_meta()
+        previous_metadata = self._load_meta()
         run_control.checkpoint()
-
         to_hash, delete_files = self._scan_changed_paths(
             changed_paths,
-            prev_meta,
             reporter,
             inputs,
+            prev_meta=previous_metadata,
             run_control=run_control,
         )
         changed_hashes = self._hash_changed_paths(
-            to_hash,
-            reporter,
-            run_control=run_control,
+            to_hash, reporter, run_control=run_control
         )
-
         for rel in set(to_hash) - set(changed_hashes):
             to_hash.pop(rel, None)
-
-        new_files = {r for r in changed_hashes if r not in prev_meta}
+        new_files = {rel for rel in changed_hashes if rel not in previous_metadata}
         modified_files = {
-            r
-            for r in changed_hashes
-            if r in prev_meta and changed_hashes[r] != prev_meta.get(r)
+            rel
+            for rel in changed_hashes
+            if (
+                rel in previous_metadata
+                and changed_hashes[rel] != previous_metadata.get(rel)
+            )
         }
         to_index = new_files | modified_files
-
-        all_new_chunks: list[CodeChunk] = []
-        reporter.phase_start("chunk files", len(to_index))
-        try:
-            if to_index:
-                paths_to_index = [to_hash[r] for r in to_index]
-                all_new_chunks = self._chunk_paths(
-                    paths_to_index,
-                    reporter=reporter,
-                    run_control=run_control,
-                )
-        finally:
-            reporter.phase_end()
+        paths_to_index = [to_hash[rel] for rel in sorted(to_index)]
+        attempted_paths = to_index | delete_files
         run_control.checkpoint()
-
-        # Modified files have their old chunks dropped before re-upsert
-        # (chunk ids embed line ranges + content hash, so stale chunks
-        # would otherwise linger); vanished files are dropped outright.
-        files_to_remove = modified_files | delete_files
-        old_chunk_ids: list[str] = []
-        if files_to_remove:
-            run_control.checkpoint()
-            old_chunk_ids = self._get_chunk_ids_for_files(files_to_remove)
-            run_control.checkpoint()
-
-        new_meta = dict(prev_meta)
-        new_meta.update(changed_hashes)
-        for rel in delete_files:
-            new_meta.pop(rel, None)
-
-        self._publish_incremental_replacement(
-            chunks=all_new_chunks,
-            files_to_remove=files_to_remove,
-            old_chunk_ids=old_chunk_ids,
-            metadata=new_meta,
-            slice_size=slice_size,
+        existing_ids: set[str] = (
+            set(self._get_chunk_ids_for_files(attempted_paths))
+            if attempted_paths
+            else set()
+        )
+        run_control.checkpoint()
+        published_ids, published_hashes = self._publish_incremental_paths(
+            paths=paths_to_index,
+            attempted_paths=attempted_paths,
+            existing_ids=existing_ids,
             reporter=reporter,
             run_control=run_control,
         )
-
+        new_metadata = dict(previous_metadata)
+        new_metadata.update(published_hashes)
+        for rel in delete_files:
+            new_metadata.pop(rel, None)
+        self._commit_incremental_replacement(
+            existing_ids=existing_ids,
+            published_ids=published_ids,
+            metadata=new_metadata,
+            files_count=len(attempted_paths),
+            protect_replacement=bool(modified_files or delete_files),
+            reporter=reporter,
+            run_control=run_control,
+        )
         total = self.store.count_code()
         duration_ms = int((time.time() - start) * 1000)
         return IndexResult(
