@@ -13,7 +13,7 @@ the rest of the local-mode store layer.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -46,6 +46,7 @@ class _VaultSearchMixin:
     if TYPE_CHECKING:
         TABLE_NAME: str
         CODE_TABLE_NAME: str
+        DOCUMENT_TABLE_NAME: str
 
         @property
         def client(self) -> QdrantClient: ...
@@ -53,6 +54,8 @@ class _VaultSearchMixin:
         def ensure_table(self) -> None: ...
 
         def ensure_code_table(self) -> None: ...
+
+        def ensure_document_table(self) -> None: ...
 
         def _point_lock(self, collection: str) -> AbstractContextManager[object]: ...
 
@@ -105,7 +108,7 @@ class _VaultSearchMixin:
             dense_query, sparse_vector, query_filter, limit
         )
         scored_points = self._execute_hybrid_query(
-            self.TABLE_NAME, False, prefetch, dense_query, query_filter, limit
+            self.TABLE_NAME, "vault", prefetch, dense_query, query_filter, limit
         )
 
         return self._points_to_dicts(scored_points, "doc_id")
@@ -156,7 +159,7 @@ class _VaultSearchMixin:
         )
         scored_points = self._execute_hybrid_query(
             self.CODE_TABLE_NAME,
-            True,
+            "code",
             prefetch,
             dense_query,
             query_filter,
@@ -164,6 +167,34 @@ class _VaultSearchMixin:
         )
 
         return self._points_to_dicts(scored_points, "chunk_id")
+
+    def hybrid_search_document(
+        self,
+        query_vector: list[float],
+        _query_text: str,
+        filters: dict[str, str] | None = None,
+        limit: int = 5,
+        *,
+        sparse_vector: SparseResult | None = None,
+    ) -> list[dict[str, Any]]:
+        """Execute hybrid search against the independent document collection."""
+        query_filter = self._build_document_filter(filters)
+        dense_query: Any = query_vector
+        prefetch = self._build_prefetch(
+            dense_query,
+            sparse_vector,
+            query_filter,
+            limit,
+        )
+        scored_points = self._execute_hybrid_query(
+            self.DOCUMENT_TABLE_NAME,
+            "document",
+            prefetch,
+            dense_query,
+            query_filter,
+            limit,
+        )
+        return self._points_to_dicts(scored_points, "document_id")
 
     def _resolve_vault_feedback_id(self, doc_id: str) -> int:
         """Map a vault document id to an existing feedback point id.
@@ -263,7 +294,7 @@ class _VaultSearchMixin:
     def _execute_hybrid_query(
         self,
         collection_name: str,
-        is_codebase: bool,
+        source: Literal["vault", "code", "document"],
         prefetch: list[Any],
         dense_query: Any,
         query_filter: Filter | None,
@@ -275,8 +306,10 @@ class _VaultSearchMixin:
             UnexpectedResponse,
         )
 
-        if is_codebase:
+        if source == "code":
             self.ensure_code_table()
+        elif source == "document":
+            self.ensure_document_table()
         else:
             self.ensure_table()
 
@@ -472,3 +505,35 @@ class _VaultSearchMixin:
         if not conditions and not must_not:
             return None
         return models.Filter(must=conditions or None, must_not=must_not or None)
+
+    @staticmethod
+    def _build_document_filter(
+        filters: dict[str, str] | None,
+    ) -> Filter | None:
+        """Build exact filters only for declared document payload indexes."""
+        if not filters:
+            return None
+        from qdrant_client import models
+
+        indexed = {
+            "source_path",
+            "content_fingerprint",
+            "extractor_id",
+            "extractor_version",
+            "locator_kind",
+            "locator_value_str",
+        }
+        conditions: list[Condition] = []
+        for key, value in filters.items():
+            if key not in indexed:
+                logger.warning("Unknown document filter key: %s", key)
+                continue
+            conditions.append(
+                models.FieldCondition(
+                    key=key,
+                    match=models.MatchValue(value=value),
+                )
+            )
+        if not conditions:
+            return None
+        return models.Filter(must=conditions)
