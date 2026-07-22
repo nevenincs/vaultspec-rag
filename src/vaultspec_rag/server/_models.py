@@ -89,7 +89,7 @@ class SearchResultItem(BaseModel):
     unit_metadata: dict[str, object] = Field(default_factory=dict)
     extractor_id: str | None = None
     extractor_version: str | None = None
-    rerank_text: str | None = None
+    rerank_text: str | None = Field(default=None, exclude=True)
 
     @field_validator("document_metadata", "unit_metadata", mode="before")
     @classmethod
