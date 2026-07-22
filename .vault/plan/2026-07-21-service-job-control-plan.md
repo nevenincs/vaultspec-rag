@@ -11,7 +11,6 @@ related:
   - '[[2026-07-21-service-job-control-reference]]'
 ---
 
-
 <!-- RETIRED: P09 -->
 
 # `service-job-control` plan
@@ -139,13 +138,13 @@ Add singular server job commands with exact mutations, human-only prefix resolut
 
 - [x] `W04.P14.S29` - Register the singular server job command group while preserving the server jobs collection command using vaultspec-low-executor; `src/vaultspec_rag/cli/_app.py`.
 - [x] `W04.P14.S30` - Implement show, pause, resume, stop, retry, and delete commands with unique-prefix resolution before exact mutation using vaultspec-standard-executor; `src/vaultspec_rag/cli/_service_jobs.py`.
-- [ ] `W04.P14.S31` - Verify human and JSON CLI controls, ambiguous prefixes, idempotent requests, stable errors, retry, deletion, and force rejection against a real server using vaultspec-standard-executor; `src/vaultspec_rag/tests/integration/test_service_job_control.py`.
+- [x] `W04.P14.S31` - Verify human and JSON CLI controls, ambiguous prefixes, idempotent requests, stable errors, retry, deletion, and force rejection against a real server using vaultspec-standard-executor; `src/vaultspec_rag/tests/integration/test_service_job_control.py`.
 
 ### Phase `W04.P15` - adapter compatibility verification
 
 Verify authentication, idempotency, conflict codes, reindex compatibility, CLI behavior, and the unchanged MCP administration boundary.
 
-- [ ] `W04.P15.S32` - Verify reindex compatibility and the unchanged MCP incremental-refresh-only administration boundary using vaultspec-standard-executor; `src/vaultspec_rag/tests/integration/test_service_job_control.py`.
+- [x] `W04.P15.S32` - Verify reindex compatibility and the unchanged MCP incremental-refresh-only administration boundary using vaultspec-standard-executor; `src/vaultspec_rag/tests/integration/test_service_job_control.py`.
 
 ## Wave `W05` - system verification and review
 
@@ -155,16 +154,16 @@ Prove the full lifecycle across indexing, restart, watcher, shutdown, HTTP, clie
 
 Exercise realistic cross-boundary pause, resume, cancel, restart, watcher, shutdown, and operator-control scenarios against production components.
 
-- [ ] `W05.P16.S33` - Exercise a real large-corpus pause, resume, and cancel lifecycle proving convergence, attempt lineage, resource release, and no post-cancellation writes using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_service_job_control_e2e.py`.
-- [ ] `W05.P16.S34` - Exercise a real restart lifecycle proving durable queued dispatch, persistent pause, interrupted attempts, linked retry, and terminal-history deletion using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_service_job_control_e2e.py`.
-- [ ] `W05.P16.S35` - Exercise a real watcher and shutdown lifecycle proving dirtiness coalescing, replacement scheduling, separate watcher control, and safe store closure using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_service_job_control_e2e.py`.
-- [ ] `W05.P16.S36` - Exercise the end-to-end HTTP, transport, and CLI outcome matrix for exact IDs, stale revisions, already-satisfied requests, conflicts, and force rejection using vaultspec-standard-executor; `src/vaultspec_rag/tests/integration/test_service_job_control_e2e.py`.
+- [x] `W05.P16.S33` - Exercise a real large-corpus pause, resume, and cancel lifecycle proving convergence, attempt lineage, resource release, and no post-cancellation writes using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_service_job_control_e2e.py`.
+- [x] `W05.P16.S34` - Exercise a real restart lifecycle proving durable queued dispatch, persistent pause, interrupted attempts, linked retry, and terminal-history deletion using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_service_job_control_e2e.py`.
+- [x] `W05.P16.S35` - Exercise a real watcher and shutdown lifecycle proving dirtiness coalescing, replacement scheduling, separate watcher control, and safe store closure using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_service_job_control_e2e.py`.
+- [x] `W05.P16.S36` - Exercise the end-to-end HTTP, transport, and CLI outcome matrix for exact IDs, stale revisions, already-satisfied requests, conflicts, and force rejection using vaultspec-standard-executor; `src/vaultspec_rag/tests/integration/test_service_job_control_e2e.py`.
 
 ### Phase `W05.P17` - architecture and safety audit
 
 Review the completed implementation against the accepted ADR and codified concurrency, storage, operability, and test-integrity constraints.
 
-- [ ] `W05.P17.S37` - Audit ADR conformance, truthful acknowledgement, bounded views, GPU ownership, storage safety, shutdown ordering, MCP scope, and test integrity and apply required corrections using vaultspec-code-reviewer; `src/vaultspec_rag/`.
+- [x] `W05.P17.S37` - Audit ADR conformance, truthful acknowledgement, bounded views, GPU ownership, storage safety, shutdown ordering, MCP scope, and test integrity and apply required corrections using vaultspec-code-reviewer; `src/vaultspec_rag/`.
 
 ## Description
 

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from ..indexer._content_policy import ContentKind
 from ..indexer._preprocess_config import OnError, PreprocessRule
 from ..indexer._preprocess_runner import (
     PreprocessAbortError,
@@ -32,6 +33,8 @@ def test_dash_leading_path_operand_is_neutralised() -> None:
         command="extract {path}",
         entry_point=None,
         priority=100,
+        target=ContentKind.DOCUMENT,
+        extractor_version="1.0",
         on_error="skip",
         timeout_s=30.0,
         options={},
@@ -49,6 +52,8 @@ def test_dash_leading_path_operand_is_neutralised() -> None:
         command="extract --in={path}",
         entry_point=None,
         priority=100,
+        target=ContentKind.DOCUMENT,
+        extractor_version="1.0",
         on_error="skip",
         timeout_s=30.0,
         options={},
@@ -97,6 +102,8 @@ def _rule(
         command=command,
         entry_point=None,
         priority=100,
+        target=ContentKind.DOCUMENT,
+        extractor_version="1.0",
         on_error=on_error,
         timeout_s=timeout_s,
         options={},

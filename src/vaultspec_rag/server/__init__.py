@@ -49,6 +49,7 @@ from . import _jobs
 
 # 2. Leaf helpers (no decorators).
 from ._lifecycle import (
+    _DiscoveryPublisher,
     _heartbeat_loop,
     _heartbeat_tick_sync,
     _install_daemon_shutdown_hooks,
@@ -134,6 +135,7 @@ __all__ = [
     "SearchResponse",
     "SearchResultItem",
     "SurveySnapshot",
+    "_DiscoveryPublisher",
     "_clamp_top_k",
     "_default_root",
     "_ensure_watcher",

@@ -120,6 +120,10 @@ def _ensure_watcher_soon(root: Path) -> None:
     it does not, the slot is warmed on a worker thread and the watcher
     registered afterwards.
     """
+    from ..config import get_config
+
+    if not get_config().watch_enabled:
+        return
     root = root.resolve()
     task: asyncio.Task[None] | None = None
     drain: _WatcherDrain | None = None
@@ -495,10 +499,7 @@ async def _watcher_release_error(
     if not await _wait_for_intake_release(root, drain.intake_task, deadline):
         return f"watcher intake did not stop within {timeout:g} seconds"
     if not await _wait_for_managed_watcher_attempts(root, deadline):
-        return (
-            "watcher-owned job resources did not release within "
-            f"{timeout:g} seconds"
-        )
+        return f"watcher-owned job resources did not release within {timeout:g} seconds"
     from ..watcher import wait_for_retry_settlements
 
     if not await wait_for_retry_settlements(root, deadline):

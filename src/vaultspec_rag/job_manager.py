@@ -1002,7 +1002,79 @@ class JobManager:
         except Exception:
             logger.exception("managed job completion callback failed")
 
-    def create(  # noqa: C901, PLR0912 - admission/replay matrix
+    def _replay_idempotent_locked(
+        self,
+        normalized_key: str | None,
+        signature: tuple[JobSpec, JobInitiator, bool],
+    ) -> JobOutcome | None:
+        """Resolve an idempotency key against existing bindings.
+
+        Returns the outcome to hand back when the key conflicts with a
+        different request or replays an existing job, or ``None`` when
+        admission should proceed - including when the bound job has since
+        disappeared, whose stale binding is dropped here.
+        """
+        if normalized_key is None:
+            return None
+        binding = self._idempotency.get(normalized_key)
+        if binding is None:
+            return None
+        self._idempotency.move_to_end(normalized_key)
+        existing = self._get_locked(binding.job_id)
+        if binding.signature != signature:
+            return JobOutcome(
+                command="create",
+                status=JobOutcomeStatus.ERROR,
+                code="idempotency_key_conflict",
+                message=(
+                    "The idempotency key is already bound to a different job request."
+                ),
+                job=existing,
+            )
+        if existing is not None:
+            return JobOutcome(
+                command="create",
+                status=JobOutcomeStatus.OK,
+                code="idempotency_replayed",
+                message="The original job creation result was replayed.",
+                job=existing,
+            )
+        self._idempotency.pop(normalized_key, None)
+        return None
+
+    def _adopt_equivalent_locked(
+        self,
+        equivalent: JobSnapshot,
+        *,
+        normalized_key: str | None,
+        signature: tuple[JobSpec, JobInitiator, bool],
+        backup: _ManagerStateBackup,
+    ) -> JobOutcome:
+        """Bind an optional replay key to equivalent active work durably."""
+        if normalized_key is not None:
+            self._bind_idempotency_locked(
+                normalized_key,
+                signature,
+                equivalent.id,
+            )
+            persistence_error = self._persist_locked()
+            if persistence_error is not None:
+                if not persistence_error.published:
+                    self._restore_state_locked(backup)
+                return self._persistence_error(
+                    "create",
+                    persistence_error,
+                    equivalent,
+                )
+        return JobOutcome(
+            command="create",
+            status=JobOutcomeStatus.OK,
+            code="active_job_exists",
+            message="Equivalent active work is already registered.",
+            job=equivalent,
+        )
+
+    def create(
         self,
         spec: JobSpec,
         initiator: JobInitiator,
@@ -1033,55 +1105,17 @@ class JobManager:
 
         with self._lock:
             backup = self._capture_state_locked()
-            if normalized_key is not None:
-                binding = self._idempotency.get(normalized_key)
-                if binding is not None:
-                    self._idempotency.move_to_end(normalized_key)
-                    existing = self._get_locked(binding.job_id)
-                    if binding.signature != signature:
-                        return JobOutcome(
-                            command="create",
-                            status=JobOutcomeStatus.ERROR,
-                            code="idempotency_key_conflict",
-                            message=(
-                                "The idempotency key is already bound to a different "
-                                "job request."
-                            ),
-                            job=existing,
-                        )
-                    if existing is not None:
-                        return JobOutcome(
-                            command="create",
-                            status=JobOutcomeStatus.OK,
-                            code="idempotency_replayed",
-                            message="The original job creation result was replayed.",
-                            job=existing,
-                        )
-                    self._idempotency.pop(normalized_key, None)
+            replay = self._replay_idempotent_locked(normalized_key, signature)
+            if replay is not None:
+                return replay
 
             equivalent = self._find_equivalent_active_locked(spec)
             if equivalent is not None:
-                if normalized_key is not None:
-                    self._bind_idempotency_locked(
-                        normalized_key,
-                        signature,
-                        equivalent.id,
-                    )
-                    persistence_error = self._persist_locked()
-                    if persistence_error is not None:
-                        if not persistence_error.published:
-                            self._restore_state_locked(backup)
-                        return self._persistence_error(
-                            "create",
-                            persistence_error,
-                            equivalent,
-                        )
-                return JobOutcome(
-                    command="create",
-                    status=JobOutcomeStatus.OK,
-                    code="active_job_exists",
-                    message="Equivalent active work is already registered.",
-                    job=equivalent,
+                return self._adopt_equivalent_locked(
+                    equivalent,
+                    normalized_key=normalized_key,
+                    signature=signature,
+                    backup=backup,
                 )
 
             if len(self._active) >= self._max_nonterminal:
@@ -1511,7 +1545,155 @@ class JobManager:
                 return False
             return True
 
-    def set_desired_state(  # noqa: C901, PLR0911, PLR0912 - lifecycle matrix
+    def _resolve_control_target_locked(
+        self,
+        command: str,
+        job_id: str,
+        desired_state: DesiredJobState,
+        *,
+        expected_revision: int | None,
+        mode: str,
+    ) -> tuple[_ManagedJob | None, JobOutcome | None]:
+        """Resolve and validate the resource targeted by a control request."""
+        managed = self._active.get(job_id)
+        terminal = None if managed is not None else self._get_terminal_locked(job_id)
+        if managed is None and terminal is None:
+            return None, self._error(
+                command,
+                "job_not_found",
+                "The job was not found.",
+            )
+        target = managed if managed is not None else terminal
+        if mode == "force":
+            return None, self._error(
+                command,
+                "force_termination_unavailable",
+                "Per-job force termination is unavailable for this runtime.",
+                target,
+            )
+        if mode != "graceful":
+            return None, self._error(
+                command,
+                "invalid_control_mode",
+                f"Unsupported control mode {mode!r}.",
+                target,
+            )
+        if managed is None:
+            assert terminal is not None
+            if (
+                terminal.snapshot.state is JobState.CANCELLED
+                and desired_state is DesiredJobState.CANCELLED
+            ):
+                return None, self._already_satisfied(command, terminal)
+            return None, self._error(
+                command,
+                "invalid_transition",
+                "A terminal job cannot change desired state.",
+                terminal,
+            )
+        if managed.snapshot.desired_state is desired_state:
+            return None, self._already_satisfied(command, managed)
+        if (
+            expected_revision is not None
+            and expected_revision != managed.snapshot.revision
+        ):
+            return None, self._error(
+                command,
+                "revision_conflict",
+                (
+                    f"Expected revision {expected_revision}, but the job is at "
+                    f"revision {managed.snapshot.revision}."
+                ),
+                managed,
+            )
+        return managed, None
+
+    def _request_desired_transition_locked(
+        self,
+        command: str,
+        managed: _ManagedJob,
+        desired_state: DesiredJobState,
+    ) -> JobOutcome:
+        """Apply one validated desired-state transition in memory."""
+        state = managed.snapshot.state
+        if desired_state is DesiredJobState.PAUSED:
+            return self._request_pause_locked(command, managed, state)
+        if desired_state is DesiredJobState.RUNNING:
+            return self._request_resume_locked(command, managed, state)
+        return self._request_cancel_locked(command, managed, state)
+
+    def _resolve_pause_withdrawal_locked(
+        self,
+        command: str,
+        managed: _ManagedJob,
+        outcome: JobOutcome,
+        *,
+        resume_withdrawn: bool | None,
+    ) -> JobOutcome:
+        """Publish the result of racing pause delivery with a resume request."""
+        if outcome.code != "pause_withdrawal_pending":
+            return outcome
+        if resume_withdrawn:
+            return JobOutcome(
+                command=command,
+                status=JobOutcomeStatus.OK,
+                code="pause_withdrawn",
+                message="The undelivered pause request was withdrawn.",
+                job=self._snapshot_locked(managed),
+            )
+
+        # Delivery won the race while RUNNING was being made durable. Restore
+        # truthful PAUSING state and let cleanup queue a reconciliation attempt.
+        persistence_error = self._restore_delivered_pause_locked(managed)
+        if persistence_error is not None:
+            return self._persistence_error(
+                command,
+                persistence_error,
+                self._get_locked(managed.snapshot.id),
+            )
+        return JobOutcome(
+            command=command,
+            status=JobOutcomeStatus.ACCEPTED,
+            code="resume_requested",
+            message="The delivered pause will unwind before resume requeues.",
+            job=self._snapshot_locked(managed),
+        )
+
+    def _persist_desired_transition_locked(
+        self,
+        command: str,
+        job_id: str,
+        managed: _ManagedJob,
+        outcome: JobOutcome,
+        backup: _ManagerStateBackup,
+    ) -> JobOutcome:
+        """Persist a transition before delivering its cooperative signal."""
+        persistence_error = self._persist_locked()
+        if persistence_error is not None:
+            if not persistence_error.published:
+                self._restore_state_locked(backup)
+            else:
+                resume_withdrawn = self._apply_control_signal_locked(
+                    managed,
+                    outcome.code,
+                )
+                if outcome.code == "pause_withdrawal_pending" and not resume_withdrawn:
+                    self._restore_delivered_pause_locked(managed)
+            return self._persistence_error(
+                command,
+                persistence_error,
+                self._get_locked(job_id),
+            )
+
+        resume_withdrawn = self._apply_control_signal_locked(managed, outcome.code)
+        return self._resolve_pause_withdrawal_locked(
+            command,
+            managed,
+            outcome,
+            resume_withdrawn=resume_withdrawn,
+        )
+
+    def set_desired_state(
         self,
         job_id: str,
         desired_state: DesiredJobState,
@@ -1526,129 +1708,13 @@ class JobManager:
         revision is stale. This lets clients safely retry a request whose response
         was lost without weakening optimistic concurrency for real state changes.
         """
-        command = "set_desired_state"
-        with self._lock:
-            backup = self._capture_state_locked()
-            managed = self._active.get(job_id)
-            terminal = (
-                None if managed is not None else self._get_terminal_locked(job_id)
-            )
-            if managed is None and terminal is None:
-                return self._error(command, "job_not_found", "The job was not found.")
-            target = managed if managed is not None else terminal
-            if mode == "force":
-                return self._error(
-                    command,
-                    "force_termination_unavailable",
-                    "Per-job force termination is unavailable for this runtime.",
-                    target,
-                )
-            if mode != "graceful":
-                return self._error(
-                    command,
-                    "invalid_control_mode",
-                    f"Unsupported control mode {mode!r}.",
-                    target,
-                )
-            if managed is None:
-                assert terminal is not None
-                if (
-                    terminal.snapshot.state is JobState.CANCELLED
-                    and desired_state is DesiredJobState.CANCELLED
-                ):
-                    return self._already_satisfied(command, terminal)
-                return self._error(
-                    command,
-                    "invalid_transition",
-                    "A terminal job cannot change desired state.",
-                    terminal,
-                )
-            if managed.snapshot.desired_state is desired_state:
-                return self._already_satisfied(command, managed)
-            if (
-                expected_revision is not None
-                and expected_revision != managed.snapshot.revision
-            ):
-                return self._error(
-                    command,
-                    "revision_conflict",
-                    (
-                        f"Expected revision {expected_revision}, but the job is at "
-                        f"revision {managed.snapshot.revision}."
-                    ),
-                    managed,
-                )
-
-            state = managed.snapshot.state
-            if desired_state is DesiredJobState.PAUSED:
-                outcome = self._request_pause_locked(command, managed, state)
-            elif desired_state is DesiredJobState.RUNNING:
-                outcome = self._request_resume_locked(command, managed, state)
-            else:
-                outcome = self._request_cancel_locked(command, managed, state)
-            if outcome.status is JobOutcomeStatus.ERROR:
-                return outcome
-
-            persistence_error = self._persist_locked()
-            if persistence_error is not None:
-                if not persistence_error.published:
-                    self._restore_state_locked(backup)
-                else:
-                    resume_withdrawn = self._apply_control_signal_locked(
-                        managed,
-                        outcome.code,
-                    )
-                    if (
-                        outcome.code == "pause_withdrawal_pending"
-                        and not resume_withdrawn
-                    ):
-                        self._restore_delivered_pause_locked(managed)
-                return self._persistence_error(
-                    command,
-                    persistence_error,
-                    self._get_locked(job_id),
-                )
-            resume_withdrawn = self._apply_control_signal_locked(
-                managed,
-                outcome.code,
-            )
-            if outcome.code == "pause_withdrawal_pending":
-                if resume_withdrawn:
-                    outcome = JobOutcome(
-                        command=command,
-                        status=JobOutcomeStatus.OK,
-                        code="pause_withdrawn",
-                        message="The undelivered pause request was withdrawn.",
-                        job=self._snapshot_locked(managed),
-                    )
-                else:
-                    # Delivery won the race while RUNNING was being made
-                    # durable. Restore truthful observed PAUSING state and let
-                    # cleanup queue a fresh reconciliation attempt.
-                    persistence_error = self._restore_delivered_pause_locked(managed)
-                    if persistence_error is not None:
-                        return self._persistence_error(
-                            command,
-                            persistence_error,
-                            self._get_locked(job_id),
-                        )
-                    outcome = JobOutcome(
-                        command=command,
-                        status=JobOutcomeStatus.ACCEPTED,
-                        code="resume_requested",
-                        message=(
-                            "The delivered pause will unwind before resume requeues."
-                        ),
-                        job=self._snapshot_locked(managed),
-                    )
-            dispatch_after_transition = (
-                managed.snapshot.state is JobState.QUEUED
-                and managed.snapshot.desired_state is DesiredJobState.RUNNING
-                and job_id in self._dispatchers
-            )
-        if _schedule_dispatch_after_transition and dispatch_after_transition:
-            self._schedule_dispatch(job_id)
-        return outcome
+        return self._set_desired_state(
+            job_id,
+            desired_state,
+            expected_revision=expected_revision,
+            mode=mode,
+            schedule_dispatch=_schedule_dispatch_after_transition,
+        )
 
     async def set_desired_state_async(
         self,
@@ -1686,6 +1752,54 @@ class JobManager:
                         job_id,
                         dispatched.message,
                     )
+        return outcome
+
+    def _set_desired_state(
+        self,
+        job_id: str,
+        desired_state: DesiredJobState,
+        *,
+        expected_revision: int | None,
+        mode: Literal["graceful", "force"],
+        schedule_dispatch: bool,
+    ) -> JobOutcome:
+        """Apply and persist intent, optionally scheduling synchronous dispatch."""
+        command = "set_desired_state"
+        with self._lock:
+            backup = self._capture_state_locked()
+            managed, early_outcome = self._resolve_control_target_locked(
+                command,
+                job_id,
+                desired_state,
+                expected_revision=expected_revision,
+                mode=mode,
+            )
+            if early_outcome is not None:
+                return early_outcome
+            assert managed is not None
+            outcome = self._request_desired_transition_locked(
+                command,
+                managed,
+                desired_state,
+            )
+            if outcome.status is JobOutcomeStatus.ERROR:
+                return outcome
+            outcome = self._persist_desired_transition_locked(
+                command,
+                job_id,
+                managed,
+                outcome,
+                backup,
+            )
+            if outcome.status is JobOutcomeStatus.ERROR:
+                return outcome
+            dispatch_after_transition = (
+                managed.snapshot.state is JobState.QUEUED
+                and managed.snapshot.desired_state is DesiredJobState.RUNNING
+                and job_id in self._dispatchers
+            )
+        if schedule_dispatch and dispatch_after_transition:
+            self._schedule_dispatch(job_id)
         return outcome
 
     def _schedule_dispatch(self, job_id: str) -> None:
@@ -2099,7 +2213,95 @@ class JobManager:
                 job=self._snapshot_locked(terminal),
             )
 
-    def restore_persisted(self) -> JobOutcome:  # noqa: PLR0912 - recovery matrix
+    def _restore_snapshot_locked(self, snapshot: JobSnapshot, *, now: float) -> None:
+        """Restore one validated snapshot with no live execution resources."""
+        resumable = snapshot.state in {JobState.QUEUED, JobState.PAUSED}
+        restored_runtime = (
+            self._process_runtime_snapshot()
+            if resumable
+            else replace(
+                snapshot.runtime,
+                task_active=False,
+                worker_active=False,
+            )
+        )
+        managed = _ManagedJob(
+            snapshot=replace(
+                snapshot,
+                runtime=restored_runtime,
+                resources=replace(
+                    snapshot.resources,
+                    index_capacity_held=False,
+                    project_lease_held=False,
+                    writer_lock_held=False,
+                    pipeline_active=False,
+                ),
+            ),
+            runtime=_JobRuntimeOwner(task=None, control=None),
+        )
+        if resumable:
+            self._active[snapshot.id] = managed
+            return
+        if snapshot.state in {
+            JobState.RUNNING,
+            JobState.PAUSING,
+            JobState.CANCELLING,
+        }:
+            self._active[snapshot.id] = managed
+            self._replace_snapshot_locked(
+                managed,
+                state=JobState.INTERRUPTED,
+                desired_state=snapshot.desired_state,
+                now=now,
+                finished_at=now,
+                result="The service stopped before the attempt acknowledged.",
+                error_kind="interrupted",
+            )
+            self._archive_terminal_locked(managed)
+            return
+        self._terminal.append(managed)
+
+    def _restore_jobs_locked(
+        self,
+        restored_jobs: tuple[JobSnapshot, ...],
+        *,
+        now: float,
+    ) -> None:
+        """Restore terminal history before active and interrupted resources."""
+        restore_order = [
+            *(job for job in restored_jobs if job.state.is_terminal),
+            *(job for job in restored_jobs if not job.state.is_terminal),
+        ]
+        for snapshot in restore_order:
+            self._restore_snapshot_locked(snapshot, now=now)
+
+    def _trim_restored_history_locked(self) -> None:
+        """Apply the configured terminal bound to restored history."""
+        while len(self._terminal) > self._max_terminal_history:
+            evicted = self._terminal.popleft()
+            self._forget_idempotency_locked(evicted.snapshot.id)
+
+    def _restore_bindings_locked(
+        self,
+        restored_bindings: tuple[
+            tuple[str, _job_persistence.IdempotencyBinding],
+            ...,
+        ],
+    ) -> None:
+        """Restore only bindings whose target survived configured retention."""
+        retained_ids = {
+            *self._active,
+            *(managed.snapshot.id for managed in self._terminal),
+        }
+        for key, binding in restored_bindings:
+            if binding.job_id in retained_ids:
+                self._bind_idempotency_locked(
+                    key,
+                    binding.signature,
+                    binding.job_id,
+                )
+
+    def restore_persisted(self) -> JobOutcome:
         """Restore durable jobs without partially applying an invalid state file."""
         command = "restore_jobs"
         path = self._state_path
@@ -2145,69 +2347,9 @@ class JobManager:
                 )
             backup = self._capture_state_locked()
             now = time.time()
-            restore_order = [
-                *(job for job in restored_jobs if job.state.is_terminal),
-                *(job for job in restored_jobs if not job.state.is_terminal),
-            ]
-            for snapshot in restore_order:
-                restored_runtime = (
-                    self._process_runtime_snapshot()
-                    if snapshot.state in {JobState.QUEUED, JobState.PAUSED}
-                    else replace(
-                        snapshot.runtime,
-                        task_active=False,
-                        worker_active=False,
-                    )
-                )
-                managed = _ManagedJob(
-                    snapshot=replace(
-                        snapshot,
-                        runtime=restored_runtime,
-                        resources=replace(
-                            snapshot.resources,
-                            index_capacity_held=False,
-                            project_lease_held=False,
-                            writer_lock_held=False,
-                            pipeline_active=False,
-                        ),
-                    ),
-                    runtime=_JobRuntimeOwner(task=None, control=None),
-                )
-                if snapshot.state in {JobState.QUEUED, JobState.PAUSED}:
-                    self._active[snapshot.id] = managed
-                elif snapshot.state in {
-                    JobState.RUNNING,
-                    JobState.PAUSING,
-                    JobState.CANCELLING,
-                }:
-                    self._active[snapshot.id] = managed
-                    self._replace_snapshot_locked(
-                        managed,
-                        state=JobState.INTERRUPTED,
-                        desired_state=snapshot.desired_state,
-                        now=now,
-                        finished_at=now,
-                        result="The service stopped before the attempt acknowledged.",
-                        error_kind="interrupted",
-                    )
-                    self._archive_terminal_locked(managed)
-                else:
-                    self._terminal.append(managed)
-
-            while len(self._terminal) > self._max_terminal_history:
-                evicted = self._terminal.popleft()
-                self._forget_idempotency_locked(evicted.snapshot.id)
-            retained_ids = {
-                *self._active,
-                *(managed.snapshot.id for managed in self._terminal),
-            }
-            for key, binding in restored_bindings:
-                if binding.job_id in retained_ids:
-                    self._bind_idempotency_locked(
-                        key,
-                        binding.signature,
-                        binding.job_id,
-                    )
+            self._restore_jobs_locked(restored_jobs, now=now)
+            self._trim_restored_history_locked()
+            self._restore_bindings_locked(restored_bindings)
 
             persistence_error = self._persist_locked()
             if persistence_error is not None:

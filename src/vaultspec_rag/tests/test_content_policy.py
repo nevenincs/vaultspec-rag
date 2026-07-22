@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import pickle
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pathspec
 import pytest
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 from .._job_errors import JobErrorKind, classify_error_text
 from ..config import ContentRouteConfig, RootContentPolicyConfig
@@ -135,8 +132,9 @@ def test_snapshot_rejects_route_transform_conflict_before_use() -> None:
         )
     )
     with pytest.raises(AdmissionPolicyError):
-        ResolvedIndexPolicy(
-            1,
+            ResolvedIndexPolicy(
+                Path.cwd().resolve(),
+                1,
             policy,
             2,
             (rule,),

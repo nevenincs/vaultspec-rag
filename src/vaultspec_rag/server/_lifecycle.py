@@ -55,11 +55,11 @@ from ..serviceclient._discovery import (
     SERVICE_DISCOVERY_VERSION,
     SERVICE_PHASE_WARMING,
     _discovery_timestamp,
-    _merge_service_status,
 )
 from ._state import _HEARTBEAT_INTERVAL_SECONDS, _HEARTBEAT_STALENESS_SECONDS
 
 logger = logging.getLogger("vaultspec_rag.server")
+_atexit_publisher: _DiscoveryPublisher | None = None
 
 
 def _resolve_log_path() -> Path:
@@ -196,6 +196,7 @@ class _DiscoveryPublisher:
         repr=False,
     )
     _stopping: bool = field(default=False, init=False, repr=False)
+    _cleaned: bool = field(default=False, init=False, repr=False)
 
     def publish_phase(self, phase: str) -> dict[str, object] | None:
         """Set *phase* and publish it unless shutdown has begun."""
@@ -217,14 +218,18 @@ class _DiscoveryPublisher:
         with self._guard:
             self._stopping = True
 
-    def cleanup(self) -> None:
-        """Delete both views under the retained owner lease."""
+    def cleanup(self) -> bool:
+        """Delete both views under the retained lease and report convergence."""
         from .._machine_lock import delete_machine_discovery
         from ..serviceclient._discovery import _delete_service_status
 
         status_path = _m._status_file_path()
         with self._guard:
+            if self._cleaned:
+                return True
             self._stopping = True
+            status_clean = False
+            pointer_clean = False
             try:
                 _delete_service_status(path=status_path)
             except (OSError, RuntimeError, TimeoutError) as exc:
@@ -236,6 +241,8 @@ class _DiscoveryPublisher:
                     path=status_path,
                     error=exc,
                 )
+            else:
+                status_clean = True
             try:
                 delete_machine_discovery(self.lease)
             except (OSError, PermissionError) as exc:
@@ -247,6 +254,10 @@ class _DiscoveryPublisher:
                     path=self.lease.path.parent / "service.json",
                     error=exc,
                 )
+            else:
+                pointer_clean = True
+            self._cleaned = status_clean and pointer_clean
+            return self._cleaned
 
     def _publish_locked(self) -> dict[str, object]:
         """Publish each view independently while holding the lifecycle gate."""
@@ -288,189 +299,14 @@ def _lifecycle_log(event: str, **kv: object) -> None:
     log_event(logger, "service.lifecycle", event, fields=kv)
 
 
-def _unlink_status_file_silently() -> None:
-    """Best-effort unlink of service.json and the machine-global pointer.
-
-    Called from atexit, signal handlers, and the lifespan finally block.
-    Idempotent because any of those code paths may have already removed a file.
-    Both the per-STATUS_DIR ``service.json`` and the machine-global discovery
-    pointer beside the lock are cleaned, so a stopped service leaves neither
-    behind.
-    """
-    from .._machine_lock import machine_discovery_path
-    from .._test_isolation import enforce_pytest_managed_singleton_containment
-
-    status_path = _m._status_file_path()
-    paths: list[Path] = []
-    try:
-        paths.append(machine_discovery_path())
-    except Exception as exc:  # config unavailable at a late shutdown stage
-        logger.debug("machine discovery pointer path unresolved: %s", exc)
-    try:
-        from ..serviceclient._discovery import _delete_service_status
-
-        _delete_service_status(path=status_path)
-    except (OSError, RuntimeError, TimeoutError) as exc:
-        log_event(
-            logger,
-            "service.lifecycle",
-            "cleanup_failed",
-            severity=logging.WARNING,
-            path=status_path,
-            error=exc,
-        )
-    for path in paths:
-        enforce_pytest_managed_singleton_containment(
-            operation="delete the machine service discovery pointer",
-            targets=(path,),
-        )
-        try:
-            path.unlink()
-        except FileNotFoundError as exc:
-            # Already-removed is the expected idempotent case.
-            logger.debug("discovery file already gone at %s: %s", path, exc)
-        except OSError as exc:
-            log_event(
-                logger,
-                "service.lifecycle",
-                "cleanup_failed",
-                severity=logging.WARNING,
-                path=path,
-                error=exc,
-            )
+def _unlink_status_file_silently(publisher: _DiscoveryPublisher) -> bool:
+    """Idempotently remove both views and report cleanup convergence."""
+    return publisher.cleanup()
 
 
-def _heartbeat_tick_sync() -> None:
-    """Synchronous heartbeat write - atomic via .tmp + os.replace.
-
-    Reads the current service.json, merges ``last_heartbeat`` (ISO-8601
-    UTC, second resolution), writes through a tmp file. Called from
-    inside ``asyncio.to_thread`` so file I/O does not block the event
-    loop.
-
-    Exits silently when service.json is missing (the CLI parent may
-    have unlinked it during ``server stop`` - the heartbeat
-    loop will exit on the next tick).
-    """
-    path = _m._status_file_path()
-    if not path.exists():
-        return
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        # Read failures are best-effort: the CLI parent wrote the
-        # file; the daemon's tick is additive. Debug-log so the
-        # swallow stays observable (no-swallow rule).
-        logger.debug(
-            "heartbeat tick: failed to read %s: %s",
-            path,
-            exc,
-            exc_info=True,
-        )
-        return
-    if not isinstance(data, dict):
-        logger.debug(
-            "heartbeat tick: %s did not deserialise to dict (got %r)",
-            path,
-            type(data).__name__,
-        )
-        return
-    # Re-assert the schema discriminator and the single declared timestamp format
-    # so a file written by an older parent is upgraded on the first tick and the
-    # two timestamp fields never diverge in precision (#190). Surface the staleness
-    # contract in the file so a consumer reads it rather than hard-coding a guess.
-    fields: dict[str, object] = {
-        "schema": SERVICE_DISCOVERY_SCHEMA,
-        "version": SERVICE_DISCOVERY_VERSION,
-        "last_heartbeat": _discovery_timestamp(),
-        "heartbeat_interval_s": _HEARTBEAT_INTERVAL_SECONDS,
-        "stale_after_s": _HEARTBEAT_STALENESS_SECONDS,
-        "pid": os.getpid(),
-        "parent_pid": os.getppid(),
-    }
-    # Record the daemon's own python environment so operators and `server
-    # status` can see which interpreter and venv actually run the service. The
-    # daemon inherits the launcher's environment (see `_resolve_daemon_interpreter`)
-    # and never provisions its own python; this makes that coupling legible. Field
-    # names mirror the /health payload (`executable`/`prefix`) for one vocabulary.
-    fields["executable"] = sys.executable
-    fields["prefix"] = sys.prefix
-    fields["python_version"] = sys.version.split()[0]
-    # Record the supervised qdrant child (if any) so operators and the
-    # CLI status surface can see the pair without probing the daemon.
-    from .. import qdrant_runtime as _qr
-
-    supervisor = _qr.active_supervisor()
-    if supervisor is not None:
-        from ..qdrant_runtime._resolve import read_qdrant_identity
-
-        identity = read_qdrant_identity()
-        supervised_pid = supervisor.pid
-        if (
-            supervised_pid is None
-            and identity is not None
-            and identity.http_port == supervisor.http_port
-        ):
-            supervised_pid = identity.qdrant_pid
-        if supervised_pid is not None:
-            fields["qdrant_pid"] = supervised_pid
-        fields["qdrant_alive"] = supervisor.is_alive()
-        fields["qdrant_port"] = supervisor.http_port
-        if (
-            identity is not None
-            and identity.qdrant_pid == supervised_pid
-            and identity.http_port == supervisor.http_port
-        ):
-            fields["qdrant_version"] = identity.version
-            fields["qdrant_start_time"] = identity.qdrant_start_time
-            fields["qdrant_identity"] = {
-                "pid": identity.qdrant_pid,
-                "start_time": identity.qdrant_start_time,
-                "port": identity.http_port,
-                "version": identity.version,
-                "storage_path": identity.storage_path,
-            }
-    # Per-process identity token. Empty during the narrow window
-    # between module import and service_lifespan startup; the guard
-    # prevents an in-flight zero-value overwrite of a token written
-    # by a previous daemon process that crashed without unlinking
-    # service.json.
-    if _m._SERVICE_TOKEN:
-        fields["service_token"] = _m._SERVICE_TOKEN
-    try:
-        data = _merge_service_status(fields, path=path, require_existing=True)
-    except FileNotFoundError:
-        return
-    # Mirror the same versioned payload to the machine-global discovery pointer
-    # beside the lock, so a consumer that does not share this daemon's STATUS_DIR
-    # can still find it. Best-effort: a pointer write failure is a discovery
-    # nuisance, never a reason to break the heartbeat.
-    _write_machine_discovery(data)
-
-
-def _write_machine_discovery(data: dict[str, object]) -> None:
-    """Mirror the discovery payload to the machine-global pointer atomically.
-
-    The pointer is STATUS_DIR-independent (beside the machine lock); a consumer
-    reads it to find the one service regardless of its own STATUS_DIR. Best-effort
-    and observable: a failure is debug-logged and swallowed (the STATUS_DIR file
-    still describes the service; the lock remains the singleton authority).
-    """
-    from .._machine_lock import machine_discovery_path
-    from .._test_isolation import enforce_pytest_managed_singleton_containment
-
-    try:
-        pointer = machine_discovery_path()
-        enforce_pytest_managed_singleton_containment(
-            operation="write the machine service discovery pointer",
-            targets=(pointer,),
-        )
-        pointer.parent.mkdir(parents=True, exist_ok=True)
-        tmp = pointer.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data), encoding="utf-8")
-        os.replace(str(tmp), str(pointer))
-    except OSError as exc:
-        logger.debug("machine discovery pointer write skipped: %s", exc, exc_info=True)
+def _heartbeat_tick_sync(publisher: _DiscoveryPublisher) -> None:
+    """Publish one synchronous daemon-owned heartbeat snapshot."""
+    publisher.heartbeat()
 
 
 def _qdrant_liveness_tick() -> None:
@@ -513,7 +349,7 @@ def _qdrant_liveness_tick() -> None:
         )
 
 
-async def _heartbeat_loop() -> None:
+async def _heartbeat_loop(publisher: _DiscoveryPublisher) -> None:
     """Periodic heartbeat task; cancelled in the lifespan finally.
 
     Sleeps ``_HEARTBEAT_INTERVAL_SECONDS`` between ticks. Tolerates
@@ -524,7 +360,7 @@ async def _heartbeat_loop() -> None:
     while True:
         try:
             await asyncio.sleep(_HEARTBEAT_INTERVAL_SECONDS)
-            await asyncio.to_thread(_m._heartbeat_tick_sync)
+            await asyncio.to_thread(_m._heartbeat_tick_sync, publisher)
             await asyncio.to_thread(_qdrant_liveness_tick)
         except asyncio.CancelledError:
             return
@@ -890,7 +726,7 @@ async def _maintenance_loop() -> None:
 
 
 def _record_shutdown(reason: str, **kv: object) -> None:
-    """Log + unlink once; subsequent calls are no-ops.
+    """Log shutdown once; owner cleanup is a separate ordered operation.
 
     atexit, the signal handler, and the lifespan finally block may
     all fire in sequence. The first one wins. The guard
@@ -902,10 +738,18 @@ def _record_shutdown(reason: str, **kv: object) -> None:
         return
     _m._shutdown_recorded = True
     _m._lifecycle_log("shutdown", reason=reason, **kv)
-    _m._unlink_status_file_silently()
 
 
-def _install_daemon_shutdown_hooks() -> None:
+def _atexit_shutdown() -> None:
+    """Best-effort owner cleanup for exits outside lifespan shutdown."""
+    publisher = _atexit_publisher
+    if publisher is not None:
+        publisher.quiesce()
+        publisher.cleanup()
+    _m._record_shutdown("atexit")
+
+
+def _install_daemon_shutdown_hooks(publisher: _DiscoveryPublisher) -> None:
     """Register atexit cleanup once per process.
 
     SIGTERM/SIGINT are intentionally NOT overridden - uvicorn already
@@ -926,8 +770,10 @@ def _install_daemon_shutdown_hooks() -> None:
     The install guard lives on the package namespace so it stays a
     single per-process flag across the split submodules.
     """
+    global _atexit_publisher
+    _atexit_publisher = publisher
     if _m._shutdown_hooks_installed:
         return
     _m._shutdown_hooks_installed = True
 
-    atexit.register(lambda: _m._record_shutdown("atexit"))
+    atexit.register(_atexit_shutdown)

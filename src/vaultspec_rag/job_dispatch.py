@@ -12,6 +12,7 @@ from .job_models import JobMode, JobOperation, JobOutcome, JobSource
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from .indexer._codebase_indexer import CodeIndexPreflight
     from .job_manager import JobManager
     from .job_models import JobSnapshot
     from .service import ServiceRegistry
@@ -22,6 +23,7 @@ def bind_index_job(
     job_id: str,
     *,
     registry: ServiceRegistry,
+    code_preflight: CodeIndexPreflight | None,
     on_started: Callable[[JobSnapshot], None] | None = None,
     on_finished: (
         Callable[
@@ -32,6 +34,7 @@ def bind_index_job(
     ) = None,
 ) -> JobOutcome:
     """Bind one restored or newly admitted indexing job to production services."""
+    del code_preflight  # Admission authority must never survive until execution.
     snapshot = manager.get(job_id)
     if snapshot is None:
         raise RuntimeError(f"Cannot bind unknown job: {job_id}")
@@ -45,8 +48,8 @@ def bind_index_job(
         raise RuntimeError(f"Cannot bind unsupported durable job: {job_id}")
     root = Path(spec.project_root).resolve()
     clean = spec.mode is JobMode.REBUILD
-    runner = (
-        partial(
+    if spec.source is JobSource.VAULT:
+        runner = partial(
             _run_vault_attempt,
             manager=manager,
             job_id=job_id,
@@ -54,8 +57,8 @@ def bind_index_job(
             clean=clean,
             registry=registry,
         )
-        if spec.source is JobSource.VAULT
-        else partial(
+    else:
+        runner = partial(
             _run_code_attempt,
             manager=manager,
             job_id=job_id,
@@ -63,7 +66,6 @@ def bind_index_job(
             clean=clean,
             registry=registry,
         )
-    )
     return manager.bind_dispatch(
         job_id,
         runner,
@@ -83,7 +85,6 @@ def _run_vault_attempt(
 ) -> JobExecutionResult:
     """Run one vault attempt through the exact service registry."""
     from .jobs import JobProgressReporter
-
     registry.load_model()
     try:
         with registry.lease(root) as slot:
@@ -129,9 +130,12 @@ def _run_code_attempt(
     clean: bool,
     registry: ServiceRegistry,
 ) -> JobExecutionResult:
-    """Run one code attempt through the exact service registry."""
-    from .jobs import JobProgressReporter
+    """Run one code attempt through fresh execution authority."""
+    from .jobs import JobProgressReporter, validate_code_index_policy
 
+    context.control.checkpoint()
+    preflight = validate_code_index_policy(root)
+    context.control.checkpoint()
     registry.load_model()
     try:
         with registry.lease(root) as slot:
@@ -151,11 +155,13 @@ def _run_code_attempt(
                     result = slot.code_indexer.full_index(
                         clean=not resumed,
                         reporter=reporter,
+                        preflight=preflight,
                         run_control=context.control,
                     )
                 else:
                     result = slot.code_indexer.incremental_index(
                         reporter=reporter,
+                        preflight=preflight,
                         run_control=context.control,
                     )
             finally:

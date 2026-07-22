@@ -18,8 +18,12 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
 )
 
 from .._machine_lock import (
+    MachineLockLease,
     acquire_machine_lock,
+    delete_machine_discovery,
     machine_lock_live_holder,
+    machine_lock_path,
+    publish_machine_discovery,
     release_machine_lock,
 )
 from .._test_isolation import (
@@ -42,11 +46,7 @@ from ..qdrant_runtime._supervise import (
     set_active_supervisor,
     start_supervised_from_config,
 )
-from ..server._lifecycle import (
-    _resolve_log_path,
-    _unlink_status_file_silently,
-    _write_machine_discovery,
-)
+from ..server._lifecycle import _resolve_log_path
 from ..serviceclient._discovery import (
     _delete_service_status,
     _merge_service_status,
@@ -69,10 +69,14 @@ _AMBIENT_CHILD_PROGRAM = r"""
 import json
 import os
 
-from vaultspec_rag._machine_lock import acquire_machine_lock
+from vaultspec_rag._machine_lock import (
+    MachineLockLease,
+    acquire_machine_lock,
+    machine_lock_path,
+    publish_machine_discovery,
+)
 from vaultspec_rag._test_isolation import ManagedSingletonIsolationError
 from vaultspec_rag.qdrant_runtime._resolve import write_qdrant_identity
-from vaultspec_rag.server._lifecycle import _write_machine_discovery
 from vaultspec_rag.serviceclient._discovery import _merge_service_status
 
 operations = (
@@ -91,7 +95,10 @@ operations = (
     ),
     (
         "pointer",
-        lambda: _write_machine_discovery({"pid": os.getpid(), "port": 1}),
+        lambda: publish_machine_discovery(
+            MachineLockLease(machine_lock_path(), os.getpid(), 0),
+            {"pid": os.getpid(), "port": 1},
+        ),
     ),
 )
 
@@ -259,7 +266,10 @@ def test_in_test_path_changes_cannot_redirect_singleton_writers() -> None:
                     qdrant_start_time=0.0,
                 )
             with pytest.raises(ManagedSingletonIsolationError):
-                _write_machine_discovery({"pid": os.getpid(), "port": 1})
+                publish_machine_discovery(
+                    MachineLockLease(machine_lock_path(), os.getpid(), 0),
+                    {"pid": os.getpid(), "port": 1},
+                )
             with pytest.raises(ManagedSingletonIsolationError):
                 _resolve_log_path()
 
@@ -303,7 +313,9 @@ def test_in_test_path_changes_cannot_delete_singleton_records() -> None:
             with pytest.raises(ManagedSingletonIsolationError):
                 _delete_service_status()
             with pytest.raises(ManagedSingletonIsolationError):
-                _unlink_status_file_silently()
+                delete_machine_discovery(
+                    MachineLockLease(machine_lock_path(), os.getpid(), 0)
+                )
 
         assert status.read_text(encoding="utf-8") == "status-owned-by-test"
         assert pointer.read_text(encoding="utf-8") == "pointer-owned-by-test"
