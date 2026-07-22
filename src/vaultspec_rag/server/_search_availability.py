@@ -1,4 +1,4 @@
-"""Bounded search-availability classification for copied job snapshots."""
+"""Bounded search-availability classification for canonical job snapshots."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ class _MatchingJob:
 
     id: str
     state: str
-    mode: JobMode | None
+    mode: JobMode
 
     def to_reference(self) -> dict[str, object]:
         """Return the exact public job-reference shape."""
@@ -69,31 +69,14 @@ def _canonical_match(
         return None
     if _normalized_root(spec.get("project_root")) != requested_root:
         return None
+    mode = _normalized_mode(spec.get("mode"))
+    if mode is None:
+        return None
     return _MatchingJob(
         id=job_id,
         state=state,
-        mode=_normalized_mode(spec.get("mode")),
+        mode=mode,
     )
-
-
-def _compatibility_match(
-    record: Mapping[str, object],
-    *,
-    requested_root: str,
-    source: IndexSource,
-) -> _MatchingJob | None:
-    job_id = record.get("id")
-    if not isinstance(job_id, str) or not job_id.strip():
-        return None
-    if record.get("source") != source or record.get("phase") != "running":
-        return None
-    initiator = record.get("initiator")
-    if not isinstance(initiator, Mapping):
-        return None
-    initiator_data = cast("Mapping[str, object]", initiator)
-    if _normalized_root(initiator_data.get("project_root")) != requested_root:
-        return None
-    return _MatchingJob(id=job_id, state="running", mode=None)
 
 
 def _matching_jobs(
@@ -107,23 +90,15 @@ def _matching_jobs(
         if not isinstance(candidate, Mapping):
             continue
         record = cast("Mapping[str, object]", candidate)
-        if "spec" in record:
-            spec = record.get("spec")
-            if not isinstance(spec, Mapping):
-                continue
-            spec_data = cast("Mapping[str, object]", spec)
-            match = _canonical_match(
-                record,
-                spec_data,
-                requested_root=requested_root,
-                source=source,
-            )
-        else:
-            match = _compatibility_match(
-                record,
-                requested_root=requested_root,
-                source=source,
-            )
+        spec = record.get("spec")
+        if not isinstance(spec, Mapping):
+            continue
+        match = _canonical_match(
+            record,
+            cast("Mapping[str, object]", spec),
+            requested_root=requested_root,
+            source=source,
+        )
         if match is not None:
             matches.append(match)
     return matches

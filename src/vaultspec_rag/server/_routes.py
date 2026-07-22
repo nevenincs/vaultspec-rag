@@ -268,7 +268,7 @@ def _empty_search_response(
     source = "code" if search_type in ("code", "codebase") else "vault"
     unavailable = build_index_unavailable_response(
         before_snapshot=job_snapshot_before,
-        after_snapshot=_jobs.snapshot(),
+        after_snapshot=_canonical_job_snapshot(),
         requested_root=root,
         source=source,
         request_id=request_id,
@@ -279,6 +279,13 @@ def _empty_search_response(
         return unavailable, 503
     result["empty"] = _empty_search_diagnostics(index_state, port=port)
     return result, 200
+
+
+def _canonical_job_snapshot() -> list[dict[str, object]]:
+    """Return the canonical manager's copied, JSON-ready job view."""
+    from ..jobs import get_job_manager
+
+    return [snapshot.to_dict() for snapshot in get_job_manager().list_jobs()]
 
 
 async def jobs_route(request: Request) -> JSONResponse:
@@ -403,7 +410,7 @@ async def search_route(request: Request) -> JSONResponse:
     except ValueError as exc:
         return _bad_request_invalid_root(exc)
 
-    job_snapshot_before = _jobs.snapshot()
+    job_snapshot_before = _canonical_job_snapshot()
     notes: dict[str, object] = {}
 
     def _run():
