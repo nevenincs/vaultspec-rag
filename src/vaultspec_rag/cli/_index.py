@@ -397,7 +397,11 @@ def _try_service_delegation(
         str(target),
         initiator_kind="cli",
     )
-    if isinstance(data, dict) and data.get("ok") is False:
+    if (
+        isinstance(data, dict)
+        and data.get("ok") is False
+        and data.get("partial") is not True
+    ):
         if not json_mode:
             _cli.console.print(
                 f"Reindex {index_type.value} reported an error; "
@@ -423,6 +427,8 @@ def _try_service_delegation(
                 highlight=False,
             )
             _cli.console.print("Check progress with: vaultspec-rag server jobs")
+        elif _print_service_domain_outcomes(data.get("domains")):
+            pass
         else:
             rows = data.get("sources")
             if isinstance(rows, list):
@@ -450,6 +456,37 @@ def _try_service_delegation(
         raise typer.Exit(code=1)
 
     return False
+
+
+def _print_service_domain_outcomes(raw_domains: object) -> bool:
+    """Render canonical per-domain queued or failed reindex outcomes."""
+    if not isinstance(raw_domains, dict):
+        return False
+    domains = cast("dict[str, object]", raw_domains)
+    rendered = False
+    for source in ("vault", "code", "document"):
+        raw = domains.get(source)
+        if not isinstance(raw, dict):
+            continue
+        domain = cast("dict[str, object]", raw)
+        rendered = True
+        label = _index_source_label(source)
+        if domain.get("ok") is True:
+            _cli.console.print(
+                f"{label} re-index job queued on service: {domain.get('job_id')}",
+                markup=False,
+                highlight=False,
+            )
+        else:
+            _cli.console.print(
+                f"{label}: failed: {domain.get('error_kind')}: "
+                f"{domain.get('detail')}",
+                markup=False,
+                highlight=False,
+            )
+    if rendered:
+        _cli.console.print("Check progress with: vaultspec-rag server jobs")
+    return rendered
 
 
 def _print_service_async_results(
