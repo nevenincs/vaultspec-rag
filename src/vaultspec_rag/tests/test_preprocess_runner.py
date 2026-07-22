@@ -298,6 +298,26 @@ def test_oversize_emission_is_skipped(tmp_path: Path) -> None:
     assert "exceeds cap" in result.reason
 
 
+def test_emitted_cap_measures_encoded_bytes(tmp_path: Path) -> None:
+    body = """
+        import json, sys
+        print(json.dumps({
+            "schema_version": 1,
+            "preprocessor_id": "echo",
+            "preprocessor_version": "1.0",
+            "source_path": sys.argv[1],
+            "text": "é" * 60,
+        }))
+    """
+    script = _script(tmp_path, body)
+    source = tmp_path / "doc.bin"
+    source.write_bytes(b"x")
+    result = _run(source, _rule(script), max_emitted_bytes=100)
+    assert result.status == "skipped"
+    assert result.reason is not None
+    assert "text bytes 120 exceeds cap 100" in result.reason
+
+
 def test_oversize_stdout_is_bounded_and_skipped(tmp_path: Path) -> None:
     # Emit far more raw stdout than the cap allows; the bounded read must skip
     # without buffering it all (review PREPROCESS-003). cap=100 -> stdout cap

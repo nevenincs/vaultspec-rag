@@ -129,6 +129,9 @@ class PreprocessRule:
         path_independent: Permit cache reuse between byte-identical inputs at
             different paths. Defaults to false because most extractors embed
             source identity in locators or metadata.
+        max_source_bytes: Optional per-rule source-size ceiling. The worker
+            combines it with the active support-profile ceiling and enforces
+            the smaller value before launching an extractor.
     """
 
     pattern: str
@@ -143,6 +146,7 @@ class PreprocessRule:
     order: int
     batch: bool = False
     path_independent: bool = False
+    max_source_bytes: int | None = None
 
 
 class PreprocessConfig:
@@ -239,12 +243,15 @@ class PreprocessContext:
         project_root: The project root; placed on the hook child's
             ``PYTHONPATH`` so a ``command``/``entry_point`` that imports its own
             module tree can do so.
+        max_source_bytes: Optional support-profile ceiling applied to every
+            source before extraction. A matching rule may lower this ceiling.
     """
 
     config: PreprocessConfig
     cache_root: pathlib.Path
     max_emitted_bytes: int
     project_root: pathlib.Path
+    max_source_bytes: int | None = None
 
 
 def load_preprocess_rules(
@@ -388,6 +395,7 @@ def _build_rule(
     timeout_s = _resolve_timeout(rule_map, reject)
     batch = _resolve_batch(rule_map, command, entry_point, reject)
     path_independent = _resolve_path_independent(rule_map, reject)
+    max_source_bytes = _resolve_max_source_bytes(rule_map, reject)
 
     options_raw = rule_map.get("options", {})
     if not isinstance(options_raw, dict):
@@ -407,6 +415,7 @@ def _build_rule(
         order=order,
         batch=batch,
         path_independent=path_independent,
+        max_source_bytes=max_source_bytes,
     )
 
 
@@ -418,6 +427,19 @@ def _resolve_path_independent(
     value = rule_map.get("path_independent", False)
     if not isinstance(value, bool):
         raise reject("'path_independent' must be a boolean")
+    return value
+
+
+def _resolve_max_source_bytes(
+    rule_map: dict[str, object],
+    reject: Callable[[str], _RuleRejectedError],
+) -> int | None:
+    """Resolve an optional positive per-rule source-size ceiling."""
+    value = rule_map.get("max_source_bytes")
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise reject("'max_source_bytes' must be a positive integer")
     return value
 
 

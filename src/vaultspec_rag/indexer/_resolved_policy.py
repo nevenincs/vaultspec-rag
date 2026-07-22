@@ -248,6 +248,7 @@ class ResolvedPreprocessRule:
     order: int
     batch: bool
     path_independent: bool
+    max_source_bytes: int | None
 
     def __post_init__(self) -> None:
         canonical: CanonicalOption = ("mapping", self.options)
@@ -278,6 +279,7 @@ class ResolvedPreprocessRule:
             order=rule.order,
             batch=rule.batch,
             path_independent=rule.path_independent,
+            max_source_bytes=rule.max_source_bytes,
         )
 
     def materialize(self) -> PreprocessRule:
@@ -296,6 +298,7 @@ class ResolvedPreprocessRule:
             order=self.order,
             batch=self.batch,
             path_independent=self.path_independent,
+            max_source_bytes=self.max_source_bytes,
         )
 
 
