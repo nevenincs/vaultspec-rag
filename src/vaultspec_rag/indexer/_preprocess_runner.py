@@ -31,6 +31,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING, Literal, cast
 
@@ -47,7 +48,7 @@ from ._preprocess_schema import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from ._preprocess_config import PreprocessRule
 
@@ -186,8 +187,7 @@ def _invocation_envelope(
     return PreprocessInvocation.model_validate(
         {
             "source_paths": tuple(
-                _canonical_source_identity(path, project_root)
-                for path in source_paths
+                _canonical_source_identity(path, project_root) for path in source_paths
             ),
             "options": dict(rule.options),
             "extractor_version": rule.extractor_version,
@@ -215,10 +215,59 @@ def _child_env(
     return env
 
 
+def _drain_stdout_bounded(
+    pipe: IO[bytes], stdout_cap: int, captured: dict[str, bytes]
+) -> None:
+    """Drain stdout while retaining at most one byte beyond its hard cap."""
+    buf = bytearray()
+    while chunk := pipe.read(65536):
+        if len(buf) <= stdout_cap:
+            buf += chunk
+    captured["stdout"] = bytes(buf[: stdout_cap + 1])
+
+
+def _drain_stderr_bounded(pipe: IO[bytes], captured: dict[str, bytes]) -> None:
+    """Drain stderr while retaining only its bounded diagnostic prefix."""
+    captured["stderr"] = pipe.read(_STDERR_CAP)
+    while pipe.read(65536):
+        pass
+
+
+def _wait_for_child(
+    handle: subprocess.Popen[bytes],
+    timeout_s: float | None,
+    checkpoint: Callable[[], None] | None,
+) -> None:
+    """Poll one child at cooperative cancellation and timeout safe points."""
+    started = time.monotonic()
+    while handle.poll() is None:
+        if checkpoint is not None:
+            checkpoint()
+        if timeout_s is not None and time.monotonic() - started >= timeout_s:
+            raise subprocess.TimeoutExpired(handle.args, timeout_s)
+        try:
+            handle.wait(timeout=0.1)
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def _terminate_and_join(
+    handle: subprocess.Popen[bytes],
+    stdout_thread: threading.Thread,
+    stderr_thread: threading.Thread,
+) -> None:
+    """Terminate a child and join both pipe drains on every exceptional exit."""
+    handle.kill()
+    handle.wait()
+    stdout_thread.join(timeout=5)
+    stderr_thread.join(timeout=5)
+
+
 def _drain_and_wait(
     handle: subprocess.Popen[bytes],
     timeout_s: float | None,
     stdout_cap: int,
+    checkpoint: Callable[[], None] | None = None,
 ) -> tuple[int, bytes, str]:
     """Drain a launched child's pipes on threads, then wait with a timeout.
 
@@ -235,38 +284,29 @@ def _drain_and_wait(
     """
     captured: dict[str, bytes] = {"stdout": b"", "stderr": b""}
 
-    def _drain_stdout(pipe: IO[bytes]) -> None:
-        buf = bytearray()
-        while True:
-            chunk = pipe.read(65536)
-            if not chunk:
-                break
-            if len(buf) <= stdout_cap:
-                buf += chunk  # store until just past the cap, then discard
-        captured["stdout"] = bytes(buf[: stdout_cap + 1])
-
-    def _drain_stderr(pipe: IO[bytes]) -> None:
-        captured["stderr"] = pipe.read(_STDERR_CAP)
-        while pipe.read(65536):
-            pass
-
     if handle.stdout is None or handle.stderr is None:  # pragma: no cover - PIPE set
         handle.kill()
         msg = "preprocessor pipes unavailable"
         raise _PreprocessSkipError(msg)
-    t_out = threading.Thread(target=_drain_stdout, args=(handle.stdout,))
-    t_err = threading.Thread(target=_drain_stderr, args=(handle.stderr,))
+    t_out = threading.Thread(
+        target=_drain_stdout_bounded,
+        args=(handle.stdout, stdout_cap, captured),
+    )
+    t_err = threading.Thread(
+        target=_drain_stderr_bounded,
+        args=(handle.stderr, captured),
+    )
     t_out.start()
     t_err.start()
     try:
-        handle.wait(timeout=timeout_s)
+        _wait_for_child(handle, timeout_s, checkpoint)
     except subprocess.TimeoutExpired as exc:
-        handle.kill()
-        handle.wait()
-        t_out.join(timeout=5)
-        t_err.join(timeout=5)
+        _terminate_and_join(handle, t_out, t_err)
         msg = f"preprocessor timed out after {timeout_s}s"
         raise _PreprocessSkipError(msg) from exc
+    except BaseException:
+        _terminate_and_join(handle, t_out, t_err)
+        raise
     t_out.join(timeout=5)
     t_err.join(timeout=5)
     stderr_text = captured["stderr"].decode("utf-8", errors="replace").strip()
@@ -281,6 +321,7 @@ def _run_bounded(
     *,
     cwd: pathlib.Path,
     env: dict[str, str],
+    checkpoint: Callable[[], None] | None = None,
 ) -> tuple[int, bytes, str]:
     """Launch ``argv`` directly and drain it bounded.
 
@@ -296,7 +337,7 @@ def _run_bounded(
         msg = f"preprocessor could not be launched: {exc}"
         raise _PreprocessSkipError(msg) from exc
 
-    return _drain_and_wait(handle, timeout_s, stdout_cap)
+    return _drain_and_wait(handle, timeout_s, stdout_cap, checkpoint)
 
 
 def _invoke_and_validate(
@@ -305,6 +346,7 @@ def _invoke_and_validate(
     max_emitted_bytes: int,
     *,
     project_root: pathlib.Path,
+    checkpoint: Callable[[], None] | None = None,
 ) -> PreprocOutput:
     """Run the preprocessor, validate its output, and enforce the caps.
 
@@ -338,6 +380,7 @@ def _invoke_and_validate(
         stdout_cap,
         cwd=project_root,
         env=_child_env(project_root, invocation),
+        checkpoint=checkpoint,
     )
     output = _validate_output(
         returncode,
@@ -417,6 +460,7 @@ def run_preprocessor(
     *,
     max_emitted_bytes: int,
     project_root: pathlib.Path,
+    checkpoint: Callable[[], None] | None = None,
 ) -> PreprocessResult:
     """Run a command rule against one source file and resolve its disposition.
 
@@ -442,6 +486,7 @@ def run_preprocessor(
             rule,
             max_emitted_bytes,
             project_root=project_root,
+            checkpoint=checkpoint,
         )
     except _PreprocessSkipError as exc:
         return _dispose_failure(source_path, rule, str(exc), cause=exc)
@@ -636,6 +681,7 @@ def _invoke_batch(
     max_emitted_bytes: int,
     project_root: pathlib.Path,
     manifest_path: str,
+    checkpoint: Callable[[], None] | None = None,
 ) -> _BatchParse:
     """Run the batch command once over the manifest and split its envelope.
 
@@ -666,6 +712,7 @@ def _invoke_batch(
         stdout_cap,
         cwd=project_root,
         env=_child_env(project_root, invocation),
+        checkpoint=checkpoint,
     )
     return _split_batch_output(
         returncode,
@@ -684,6 +731,7 @@ def run_preprocessor_batch(
     *,
     max_emitted_bytes: int,
     project_root: pathlib.Path,
+    checkpoint: Callable[[], None] | None = None,
 ) -> dict[str, PreprocessResult]:
     """Run a batch command rule once over many files, resolving each in turn.
 
@@ -722,7 +770,12 @@ def run_preprocessor_batch(
         _write_manifest_fd(fd, source_paths)
         try:
             parsed = _invoke_batch(
-                source_paths, rule, max_emitted_bytes, project_root, manifest_path
+                source_paths,
+                rule,
+                max_emitted_bytes,
+                project_root,
+                manifest_path,
+                checkpoint,
             )
         except _PreprocessSkipError as exc:
             reason = str(exc)
