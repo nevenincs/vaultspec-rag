@@ -9,6 +9,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..indexer._code_meta import (
+    CONTENT_EPOCH_KEY,
+    GENERATION_ID_KEY,
+    MEMBERSHIP_EPOCH_KEY,
+    load_meta,
+    publish_meta_from_file_states,
+    read_meta_raw,
+)
 from ..indexer._content_policy import AdmissionDisposition, AdmissionReason, ContentKind
 from ..indexer._file_state import FileState, FileStateKind
 from ..indexer._run_ledger import (
@@ -220,6 +228,11 @@ def test_file_outcomes_and_finalization_are_immutable(tmp_path: Path) -> None:
         if phase is FinalizationPhase.STALE_RECONCILED:
             with pytest.raises(RunLedgerStateError, match="finalization begins"):
                 ledger.record_file_state(generation.generation_id, failed)
+    with pytest.raises(RunLedgerStateError, match=r"only compact\(\)"):
+        ledger.advance_finalization(
+            generation.generation_id,
+            FinalizationPhase.COMPACTED,
+        )
 
     completed = ledger.finish_generation(
         generation.generation_id,
@@ -301,3 +314,107 @@ def test_schema_compatibility_and_corruption_fail_closed(tmp_path: Path) -> None
     connection.close()
     with pytest.raises(RunLedgerCorruptionError, match="signature"):
         logical.start_generation(generation.signature)
+
+    incomplete_path = tmp_path / "incomplete.sqlite3"
+    RunLedger(incomplete_path)
+    connection = sqlite3.connect(incomplete_path)
+    connection.execute("PRAGMA foreign_keys = OFF")
+    connection.execute("DROP TABLE file_states")
+    connection.close()
+    with pytest.raises(RunLedgerCompatibilityError, match="missing tables"):
+        RunLedger(incomplete_path)
+
+    malformed = RunLedger(tmp_path / "malformed.sqlite3")
+    malformed_generation = malformed.start_generation(_signature(tmp_path))
+    connection = sqlite3.connect(malformed.path)
+    connection.execute(
+        "UPDATE generations SET terminal_state = 'unknown' WHERE generation_id = ?",
+        (malformed_generation.generation_id,),
+    )
+    connection.commit()
+    connection.close()
+    with pytest.raises(RunLedgerCorruptionError, match="generation"):
+        malformed.generation(malformed_generation.generation_id)
+
+
+def test_bounded_iterator_does_not_hold_a_writer_transaction(tmp_path: Path) -> None:
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    generation = ledger.start_generation(_signature(tmp_path))
+    first = _unit("src/a.py", 0, 1)
+    second = _unit("src/b.py", 0, 1)
+    ledger.record_storage_confirmed_unit(generation.generation_id, first)
+    ledger.record_storage_confirmed_unit(generation.generation_id, second)
+
+    rows = ledger.iter_units(generation.generation_id, batch_size=1)
+    assert next(rows) == first
+    third = _unit("src/c.py", 0, 1)
+    assert ledger.record_storage_confirmed_unit(generation.generation_id, third)
+    assert list(rows) == [second, third]
+
+
+def test_metadata_publication_streams_only_converged_ledger_rows(
+    tmp_path: Path,
+) -> None:
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    generation = ledger.start_generation(_signature(tmp_path))
+    content_hash = _digest("published")
+    ledger.record_storage_confirmed_unit(
+        generation.generation_id,
+        _unit("src/published.py", 0, 1, digest=content_hash),
+    )
+    ledger.record_file_state(
+        generation.generation_id,
+        FileState.indexed("src/published.py", ContentKind.CODE, content_hash),
+    )
+    ledger.record_file_state(
+        generation.generation_id,
+        FileState.policy_rejected(
+            "notes/ignored.md",
+            AdmissionDisposition(
+                kind=None,
+                admitted=False,
+                reason=AdmissionReason.IGNORED,
+            ),
+        ),
+    )
+    meta_path = tmp_path / "code_meta.json"
+    assert (
+        publish_meta_from_file_states(
+            meta_path,
+            ledger.iter_file_states(
+                generation.generation_id,
+                converged_only=True,
+                batch_size=1,
+            ),
+            generation_id=generation.generation_id,
+            membership_epoch="membership-v1",
+            content_epoch="content-v1",
+        )
+        == 1
+    )
+    assert load_meta(meta_path) == {"src/published.py": content_hash}
+    raw = read_meta_raw(meta_path)
+    assert raw[GENERATION_ID_KEY] == generation.generation_id
+    assert raw[MEMBERSHIP_EPOCH_KEY] == "membership-v1"
+    assert raw[CONTENT_EPOCH_KEY] == "content-v1"
+
+    ledger.record_file_state(
+        generation.generation_id,
+        FileState.failed(
+            "src/unresolved.py",
+            FileStateKind.CHUNK_FAILED,
+            ContentKind.CODE,
+            "chunking failed",
+            content_hash=_digest("unresolved"),
+        ),
+    )
+    before = meta_path.read_bytes()
+    with pytest.raises(ValueError, match="unresolved"):
+        publish_meta_from_file_states(
+            meta_path,
+            ledger.iter_file_states(generation.generation_id),
+            generation_id=generation.generation_id,
+            membership_epoch="membership-v1",
+            content_epoch="content-v1",
+        )
+    assert meta_path.read_bytes() == before

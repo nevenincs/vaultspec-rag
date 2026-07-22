@@ -43,6 +43,51 @@ __all__ = [
 _SCHEMA_VERSION: Final = 4
 _FETCH_BATCH: Final = 256
 _DIGEST_REPR_LENGTH: Final = 128
+_REQUIRED_SCHEMA: Final = {
+    "generations": frozenset(
+        {
+            "generation_id",
+            "source_type",
+            "collection_identity",
+            "signature_fingerprint",
+            "signature_json",
+            "finalization_phase",
+            "terminal_state",
+            "destructive_intent",
+            "created_at",
+            "updated_at",
+            "terminal_detail",
+        }
+    ),
+    "commit_units": frozenset(
+        {
+            "generation_id",
+            "unit_id",
+            "rel_path",
+            "unit_kind",
+            "source_digest",
+            "segment_ordinal",
+            "is_file_end",
+            "point_ids_json",
+            "committed_at",
+        }
+    ),
+    "commit_point_ids": frozenset(
+        {"generation_id", "unit_id", "point_ordinal", "point_id"}
+    ),
+    "file_states": frozenset(
+        {
+            "generation_id",
+            "rel_path",
+            "state",
+            "content_kind",
+            "content_hash",
+            "admission_reason",
+            "error_kind",
+            "detail",
+        }
+    ),
+}
 
 
 class RunLedgerError(RuntimeError):
@@ -240,6 +285,7 @@ class RunLedger:
         try:
             with self._connect() as connection:
                 self._initialize(connection)
+                self._verify_schema(connection)
                 self._verify_integrity(connection)
         except sqlite3.DatabaseError as exc:
             raise RunLedgerCorruptionError(
@@ -488,33 +534,41 @@ class RunLedger:
     ) -> tuple[bool, str | None]:
         rows = connection.execute(
             """
-            SELECT unit_kind, source_digest, segment_ordinal, is_file_end
+            SELECT unit_kind, source_digest,
+                   COUNT(*) AS unit_count,
+                   MIN(segment_ordinal) AS first_ordinal,
+                   MAX(segment_ordinal) AS last_ordinal,
+                   SUM(segment_ordinal) AS ordinal_sum,
+                   SUM(is_file_end) AS end_count,
+                   MAX(CASE WHEN is_file_end = 1 THEN segment_ordinal END)
+                       AS end_ordinal
             FROM commit_units
             WHERE generation_id = ? AND rel_path = ?
-            ORDER BY segment_ordinal
+            GROUP BY unit_kind, source_digest
             """,
             (generation_id, rel_path),
         ).fetchall()
         if not rows:
             return False, None
-        by_kind: dict[str, list[sqlite3.Row]] = {}
+        by_kind: dict[str, sqlite3.Row] = {}
         for row in rows:
-            by_kind.setdefault(str(row["unit_kind"]), []).append(row)
-        for kind_rows in by_kind.values():
-            end_ordinals = [
-                row["segment_ordinal"]
-                for row in kind_rows
-                if bool(row["is_file_end"])
-            ]
-            if len(end_ordinals) != 1:
+            kind = str(row["unit_kind"])
+            if kind in by_kind:
                 return False, None
-            expected = end_ordinals[0] + 1
-            if len(kind_rows) != expected or [
-                row["segment_ordinal"] for row in kind_rows
-            ] != list(range(expected)):
+            by_kind[kind] = row
+            count = int(row["unit_count"])
+            expected_sum = count * (count - 1) // 2
+            if (
+                count <= 0
+                or int(row["first_ordinal"]) != 0
+                or int(row["last_ordinal"]) != count - 1
+                or int(row["ordinal_sum"]) != expected_sum
+                or int(row["end_count"]) != 1
+                or int(row["end_ordinal"]) != count - 1
+            ):
                 return False, None
         upserts = by_kind.get(CommitUnitKind.UPSERT.value)
-        digest = str(upserts[0]["source_digest"]) if upserts else None
+        digest = str(upserts["source_digest"]) if upserts else None
         return True, digest
 
     def iter_units(
@@ -526,25 +580,42 @@ class RunLedger:
         """Yield committed units using bounded row-wise iteration."""
         if batch_size <= 0:
             raise ValueError("batch_size must be positive")
-        with self._connect() as connection:
-            cursor = connection.execute(
-                """
-                SELECT * FROM commit_units
-                WHERE generation_id = ?
-                ORDER BY rel_path, unit_kind, segment_ordinal
-                """,
-                (generation_id,),
+        last_key: tuple[str, str, int, str] | None = None
+        while True:
+            with self._connect() as connection:
+                if last_key is None:
+                    rows = connection.execute(
+                        """
+                        SELECT * FROM commit_units
+                        WHERE generation_id = ?
+                        ORDER BY rel_path, unit_kind, segment_ordinal, unit_id
+                        LIMIT ?
+                        """,
+                        (generation_id, batch_size),
+                    ).fetchall()
+                else:
+                    rows = connection.execute(
+                        """
+                        SELECT * FROM commit_units
+                        WHERE generation_id = ?
+                          AND (rel_path, unit_kind, segment_ordinal, unit_id)
+                              > (?, ?, ?, ?)
+                        ORDER BY rel_path, unit_kind, segment_ordinal, unit_id
+                        LIMIT ?
+                        """,
+                        (generation_id, *last_key, batch_size),
+                    ).fetchall()
+            if not rows:
+                return
+            for row in rows:
+                yield _commit_unit_from_row(row)
+            last = rows[-1]
+            last_key = (
+                str(last["rel_path"]),
+                str(last["unit_kind"]),
+                int(last["segment_ordinal"]),
+                str(last["unit_id"]),
             )
-            while rows := cursor.fetchmany(batch_size):
-                for row in rows:
-                    yield CommitUnit(
-                        rel_path=row["rel_path"],
-                        kind=CommitUnitKind(row["unit_kind"]),
-                        source_digest=row["source_digest"],
-                        segment_ordinal=row["segment_ordinal"],
-                        is_file_end=bool(row["is_file_end"]),
-                        point_ids=tuple(json.loads(row["point_ids_json"])),
-                    )
 
     def iter_point_ids(
         self,
@@ -555,23 +626,48 @@ class RunLedger:
         """Yield deterministic committed point identities row by row."""
         if batch_size <= 0:
             raise ValueError("batch_size must be positive")
-        with self._connect() as connection:
-            cursor = connection.execute(
+        last_key: tuple[str, str, int, int, str] | None = None
+        while True:
+            condition = ""
+            parameters: tuple[object, ...] = (generation_id,)
+            if last_key is not None:
+                condition = """
+                  AND (units.rel_path, units.unit_kind,
+                       units.segment_ordinal, points.point_ordinal,
+                       points.point_id) > (?, ?, ?, ?, ?)
                 """
-                SELECT points.point_id
-                FROM commit_point_ids AS points
-                JOIN commit_units AS units
-                  ON units.generation_id = points.generation_id
-                 AND units.unit_id = points.unit_id
-                WHERE points.generation_id = ?
-                ORDER BY units.rel_path, units.unit_kind,
-                         units.segment_ordinal, points.point_ordinal
-                """,
-                (generation_id,),
+                parameters = (generation_id, *last_key)
+            with self._connect() as connection:
+                rows = connection.execute(
+                    f"""
+                    SELECT points.point_id, points.point_ordinal,
+                           units.rel_path, units.unit_kind,
+                           units.segment_ordinal
+                    FROM commit_point_ids AS points
+                    JOIN commit_units AS units
+                      ON units.generation_id = points.generation_id
+                     AND units.unit_id = points.unit_id
+                    WHERE points.generation_id = ?
+                    {condition}
+                    ORDER BY units.rel_path, units.unit_kind,
+                             units.segment_ordinal, points.point_ordinal,
+                             points.point_id
+                    LIMIT ?
+                    """,
+                    (*parameters, batch_size),
+                ).fetchall()
+            if not rows:
+                return
+            for row in rows:
+                yield str(row["point_id"])
+            last = rows[-1]
+            last_key = (
+                str(last["rel_path"]),
+                str(last["unit_kind"]),
+                int(last["segment_ordinal"]),
+                int(last["point_ordinal"]),
+                str(last["point_id"]),
             )
-            while rows := cursor.fetchmany(batch_size):
-                for row in rows:
-                    yield str(row["point_id"])
 
     def record_file_state(self, generation_id: str, state: FileState) -> None:
         """Upsert the latest explicit per-file convergence outcome."""
@@ -637,19 +733,34 @@ class RunLedger:
         """Yield explicit outcomes without materializing generation metadata."""
         if batch_size <= 0:
             raise ValueError("batch_size must be positive")
-        with self._connect() as connection:
-            cursor = connection.execute(
-                """
-                SELECT * FROM file_states
-                WHERE generation_id = ? ORDER BY rel_path
-                """,
-                (generation_id,),
-            )
-            while rows := cursor.fetchmany(batch_size):
-                for row in rows:
-                    state = _file_state_from_row(row)
-                    if not converged_only or state.converged:
-                        yield state
+        last_path: str | None = None
+        while True:
+            with self._connect() as connection:
+                if last_path is None:
+                    rows = connection.execute(
+                        """
+                        SELECT * FROM file_states
+                        WHERE generation_id = ?
+                        ORDER BY rel_path LIMIT ?
+                        """,
+                        (generation_id, batch_size),
+                    ).fetchall()
+                else:
+                    rows = connection.execute(
+                        """
+                        SELECT * FROM file_states
+                        WHERE generation_id = ? AND rel_path > ?
+                        ORDER BY rel_path LIMIT ?
+                        """,
+                        (generation_id, last_path, batch_size),
+                    ).fetchall()
+            if not rows:
+                return
+            for row in rows:
+                state = _file_state_from_row(row)
+                if not converged_only or state.converged:
+                    yield state
+            last_path = str(rows[-1]["rel_path"])
 
     def advance_finalization(
         self,
@@ -659,6 +770,10 @@ class RunLedger:
         """Advance exactly one confirmed external finalization boundary."""
         if not isinstance(phase, FinalizationPhase):
             raise TypeError("phase must be a FinalizationPhase")
+        if phase is FinalizationPhase.COMPACTED:
+            raise RunLedgerStateError(
+                "only compact() may commit the compacted finalization phase"
+            )
         now = time.time()
         with self._transaction() as connection:
             row = self._require_mutable_generation(connection, generation_id)
@@ -881,6 +996,31 @@ class RunLedger:
         if [row[0] for row in rows] != ["ok"]:
             raise RunLedgerCorruptionError("run ledger failed SQLite quick_check")
 
+    def _verify_schema(self, connection: sqlite3.Connection) -> None:
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        missing_tables = set(_REQUIRED_SCHEMA) - tables
+        if missing_tables:
+            raise RunLedgerCompatibilityError(
+                "run ledger schema is incomplete; missing tables: "
+                + ", ".join(sorted(missing_tables))
+            )
+        for table, required_columns in _REQUIRED_SCHEMA.items():
+            columns = {
+                str(row[1])
+                for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            missing_columns = required_columns - columns
+            if missing_columns:
+                raise RunLedgerCompatibilityError(
+                    f"run ledger table {table!r} is missing columns: "
+                    + ", ".join(sorted(missing_columns))
+                )
+
     @staticmethod
     def _require_mutable_generation(
         connection: sqlite3.Connection,
@@ -898,12 +1038,25 @@ class RunLedger:
 
     @staticmethod
     def _generation_from_row(row: sqlite3.Row) -> RunGeneration:
-        signature_payload: dict[str, Any] = json.loads(row["signature_json"])
-        signature_payload["source_type"] = ContentKind(
-            signature_payload["source_type"]
-        )
-        signature_payload["operation"] = RunOperation(signature_payload["operation"])
-        signature = RunSignature(**signature_payload)
+        try:
+            signature_payload: dict[str, Any] = json.loads(row["signature_json"])
+            signature_payload["source_type"] = ContentKind(
+                signature_payload["source_type"]
+            )
+            signature_payload["operation"] = RunOperation(
+                signature_payload["operation"]
+            )
+            signature = RunSignature(**signature_payload)
+            finalization_phase = FinalizationPhase(row["finalization_phase"])
+            terminal_state = RunTerminalState(row["terminal_state"])
+            destructive_intent = bool(row["destructive_intent"])
+            created_at = float(row["created_at"])
+            updated_at = float(row["updated_at"])
+            terminal_detail = row["terminal_detail"]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RunLedgerCorruptionError(
+                "stored generation row is malformed"
+            ) from exc
         if signature.fingerprint != row["signature_fingerprint"]:
             raise RunLedgerCorruptionError(
                 "stored generation signature does not match its fingerprint"
@@ -911,12 +1064,12 @@ class RunLedger:
         return RunGeneration(
             generation_id=row["generation_id"],
             signature=signature,
-            finalization_phase=FinalizationPhase(row["finalization_phase"]),
-            terminal_state=RunTerminalState(row["terminal_state"]),
-            destructive_intent=bool(row["destructive_intent"]),
-            created_at=float(row["created_at"]),
-            updated_at=float(row["updated_at"]),
-            terminal_detail=row["terminal_detail"],
+            finalization_phase=finalization_phase,
+            terminal_state=terminal_state,
+            destructive_intent=destructive_intent,
+            created_at=created_at,
+            updated_at=updated_at,
+            terminal_detail=terminal_detail,
         )
 
 
@@ -946,18 +1099,38 @@ def _is_digest(value: object) -> bool:
 def _file_state_from_row(row: Mapping[str, Any]) -> FileState:
     from .._job_errors import JobErrorKind
 
-    return FileState(
-        rel_path=row["rel_path"],
-        state=FileStateKind(row["state"]),
-        kind=ContentKind(row["content_kind"])
-        if row["content_kind"] is not None
-        else None,
-        content_hash=row["content_hash"],
-        admission_reason=AdmissionReason(row["admission_reason"])
-        if row["admission_reason"] is not None
-        else None,
-        error_kind=JobErrorKind(row["error_kind"])
-        if row["error_kind"] is not None
-        else None,
-        detail=row["detail"],
-    )
+    try:
+        return FileState(
+            rel_path=row["rel_path"],
+            state=FileStateKind(row["state"]),
+            kind=ContentKind(row["content_kind"])
+            if row["content_kind"] is not None
+            else None,
+            content_hash=row["content_hash"],
+            admission_reason=AdmissionReason(row["admission_reason"])
+            if row["admission_reason"] is not None
+            else None,
+            error_kind=JobErrorKind(row["error_kind"])
+            if row["error_kind"] is not None
+            else None,
+            detail=row["detail"],
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RunLedgerCorruptionError("stored file state is malformed") from exc
+
+
+def _commit_unit_from_row(row: Mapping[str, Any]) -> CommitUnit:
+    try:
+        point_ids = json.loads(row["point_ids_json"])
+        if not isinstance(point_ids, list):
+            raise TypeError("point_ids_json must contain a list")
+        return CommitUnit(
+            rel_path=row["rel_path"],
+            kind=CommitUnitKind(row["unit_kind"]),
+            source_digest=row["source_digest"],
+            segment_ordinal=row["segment_ordinal"],
+            is_file_end=bool(row["is_file_end"]),
+            point_ids=tuple(point_ids),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RunLedgerCorruptionError("stored commit unit is malformed") from exc
