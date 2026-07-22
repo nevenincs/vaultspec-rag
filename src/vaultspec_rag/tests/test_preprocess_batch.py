@@ -312,7 +312,10 @@ def _batch_rule(
         command=" ".join(parts),
         entry_point=None,
         priority=100,
-        target=ContentKind.DOCUMENT,
+        # Batch dispatch here is asserted through the code batch worker and the
+        # code indexer, so every rule in this module is an explicit code route.
+        # Document-targeted batching is exercised against the document worker.
+        target=ContentKind.CODE,
         extractor_version="1.0.0",
         on_error=on_error,
         timeout_s=timeout_s,
@@ -502,7 +505,7 @@ def _counting_context(tmp_path: Path) -> tuple[PreprocessContext, Path]:
         command=command,
         entry_point=None,
         priority=100,
-        target=ContentKind.DOCUMENT,
+        target=ContentKind.CODE,
         extractor_version="1.0.0",
         on_error="skip",
         timeout_s=30.0,
@@ -647,7 +650,7 @@ def _counting_rule(command: str, pattern: str) -> PreprocessRule:
         command=command,
         entry_point=None,
         priority=100,
-        target=ContentKind.DOCUMENT,
+        target=ContentKind.CODE,
         extractor_version="1.0.0",
         on_error="skip",
         timeout_s=30.0,
@@ -714,7 +717,7 @@ def test_indexer_pool_propagates_batch_on_error_fail(tmp_path: Path) -> None:
             command=command,
             entry_point=None,
             priority=100,
-            target=ContentKind.DOCUMENT,
+            target=ContentKind.CODE,
             extractor_version="1.0.0",
             on_error="fail",
             timeout_s=30.0,

@@ -12,6 +12,16 @@ related:
   - '[[2026-07-21-large-index-resilience-plan]]'
 ---
 
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
+
 # `code-document-index-boundary` plan
 
 ## Description
@@ -249,9 +259,18 @@ Depend on the completed 250,872-chunk representative source-code workload gate a
 
 Run focused and complete verification without test shortcuts, then close only after a formal architecture and safety audit reports no unresolved finding.
 
-- [ ] `W06.P13.S84` - Run focused policy, preprocessing, indexer, migration, store, search, watcher, jobs, service, CLI, MCP, restart, and resource suites; `src/vaultspec_rag/tests`.
+- [x] `W06.P13.S129` - Collapse the triplicated code-kind admission guard into one shared helper so the boundary invariant has a single owner; `src/vaultspec_rag/indexer/_chunk_worker.py`.
+- [x] `W06.P13.S130` - Reconcile preprocess and chunk-worker fixtures with the code and document admission boundary so document-targeted rules exercise the document path; `src/vaultspec_rag/tests/test_chunk_worker_parity.py, src/vaultspec_rag/tests/test_preprocess_batch.py, src/vaultspec_rag/tests/test_preprocess_worker.py`.
+- [x] `W06.P13.S131` - Reconcile the search source-type rename across the CLI search contract and service diagnostics so one vocabulary spans adapter and route; `src/vaultspec_rag/tests/test_cli_search_safety.py, src/vaultspec_rag/tests/test_service_search_diagnostics.py`.
+- [x] `W06.P13.S132` - Reconcile the readiness response shape and empty-query validation ordering with the shipped support-profile and degraded-reason fields; `src/vaultspec_rag/tests/test_readiness.py, src/vaultspec_rag/tests/test_search_quality_fixes_unit.py`.
+- [x] `W06.P13.S133` - Reconcile server-mode namespacing expectations with the document collection introduced by the boundary split; `src/vaultspec_rag/tests/test_store.py`.
+- [x] `W06.P13.S134` - Reconcile CLI help-text metavar expectations with the current Typer rendering convention; `src/vaultspec_rag/tests/test_cli_watcher.py, src/vaultspec_rag/tests/test_cli_mcp_control_parity.py, src/vaultspec_rag/tests/test_cli_server.py`.
+- [x] `W06.P13.S135` - Clear the redundant-cast type diagnostics blocking the lint gate; `src/vaultspec_rag/indexer/_resolved_policy.py, src/vaultspec_rag/search/_result_shaping.py, src/vaultspec_rag/server/_routes.py`.
+- [x] `W06.P13.S136` - Remove the first-failure and narrowed-marker shortcuts from the test recipe so the harness gate reports the complete result; `justfile`.
+- [x] `W06.P13.S84` - Run focused policy, preprocessing, indexer, migration, store, search, watcher, jobs, service, CLI, MCP, restart, and resource suites; `src/vaultspec_rag/tests`.
+- [ ] `W06.P13.S137` - Reconcile the command reference with the shipped source-type vocabulary so the document kind and the combined alias appear wherever a type is accepted; `docs/cli.md`.
 - [ ] `W06.P13.S85` - Run the complete project test suite without fakes, mocks, stubs, patches, monkeypatches, skips, or expected failures; `pyproject.toml`.
-- [ ] `W06.P13.S86` - Run formatting, lint, type, import-boundary, GPU, storage, and policy checks over the completed change; `.pre-commit-config.yaml`.
+- [x] `W06.P13.S86` - Run formatting, lint, type, import-boundary, GPU, storage, and policy checks over the completed change; `.pre-commit-config.yaml`.
 - [ ] `W06.P13.S87` - Perform the mandatory review for generic routing, fail-closed mutation, document isolation, migration replay, bounded resources, GPU discipline, public exhaustiveness, and test integrity; `.vault/audit/2026-07-22-code-document-index-boundary-audit.md`.
 
 ## Parallelization

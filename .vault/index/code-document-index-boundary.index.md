@@ -9,7 +9,134 @@ related:
   - '[[2026-07-21-code-document-index-boundary-adr]]'
   - '[[2026-07-21-code-document-index-boundary-reference]]'
   - '[[2026-07-21-code-document-index-boundary-research]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P01-S01]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P01-S02]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P01-S03]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P01-S04]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P01-S05]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P01-S06]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P01-S07]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P01-S37]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P01-S47]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P01-S88]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P01-S89]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P01-summary]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P02-S08]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P02-S09]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P02-S10]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P02-S11]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P02-S12]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P02-S13]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P02-S14]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P02-S90]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P02-S91]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P02-S92]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P02-S93]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P02-S94]]'
+  - '[[2026-07-22-code-document-index-boundary-W01-P02-S95]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P03-S100]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P03-S121]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P03-S122]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P03-S123]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P03-S124]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P03-S15]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P03-S16]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P03-S17]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P03-S18]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P03-S19]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P03-S20]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P03-S21]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P03-S22]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P03-S96]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P03-S97]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P03-S98]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P03-S99]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P03-summary]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P04-S101]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P04-S102]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P04-S103]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P04-S104]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P04-S105]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P04-S23]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P04-S24]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P04-S25]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P04-S26]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P04-S27]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P04-S28]]'
+  - '[[2026-07-22-code-document-index-boundary-W02-P04-summary]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P05-S106]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P05-S29]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P05-S30]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P05-S31]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P05-S32]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P05-S33]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P05-S34]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P05-S35]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P05-S36]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P05-summary]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P06-S107]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P06-S38]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P06-S39]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P06-S40]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P06-S41]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P06-S42]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P06-S43]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P06-S44]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P06-S45]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P06-S46]]'
+  - '[[2026-07-22-code-document-index-boundary-W03-P06-summary]]'
+  - '[[2026-07-22-code-document-index-boundary-W04-P07-summary]]'
+  - '[[2026-07-22-code-document-index-boundary-W04-P08-summary]]'
+  - '[[2026-07-22-code-document-index-boundary-W06-P12-S78]]'
+  - '[[2026-07-22-code-document-index-boundary-W06-P12-S79]]'
+  - '[[2026-07-22-code-document-index-boundary-W06-P12-S80]]'
+  - '[[2026-07-22-code-document-index-boundary-W06-P12-S81]]'
+  - '[[2026-07-22-code-document-index-boundary-W06-P12-S82]]'
+  - '[[2026-07-22-code-document-index-boundary-W06-P12-S83]]'
+  - '[[2026-07-22-code-document-index-boundary-W06-P12-summary]]'
+  - '[[2026-07-22-code-document-index-boundary-W06-P13-S129]]'
+  - '[[2026-07-22-code-document-index-boundary-W06-P13-S130]]'
+  - '[[2026-07-22-code-document-index-boundary-W06-P13-S131]]'
+  - '[[2026-07-22-code-document-index-boundary-W06-P13-S132]]'
+  - '[[2026-07-22-code-document-index-boundary-W06-P13-S133]]'
+  - '[[2026-07-22-code-document-index-boundary-W06-P13-S134]]'
+  - '[[2026-07-22-code-document-index-boundary-W06-P13-S135]]'
+  - '[[2026-07-22-code-document-index-boundary-W06-P13-S136]]'
+  - '[[2026-07-22-code-document-index-boundary-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-p06-resource-bounds-audit]]'
   - '[[2026-07-22-code-document-index-boundary-plan]]'
+  - '[[2026-07-22-code-document-index-boundary-s01-content-policy-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s02-ordered-root-routes-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s03-versioned-preprocess-schema-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s04-fail-closed-routing-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s05-deterministic-classifier-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s06-resolved-policy-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s07-policy-tests-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s100-schema-compatibility-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s121-survey-verification-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s122-snapshot-verification-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s123-migration-verification-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s124-maintenance-verification-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s15-document-models-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s16-document-identity-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s17-document-schema-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s18-document-store-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s19-document-metadata-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s20-document-clean-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s21-document-manifest-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s22-document-store-tests-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s37-file-states-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s47-kind-fingerprints-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s88-policy-preflight-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s94-disabled-preprocessing-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s96-document-survey-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s97-snapshot-manifest-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s98-document-migration-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-s99-document-maintenance-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-w02-p03-code-review-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-w03-p05-preprocess-fidelity-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-w03-p05-remediation-code-review-audit]]'
+  - '[[2026-07-22-code-document-index-boundary-w05-public-surfaces-audit]]'
 ---
 
 # `code-document-index-boundary` feature index
@@ -21,6 +148,139 @@ Auto-generated index of all documents tagged with `#code-document-index-boundary
 ### adr
 
 - `2026-07-21-code-document-index-boundary-adr` - `code-document-index-boundary` adr: `explicit content-kind admission and document isolation` | (**status:** `accepted`)
+
+### audit
+
+- `2026-07-22-code-document-index-boundary-audit` - `code-document-index-boundary` audit: `Final implementation review`
+- `2026-07-22-code-document-index-boundary-p06-resource-bounds-audit` - `code-document-index-boundary` audit: `p06 resource bounds`
+- `2026-07-22-code-document-index-boundary-s01-content-policy-audit` - `code-document-index-boundary` audit: `S01 content policy types`
+- `2026-07-22-code-document-index-boundary-s02-ordered-root-routes-audit` - `code-document-index-boundary` audit: `S02 ordered root routes`
+- `2026-07-22-code-document-index-boundary-s03-versioned-preprocess-schema-audit` - `code-document-index-boundary` audit: `S03 versioned preprocess schema`
+- `2026-07-22-code-document-index-boundary-s04-fail-closed-routing-audit` - `code-document-index-boundary` audit: `S04 fail-closed routing`
+- `2026-07-22-code-document-index-boundary-s05-deterministic-classifier-audit` - `code-document-index-boundary` audit: `S05 deterministic classifier`
+- `2026-07-22-code-document-index-boundary-s06-resolved-policy-audit` - `code-document-index-boundary` audit: `S06 resolved policy snapshot`
+- `2026-07-22-code-document-index-boundary-s07-policy-tests-audit` - `code-document-index-boundary` audit: `S07 policy configuration tests`
+- `2026-07-22-code-document-index-boundary-s100-schema-compatibility-audit` - `code-document-index-boundary` audit: `Document Schema Compatibility Audit`
+- `2026-07-22-code-document-index-boundary-s121-survey-verification-audit` - `code-document-index-boundary` audit: `Document Survey Verification Audit`
+- `2026-07-22-code-document-index-boundary-s122-snapshot-verification-audit` - `code-document-index-boundary` audit: `Document Snapshot Verification Audit`
+- `2026-07-22-code-document-index-boundary-s123-migration-verification-audit` - `code-document-index-boundary` audit: `Document Migration Verification Audit`
+- `2026-07-22-code-document-index-boundary-s124-maintenance-verification-audit` - `code-document-index-boundary` audit: `Document Maintenance Verification Audit`
+- `2026-07-22-code-document-index-boundary-s15-document-models-audit` - `code-document-index-boundary` audit: `S15 document-native models`
+- `2026-07-22-code-document-index-boundary-s16-document-identity-audit` - `code-document-index-boundary` audit: `S16 document point identity`
+- `2026-07-22-code-document-index-boundary-s17-document-schema-audit` - `code-document-index-boundary` audit: `S17 document storage schema`
+- `2026-07-22-code-document-index-boundary-s18-document-store-audit` - `code-document-index-boundary` audit: `S18 document store lifecycle`
+- `2026-07-22-code-document-index-boundary-s19-document-metadata-audit` - `code-document-index-boundary` audit: `S19 document metadata publication`
+- `2026-07-22-code-document-index-boundary-s20-document-clean-audit` - `code-document-index-boundary` audit: `S20 targeted document clean`
+- `2026-07-22-code-document-index-boundary-s21-document-manifest-audit` - `code-document-index-boundary` audit: `S21 document storage manifest`
+- `2026-07-22-code-document-index-boundary-s22-document-store-tests-audit` - `code-document-index-boundary` audit: `S22 real document store verification`
+- `2026-07-22-code-document-index-boundary-s37-file-states-audit` - `code-document-index-boundary` audit: `S37 explicit file states`
+- `2026-07-22-code-document-index-boundary-s47-kind-fingerprints-audit` - `code-document-index-boundary` audit: `S47 per-kind policy fingerprints`
+- `2026-07-22-code-document-index-boundary-s88-policy-preflight-audit` - `code-document-index-boundary` audit: `s88 policy preflight`
+- `2026-07-22-code-document-index-boundary-s94-disabled-preprocessing-audit` - `code-document-index-boundary` audit: `S94 disabled preprocessing retention`
+- `2026-07-22-code-document-index-boundary-s96-document-survey-audit` - `code-document-index-boundary` audit: `S96 document storage survey`
+- `2026-07-22-code-document-index-boundary-s97-snapshot-manifest-audit` - `code-document-index-boundary` audit: `Document Snapshot Manifest Audit`
+- `2026-07-22-code-document-index-boundary-s98-document-migration-audit` - `code-document-index-boundary` audit: `Document Migration Audit`
+- `2026-07-22-code-document-index-boundary-s99-document-maintenance-audit` - `code-document-index-boundary` audit: `Document Maintenance Audit`
+- `2026-07-22-code-document-index-boundary-w02-p03-code-review-audit` - `code-document-index-boundary` audit: `W02 P03 Code Review`
+- `2026-07-22-code-document-index-boundary-w03-p05-preprocess-fidelity-audit` - `code-document-index-boundary` audit: `W03 P05 Preprocess Fidelity Code Review`
+- `2026-07-22-code-document-index-boundary-w03-p05-remediation-code-review-audit` - `code-document-index-boundary` audit: `W03 P05 Remediation Code Review`
+- `2026-07-22-code-document-index-boundary-w05-public-surfaces-audit` - `code-document-index-boundary` audit: `w05 public surfaces`
+
+### exec
+
+- `2026-07-22-code-document-index-boundary-W01-P01-S01` - Define closed content-kind, admission-disposition, stable-reason, and source-profile-version types
+- `2026-07-22-code-document-index-boundary-W01-P01-S02` - Define ordered root routing rules independently from optional preprocessing transforms
+- `2026-07-22-code-document-index-boundary-W01-P01-S03` - Upgrade preprocessing configuration to require a target and explicit extractor version under a versioned schema
+- `2026-07-22-code-document-index-boundary-W01-P01-S04` - Reject legacy targetless, unknown-target, and conflicting routing policies before mutable index resources are opened
+- `2026-07-22-code-document-index-boundary-W01-P01-S05` - Compile ignore precedence, explicit ownership, source-profile admission, and parser selection into one deterministic classifier
+- `2026-07-22-code-document-index-boundary-W01-P01-S06` - Resolve one immutable policy snapshot containing routing, preprocessing, decoding, execution mode, and normalized fingerprints
+- `2026-07-22-code-document-index-boundary-W01-P01-S07` - Verify real configuration loading, route ordering, one-owner enforcement, and mutation-free migration refusal
+- `2026-07-22-code-document-index-boundary-W01-P01-S37` - Define indexed, policy-rejected, retryable-extraction, terminal-extraction, decode-failed, and chunk-failed file states
+- `2026-07-22-code-document-index-boundary-W01-P01-S47` - Derive per-kind membership and content signatures from source profile, ordered routes, targets, ignores, schema, and extractor semantics
+- `2026-07-22-code-document-index-boundary-W01-P01-S88` - Gate index and job entry points on a valid resolved policy before acquiring store, ledger, cache, writer, or GPU mutation authority
+- `2026-07-22-code-document-index-boundary-W01-P01-S89` - Verify invalid routing leaves real collections, sidecars, ledger rows, and caches unchanged
+- `2026-07-22-code-document-index-boundary-W01-P01-summary` - `code-document-index-boundary` `W01.P01` summary
+- `2026-07-22-code-document-index-boundary-W01-P02-S08` - Separate conventional source admission from the parser and chunker capability registry
+- `2026-07-22-code-document-index-boundary-W01-P02-S09` - Route full and unscoped discovery through the shared classifier and resolved policy snapshot
+- `2026-07-22-code-document-index-boundary-W01-P02-S10` - Route scoped discovery through the shared classifier and resolved policy snapshot
+- `2026-07-22-code-document-index-boundary-W01-P02-S11` - Add a bounded structured scan result and retain the public path-list scan as its compatibility projection
+- `2026-07-22-code-document-index-boundary-W01-P02-S12` - Make CLI dry-run apply the same preprocessing mode and return the structured admission summary
+- `2026-07-22-code-document-index-boundary-W01-P02-S13` - Make resident-service preflight consume the structured scan without independently reloading configuration
+- `2026-07-22-code-document-index-boundary-W01-P02-S14` - Verify full, scoped, API, CLI, and service admission parity against one real temporary repository
+- `2026-07-22-code-document-index-boundary-W01-P02-S90` - Thread the exact resolved snapshot through worker execution, epochs, ledger signatures, and metadata publication without a second configuration load
+- `2026-07-22-code-document-index-boundary-W01-P02-S91` - Verify an on-disk configuration edit during real extraction cannot change the active operation fingerprint or publication identity
+- `2026-07-22-code-document-index-boundary-W01-P02-S92` - Route ordinary added and modified watcher paths through the shared disposition and active policy snapshot
+- `2026-07-22-code-document-index-boundary-W01-P02-S93` - Verify watcher classification matches full and scoped discovery for ordinary real file events
+- `2026-07-22-code-document-index-boundary-W01-P02-S94` - Retain resolved routing when preprocessing execution is disabled and mark affected work stale without deletion or reclassification
+- `2026-07-22-code-document-index-boundary-W01-P02-S95` - Verify the preprocessing kill switch suppresses real extractor execution while preserving ownership and stored points
+- `2026-07-22-code-document-index-boundary-W02-P03-S100` - Verify older and newer storage descriptors fail or migrate according to the direct-consumer compatibility contract
+- `2026-07-22-code-document-index-boundary-W02-P03-S121` - Verify document collection counts appear in real storage survey output
+- `2026-07-22-code-document-index-boundary-W02-P03-S122` - Verify document collection and metadata appear in a real snapshot manifest
+- `2026-07-22-code-document-index-boundary-W02-P03-S123` - Verify real local-to-service document migration is idempotent
+- `2026-07-22-code-document-index-boundary-W02-P03-S124` - Verify document prefix pruning, debris classification, and maintenance routes against real storage
+- `2026-07-22-code-document-index-boundary-W02-P03-S15` - Define document chunk, locator, metadata, payload, and result models distinct from source chunks
+- `2026-07-22-code-document-index-boundary-W02-P03-S16` - Implement collection-local document point identities from normalized source, native locator or unit ordinal, and content fingerprint
+- `2026-07-22-code-document-index-boundary-W02-P03-S17` - Add the document collection, payload indexes, schema-version contract, descriptor entry, and direct-consumer compatibility behavior
+- `2026-07-22-code-document-index-boundary-W02-P03-S18` - Add document collection locks, upsert, delete, scroll, and count operations
+- `2026-07-22-code-document-index-boundary-W02-P03-S19` - Add independent document metadata publication and compatibility markers
+- `2026-07-22-code-document-index-boundary-W02-P03-S20` - Add targeted document clean semantics without evicting code state or unrelated extraction cache entries
+- `2026-07-22-code-document-index-boundary-W02-P03-S21` - Add the document collection to storage manifest recording and schema compatibility
+- `2026-07-22-code-document-index-boundary-W02-P03-S22` - Verify document identities, schema, locks, and lifecycle against real local and server Qdrant stores
+- `2026-07-22-code-document-index-boundary-W02-P03-S96` - Include document collections and bounded counts in storage survey output
+- `2026-07-22-code-document-index-boundary-W02-P03-S97` - Include document collections and metadata in snapshot manifests
+- `2026-07-22-code-document-index-boundary-W02-P03-S98` - Migrate document collections idempotently between local and resident-service storage
+- `2026-07-22-code-document-index-boundary-W02-P03-S99` - Include document collections in prefix pruning, debris classification, and storage maintenance routes
+- `2026-07-22-code-document-index-boundary-W02-P03-summary` - `code-document-index-boundary` `W02.P03` summary
+- `2026-07-22-code-document-index-boundary-W02-P04-S101` - Implement unscoped incremental document indexing behind the service-domain entry point
+- `2026-07-22-code-document-index-boundary-W02-P04-S102` - Implement scoped incremental document indexing behind the service-domain entry point
+- `2026-07-22-code-document-index-boundary-W02-P04-S103` - Register document indexer construction, counts, close lifecycle, and watcher injection in managed project slots
+- `2026-07-22-code-document-index-boundary-W02-P04-S104` - Ingest explicitly routed decodable raw documents without launching an extractor
+- `2026-07-22-code-document-index-boundary-W02-P04-S105` - Verify raw and extracted document routes remain document-owned through real full and incremental indexing
+- `2026-07-22-code-document-index-boundary-W02-P04-S23` - Split worker output into source and document chunk result types without overloading `CodeChunk`
+- `2026-07-22-code-document-index-boundary-W02-P04-S24` - Preserve title, section, anchor, locator, document metadata, unit metadata, and extractor identity on document chunks
+- `2026-07-22-code-document-index-boundary-W02-P04-S25` - Dispatch bounded streaming batches to the collection selected by each admission disposition
+- `2026-07-22-code-document-index-boundary-W02-P04-S26` - Implement full document indexing behind one service-domain entry point
+- `2026-07-22-code-document-index-boundary-W02-P04-S27` - Return explicit per-domain outcomes from all indexing without hiding a partial failure
+- `2026-07-22-code-document-index-boundary-W02-P04-S28` - Verify source and extracted units reach only their assigned collections through the real embedding and storage path
+- `2026-07-22-code-document-index-boundary-W02-P04-summary` - `code-document-index-boundary` `W02.P04` summary
+- `2026-07-22-code-document-index-boundary-W03-P05-S106` - Render targets, extractor versions, path-independence, schema migration, and disabled execution through preprocess list, check, and status
+- `2026-07-22-code-document-index-boundary-W03-P05-S29` - Define a versioned extractor invocation envelope with canonical source identity, normalized options, configured version, target, and mode
+- `2026-07-22-code-document-index-boundary-W03-P05-S30` - Deliver the invocation envelope to command extractors without shell-specific argument reconstruction
+- `2026-07-22-code-document-index-boundary-W03-P05-S31` - Deliver the invocation envelope to entry-point extractors with the same contract as command execution
+- `2026-07-22-code-document-index-boundary-W03-P05-S32` - Reject emitted source redirection and validate bounded document and unit metadata
+- `2026-07-22-code-document-index-boundary-W03-P05-S33` - Key extraction cache entries by source path, source hash, output schema, and canonical execution fingerprint
+- `2026-07-22-code-document-index-boundary-W03-P05-S34` - Permit cross-path cache reuse only for extractors that explicitly declare path independence
+- `2026-07-22-code-document-index-boundary-W03-P05-S35` - Partition extraction cache lifecycle from code and document collection cleanup
+- `2026-07-22-code-document-index-boundary-W03-P05-S36` - Verify options, versions, source binding, metadata retention, and path-dependent cache behavior with real extractor processes
+- `2026-07-22-code-document-index-boundary-W03-P05-summary` - `code-document-index-boundary` `W03.P05` summary
+- `2026-07-22-code-document-index-boundary-W03-P06-S107` - Define and enforce a named document support profile at service job admission before GPU work
+- `2026-07-22-code-document-index-boundary-W03-P06-S38` - Apply the source decoder only after code admission and bypass it for extractor-owned document input
+- `2026-07-22-code-document-index-boundary-W03-P06-S39` - Keep skip, fail, and passthrough outcomes in their declared kind and require same-kind raw admission for passthrough
+- `2026-07-22-code-document-index-boundary-W03-P06-S40` - Publish hashes as converged metadata only for indexed or stable policy-rejected files
+- `2026-07-22-code-document-index-boundary-W03-P06-S41` - Keep retryable extraction as a service-owned obligation with bounded per-kind backoff and circuit state
+- `2026-07-22-code-document-index-boundary-W03-P06-S42` - Stream source hashing and enforce profile and per-rule source-byte ceilings before extraction
+- `2026-07-22-code-document-index-boundary-W03-P06-S43` - Measure emitted encoded bytes and enforce aggregate output, chunk, payload, and weighted-queue ceilings
+- `2026-07-22-code-document-index-boundary-W03-P06-S44` - Make batch extraction, subprocess output, timeout, no-progress, and cancellation bounded and interruptible
+- `2026-07-22-code-document-index-boundary-W03-P06-S45` - Share the index limiter, writer authority, GPU consumer, and memory policy while isolating per-kind operational state
+- `2026-07-22-code-document-index-boundary-W03-P06-S46` - Verify failure visibility, decoder isolation, retry behavior, resource ceilings, and zero extractor launches for code-only jobs
+- `2026-07-22-code-document-index-boundary-W03-P06-summary` - `code-document-index-boundary` `W03.P06` summary
+- `2026-07-22-code-document-index-boundary-W04-P07-summary` - `code-document-index-boundary` `W04.P07` summary
+- `2026-07-22-code-document-index-boundary-W04-P08-summary` - `code-document-index-boundary` `W04.P08` summary
+- `2026-07-22-code-document-index-boundary-W06-P12-S78` - Expose active source and document support profiles and their independent ceilings in service status
+- `2026-07-22-code-document-index-boundary-W06-P12-S79` - Generate a separately named document workload with measured source, extracted, chunk, queue, RSS, and CUDA dimensions
+- `2026-07-22-code-document-index-boundary-W06-P12-S80` - Verify over-budget document workloads are refused at job admission before GPU work
+- `2026-07-22-code-document-index-boundary-W06-P12-S81` - Verify bounded document completion, interruption, and resume with representative real formats, extractor processes, CUDA, and Qdrant
+- `2026-07-22-code-document-index-boundary-W06-P12-S82` - Verify code-only jobs launch no document extractor and code cleanup preserves document collection, metadata, and cache
+- `2026-07-22-code-document-index-boundary-W06-P12-S83` - Verify multi-segment code and document restarts replay only the final unconfirmed unit in each kind
+- `2026-07-22-code-document-index-boundary-W06-P12-summary` - `code-document-index-boundary` `W06.P12` summary
+- `2026-07-22-code-document-index-boundary-W06-P13-S129` - Collapse the triplicated code-kind admission guard into one shared helper so the boundary invariant has a single owner
+- `2026-07-22-code-document-index-boundary-W06-P13-S130` - Reconcile preprocess and chunk-worker fixtures with the code and document admission boundary so document-targeted rules exercise the document path
+- `2026-07-22-code-document-index-boundary-W06-P13-S131` - Reconcile the search source-type rename across the CLI search contract and service diagnostics so one vocabulary spans adapter and route
+- `2026-07-22-code-document-index-boundary-W06-P13-S132` - Reconcile the readiness response shape and empty-query validation ordering with the shipped support-profile and degraded-reason fields
+- `2026-07-22-code-document-index-boundary-W06-P13-S133` - Reconcile server-mode namespacing expectations with the document collection introduced by the boundary split
+- `2026-07-22-code-document-index-boundary-W06-P13-S134` - Reconcile CLI help-text metavar expectations with the current Typer rendering convention
+- `2026-07-22-code-document-index-boundary-W06-P13-S135` - Clear the redundant-cast type diagnostics blocking the lint gate
+- `2026-07-22-code-document-index-boundary-W06-P13-S136` - Remove the first-failure and narrowed-marker shortcuts from the test recipe so the harness gate reports the complete result
 
 ### plan
 

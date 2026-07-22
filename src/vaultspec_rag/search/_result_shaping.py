@@ -22,10 +22,26 @@ from ._postprocess import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from .._store_models import DocumentLocatorKind
     from ._models import DocumentSearchResult, ParsedQuery, SearchResult
 
     type CombinedSearchResult = SearchResult | DocumentSearchResult
+
+
+# The admissible native locator kinds, mapped to themselves so a raw payload
+# string resolves to the typed kind without an unchecked cast. This is the
+# single source of truth for the set; the type alias and this table are
+# checked against each other by the type checker.
+_LOCATOR_KINDS: Mapping[str, DocumentLocatorKind] = {
+    "byte": "byte",
+    "page": "page",
+    "sheet": "sheet",
+    "line": "line",
+    "char": "char",
+    "none": "none",
+}
 
 
 def format_locator(payload: dict[str, object]) -> str | None:
@@ -255,15 +271,9 @@ def map_document_results(
 
 def _document_locator(row: dict[str, object]) -> DocumentLocator | None:
     """Materialize a valid native document locator from split payload fields."""
-    kind = row.get("locator_kind")
-    if not isinstance(kind, str) or kind not in {
-        "byte",
-        "page",
-        "sheet",
-        "line",
-        "char",
-        "none",
-    }:
+    raw_kind = row.get("locator_kind")
+    kind = _LOCATOR_KINDS.get(raw_kind) if isinstance(raw_kind, str) else None
+    if kind is None:
         return None
     value: object = row.get("locator_value_int")
     if isinstance(value, bool) or not isinstance(value, int):
@@ -275,7 +285,7 @@ def _document_locator(row: dict[str, object]) -> DocumentLocator | None:
         end = row.get("locator_end_str")
     if isinstance(end, bool) or not isinstance(end, (int, str)) or end == "":
         end = None
-    return DocumentLocator(cast("DocumentLocatorKind", kind), value, end)
+    return DocumentLocator(kind, value, end)
 
 
 def select_combined_results(

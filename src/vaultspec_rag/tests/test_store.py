@@ -764,12 +764,19 @@ class TestServerModeNamespacing:
                     f"{root_collection_prefix(root_a)}codebase_docs"
                 ) == store_a.CODE_TABLE_NAME
                 assert store_a.TABLE_NAME != store_b.TABLE_NAME
+                assert (
+                    f"{root_collection_prefix(root_a)}document_docs"
+                ) == store_a.DOCUMENT_TABLE_NAME
                 assert store_a.CODE_TABLE_NAME != store_b.CODE_TABLE_NAME
+                assert store_a.DOCUMENT_TABLE_NAME != store_b.DOCUMENT_TABLE_NAME
                 assert store_a.TABLE_NAME.endswith("vault_docs")
-                # The point-lock dict is keyed by the resolved names.
+                # The point-lock dict is keyed by the resolved names: one
+                # reentrant lock per collection, including the document
+                # collection, and never a single store-wide mutex.
                 assert set(store_a._collection_locks) == {
                     store_a.TABLE_NAME,
                     store_a.CODE_TABLE_NAME,
+                    store_a.DOCUMENT_TABLE_NAME,
                 }
             finally:
                 store_a.close()

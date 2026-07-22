@@ -2,6 +2,13 @@ set positional-arguments := false
 set shell := ["pwsh", "-NoProfile", "-Command"]
 set windows-shell := ["pwsh.exe", "-NoProfile", "-Command"]
 
+# Every recipe that merely *runs* a tool from the existing environment uses this
+# runner. --no-sync keeps `uv run` from re-resolving and rebuilding the project
+# into .venv, which fails on Windows whenever a resident process holds one of the
+# console-script .exe shims open. Recipes whose purpose IS to touch the
+# environment (uv sync / uv lock / uv build / uv audit) deliberately do not.
+uvr := "uv run --no-sync"
+
 export VIRTUAL_ENV := justfile_directory() + "/.venv"
 export PATH := if os_family() == "windows" { VIRTUAL_ENV + "/Scripts;" + env_var('PATH') } else { VIRTUAL_ENV + "/bin:" + env_var('PATH') }
 
@@ -22,7 +29,7 @@ default:
 
 # prod - pure 1:1 mirror of the vaultspec-rag Python CLI
 prod *args='':
-  uv run vaultspec-rag {{args}}
+  {{uvr}} vaultspec-rag {{args}}
 
 # ===========================================================================
 # readme-assets - regenerate the README terminal-render SVGs
@@ -33,7 +40,7 @@ prod *args='':
 
 # readme-assets - regenerate the README terminal-render SVGs
 readme-assets out_dir='assets':
-  uv run --no-sync python scripts/render_readme_assets.py {{out_dir}}
+  {{uvr}} python scripts/render_readme_assets.py {{out_dir}}
 
 # ===========================================================================
 # dev - development toolchain (linters, formatters, tests, builds)
@@ -93,7 +100,7 @@ ci:
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   just dev audit deps
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-  uv run vaultspec-core vault check all
+  {{uvr}} vaultspec-core vault check all
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   just dev test all
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -117,8 +124,8 @@ _dev-deps target='sync':
 
 _dev-lint target='all':
   switch ("{{target}}") { \
-    "python" { uv run ruff check src tools ; break } \
-    "type" { uv run python -m ty check src/vaultspec_rag ; break } \
+    "python" { {{uvr}} ruff check src tools ; break } \
+    "type" { {{uvr}} python -m ty check src/vaultspec_rag ; break } \
     "links" { \
       if (Get-Command lychee -ErrorAction SilentlyContinue) { \
         lychee --config lychee.toml README.md .vault .vaultspec \
@@ -142,9 +149,9 @@ _dev-lint target='all':
       break \
     } \
     "markdown" { \
-      uv run mdformat --check README.md .vaultspec/ .vault/ ; \
+      {{uvr}} mdformat --check README.md .vaultspec/ .vault/ ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-      uv run pymarkdown --config .pymarkdown.json scan -r README.md .vaultspec/ .vault/ ; \
+      {{uvr}} pymarkdown --config .pymarkdown.json scan -r README.md .vaultspec/ .vault/ ; \
       break \
     } \
     "workflow" { \
@@ -159,19 +166,19 @@ _dev-lint target='all':
       break \
     } \
     "complexity" { \
-      uv run python tools/complexity_gate.py ; \
+      {{uvr}} python tools/complexity_gate.py ; \
       break \
     } \
     "type-strict" { \
-      uv run basedpyright ; \
+      {{uvr}} basedpyright ; \
       break \
     } \
     "module-length" { \
-      uv run python tools/module_length.py ; \
+      {{uvr}} python tools/module_length.py ; \
       break \
     } \
     "docs-version" { \
-      uv run python tools/check_docs_version.py ; \
+      {{uvr}} python tools/check_docs_version.py ; \
       break \
     } \
     "absolute-imports" { \
@@ -217,9 +224,9 @@ _dev-lint target='all':
 _dev-fix target='all':
   switch ("{{target}}") { \
     "python" { \
-      uv run ruff format src tools ; \
+      {{uvr}} ruff format src tools ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-      uv run ruff check --fix src tools ; \
+      {{uvr}} ruff check --fix src tools ; \
       break \
     } \
     "toml" { \
@@ -234,13 +241,13 @@ _dev-fix target='all':
       break \
     } \
     "markdown" { \
-      uv run mdformat README.md .vaultspec/ .vault/ ; \
+      {{uvr}} mdformat README.md .vaultspec/ .vault/ ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-      uv run pymarkdown --config .pymarkdown.json fix -r README.md .vaultspec/ .vault/ ; \
+      {{uvr}} pymarkdown --config .pymarkdown.json fix -r README.md .vaultspec/ .vault/ ; \
       break \
     } \
     "vault" { \
-      uv run vaultspec-core vault check all --fix ; \
+      {{uvr}} vaultspec-core vault check all --fix ; \
       break \
     } \
     "all" { \
@@ -274,13 +281,20 @@ _dev-audit target:
     } \
   }
 
+# "not integration" matches the population the project actually gates on: the
+# registered "unit" marker is not applied to every fast test (~500+ tests carry
+# no marker at all and are silently dropped by "-m unit"), while "integration"
+# is applied consistently, so excluding it is the accurate full-population
+# selector. No -x here: a repo-health recipe must report every failure, not
+# stop at the first one.
 _dev-test target='all':
   switch ("{{target}}") { \
-    "python" { uv run pytest src/vaultspec_rag/tests/ -x -q --tb=short -m unit ; break } \
+    "python" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "not integration" ; break } \
+    "fast" { {{uvr}} pytest src/vaultspec_rag/tests/ -x -q --tb=short -m unit ; break } \
     "all" { just _dev-test python ; break } \
     default { \
       Write-Host "unknown dev test target: {{target}}" -ForegroundColor Red ; \
-      Write-Host "  targets: python all" -ForegroundColor Red ; \
+      Write-Host "  targets: python fast all" -ForegroundColor Red ; \
       exit 1 \
     } \
   }
@@ -299,13 +313,13 @@ _dev-build target:
 # cognitive, function limits, module LOC, maintainability, strict types).
 # Measurement only — always exits 0. Pass --fast to skip basedpyright.
 _dev-health *args='':
-  uv run python tools/health_report.py {{args}}
+  {{uvr}} python tools/health_report.py {{args}}
 
 _dev-precommit target='run':
   switch ("{{target}}") { \
-    "install" { uv run prek install ; break } \
-    "upgrade" { uv run prek auto-update ; break } \
-    "run" { uv run prek run --all-files ; break } \
+    "install" { {{uvr}} prek install ; break } \
+    "upgrade" { {{uvr}} prek auto-update ; break } \
+    "run" { {{uvr}} prek run --all-files ; break } \
     default { \
       Write-Host "unknown dev precommit target: {{target}}" -ForegroundColor Red ; \
       Write-Host "  targets: install upgrade run" -ForegroundColor Red ; \
