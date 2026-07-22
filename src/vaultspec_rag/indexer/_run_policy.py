@@ -12,12 +12,17 @@ import math
 import queue
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from .._job_errors import JobError, JobErrorKind
 from .._store_writes import StoreWritePolicy
 from ..job_control import NO_RUN_CONTROL, RunControl
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 __all__ = [
     "CleanupQueuePutOutcome",
@@ -145,6 +150,15 @@ class RunPolicy:
         _require_label(label)
         self._remaining_or_raise(label=label)
         self._run_control.checkpoint()
+
+    @contextmanager
+    def protected(self, label: str) -> Generator[None]:
+        """Defer cooperative control across one labeled indivisible span."""
+        _require_label(label)
+        self.checkpoint(f"{label} entry")
+        with self._run_control.protected():
+            yield
+        self.checkpoint(f"{label} exit")
 
     def remaining_seconds(self) -> float:
         """Return the live positive budget or raise the typed latched expiry."""

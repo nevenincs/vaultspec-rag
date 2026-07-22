@@ -2341,7 +2341,13 @@ class CodebaseIndexer:
         try:
             run_control.checkpoint()
             publication_span = (
-                run_control.protected()
+                (
+                    checkpoint.run_policy.protected(
+                        "incremental code replacement"
+                    )
+                    if checkpoint is not None
+                    else run_control.protected()
+                )
                 if protect_replacement
                 else contextlib.nullcontext()
             )
@@ -2647,7 +2653,9 @@ class CodebaseIndexer:
         # stale cleanup, and atomic metadata publication. Non-clean rebuilding
         # remains failure-safe and interruptible between bounded slices.
         publication_span = (
-            run_control.protected() if effective_clean else contextlib.nullcontext()
+            checkpoint.run_policy.protected("clean code publication")
+            if effective_clean
+            else contextlib.nullcontext()
         )
         with checkpoint.preserve_incomplete_generation(), publication_span:
             reporter.phase_start("prepare collection", 1)
