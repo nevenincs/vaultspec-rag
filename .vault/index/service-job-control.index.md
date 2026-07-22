@@ -43,6 +43,7 @@ related:
   - '[[2026-07-21-service-job-control-W03-P11-S22]]'
   - '[[2026-07-21-service-job-control-W03-P11-summary]]'
   - '[[2026-07-21-service-job-control-W04-P12-S23]]'
+  - '[[2026-07-21-service-job-control-W04-P12-S24]]'
   - '[[2026-07-21-service-job-control-adr]]'
   - '[[2026-07-21-service-job-control-plan]]'
   - '[[2026-07-21-service-job-control-reference]]'
@@ -70,6 +71,7 @@ related:
   - '[[2026-07-22-service-job-control-s21-orchestration-audit]]'
   - '[[2026-07-22-service-job-control-s22-lifecycle-integration-audit]]'
   - '[[2026-07-22-service-job-control-s23-http-job-shaping-audit]]'
+  - '[[2026-07-22-service-job-control-s24-http-job-routes-audit]]'
 ---
 
 # `service-job-control` feature index
@@ -107,6 +109,7 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-22-service-job-control-s21-orchestration-audit` - `service-job-control` audit: `W03.P11.S21 watcher orchestration verification`
 - `2026-07-22-service-job-control-s22-lifecycle-integration-audit` - `service-job-control` audit: `S22 lifecycle integration`
 - `2026-07-22-service-job-control-s23-http-job-shaping-audit` - `service-job-control` audit: `S23 HTTP job shaping`
+- `2026-07-22-service-job-control-s24-http-job-routes-audit` - `service-job-control` audit: `s24 http job routes`
 
 ### exec
 
@@ -147,6 +150,7 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-21-service-job-control-W03-P11-S22` - Verify real daemon restart and shutdown preserve queued and paused intent, mark interrupted attempts, and close stores only after worker release using vaultspec-high-executor
 - `2026-07-21-service-job-control-W03-P11-summary` - `service-job-control` `W03.P11` summary
 - `2026-07-21-service-job-control-W04-P12-S23` - Extend job shaping, filtering, ordering, stall classification, control age, capabilities, and canonical state summaries using vaultspec-standard-executor
+- `2026-07-21-service-job-control-W04-P12-S24` - Add create, exact detail, desired-state update, retry, and terminal deletion routes and retain reindex as a validated compatibility adapter using vaultspec-standard-executor
 
 ### plan
 
