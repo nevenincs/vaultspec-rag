@@ -37,6 +37,7 @@ __all__ = [
     "StoreWritePolicy",
     "classify_write_error",
     "ensure_disk_headroom",
+    "remaining_write_seconds",
     "run_write_with_retry",
 ]
 
@@ -138,7 +139,7 @@ def run_write_with_retry[T](
     max_delay = cfg.store_write_retry_max_seconds
 
     for attempt in range(1, attempts + 1):
-        remaining = _remaining_or_raise(policy, description=description)
+        remaining = remaining_write_seconds(policy, description=description)
         attempt_timeout = _attempt_timeout_seconds(
             operation_timeout,
             remaining,
@@ -153,7 +154,7 @@ def run_write_with_retry[T](
                 )
                 raise
 
-            remaining = _remaining_or_raise(
+            remaining = remaining_write_seconds(
                 policy,
                 description=description,
             )
@@ -207,7 +208,7 @@ def _attempt_timeout_seconds(
     )
 
 
-def _remaining_or_raise(
+def remaining_write_seconds(
     policy: StoreWritePolicy | None,
     *,
     description: str,
