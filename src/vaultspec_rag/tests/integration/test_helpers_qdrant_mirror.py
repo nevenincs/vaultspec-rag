@@ -19,7 +19,7 @@ import pytest
 
 from ...qdrant_runtime._provision import file_sha256
 from ...qdrant_runtime._resolve import qdrant_bin_dir, resolve_binary
-from ._helpers import _resolve_host_provisioned_qdrant, _service_env
+from ._helpers import _service_env
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -29,15 +29,12 @@ pytestmark = [pytest.mark.integration]
 
 def test_service_env_mirrors_provisioned_binary_with_verification(
     tmp_path: Path,
+    required_host_provisioned_qdrant_source: tuple[Path, Path],
 ) -> None:
-    if _resolve_host_provisioned_qdrant() is None:
-        pytest.fail(
-            "No provisioned qdrant binary on the host to mirror; run "
-            "'vaultspec-rag server qdrant install' so server-mode lifecycle "
-            "tests can exercise the live daemon path."
-        )
-
-    with _service_env(tmp_path):
+    with _service_env(
+        tmp_path,
+        qdrant_source=required_host_provisioned_qdrant_source,
+    ):
         resolved = resolve_binary()
         # The daemon resolves a binary from inside the isolated status dir, not
         # the host's real managed dir.

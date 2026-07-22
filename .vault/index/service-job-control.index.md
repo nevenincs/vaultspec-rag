@@ -34,23 +34,40 @@ related:
   - '[[2026-07-21-service-job-control-W02-P06-summary]]'
   - '[[2026-07-21-service-job-control-W02-P07-S17]]'
   - '[[2026-07-21-service-job-control-W02-P07-summary]]'
+  - '[[2026-07-21-service-job-control-W03-P08-S18]]'
+  - '[[2026-07-21-service-job-control-W03-P08-S19]]'
+  - '[[2026-07-21-service-job-control-W03-P08-summary]]'
+  - '[[2026-07-21-service-job-control-W03-P10-S20]]'
+  - '[[2026-07-21-service-job-control-W03-P10-summary]]'
+  - '[[2026-07-21-service-job-control-W03-P11-S21]]'
+  - '[[2026-07-21-service-job-control-W03-P11-S22]]'
+  - '[[2026-07-21-service-job-control-W03-P11-summary]]'
   - '[[2026-07-21-service-job-control-adr]]'
   - '[[2026-07-21-service-job-control-plan]]'
   - '[[2026-07-21-service-job-control-reference]]'
   - '[[2026-07-21-service-job-control-research]]'
   - '[[2026-07-21-service-job-control-s02-config-audit]]'
   - '[[2026-07-21-service-job-control-s03-tests-audit]]'
+  - '[[2026-07-21-service-job-control-s04-canonical-resources-audit]]'
+  - '[[2026-07-21-service-job-control-s05-manager-audit]]'
+  - '[[2026-07-21-service-job-control-s06-transitions-audit]]'
   - '[[2026-07-21-service-job-control-s10-streaming-audit]]'
   - '[[2026-07-21-service-job-control-s11-vault-control-audit]]'
   - '[[2026-07-21-service-job-control-s12-index-control-audit]]'
   - '[[2026-07-21-service-job-control-s39-persistence-audit]]'
   - '[[2026-07-21-service-job-control-s40-manager-audit]]'
+  - '[[2026-07-21-service-job-control-w01-p01-foundation-audit]]'
   - '[[2026-07-21-service-job-control-wave-1-audit]]'
   - '[[2026-07-22-service-job-control-s13-code-pipeline-control-audit]]'
   - '[[2026-07-22-service-job-control-s14-code-publication-protection-audit]]'
   - '[[2026-07-22-service-job-control-s15-code-index-control-audit]]'
   - '[[2026-07-22-service-job-control-s16-dispatch-audit]]'
   - '[[2026-07-22-service-job-control-s17-execution-audit]]'
+  - '[[2026-07-22-service-job-control-s18-watcher-audit]]'
+  - '[[2026-07-22-service-job-control-s19-watcher-stop-audit]]'
+  - '[[2026-07-22-service-job-control-s20-lifecycle-audit]]'
+  - '[[2026-07-22-service-job-control-s21-orchestration-audit]]'
+  - '[[2026-07-22-service-job-control-s22-lifecycle-integration-audit]]'
 ---
 
 # `service-job-control` feature index
@@ -67,17 +84,26 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 
 - `2026-07-21-service-job-control-s02-config-audit` - `service-job-control` audit: `s02 config`
 - `2026-07-21-service-job-control-s03-tests-audit` - `service-job-control` audit: `s03 tests`
+- `2026-07-21-service-job-control-s04-canonical-resources-audit` - `service-job-control` audit: `W01.P02.S04 canonical resources`
+- `2026-07-21-service-job-control-s05-manager-audit` - `service-job-control` audit: `W01.P02.S05 bounded job manager`
+- `2026-07-21-service-job-control-s06-transitions-audit` - `service-job-control` audit: `service-job-control audit: W01.P02.S06 deterministic job transitions`
 - `2026-07-21-service-job-control-s10-streaming-audit` - `service-job-control` audit: `S10 streaming run control`
 - `2026-07-21-service-job-control-s11-vault-control-audit` - `service-job-control` audit: `S11 vault run control`
 - `2026-07-21-service-job-control-s12-index-control-audit` - `service-job-control` audit: `s12 index control`
 - `2026-07-21-service-job-control-s39-persistence-audit` - `service-job-control` audit: `S39 persistence boundary`
 - `2026-07-21-service-job-control-s40-manager-audit` - `service-job-control` audit: `S40 manager extraction`
+- `2026-07-21-service-job-control-w01-p01-foundation-audit` - `service-job-control` audit: `W01.P01 foundation commits`
 - `2026-07-21-service-job-control-wave-1-audit` - `service-job-control` audit: `Wave 1 state authority`
 - `2026-07-22-service-job-control-s13-code-pipeline-control-audit` - `service-job-control` audit: `s13 code pipeline control`
 - `2026-07-22-service-job-control-s14-code-publication-protection-audit` - `service-job-control` audit: `s14 code publication protection`
 - `2026-07-22-service-job-control-s15-code-index-control-audit` - `service-job-control` audit: `S15 code indexing job control review`
 - `2026-07-22-service-job-control-s16-dispatch-audit` - `service-job-control` audit: `Manager-owned dispatch`
 - `2026-07-22-service-job-control-s17-execution-audit` - `service-job-control` audit: `s17 execution`
+- `2026-07-22-service-job-control-s18-watcher-audit` - `service-job-control` audit: `S18 watcher convergence`
+- `2026-07-22-service-job-control-s19-watcher-stop-audit` - `service-job-control` audit: `S19 watcher stop and drain`
+- `2026-07-22-service-job-control-s20-lifecycle-audit` - `service-job-control` audit: `S20 lifecycle restore and shutdown`
+- `2026-07-22-service-job-control-s21-orchestration-audit` - `service-job-control` audit: `W03.P11.S21 watcher orchestration verification`
+- `2026-07-22-service-job-control-s22-lifecycle-integration-audit` - `service-job-control` audit: `S22 lifecycle integration`
 
 ### exec
 
@@ -109,6 +135,14 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-21-service-job-control-W02-P06-summary` - `service-job-control` `W02.P06` summary
 - `2026-07-21-service-job-control-W02-P07-S17` - Verify paused attempts release limiter, lease, writer ownership, thread, and pipeline resources and cancelled attempts make no later writes using vaultspec-high-executor
 - `2026-07-21-service-job-control-W02-P07-summary` - `service-job-control` `W02.P07` summary
+- `2026-07-21-service-job-control-W03-P08-S18` - Submit watcher indexing through JobManager, retain paused convergence slots, coalesce later dirtiness, and schedule cancelled replacements with bounded backoff using vaultspec-high-executor
+- `2026-07-21-service-job-control-W03-P08-S19` - Keep watcher enablement separate from job cancellation and wait for manager-owned cleanup on watcher stop using vaultspec-high-executor
+- `2026-07-21-service-job-control-W03-P08-summary` - `service-job-control` `W03.P08` summary
+- `2026-07-21-service-job-control-W03-P10-S20` - Restore the single manager, resume durable queues, preserve pauses, drain workers before store closure, and report unclean shutdown truthfully using vaultspec-high-executor
+- `2026-07-21-service-job-control-W03-P10-summary` - `service-job-control` `W03.P10` summary
+- `2026-07-21-service-job-control-W03-P11-S21` - Verify real watcher pause coalescing, cancellation dirtiness, replacement expectations, explicit watcher stop, and cleanup joining using vaultspec-high-executor
+- `2026-07-21-service-job-control-W03-P11-S22` - Verify real daemon restart and shutdown preserve queued and paused intent, mark interrupted attempts, and close stores only after worker release using vaultspec-high-executor
+- `2026-07-21-service-job-control-W03-P11-summary` - `service-job-control` `W03.P11` summary
 
 ### plan
 

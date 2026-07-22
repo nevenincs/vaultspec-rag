@@ -45,7 +45,9 @@ def _force_machine_singleton_test_paths(paths: Mapping[str, str]) -> None:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def isolated_machine_singleton_dirs() -> Generator[Mapping[str, str]]:
+def isolated_machine_singleton_dirs(
+    host_provisioned_qdrant_source: tuple[Path, Path] | None,
+) -> Generator[Mapping[str, str]]:
     """Point the machine-singleton dirs at a session temp tree for every test.
 
     The status dir and the qdrant storage dir resolve the machine-global
@@ -60,12 +62,8 @@ def isolated_machine_singleton_dirs() -> Generator[Mapping[str, str]]:
     import os
 
     from ..config import EnvVar
-    from .integration._helpers import (
-        _mirror_managed_qdrant_binary,
-        _resolve_host_provisioned_qdrant,
-    )
+    from .integration._helpers import _mirror_managed_qdrant_binary
 
-    host_qdrant = _resolve_host_provisioned_qdrant()
     raw_root = os.environ.get(PYTEST_MANAGED_SINGLETON_ROOT_ENV)
     if not raw_root:
         raise RuntimeError(
@@ -91,8 +89,11 @@ def isolated_machine_singleton_dirs() -> Generator[Mapping[str, str]]:
     try:
         register_pytest_singleton_root(session_root)
         _force_machine_singleton_test_paths(session_paths)
-        if host_qdrant is not None:
-            _mirror_managed_qdrant_binary(base / "status", host_qdrant)
+        if host_provisioned_qdrant_source is not None:
+            _mirror_managed_qdrant_binary(
+                base / "status",
+                host_provisioned_qdrant_source,
+            )
         yield session_paths
     finally:
         for var, value in prior.items():
