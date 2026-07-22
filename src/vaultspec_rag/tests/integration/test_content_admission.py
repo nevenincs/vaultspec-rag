@@ -48,7 +48,8 @@ def _admission_json(scan: ContentScanResult) -> dict[str, object]:
     }
 
 
-def test_full_and_scoped_discovery_share_code_admission(tmp_path: Path) -> None:
+def _write_admission_sources(tmp_path: Path) -> dict[str, Path]:
+    """Create a mixed routed and unrouted source set for parity assertions."""
     (tmp_path / ".vault").mkdir()
     (tmp_path / ".vaultspec").mkdir()
     sources = {
@@ -82,24 +83,23 @@ def test_full_and_scoped_discovery_share_code_admission(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     paths[PREPROCESS_CONFIG_FILENAME] = config_path
+    return paths
 
-    indexer = CodebaseIndexer(
-        tmp_path,
-        cast("Any", None),
-        cast("Any", None),
-    )
+
+def _assert_discovery_parity(
+    indexer: CodebaseIndexer,
+    paths: dict[str, Path],
+    tmp_path: Path,
+) -> tuple[ContentScanResult, set[str]]:
+    """Assert full and scoped discovery agree on admitted source paths."""
     resolved = indexer._resolve_operation_policy()
-
     full_scan = indexer.scan_content(sample_limit=len(paths))
-    full = {
-        path.relative_to(tmp_path).as_posix() for path in full_scan.files
-    }
+    full = {path.relative_to(tmp_path).as_posix() for path in full_scan.files}
     scoped, rejected = indexer._scan_changed_paths(
         paths.values(),
         NullProgressReporter(),
         resolved,
     )
-
     admitted = {"p0/alpha.py", "p1/beta.ts"}
     assert full == admitted
     assert set(indexer.scan_files()) == set(full_scan.files)
@@ -107,20 +107,23 @@ def test_full_and_scoped_discovery_share_code_admission(tmp_path: Path) -> None:
     assert rejected == set(paths) - admitted
     assert full_scan.policy_fingerprint == resolved.fingerprints.snapshot
     assert sum(item.count for item in full_scan.counts) == len(paths)
+    return full_scan, admitted
 
-    dispositions = {
-        item.path: item for item in full_scan.samples
-    }
+
+def _assert_disposition_parity(
+    indexer: CodebaseIndexer,
+    paths: dict[str, Path],
+    full_scan: ContentScanResult,
+) -> dict[str, object]:
+    """Assert full-scan counts and samples match per-path classification."""
+    resolved = indexer._resolve_operation_policy()
+    dispositions = {item.path: item for item in full_scan.samples}
     scoped_dispositions = {
         relative: indexer._classify_file(path, relative, resolved).disposition
         for relative, path in paths.items()
     }
     assert Counter(
-        (
-            disposition.kind,
-            disposition.admitted,
-            disposition.reason,
-        )
+        (disposition.kind, disposition.admitted, disposition.reason)
         for disposition in scoped_dispositions.values()
     ) == Counter(
         {
@@ -135,32 +138,44 @@ def test_full_and_scoped_discovery_share_code_admission(tmp_path: Path) -> None:
         relative: (item.kind, item.admitted, item.reason)
         for relative, item in scoped_dispositions.items()
     }
-    assert dispositions["p0/alpha.py"].reason is AdmissionReason.SOURCE_PROFILE
-    assert dispositions["p1/beta.ts"].reason is AdmissionReason.SOURCE_PROFILE
-    assert dispositions["p2/options.toml"].reason is (
-        AdmissionReason.SOURCE_PROFILE_EXCLUDED
-    )
-    assert not dispositions["p2/options.toml"].admitted
-    assert dispositions["p3/notes.md"].reason is (
-        AdmissionReason.SOURCE_PROFILE_EXCLUDED
-    )
-    assert not dispositions["p3/notes.md"].admitted
-    assert dispositions["p4/schema.xsd"].kind is ContentKind.DOCUMENT
-    assert dispositions["p4/schema.xsd"].admitted
-    assert dispositions["p4/schema.xsd"].reason is AdmissionReason.EXPLICIT_ROUTE
-    assert dispositions["p5/table.xlsx"].reason is (
-        AdmissionReason.SOURCE_PROFILE_EXCLUDED
-    )
-    assert not dispositions["p5/table.xlsx"].admitted
+    return cast("dict[str, object]", dispositions)
 
+
+def _assert_expected_dispositions(dispositions: dict[str, object]) -> None:
+    """Assert the representative profile and explicit-route decisions."""
+    alpha = cast("Any", dispositions["p0/alpha.py"])
+    beta = cast("Any", dispositions["p1/beta.ts"])
+    options = cast("Any", dispositions["p2/options.toml"])
+    notes = cast("Any", dispositions["p3/notes.md"])
+    schema = cast("Any", dispositions["p4/schema.xsd"])
+    workbook = cast("Any", dispositions["p5/table.xlsx"])
+    assert alpha.reason is AdmissionReason.SOURCE_PROFILE
+    assert beta.reason is AdmissionReason.SOURCE_PROFILE
+    assert options.reason is AdmissionReason.SOURCE_PROFILE_EXCLUDED
+    assert not options.admitted
+    assert notes.reason is AdmissionReason.SOURCE_PROFILE_EXCLUDED
+    assert not notes.admitted
+    assert schema.kind is ContentKind.DOCUMENT
+    assert schema.admitted
+    assert schema.reason is AdmissionReason.EXPLICIT_ROUTE
+    assert workbook.reason is AdmissionReason.SOURCE_PROFILE_EXCLUDED
+    assert not workbook.admitted
+
+
+def _assert_public_admission_views(
+    tmp_path: Path,
+    full_scan: ContentScanResult,
+    admitted: set[str],
+    path_count: int,
+) -> None:
+    """Assert API, service, and CLI projections retain the same scan."""
     from ...api import scan_codebase
     from ...jobs import scan_code_index_preflight
 
-    api_scan = scan_codebase(tmp_path, sample_limit=len(paths))
+    api_scan = scan_codebase(tmp_path, sample_limit=path_count)
     service_scan = scan_code_index_preflight(tmp_path)
     assert api_scan == full_scan
     assert service_scan == full_scan
-
     cli_result = runner.invoke(
         app,
         [
@@ -178,3 +193,17 @@ def test_full_and_scoped_discovery_share_code_admission(tmp_path: Path) -> None:
     assert cli_data["count"] == len(admitted)
     assert {Path(path).as_posix() for path in cli_data["files"]} == admitted
     assert cli_data["admission"] == _admission_json(full_scan)
+
+
+def test_full_and_scoped_discovery_share_code_admission(tmp_path: Path) -> None:
+    paths = _write_admission_sources(tmp_path)
+
+    indexer = CodebaseIndexer(
+        tmp_path,
+        cast("Any", None),
+        cast("Any", None),
+    )
+    full_scan, admitted = _assert_discovery_parity(indexer, paths, tmp_path)
+    dispositions = _assert_disposition_parity(indexer, paths, full_scan)
+    _assert_expected_dispositions(dispositions)
+    _assert_public_admission_views(tmp_path, full_scan, admitted, len(paths))

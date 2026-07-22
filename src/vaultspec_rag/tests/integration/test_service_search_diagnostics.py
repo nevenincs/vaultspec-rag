@@ -92,27 +92,37 @@ def _wait_for_search_log_line(port: int, request_id: str) -> str:
             None,
             timeout=5,
         )
-        if isinstance(last_logs, dict):
-            raw_groups = last_logs.get("groups")
-            if isinstance(raw_groups, list):
-                for raw_group in cast("list[object]", raw_groups):
-                    if not isinstance(raw_group, dict):
-                        continue
-                    group = cast("dict[str, object]", raw_group)
-                    if group.get("source") != "service":
-                        continue
-                    raw_lines = group.get("lines")
-                    if not isinstance(raw_lines, list):
-                        continue
-                    for raw_line in cast("list[object]", raw_lines):
-                        line = str(raw_line)
-                        if request_id in line and "service.search" in line:
-                            return line
+        matching_line = _matching_search_log_line(last_logs, request_id)
+        if matching_line is not None:
+            return matching_line
         time.sleep(0.1)
     pytest.fail(
         "service.search log line did not become queryable via /logs/json: "
         f"request_id={request_id} logs={last_logs!r}"
     )
+
+
+def _matching_search_log_line(logs: object, request_id: str) -> str | None:
+    """Find one correlated service-search event in a structured log payload."""
+    if not isinstance(logs, dict):
+        return None
+    raw_groups = logs.get("groups")
+    if not isinstance(raw_groups, list):
+        return None
+    for raw_group in cast("list[object]", raw_groups):
+        if not isinstance(raw_group, dict):
+            continue
+        group = cast("dict[str, object]", raw_group)
+        if group.get("source") != "service":
+            continue
+        raw_lines = group.get("lines")
+        if not isinstance(raw_lines, list):
+            continue
+        for raw_line in cast("list[object]", raw_lines):
+            line = str(raw_line)
+            if request_id in line and "service.search" in line:
+                return line
+    return None
 
 
 def _exact_job_snapshot(port: int, job_id: str) -> dict[str, object] | None:

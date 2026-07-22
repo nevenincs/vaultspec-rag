@@ -29,7 +29,11 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from ...indexer import IndexResult
+    from ...embeddings import EmbeddingModel
+    from ...indexer import CodebaseIndexer, IndexResult
+    from ...indexer._preprocess_config import PreprocessRule
+    from ...indexer._resolved_policy import ResolvedIndexPolicy
+    from ...store import VaultStore
     from ..conftest import RagComponentsWithManifest
 
 pytestmark = [pytest.mark.integration]
@@ -185,12 +189,71 @@ def _cross_mutation_barrier(
     return future.result(timeout=600)
 
 
+def _assert_active_snapshot(
+    indexer: CodebaseIndexer,
+    entry_policy: ResolvedIndexPolicy,
+    entry_rule: PreprocessRule,
+) -> None:
+    """Assert the active indexer retained its operation-entry policy."""
+    active_policy = indexer._resolved_policy
+    assert active_policy is not None
+    assert active_policy == entry_policy
+    assert active_policy.fingerprints.snapshot == entry_policy.fingerprints.snapshot
+    assert active_policy.classify("a_payload.blob").disposition.kind is ContentKind.CODE
+    assert indexer._prep_ctx is not None
+    assert indexer._prep_ctx.config.rules == [entry_rule]
+    assert indexer._chunk_execution_policy.html_strip
+
+
+def _assert_published_snapshot(
+    indexer: CodebaseIndexer,
+    entry_policy: ResolvedIndexPolicy,
+) -> None:
+    """Assert publication uses entry epochs while fresh resolution observes drift."""
+    entry_code = entry_policy.fingerprints_for(ContentKind.CODE)
+    published = indexer._read_meta_raw()
+    assert published[MEMBERSHIP_EPOCH_KEY] == entry_code.membership
+    assert published[CONTENT_EPOCH_KEY] == entry_code.content
+    fresh_policy = indexer._resolve_operation_policy()
+    fresh_code = fresh_policy.fingerprints_for(ContentKind.CODE)
+    assert fresh_policy.fingerprints.snapshot != entry_policy.fingerprints.snapshot
+    assert not fresh_policy.html_strip
+    assert (
+        fresh_policy.classify("a_payload.blob").disposition.kind is ContentKind.DOCUMENT
+    )
+    assert (
+        published[MEMBERSHIP_EPOCH_KEY],
+        published[CONTENT_EPOCH_KEY],
+    ) != (fresh_code.membership, fresh_code.content)
+
+
+def _assert_snapshot_search(
+    root: Path,
+    model: EmbeddingModel,
+    store: VaultStore,
+) -> None:
+    """Assert searchable content carries entry-snapshot transformation evidence."""
+    from ... import VaultSearcher
+
+    searcher = VaultSearcher(root, model, store)
+    hits = searcher.search_codebase(
+        "immutable operation snapshot publication worker shaping marker",
+        top_k=5,
+    )
+    published_hit = next(hit for hit in hits if hit.path == "a_payload.blob")
+    assert published_hit.preprocessor_id == "entry-snapshot-extractor"
+    assert published_hit.source_path == "a_payload.blob"
+    html_hit = next(hit for hit in hits if hit.path == "z_markup.html")
+    assert "<section>" not in html_hit.snippet
+    assert "<strong>" not in html_hit.snippet
+
+
 @pytest.mark.timeout(600)
 def test_config_edit_during_extraction_cannot_change_active_snapshot(
     rag_components: RagComponentsWithManifest,
     tmp_path: Path,
 ) -> None:
-    from ... import CodebaseIndexer, VaultSearcher, VaultStore
+    from ... import CodebaseIndexer, VaultStore
 
     paths = _write_snapshot_project(tmp_path)
     with _snapshot_environment() as html_key:
@@ -207,7 +270,6 @@ def test_config_edit_during_extraction_cannot_change_active_snapshot(
         changed_paths = [paths.source, paths.html]
         preflight = indexer.preflight_changed_paths(changed_paths)
         entry_policy = preflight.policy
-        entry_code = entry_policy.fingerprints_for(ContentKind.CODE)
         entry_rule = entry_policy.preprocess_rules[0].materialize()
         assert entry_policy.html_strip
 
@@ -226,47 +288,8 @@ def test_config_edit_during_extraction_cannot_change_active_snapshot(
             ) == paths.replacement.read_text(encoding="utf-8")
             assert result.preprocess_ok == 1
             assert store.get_code_ids_by_paths({"a_payload.blob", "z_markup.html"})
-            active_policy = indexer._resolved_policy
-            assert active_policy is not None
-            assert active_policy == entry_policy
-            assert active_policy.fingerprints.snapshot == (
-                entry_policy.fingerprints.snapshot
-            )
-            assert active_policy.classify(
-                "a_payload.blob"
-            ).disposition.kind is ContentKind.CODE
-            assert indexer._prep_ctx is not None
-            assert indexer._prep_ctx.config.rules == [entry_rule]
-            assert indexer._chunk_execution_policy.html_strip
-
-            published = indexer._read_meta_raw()
-            assert published[MEMBERSHIP_EPOCH_KEY] == entry_code.membership
-            assert published[CONTENT_EPOCH_KEY] == entry_code.content
-
-            fresh_policy = indexer._resolve_operation_policy()
-            fresh_code = fresh_policy.fingerprints_for(ContentKind.CODE)
-            assert fresh_policy.fingerprints.snapshot != (
-                entry_policy.fingerprints.snapshot
-            )
-            assert not fresh_policy.html_strip
-            assert fresh_policy.classify(
-                "a_payload.blob"
-            ).disposition.kind is ContentKind.DOCUMENT
-            assert (
-                published[MEMBERSHIP_EPOCH_KEY],
-                published[CONTENT_EPOCH_KEY],
-            ) != (fresh_code.membership, fresh_code.content)
-
-            searcher = VaultSearcher(tmp_path, rag_components["model"], store)
-            hits = searcher.search_codebase(
-                "immutable operation snapshot publication worker shaping marker",
-                top_k=5,
-            )
-            published_hit = next(hit for hit in hits if hit.path == "a_payload.blob")
-            assert published_hit.preprocessor_id == "entry-snapshot-extractor"
-            assert published_hit.source_path == "a_payload.blob"
-            html_hit = next(hit for hit in hits if hit.path == "z_markup.html")
-            assert "<section>" not in html_hit.snippet
-            assert "<strong>" not in html_hit.snippet
+            _assert_active_snapshot(indexer, entry_policy, entry_rule)
+            _assert_published_snapshot(indexer, entry_policy)
+            _assert_snapshot_search(tmp_path, rag_components["model"], store)
         finally:
             store.close()

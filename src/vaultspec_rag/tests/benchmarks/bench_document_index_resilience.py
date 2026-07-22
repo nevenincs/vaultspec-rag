@@ -218,7 +218,7 @@ def _configuration(root: Path, spec: DocumentWorkloadSpec) -> str:
         "version = 2\n\n"
         "[[rule]]\n"
         'pattern = "inputs/extracted/*.blob"\n'
-        f"command = '\"{executable}\" \"{extractor}\" {{path}}'\n"
+        f'command = \'"{executable}" "{extractor}" {{path}}\'\n'
         'target = "document"\n'
         'extractor_version = "1"\n'
         'on_error = "fail"\n'
@@ -367,49 +367,28 @@ def _run_interrupted_index(
     interrupt_after_units: int,
 ) -> tuple[str, int]:
     """Interrupt after durable units exist and return their generation evidence."""
-    from ... import store_schema
     from ...config import get_config
-    from ...indexer._content_policy import ContentKind
-    from ...indexer._run_ledger import RunLedger, index_run_ledger_path
+    from ...indexer._run_ledger import index_run_ledger_path
     from ...job_control import CancelRequested, RunControlToken
-    from ...progress import NullProgressReporter
 
     if interrupt_after_units <= 0:
         raise ValueError("interrupt_after_units must be positive")
     token = RunControlToken()
     failures: list[BaseException] = []
 
-    def _run() -> None:
-        try:
-            indexer.full_index(
-                reporter=NullProgressReporter(),
-                preflight=indexer.preflight_content(),
-                run_control=token,
-            )
-        except BaseException as exc:
-            failures.append(exc)
-
-    worker = threading.Thread(target=_run, name="document-acceptance-interrupt")
+    worker = threading.Thread(
+        target=_capture_interrupted_run,
+        args=(indexer, token, failures),
+        name="document-acceptance-interrupt",
+    )
     worker.start()
     ledger_path = index_run_ledger_path(root / get_config().data_dir)
-    deadline = time.monotonic() + 600.0
-    generation_id = ""
-    confirmed = 0
-    while time.monotonic() < deadline and worker.is_alive():
-        if ledger_path.is_file():
-            ledger = RunLedger(ledger_path)
-            generation = ledger.latest_generation(
-                ContentKind.DOCUMENT,
-                collection_identity=store_schema.DOCUMENT_COLLECTION,
-            )
-            if generation is not None:
-                units = tuple(ledger.iter_units(generation.generation_id))
-                generation_id = generation.generation_id
-                confirmed = len(units)
-                if confirmed >= interrupt_after_units:
-                    token.request_cancel()
-                    break
-        time.sleep(0.01)
+    generation_id, confirmed = _wait_for_interruption_boundary(
+        ledger_path,
+        worker,
+        token,
+        interrupt_after_units=interrupt_after_units,
+    )
     if confirmed < interrupt_after_units:
         token.request_cancel()
         worker.join(timeout=300.0)
@@ -425,6 +404,61 @@ def _run_interrupted_index(
     if not generation_id:
         raise RuntimeError("document interruption lost its generation identity")
     return generation_id, confirmed
+
+
+def _capture_interrupted_run(
+    indexer: Any,
+    token: Any,
+    failures: list[BaseException],
+) -> None:
+    """Capture the terminal signal from one benchmark index thread."""
+    from ...progress import NullProgressReporter
+
+    try:
+        indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+            run_control=token,
+        )
+    except BaseException as exc:
+        failures.append(exc)
+
+
+def _wait_for_interruption_boundary(
+    ledger_path: Path,
+    worker: threading.Thread,
+    token: Any,
+    *,
+    interrupt_after_units: int,
+) -> tuple[str, int]:
+    """Poll durable units until the requested benchmark interruption point."""
+    deadline = time.monotonic() + 600.0
+    while time.monotonic() < deadline and worker.is_alive():
+        generation_id, confirmed = _document_generation_units(ledger_path)
+        if confirmed >= interrupt_after_units:
+            token.request_cancel()
+            return generation_id, confirmed
+        time.sleep(0.01)
+    return "", 0
+
+
+def _document_generation_units(ledger_path: Path) -> tuple[str, int]:
+    """Read the latest benchmark generation identity and durable unit count."""
+    from ... import store_schema
+    from ...indexer._content_policy import ContentKind
+    from ...indexer._run_ledger import RunLedger
+
+    if not ledger_path.is_file():
+        return "", 0
+    ledger = RunLedger(ledger_path)
+    generation = ledger.latest_generation(
+        ContentKind.DOCUMENT,
+        collection_identity=store_schema.DOCUMENT_COLLECTION,
+    )
+    if generation is None:
+        return "", 0
+    units = tuple(ledger.iter_units(generation.generation_id))
+    return generation.generation_id, len(units)
 
 
 def run_document_acceptance(
