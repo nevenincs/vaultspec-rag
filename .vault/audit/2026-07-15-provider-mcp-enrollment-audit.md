@@ -3,7 +3,7 @@ tags:
   - '#audit'
   - '#provider-mcp-enrollment'
 date: '2026-07-15'
-modified: '2026-07-16'
+modified: '2026-07-22'
 related:
   - "[[2026-07-15-provider-mcp-enrollment-adr]]"
   - "[[2026-07-15-provider-mcp-enrollment-research]]"

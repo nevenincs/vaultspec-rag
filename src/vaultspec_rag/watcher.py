@@ -55,6 +55,7 @@ if TYPE_CHECKING:
 
     from .graph_cache import GraphCache
     from .indexer import CodebaseIndexer, VaultIndexer
+    from .indexer._codebase_indexer import CodeExecutionPreflight
     from .indexer._resolved_policy import ResolvedIndexPolicy
     from .service import ServiceRegistry
 
@@ -138,6 +139,28 @@ class _WatcherConvergenceSlot:
     def pending_count(self) -> int:
         with self.lock:
             return len(self.held_paths | self.pending_paths)
+
+    def dirty_paths(self) -> frozenset[Path]:
+        """Snapshot the exact paths eligible for the next watcher attempt."""
+        with self.lock:
+            return frozenset(self.held_paths | self.pending_paths)
+
+    def capture_prevalidated_attempt(
+        self,
+        attempt: int,
+        paths: frozenset[Path],
+    ) -> frozenset[Path]:
+        """Bind only the prevalidated paths, leaving later events pending."""
+        with self.lock:
+            self.pending_paths.difference_update(paths)
+            self.held_paths.update(paths)
+            self.attempt_paths[attempt] = paths
+            return paths
+
+    def captured_attempt(self, attempt: int) -> frozenset[Path] | None:
+        """Return the immutable path batch already bound to an attempt."""
+        with self.lock:
+            return self.attempt_paths.get(attempt)
 
     def capture_attempt(self, attempt: int) -> frozenset[Path]:
         """Move the current pending generation into one immutable attempt batch."""
@@ -928,8 +951,21 @@ async def _submit_watcher_job(
     secondary_graph_cache: GraphCache | None,
 ) -> None:
     """Admit and bind one manager-owned watcher attempt, or coalesce on dedupe."""
+    candidate_paths = slot.dirty_paths()
+    code_preflight = None
     if slot.source is JobSource.CODE:
-        _jobs.validate_code_index_policy(slot.root)
+        policy_resolver = (
+            _jobs.validate_code_index_policy
+            if retry_decision.requires_unscoped
+            else partial(
+                _jobs.validate_scoped_code_index_policy,
+                changed_paths=candidate_paths,
+            )
+        )
+        code_preflight = await _run_in_thread(
+            policy_resolver,
+            slot.root,
+        )
     manager = _jobs.get_job_manager()
     generation = retry_decision.attempt_generation
     if generation is None:
@@ -938,19 +974,22 @@ async def _submit_watcher_job(
         slot.retry_attempt_generations[1] = generation
         if retry_decision.requires_unscoped:
             slot.retry_unscoped_attempts.add(1)
-    outcome = manager.create(
-        JobSpec(
-            operation=JobOperation.INDEX,
-            source=slot.source,
-            project_root=str(slot.root),
-            mode=JobMode.INCREMENTAL,
-        ),
-        JobInitiator(
-            kind="watcher",
-            command=slot.command,
-            project_root=str(slot.root),
-        ),
-        job_id=uuid.uuid4().hex,
+    outcome = await _run_in_thread(
+        partial(
+            manager.create,
+            JobSpec(
+                operation=JobOperation.INDEX,
+                source=slot.source,
+                project_root=str(slot.root),
+                mode=JobMode.INCREMENTAL,
+            ),
+            JobInitiator(
+                kind="watcher",
+                command=slot.command,
+                project_root=str(slot.root),
+            ),
+            job_id=uuid.uuid4().hex,
+        )
     )
     if outcome.status is JobOutcomeStatus.ERROR or outcome.job is None:
         await _settle_retry_failure(
@@ -998,19 +1037,29 @@ async def _submit_watcher_job(
         return
 
     job_id = snapshot.id
-    _jobs.record_start(
-        slot.source.value,
-        "watcher",
-        project_root=slot.root,
-        command=slot.command,
-        initiator_kind="watcher",
-        _record_id=job_id,
+    captured_paths = slot.capture_prevalidated_attempt(
+        snapshot.attempt.number,
+        candidate_paths,
+    )
+    await _run_in_thread(
+        partial(
+            _jobs.record_start,
+            slot.source.value,
+            "watcher",
+            project_root=slot.root,
+            command=slot.command,
+            initiator_kind="watcher",
+            _record_id=job_id,
+        )
     )
 
     def _run_attempt(context: JobAttemptContext) -> JobExecutionResult:
         return _run_managed_index_attempt(
             slot,
             context,
+            initial_attempt=snapshot.attempt.number,
+            initial_paths=captured_paths,
+            initial_code_preflight=code_preflight,
             secondary_graph_cache=secondary_graph_cache,
         )
 
@@ -1066,7 +1115,7 @@ async def _submit_watcher_job(
         )
         return
 
-    dispatched = manager.dispatch(job_id)
+    dispatched = await manager.dispatch_async(job_id)
     if dispatched.status is JobOutcomeStatus.ERROR:
         await _finish_unstarted_watcher_failure(
             slot,
@@ -1107,7 +1156,9 @@ async def _finish_unstarted_watcher_failure(
     reason: str,
 ) -> None:
     """Durably settle an orchestration failure before releasing its slot."""
-    manager.fail_unstarted(job_id, result=message)
+    await _run_in_thread(
+        partial(manager.fail_unstarted, job_id, result=message),
+    )
     failure = RuntimeError(message)
     await _settle_retry_failure(
         slot,
@@ -1115,7 +1166,7 @@ async def _finish_unstarted_watcher_failure(
         attempt=attempt,
         action=action,
     )
-    failed = manager.get(job_id)
+    failed = await _run_in_thread(manager.get, job_id)
     observed_terminal = (
         failed is not None
         and failed.state.is_terminal
@@ -1127,7 +1178,9 @@ async def _finish_unstarted_watcher_failure(
         )
     )
     if observed_terminal:
-        _jobs.record_finish(job_id, error=message)
+        await _run_in_thread(
+            partial(_jobs.record_finish, job_id, error=message),
+        )
         return
     _schedule_replacement(
         slot,
@@ -1362,6 +1415,9 @@ def _run_managed_index_attempt(
     slot: _WatcherConvergenceSlot,
     context: JobAttemptContext,
     *,
+    initial_attempt: int,
+    initial_paths: frozenset[Path],
+    initial_code_preflight: CodeExecutionPreflight | None,
     secondary_graph_cache: GraphCache | None,
 ) -> JobExecutionResult:
     """Run one watcher generation under manager and registry ownership."""
@@ -1369,8 +1425,28 @@ def _run_managed_index_attempt(
         slot,
         context.attempt,
     )
-    captured_paths = slot.capture_attempt(context.attempt)
+    captured_paths = slot.captured_attempt(context.attempt)
+    if captured_paths is None:
+        captured_paths = slot.capture_attempt(context.attempt)
+    if context.attempt == initial_attempt and captured_paths != initial_paths:
+        raise WatcherRetryStateError(
+            "managed watcher scope differs from its validated admission"
+        )
     paths = None if requires_unscoped else captured_paths
+    code_preflight = (
+        initial_code_preflight if context.attempt == initial_attempt else None
+    )
+    if slot.source is JobSource.CODE and code_preflight is None:
+        context.control.checkpoint()
+        code_preflight = (
+            _jobs.validate_code_index_policy(slot.root)
+            if requires_unscoped
+            else _jobs.validate_scoped_code_index_policy(
+                slot.root,
+                captured_paths,
+            )
+        )
+        context.control.checkpoint()
     pipeline_active = slot.source is JobSource.CODE
     registry = slot.registry
     registry.load_model()
@@ -1399,9 +1475,14 @@ def _run_managed_index_attempt(
                     ):
                         secondary_graph_cache.invalidate()
                 else:
+                    if code_preflight is None:
+                        raise RuntimeError(
+                            "code watcher attempt has no execution preflight"
+                        )
                     result = project.code_indexer.incremental_index(
                         reporter=reporter,
                         changed_paths=paths,
+                        preflight=code_preflight,
                         run_control=context.control,
                     )
             finally:

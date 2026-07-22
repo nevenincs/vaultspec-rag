@@ -49,6 +49,7 @@ from . import _jobs
 
 # 2. Leaf helpers (no decorators).
 from ._lifecycle import (
+    _DiscoveryPublisher,
     _heartbeat_loop,
     _heartbeat_tick_sync,
     _install_daemon_shutdown_hooks,
@@ -60,7 +61,6 @@ from ._lifecycle import (
     _storage_maintenance_tick_sync,
     _storage_survey_warm_sync,
     _survey_warmup_task,
-    _unlink_status_file_silently,
 )
 from ._lifespan import health_handler, service_lifespan
 
@@ -134,6 +134,7 @@ __all__ = [
     "SearchResponse",
     "SearchResultItem",
     "SurveySnapshot",
+    "_DiscoveryPublisher",
     "_clamp_top_k",
     "_default_root",
     "_ensure_watcher",
@@ -163,7 +164,6 @@ __all__ = [
     "_storage_maintenance_tick_sync",
     "_storage_survey_warm_sync",
     "_survey_warmup_task",
-    "_unlink_status_file_silently",
     "_validate_query",
     "_validate_vault_root",
     "_wait_for_watcher_cleanup",

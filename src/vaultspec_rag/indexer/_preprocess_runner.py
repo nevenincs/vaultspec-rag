@@ -37,7 +37,10 @@ from pydantic import ValidationError
 
 from ._hook_sandbox import curated_child_env, default_popen_handle
 from ._preprocess_schema import (
+    PREPROCESS_INVOCATION_ENV,
     PreprocOutput,
+    PreprocessInvocation,
+    PreprocessInvocationMode,
     UnsupportedSchemaVersionError,
     validate_preproc_output,
 )
@@ -161,7 +164,40 @@ def _substitute_path(token: str, path_str: str) -> str:
     return substituted
 
 
-def _child_env(project_root: pathlib.Path) -> dict[str, str]:
+def _canonical_source_identity(
+    source_path: pathlib.Path,
+    project_root: pathlib.Path,
+) -> str:
+    """Return the host-owned normalized project-relative source identity."""
+    try:
+        return source_path.resolve().relative_to(project_root.resolve()).as_posix()
+    except ValueError as exc:
+        msg = f"preprocess source is outside the project root: {source_path}"
+        raise _PreprocessSkipError(msg) from exc
+
+
+def _invocation_envelope(
+    source_paths: Sequence[pathlib.Path],
+    rule: PreprocessRule,
+    project_root: pathlib.Path,
+    mode: PreprocessInvocationMode,
+) -> PreprocessInvocation:
+    """Build the canonical envelope shared by command and entry-point forms."""
+    return PreprocessInvocation(
+        source_paths=tuple(
+            _canonical_source_identity(path, project_root) for path in source_paths
+        ),
+        options=dict(rule.options),
+        extractor_version=rule.extractor_version,
+        target=rule.target.value,
+        mode=mode,
+    )
+
+
+def _child_env(
+    project_root: pathlib.Path,
+    invocation: PreprocessInvocation,
+) -> dict[str, str]:
     """Return the curated hook env with the project root on ``PYTHONPATH``.
 
     The curated env strips every secret and ``VAULTSPEC_RAG_*`` knob (including
@@ -172,6 +208,7 @@ def _child_env(project_root: pathlib.Path) -> dict[str, str]:
     """
     env = curated_child_env()
     env["PYTHONPATH"] = str(project_root)
+    env[PREPROCESS_INVOCATION_ENV] = invocation.canonical_json
     return env
 
 
@@ -285,15 +322,48 @@ def _invoke_and_validate(
         msg = "rule has neither a runnable command nor entry_point"
         raise _PreprocessSkipError(msg)
 
+    invocation = _invocation_envelope(
+        (source_path,),
+        rule,
+        project_root,
+        "single",
+    )
     stdout_cap = max(max_emitted_bytes * _STDOUT_CAP_MULTIPLIER, _MIN_STDOUT_CAP)
     returncode, stdout, stderr = _run_bounded(
         argv,
         rule.timeout_s,
         stdout_cap,
         cwd=project_root,
-        env=_child_env(project_root),
+        env=_child_env(project_root, invocation),
     )
-    return _validate_output(returncode, stdout, stderr, stdout_cap, max_emitted_bytes)
+    output = _validate_output(
+        returncode,
+        stdout,
+        stderr,
+        stdout_cap,
+        max_emitted_bytes,
+    )
+    _validate_source_binding(output, source_path, project_root)
+    return output
+
+
+def _validate_source_binding(
+    output: PreprocOutput,
+    expected_path: pathlib.Path,
+    project_root: pathlib.Path,
+) -> None:
+    """Reject extractor attempts to redirect output to another source."""
+    expected = _canonical_source_identity(expected_path, project_root)
+    declared = pathlib.Path(output.source_path)
+    if not declared.is_absolute():
+        declared = project_root / declared
+    actual = _canonical_source_identity(declared, project_root)
+    if actual != expected:
+        msg = (
+            "preprocessor output source_path does not match invoked source: "
+            f"expected {expected!r}, received {actual!r}"
+        )
+        raise _PreprocessSkipError(msg)
 
 
 def _validate_output(
@@ -542,6 +612,11 @@ def _split_batch_output(
         except (ValidationError, UnsupportedSchemaVersionError) as exc:
             failures[key] = f"preprocessor output failed validation: {exc}"
             continue
+        try:
+            _validate_source_binding(output, pathlib.Path(key), project_root)
+        except _PreprocessSkipError as exc:
+            failures[key] = str(exc)
+            continue
         emitted = _emitted_text_length(output)
         if emitted > max_emitted_bytes:
             failures[key] = f"emitted text {emitted} exceeds cap {max_emitted_bytes}"
@@ -579,12 +654,13 @@ def _invoke_batch(
         if rule.timeout_s is None
         else min(rule.timeout_s * count, _MAX_BATCH_TIMEOUT_S)
     )
+    invocation = _invocation_envelope(source_paths, rule, project_root, "batch")
     returncode, stdout, stderr = _run_bounded(
         argv,
         timeout_s,
         stdout_cap,
         cwd=project_root,
-        env=_child_env(project_root),
+        env=_child_env(project_root, invocation),
     )
     return _split_batch_output(
         returncode,

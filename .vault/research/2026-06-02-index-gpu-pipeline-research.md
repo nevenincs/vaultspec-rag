@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#index-gpu-pipeline'
 date: '2026-06-02'
-modified: '2026-06-30'
+modified: '2026-07-22'
 related:
   - "[[2026-06-02-index-perf-hardening-adr]]"
   - "[[2026-06-02-index-perf-hardening-research]]"

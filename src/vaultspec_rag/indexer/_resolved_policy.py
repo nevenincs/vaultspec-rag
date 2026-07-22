@@ -73,11 +73,14 @@ _CANONICAL_OPTION_TAGS: frozenset[str] = frozenset(
 
 def _canonical_option(value: object) -> CanonicalOption:
     """Validate and narrow one canonical tagged option pair."""
-    if not isinstance(value, tuple) or len(value) != 2:
+    if not isinstance(value, tuple):
         raise TypeError("canonical preprocess option must be a tagged pair")
-    if value[0] not in _CANONICAL_OPTION_TAGS:
-        raise TypeError(f"unknown canonical preprocess option tag {value[0]!r}")
-    return cast("CanonicalOption", value)
+    pair = value
+    if len(pair) != 2:
+        raise TypeError("canonical preprocess option must be a tagged pair")
+    if pair[0] not in _CANONICAL_OPTION_TAGS:
+        raise TypeError(f"unknown canonical preprocess option tag {pair[0]!r}")
+    return cast("CanonicalOption", pair)
 
 
 def _mapping_payload(
@@ -88,9 +91,12 @@ def _mapping_payload(
         raise TypeError("canonical mapping payload must be a tuple")
     items: list[tuple[str, CanonicalOption]] = []
     for item in payload:
-        if not isinstance(item, tuple) or len(item) != 2:
+        if not isinstance(item, tuple):
             raise TypeError("canonical mapping entries must be key-value pairs")
-        key, nested = item
+        pair = item
+        if len(pair) != 2:
+            raise TypeError("canonical mapping entries must be key-value pairs")
+        key, nested = pair
         if not isinstance(key, str):
             raise TypeError("canonical mapping keys must be strings")
         items.append((key, _canonical_option(nested)))
@@ -128,16 +134,26 @@ def _freeze_option(value: object) -> CanonicalOption:
     if isinstance(value, str):
         return ("str", value)
     if isinstance(value, Mapping):
+        mapping = cast("Mapping[object, object]", value)
         items: list[tuple[str, CanonicalOption]] = []
-        for key, nested in value.items():
+        for key, nested in mapping.items():
             if not isinstance(key, str):
                 raise TypeError("preprocess option mapping keys must be strings")
             items.append((key, _freeze_option(nested)))
         return ("mapping", tuple(sorted(items)))
     if isinstance(value, list):
-        return ("list", tuple(_freeze_option(item) for item in value))
+        return (
+            "list",
+            tuple(_freeze_option(item) for item in cast("list[object]", value)),
+        )
     if isinstance(value, tuple):
-        return ("tuple", tuple(_freeze_option(item) for item in value))
+        return (
+            "tuple",
+            tuple(
+                _freeze_option(item)
+                for item in cast("tuple[object, ...]", value)
+            ),
+        )
     if isinstance(value, (datetime.date, datetime.time)):
         return _freeze_temporal(value)
     raise TypeError(
@@ -231,6 +247,7 @@ class ResolvedPreprocessRule:
     options: tuple[tuple[str, CanonicalOption], ...]
     order: int
     batch: bool
+    path_independent: bool
 
     def __post_init__(self) -> None:
         canonical: CanonicalOption = ("mapping", self.options)
@@ -260,6 +277,7 @@ class ResolvedPreprocessRule:
             options=_mapping_payload(payload),
             order=rule.order,
             batch=rule.batch,
+            path_independent=rule.path_independent,
         )
 
     def materialize(self) -> PreprocessRule:
@@ -277,6 +295,7 @@ class ResolvedPreprocessRule:
             options=options,
             order=self.order,
             batch=self.batch,
+            path_independent=self.path_independent,
         )
 
 
@@ -284,6 +303,7 @@ class ResolvedPreprocessRule:
 class ResolvedIndexPolicy:
     """One exact, reconstructible policy snapshot for an index operation."""
 
+    root_dir: pathlib.Path
     policy_schema_version: int
     content_policy: RootContentPolicy
     preprocess_schema_version: int
@@ -305,26 +325,28 @@ class ResolvedIndexPolicy:
     ] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        if self.root_dir.resolve() != self.root_dir:
+            raise ValueError("resolved policy root must be canonical")
+        policy_schema_version = cast("object", self.policy_schema_version)
         if (
-            isinstance(self.policy_schema_version, bool)
-            or self.policy_schema_version != POLICY_SCHEMA_VERSION
+            isinstance(policy_schema_version, bool)
+            or policy_schema_version != POLICY_SCHEMA_VERSION
         ):
             raise ValueError(
                 f"unsupported policy schema version {self.policy_schema_version}"
             )
-        if (
-            isinstance(self.preprocess_schema_version, bool)
-            or not isinstance(self.preprocess_schema_version, int)
-            or self.preprocess_schema_version <= 0
-        ):
+        preprocess_schema_version = cast("object", self.preprocess_schema_version)
+        if isinstance(preprocess_schema_version, bool) or not isinstance(
+            preprocess_schema_version, int
+        ) or preprocess_schema_version <= 0:
             raise ValueError("preprocess_schema_version must be a positive integer")
-        if not isinstance(self.html_strip, bool):
+        html_strip = cast("object", self.html_strip)
+        if not isinstance(html_strip, bool):
             raise ValueError("html_strip must be a boolean")
-        if (
-            isinstance(self.max_emitted_bytes, bool)
-            or not isinstance(self.max_emitted_bytes, int)
-            or self.max_emitted_bytes <= 0
-        ):
+        max_emitted_bytes = cast("object", self.max_emitted_bytes)
+        if isinstance(max_emitted_bytes, bool) or not isinstance(
+            max_emitted_bytes, int
+        ) or max_emitted_bytes <= 0:
             raise ValueError("max_emitted_bytes must be a positive integer")
         if self.execution_mode not in {"default", "off"}:
             raise ValueError(
@@ -382,6 +404,7 @@ class ResolvedIndexPolicy:
         return (
             ResolvedIndexPolicy,
             (
+                self.root_dir,
                 self.policy_schema_version,
                 self.content_policy,
                 self.preprocess_schema_version,
@@ -481,6 +504,7 @@ def resolve_index_policy(
         ResolvedPreprocessRule.from_rule(rule) for rule in preprocess_config.rules
     )
     return ResolvedIndexPolicy(
+        root_dir=root_dir.resolve(),
         policy_schema_version=POLICY_SCHEMA_VERSION,
         content_policy=content_policy,
         preprocess_schema_version=preprocess_config.schema_version,

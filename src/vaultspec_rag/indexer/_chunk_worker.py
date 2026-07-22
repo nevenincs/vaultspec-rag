@@ -26,7 +26,11 @@ from typing import TYPE_CHECKING
 from ..store import CodeChunk
 from ._ast_chunker import ASTChunker
 from ._chunking import LANGUAGE_MAP, TextSplitter
-from ._preprocess_cache import read_cached_output, write_cached_output
+from ._preprocess_cache import (
+    PreprocessCacheIdentity,
+    read_cached_output,
+    write_cached_output,
+)
 from ._preprocess_runner import run_preprocessor, run_preprocessor_batch
 
 if TYPE_CHECKING:
@@ -165,11 +169,16 @@ def preprocess_file(
     if rule is None or (rule.command is None and rule.entry_point is None):
         return _PreprocessOutcome("none", [], None)
 
-    # Cache token identifies the invocation (command or entry_point) so a
-    # version bump via either lever invalidates exactly its own files (D7).
-    cache_token = rule.command or rule.entry_point or ""
-    cached = read_cached_output(prep.cache_root, content_hash, cache_token)
+    cache_identity = PreprocessCacheIdentity.from_rule(
+        source_path=rel_path,
+        source_hash=content_hash,
+        rule=rule,
+        mode="batch" if rule.batch else "single",
+    )
+    cached = read_cached_output(prep.cache_root, cache_identity)
     if cached is not None:
+        if rule.path_independent:
+            cached = cached.model_copy(update={"source_path": rel_path})
         return _PreprocessOutcome("ok", _chunks_from_output(cached, rel_path), None)
 
     if rule.batch:
@@ -190,7 +199,7 @@ def preprocess_file(
             project_root=prep.project_root,
         )
     if result.status == "ok" and result.output is not None:
-        write_cached_output(prep.cache_root, content_hash, cache_token, result.output)
+        write_cached_output(prep.cache_root, cache_identity, result.output)
         return _PreprocessOutcome(
             "ok",
             _chunks_from_output(result.output, rel_path),
@@ -458,7 +467,6 @@ def chunk_batch_files(
         PreprocessAbortError: If any file fails and ``on_error == "fail"`` -
             propagates out of the worker to abort the run.
     """
-    cache_token = rule.command or ""
     members: list[_BatchMember] = []
     misses: list[pathlib.Path] = []
     for path in paths:
@@ -469,7 +477,15 @@ def chunk_batch_files(
             raise
         content_hash = hashlib.blake2b(raw).hexdigest()
         rel_path = str(path.relative_to(root_dir)).replace("\\", "/")
-        cached = read_cached_output(prep.cache_root, content_hash, cache_token)
+        cache_identity = PreprocessCacheIdentity.from_rule(
+            source_path=rel_path,
+            source_hash=content_hash,
+            rule=rule,
+            mode="batch",
+        )
+        cached = read_cached_output(prep.cache_root, cache_identity)
+        if cached is not None and rule.path_independent:
+            cached = cached.model_copy(update={"source_path": rel_path})
         members.append(_BatchMember(path, rel_path, content_hash, cached))
         if cached is None:
             misses.append(path)
@@ -493,8 +509,12 @@ def chunk_batch_files(
             ):
                 write_cached_output(
                     prep.cache_root,
-                    member.content_hash,
-                    cache_token,
+                    PreprocessCacheIdentity.from_rule(
+                        source_path=member.rel_path,
+                        source_hash=member.content_hash,
+                        rule=rule,
+                        mode="batch",
+                    ),
                     result.output,
                 )
 

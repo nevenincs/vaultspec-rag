@@ -189,7 +189,10 @@ def _build_code(
     b.write_text("def beta():\n    return 'beta-one'\n", encoding="utf-8")
     store = VaultStore(root)
     code_indexer = CodebaseIndexer(root, model, store)
-    code_indexer.full_index(reporter=NullProgressReporter())
+    code_indexer.full_index(
+        reporter=NullProgressReporter(),
+        preflight=code_indexer.preflight_content(),
+    )
     return store, code_indexer, a, b
 
 
@@ -213,6 +216,7 @@ class TestCodeScopedReindex:
             result = code_indexer.incremental_index(
                 reporter=NullProgressReporter(),
                 changed_paths={a},
+                preflight=code_indexer.preflight_changed_paths({a}),
             )
 
             meta_after = code_indexer._load_meta()
@@ -239,6 +243,7 @@ class TestCodeScopedReindex:
             result = code_indexer.incremental_index(
                 reporter=NullProgressReporter(),
                 changed_paths={a},
+                preflight=code_indexer.preflight_changed_paths({a}),
             )
 
             assert result.removed == 1
@@ -262,6 +267,7 @@ class TestCodeScopedReindex:
             result = code_indexer.incremental_index(
                 reporter=NullProgressReporter(),
                 changed_paths={ignored},
+                preflight=code_indexer.preflight_changed_paths({ignored}),
             )
 
             assert (result.added, result.updated, result.removed) == (0, 0, 0)

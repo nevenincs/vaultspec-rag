@@ -119,6 +119,9 @@ def _shape_survey_payload(
                 "status": s.status,
                 "collections": s.collections,
                 "points": s.points,
+                "vault_points": s.vault_points,
+                "code_points": s.code_points,
+                "document_points": s.document_points,
                 "footprint_bytes": s.footprint_bytes,
                 "temp_rooted": is_temp_rooted(s.root),
             }

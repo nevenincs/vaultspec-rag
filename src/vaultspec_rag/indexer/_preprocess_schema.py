@@ -16,6 +16,8 @@ understands; a newer document is rejected with a clear upgrade message.
 
 from __future__ import annotations
 
+import json
+import os
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
@@ -24,18 +26,56 @@ __all__ = [
     "SUPPORTED_SCHEMA_VERSION",
     "Locator",
     "LocatorKind",
+    "PREPROCESS_INVOCATION_ENV",
+    "PreprocessInvocation",
+    "PreprocessInvocationMode",
     "PreprocOutput",
     "PreprocUnit",
     "UnsupportedSchemaVersionError",
     "validate_preproc_output",
+    "load_preprocess_invocation",
 ]
 
 #: The schema major version this indexer understands. A document declaring a
 #: higher ``schema_version`` is rejected (D5); a lower one is accepted when it
 #: still constructs, which for v1 is every valid document.
 SUPPORTED_SCHEMA_VERSION = 1
+PREPROCESS_INVOCATION_SCHEMA_VERSION = 1
+PREPROCESS_INVOCATION_ENV = "VAULTSPEC_PREPROCESS_INVOCATION"
+
+PreprocessInvocationMode = Literal["single", "batch"]
 
 LocatorKind = Literal["byte", "page", "sheet", "line", "char", "none"]
+
+
+class PreprocessInvocation(BaseModel):
+    """Versioned host-to-extractor execution envelope."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = PREPROCESS_INVOCATION_SCHEMA_VERSION
+    source_paths: tuple[str, ...] = Field(min_length=1)
+    options: dict[str, JsonValue] = Field(default_factory=dict)
+    extractor_version: str = Field(min_length=1)
+    target: Literal["code", "document"]
+    mode: PreprocessInvocationMode
+
+    @property
+    def canonical_json(self) -> str:
+        """Return deterministic JSON suitable for environment delivery."""
+        return json.dumps(
+            self.model_dump(mode="json"),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+
+def load_preprocess_invocation() -> PreprocessInvocation:
+    """Load and validate the invocation envelope in an extractor process."""
+    raw = os.environ.get(PREPROCESS_INVOCATION_ENV)
+    if raw is None:
+        raise RuntimeError(f"missing {PREPROCESS_INVOCATION_ENV}")
+    return PreprocessInvocation.model_validate_json(raw)
 
 
 class UnsupportedSchemaVersionError(ValueError):
@@ -67,11 +107,16 @@ class PreprocUnit(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str = Field(min_length=1)
-    title: str | None = None
-    section: str | None = None
-    anchor: str | None = None
+    title: str | None = Field(default=None, max_length=4096)
+    section: str | None = Field(default=None, max_length=4096)
+    anchor: str | None = Field(default=None, max_length=8192)
     locator: Locator | None = None
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _bound_metadata(self) -> PreprocUnit:
+        _validate_metadata(self.metadata, max_bytes=16 * 1024)
+        return self
 
 
 class PreprocOutput(BaseModel):
@@ -101,7 +146,20 @@ class PreprocOutput(BaseModel):
         if self.units is not None and len(self.units) == 0:
             msg = "'units' must be non-empty when provided"
             raise ValueError(msg)
+        if self.units is not None and len(self.units) > 100_000:
+            msg = "'units' exceeds the per-document unit limit"
+            raise ValueError(msg)
+        _validate_metadata(self.metadata, max_bytes=64 * 1024)
         return self
+
+
+def _validate_metadata(metadata: dict[str, JsonValue], *, max_bytes: int) -> None:
+    """Reject metadata that cannot remain a bounded payload component."""
+    if len(metadata) > 256:
+        raise ValueError("metadata exceeds 256 top-level fields")
+    encoded = json.dumps(metadata, sort_keys=True, separators=(",", ":"))
+    if len(encoded.encode("utf-8")) > max_bytes:
+        raise ValueError(f"metadata exceeds {max_bytes} encoded bytes")
 
 
 def validate_preproc_output(payload: object) -> PreprocOutput:

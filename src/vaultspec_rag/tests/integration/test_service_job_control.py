@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import socket
@@ -12,12 +13,17 @@ from typing import TYPE_CHECKING, cast
 
 import uvicorn
 from starlette.applications import Starlette
+from typer.testing import CliRunner
 
 import vaultspec_rag.server as _server_state
 
+from ...cli import app
 from ...config import EnvVar, reset_config
+from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
 from ...jobs import get_job_manager
 from ...jobs import reset as reset_jobs
+from ...mcp._mcp import mcp
+from ...mcp._tools import reindex_vault
 from ...server._routes import ROUTES
 from ...serviceclient import (
     _try_http_create_job,
@@ -30,6 +36,8 @@ from ...serviceclient import (
 if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
+
+runner = CliRunner()
 
 
 def _free_port() -> int:
@@ -103,6 +111,37 @@ def _real_job_control_server(tmp_path: Path) -> Generator[int]:
             os.environ[EnvVar.WATCH_ENABLED] = prior_watch_enabled
         reset_config()
         assert stopped
+
+
+def _seed_paused_job(project_root: Path, job_id: str) -> dict[str, object]:
+    (project_root / ".vault").mkdir(parents=True)
+    outcome = get_job_manager().create(
+        JobSpec(
+            operation=JobOperation.INDEX,
+            source=JobSource.VAULT,
+            project_root=str(project_root),
+            mode=JobMode.INCREMENTAL,
+        ),
+        JobInitiator(
+            kind="cli",
+            command="test_seed_job_control",
+            project_root=str(project_root),
+        ),
+        start_paused=True,
+        job_id=job_id,
+    )
+    assert outcome.code == "job_created"
+    assert outcome.job is not None
+    return outcome.job.to_dict()
+
+
+def _invoke_job_json(*args: str) -> tuple[int, dict[str, object]]:
+    result = runner.invoke(app, ["server", "job", *args, "--json"])
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    assert len(lines) == 1, result.stdout
+    payload = json.loads(lines[0])
+    assert isinstance(payload, dict)
+    return result.exit_code, cast("dict[str, object]", payload)
 
 
 def test_typed_job_control_transport_uses_real_http_methods_and_conflicts(
@@ -184,3 +223,216 @@ def test_typed_job_control_transport_uses_real_http_methods_and_conflicts(
         assert missing is not None
         assert missing["ok"] is False
         assert missing["error"] == "job_not_found"
+
+
+def test_human_cli_job_controls_resolve_unique_prefixes_before_exact_mutation(
+    tmp_path: Path,
+) -> None:
+    first_id = "abcdef01-0000-4000-8000-000000000001"
+    second_id = "abcdef02-0000-4000-8000-000000000002"
+
+    with _real_job_control_server(tmp_path) as port:
+        _seed_paused_job(tmp_path / "first", first_id)
+        _seed_paused_job(tmp_path / "second", second_id)
+        port_arg = str(port)
+
+        shown = runner.invoke(
+            app,
+            ["server", "job", "show", "abcdef01", "--port", port_arg],
+        )
+        assert shown.exit_code == 0, shown.output
+        assert f"Job {first_id}" in shown.stdout
+        assert "Status: paused" in shown.stdout
+
+        ambiguous = runner.invoke(
+            app,
+            ["server", "job", "show", "abcdef", "--port", port_arg],
+        )
+        assert ambiguous.exit_code == 2
+        assert "Code: ambiguous_job_id" in ambiguous.stdout
+
+        paused = runner.invoke(
+            app,
+            ["server", "job", "pause", "abcdef01", "--port", port_arg],
+        )
+        assert paused.exit_code == 0, paused.output
+        assert "Outcome: already_satisfied" in paused.stdout
+
+        get_job_manager().begin_shutdown()
+        resumed = runner.invoke(
+            app,
+            ["server", "job", "resume", "abcdef01", "--port", port_arg],
+        )
+        assert resumed.exit_code == 0, resumed.output
+        assert f"Job: {first_id}" in resumed.stdout
+        assert "Desired state: running" in resumed.stdout
+
+        stopped = runner.invoke(
+            app,
+            ["server", "job", "stop", "abcdef01", "--port", port_arg],
+        )
+        assert stopped.exit_code == 0, stopped.output
+        assert "State: cancelled" in stopped.stdout
+
+        retried = runner.invoke(
+            app,
+            ["server", "job", "retry", "abcdef01", "--port", port_arg],
+        )
+        assert retried.exit_code == 0, retried.output
+        assert "Outcome: job_retry_created" in retried.stdout
+        linked_retries = [
+            snapshot
+            for snapshot in get_job_manager().list_jobs()
+            if snapshot.attempt.parent_job_id == first_id
+        ]
+        assert len(linked_retries) == 1
+        assert linked_retries[0].id != first_id
+
+        deleted = runner.invoke(
+            app,
+            ["server", "job", "delete", "abcdef01", "--port", port_arg],
+        )
+        assert deleted.exit_code == 0, deleted.output
+        assert "Outcome: job_deleted" in deleted.stdout
+
+
+def test_json_cli_job_controls_use_full_ids_and_one_stable_outcome(
+    tmp_path: Path,
+) -> None:
+    job_id = "12345678-0000-4000-8000-000000000001"
+
+    with _real_job_control_server(tmp_path) as port:
+        _seed_paused_job(tmp_path / "json", job_id)
+        port_arg = str(port)
+
+        exit_code, shown = _invoke_job_json(
+            "show",
+            job_id,
+            "--port",
+            port_arg,
+        )
+        assert exit_code == 0
+        assert shown["ok"] is True
+        shown_data = cast("dict[str, object]", shown["data"])
+        shown_job = cast("dict[str, object]", shown_data["job"])
+        assert shown_job["id"] == job_id
+
+        exit_code, prefix_rejected = _invoke_job_json(
+            "show",
+            "12345678",
+            "--port",
+            port_arg,
+        )
+        assert exit_code == 1
+        assert prefix_rejected["ok"] is False
+        assert prefix_rejected["error"] == "job_not_found"
+
+        exit_code, force_rejected = _invoke_job_json(
+            "stop",
+            job_id,
+            "--port",
+            port_arg,
+            "--force",
+        )
+        assert exit_code == 1
+        assert force_rejected["ok"] is False
+        assert force_rejected["error"] == "force_termination_unavailable"
+
+        exit_code, stopped = _invoke_job_json(
+            "stop",
+            job_id,
+            "--port",
+            port_arg,
+        )
+        assert exit_code == 0
+        assert stopped["ok"] is True
+        stopped_data = cast("dict[str, object]", stopped["data"])
+        assert stopped_data["status"] == "job_cancelled"
+        stopped_job = cast("dict[str, object]", stopped_data["job"])
+        assert stopped_job["state"] == "cancelled"
+
+        exit_code, replayed = _invoke_job_json(
+            "stop",
+            job_id,
+            "--port",
+            port_arg,
+        )
+        assert exit_code == 0
+        assert replayed["ok"] is True
+        replayed_data = cast("dict[str, object]", replayed["data"])
+        assert replayed_data["status"] == "already_satisfied"
+
+        exit_code, deleted = _invoke_job_json(
+            "delete",
+            job_id,
+            "--port",
+            port_arg,
+        )
+        assert exit_code == 0
+        assert deleted["ok"] is True
+        deleted_data = cast("dict[str, object]", deleted["data"])
+        assert deleted_data["status"] == "job_deleted"
+
+        exit_code, missing = _invoke_job_json(
+            "delete",
+            job_id,
+            "--port",
+            port_arg,
+        )
+        assert exit_code == 1
+        assert missing["ok"] is False
+        assert missing["error"] == "job_not_found"
+
+
+def test_reindex_compatibility_keeps_mcp_incremental_refresh_only(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "mcp-refresh"
+    (project_root / ".vault").mkdir(parents=True)
+
+    tools = asyncio.run(mcp.list_tools())
+    assert {tool.name for tool in tools} == {
+        "search_vault",
+        "search_codebase",
+        "get_code_file",
+        "reindex_vault",
+        "reindex_codebase",
+    }
+    assert {
+        "show_job",
+        "pause_job",
+        "resume_job",
+        "stop_job",
+        "retry_job",
+        "delete_job",
+        "get_jobs",
+    }.isdisjoint(tool.name for tool in tools)
+    for tool in tools:
+        if tool.name not in {"reindex_vault", "reindex_codebase"}:
+            continue
+        assert "clean" not in tool.inputSchema.get("properties", {})
+        assert tool.annotations is not None
+        assert tool.annotations.readOnlyHint is False
+        assert tool.annotations.destructiveHint is False
+        assert tool.annotations.idempotentHint is True
+
+    with _real_job_control_server(tmp_path):
+        get_job_manager().begin_shutdown()
+        response = asyncio.run(reindex_vault(project_root=str(project_root)))
+
+        assert response["ok"] is True
+        assert response["status"] == "queued"
+        assert isinstance(response["job_id"], str)
+        outcome = cast("dict[str, object]", response["outcome"])
+        assert outcome["code"] == "job_created"
+        job = cast("dict[str, object]", outcome["job"])
+        spec = cast("dict[str, object]", job["spec"])
+        initiator = cast("dict[str, object]", job["initiator"])
+        assert spec == {
+            "operation": "index",
+            "source": "vault",
+            "project_root": str(project_root),
+            "mode": "incremental",
+        }
+        assert initiator["kind"] == "mcp"
+        assert job["id"] == response["job_id"]

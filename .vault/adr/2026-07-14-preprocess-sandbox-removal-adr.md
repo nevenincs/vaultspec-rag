@@ -9,7 +9,7 @@ related:
   - "[[2026-06-10-preprocess-hooks-adr]]"
 supersedes:
   - '2026-07-13-preprocess-sandbox-adr'
-modified: '2026-07-21'
+modified: '2026-07-22'
 ---
 
 # `preprocess-sandbox-removal` adr: `Direct hook execution replaces OS containment: performance is the mandate` | (**status:** `accepted`)

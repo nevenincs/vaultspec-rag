@@ -675,10 +675,11 @@ def _local_store_path(root: str) -> Path:
 
 def _migrate_name_map(root: str, *, to_server: bool) -> dict[str, str]:
     """Map source collection names to target names for the given direction."""
-    from ..store import VaultStore, root_collection_prefix
+    from .. import store_schema
+    from ..store import root_collection_prefix
 
     prefix = root_collection_prefix(root)
-    bases = (VaultStore.TABLE_NAME, VaultStore.CODE_TABLE_NAME)
+    bases = store_schema.collection_names()
     if to_server:
         return {base: f"{prefix}{base}" for base in bases}
     return {f"{prefix}{base}": base for base in bases}

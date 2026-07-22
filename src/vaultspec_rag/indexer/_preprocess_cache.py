@@ -27,6 +27,8 @@ import hashlib
 import json
 import logging
 import os
+from dataclasses import asdict, dataclass
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
@@ -40,12 +42,15 @@ from ._preprocess_schema import (
 if TYPE_CHECKING:
     import pathlib
 
+    from ._preprocess_config import PreprocessRule
     from ._preprocess_schema import PreprocOutput
+    from ._preprocess_schema import PreprocessInvocationMode
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "PREPROCESS_CACHE_DIRNAME",
+    "PreprocessCacheIdentity",
     "clear_preprocess_cache",
     "preprocess_cache_dir",
     "read_cached_output",
@@ -66,15 +71,64 @@ def preprocess_cache_dir(data_root: pathlib.Path) -> pathlib.Path:
     return data_root / PREPROCESS_CACHE_DIRNAME
 
 
-def _cache_key(source_hash: str, command: str) -> str:
-    """Compute the content-addressed cache key for a source/command pair."""
-    digest = hashlib.blake2b(digest_size=16)
-    digest.update(source_hash.encode("utf-8"))
-    digest.update(b"\x00")
-    digest.update(command.encode("utf-8"))
-    digest.update(b"\x00")
-    digest.update(str(SUPPORTED_SCHEMA_VERSION).encode("utf-8"))
-    return digest.hexdigest()
+@dataclass(frozen=True, slots=True)
+class PreprocessCacheIdentity:
+    """Complete deterministic identity for one successful extraction."""
+
+    source_path: str
+    source_hash: str
+    execution_fingerprint: str
+    path_independent: bool = False
+
+    def __post_init__(self) -> None:
+        normalized = PurePosixPath(self.source_path)
+        if (
+            not self.source_path
+            or normalized.is_absolute()
+            or ".." in normalized.parts
+            or normalized.as_posix() != self.source_path
+        ):
+            raise ValueError("source_path must be normalized and project-relative")
+        if not self.source_hash or not self.execution_fingerprint:
+            raise ValueError("cache hashes and fingerprints must be non-empty")
+        if not isinstance(self.path_independent, bool):
+            raise TypeError("path_independent must be a bool")
+
+    @classmethod
+    def from_rule(
+        cls,
+        *,
+        source_path: str,
+        source_hash: str,
+        rule: PreprocessRule,
+        mode: PreprocessInvocationMode,
+    ) -> PreprocessCacheIdentity:
+        """Bind one source to the rule's complete execution semantics."""
+        execution = {
+            "command": rule.command,
+            "entry_point": rule.entry_point,
+            "options": dict(rule.options),
+            "extractor_version": rule.extractor_version,
+            "target": rule.target.value,
+            "mode": mode,
+            "output_schema": SUPPORTED_SCHEMA_VERSION,
+        }
+        encoded = json.dumps(execution, sort_keys=True, separators=(",", ":"))
+        return cls(
+            source_path=source_path,
+            source_hash=source_hash,
+            execution_fingerprint=hashlib.blake2b(encoded.encode("utf-8")).hexdigest(),
+            path_independent=rule.path_independent,
+        )
+
+    @property
+    def key(self) -> str:
+        """Return the sharded filename key for this identity."""
+        payload = asdict(self)
+        if self.path_independent:
+            payload["source_path"] = ""
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return hashlib.blake2b(encoded.encode("utf-8"), digest_size=16).hexdigest()
 
 
 def _cache_path(cache_root: pathlib.Path, key: str) -> pathlib.Path:
@@ -84,8 +138,7 @@ def _cache_path(cache_root: pathlib.Path, key: str) -> pathlib.Path:
 
 def read_cached_output(
     cache_root: pathlib.Path,
-    source_hash: str,
-    command: str,
+    identity: PreprocessCacheIdentity,
 ) -> PreprocOutput | None:
     """Return the cached output for a source/command pair, or ``None`` on miss.
 
@@ -100,7 +153,7 @@ def read_cached_output(
     Returns:
         The validated :class:`PreprocOutput`, or ``None`` if absent or unusable.
     """
-    path = _cache_path(cache_root, _cache_key(source_hash, command))
+    path = _cache_path(cache_root, identity.key)
     if not path.is_file():
         return None
     try:
@@ -111,7 +164,10 @@ def read_cached_output(
     if not isinstance(loaded, dict):
         return None
     entry = cast("dict[str, object]", loaded)
-    if entry.get("source_hash") != source_hash or entry.get("command") != command:
+    expected = asdict(identity)
+    if identity.path_independent:
+        expected["source_path"] = ""
+    if entry.get("identity") != expected:
         # Key collision or tampering; treat as a miss rather than trust it.
         return None
     try:
@@ -123,8 +179,7 @@ def read_cached_output(
 
 def write_cached_output(
     cache_root: pathlib.Path,
-    source_hash: str,
-    command: str,
+    identity: PreprocessCacheIdentity,
     output: PreprocOutput,
 ) -> None:
     """Atomically cache a successful output for a source/command pair.
@@ -140,10 +195,12 @@ def write_cached_output(
         command: The matched rule's command template.
         output: The validated output to cache.
     """
-    path = _cache_path(cache_root, _cache_key(source_hash, command))
+    path = _cache_path(cache_root, identity.key)
+    stored_identity = asdict(identity)
+    if identity.path_independent:
+        stored_identity["source_path"] = ""
     entry = {
-        "source_hash": source_hash,
-        "command": command,
+        "identity": stored_identity,
         "schema_version": output.schema_version,
         "preprocessor_id": output.preprocessor_id,
         "preprocessor_version": output.preprocessor_version,
