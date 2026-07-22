@@ -29,6 +29,26 @@ def test_combined_outcome_retains_partial_failure_and_successful_hits() -> None:
     assert outcome.partial
     assert [result.id for result in outcome.results] == ["d", "v"]
     assert outcome.code.error_kind == "index_unavailable"
+    assert outcome.domain_status_payload() == {
+        "vault": {
+            "ok": True,
+            "results_count": 1,
+            "error_kind": None,
+            "detail": None,
+        },
+        "code": {
+            "ok": False,
+            "results_count": 0,
+            "error_kind": "index_unavailable",
+            "detail": "code collection is unavailable",
+        },
+        "document": {
+            "ok": True,
+            "results_count": 1,
+            "error_kind": None,
+            "detail": None,
+        },
+    }
 
 
 def test_failed_domain_cannot_smuggle_results() -> None:

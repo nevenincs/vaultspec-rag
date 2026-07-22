@@ -91,3 +91,15 @@ class CombinedSearchOutcome:
             for result in outcome.results
         ]
         return select_combined_results(candidates, self.top_k)
+
+    def domain_status_payload(self) -> dict[str, dict[str, object]]:
+        """Return the canonical wire status for each closed domain."""
+        return {
+            outcome.source.value: {
+                "ok": outcome.ok,
+                "results_count": len(outcome.results),
+                "error_kind": outcome.error_kind,
+                "detail": outcome.detail,
+            }
+            for outcome in (self.vault, self.code, self.document)
+        }
