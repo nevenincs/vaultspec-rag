@@ -504,3 +504,55 @@ class TestRedirectsAreRefused:
         # And the sink's body was never adopted as a service response.
         assert result is not None
         assert "sink-token-never-legitimate" not in str(result)
+
+
+class _SlowHandler(BaseHTTPRequestHandler):
+    """Answer only after a delay far longer than any bound under test."""
+
+    def do_GET(self) -> None:
+        time.sleep(5.0)
+        body = b"{}"
+        with contextlib.suppress(
+            BrokenPipeError,
+            ConnectionAbortedError,
+            ConnectionResetError,
+        ):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    def log_message(self, *_args: object, **_kwargs: object) -> None:
+        """Silence the default stderr request logging."""
+
+
+@pytest.mark.usefixtures("isolated_status_dir", "isolated_admin_timeout_env")
+class TestOmittedTimeoutIsBounded:
+    """A call that names no timeout is bounded, not left to wait forever.
+
+    An unbounded wait is both a wedged command and, because these requests carry
+    the service bearer credential, an unbounded window in which that credential
+    is in flight. The bound is asserted against a real server that never answers
+    within it, so the test proves the caller gave up rather than that the server
+    happened to be quick.
+    """
+
+    def test_call_without_a_timeout_argument_gives_up(self) -> None:
+        from ..serviceclient._transport import _do_http_call
+
+        os.environ["VAULTSPEC_RAG_ADMIN_TIMEOUT"] = "0.75"
+        server, port = _serve(_SlowHandler)
+        started = time.monotonic()
+        try:
+            with pytest.raises(TimeoutError):
+                # No timeout argument: the resolved policy must supply one.
+                _do_http_call(port, "/service-state", None)
+        finally:
+            elapsed = time.monotonic() - started
+            server.shutdown()
+            server.server_close()
+
+        # Bounded by the resolved policy rather than by the server's own delay,
+        # which is several times longer.
+        assert elapsed < 4.0
