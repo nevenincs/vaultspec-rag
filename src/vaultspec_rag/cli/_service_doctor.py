@@ -122,16 +122,43 @@ def _live_service_axis() -> dict[str, object]:
     cleans a confirmed-dead stale ``service.json`` as a side effect, matching
     ``server status`` behaviour exactly.
     """
+    from ..serviceclient._discovery import resolve_machine_service
+    from ..serviceclient._status import STATUS_STOPPED, compose_discovery_status
     from ._service_lifecycle import _evaluate_service_signals
     from ._service_status import _read_service_status
+    from ._status_render import _liveness_from_resolution
 
     status = _read_service_status()
     if status is None:
+        # The singleton is machine-global, so an absent record in this status
+        # directory is not evidence that nothing is running. Deriving the axis
+        # from the same canonical composition the status verb uses is what
+        # keeps doctor and status from disagreeing about a live holder.
+        resolution = resolve_machine_service()
+        verdict = compose_discovery_status(
+            resolution,
+            _liveness_from_resolution(resolution),
+        )
+        if verdict.state == STATUS_STOPPED:
+            return {
+                "present": False,
+                "live": False,
+                "state": "not_started",
+                "label": "no service has been started (no discovery file)",
+            }
         return {
-            "present": False,
-            "live": False,
-            "state": "not_started",
-            "label": "no service has been started (no discovery file)",
+            "present": True,
+            "live": verdict.exit_code == 0,
+            "state": verdict.state,
+            "label": verdict.label,
+            "pid": verdict.signals.pid,
+            "port": verdict.port,
+            "pid_alive": verdict.signals.pid_alive,
+            "pid_matches_service": verdict.signals.pid_matches_service,
+            "port_listening": verdict.signals.port_listening,
+            "heartbeat_age_seconds": verdict.signals.heartbeat_age_s,
+            "heartbeat_stale": verdict.signals.heartbeat_stale,
+            "discovery_evidence": resolution.evidence(),
         }
 
     (

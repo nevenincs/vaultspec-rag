@@ -596,3 +596,116 @@ class TestWarmingStatusState:
             os.environ.pop(EnvVar.QDRANT_STORAGE_DIR, None)
             reset_base_config()
             reset_rag_config()
+
+
+class TestDegradedDiscoveryStatus:
+    """A live singleton holder is never rendered as a stopped service.
+
+    Exercised against a real held machine lock and a real on-disk pointer, with
+    both managed singleton paths relocated under the test's own temp root.
+    """
+
+    @staticmethod
+    def _isolate(tmp_path: Path) -> None:
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path / "status")
+        os.environ[EnvVar.QDRANT_STORAGE_DIR] = str(
+            tmp_path / "qdrant-server" / "storage"
+        )
+        (tmp_path / "status").mkdir(parents=True, exist_ok=True)
+        reset_base_config()
+        reset_rag_config()
+
+    @staticmethod
+    def _restore() -> None:
+        from .._machine_lock import release_machine_lock
+
+        release_machine_lock()
+        os.environ.pop(EnvVar.STATUS_DIR, None)
+        os.environ.pop(EnvVar.QDRANT_STORAGE_DIR, None)
+        reset_base_config()
+        reset_rag_config()
+
+    def test_unheld_singleton_still_reports_stopped(self, tmp_path: Path) -> None:
+        """The stopped contract is unchanged when nothing holds the singleton."""
+        self._isolate(tmp_path)
+        try:
+            result = runner.invoke(app, ["server", "status", "--json"])
+            assert result.exit_code == 3
+            payload = json.loads(result.stdout)
+            assert payload["data"]["state"] == "stopped"
+        finally:
+            self._restore()
+
+    def test_live_holder_without_a_pointer_reports_degraded(
+        self, tmp_path: Path
+    ) -> None:
+        """A holder that never published must not read as stopped.
+
+        This is the case that previously rendered as an absent service: the
+        status directory holds no record, so the machine singleton is the only
+        evidence, and something owns it.
+        """
+        from .._machine_lock import acquire_machine_lock
+
+        self._isolate(tmp_path)
+        try:
+            acquired, _holder = acquire_machine_lock()
+            assert acquired
+
+            result = runner.invoke(app, ["server", "status", "--json"])
+            assert result.exit_code == 4, result.stdout
+            payload = json.loads(result.stdout)
+            data = payload["data"]
+            assert data["state"] == "degraded_discovery"
+            assert data["discovery"]["reason"] == "pointer_missing"
+            assert data["discovery"]["holder_pid"] == os.getpid()
+            # The evidence, not just a bare verdict, reaches the operator.
+            assert str(os.getpid()) in data["discovery"]["evidence"]
+        finally:
+            self._restore()
+
+    def test_degraded_discovery_is_visible_in_human_output(
+        self, tmp_path: Path
+    ) -> None:
+        """The human summary names the condition rather than saying stopped."""
+        from .._machine_lock import acquire_machine_lock
+
+        self._isolate(tmp_path)
+        try:
+            acquired, _holder = acquire_machine_lock()
+            assert acquired
+
+            result = runner.invoke(app, ["server", "status"])
+            assert result.exit_code == 4, result.stdout
+            lowered = result.stdout.lower()
+            assert "holds the machine singleton" in lowered
+            assert "stopped" not in lowered
+        finally:
+            self._restore()
+
+    def test_doctor_agrees_with_status_on_a_live_holder(self, tmp_path: Path) -> None:
+        """Doctor and status must not disagree about a live holder."""
+        from .._machine_lock import acquire_machine_lock
+
+        self._isolate(tmp_path)
+        try:
+            acquired, _holder = acquire_machine_lock()
+            assert acquired
+
+            doctor = runner.invoke(app, ["server", "doctor", "--json"])
+            # Doctor also probes installed dependencies, which can fail for
+            # reasons unrelated to discovery. Surface that directly rather than
+            # letting it resurface as an opaque parse error on the next line.
+            assert doctor.stdout.strip(), (
+                f"doctor emitted nothing; exception={doctor.exception!r}"
+            )
+            payload = json.loads(doctor.stdout)
+            service = payload["data"]["service"]
+            assert service["present"] is True
+            assert service["live"] is False
+            assert service["state"] == "degraded_discovery"
+            assert "holds the machine singleton" in str(service["label"]).lower()
+            # A daemon that is present but not live must not read ready.
+            assert payload["data"]["status"] == "needs_restart"
+        finally:
+            self._restore()

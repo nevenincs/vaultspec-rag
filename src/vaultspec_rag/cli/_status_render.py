@@ -17,6 +17,13 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from ..serviceclient._discovery import MachineResolution, resolve_machine_service
+from ..serviceclient._status import (
+    STATUS_STOPPED,
+    DiscoveryStatus,
+    LivenessSignals,
+    compose_discovery_status,
+)
 from ._app import server_app
 from ._http_search import _try_http_admin
 from ._process import (
@@ -60,6 +67,7 @@ __all__ = [
     "_compute_state",
     "_evaluate_service_signals",
     "_explicit_port_state",
+    "_liveness_from_resolution",
     "_status_busy_label",
     "_status_env_label",
     "_status_jobs_label",
@@ -85,6 +93,88 @@ def _compute_token_match(
         response_token = probe_for_token["service_token"]
         return bool(response_token) and response_token == expected_token
     return None
+
+
+def _liveness_from_resolution(resolution: MachineResolution) -> LivenessSignals:
+    """Probe the live signals for an address the machine resolution produced."""
+    payload = resolution.payload or {}
+    pid = resolution.pointer_pid or 0
+    port = resolution.port or 0
+    token = resolution.service_token
+    pid_alive = _cli._is_pid_alive(pid) if pid > 0 else False
+    pid_matches = (
+        _cli._is_our_service(pid, port=port, expected_token=token)
+        if pid_alive
+        else False
+    )
+    port_listening = _port_is_listening(port) if port > 0 else False
+    age = resolution.heartbeat_age_s
+    window = resolution.stale_after_s
+    stale = age is not None and window is not None and age > window
+    return LivenessSignals(
+        pid=pid,
+        pid_alive=pid_alive,
+        pid_matches_service=pid_matches,
+        port_listening=port_listening,
+        heartbeat_age_s=age,
+        heartbeat_stale=stale,
+        service_token_match=_compute_token_match(
+            token, pid_alive, port_listening, port
+        ),
+        phase=_service_phase(payload),
+    )
+
+
+def _render_discovery_verdict(
+    verdict: DiscoveryStatus,
+    *,
+    json_mode: bool,
+    verbose: bool,
+) -> None:
+    """Render a verdict derived from machine-global discovery alone.
+
+    Reached when this status directory holds no record of its own, so the
+    machine singleton is the only evidence available.
+    """
+    port = verdict.port or 0
+    health = _health_probe(port) if verdict.signals.port_listening else None
+    if json_mode:
+        payload = verdict.as_dict()
+        payload["service_json_present"] = False
+        payload["port"] = verdict.port
+        if health is not None:
+            payload["health"] = health
+        _emit_json(
+            verdict.exit_code == 0,
+            "service.status",
+            data=payload,
+            **(
+                {"error": verdict.state, "message": verdict.label}
+                if verdict.exit_code != 0
+                else {}
+            ),
+        )
+        if verdict.exit_code != 0:
+            raise typer.Exit(code=verdict.exit_code)
+        return
+
+    if verbose:
+        _cli.console.print("Service status")
+        _print_detail_line("Local record", "not found")
+        _print_detail_line("Server", verdict.label)
+        _print_detail_line("Discovery", verdict.resolution.evidence())
+        if verdict.exit_code != 0:
+            raise typer.Exit(code=verdict.exit_code)
+        return
+
+    _render_status_summary(
+        state_label=verdict.label,
+        port=port or _default_service_port() or 8766,
+        port_listening=verdict.signals.port_listening,
+        health=health,
+        operational=None,
+        exit_code=verdict.exit_code,
+    )
 
 
 def _compute_state(
@@ -852,13 +942,27 @@ def service_status(
                 verbose=verbose,
             )
             return
-        # No service.json in the configured status dir => this config's
-        # service is stopped (exit 3), per the documented contract (exit 4
-        # is reserved for a *present* service.json that diverges). We do
-        # NOT probe the port here: on the shared default port another
-        # project's healthy service would otherwise be misreported as this
-        # config's orphan/divergent state (a multi-project false positive).
-        # `server start` keeps its own port guard against double-starts.
+        # This status directory holds no record, but the machine singleton is
+        # machine-global: a consumer that does not share the daemon's status
+        # directory still shares the singleton. Consult it before declaring
+        # anything stopped, so a live holder - whether it is serving or has
+        # merely failed to publish a trustworthy address - is never rendered
+        # as an absent service. Only a genuinely unheld singleton falls
+        # through to the stopped contract below.
+        verdict = compose_discovery_status(
+            (resolution := resolve_machine_service()),
+            _liveness_from_resolution(resolution),
+        )
+        if verdict.state != STATUS_STOPPED:
+            _render_discovery_verdict(verdict, json_mode=json_mode, verbose=verbose)
+            return
+        # Nothing holds the singleton => this config's service is stopped
+        # (exit 3), per the documented contract (exit 4 is reserved for a
+        # *present* service.json that diverges). We do NOT probe the port
+        # here: on the shared default port another project's healthy service
+        # would otherwise be misreported as this config's orphan/divergent
+        # state (a multi-project false positive). `server start` keeps its own
+        # port guard against double-starts.
         if json_mode:
             _emit_json(
                 False,
