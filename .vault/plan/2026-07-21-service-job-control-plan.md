@@ -96,7 +96,7 @@ Make manager-owned attempts translate cooperative unwind into truthful pause, ca
 
 Exercise real vault and code indexing attempts to prove safe unwind, convergence on resume, and absence of post-acknowledgement writes.
 
-- [ ] `W02.P07.S17` - Verify paused attempts release limiter, lease, writer ownership, thread, and pipeline resources and cancelled attempts make no later writes using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_index_job_control.py`.
+- [x] `W02.P07.S17` - Verify paused attempts release limiter, lease, writer ownership, thread, and pipeline resources and cancelled attempts make no later writes using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_index_job_control.py`.
 
 ## Wave `W03` - automatic orchestration and shutdown
 
