@@ -10,6 +10,7 @@ constructed - the classification methods operate on the resolved config alone.
 import json
 import os
 from collections.abc import Generator
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -24,6 +25,12 @@ from ..indexer import CodebaseIndexer
 from ..indexer import _config_epoch as ce
 from ..indexer._content_policy import ContentKind
 from ..indexer._preprocess_config import OnError, PreprocessRule
+from ..indexer._run_ledger import (
+    RunLedger,
+    RunOperation,
+    RunSignature,
+    RunTerminalState,
+)
 from ..progress import NullProgressReporter
 
 if TYPE_CHECKING:
@@ -362,6 +369,61 @@ class TestCodeDriftClassification:
             target=ContentKind.CODE,
         )
         assert _classify_current(indexer) == "clean"
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        pytest.param("model_identity", "model-v2", id="model"),
+        pytest.param("dense_dimensions", 16, id="dimensions"),
+        pytest.param("embedding_schema", 3, id="embedding-schema"),
+        pytest.param("payload_schema", 4, id="payload-schema"),
+        pytest.param("content_epoch", "content-v2", id="content"),
+        pytest.param("membership_epoch", "membership-v2", id="membership"),
+        pytest.param(
+            "preprocessing_identity",
+            "preprocessing-v2",
+            id="preprocessing",
+        ),
+        pytest.param(
+            "configuration_fingerprint",
+            "configuration-v2",
+            id="configuration",
+        ),
+    ],
+)
+def test_checkpoint_signature_drift_invalidates_before_reuse(
+    tmp_path: Path,
+    field: str,
+    replacement: str | int,
+) -> None:
+    """Every content- or storage-shaping signature change fails closed."""
+    ledger = RunLedger(tmp_path / "code-runs.sqlite3")
+    signature = RunSignature(
+        root_identity=str(tmp_path.resolve()),
+        collection_identity="codebase-v1",
+        source_type=ContentKind.CODE,
+        operation=RunOperation.FULL,
+        clean=False,
+        model_identity="model-v1",
+        dense_dimensions=8,
+        embedding_schema=2,
+        payload_schema=3,
+        content_epoch="content-v1",
+        membership_epoch="membership-v1",
+        preprocessing_identity="preprocessing-v1",
+        configuration_fingerprint="configuration-v1",
+        policy_fingerprint="policy-v1",
+    )
+    active = ledger.start_generation(signature)
+
+    changed = ledger.start_generation(replace(signature, **{field: replacement}))
+
+    assert changed.generation_id != active.generation_id
+    assert (
+        ledger.generation(active.generation_id).terminal_state
+        is RunTerminalState.INVALIDATED
+    )
 
 
 class TestScopedSnapshot:
