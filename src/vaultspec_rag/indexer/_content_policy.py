@@ -13,12 +13,17 @@ from enum import StrEnum
 
 __all__ = [
     "AdmissionDisposition",
+    "AdmissionPolicyError",
     "AdmissionReason",
     "ContentKind",
     "ContentRoute",
     "RootContentPolicy",
     "SourceProfileVersion",
 ]
+
+
+class AdmissionPolicyError(ValueError):
+    """Raised when explicit routes assign conflicting content ownership."""
 
 
 class ContentKind(StrEnum):
@@ -72,6 +77,16 @@ class RootContentPolicy:
 
     source_profile: SourceProfileVersion
     routes: tuple[ContentRoute, ...] = ()
+
+    def __post_init__(self) -> None:
+        owners: dict[str, ContentKind] = {}
+        for route in self.routes:
+            existing = owners.setdefault(route.pattern, route.kind)
+            if existing is not route.kind:
+                raise AdmissionPolicyError(
+                    f"content route {route.pattern!r} targets both "
+                    f"{existing.value!r} and {route.kind.value!r}"
+                )
 
 
 @dataclass(frozen=True, slots=True)
