@@ -532,6 +532,12 @@ def _spawn_service(
         PID of the spawned process.
 
     """
+    from .._test_isolation import enforce_pytest_managed_singleton_containment
+
+    enforce_pytest_managed_singleton_containment(
+        operation="spawn the managed service process",
+        targets=(log_path,),
+    )
     deadline = time.monotonic() + timeout if timeout is not None else None
     launch_token = uuid.uuid4().hex
     if deadline is not None and deadline <= time.monotonic():
@@ -831,6 +837,11 @@ def _terminate_pid(pid: int, timeout: float = 4.0) -> None:
             graceful service drain, escalation, and owned-Qdrant reap.
 
     """
+    from .._test_isolation import enforce_pytest_managed_singleton_containment
+
+    enforce_pytest_managed_singleton_containment(
+        operation="signal the managed service process",
+    )
     deadline = time.monotonic() + max(0.0, timeout)
     qdrant_identity = _owned_qdrant_identity(pid, deadline=deadline)
     if sys.platform == "win32":

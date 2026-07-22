@@ -161,6 +161,12 @@ def acquire_machine_lock() -> tuple[bool, int]:
     later acquire simply succeeds with no stale-file reclaim.
     """
     path = machine_lock_path()
+    from ._test_isolation import enforce_pytest_managed_singleton_containment
+
+    enforce_pytest_managed_singleton_containment(
+        operation="acquire the machine service lock",
+        targets=(path,),
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
     if not _try_lock_exclusive(fd):
@@ -190,6 +196,12 @@ def release_machine_lock() -> None:
     stale pid, and a dead/empty file is always acquirable.
     """
     path = machine_lock_path()
+    from ._test_isolation import enforce_pytest_managed_singleton_containment
+
+    enforce_pytest_managed_singleton_containment(
+        operation="release the machine service lock",
+        targets=(path,),
+    )
     fd = _held_fds.pop(str(path), None)
     if fd is None:
         return
@@ -207,6 +219,12 @@ def machine_lock_live_holder() -> int:
     and a second must not be spawned.
     """
     path = machine_lock_path()
+    from ._test_isolation import enforce_pytest_managed_singleton_containment
+
+    enforce_pytest_managed_singleton_containment(
+        operation="probe the machine service lock",
+        targets=(path,),
+    )
     if str(path) in _held_fds:
         # We already hold it in this process.
         return os.getpid()

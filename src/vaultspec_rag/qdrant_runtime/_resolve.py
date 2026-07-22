@@ -528,6 +528,12 @@ def reap_qdrant_orphan(
     """
     import time as _time
 
+    from .._test_isolation import enforce_pytest_managed_singleton_containment
+
+    enforce_pytest_managed_singleton_containment(
+        operation="signal a managed Qdrant orphan",
+    )
+
     deadline = _time.monotonic() + max(0.0, wait_seconds)
 
     def target_is_gone_or_replaced() -> bool:
@@ -670,6 +676,12 @@ def write_qdrant_identity(
     if qdrant_start_time is None:
         qdrant_start_time = pid_start_time(qdrant_pid)
     path = qdrant_identity_path()
+    from .._test_isolation import enforce_pytest_managed_singleton_containment
+
+    enforce_pytest_managed_singleton_containment(
+        operation="write the managed Qdrant identity",
+        targets=(path,),
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(

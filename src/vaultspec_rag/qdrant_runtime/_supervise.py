@@ -424,22 +424,16 @@ class QdrantSupervisor:
                 the rotating log sink.
             OSError: If the spawn itself fails.
         """
-        from .._test_isolation import enforce_pytest_singleton_containment
+        from .._test_isolation import enforce_pytest_managed_singleton_containment
 
         snapshots_dir = self.storage_dir.parent / "snapshots"
-        enforce_pytest_singleton_containment(
-            self.storage_dir,
-            operation="create supervised managed Qdrant storage",
-        )
-        enforce_pytest_singleton_containment(
-            snapshots_dir,
-            operation="create supervised managed Qdrant snapshots",
-        )
+        containment_targets = [self.storage_dir, snapshots_dir]
         if self.log_path is not None:
-            enforce_pytest_singleton_containment(
-                self.log_path,
-                operation="open the supervised managed Qdrant log",
-            )
+            containment_targets.append(self.log_path)
+        enforce_pytest_managed_singleton_containment(
+            operation="create supervised managed Qdrant storage",
+            targets=containment_targets,
+        )
 
         if self.is_alive():
             raise RuntimeError(f"qdrant child pid={self.pid} is already running")
@@ -770,11 +764,13 @@ class QdrantSupervisor:
         """
         proc = self._proc
         if proc is not None and proc.poll() is None:
-            from .._test_isolation import enforce_pytest_singleton_containment
+            from .._test_isolation import (
+                enforce_pytest_managed_singleton_containment,
+            )
 
-            enforce_pytest_singleton_containment(
-                self.storage_dir,
+            enforce_pytest_managed_singleton_containment(
                 operation="stop a supervised managed Qdrant process",
+                targets=(self.storage_dir,),
             )
             try:
                 if sys.platform == "win32":
