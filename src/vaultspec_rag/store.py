@@ -15,9 +15,10 @@ from contextlib import contextmanager, nullcontext
 from typing import TYPE_CHECKING, Any, cast
 
 from . import store_schema
-from ._store_locks import FileLock, VaultStoreLockedError
+from ._store_locks import FileLock, VaultStoreLockedError, acquire_collection_locks
 from ._store_models import (
     CodeChunk,
+    DocumentChunk,
     VaultChunk,
     VaultDocument,
     _code_chunk_payload,
@@ -45,6 +46,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "CodeChunk",
+    "DocumentChunk",
     "VaultDocument",
     "VaultStore",
     "VaultStoreLockedError",
@@ -123,12 +125,12 @@ def _check_rag_deps() -> None:
 
 
 class VaultStore(_VaultSearchMixin):
-    """Qdrant-backed vector store for vault documents and codebase chunks.
+    """Qdrant-backed vector store for vault, code, and document content.
 
     Storage lives at ``{root_dir}/{data_dir}/{qdrant_dir}/`` (by default
     ``.vault/data/search-data/qdrant/``).  The collection ``vault_docs``
-    holds one point per indexed document, and ``codebase_docs`` holds
-    points per source code chunk.
+    holds vault chunks, ``codebase_docs`` holds source chunks, and
+    ``document_docs`` holds independently owned document chunks.
 
     In server mode (``cfg.qdrant_url`` set) one shared qdrant server
     hosts every root, so the instance-level collection names gain a
@@ -137,8 +139,9 @@ class VaultStore(_VaultSearchMixin):
     suffix of the namespaced names.
     """
 
-    TABLE_NAME = "vault_docs"
-    CODE_TABLE_NAME = "codebase_docs"
+    TABLE_NAME = store_schema.VAULT_COLLECTION
+    CODE_TABLE_NAME = store_schema.CODE_COLLECTION
+    DOCUMENT_TABLE_NAME = store_schema.DOCUMENT_COLLECTION
 
     def __init__(
         self,
@@ -180,13 +183,14 @@ class VaultStore(_VaultSearchMixin):
         # the class-constant / instance-override split this class relies on.
         self.TABLE_NAME: str = _prefix + VaultStore.TABLE_NAME  # pyright: ignore[reportConstantRedefinition]
         self.CODE_TABLE_NAME: str = _prefix + VaultStore.CODE_TABLE_NAME  # pyright: ignore[reportConstantRedefinition]
+        self.DOCUMENT_TABLE_NAME: str = _prefix + VaultStore.DOCUMENT_TABLE_NAME  # pyright: ignore[reportConstantRedefinition]
         # Locking is backend-aware and split per concern. The lifecycle
         # lock guards client open/close, collection create/drop, and the
         # ensure flags. Point operations take their collection's own
         # lock: QdrantLocal is not thread-safe within a collection, but
         # each collection owns independent state (its own in-memory
-        # structures and sqlite connection), so vault and code traffic
-        # never serialize against each other. A remote Qdrant server
+        # structures and sqlite connection), so vault, code, and document
+        # traffic never serialize against each other. A remote Qdrant server
         # handles its own concurrency, so server-mode point operations
         # take no lock at all. The lock dict is keyed by the resolved
         # (possibly prefixed) collection names assigned above.
@@ -194,6 +198,7 @@ class VaultStore(_VaultSearchMixin):
         self._collection_locks: dict[str, threading.RLock] = {
             self.TABLE_NAME: threading.RLock(),
             self.CODE_TABLE_NAME: threading.RLock(),
+            self.DOCUMENT_TABLE_NAME: threading.RLock(),
         }
         self._client: QdrantClient | None = None
 
@@ -245,6 +250,7 @@ class VaultStore(_VaultSearchMixin):
         self._embedding_dim = embedding_dim or store_schema.effective_dense_dim()
         self._vault_ensured = False
         self._code_ensured = False
+        self._document_ensured = False
         # Best-effort storage-manifest attribution is recorded at most once per
         # store instance (server mode only) so it never re-enters the hot path.
         self._manifest_recorded = False
@@ -308,11 +314,7 @@ class VaultStore(_VaultSearchMixin):
         fixed order so no point operation is in flight when the client
         goes away.
         """
-        with (
-            self._lifecycle_lock,
-            self._collection_locks[self.TABLE_NAME],
-            self._collection_locks[self.CODE_TABLE_NAME],
-        ):
+        with self._lifecycle_lock, acquire_collection_locks(self._collection_locks):
             if self._client is not None:
                 self._client.close()
                 self._client = None
@@ -459,6 +461,14 @@ class VaultStore(_VaultSearchMixin):
                 logger.info("Dropped collection '%s'", self.CODE_TABLE_NAME)
             self._code_ensured = False
 
+    def drop_document_table(self) -> None:
+        """Drop only the independently owned document collection."""
+        with self._lifecycle_lock, self._point_lock(self.DOCUMENT_TABLE_NAME):
+            if self.client.collection_exists(self.DOCUMENT_TABLE_NAME):
+                self._delete_collection_hard(self.DOCUMENT_TABLE_NAME)
+                logger.info("Dropped collection '%s'", self.DOCUMENT_TABLE_NAME)
+            self._document_ensured = False
+
     def _record_manifest(self) -> None:
         """Record this root in the storage manifest (server mode only).
 
@@ -591,6 +601,64 @@ class VaultStore(_VaultSearchMixin):
 
             self._ensure_code_indexes()
             self._code_ensured = True
+
+    def _ensure_document_indexes(self) -> None:
+        """Create every declared document payload index idempotently."""
+        from qdrant_client import models
+
+        for fname in store_schema.DOCUMENT_KEYWORD_INDEXES:
+            with _suppress_local_qdrant_warnings():
+                self.client.create_payload_index(
+                    collection_name=self.DOCUMENT_TABLE_NAME,
+                    field_name=fname,
+                    field_schema=models.PayloadSchemaType.KEYWORD,
+                )
+        for fname in store_schema.DOCUMENT_INTEGER_INDEXES:
+            with _suppress_local_qdrant_warnings():
+                self.client.create_payload_index(
+                    collection_name=self.DOCUMENT_TABLE_NAME,
+                    field_name=fname,
+                    field_schema=models.PayloadSchemaType.INTEGER,
+                )
+
+    def ensure_document_table(self) -> None:
+        """Create the document collection and its declared payload indexes."""
+        self._record_manifest()
+        with self._lifecycle_lock:
+            if self._document_ensured:
+                return
+            if not self.client.collection_exists(self.DOCUMENT_TABLE_NAME):
+                self._ensure_collection(self.DOCUMENT_TABLE_NAME)
+            self._ensure_document_indexes()
+            self._document_ensured = True
+
+    @staticmethod
+    def _document_chunk_payload(
+        chunk: DocumentChunk,
+    ) -> store_schema.DocumentChunkPayload:
+        """Build the canonical document collection payload."""
+        locator = chunk.payload.locator
+        value = locator.value if locator is not None else None
+        end = locator.end if locator is not None else None
+        return {
+            "document_id": chunk.id,
+            "source_path": chunk.payload.source_path,
+            "unit_ordinal": chunk.payload.unit_ordinal,
+            "content_fingerprint": chunk.payload.content_fingerprint,
+            "content": chunk.payload.content,
+            "title": chunk.payload.title,
+            "section": chunk.payload.section,
+            "anchor": chunk.payload.anchor,
+            "locator_kind": locator.kind if locator is not None else None,
+            "locator_value_int": value if isinstance(value, int) else None,
+            "locator_value_str": value if isinstance(value, str) else None,
+            "locator_end_int": end if isinstance(end, int) else None,
+            "locator_end_str": end if isinstance(end, str) else None,
+            "document_metadata": chunk.payload.document_metadata.materialize(),
+            "unit_metadata": chunk.payload.unit_metadata.materialize(),
+            "extractor_id": chunk.payload.extractor_id,
+            "extractor_version": chunk.payload.extractor_version,
+        }
 
     def upsert_documents(
         self,
@@ -734,6 +802,47 @@ class VaultStore(_VaultSearchMixin):
             )
         logger.info("Upserted %d codebase chunk(s)", len(chunks))
 
+    def upsert_document_content_chunks(
+        self,
+        chunks: list[DocumentChunk],
+        *,
+        write_policy: StoreWritePolicy | None,
+    ) -> None:
+        """Insert or replace document-native chunks by deterministic ID."""
+        if not chunks:
+            return
+
+        from qdrant_client import models
+
+        points: list[Any] = []
+        for chunk in chunks:
+            vector: dict[str, Any] = {"dense": chunk.vector}
+            if chunk.sparse_indices:
+                vector["sparse"] = models.SparseVector(
+                    indices=chunk.sparse_indices,
+                    values=chunk.sparse_values,
+                )
+            points.append(
+                models.PointStruct(
+                    id=self._stable_id(chunk.id),
+                    vector=vector,
+                    payload=cast(
+                        "dict[str, Any]",
+                        self._document_chunk_payload(chunk),
+                    ),
+                )
+            )
+
+        self.ensure_document_table()
+        with self._point_lock(self.DOCUMENT_TABLE_NAME):
+            self._guarded_upsert(
+                self.DOCUMENT_TABLE_NAME,
+                points,
+                "document chunks",
+                write_policy=write_policy,
+            )
+        logger.info("Upserted %d document chunk(s)", len(chunks))
+
     def _guarded_upsert(
         self,
         collection_name: str,
@@ -820,6 +929,44 @@ class VaultStore(_VaultSearchMixin):
                 points_selector=models.PointIdsList(points=point_ids),
             )
         logger.info("Deleted %d code chunk(s)", len(ids))
+
+    def delete_document_content_chunks(self, ids: list[str]) -> None:
+        """Remove document-native chunks by their deterministic IDs."""
+        if not ids:
+            return
+        from qdrant_client import models
+
+        self.ensure_document_table()
+        point_ids: list[int | str | UUID] = [self._stable_id(value) for value in ids]
+        with self._point_lock(self.DOCUMENT_TABLE_NAME):
+            self.client.delete(
+                collection_name=self.DOCUMENT_TABLE_NAME,
+                points_selector=models.PointIdsList(points=point_ids),
+            )
+        logger.info("Deleted %d document chunk(s)", len(ids))
+
+    def delete_document_sources(self, source_paths: set[str]) -> None:
+        """Remove every document chunk belonging to the selected sources."""
+        if not source_paths:
+            return
+        from qdrant_client import models
+
+        self.ensure_document_table()
+        with self._point_lock(self.DOCUMENT_TABLE_NAME):
+            self.client.delete(
+                collection_name=self.DOCUMENT_TABLE_NAME,
+                points_selector=models.FilterSelector(
+                    filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="source_path",
+                                match=models.MatchAny(any=sorted(source_paths)),
+                            )
+                        ]
+                    )
+                ),
+            )
+        logger.info("Deleted document chunks for %d source(s)", len(source_paths))
 
     def get_all_ids(self) -> set[str]:
         """Return the set of all document ``id`` values in the store.
@@ -935,6 +1082,59 @@ class VaultStore(_VaultSearchMixin):
         with self._point_lock(self.CODE_TABLE_NAME):
             return self._scroll_all_ids(self.CODE_TABLE_NAME, "chunk_id")
 
+    def get_all_document_content_ids(self) -> set[str]:
+        """Return every deterministic ID in the document collection."""
+        self.ensure_document_table()
+        with self._point_lock(self.DOCUMENT_TABLE_NAME):
+            return self._scroll_all_ids(self.DOCUMENT_TABLE_NAME, "document_id")
+
+    def scroll_document_content(
+        self,
+        *,
+        limit: int = 100,
+        offset: Any = None,
+        source_paths: set[str] | None = None,
+        with_vectors: bool = False,
+    ) -> tuple[list[dict[str, Any]], Any]:
+        """Return one bounded page from the document collection."""
+        from qdrant_client import models
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise ValueError("document scroll limit must be a positive integer")
+        if limit > 1000:
+            raise ValueError("document scroll limit must not exceed 1000")
+        scroll_filter = None
+        if source_paths is not None:
+            if not source_paths:
+                return [], None
+            scroll_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="source_path",
+                        match=models.MatchAny(any=sorted(source_paths)),
+                    )
+                ]
+            )
+        self.ensure_document_table()
+        with self._point_lock(self.DOCUMENT_TABLE_NAME):
+            records, next_offset = self.client.scroll(
+                collection_name=self.DOCUMENT_TABLE_NAME,
+                scroll_filter=scroll_filter,
+                limit=limit,
+                offset=offset,
+                with_payload=True,
+                with_vectors=with_vectors,
+            )
+        rows = [
+            {
+                "id": str(record.id),
+                "payload": dict(record.payload or {}),
+                "vector": record.vector if with_vectors else None,
+            }
+            for record in records
+        ]
+        return rows, next_offset
+
     def _scroll_all_ids(self, collection: str, id_field: str) -> set[str]:
         """Scroll through all points and collect the id field from payloads.
 
@@ -1035,6 +1235,12 @@ class VaultStore(_VaultSearchMixin):
         self.ensure_code_table()
         with self._point_lock(self.CODE_TABLE_NAME):
             return self.client.count(collection_name=self.CODE_TABLE_NAME).count
+
+    def count_document(self) -> int:
+        """Return the point count in the document collection."""
+        self.ensure_document_table()
+        with self._point_lock(self.DOCUMENT_TABLE_NAME):
+            return self.client.count(collection_name=self.DOCUMENT_TABLE_NAME).count
 
     def get_by_id(self, doc_id: str) -> dict[str, Any] | None:
         """Retrieve a single document by ID, or ``None`` if not found.

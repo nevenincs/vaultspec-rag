@@ -8,11 +8,23 @@ or its error type.
 
 from __future__ import annotations
 
-from contextlib import suppress
-from typing import TYPE_CHECKING
+from contextlib import ExitStack, contextmanager, suppress
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Generator, Mapping
+
+
+@contextmanager
+def acquire_collection_locks(
+    locks: Mapping[str, Any],
+) -> Generator[None]:
+    """Acquire collection guards in deterministic name order."""
+    with ExitStack() as stack:
+        for name in sorted(locks):
+            stack.enter_context(locks[name])
+        yield
 
 
 class VaultStoreLockedError(RuntimeError):
