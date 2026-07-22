@@ -23,6 +23,7 @@ from ._public_search import (
     search_documents,
     search_documents_timed,
 )
+from ._source_types import PublicSourceType, parse_source_type
 from .graph_cache import GraphCache
 from .progress import NullProgressReporter
 from .registry import get_registry
@@ -696,7 +697,10 @@ def get_related(
 def clean(
     root_dir: pathlib.Path,
     *,
-    clean_type: Literal["vault", "code", "document", "all"] = "all",
+    clean_type: PublicSourceType
+    | Literal[
+        "vault", "code", "document", "combined", "all", "codebase", "docs"
+    ] = "all",
 ) -> list[str]:
     """Wipe the selected collections and their index metadata sidecars.
 
@@ -704,11 +708,12 @@ def clean(
 
     Args:
         root_dir: Workspace root directory.
-        clean_type: What to wipe: 'vault', 'code', 'document', or 'all'.
+        clean_type: Canonical source type or an established compatibility alias.
 
     Returns:
         List of cleared source labels (e.g. ['vault', 'codebase']).
     """
+    source_type = parse_source_type(clean_type, allow_aliases=True)
     root = _resolve(root_dir)
     from .config import get_config
     from .registry import get_registry
@@ -723,9 +728,10 @@ def clean(
 
     store = VaultStore(root)
     try:
-        do_vault = clean_type in ("vault", "all")
-        do_code = clean_type in ("code", "all")
-        do_document = clean_type in ("document", "all")
+        combined = source_type is PublicSourceType.COMBINED
+        do_vault = source_type is PublicSourceType.VAULT or combined
+        do_code = source_type is PublicSourceType.CODE or combined
+        do_document = source_type is PublicSourceType.DOCUMENT or combined
         if do_vault:
             store.drop_table()
             store.ensure_table()
@@ -742,13 +748,13 @@ def clean(
         store.close()
 
     data_dir = root / cfg.data_dir
-    if clean_type in ("vault", "all"):
+    if do_vault:
         meta = data_dir / cfg.index_metadata_file
         meta.unlink(missing_ok=True)
-    if clean_type in ("code", "all"):
+    if do_code:
         meta = data_dir / cfg.code_index_metadata_file
         meta.unlink(missing_ok=True)
-    if clean_type in ("document", "all"):
+    if do_document:
         from .indexer._document_meta import DOCUMENT_META_FILENAME
 
         meta = data_dir / DOCUMENT_META_FILENAME
