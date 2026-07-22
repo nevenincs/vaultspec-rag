@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from sentence_transformers import CrossEncoder
 
     from .embeddings import EmbeddingModel
-    from .indexer import CodebaseIndexer, VaultIndexer
+    from .indexer import CodebaseIndexer, DocumentIndexer, VaultIndexer
     from .search import VaultSearcher
     from .store import VaultStore
 
@@ -94,6 +94,7 @@ class ProjectSlot:
     searcher: VaultSearcher
     vault_indexer: VaultIndexer
     code_indexer: CodebaseIndexer
+    document_indexer: DocumentIndexer
     graph_cache: GraphCache
     last_access: float = field(default=0.0)
     ref_count: int = field(default=0)
@@ -322,7 +323,7 @@ class ServiceRegistry:
                 self._projects[root] = slot
         return slot
 
-    def _store_count(self, root: Path, *, code: bool) -> int:
+    def _store_count(self, root: Path, *, domain: str) -> int:
         """Count points in one collection without loading the GPU model.
 
         Counting only touches the vector store, so it never loads the
@@ -334,15 +335,23 @@ class ServiceRegistry:
         without requiring a GPU at all.
         """
         with self.lease_store(root) as store:
-            return store.count_code() if code else store.count()
+            if domain == "code":
+                return store.count_code()
+            if domain == "document":
+                return store.count_document()
+            return store.count()
 
     def vault_doc_count(self, root: Path) -> int:
         """Indexed vault-doc count for *root*, model-free (see _store_count)."""
-        return self._store_count(root, code=False)
+        return self._store_count(root, domain="vault")
 
     def code_chunk_count(self, root: Path) -> int:
         """Indexed code-chunk count for *root*, model-free (see _store_count)."""
-        return self._store_count(root, code=True)
+        return self._store_count(root, domain="code")
+
+    def document_chunk_count(self, root: Path) -> int:
+        """Indexed document-chunk count for *root*, without loading a model."""
+        return self._store_count(root, domain="document")
 
     @contextlib.contextmanager
     def lease_store(self, root: Path) -> Generator[VaultStore]:
@@ -704,7 +713,7 @@ class ServiceRegistry:
             A fully wired ``ProjectSlot``.
         """
         from .config import get_config
-        from .indexer import CodebaseIndexer, VaultIndexer
+        from .indexer import CodebaseIndexer, DocumentIndexer, VaultIndexer
         from .search import VaultSearcher
         from .store import VaultStore
 
@@ -735,6 +744,12 @@ class ServiceRegistry:
                 store,
                 gpu_lock=self._gpu_lock,
             )
+            document_indexer = DocumentIndexer(
+                root,
+                model,
+                store,
+                gpu_lock=self._gpu_lock,
+            )
         except Exception:
             store.close()
             raise
@@ -745,6 +760,7 @@ class ServiceRegistry:
             searcher=searcher,
             vault_indexer=vault_indexer,
             code_indexer=code_indexer,
+            document_indexer=document_indexer,
             graph_cache=graph_cache,
         )
 

@@ -29,6 +29,7 @@ from ._chunking import (
     _is_binary,
 )
 from ._codebase_indexer import CodebaseIndexer
+from ._document_indexer import DocumentIndexer
 from ._streaming import (
     _release_cuda_cache,
     _stream_encode_and_upsert_vault,
@@ -51,6 +52,7 @@ __all__ = [
     "_TOP_LEVEL_NODES",
     "ASTChunker",
     "CodebaseIndexer",
+    "DocumentIndexer",
     "IndexResult",
     "TextSplitter",
     "VaultIndexer",

@@ -43,8 +43,7 @@ if TYPE_CHECKING:
     import pathlib
 
     from ._preprocess_config import PreprocessRule
-    from ._preprocess_schema import PreprocOutput
-    from ._preprocess_schema import PreprocessInvocationMode
+    from ._preprocess_schema import PreprocessInvocationMode, PreprocOutput
 
 logger = logging.getLogger(__name__)
 

@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from ..indexer._preprocess_cache import (
+    PreprocessCacheIdentity,
     clear_preprocess_cache,
     preprocess_cache_dir,
     read_cached_output,
@@ -32,46 +33,64 @@ def _output(text: str = "extracted") -> PreprocOutput:
     )
 
 
+def _identity(
+    source_hash: str = "hash1",
+    execution_fingerprint: str = "extract-v1",
+    source_path: str = "docs/a.pdf",
+) -> PreprocessCacheIdentity:
+    return PreprocessCacheIdentity(
+        source_path=source_path,
+        source_hash=source_hash,
+        execution_fingerprint=execution_fingerprint,
+    )
+
+
 def test_miss_on_empty_cache(tmp_path: Path) -> None:
     root = preprocess_cache_dir(tmp_path)
-    assert read_cached_output(root, "hash1", "extract {path}") is None
+    assert read_cached_output(root, _identity()) is None
 
 
 def test_write_then_hit(tmp_path: Path) -> None:
     root = preprocess_cache_dir(tmp_path)
-    write_cached_output(root, "hash1", "extract {path}", _output("hello"))
-    hit = read_cached_output(root, "hash1", "extract {path}")
+    identity = _identity()
+    write_cached_output(root, identity, _output("hello"))
+    hit = read_cached_output(root, identity)
     assert hit is not None
     assert hit.text == "hello"
 
 
 def test_different_source_hash_misses(tmp_path: Path) -> None:
     root = preprocess_cache_dir(tmp_path)
-    write_cached_output(root, "hash1", "extract {path}", _output())
-    assert read_cached_output(root, "hash2", "extract {path}") is None
+    write_cached_output(root, _identity(), _output())
+    assert read_cached_output(root, _identity(source_hash="hash2")) is None
 
 
 def test_command_change_invalidates(tmp_path: Path) -> None:
     root = preprocess_cache_dir(tmp_path)
-    write_cached_output(root, "hash1", "extract-v1 {path}", _output("old"))
+    original = _identity(execution_fingerprint="extract-v1")
+    write_cached_output(root, original, _output("old"))
     # Same source, bumped extractor command -> a fresh key -> a miss.
-    assert read_cached_output(root, "hash1", "extract-v2 {path}") is None
+    assert (
+        read_cached_output(root, _identity(execution_fingerprint="extract-v2"))
+        is None
+    )
     # The original entry still hits on its own command.
-    assert read_cached_output(root, "hash1", "extract-v1 {path}") is not None
+    assert read_cached_output(root, original) is not None
 
 
 def test_corrupt_entry_is_a_miss(tmp_path: Path) -> None:
     root = preprocess_cache_dir(tmp_path)
-    write_cached_output(root, "hash1", "extract {path}", _output())
+    identity = _identity()
+    write_cached_output(root, identity, _output())
     # Corrupt every cached json file in place.
     for json_file in root.rglob("*.json"):
         json_file.write_text("{ not valid", encoding="utf-8")
-    assert read_cached_output(root, "hash1", "extract {path}") is None
+    assert read_cached_output(root, identity) is None
 
 
 def test_clear_removes_subtree(tmp_path: Path) -> None:
     root = preprocess_cache_dir(tmp_path)
-    write_cached_output(root, "hash1", "extract {path}", _output())
+    write_cached_output(root, _identity(), _output())
     assert root.exists()
     clear_preprocess_cache(root)
     assert not root.exists()
@@ -96,8 +115,13 @@ def test_units_output_round_trips(tmp_path: Path) -> None:
             ],
         }
     )
-    write_cached_output(root, "h", "xlsx {path}", output)
-    hit = read_cached_output(root, "h", "xlsx {path}")
+    identity = _identity(
+        source_hash="h",
+        execution_fingerprint="xlsx-v2",
+        source_path="book.xlsx",
+    )
+    write_cached_output(root, identity, output)
+    hit = read_cached_output(root, identity)
     assert hit is not None
     assert hit.units is not None
     assert hit.units[0].locator is not None

@@ -23,17 +23,17 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 __all__ = [
+    "PREPROCESS_INVOCATION_ENV",
     "SUPPORTED_SCHEMA_VERSION",
     "Locator",
     "LocatorKind",
-    "PREPROCESS_INVOCATION_ENV",
-    "PreprocessInvocation",
-    "PreprocessInvocationMode",
     "PreprocOutput",
     "PreprocUnit",
+    "PreprocessInvocation",
+    "PreprocessInvocationMode",
     "UnsupportedSchemaVersionError",
-    "validate_preproc_output",
     "load_preprocess_invocation",
+    "validate_preproc_output",
 ]
 
 #: The schema major version this indexer understands. A document declaring a
