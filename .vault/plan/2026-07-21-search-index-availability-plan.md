@@ -50,14 +50,14 @@ Terra xhigh, the high-tier production executor, implements the accepted root-sco
 
 Normalize copied compatibility and canonical job snapshots, then make only non-authoritative empty responses fail with the stable structured contract.
 
-- [ ] `W02.P02.S19` - Implement bounded root and source job matching plus the structured unavailable response using Terra xhigh; `src/vaultspec_rag/server/_search_availability.py`.
-- [ ] `W02.P02.S20` - Integrate double job-state observation and HTTP 503 emission into the search route using Terra xhigh; `src/vaultspec_rag/server/_routes.py`.
+- [x] `W02.P02.S19` - Implement bounded root and source job matching plus the structured unavailable response using Terra xhigh; `src/vaultspec_rag/server/_search_availability.py`.
+- [x] `W02.P02.S20` - Integrate double job-state observation and HTTP 503 emission into the search route using Terra xhigh; `src/vaultspec_rag/server/_routes.py`.
 
 ### Phase `W02.P07` - MCP failure translation
 
 Translate structured daemon search failures before output-schema validation so Model Context Protocol callers receive a recoverable tool error instead of synthetic empty results.
 
-- [ ] `W02.P07.S21` - Map structured daemon search failures to recoverable MCP tool errors without synthesizing results using Terra xhigh; `src/vaultspec_rag/mcp/_tools.py`.
+- [x] `W02.P07.S21` - Map structured daemon search failures to recoverable MCP tool errors without synthesizing results using Terra xhigh; `src/vaultspec_rag/mcp/_tools.py`.
 
 ## Wave `W03` - acceptance and review
 
