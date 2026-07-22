@@ -22,12 +22,43 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from ..config import PreprocessMode
+    from ._content_policy import RootContentPolicy
     from ._preprocess_config import PreprocessRule
+    from ._resolved_policy import ResolvedPreprocessRule
+
+__all__ = [
+    "NormalizedPolicyFingerprints",
+    "code_content_epoch",
+    "code_membership_epoch",
+    "resolved_policy_fingerprints",
+    "vault_content_epoch",
+]
+
+RAW_CHUNK_SEMANTICS_VERSION = 1
+PARSER_CAPABILITY_VERSION = 1
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizedPolicyFingerprints:
+    """Stable persistent, operation, content, execution, and snapshot IDs."""
+
+    persistent_membership: str
+    operation_membership: str
+    content: str
+    execution: str
+    snapshot: str
+
+    @property
+    def membership(self) -> str:
+        """Return the exact operation membership identity."""
+        return self.operation_membership
 
 
 def _digest(payload: object) -> str:
@@ -53,6 +84,104 @@ def _preprocess_patterns(rules: Sequence[PreprocessRule]) -> list[str]:
     return [rule.pattern for rule in rules]
 
 
+def resolved_policy_fingerprints(
+    *,
+    policy_schema_version: int,
+    content_policy: RootContentPolicy,
+    gitignore_patterns: Sequence[str],
+    vaultragignore_patterns: Sequence[str],
+    extra_excludes: Sequence[str],
+    preprocess_schema_version: int,
+    preprocess_rules: Sequence[ResolvedPreprocessRule],
+    decoder_encoding: str,
+    decoder_errors: str,
+    normalize_newlines: bool,
+    execution_mode: PreprocessMode,
+    html_strip: bool,
+    max_emitted_bytes: int,
+) -> NormalizedPolicyFingerprints:
+    """Hash a resolved policy without depending on object identity.
+
+    Ordered rules and ignores retain semantic order. Ephemeral excludes shape
+    the operation identity without changing the persistent-membership digest
+    used by durable compatibility adapters.
+    """
+    persistent_membership_payload = {
+        "version": policy_schema_version,
+        "source_profile": content_policy.source_profile.value,
+        "routes": [
+            {"pattern": route.pattern, "target": route.kind.value}
+            for route in content_policy.routes
+        ],
+        "gitignore": list(gitignore_patterns),
+        "vaultragignore": list(vaultragignore_patterns),
+        "preprocess_schema_version": preprocess_schema_version,
+        "preprocess": [
+            {
+                "pattern": rule.pattern,
+                "target": rule.target.value,
+                "priority": rule.priority,
+                "order": rule.order,
+            }
+            for rule in preprocess_rules
+        ],
+    }
+    operation_membership_payload = {
+        **persistent_membership_payload,
+        "extra_excludes": list(extra_excludes),
+    }
+    content_payload = {
+        "version": policy_schema_version,
+        "raw_chunk_semantics_version": RAW_CHUNK_SEMANTICS_VERSION,
+        "parser_capability_version": PARSER_CAPABILITY_VERSION,
+        "preprocess_schema_version": preprocess_schema_version,
+        "decoder": {
+            "encoding": decoder_encoding,
+            "errors": decoder_errors,
+            "normalize_newlines": normalize_newlines,
+        },
+        "html_strip": bool(html_strip),
+        "max_emitted_bytes": int(max_emitted_bytes),
+        "preprocess": [
+            {
+                "pattern": rule.pattern,
+                "command": rule.command,
+                "entry_point": rule.entry_point,
+                "target": rule.target.value,
+                "extractor_version": rule.extractor_version,
+                "on_error": rule.on_error,
+                "timeout_s": rule.timeout_s,
+                "options": rule.options,
+                "priority": rule.priority,
+                "order": rule.order,
+                "batch": rule.batch,
+            }
+            for rule in preprocess_rules
+        ],
+    }
+    persistent_membership = _digest(persistent_membership_payload)
+    operation_membership = _digest(operation_membership_payload)
+    content = _digest(content_payload)
+    execution = _digest(
+        {"version": policy_schema_version, "preprocess_mode": execution_mode}
+    )
+    snapshot = _digest(
+        {
+            "version": policy_schema_version,
+            "operation_membership": operation_membership,
+            "content": content,
+            "execution": execution,
+        }
+    )
+    return NormalizedPolicyFingerprints(
+        persistent_membership=persistent_membership,
+        operation_membership=operation_membership,
+        content=content,
+        execution=execution,
+        snapshot=snapshot,
+    )
+
+
 def code_membership_epoch(
     *,
     gitignore_patterns: Sequence[str],
@@ -61,16 +190,14 @@ def code_membership_epoch(
 ) -> str:
     """Hash the inputs that decide which code files are indexed.
 
-    The gitignore patterns are sorted before hashing so a mere change in the
-    filesystem traversal order of nested ``.gitignore`` files (which is not
-    guaranteed stable across runs) never registers as spurious drift; a genuine
-    pattern add or remove still changes the multiset and thus the digest. The
-    ``.vaultragignore`` file patterns keep their file order, and CLI
+    Gitignore order remains significant because later rules and negations may
+    override earlier rules. Directory traversal is already normalized by the
+    collector. The ``.vaultragignore`` file patterns keep their file order, and CLI
     ``--exclude`` patterns are deliberately excluded upstream so the epoch does
     not thrash between an ephemeral CLI run and the resident service.
     """
     payload = {
-        "gitignore": sorted(gitignore_patterns),
+        "gitignore": list(gitignore_patterns),
         "vaultragignore": list(vaultragignore_patterns),
         "preprocess_patterns": _preprocess_patterns(preprocess_rules),
     }

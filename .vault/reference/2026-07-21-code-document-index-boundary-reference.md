@@ -100,6 +100,15 @@ decoder policy, and their fingerprints. Full/scoped discovery, worker execution,
 dispatch confirmation, dry-run, epoch calculation, and checkpoints consume that object.
 Configuration control events schedule all affected kinds for unscoped reconciliation.
 
+The S06 implementation audit sharpened that boundary. Canonical tuples are authoritative;
+compiled ignore and preprocess matchers are derived caches rebuilt after pickling. Preprocess
+options require recursively frozen, type-tagged values because a frozen rule containing a
+mutable mapping is not an immutable snapshot. Membership identity preserves order-sensitive
+ignore semantics and separates persistent policy from operation-only excludes. Content
+identity includes explicit policy, parser, and raw-chunk semantics versions; execution mode
+has its own identity so switching extraction off preserves ownership and never authorizes
+deletion.
+
 ### Preprocess schema, cache, and metadata integrity
 
 - `src/vaultspec_rag/indexer/_preprocess_config.py:82-123` declares `options`, and
