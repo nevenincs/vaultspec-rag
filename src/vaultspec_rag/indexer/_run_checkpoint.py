@@ -211,6 +211,37 @@ class CodeRunCheckpoint:
             self._record_indexed_file(segment.path, source_digest)
         return inserted
 
+    def record_confirmed_segments(
+        self,
+        segments: tuple[CodeFileSegment, ...],
+        source_digests: dict[str, str],
+    ) -> int:
+        """Atomically checkpoint every segment in one confirmed store mutation."""
+        if not segments:
+            raise ValueError("a confirmed code store mutation must contain segments")
+        units = tuple(
+            self.unit_for(segment, source_digests[segment.path]) for segment in segments
+        )
+        inserted = self.ledger.record_storage_confirmed_units(
+            self.generation_id,
+            units,
+        )
+        if inserted:
+            self.run_policy.record_durable_progress(
+                kind=DurableProgressKind.LEDGER_UNIT_COMMITTED,
+                label=(
+                    f"code store mutation with {len(segments)} segment(s) "
+                    f"and {inserted} new ledger unit(s)"
+                ),
+            )
+        for segment in segments:
+            if segment.is_file_end:
+                self._record_indexed_file(
+                    segment.path,
+                    source_digests[segment.path],
+                )
+        return inserted
+
     def record_confirmed_deletion(
         self,
         rel_path: str,
