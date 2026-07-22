@@ -37,7 +37,9 @@ production SQLite ledger and its real-file tests for transaction boundaries,
 signature compatibility, structural and logical corruption, immutable
 completion, row-wise iteration, compaction ownership, concurrent access, and
 test integrity. Follow-up commits `5a45e96`, `7a97d85`, and `3746e99` were
-re-reviewed as remediation landed.
+re-reviewed as remediation landed. Commit `ec6fa09` was then reviewed for the
+four remaining medium-severity remediations and the bounded atomic metadata
+publication helper.
 
 ## Findings
 
@@ -117,6 +119,11 @@ reader/writer-safe journal mode or keyset pagination that releases the read
 transaction between bounded batches, and verify concurrent reader/writer
 progress with separate real connections.
 
+Commit `ec6fa09` resolves this finding with keyset pagination that closes each
+bounded read connection before yielding its batch. The real SQLite regression
+pauses a one-row iterator, commits through another connection, and then proves
+iteration continues through both the original and newly committed rows.
+
 ### file-completeness-materialization | medium | File completeness materializes every segment
 
 `file_complete` uses `fetchall` and constructs full ordinal collections even
@@ -125,6 +132,10 @@ segment. A pathological large file can make this authority proportional to all
 of its segments. Replace this with bounded iteration or aggregate SQL that
 proves one kind, one final marker, a contiguous ordinal range, and matching
 count without materializing all rows.
+
+Commit `ec6fa09` resolves this finding with grouped SQL evidence for count,
+ordinal bounds and sum, and the unique final marker. The materialized result is
+bounded by mutation kind and digest rather than segment count.
 
 ### compaction-phase-authority | medium | Generic finalization can claim compaction before compaction runs
 
@@ -135,6 +146,10 @@ caller can therefore advance to `compacted` and finish successfully without
 executing compaction. Reserve the compacted transition for `compact`, and
 reject it through the generic external-phase method.
 
+Commit `ec6fa09` resolves this finding by rejecting `compacted` in
+`advance_finalization`; only the successful-generation `compact` transaction
+can now record that phase, with direct regression coverage.
+
 ### corruption-and-concurrency-tests | medium | The test matrix omits logical corruption and concurrent writers
 
 The real SQLite tests cover incompatible schema versions, a file that is not
@@ -144,21 +159,46 @@ two ledger instances operating concurrently, or a forced mid-transaction
 rollback. Add real thread or process contention, rollback, partial-schema, and
 malformed-row cases without mocks or patches.
 
+Commit `ec6fa09` resolves the release-blocking portion of this finding. Startup
+now rejects missing tables and columns with a typed compatibility error, row
+conversion wraps malformed generation, file-state, and commit-unit values as
+typed corruption, and real SQLite coverage exercises a missing table and a
+malformed generation enum. The paused iterator test also proves writer progress
+through a distinct connection. A forced mid-transaction rollback remains a
+useful low-severity expansion because transaction rollback is already exercised
+by SQLite's context-manager boundary rather than custom rollback logic.
+
+### publication-temp-ownership | medium | Concurrent publishers share one temporary file
+
+`publish_meta_from_file_states` streams bounded, ordered, converged ledger rows,
+flushes and synchronizes the completed file, and preserves the prior sidecar
+when row validation fails. Its temporary pathname is nevertheless fixed per
+target. Two publishers can therefore open and truncate the same temporary file.
+On Windows a real overlapping-call probe made one publisher fail with a sharing
+violation; on platforms that permit replacement of an open file, one handle can
+continue writing the inode after it becomes the published target, exposing a
+partially written sidecar and breaking the atomic replacement guarantee. Give
+each invocation a unique temporary file in the target directory, replace only
+that owned file, and add a real overlapping-publisher regression.
+
 ### test-integrity | low | Existing tests use production behavior and real SQLite
 
 The reviewed test module imports production types directly and uses real
-temporary SQLite databases. It contains no fake, mock, stub, patch,
-monkeypatch, skip, or expected-failure shortcut, and its fixture helpers only
-construct valid inputs rather than mirroring ledger decisions.
+temporary SQLite databases and the production metadata publisher. It contains
+no fake, mock, stub, patch, monkeypatch, skip, or expected-failure shortcut, and
+its fixture helpers only construct valid inputs rather than mirroring ledger
+decisions.
 
 ## Recommendations
 
-All high-severity checkpoint-integrity findings were resolved by `5a45e96`,
-`7a97d85`, and `3746e99`. Before W02.P06 depends on concurrent or long-lived
-ledger readers, address iterator/write contention, bounded file-completeness
-evaluation, exclusive compact-phase authority, and typed partial-schema and
-malformed-row handling. Add the corresponding real concurrency, rollback, and
-corruption tests.
+All original high- and medium-severity ledger findings were resolved by
+`5a45e96`, `7a97d85`, `3746e99`, and `ec6fa09`. Before the metadata helper is
+integrated into concurrent or recoverable publication, isolate each temporary
+file by invocation and verify overlapping real publishers. A forced
+mid-transaction rollback and additional malformed file-state and commit-unit
+rows are lower-severity test-matrix expansions.
 
-The final focused review run passed all five ledger tests in 1.31 seconds.
-Ruff and Ty reported no finding in the reviewed production and test files.
+The final focused review run passed all seven ledger tests in 1.43 seconds.
+Ruff and Ty reported no finding in the reviewed production and test files. A
+real overlapping metadata-publication probe reproduced the temporary-file
+ownership conflict without altering production code.
