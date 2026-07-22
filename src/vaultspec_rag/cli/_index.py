@@ -570,7 +570,7 @@ def _print_service_results(
 @app.command(
     "index",
     help=(
-        "Build or update the project documentation and source-code search index. "
+        "Build or update the vault, code, and extracted-document search indexes. "
         "Uses the running service when available; otherwise runs locally. "
         "See the indexing architecture guide: docs/indexing.md"
     ),
@@ -582,8 +582,8 @@ def handle_index(
         typer.Option(
             "--type",
             help=(
-                "What to index: 'vault' for documents, 'code' for source files, "
-                "or 'all'."
+                "What to index: vault, code, document, or combined. "
+                "Aliases: docs, codebase, all."
             ),
             show_default=True,
         ),
@@ -611,8 +611,8 @@ def handle_index(
         typer.Option(
             "--dry-run",
             help=(
-                "List source-code files that would be indexed without indexing. "
-                "Use with --type code or the default --type all."
+                "Show the resolved code/document admission summary without indexing. "
+                "Use with --type code, document, combined, or the default all alias."
             ),
         ),
     ] = False,

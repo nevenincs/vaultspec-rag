@@ -101,10 +101,11 @@ case results are returned in fusion order.
 
 ## Vector store
 
-The store keeps two collections, regardless of backend:
+The store keeps three independent collections, regardless of backend:
 
 - `vault_docs` - one point per indexed vault document
 - `codebase_docs` - one point per source-code chunk
+- `document_docs` - one point per extracted-document chunk
 
 Each point carries both a `dense` named vector (cosine similarity) and a
 `sparse` named vector (dot product). Payload indexes - per-field indexes Qdrant
@@ -161,13 +162,31 @@ writer lock serialises concurrent `full_index` and `incremental_index` calls,
 because MCP, CLI, and the automatic-update watcher can all trigger indexing at
 once and must not race each other's metadata snapshots.
 
-The codebase indexer walks the project tree with gitignore-aware pruning plus an
-optional `.vaultragignore` file, and skips binary files and files larger than
-10 MB - material that costs tokenizer time and adds no retrievable structure.
-Where a tree-sitter grammar exists, an AST (abstract syntax tree) chunker splits
-source into top-level declarations so a chunk is a function or class rather than
-an arbitrary window;
-formats without a grammar fall back to a structure-aware text splitter.
+Code and document discovery share one immutable, versioned policy snapshot. Ignore rules
+win first. Ordered project rules can then explicitly assign a path to `code` or
+`document`; otherwise the named source profile admits only its conventional source
+formats. Directory names are not ownership signals, and parser capability alone does not
+admit a file. This keeps arbitrary data and binary inputs out of `--type code` unless the
+project deliberately routes extractor output there.
+
+Where an admitted code format has a tree-sitter grammar, an AST (abstract syntax tree)
+chunker splits source into top-level declarations so a chunk is a function or class
+rather than an arbitrary window. Conventional text source without a grammar uses a
+structure-aware splitter. Extractor-owned document input bypasses the source decoder and
+enters the independent document pipeline only after versioned output validation.
+
+The policy names its source-admission behavior so upgrades cannot silently widen a scan:
+
+| Source profile     | Admission without an explicit route                              |
+| ------------------ | ---------------------------------------------------------------- |
+| `conventional-v1`  | Known conventional source extensions enter the `code` domain      |
+| `explicit-only-v1` | Nothing enters code or document unless the caller assigns an owner |
+
+`conventional-v1` is the compatibility default. The selected profile, ordered routes,
+preprocessing targets and versions, ignores, decoder policy, and schema versions are
+fingerprinted independently for code and document generations. Invalid profiles,
+targetless legacy rules, unknown targets, or conflicting ownership fail before mutable
+index resources are opened.
 
 Chunking runs in a spawn-based, CPU-only process pool because tree-sitter holds
 the GIL for both parse and traverse, so threads give no speedup - separate
@@ -182,8 +201,11 @@ bounded queue the chunk producers refill. One thread is correct because a single
 GPU has no compute-to-compute overlap to exploit - a second consumer would only
 serialise on the streaming multiprocessors and GIL launch overhead. The real
 parallelism is CPU-produce against GPU-consume, and that is exactly what the
-queue captures. Each file's blake2b digest in `code_index_meta.json` lets
-incremental runs re-chunk and re-embed only the files whose content changed.
+queue captures. Each content kind has independent metadata and generation identity over a
+shared durable run ledger. A file is published as converged only after its chunks,
+deletions, metadata, schema evidence, and generation finalization are durable. Interrupted
+runs resume from the final unconfirmed unit; retryable extraction and decode/chunk
+failures remain visible obligations instead of being hidden behind a content hash.
 
 ### Incremental versus rebuild
 
@@ -192,18 +214,19 @@ ones, embeds new and modified content, and purges chunks for deleted files. This
 is the right mode for everyday work - it touches only what moved and keeps the
 GPU idle the rest of the time.
 
-A rebuild drops and recreates the target collection from scratch. Reach for it
+A rebuild replaces the named target collection. Reach for it
 when incremental updates can't reconcile the index with reality: after a schema
 change such as a new embedding dimension, or after a large-scale restructure
 where content-hash bookkeeping no longer reflects the tree. A rebuild requires
-naming the index type explicitly, so it can't wipe both collections by accident.
+naming the index type explicitly, so it cannot replace multiple collections by accident.
 For the exact commands, see the [search and index guide](search-and-index.md).
 
-When the resident service runs, a `watchfiles`-based watcher monitors `.vault/`
-and tracked source and triggers a scoped incremental reindex for the changed
-files after a debounce window. It is on by default; tune its timing rather than
-disabling it when changes are noisy. See [automation](automation.md) for the
-watcher in detail.
+When the resident service runs, a `watchfiles`-based watcher monitors `.vault/` and the
+resolved code/document membership. It retains pending, retry, and circuit state per kind
+under one writer and GPU authority. A policy change schedules every affected kind;
+destination points are published before old ownership is removed, so route changes and
+restarts do not create a searchable gap. See [automation](automation.md) for watcher
+operation.
 
 ## Configuration knobs
 

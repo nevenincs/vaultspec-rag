@@ -4,7 +4,7 @@
 
 # vaultspec-rag
 
-**The semantic search component for vault and code.**
+**Semantic search for vault records, source code, and extracted documents.**
 
 [![build](https://img.shields.io/github/actions/workflow/status/nevenincs/vaultspec-rag/ci.yml?branch=main&style=for-the-badge&label=build&logo=githubactions&logoColor=white&labelColor=1b1a16)](https://github.com/nevenincs/vaultspec-rag/actions/workflows/ci.yml)
 [![release](https://img.shields.io/pypi/v/vaultspec-rag?style=for-the-badge&label=release&logo=pypi&logoColor=white&labelColor=1b1a16&color=8A72B5)](https://pypi.org/project/vaultspec-rag/)
@@ -26,11 +26,16 @@
 <img src="assets/term-search-vault.svg" alt="vaultspec-rag search - a plain-English query surfacing the governing ADR from this repository's own vault" width="880" />
 </p>
 
-A [vaultspec-core](https://github.com/nevenincs/vaultspec-core) project accumulates a durable record of decisions, plans, research, and the code they produced. vaultspec-rag searches that record and your source code by meaning, not by keyword.
+A [vaultspec-core](https://github.com/nevenincs/vaultspec-core) project accumulates a
+durable record of decisions, plans, research, and the code they produced. vaultspec-rag
+searches that record, conventional source code, and explicitly routed extracted documents
+by meaning, not by keyword.
 
 Search `"file lock concurrent write per-root"` and vaultspec-rag surfaces the decision that governs it, even when the document never uses those exact words. It is the retrieval layer of the project: it finds and ranks the grounding, and a client such as a coding agent reads it.
 
-Every terminal render on this page is real output against this repository's own vault and code. The [architecture overview](docs/architecture.md) explains how it works; the [glossary](docs/glossary.md) defines the terms used across the docs.
+Every terminal render on this page is real output against this repository's own vault,
+code, or document index. The [architecture overview](docs/architecture.md) explains how
+it works; the [glossary](docs/glossary.md) defines the terms used across the docs.
 
 ## Getting started
 
@@ -100,11 +105,11 @@ See the [getting started guide](docs/getting-started.md) for the full walkthroug
 | Capability               | What it gives you                                                                    |
 | ------------------------ | ------------------------------------------------------------------------------------ |
 | Hybrid search            | Dense (semantic) and sparse (keyword) matching, cross-encoder reranked               |
-| Vault and code search    | `--type vault` or `--type code`, filterable by language, path, and symbol name       |
+| Independent search       | Search `vault`, `code`, or extracted `document` content, or combine all three        |
 | Managed or local backend | A supervised Qdrant server for throughput, or `--local-only` for a zero-server setup |
-| MCP integration          | `search_vault` and `search_codebase` tools for Claude Code and other MCP clients     |
+| MCP integration          | Search, reindex, clean, and inspect vault, code, and document domains                 |
 | Live reindexing          | The running service watches your files and reindexes changes automatically           |
-| Preprocessing hooks      | Convert PDFs, spreadsheets, and other non-text formats into indexable text           |
+| Preprocessing hooks      | Route project-defined extractor output explicitly to code or document indexing       |
 
 <p align="center">
 <img src="assets/term-search-code.svg" alt="vaultspec-rag code search - the reranker implementation surfaced from a plain-English description" width="880" />
@@ -115,7 +120,7 @@ See [search and index](docs/search-and-index.md) for the full filter set, [MCP i
 ## The vaultspec family
 
 - [vaultspec-core](https://github.com/nevenincs/vaultspec-core) - Beta - The agent harness: the pipeline, the vault, and the CLI that drives them.
-- **vaultspec-rag** - Beta - The semantic search component for vault and code.
+- **vaultspec-rag** - Beta - Semantic search across vault, code, and document domains.
 - [vaultspec-dashboard](https://github.com/nevenincs/vaultspec-dashboard) - Beta - The application that runs it all as a UI.
 - [vaultspec-a2a](https://github.com/nevenincs/vaultspec-a2a) - Beta - Headless agent-to-agent orchestration.
 
