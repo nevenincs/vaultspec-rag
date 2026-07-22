@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#service-job-control'
-date: '2026-07-21'
-modified: '2026-07-21'
+date: '2026-07-22'
+modified: '2026-07-22'
 related:
   - '[[2026-07-21-service-job-control-W01-P01-S01]]'
   - '[[2026-07-21-service-job-control-W01-P01-S02]]'
@@ -26,6 +26,7 @@ related:
   - '[[2026-07-21-service-job-control-W02-P04-S11]]'
   - '[[2026-07-21-service-job-control-W02-P04-S12]]'
   - '[[2026-07-21-service-job-control-W02-P04-summary]]'
+  - '[[2026-07-21-service-job-control-W02-P05-S13]]'
   - '[[2026-07-21-service-job-control-adr]]'
   - '[[2026-07-21-service-job-control-plan]]'
   - '[[2026-07-21-service-job-control-reference]]'
@@ -38,6 +39,7 @@ related:
   - '[[2026-07-21-service-job-control-s39-persistence-audit]]'
   - '[[2026-07-21-service-job-control-s40-manager-audit]]'
   - '[[2026-07-21-service-job-control-wave-1-audit]]'
+  - '[[2026-07-22-service-job-control-s13-code-pipeline-control-audit]]'
 ---
 
 # `service-job-control` feature index
@@ -60,6 +62,7 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-21-service-job-control-s39-persistence-audit` - `service-job-control` audit: `S39 persistence boundary`
 - `2026-07-21-service-job-control-s40-manager-audit` - `service-job-control` audit: `S40 manager extraction`
 - `2026-07-21-service-job-control-wave-1-audit` - `service-job-control` audit: `Wave 1 state authority`
+- `2026-07-22-service-job-control-s13-code-pipeline-control-audit` - `service-job-control` audit: `s13 code pipeline control`
 
 ### exec
 
@@ -83,6 +86,7 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-21-service-job-control-W02-P04-S11` - Add checkpoints around vault phases and batches while protecting collection drop through valid publication using vaultspec-high-executor
 - `2026-07-21-service-job-control-W02-P04-S12` - Verify real streaming and vault indexing observe control between slices without exposing partial rebuilds using vaultspec-high-executor
 - `2026-07-21-service-job-control-W02-P04-summary` - `service-job-control` `W02.P04` summary
+- `2026-07-21-service-job-control-W02-P05-S13` - Propagate run control through code producers, process-pool work, the single GPU consumer, bounded queues, and consumer shutdown using vaultspec-high-executor
 
 ### plan
 

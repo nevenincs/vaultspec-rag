@@ -82,7 +82,7 @@ Place control checks at vault phase, batch, and GPU-slice boundaries while prote
 
 Place control checks around code scanning, process-pool work, producer-consumer flow, GPU slices, and file replacement spans.
 
-- [ ] `W02.P05.S13` - Propagate run control through code producers, process-pool work, the single GPU consumer, bounded queues, and consumer shutdown using vaultspec-high-executor; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `W02.P05.S13` - Propagate run control through code producers, process-pool work, the single GPU consumer, bounded queues, and consumer shutdown using vaultspec-high-executor; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [ ] `W02.P05.S14` - Protect code clean rebuild and per-file replacement spans from cooperative interruption until published state is valid using vaultspec-high-executor; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [ ] `W02.P05.S15` - Verify real code indexing unwinds producer-consumer resources, preserves mutation safety, and converges after resume using vaultspec-high-executor; `src/vaultspec_rag/tests/integration/test_index_job_control.py`.
 
