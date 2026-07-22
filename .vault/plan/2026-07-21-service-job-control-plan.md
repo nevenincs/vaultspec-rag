@@ -137,7 +137,7 @@ Add explicit HTTP methods and typed job operations without changing established 
 
 Add singular server job commands with exact mutations, human-only prefix resolution, and one structured JSON outcome per exit path.
 
-- [ ] `W04.P14.S29` - Register the singular server job command group while preserving the server jobs collection command using vaultspec-low-executor; `src/vaultspec_rag/cli/_app.py`.
+- [x] `W04.P14.S29` - Register the singular server job command group while preserving the server jobs collection command using vaultspec-low-executor; `src/vaultspec_rag/cli/_app.py`.
 - [ ] `W04.P14.S30` - Implement show, pause, resume, stop, retry, and delete commands with unique-prefix resolution before exact mutation using vaultspec-standard-executor; `src/vaultspec_rag/cli/_service_jobs.py`.
 - [ ] `W04.P14.S31` - Verify human and JSON CLI controls, ambiguous prefixes, idempotent requests, stable errors, retry, deletion, and force rejection against a real server using vaultspec-standard-executor; `src/vaultspec_rag/tests/integration/test_service_job_control.py`.
 
