@@ -104,7 +104,7 @@ harder to reason about than an inline loop — exception propagation across the 
 boundary, clean sentinel shutdown, and `gpu_lock` ownership must be exact or the index can
 hang or deadlock; the serial/fallback paths now have a different shape from the parallel
 path and must be tested independently. The win is regime-dependent: codebases where chunking
-is already cheap (measured: the real aeat tree at 800 files/s) see little end-to-end change,
+is already cheap (measured: a real client tree at 800 files/s) see little end-to-end change,
 while chunk-bound codebases (the #154 profile) gain the most — the byte gate already ensures
 no regression on small trees. Pathways opened: the same producer/consumer can back the
 vault-document index for symmetry, and tokenise-in-workers sets up a future where the GPU

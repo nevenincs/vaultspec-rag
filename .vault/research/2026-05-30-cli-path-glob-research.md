@@ -16,7 +16,7 @@ returns top-k crowded with translation files / test docstrings in
 polyglot codebases. PR #109 wired the existing exact-match `path`
 filter through MCP and CLI as `--path`; that is not enough — users
 need to **exclude** path patterns (e.g. `locales/*.yml`) or restrict
-to a prefix (e.g. `src/aeat/application/**`).
+to a prefix (e.g. `src/client/application/**`).
 
 This research grounds the implementation choice before touching code.
 

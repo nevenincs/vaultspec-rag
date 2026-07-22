@@ -20,7 +20,7 @@ The OS-level hook sandbox accepted the day before (`preprocess-sandbox`, `cc3d68
 every server-side preprocess hook run inside a per-file AppContainer with a staged input
 copy. On the primary Windows host this containment costs ~5-8s per matched file against a
 ~50ms/file pre-sandbox indexing baseline - roughly a 150x per-file regression. A
-production corpus (aeat) indexed 640 chunks in 80 minutes under the sandbox; before it,
+one production corpus indexed 640 chunks in 80 minutes under the sandbox; before it,
 the same class of run was minutes. The per-invocation tax is structural: scratch-dir
 staging, an `icacls` child process to ACL-grant the scratch dir, AppContainer
 `CreateProcessW`, and a cold interpreter/uv startup inside a default-deny container -
@@ -135,7 +135,7 @@ that launch is deleted. The decision set:
   uncontained. `PYTHONPATH=project_root` injection stays so `entry_point`/project-local
   hooks import their own module tree.
 - **D8 (amended in execution) - Set the child cwd to the project root.** The first
-  execution pass kept a fresh scratch temp dir as the cwd; the aeat validation run then
+  execution pass kept a fresh scratch temp dir as the cwd; the client validation run then
   showed all 531 hook invocations failing, because project-launcher commands (`uv run`,
   `npm exec`, `make`) resolve their project from the cwd and the pre-sandbox runner -
   the contract hooks were authored and validated against with `preprocess run-one` -

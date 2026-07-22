@@ -1122,7 +1122,7 @@ uncredited. Per the release-gate stop rule, the remaining inventory, singleton a
 service repetitions, Ruff, formatting, Ty, BasedPyright, complexity, lock, Vaultspec
 and provider-artifact checks, diff check, build, wheel and source-distribution smoke,
 public-Core 0.1.45 installed acceptance, and real Claude and Codex project recognition
-were not run and are not waived. The current AEAT workspace registration is explicitly
+were not run and are not waived. The current client workspace registration is explicitly
 not release evidence, and this session's start-time tool snapshot remains distinct from
 future CLI registration. No production or test file changed during S50.
 
@@ -1164,7 +1164,7 @@ test receives S52 credit. Source correctness review, repeated singleton and serv
 gates, the POSIX FIFO execution, Ruff, formatting, Ty, BasedPyright, complexity, lock,
 Vaultspec, provider-artifact, diff, build, wheel and source-distribution smoke, public
 Core 0.1.45 installed acceptance, and fresh Claude and Codex host recognition were not
-run and are not waived. The stale AEAT workspace registrations receive no credit. No
+run and are not waived. The stale client workspace registrations receive no credit. No
 production or test file changed during S52.
 
 S52 verdict: **FAIL — not release-ready; one unresolved HIGH finding and no CRITICAL
@@ -1239,7 +1239,7 @@ complexity and diff gates, lock and Vaultspec checks, provider-artifact validati
 wheel and source-distribution builds, public-Core smoke, and fresh installed-package
 Claude and Codex acceptance were stopped and receive neither credit nor waiver. The
 POSIX FIFO pass is recorded as bounded platform evidence but cannot make the incomplete
-Windows campaign release-ready. The stale AEAT workspace registration receives no
+Windows campaign release-ready. The stale client workspace registration receives no
 credit. No production or test file changed during S53.
 
 S53 verdict: **FAIL — not release-ready; one unresolved MEDIUM release-gate finding and
@@ -1302,7 +1302,7 @@ complexity, lock, Vaultspec and provider-artifact checks, build, wheel and sourc
 distribution smoke, public-Core 0.1.45 installed acceptance, and fresh Claude and
 Codex host recognition were stopped and receive neither credit nor waiver. The POSIX
 FIFO pass is bounded platform evidence only and cannot make the failed Windows
-campaign release-ready. The stale AEAT workspace registration remains uncreditable.
+campaign release-ready. The stale client workspace registration remains uncreditable.
 No production or test file changed during S55.
 
 S55 verdict: **FAIL — not release-ready; one unresolved MEDIUM test-harness and
@@ -1473,7 +1473,7 @@ ranking assertions, Ruff, formatting, Ty, BasedPyright, complexity, lock, diff,
 Vaultspec, provider-artifact, spec, build, wheel and source-distribution smoke,
 public-Core resolution, installed-package acceptance, Claude and Codex recognition,
 idempotence, selective unenrollment, and uninstall gates receive neither credit nor
-waiver. The current AEAT state remains uncreditable. No production or test file
+waiver. The current client state remains uncreditable. No production or test file
 changed during S57.
 
 S57 verdict: **FAIL — not release-ready; one unresolved HIGH platform-ledger finding
@@ -1704,7 +1704,7 @@ loads the absent package-local paths.
 
 No intent-ranking worker survived the failure. A pre-existing `vaultspec-rag` service
 on port 55108 started more than 35 minutes before the S59 process and was left
-untouched; current AEAT state remains uncreditable.
+untouched; current client state remains uncreditable.
 
 Recommendation: recreate the audit environment from the locked scikit-learn wheel,
 verify both package-local DLL files against `RECORD`, and require a direct
@@ -1999,7 +1999,7 @@ repository-wide Ruff and format checks, Ty, strict BasedPyright, complexity,
 lock, diff, Vaultspec, provider-artifact, spec, build, wheel and source
 distribution smoke, published Core 0.1.45 resolution, isolated installed-package
 acceptance, Claude and Codex recognition, idempotence, unenrollment, and
-uninstall gates receive neither credit nor waiver. Current AEAT state also
+uninstall gates receive neither credit nor waiver. Current client state also
 remains uncreditable.
 
 S61 verdict: **FAIL — not release-ready; one unresolved MEDIUM deterministic
