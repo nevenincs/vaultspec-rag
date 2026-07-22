@@ -27,6 +27,7 @@ related:
   - '[[2026-07-21-service-job-control-W02-P04-S12]]'
   - '[[2026-07-21-service-job-control-W02-P04-summary]]'
   - '[[2026-07-21-service-job-control-W02-P05-S13]]'
+  - '[[2026-07-21-service-job-control-W02-P05-S14]]'
   - '[[2026-07-21-service-job-control-adr]]'
   - '[[2026-07-21-service-job-control-plan]]'
   - '[[2026-07-21-service-job-control-reference]]'
@@ -40,6 +41,7 @@ related:
   - '[[2026-07-21-service-job-control-s40-manager-audit]]'
   - '[[2026-07-21-service-job-control-wave-1-audit]]'
   - '[[2026-07-22-service-job-control-s13-code-pipeline-control-audit]]'
+  - '[[2026-07-22-service-job-control-s14-code-publication-protection-audit]]'
 ---
 
 # `service-job-control` feature index
@@ -63,6 +65,7 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-21-service-job-control-s40-manager-audit` - `service-job-control` audit: `S40 manager extraction`
 - `2026-07-21-service-job-control-wave-1-audit` - `service-job-control` audit: `Wave 1 state authority`
 - `2026-07-22-service-job-control-s13-code-pipeline-control-audit` - `service-job-control` audit: `s13 code pipeline control`
+- `2026-07-22-service-job-control-s14-code-publication-protection-audit` - `service-job-control` audit: `s14 code publication protection`
 
 ### exec
 
@@ -87,6 +90,7 @@ Auto-generated index of all documents tagged with `#service-job-control`.
 - `2026-07-21-service-job-control-W02-P04-S12` - Verify real streaming and vault indexing observe control between slices without exposing partial rebuilds using vaultspec-high-executor
 - `2026-07-21-service-job-control-W02-P04-summary` - `service-job-control` `W02.P04` summary
 - `2026-07-21-service-job-control-W02-P05-S13` - Propagate run control through code producers, process-pool work, the single GPU consumer, bounded queues, and consumer shutdown using vaultspec-high-executor
+- `2026-07-21-service-job-control-W02-P05-S14` - Protect code clean rebuild and per-file replacement spans from cooperative interruption until published state is valid using vaultspec-high-executor
 
 ### plan
 

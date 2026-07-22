@@ -7,6 +7,7 @@ chunks, tracking content hashes for incremental re-indexing.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import itertools
 import json
@@ -1600,6 +1601,61 @@ class CodebaseIndexer:
         run_control.checkpoint()
         return paths
 
+    def _publish_incremental_replacement(
+        self,
+        *,
+        chunks: list[CodeChunk],
+        files_to_remove: set[str],
+        old_chunk_ids: list[str],
+        metadata: dict[str, str],
+        slice_size: int,
+        reporter: ProgressReporter,
+        run_control: RunControl = NO_RUN_CONTROL,
+    ) -> None:
+        """Publish one incremental change set without exposing invalid files.
+
+        The code pipeline batches chunks across changed files. When any old
+        file state must be removed, the protected span conservatively covers
+        the whole batched delete-and-replacement interval. This preserves GPU
+        batching while ensuring every individual file replacement is valid at
+        each cooperative safe edge. New-only publication remains interruptible.
+        """
+        run_control.checkpoint()
+        replacement_span = (
+            run_control.protected() if files_to_remove else contextlib.nullcontext()
+        )
+        with replacement_span:
+            reporter.phase_start("delete removed", len(files_to_remove))
+            try:
+                if files_to_remove:
+                    if old_chunk_ids:
+                        self.store.delete_code_chunks(old_chunk_ids)
+                    reporter.advance(len(files_to_remove))
+            finally:
+                reporter.phase_end()
+
+            if chunks:
+                _stream_encode_and_upsert_codebase(
+                    chunks=chunks,
+                    slice_size=slice_size,
+                    model=self.model,
+                    store=self.store,
+                    gpu_lock=self._gpu_lock,
+                    reporter=reporter,
+                    run_control=run_control,
+                )
+            else:
+                reporter.phase_start("embed + upsert chunks", 0)
+                reporter.phase_end()
+
+            reporter.phase_start("write metadata", 1)
+            try:
+                self._write_meta(metadata)
+                reporter.advance(1)
+            finally:
+                reporter.phase_end()
+        run_control.checkpoint()
+
     def _scan_and_hash_incremental_inputs(
         self,
         inputs: _ScanInputs,
@@ -1740,6 +1796,9 @@ class CodebaseIndexer:
                 rebuild, so an interrupted run never leaves the
                 collection empty.
             reporter: Required progress reporter.
+            run_control: Cooperative attempt control checked before the clean
+                destructive span and delivered after valid collection and
+                metadata publication.
 
         Returns:
             An ``IndexResult`` where ``added`` equals the total chunk
@@ -1764,77 +1823,79 @@ class CodebaseIndexer:
         # pipeline upserts as it goes; an empty tree still falls through to the
         # purge below so a rebuild after deleting every source file clears the
         # old collection (F3.11 regression guard).
-        run_control.checkpoint()
-        reporter.phase_start("prepare collection", 1)
-        try:
-            if clean:
-                self.store.drop_code_table()
-                self._clear_preprocess_cache()
-                self.store.ensure_code_table()
-                # The collection was just dropped: the snapshot is
-                # empty by construction, and a full id scan of a large
-                # local collection costs minutes of GIL-holding CPU.
-                existing_ids_before: set[str] = set()
-            else:
-                self.store.ensure_code_table()
-                try:
-                    existing_ids_before = set(self.store.get_all_code_ids())
-                except (OSError, RuntimeError):
-                    logger.warning(
-                        "Could not snapshot existing code-chunk IDs "
-                        "before rebuild; stale-chunk purge will be "
-                        "skipped",
-                        exc_info=True,
-                    )
-                    existing_ids_before = set()
-            reporter.advance(1)
-        finally:
-            reporter.phase_end()
-        if not clean:
-            run_control.checkpoint()
-
-        # Pipelined chunk -> embed: process-pool workers read, hash, and chunk
-        # files while the single in-process GPU consumer encodes and upserts
-        # completed slices, so the GPU never idles waiting for the whole tree
-        # to be chunked (#155 ADR P02). The workers return the content hash
-        # from the same read, so ``meta`` needs no separate hash pass (P03).
-        new_ids, total_chunks, meta = self._pipeline_chunk_and_embed(
-            paths,
-            slice_size=slice_size,
-            reporter=reporter,
-            # Until S14 installs the explicit protected publication span, a
-            # clean rebuild deliberately defers control from collection drop
-            # through replacement points and metadata. Non-clean streaming is
-            # convergent and remains interruptible between slices.
-            run_control=NO_RUN_CONTROL if clean else run_control,
+        # A request already pending is delivered by ``protected`` before a
+        # clean collection can be dropped. Once the drop begins, defer new
+        # requests through recreation, the bounded producer/consumer pipeline,
+        # stale cleanup, and atomic metadata publication. Non-clean rebuilding
+        # remains failure-safe and interruptible between bounded slices.
+        publication_span = (
+            run_control.protected() if clean else contextlib.nullcontext()
         )
-
-        stale_ids = sorted(existing_ids_before - new_ids)
-        if not clean:
+        with publication_span:
+            reporter.phase_start("prepare collection", 1)
+            try:
+                if clean:
+                    self.store.drop_code_table()
+                    self._clear_preprocess_cache()
+                    self.store.ensure_code_table()
+                    # The collection was just dropped: the snapshot is
+                    # empty by construction, and a full id scan of a large
+                    # local collection costs minutes of GIL-holding CPU.
+                    existing_ids_before: set[str] = set()
+                else:
+                    self.store.ensure_code_table()
+                    try:
+                        existing_ids_before = set(self.store.get_all_code_ids())
+                    except (OSError, RuntimeError):
+                        logger.warning(
+                            "Could not snapshot existing code-chunk IDs "
+                            "before rebuild; stale-chunk purge will be "
+                            "skipped",
+                            exc_info=True,
+                        )
+                        existing_ids_before = set()
+                reporter.advance(1)
+            finally:
+                reporter.phase_end()
             run_control.checkpoint()
-        reporter.phase_start("purge stale chunks", len(stale_ids))
-        try:
-            if stale_ids:
-                try:
-                    self.store.delete_code_chunks(stale_ids)
-                except OSError:
-                    logger.error(
-                        "Failed to purge stale code chunks after "
-                        "successful rebuild - collection still "
-                        "contains valid new chunks plus %d stale rows",
-                        len(stale_ids),
-                    )
-                    raise
-                reporter.advance(len(stale_ids))
-        finally:
-            reporter.phase_end()
 
-        reporter.phase_start("write metadata", 1)
-        try:
-            self._write_meta(meta)
-            reporter.advance(1)
-        finally:
-            reporter.phase_end()
+            # Pipelined chunk -> embed: process-pool workers read, hash, and chunk
+            # files while the single in-process GPU consumer encodes and upserts
+            # completed slices, so the GPU never idles waiting for the whole tree
+            # to be chunked (#155 ADR P02). The workers return the content hash
+            # from the same read, so ``meta`` needs no separate hash pass (P03).
+            new_ids, total_chunks, meta = self._pipeline_chunk_and_embed(
+                paths,
+                slice_size=slice_size,
+                reporter=reporter,
+                run_control=run_control,
+            )
+
+            stale_ids = sorted(existing_ids_before - new_ids)
+            run_control.checkpoint()
+            reporter.phase_start("purge stale chunks", len(stale_ids))
+            try:
+                if stale_ids:
+                    try:
+                        self.store.delete_code_chunks(stale_ids)
+                    except OSError:
+                        logger.error(
+                            "Failed to purge stale code chunks after "
+                            "successful rebuild - collection still "
+                            "contains valid new chunks plus %d stale rows",
+                            len(stale_ids),
+                        )
+                        raise
+                    reporter.advance(len(stale_ids))
+            finally:
+                reporter.phase_end()
+
+            reporter.phase_start("write metadata", 1)
+            try:
+                self._write_meta(meta)
+                reporter.advance(1)
+            finally:
+                reporter.phase_end()
         run_control.checkpoint()
 
         duration_ms = int((time.time() - start) * 1000)
@@ -2040,34 +2101,21 @@ class CodebaseIndexer:
         run_control.checkpoint()
 
         files_to_remove = modified_files | deleted_files
-        replacement_control = NO_RUN_CONTROL if files_to_remove else run_control
-        reporter.phase_start("delete removed", len(files_to_remove))
+        old_chunk_ids: list[str] = []
         if files_to_remove:
+            run_control.checkpoint()
             old_chunk_ids = self._get_chunk_ids_for_files(files_to_remove)
-            if old_chunk_ids:
-                self.store.delete_code_chunks(old_chunk_ids)
-            reporter.advance(len(files_to_remove))
-        reporter.phase_end()
+            run_control.checkpoint()
 
-        if all_new_chunks:
-            _stream_encode_and_upsert_codebase(
-                chunks=all_new_chunks,
-                slice_size=slice_size,
-                model=self.model,
-                store=self.store,
-                gpu_lock=self._gpu_lock,
-                reporter=reporter,
-                run_control=replacement_control,
-            )
-        else:
-            reporter.phase_start("embed + upsert chunks", 0)
-            reporter.phase_end()
-
-        reporter.phase_start("write metadata", 1)
-        self._write_meta(current_hashes)
-        reporter.advance(1)
-        reporter.phase_end()
-        run_control.checkpoint()
+        self._publish_incremental_replacement(
+            chunks=all_new_chunks,
+            files_to_remove=files_to_remove,
+            old_chunk_ids=old_chunk_ids,
+            metadata=current_hashes,
+            slice_size=slice_size,
+            reporter=reporter,
+            run_control=run_control,
+        )
 
         total = self.store.count_code()
         duration_ms = int((time.time() - start) * 1000)
@@ -2264,38 +2312,26 @@ class CodebaseIndexer:
         # (chunk ids embed line ranges + content hash, so stale chunks
         # would otherwise linger); vanished files are dropped outright.
         files_to_remove = modified_files | delete_files
-        replacement_control = NO_RUN_CONTROL if files_to_remove else run_control
-        reporter.phase_start("delete removed", len(files_to_remove))
+        old_chunk_ids: list[str] = []
         if files_to_remove:
+            run_control.checkpoint()
             old_chunk_ids = self._get_chunk_ids_for_files(files_to_remove)
-            if old_chunk_ids:
-                self.store.delete_code_chunks(old_chunk_ids)
-            reporter.advance(len(files_to_remove))
-        reporter.phase_end()
-
-        if all_new_chunks:
-            _stream_encode_and_upsert_codebase(
-                chunks=all_new_chunks,
-                slice_size=slice_size,
-                model=self.model,
-                store=self.store,
-                gpu_lock=self._gpu_lock,
-                reporter=reporter,
-                run_control=replacement_control,
-            )
-        else:
-            reporter.phase_start("embed + upsert chunks", 0)
-            reporter.phase_end()
+            run_control.checkpoint()
 
         new_meta = dict(prev_meta)
         new_meta.update(changed_hashes)
         for rel in delete_files:
             new_meta.pop(rel, None)
-        reporter.phase_start("write metadata", 1)
-        self._write_meta(new_meta)
-        reporter.advance(1)
-        reporter.phase_end()
-        run_control.checkpoint()
+
+        self._publish_incremental_replacement(
+            chunks=all_new_chunks,
+            files_to_remove=files_to_remove,
+            old_chunk_ids=old_chunk_ids,
+            metadata=new_meta,
+            slice_size=slice_size,
+            reporter=reporter,
+            run_control=run_control,
+        )
 
         total = self.store.count_code()
         duration_ms = int((time.time() - start) * 1000)
