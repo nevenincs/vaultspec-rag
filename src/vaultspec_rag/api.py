@@ -783,6 +783,7 @@ def get_status(root_dir: pathlib.Path) -> dict[str, object]:
     from .capabilities import backend_capabilities_dict
     from .config import get_config
     from .index_profiles import index_support_profile_status
+    from .jobs import index_job_status
     from .registry import get_registry
 
     registry = get_registry()
@@ -793,6 +794,7 @@ def get_status(root_dir: pathlib.Path) -> dict[str, object]:
         storage_path = str(store.db_path)
 
     support_profile = index_support_profile_status(get_config().index_support_profile)
+    lifecycle = index_job_status(root)
 
     return {
         "cuda": cuda_available,
@@ -807,6 +809,8 @@ def get_status(root_dir: pathlib.Path) -> dict[str, object]:
         "code_count": code_count,
         "document_count": document_count,
         "support_profile": support_profile,
+        "generations": lifecycle["sources"],
+        "degraded_reasons": lifecycle["degraded_reasons"],
         "target_dir": str(root),
         "backend_capabilities": backend_capabilities_dict(),
     }

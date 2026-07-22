@@ -81,6 +81,7 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
     from ..indexer._codebase_indexer import CodeIndexPreflight
+    from ..indexer._document_indexer import DocumentIndexPreflight
     from ..job_models import JobInitiator, JobSpec
 
 logger = logging.getLogger("vaultspec_rag.server")
@@ -547,7 +548,7 @@ async def _validated_index_request(
     JobInitiator,
     bool,
     str | None,
-    CodeIndexPreflight | None,
+    CodeIndexPreflight | DocumentIndexPreflight | None,
 ]:
     from ..job_models import JobMode, JobOperation, JobSource, JobSpec
 
@@ -590,7 +591,7 @@ async def _validated_index_request(
         project_root=str(root),
         mode=JobMode(mode),
     )
-    admission = await _validate_code_job_spec(spec)
+    admission = await _validate_index_job_spec(spec)
     initiator = _validated_initiator(
         payload,
         root=root,
@@ -605,18 +606,22 @@ async def _validated_index_request(
     )
 
 
-async def _validate_code_job_spec(spec: JobSpec) -> CodeIndexPreflight | None:
-    """Scan code admission before durable job mutation; vault jobs need none."""
+async def _validate_index_job_spec(
+    spec: JobSpec,
+) -> CodeIndexPreflight | DocumentIndexPreflight | None:
+    """Resolve domain admission before durable job mutation."""
     from ..job_models import JobSource
-    from ..jobs import validate_code_index_policy
+    from ..jobs import validate_code_index_policy, validate_document_job_admission
 
-    if spec.source is not JobSource.CODE or spec.project_root is None:
+    if spec.project_root is None or spec.source is JobSource.VAULT:
         return None
     try:
-        return await _run_in_thread(
-            validate_code_index_policy,
-            Path(spec.project_root),
+        validator = (
+            validate_code_index_policy
+            if spec.source is JobSource.CODE
+            else validate_document_job_admission
         )
+        return await _run_in_thread(validator, Path(spec.project_root))
     except ValueError as exc:
         raise _InvalidJobRequestError(
             "invalid_job_spec",
@@ -647,6 +652,25 @@ def _admission_preflight(preflight: CodeIndexPreflight) -> dict[str, object]:
                 "reason": sample.reason.value,
             }
             for sample in scan.samples
+        ],
+    }
+
+
+def _index_admission_preflight(
+    preflight: CodeIndexPreflight | DocumentIndexPreflight,
+) -> dict[str, object]:
+    """Project exact code or document admission without reclassification."""
+    from ..indexer._codebase_indexer import CodeIndexPreflight
+
+    if isinstance(preflight, CodeIndexPreflight):
+        return _admission_preflight(preflight)
+    fingerprints = preflight.policy.fingerprints.per_kind.document
+    return {
+        "count": len(preflight.files),
+        "policy_fingerprint": fingerprints.membership,
+        "samples": [
+            path.relative_to(preflight.root_dir).as_posix()
+            for path in preflight.files[:100]
         ],
     }
 
@@ -716,11 +740,28 @@ def _job_response(
 
 async def _activate_index_job(
     outcome: JobOutcome,
-    code_preflight: CodeIndexPreflight | None,
+    preflight: CodeIndexPreflight | DocumentIndexPreflight | None,
 ) -> JobOutcome:
+    from ..indexer._codebase_indexer import CodeIndexPreflight
+    from ..indexer._document_indexer import DocumentIndexPreflight
+    from ..job_models import JobSource
     from ..jobs import activate_index_job
 
-    return await activate_index_job(outcome, code_preflight=code_preflight)
+    source = outcome.job.spec.source if outcome.job is not None else None
+    return await activate_index_job(
+        outcome,
+        code_preflight=(
+            preflight
+            if source is JobSource.CODE and isinstance(preflight, CodeIndexPreflight)
+            else None
+        ),
+        document_preflight=(
+            preflight
+            if source is JobSource.DOCUMENT
+            and isinstance(preflight, DocumentIndexPreflight)
+            else None
+        ),
+    )
 
 
 def _normalise_controllable_filter(raw: str | None) -> bool | None:
@@ -855,7 +896,7 @@ async def create_job_route(request: Request) -> JSONResponse:
         outcome,
         location=True,
         extra=(
-            {"admission": _admission_preflight(admission)}
+            {"admission": _index_admission_preflight(admission)}
             if admission is not None
             else None
         ),
@@ -945,7 +986,7 @@ async def retry_job_route(request: Request) -> JSONResponse:
     admission = None
     if parent is not None:
         try:
-            admission = await _validate_code_job_spec(parent.spec)
+            admission = await _validate_index_job_spec(parent.spec)
         except _InvalidJobRequestError as exc:
             return _job_error("retry", exc.code, str(exc))
     initiator = None
@@ -971,7 +1012,7 @@ async def retry_job_route(request: Request) -> JSONResponse:
         outcome,
         location=True,
         extra=(
-            {"admission": _admission_preflight(admission)}
+            {"admission": _index_admission_preflight(admission)}
             if admission is not None
             else None
         ),
@@ -1295,7 +1336,7 @@ def _preprocess_preflight(
     }
 
 
-async def reindex_route(request: Request) -> JSONResponse:
+async def reindex_route(request: Request) -> JSONResponse:  # noqa: PLR0912
     """Validated compatibility adapter over canonical ``POST /jobs`` creation."""
     denied = require_token(request)
     if denied is not None:
@@ -1361,7 +1402,7 @@ async def reindex_route(request: Request) -> JSONResponse:
     manager = get_job_manager()
     domain_responses: dict[str, dict[str, object]] = {}
     first_root: Path | None = None
-    first_admission = None
+    first_admission: CodeIndexPreflight | None = None
     for source, request_parts in validated:
         spec, initiator, start_paused, idempotency_key, admission = request_parts
         outcome = await _run_in_thread(
@@ -1382,6 +1423,8 @@ async def reindex_route(request: Request) -> JSONResponse:
             "detail": outcome.message,
             "outcome": outcome.to_dict(),
         }
+        if admission is not None:
+            domain["admission"] = _index_admission_preflight(admission)
         domain_responses[source.value] = domain
         if outcome.job is not None:
             first_root = Path(str(outcome.job.spec.project_root))
@@ -1390,7 +1433,7 @@ async def reindex_route(request: Request) -> JSONResponse:
             and source is PublicSourceType.CODE
             and admission is not None
         ):
-            first_admission = admission
+            first_admission = cast("CodeIndexPreflight", admission)
 
     if first_root is not None:
         _m._ensure_watcher_soon(first_root)
@@ -1427,8 +1470,8 @@ async def reindex_route(request: Request) -> JSONResponse:
         "preprocess": _preprocess_preflight(first_root, first_admission),
         "outcome": domain["outcome"],
     }
-    if first_admission is not None and source_type is PublicSourceType.CODE:
-        response["admission"] = _admission_preflight(first_admission)
+    if "admission" in domain:
+        response["admission"] = domain["admission"]
     return JSONResponse(response)
 
 
