@@ -12,14 +12,16 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import TYPE_CHECKING
 
 from . import _config_epoch
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterable, Sequence
 
+    from ._file_state import FileState
     from ._preprocess_config import PreprocessRule
 
 logger = logging.getLogger(__name__)
@@ -42,6 +44,7 @@ EMBED_SCHEMA_KEY = "__code_embed_schema__"
 #: (preprocess invocation fields and ``html_strip``).
 MEMBERSHIP_EPOCH_KEY = "__code_membership_epoch__"
 CONTENT_EPOCH_KEY = "__code_content_epoch__"
+GENERATION_ID_KEY = "__code_generation_id__"
 
 
 def compute_code_epochs(
@@ -150,3 +153,76 @@ def load_meta(meta_path: pathlib.Path) -> dict[str, str]:
         for key, value in read_meta_raw(meta_path).items()
         if not key.startswith("__")
     }
+
+
+def publish_meta_from_file_states(
+    meta_path: pathlib.Path,
+    states: Iterable[FileState],
+    *,
+    generation_id: str,
+    membership_epoch: str,
+    content_epoch: str,
+) -> int:
+    """Atomically stream converged indexed hashes into the code sidecar.
+
+    ``states`` is expected to come from the run ledger's bounded row iterator.
+    Stable policy rejections carry convergence evidence but do not belong in
+    the indexed-path sidecar. Any unresolved state or non-canonical iterator
+    order aborts publication and leaves the prior sidecar untouched.
+    """
+    from ._file_state import FileStateKind
+
+    for name, value in (
+        ("generation_id", generation_id),
+        ("membership_epoch", membership_epoch),
+        ("content_epoch", content_epoch),
+    ):
+        if not value.strip():
+            raise ValueError(f"{name} must not be empty")
+
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = meta_path.with_suffix(".tmp")
+    count = 0
+    previous_path: str | None = None
+    try:
+        with temp_path.open("w", encoding="utf-8", newline="\n") as stream:
+            stream.write("{\n")
+            reserved = (
+                (EMBED_SCHEMA_KEY, CODE_EMBED_SCHEMA),
+                (MEMBERSHIP_EPOCH_KEY, membership_epoch),
+                (CONTENT_EPOCH_KEY, content_epoch),
+                (GENERATION_ID_KEY, generation_id),
+            )
+            first = True
+            for key, value in reserved:
+                if not first:
+                    stream.write(",\n")
+                stream.write(f"  {json.dumps(key)}: {json.dumps(value)}")
+                first = False
+            for state in states:
+                if not state.converged:
+                    raise ValueError(
+                        f"cannot publish unresolved file state for {state.rel_path}"
+                    )
+                if previous_path is not None and state.rel_path <= previous_path:
+                    raise ValueError(
+                        "ledger file states must be unique and ordered by relative path"
+                    )
+                previous_path = state.rel_path
+                if state.state is not FileStateKind.INDEXED:
+                    continue
+                assert state.content_hash is not None
+                stream.write(",\n")
+                stream.write(
+                    f"  {json.dumps(state.rel_path)}: "
+                    f"{json.dumps(state.content_hash)}"
+                )
+                count += 1
+            stream.write("\n}\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp_path, meta_path)
+    except BaseException:
+        temp_path.unlink(missing_ok=True)
+        raise
+    return count
