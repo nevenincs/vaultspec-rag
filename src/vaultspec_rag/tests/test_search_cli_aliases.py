@@ -12,7 +12,7 @@ pytestmark = [pytest.mark.unit]
 runner = CliRunner()
 
 
-def test_search_type_docs_alias_uses_document_search_language() -> None:
+def test_search_type_docs_alias_uses_canonical_vault_validation() -> None:
     result = runner.invoke(
         app,
         [
@@ -28,7 +28,7 @@ def test_search_type_docs_alias_uses_document_search_language() -> None:
     output = " ".join(result.output.split())
     assert result.exit_code == 2
     assert "require --type code" in output
-    assert "got --type docs" in output
+    assert "got --type vault" in output
     assert "Invalid value for '--type'" not in output
 
 
