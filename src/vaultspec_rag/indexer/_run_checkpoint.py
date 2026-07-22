@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Final
 
@@ -26,7 +27,7 @@ from ._run_ledger import (
 from ._run_policy import DurableProgressKind, RunPolicy
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Generator, Iterable
     from pathlib import Path
 
     from ._resolved_policy import ResolvedIndexPolicy
@@ -142,6 +143,26 @@ class CodeRunCheckpoint:
     def ingestion_complete(self) -> bool:
         """Return whether this generation must resume finalization, not ingestion."""
         return self.generation.finalization_phase is not FinalizationPhase.INGESTING
+
+    @contextmanager
+    def preserve_incomplete_generation(self) -> Generator[None]:
+        """Classify an interrupted attempt without hiding its original failure."""
+        try:
+            yield
+        except BaseException as exc:
+            if self.generation.terminal_state is RunTerminalState.RUNNING:
+                terminal_state = (
+                    RunTerminalState.REBUILD_INCOMPLETE
+                    if self.generation.destructive_intent
+                    else RunTerminalState.FAILED
+                )
+                detail = f"{type(exc).__name__}: {exc}".rstrip()
+                self.generation = self.ledger.finish_generation(
+                    self.generation_id,
+                    terminal_state,
+                    detail=detail,
+                )
+            raise
 
     def unit_for(self, segment: CodeFileSegment, source_digest: str) -> CommitUnit:
         """Project one deterministic streaming segment into ledger evidence."""

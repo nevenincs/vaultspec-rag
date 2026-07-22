@@ -2634,7 +2634,7 @@ class CodebaseIndexer:
         publication_span = (
             run_control.protected() if effective_clean else contextlib.nullcontext()
         )
-        with publication_span:
+        with checkpoint.preserve_incomplete_generation(), publication_span:
             reporter.phase_start("prepare collection", 1)
             try:
                 if effective_clean and not clean_has_confirmed_units:
