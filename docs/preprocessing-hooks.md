@@ -1,20 +1,21 @@
 # Document preprocessing hooks
 
-vaultspec-rag indexes Markdown vault docs and source code out of the box. A large
-fraction of a real project's grounding material, though, lives in formats the indexer
-can't read directly: PDFs, spreadsheets, Word documents, XML schemas, and large HTML
-pages that index poorly as raw markup.
+vaultspec-rag keeps vault records, conventional source code, and extracted documents in
+separate index domains. A project can contain other useful formats that the built-in
+source parsers should not interpret as code.
 
-Preprocessing hooks let your project supply its own extraction logic for those formats.
-You register a command per file pattern. vaultspec-rag runs it, validates the output
-against a versioned schema, and indexes the extracted text first-class. The indexed chunks
-are searchable with anchors that deep-link back into the original document. vaultspec-rag
-never learns your formats; it owns the contract and runs your extractor.
+Preprocessing hooks let each project supply its own extraction logic and explicitly route
+the result to either the `code` or `document` domain. You register a command per file
+pattern. vaultspec-rag runs it, validates the output against a versioned schema, and
+indexes the extracted text first-class. The indexed chunks are searchable with anchors
+that deep-link back into the original document. vaultspec-rag does not infer ownership
+from directory names or ship client-specific file rules; it owns the contract and runs
+your extractor.
 
 ## How it works
 
-1. Add a `.vaultragpreprocess.toml` to your project root (a sibling of
-   `.vaultragignore`) mapping file patterns to extraction commands.
+1. Add a version-2 `.vaultragpreprocess.toml` to your project root (a sibling of
+   `.vaultragignore`) mapping file patterns to extraction commands and explicit targets.
 1. During indexing, a file matching a rule is handed to your command, which prints one
    JSON document on stdout.
 1. vaultspec-rag validates that JSON, turns it into searchable chunks (carrying your
@@ -22,26 +23,31 @@ never learns your formats; it owns the contract and runs your extractor.
 1. Search results for those chunks surface the source path and an anchor (for
    example `report.pdf#page=12`) instead of a line number.
 
-vaultspec-rag indexes a matched file even when its extension is unsupported, it exceeds
-the source-size cap, or it's binary. Your extractor turns it into text. A preprocess rule
-never re-includes files excluded by `.gitignore` or `.vaultragignore`. Ignore always wins.
+Only the owning route admits a matched file. The extractor can turn binary or otherwise
+unsupported input into text without making it source code. A preprocess rule never
+re-includes files excluded by `.gitignore` or `.vaultragignore`; ignore always wins.
 
 ## Configure rules
 
 Create `.vaultragpreprocess.toml` at the project root:
 
 ```toml
-version = 1
+version = 2
 
 [[rule]]
 pattern  = "*.pdf"                 # gitignore-style glob (same dialect as .vaultragignore)
 command  = "my-pdf-extract {path}" # {path} is replaced with the file path
+target = "document"                # code | document; required ownership
+extractor_version = "1.0.0"        # required; bump when extraction semantics change
 on_error = "skip"                  # skip | fail | passthrough  (default: skip)
 timeout_s = 60                     # wall-clock bound for the command
+max_source_bytes = 52428800         # optional per-rule input ceiling
 
 [[rule]]
 pattern  = "docs/**/*.xlsx"
 command  = "python tools/xlsx_extract.py {path}"
+target = "document"
+extractor_version = "2.1.0"
 priority = 10                      # lower priority sorts first; first matching rule wins; ties break by file order
 ```
 
@@ -49,6 +55,11 @@ Rule fields:
 
 - **`pattern`** (required) - one gitignore-style glob. Add more `[[rule]]` tables for
   more patterns.
+- **`target`** (required) - the sole owner of matching output: `code` or `document`.
+  Ownership is explicit and stable; paths and extensions do not choose the domain.
+- **`extractor_version`** (required, non-empty string) - your extractor's semantic
+  version. Change it whenever output semantics change so signatures and cache entries
+  are invalidated deterministically.
 - **One of `command` or `entry_point`** (required, exactly one):
   - `command` is a command template. `{path}` is substituted with the source file path.
     The command is split with shell-style tokenization and run **without** a shell, so
@@ -67,6 +78,11 @@ Rule fields:
   - `passthrough` - index the raw file unprocessed instead of failing.
 - **`timeout_s`** (optional) - kill the command after this many seconds and treat it as
   a failure per `on_error`. Must be a positive number.
+- **`path_independent`** (optional, default `false`) - permit byte-identical inputs at
+  different paths to share an extraction-cache entry. Enable it only when output never
+  embeds the source path in text, anchors, locators, or metadata.
+- **`max_source_bytes`** (optional) - a positive per-rule input ceiling. The effective
+  ceiling is the lower of this value and the active document/source support profile.
 - **`[rule.options]`** (optional) - an opaque table forwarded to your preprocessor for
   its own use.
 
@@ -86,16 +102,40 @@ uv run vaultspec-rag preprocess check           # validate the config; non-zero 
 uv run vaultspec-rag preprocess run-one a.pdf   # trial the matching rule against one file
 ```
 
-- `preprocess list` prints each resolved rule with its pattern, priority, failure
-  handling, timeout, and command, sorted in precedence order.
+- `preprocess list` prints each resolved rule with its target, extractor version,
+  cache-binding mode, pattern, priority, failure handling, timeout, and command, sorted
+  in precedence order.
 - `preprocess check` strictly validates `.vaultragpreprocess.toml` and reports the first
-  defect. It's the only command that fails (exit 1) on a bad config; `list` and
-  `run-one` load rules leniently and degrade instead.
+  defect. Invalid or legacy targetless configuration is rejected before indexing can
+  mutate a collection, sidecar, ledger, or cache.
 - `preprocess run-one <path>` runs the matching rule against one file and prints the
-  validated output, with no indexing side effect. It exits 1 only when the extractor
-  itself aborts, not on a config defect.
+  validated output, with no indexing side effect. Configuration and extractor failures
+  are structured errors and produce a non-zero exit.
 
-All three accept `--json` for scripting.
+All three accept `--json` for scripting. `preprocess status` adds the effective execution
+mode, schema version, targets, extractor versions, rule count, and whether the kill switch
+prevents hooks from running.
+
+## Invocation envelope
+
+Every extractor process receives a versioned JSON envelope in the
+`VAULTSPEC_PREPROCESS_INVOCATION` environment variable. Extractors can load and validate
+it with `vaultspec_rag.indexer._preprocess_schema.load_preprocess_invocation()`.
+
+```json
+{
+  "schema_version": 1,
+  "source_paths": ["/absolute/project/docs/report.pdf"],
+  "options": {"layout": "pages"},
+  "extractor_version": "1.0.0",
+  "target": "document",
+  "mode": "single"
+}
+```
+
+For a batch rule, `source_paths` contains the bounded manifest members and `mode` is
+`batch`. The envelope is the authoritative place for rule options, target, and extractor
+version; command-line placeholders remain only the transport for source paths.
 
 ## Output schema
 
@@ -179,6 +219,8 @@ of source paths via a `{paths}` placeholder (not the per-file `{path}`) and emit
 [[rule]]
 pattern  = "*.pdf"
 command  = "python tools/pdf_batch.py {paths}"   # {paths} is the manifest file path
+target = "document"
+extractor_version = "1.0.0"
 batch    = true
 on_error = "skip"
 timeout_s = 5                                     # per-file budget; see scaling below
@@ -234,13 +276,10 @@ Failure handling is per file:
 - `on_error = "fail"` aborts the index run on the first affected file, exactly as it does
   per file.
 
-> **Known interaction (`batch` + `on_error = "fail"`).** When a batching rule fails inside
-> the indexer's chunk worker pool, the pool reports it as a per-file *skip* rather than
-> aborting the run - the same way the per-file `command` path's abort is currently absorbed
-> by the pool. A whole batch that fails under `on_error = "fail"` therefore drops every file
-> in that group as skipped (they are counted and listed as skips, never silently) instead of
-> stopping the index. If a missing document must hard-stop the run, keep that rule per-file
-> (`batch = false`) until the pool propagates the abort.
+`on_error = "fail"` has the same meaning for batch and single-file rules: the first
+affected file raises a preprocessing abort that propagates through the worker pool and
+stops the index run. `skip` and `passthrough` remain per-file outcomes, so unaffected
+members of a valid batch can still succeed.
 
 Batch results are cached per file under the same [cache](#cache-and-incremental-indexing)
 key, so cache hits keep bypassing the hook entirely and a mixed hit/miss set shrinks the
@@ -249,20 +288,24 @@ each group a single spawn.
 
 ## Cache and incremental indexing
 
-Successful extraction output is cached under the data directory, keyed on the source
-content hash plus your command (or `entry_point`) and the schema version. An unchanged
-file isn't re-extracted on a full or restart reindex. A changed file produces a new hash
-and is re-extracted. Only successful outputs are cached, so a transient extractor failure
-is never made sticky.
+Successful extraction output is cached under the data directory. The key binds the source
+path and content hash to the output schema and canonical execution fingerprint, including
+the target, extractor version, command or entry point, and options. An unchanged file is
+not re-extracted on a full or resumed reindex. A changed input or execution fingerprint
+produces a new key. Only successful outputs are cached, so a transient extractor failure
+is never made sticky. Cross-path reuse requires the rule's explicit
+`path_independent = true` declaration.
 
-To force re-extraction of unchanged files after upgrading your extractor, either change
-the rule's command (or `entry_point`) or run a clean rebuild, which drops the cache:
+To force re-extraction of unchanged files after upgrading your extractor, bump
+`extractor_version`. Collection cleanup is intentionally separate from cache lifecycle;
+cleaning only `code` or only `document` does not erase extraction outputs owned by the
+other domain.
 
-- From the CLI: `vaultspec-rag index --rebuild --type code` (or `--type all`), or
-  `vaultspec-rag clean code` followed by a fresh index. See
+- From the CLI: `vaultspec-rag index --rebuild --type document` (or `--type combined`),
+  or `vaultspec-rag clean document` followed by a fresh index. See
   [rebuild from scratch](search-and-index.md#rebuild-from-scratch) for the full rebuild
   and clean surface.
-- From the MCP tools: `reindex_vault(clean=true)` or `reindex_codebase(clean=true)`.
+- From MCP: use the targeted document or combined reindex and clean tools.
 
 The filesystem watcher routes a changed matched file (an edited `.pdf`, for example)
 through your extractor on the same debounce and cooldown machinery as code changes. See
@@ -298,12 +341,12 @@ hooks will fire *before* the job runs.
 
 ## Size limits
 
-The source-size cap is relaxed for matched files (a 12 MB PDF is legitimate). The cap
-instead applies to the **emitted** text via `VAULTSPEC_RAG_PREPROCESS_MAX_EMITTED_BYTES`
-(default 10 MiB), so a runaway extractor that emits tens of megabytes is skipped while a
-large PDF that distills to a few kilobytes indexes fine. See the
-[configuration reference](configuration.md#core-variables) for this and the other
-environment variables.
+Input and output are both bounded. Source bytes are streamed and checked against the
+active support profile and optional `max_source_bytes` before an extractor launches.
+Emitted encoded bytes, unit counts, payloads, queue weight, subprocess output, timeout,
+and no-progress time are bounded independently. A limit failure remains a typed per-file
+outcome and cannot silently publish the file as converged. See the
+[configuration reference](configuration.md#core-variables) for the operational ceilings.
 
 ## Security posture
 
@@ -345,14 +388,14 @@ One operational note: the index tracks the preprocess configuration it was built
 changing the effective mode for a root (toggling `off`) triggers an automatic rebuild on
 the next index run - correct, but expensive on a large corpus.
 
-## Adjacent improvements
+## Parser capability is not admission
 
-Two related changes help every project, with or without hooks:
-
-- `.txt`, `.xml`, `.xsd`, and `.properties` are indexed as plain text by default.
-- `.html` sources are normalized to text (tags, `script`, and `style` stripped) before
-  chunking, so HTML hits carry semantic content instead of markup. Disable with
-  `VAULTSPEC_RAG_HTML_STRIP=0`.
+The indexer has plain-text and HTML-normalization capabilities that explicit routes may
+use for formats without an AST grammar. Those capabilities do not make every readable or
+supported extension source code. The source profile or an explicit `target` decides
+ownership first; only then does the owning pipeline select a parser or extractor. This
+separation is what keeps arbitrary XML, schemas, workbooks, generated data, and other
+project material out of code indexing by default.
 
 ## Illustrative extractors (project-side, not shipped)
 

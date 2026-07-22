@@ -1,6 +1,8 @@
 # Search and index your project
 
-vaultspec-rag searches your vault documents and source code by meaning, surfacing related content even when the exact words don't match. This guide covers two everyday tasks: running searches and keeping the index current.
+vaultspec-rag searches vault records, source code, and explicitly routed extracted
+documents by meaning. This guide covers running searches and keeping each independent
+index current.
 
 This guide assumes the workspace is installed and provisioned. If it isn't, see the [installation guide](installation.md) first. For how search and indexing fit together, see the [architecture overview](architecture.md). To run searches against a background daemon instead of in-process, see [service mode](service-mode.md).
 
@@ -17,6 +19,20 @@ To search source code instead, add `--type code`:
 ```
 uv run vaultspec-rag search "gpu lock around the forward pass" --type code
 ```
+
+Search extracted documents independently with `--type document`, or allocate candidates
+across all three domains with `--type combined`:
+
+```
+uv run vaultspec-rag search "quarterly retention assumptions" --type document
+uv run vaultspec-rag search "where is this policy implemented" --type combined
+```
+
+`docs` remains an alias for `vault`, `codebase` remains an alias for `code`, and `all`
+remains an alias for `combined`. Unknown source types are rejected rather than falling
+back to another corpus. A combined response preserves an outcome for every domain. If
+only some domains fail, successful results return with `partial=true`; if all three fail,
+the command reports a failure instead of an empty success.
 
 Each result is a record with a rank, a file location, and the matching text.
 
@@ -169,9 +185,9 @@ uv run vaultspec-rag search "encode batch" --type code --prefer production
 
 | Flag                                        | Applies to | What it does                                                        |
 | ------------------------------------------- | ---------- | ------------------------------------------------------------------- |
-| `--type docs\|vault\|code`                  | both       | Chooses the corpus; defaults to vault. `docs` is an alias for vault |
-| `--max-results` / `--limit`                 | both       | Sets how many results return; defaults to 10                        |
-| `--scores`                                  | both       | Shows numeric relevance scores beside each record                   |
+| `--type vault\|code\|document\|combined`    | all        | Chooses one domain or all three; defaults to vault                  |
+| `--max-results` / `--limit`                 | all        | Sets how many results return; defaults to 10                        |
+| `--scores`                                  | all        | Shows numeric relevance scores beside each record                   |
 | `--include-path`                            | code       | Keeps only files matching a glob; repeatable                        |
 | `--exclude-path`                            | code       | Drops files matching a glob; repeatable                             |
 | `--language`                                | code       | Keeps results in one programming language                           |
@@ -188,10 +204,29 @@ uv run vaultspec-rag search "encode batch" --type code --prefer production
 | `--feature`                                 | vault      | Keeps documents tagged with one feature                             |
 | `--date`                                    | vault      | Keeps documents from one `yyyy-mm-dd` date                          |
 | `--tag`                                     | vault      | Keeps documents carrying one tag (no leading `#`)                   |
+| `--preprocessor-id`                         | document   | Keeps output from one extractor identity                            |
+| `--extractor-version`                       | document   | Keeps output from one extractor version                             |
+
+## Use the service and MCP surfaces
+
+The resident service owns the same closed source vocabulary on `POST /search`,
+`POST /reindex`, and `POST /clean`. Send `vault`, `code`, `document`, or `combined` as
+the source; service requests do not accept aliases. `GET /readiness` and the service
+status surface report independent document counts, policy fingerprints, generation
+state, support profiles, and degraded reasons without loading a model on the reporting
+path.
+
+MCP exposes `search_documents`, `search_combined`, `reindex_documents`, `reindex_all`,
+`clean_documents`, `clean_all`, and `get_index_status` alongside the existing vault and
+code tools. Combined operations retain one outcome per domain, including failures. A
+domain admission failure therefore does not erase a valid job or result from another
+domain, while a complete failure remains a visible error.
 
 ## Build and refresh the index
 
-Indexing keeps search results current with your files. By default, `index` covers both documents and code and runs incrementally, processing only what changed:
+Indexing keeps search results current with your files. By default, `index` uses the
+compatibility `combined` target and runs incrementally, processing only changed work in
+each domain:
 
 ```
 uv run vaultspec-rag index
@@ -205,11 +240,16 @@ uv run vaultspec-rag server jobs
 
 If no service is running, the command indexes in the current process and returns when it's done.
 
-To scope the run to one corpus, pass `--type vault` or `--type code`:
+To scope the run, name `vault`, `code`, `document`, or `combined`:
 
 ```
 uv run vaultspec-rag index --type code
+uv run vaultspec-rag index --type document
 ```
+
+Code admission is not a recursive “all readable files” scan. It follows the configured
+source profile and explicit project routing. Configure non-source extraction and its
+owner in [preprocessing hooks](preprocessing-hooks.md).
 
 ## Rebuild from scratch
 
@@ -218,17 +258,20 @@ Use `--rebuild` with an explicit `--type` to drop one index and recreate it (for
 ```
 uv run vaultspec-rag index --rebuild --type vault
 uv run vaultspec-rag index --rebuild --type code
+uv run vaultspec-rag index --rebuild --type document
 ```
 
 `--rebuild` requires an explicit `--type`. A bare `index --rebuild` errors out, so it can't rebuild everything by accident.
 
 ## Clean index data
 
-To delete index data without rebuilding it, use `clean` with a required target of `vault`, `code`, or `all`, and confirm with `--yes`:
+To delete index data without rebuilding it, use `clean` with a required target of
+`vault`, `code`, `document`, or `combined`, and confirm with `--yes`:
 
 ```
 uv run vaultspec-rag clean vault --yes
-uv run vaultspec-rag clean all --yes
+uv run vaultspec-rag clean document --yes
+uv run vaultspec-rag clean combined --yes
 ```
 
 The target is required, so no corpus is removed unless you name it. `clean` doesn't load models or touch the GPU.
