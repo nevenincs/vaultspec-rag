@@ -11,6 +11,16 @@ related:
   - '[[2026-07-21-machine-discovery-recovery-reference]]'
 ---
 
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
+
 # `machine-discovery-recovery` plan
 
 ## Description
@@ -45,7 +55,7 @@ Make both managed singleton paths unconditionally test-owned and prove ambient v
 
 Introduce retained ownership and atomic pointer mutation primitives before lifecycle writers are migrated.
 
-- [ ] `W01.P02.S04` - Define a retained machine-lock lease and owner-checked atomic pointer publish and delete primitives; `src/vaultspec_rag/_machine_lock.py`.
+- [x] `W01.P02.S04` - Define a retained machine-lock lease and owner-checked atomic pointer publish and delete primitives; `src/vaultspec_rag/_machine_lock.py`.
 - [ ] `W01.P02.S05` - Verify a real foreign lock holder blocks pointer publication and deletion while the retained owner succeeds; `src/vaultspec_rag/tests/integration/test_machine_singleton.py`.
 
 ### Phase `W01.P03` - heartbeat and shutdown convergence
