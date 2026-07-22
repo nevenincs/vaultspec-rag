@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
     from . import _chunk_worker
     from ._chunk_worker import FileChunkResult
+    from ._resolved_policy import ResolvedIndexPolicy
 
 
 def build_preprocess_rules(root_dir: pathlib.Path) -> PreprocessConfig:
@@ -64,6 +65,26 @@ def resolve_preprocess_context(
         config=config,
         cache_root=preprocess_cache_dir(data_root),
         max_emitted_bytes=int(cfg.preprocess_max_emitted_bytes),
+        project_root=root_dir,
+    )
+
+
+def resolve_policy_preprocess_context(
+    root_dir: pathlib.Path,
+    data_root: pathlib.Path,
+    policy: ResolvedIndexPolicy,
+) -> PreprocessContext | None:
+    """Materialize worker execution state from one immutable policy snapshot."""
+    if policy.execution_mode == "off" or not policy.preprocess_rules:
+        return None
+    config = PreprocessConfig(
+        [rule.materialize() for rule in policy.preprocess_rules],
+        schema_version=policy.preprocess_schema_version,
+    )
+    return PreprocessContext(
+        config=config,
+        cache_root=preprocess_cache_dir(data_root),
+        max_emitted_bytes=policy.max_emitted_bytes,
         project_root=root_dir,
     )
 

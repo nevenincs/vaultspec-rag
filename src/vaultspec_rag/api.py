@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     import pathlib
 
     from .indexer import IndexResult
+    from .indexer._codebase_indexer import ContentScanResult
     from .progress import ProgressReporter
     from .search import SearchResult
 
@@ -37,6 +38,7 @@ __all__ = [
     "list_documents",
     "run_benchmark",
     "run_quality_probe",
+    "scan_codebase",
     "scan_codebase_files",
     "search_codebase",
     "search_codebase_timed",
@@ -581,14 +583,17 @@ def get_status(root_dir: pathlib.Path) -> dict[str, object]:
     }
 
 
-def scan_codebase_files(
+def scan_codebase(
     root_dir: pathlib.Path,
     *,
     extra_excludes: list[str] | None = None,
-) -> list[pathlib.Path]:
-    """Scan the codebase, returning list of paths that would be indexed.
+    sample_limit: int = 100,
+) -> ContentScanResult:
+    """Scan the codebase through the production admission policy.
 
-    Does not require GPU or vector store - safe for dry-runs.
+    The structured result includes the compatibility file projection, bounded
+    disposition samples, stable kind/reason counts, and the resolved policy
+    fingerprint. It does not require GPU or vector storage.
     """
     root = _resolve(root_dir)
     from .indexer import CodebaseIndexer
@@ -599,7 +604,22 @@ def scan_codebase_files(
         store=cast("Any", None),
         extra_excludes=extra_excludes,
     )
-    return indexer.scan_files()
+    return indexer.scan_content(sample_limit=sample_limit)
+
+
+def scan_codebase_files(
+    root_dir: pathlib.Path,
+    *,
+    extra_excludes: list[str] | None = None,
+) -> list[pathlib.Path]:
+    """Return the compatible path-list projection of structured admission."""
+    return list(
+        scan_codebase(
+            root_dir,
+            extra_excludes=extra_excludes,
+            sample_limit=0,
+        ).files
+    )
 
 
 def run_benchmark(
