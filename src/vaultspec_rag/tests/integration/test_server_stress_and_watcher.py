@@ -32,6 +32,11 @@ from ...job_models import (
 from ...progress import NullProgressReporter
 from ...server import _watcher as watcher_lifecycle
 from ...watcher_retry import WatcherRetryPolicy, WatcherSource
+from ..benchmarks.bench_large_index_resilience import (
+    CorpusSpec,
+    measure_full_index,
+    prepare_corpus,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
@@ -540,6 +545,95 @@ class TestLocalConcurrencyLocks:
         assert not thread.is_alive()
         assert not errors
         store.close()
+
+
+class TestLargeIndexSearchHeadroom:
+    """Concurrent code search remains live under bounded production load."""
+
+    @pytest.mark.performance
+    @pytest.mark.timeout(900)
+    def test_search_completes_while_large_index_retains_cuda_headroom(
+        self,
+        tmp_path: Path,
+        embedding_model: EmbeddingModel,
+    ) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        from ... import CodebaseIndexer, VaultSearcher
+        from ..._gpu import load_torch
+
+        root = tmp_path / "large-index-search-headroom"
+        spec = CorpusSpec(files=256, chunks_per_file=3)
+        prepare_corpus(root, spec)
+        store = VaultStore(root)
+        gpu_lock = threading.Lock()
+        try:
+            indexer = CodebaseIndexer(
+                root,
+                embedding_model,
+                store,
+                gpu_lock=gpu_lock,
+            )
+            bootstrap = (
+                root / "src" / "acceptance_workload" / "000" / ("module_000000.py")
+            )
+            indexer.incremental_index(
+                reporter=NullProgressReporter(),
+                changed_paths=[bootstrap],
+                preflight=indexer.preflight_changed_paths([bootstrap]),
+            )
+            searcher = VaultSearcher(
+                root,
+                embedding_model,
+                store,
+                gpu_lock=gpu_lock,
+            )
+            index_started = threading.Event()
+            index_finished = threading.Event()
+
+            def _index():
+                index_started.set()
+                try:
+                    return measure_full_index(
+                        indexer,
+                        indexer.preflight_content(),
+                        clean=False,
+                    )
+                finally:
+                    index_finished.set()
+
+            def _search(task: int) -> tuple[int, bool]:
+                results = searcher.search_codebase(
+                    f"acceptance workload value offset {task}",
+                    top_k=5,
+                )
+                return len(results), index_finished.is_set()
+
+            with ThreadPoolExecutor(max_workers=5) as pool:
+                index_future = pool.submit(_index)
+                assert index_started.wait(timeout=10.0)
+                search_futures = [pool.submit(_search, task) for task in range(8)]
+                search_outcomes = [future.result() for future in search_futures]
+                measured = index_future.result()
+
+            assert measured.result.total == spec.expected_chunks
+            assert all(count > 0 for count, _finished in search_outcomes)
+            assert any(not finished for _count, finished in search_outcomes), (
+                "no search completed while bounded indexing was still progressing"
+            )
+
+            torch = load_torch()
+            total_cuda_mb = float(
+                torch.cuda.get_device_properties(0).total_memory / 1024**2
+            )
+            configured_fraction = float(get_config().index_cuda_allocator_fraction)
+            required_headroom_mb = total_cuda_mb * (1.0 - configured_fraction)
+            observed_headroom_mb = (
+                total_cuda_mb - measured.resources.peak_cuda_reserved_mb
+            )
+            assert observed_headroom_mb >= required_headroom_mb - 128.0
+        finally:
+            store.close()
 
 
 @pytest.mark.asyncio

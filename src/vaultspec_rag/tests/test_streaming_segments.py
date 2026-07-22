@@ -7,6 +7,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 from itertools import chain
 
 import numpy as np
@@ -14,9 +15,11 @@ import pytest
 
 from vaultspec_rag._store_models import CodeChunk, VaultChunk
 from vaultspec_rag.indexer._codebase_indexer import (
+    CodebaseIndexer,
     _drain_code_chunks,
     _WeightedCodeSegmentQueue,
 )
+from vaultspec_rag.indexer._run_policy import DurableProgressKind, RunPolicy
 from vaultspec_rag.indexer._streaming import (
     CodeFileSegment,
     WeightedCodeSlice,
@@ -245,6 +248,52 @@ def test_weighted_queue_rejects_a_segment_above_its_byte_budget() -> None:
 
     with pytest.raises(ValueError, match="exceeds queue capacity"):
         segment_q.put(segment)
+
+
+def test_normal_consumer_drain_extends_while_storage_progress_continues() -> None:
+    chunks = [_chunk(f"drain-{index}") for index in range(4)]
+    segments = list(
+        iter_code_file_segments(
+            chunks,
+            max_chunks=1,
+            max_bytes=1_000_000,
+            dense_dimension=4,
+            sparse_enabled=False,
+        )
+    )
+    queue_bytes = sum(segment.estimated_bytes for segment in segments)
+    segment_q = _WeightedCodeSegmentQueue(
+        max_chunks=len(segments),
+        max_bytes=queue_bytes,
+    )
+    for segment in segments:
+        segment_q.put(segment)
+
+    policy = RunPolicy(no_progress_timeout_seconds=0.4)
+    consumed: list[CodeFileSegment] = []
+
+    def _consume() -> None:
+        while True:
+            segment = segment_q.get(timeout=1.0)
+            if segment is None:
+                return
+            time.sleep(0.15)
+            consumed.append(segment)
+            policy.record_durable_progress(
+                kind=DurableProgressKind.LEDGER_UNIT_COMMITTED,
+                label=f"stored {segment.path}#{segment.ordinal}",
+            )
+
+    consumer = threading.Thread(target=_consume, name="real-progressing-consumer")
+    started = time.monotonic()
+    consumer.start()
+    CodebaseIndexer._drain_consumer(consumer, segment_q, policy)
+    elapsed = time.monotonic() - started
+
+    assert not consumer.is_alive()
+    assert consumed == segments
+    assert elapsed > policy.snapshot().timeout_seconds
+    assert policy.snapshot().durable_progress_count == len(segments)
 
 
 def test_explicit_stream_limits_do_not_resolve_global_configuration() -> None:
