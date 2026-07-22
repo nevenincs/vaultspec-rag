@@ -33,15 +33,14 @@ counts and does not close the race between retrieval and response emission.
   safely be interpreted as no match in the currently published index.
 - A **convergence job** is an index operation bringing one project root and one source toward
   the files currently on disk.
-- A **nonterminal convergence job** is a canonical index job in `queued`, `running`,
-  `pausing`, `paused`, or `cancelling`, or a compatibility record in `running`.
+- A **nonterminal convergence job** is a canonical `JobManager` index job in `queued`,
+  `running`, `pausing`, `paused`, or `cancelling`.
 - The **normalized source** is `vault` for the vault search branch and `code` for the code or
   codebase search branch.
 - The **resolved root** is the request root returned by `_resolve_root`. Snapshot roots are
   expanded and resolved without requiring the path to exist, normalized with the host
   platform's path-case rules, and compared for equality. Prefix matches are forbidden.
-- A **compatibility snapshot** has the legacy top-level `source`, `phase`, and
-  `initiator.project_root` fields. A **canonical snapshot** has `spec`, `state`, and `id`.
+- A **canonical snapshot** is a copied `JobManager` resource with `spec`, `state`, and `id`.
 - **Stable** means neither observation contains a matching nonterminal convergence job. It
   does not claim that future generation-ledger evidence is available.
 - GPU means graphics processing unit. CI means continuous integration.
@@ -56,10 +55,9 @@ counts and does not close the race between retrieval and response emission.
 - Nonempty results remain useful during overlapping work and must remain HTTP 200.
 - Index work can begin or finish while retrieval runs. One preflight observation cannot
   establish the authority of a later empty result.
-- Current compatibility job snapshots expose enough root, source, and nonterminal-state evidence
-  for a narrow guard, but they are not the final lifecycle authority.
-- Canonical job control and the large-index generation ledger are accepted but still in
-  flight.
+- Canonical `JobManager` snapshots expose the root, source, mode, and nonterminal-state
+  evidence required by the narrow guard.
+- The large-index generation ledger is accepted but still in flight.
 - Existing clients recognize structured failures through `ok: false`. The 503 body must omit
   `results` so no client can reinterpret the response as a successful empty search.
 - Indexing progress provides no credible completion estimate.
@@ -92,14 +90,13 @@ counts and does not close the race between retrieval and response emission.
   `results` member, the exact envelope in the HTTP response contract, and no undeclared
   success fields.
 - `index_state.status` is `updating` unless canonical evidence proves a rebuild, in which case
-  it is `rebuilding`. Compatibility snapshots must not infer rebuilding from prose, counts,
-  or request intent.
+  it is `rebuilding`.
 - Nonempty results remain HTTP 200 even when matching index work overlaps the request.
 - Empty results remain HTTP 200 when no matching nonterminal work overlaps the request. Unrelated
   jobs are ignored.
 - `Retry-After` is omitted unless the service later owns a credible completion estimate.
-- The narrow guard may consume compatibility snapshots but must not introduce another job
-  registry, duplicate lifecycle state, or require changes to `jobs.py`.
+- The narrow guard consumes copied canonical `JobManager` snapshots. It must not introduce
+  another job registry, duplicate lifecycle state, or require changes to `jobs.py`.
 - The accepted June empty-search decision remains stable. This decision extends its HTTP
   authority semantics and does not supersede it.
 - Service-job-control remains the canonical lifecycle direction. Large-index-resilience
@@ -110,39 +107,36 @@ counts and does not close the race between retrieval and response emission.
 - Tests use production routes, real job execution, real storage, and real models without
   fakes, mocks, stubs, patches, monkeypatching, skips, or expected failures. GPU acceptance
   runs locally because no GPU CI runner exists.
-- The shared HTTP client preserves the daemon body. The Model Context Protocol (MCP) adapter
-  raises a recoverable tool error for any structured search body with `ok: false` before
-  `SearchResults` validation, so its default `results` field cannot manufacture an empty
-  success.
+- The shared HTTP client preserves structured daemon failure envelopes. The Model Context
+  Protocol (MCP) adapter accepts only dictionary envelopes. It raises a recoverable tool error
+  for structured `ok: false` failures before `SearchResults` validation. Bare lists, empty
+  objects, and malformed success envelopes fail with `invalid_service_response` rather than
+  becoming empty success.
 
 ## Implementation
 
 ### Snapshot classification
 
-The service normalizes a copied snapshot with this precedence and predicate:
+The service classifies each copied canonical snapshot with this predicate:
 
-| Shape         | Required identity                                                                                                                                                     | Convergence predicate                                                | Rebuild evidence                 |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------- |
-| Canonical     | Nonempty `id`; `spec.operation` is `index`; `spec.source` equals the normalized source; normalized `spec.project_root` equals the resolved root                       | `state` is `queued`, `running`, `pausing`, `paused`, or `cancelling` | `spec.mode` is exactly `rebuild` |
-| Compatibility | Used only when the `spec` key is absent; nonempty `id`; top-level `source` equals the normalized source; normalized `initiator.project_root` equals the resolved root | `phase` is exactly `running`                                         | Never; exposed mode is `null`    |
+| Required identity                                                                                                                               | Convergence predicate                                                | Mode evidence                            |
+| ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ---------------------------------------- |
+| Nonempty `id`; `spec.operation` is `index`; `spec.source` equals the normalized source; normalized `spec.project_root` equals the resolved root | `state` is `queued`, `running`, `pausing`, `paused`, or `cancelling` | `spec.mode` is `incremental` or `rebuild` |
 
-If the `spec` key exists, the record is canonical. Canonical fields are authoritative. A
-non-mapping or malformed `spec` record is ignored rather than reclassified through
-compatibility fields. Terminal canonical states,
-including `failed` and `cancelled`, and terminal compatibility phases do not match. Resource
-flags and progress text never override observed state. Future generation state owns failures
-that outlive a job.
+Records with a missing, non-mapping, or malformed `spec` are ignored. Terminal states,
+including `failed` and `cancelled`, do not match. Resource flags and progress text never
+override observed state. Future generation state owns failures that outlive a job.
 
-Canonical mode normalization is closed: exact `rebuild` remains `rebuild`, exact
-`incremental` remains `incremental`, and a missing, null, non-string, or unrecognized value
-becomes `null`. Only normalized `rebuild` contributes rebuilding evidence.
+Canonical mode normalization is closed: exact `rebuild` remains `rebuild`, and exact
+`incremental` remains `incremental`. A missing, null, non-string, or unrecognized value does
+not match. Only normalized `rebuild` contributes rebuilding evidence.
 
-Each observation consumes the complete service-owned copied snapshot. The registry already
+Each observation consumes the complete copied `JobManager` snapshot. The manager already
 bounds that snapshot. Response evidence is separately capped at eight unique jobs. The second
 observation comes first, followed by jobs seen only in the first observation. The stable `id`
-deduplicates the list, so the second observation's state wins. Availability status is computed
-from every unique match before response truncation. `matching_jobs_truncated` is true when
-more than eight unique matches existed.
+deduplicates the list, so the second observation's state wins. The classifier computes
+availability status from every unique match before truncating response evidence.
+`matching_jobs_truncated` is true when more than eight unique matches existed.
 
 ### HTTP response contract
 
@@ -180,11 +174,11 @@ fields. The existing index count and target fields come from `_search_index_stat
 }
 ```
 
-`status` is `rebuilding` when any unique canonical match before truncation has mode `rebuild`; otherwise
-it is `updating`. Each job reference has exactly `id`, `state`, and `mode`. `mode` is
-`incremental`, `rebuild`, or `null`. The message substitutes the normalized source and
-resolved root. The port suffix is present in HTTP service mode. No `results`, `summary`,
-`empty`, or `timing` member is emitted. No `Retry-After` header is sent.
+`status` is `rebuilding` when any unique canonical match before truncation has mode `rebuild`;
+otherwise it is `updating`. Each job reference has exactly `id`, `state`, and `mode`. `mode` is
+`incremental` or `rebuild`. The message substitutes the normalized source and resolved root.
+The port suffix is present in HTTP service mode. No `results`, `summary`, `empty`, or `timing`
+member is emitted. No `Retry-After` header is sent.
 
 When neither observation matches, the ordinary empty-result contract remains HTTP 200. It
 continues to distinguish a missing index from an available index with no match. The helper
@@ -193,21 +187,20 @@ registry.
 
 The MCP search adapters inspect the structured daemon body before Pydantic validation. Any
 body with `ok: false` raises an actionable `RuntimeError` containing the daemon error code,
-message, and remediation. FastMCP maps that recoverable exception to `isError: true`. Valid
-search envelopes continue through `SearchResults` unchanged. The regression invokes the real
-MCP stdio shim through the official client and asserts `CallToolResult.isError is True`. Its
-text contains `index_unavailable` and the jobs command, and its structured content is absent
-or has no `results` member.
+message, and remediation. FastMCP maps that recoverable exception to `isError: true`. A valid
+success is a nonempty dictionary envelope containing a `results` list. A bare list, empty
+dictionary, or malformed success raises `invalid_service_response`. The regression invokes
+the real MCP stdio shim through the official client and asserts `CallToolResult.isError is
+True`. Its text contains `index_unavailable` and the jobs command, and its structured content
+is absent or has no `results` member.
 
 ### Deterministic regression handshake
 
 The regression uses the function-scoped real subprocess service and the existing synthetic
 corpus builder to create 256 well-formed vault documents with seed 252. It submits a real
 clean vault reindex, retains the returned job ID, and polls authenticated `/jobs` every 50
-milliseconds for at most 10 seconds. The compatibility handshake requires `phase: running`
-and a `progress.step` other than `queued`. The canonical handshake requires `state: running`
-and `resources.project_lease_held: true`. These conditions prove the real indexer entered
-under the project lease before searches are admitted. The search query is
+milliseconds for at most 10 seconds until the submitted job is running. This handshake proves
+the real indexer entered before searches are admitted. The search query is
 `type:nonexistent availability authority probe`, an existing
 production filter behavior that guarantees no matching document without mirroring search
 logic in the test.
@@ -230,9 +223,8 @@ matching-empty query and the primary root.
 The HTTP 503 assertion requires the exact declared key sets. Dynamic fields are checked by
 contract: `request_id` is 32 lowercase hexadecimal characters, `indexed_count` is a
 nonnegative integer from the real search, roots equal their resolved strings, and the returned
-job reference contains the submitted job ID. The current compatibility snapshot reports
-`status: updating`, `state: running`, and `mode: null`; a canonical rebuild reports
-`status: rebuilding`, `state: running`, and `mode: rebuild`.
+job reference contains the submitted job ID. A canonical rebuild reports `status: rebuilding`,
+`state: running`, and `mode: rebuild`.
 
 The concurrent assertion matrix is:
 
@@ -247,12 +239,11 @@ The concurrent assertion matrix is:
 | Post-convergence matching empty | Primary root, `vault`, same guaranteed no-match query                                       | HTTP 200 with `results: []` and `empty.reason: no_match`                                           |
 
 The test asserts every independent contract after all futures settle. It polls the same job
-every 100 milliseconds for at most 300 seconds until compatibility `phase: done` or canonical
-`state: succeeded`. Any failure or cancellation fails the test with the job result and error
-evidence. It then repeats the raw matching-empty query and asserts the ordinary HTTP 200 empty
-contract. Timeout failures include the latest `/health`, exact `/jobs`, `/metrics`, and
-response evidence. Later test Steps append one probe at a time to this one
-service-and-job lifecycle; each invariant remains a separate commit.
+every 100 milliseconds for at most 300 seconds until it succeeds. Any failure or cancellation
+fails the test with the job result and error evidence. It then repeats the raw matching-empty
+query and asserts the ordinary HTTP 200 empty contract. Timeout failures include the latest
+`/health`, exact `/jobs`, `/metrics`, and response evidence. Later test Steps append one probe
+at a time to this one service-and-job lifecycle; each invariant remains a separate commit.
 
 When large-index-resilience publishes `rebuild_incomplete` for a destructive generation, it
 becomes an additional reason to apply this same contract to an otherwise-empty response. A
@@ -267,13 +258,11 @@ a single stale preflight check cannot manufacture success.
 
 HTTP 503 communicates temporary inability to answer authoritatively to generic HTTP
 consumers. The structured body preserves the project's machine-readable service contract.
-Omitting `results` prevents compatibility clients from collapsing the failure back into an
-empty-success path.
+Omitting `results` keeps the structured failure distinct from the empty-success path.
 
-Using current snapshots only as a compatibility input avoids competing with
-service-job-control. Deferring complete publication authority to the large-index generation
-ledger preserves its ownership of durable `rebuild_incomplete` state, including failures that
-outlive their active job.
+Using canonical `JobManager` snapshots avoids competing with service-job-control. Deferring
+complete publication authority to the large-index generation ledger preserves its ownership
+of durable `rebuild_incomplete` state, including failures that outlive their active job.
 
 ## Consequences
 
@@ -284,8 +273,8 @@ outlive their active job.
 - Empty searches overlapping even non-destructive work return a conservative 503 until
   stronger generation evidence can prove authority.
 - Each potentially empty search performs two bounded job-state observations.
-- Compatibility logic must be replaced by canonical job and generation views as their
-  campaigns land, without changing the external 503 contract.
+- Generation views can strengthen the canonical job evidence without changing the external
+  503 contract.
 - A failed clean rebuild remains unavailable after its job terminates once
   `rebuild_incomplete` generation state is exposed.
 - Clients that assumed every `/search` response contained `results` must handle the existing

@@ -37,7 +37,8 @@ Prove the availability decision is scoped to the exact resolved project root and
 
 ### Phase `W01.P06` - consumer semantics
 
-Lock the shared service client and downstream consumer boundary to structured unavailable data without a results key.
+Lock the shared service client and downstream consumer boundary to strict dictionary
+envelopes. Structured failure envelopes must omit the `results` key.
 
 - [x] `W01.P06.S09` - Prove the shared service client preserves the structured unavailable error without manufacturing results using Sol medium; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
 - [x] `W01.P06.S18` - Add a real MCP stdio call proving unavailable search yields CallToolResult isError true and never structured empty results using Sol medium; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
@@ -48,7 +49,7 @@ Terra xhigh, the high-tier production executor, implements the accepted root-sco
 
 ### Phase `W02.P02` - bounded search classification
 
-Normalize copied compatibility and canonical job snapshots, then make only non-authoritative empty responses fail with the stable structured contract.
+Classify copied canonical `JobManager` snapshots, then make only non-authoritative empty responses fail with the stable structured contract.
 
 - [x] `W02.P02.S19` - Implement bounded root and source job matching plus the structured unavailable response using Terra xhigh; `src/vaultspec_rag/server/_search_availability.py`.
 - [x] `W02.P02.S20` - Integrate double job-state observation and HTTP 503 emission into the search route using Terra xhigh; `src/vaultspec_rag/server/_routes.py`.
@@ -91,11 +92,10 @@ before returning an empty response. It emits HTTP 503 with `ok: false`,
 references, and no `results` member. Stable empty searches, unrelated index
 work, and usable nonempty results remain HTTP 200.
 
-The implementation must consume both the compatibility snapshot shape and the
-canonical service-job-control snapshot shape without modifying either job
-registry. Future generation-ledger state may supply stronger evidence such as
-`rebuild_incomplete` for an otherwise-empty result, but this plan does not
-create that ledger.
+The implementation consumes copied canonical `JobManager` snapshots without
+modifying lifecycle state. Future generation-ledger state may supply stronger
+evidence such as `rebuild_incomplete` for an otherwise-empty result, but this
+plan does not create that ledger.
 
 Sol medium is the standard-tier test executor restricted to W01 and its test
 file. Terra xhigh is the high-tier production executor restricted to W02 and
@@ -139,9 +139,11 @@ one clean-index lifecycle. Each invariant remains a distinct Step and commit.
   not alter the stable HTTP 200 empty-result contract.
 - A usable nonempty response remains HTTP 200 while matching work is
   nonterminal.
-- The shared service client preserves `index_unavailable` as structured failure
-  data. A real MCP stdio call returns `CallToolResult.isError is True` with
-  actionable text and no structured `results` member.
+- The shared service client preserves `index_unavailable` as a structured failure
+  envelope and rejects malformed response envelopes as `invalid_service_response`. A real
+  MCP stdio call returns `CallToolResult.isError is True` with actionable text
+  and no structured `results` member. Successful search responses are strict
+  dictionary envelopes containing a `results` list.
 - The local graphics processing unit regression passes with
   `uv run pytest -m subprocess_gpu src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py -k search_index_unavailable_during_matching_rebuild -vv -s`.
 - Adjacent tests pass with
