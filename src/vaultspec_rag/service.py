@@ -133,6 +133,7 @@ class ServiceRegistry:
         self._reranker_lock = threading.Lock()
         self._on_close_project: Callable[[Path], object] | None = None
         self._shutting_down = False
+        self._shutdown_complete = False
         self._idle_ttl_seconds: float = float(cfg.service_idle_ttl_seconds)
         self._max_projects: int = int(cfg.service_max_projects)
 
@@ -149,6 +150,37 @@ class ServiceRegistry:
         return self._idle_ttl_seconds
 
     # -- model lifecycle ---------------------------------------------------
+
+    def prepare_startup(self) -> bool:
+        """Reopen this exact registry after one fully completed shutdown.
+
+        Returns:
+            ``True`` when a closed registry was reopened; ``False`` for its
+            initial service life.
+
+        Raises:
+            RuntimeError: If teardown is incomplete or retained state makes
+                reopening unsafe.
+        """
+        with self._lock:
+            if not self._shutting_down:
+                return False
+            if not self._shutdown_complete:
+                raise RuntimeError(
+                    "ServiceRegistry cannot reopen before shutdown completes"
+                )
+            if (
+                self._projects
+                or self._root_locks
+                or self._model is not None
+                or self._reranker is not None
+            ):
+                raise RuntimeError(
+                    "ServiceRegistry cannot reopen while owned state remains"
+                )
+            self._shutting_down = False
+            self._shutdown_complete = False
+            return True
 
     def load_model(self, model_name: str | None = None) -> None:
         """Eagerly load GPU models into ``_model``.
@@ -679,6 +711,7 @@ class ServiceRegistry:
         """
         with self._lock:
             self._shutting_down = True
+            self._shutdown_complete = False
 
         # ADR D6: bounded drain.  5.0 seconds is intentionally hardcoded.
         deadline = time.monotonic() + 5.0
@@ -712,6 +745,7 @@ class ServiceRegistry:
             self._root_locks.clear()
             self._model = None
             self._reranker = None
+            self._shutdown_complete = True
         logger.info("ServiceRegistry shut down")
 
     # -- introspection -----------------------------------------------------

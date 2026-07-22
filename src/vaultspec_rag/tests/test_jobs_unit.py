@@ -1,9 +1,9 @@
 """Unit tests for ``jobs.py``.
 
 Covers (no GPU required):
-- Both ``_bg_run`` closures in ``start_reindex_vault`` and
-  ``start_reindex_codebase`` call ``load_model()`` before ``lease()``
-  (AST structural assertion — regression guard for the fix).
+- The jobs facade contains no duplicated ``_bg_run`` closures, while both
+  production runners in ``job_dispatch`` call ``load_model()`` before
+  ``lease()`` (AST structural regression guard).
 - ``ServiceRegistry.load_model()`` is idempotent: a second call when
   ``_model`` is already set returns immediately without touching CUDA
   (proven by injecting a sentinel and asserting it is unchanged).
@@ -97,9 +97,7 @@ assert compatibility_manager is direct_manager
 # ---------------------------------------------------------------------------
 
 
-def _function_node_named(  # pyright: ignore[reportUnusedFunction]
-    tree: ast.Module, name: str
-) -> ast.FunctionDef:
+def _function_node_named(tree: ast.Module, name: str) -> ast.FunctionDef:
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == name:
             return node
@@ -128,49 +126,56 @@ def _parse_jobs_module() -> ast.Module:
     return ast.parse(textwrap.dedent(src))
 
 
-class TestBgRunLoadModelBeforeLease:
-    """AST-level guard: load_model() must precede lease() in both closures."""
+def _parse_job_dispatch_module() -> ast.Module:
+    import vaultspec_rag.job_dispatch as dispatch_mod
 
-    def _find_bg_run_nodes(self, tree: ast.Module) -> list[ast.FunctionDef]:
-        return [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.FunctionDef) and node.name == "_bg_run"
-        ]
+    src = inspect.getsource(dispatch_mod)
+    return ast.parse(textwrap.dedent(src))
 
-    def test_two_bg_run_closures_exist(self) -> None:
-        tree = _parse_jobs_module()
-        nodes = self._find_bg_run_nodes(tree)
-        assert len(nodes) == 2, (
-            f"Expected exactly 2 _bg_run closures, found {len(nodes)}"
-        )
 
-    def test_load_model_before_lease_in_vault_bg_run(self) -> None:
-        tree = _parse_jobs_module()
-        nodes = self._find_bg_run_nodes(tree)
-        # First _bg_run belongs to start_reindex_vault
-        calls = _call_names_in_order(nodes[0])
-        assert "load_model" in calls, "_bg_run (vault) must call load_model()"
-        assert "lease" in calls, "_bg_run (vault) must call lease()"
+class TestIndexDispatchLoadModelBeforeLease:
+    """AST guard for the extracted production indexing dispatch module."""
+
+    def test_dispatch_implementations_are_extracted_from_jobs_facade(self) -> None:
+        jobs_tree = _parse_jobs_module()
+        jobs_functions = {
+            node.name
+            for node in ast.walk(jobs_tree)
+            if isinstance(node, ast.FunctionDef)
+        }
+        dispatch_tree = _parse_job_dispatch_module()
+        dispatch_functions = {
+            node.name
+            for node in ast.walk(dispatch_tree)
+            if isinstance(node, ast.FunctionDef)
+        }
+        assert "_bg_run" not in jobs_functions
+        assert {"_run_vault_attempt", "_run_code_attempt"} <= dispatch_functions
+
+    def test_load_model_before_lease_in_vault_dispatch(self) -> None:
+        tree = _parse_job_dispatch_module()
+        node = _function_node_named(tree, "_run_vault_attempt")
+        calls = _call_names_in_order(node)
+        assert "load_model" in calls, "_run_vault_attempt must call load_model()"
+        assert "lease" in calls, "_run_vault_attempt must call lease()"
         load_idx = calls.index("load_model")
         lease_idx = calls.index("lease")
         assert load_idx < lease_idx, (
             f"load_model() (pos {load_idx}) must appear before lease() "
-            f"(pos {lease_idx}) in _bg_run (vault)"
+            f"(pos {lease_idx}) in _run_vault_attempt"
         )
 
-    def test_load_model_before_lease_in_codebase_bg_run(self) -> None:
-        tree = _parse_jobs_module()
-        nodes = self._find_bg_run_nodes(tree)
-        # Second _bg_run belongs to start_reindex_codebase
-        calls = _call_names_in_order(nodes[1])
-        assert "load_model" in calls, "_bg_run (code) must call load_model()"
-        assert "lease" in calls, "_bg_run (code) must call lease()"
+    def test_load_model_before_lease_in_codebase_dispatch(self) -> None:
+        tree = _parse_job_dispatch_module()
+        node = _function_node_named(tree, "_run_code_attempt")
+        calls = _call_names_in_order(node)
+        assert "load_model" in calls, "_run_code_attempt must call load_model()"
+        assert "lease" in calls, "_run_code_attempt must call lease()"
         load_idx = calls.index("load_model")
         lease_idx = calls.index("lease")
         assert load_idx < lease_idx, (
             f"load_model() (pos {load_idx}) must appear before lease() "
-            f"(pos {lease_idx}) in _bg_run (code)"
+            f"(pos {lease_idx}) in _run_code_attempt"
         )
 
 
