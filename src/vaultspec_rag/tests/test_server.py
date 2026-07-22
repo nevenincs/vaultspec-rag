@@ -298,7 +298,8 @@ class TestPydanticModels:
         )
         assert item.language == "python"
         assert item.line_start == 1
-        assert item.model_dump()["rerank_text"] == "def main():\n    return 0"
+        assert item.rerank_text == "def main():\n    return 0"
+        assert "rerank_text" not in item.model_dump()
 
     def test_search_response(self):
         resp = SearchResponse(
@@ -1367,7 +1368,7 @@ class TestRouteMissingProjectRoot:
             assert resp.status_code == 400
             data: dict[str, Any] = cast("dict[str, Any]", resp.json())
             assert data["ok"] is False
-            assert data["error"] == "bad_request"
+            assert data["error"] == "invalid_job_spec"
             assert "project_root" in data["message"]
         finally:
             mod._http_mode = orig_mode
@@ -1545,6 +1546,7 @@ class TestReindexPreprocessPreflight:
         root = tmp_path / "proj"
         self._write_config(root)
         monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(tmp_path / "status"))
+        monkeypatch.setenv(EnvVar.INDEX_SUPPORT_PROFILE.value, "embedded-local")
         monkeypatch.delenv(EnvVar.PREPROCESS.value, raising=False)
         reset_config()
         try:
@@ -1564,6 +1566,7 @@ class TestReindexPreprocessPreflight:
         root = tmp_path / "proj"
         self._write_config(root)
         monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(tmp_path / "status"))
+        monkeypatch.setenv(EnvVar.INDEX_SUPPORT_PROFILE.value, "embedded-local")
         monkeypatch.setenv(EnvVar.PREPROCESS.value, "off")
         reset_config()
         try:
@@ -1584,6 +1587,7 @@ class TestReindexPreprocessPreflight:
         root = tmp_path / "proj"
         (root / ".vault").mkdir(parents=True)
         monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(tmp_path / "status"))
+        monkeypatch.setenv(EnvVar.INDEX_SUPPORT_PROFILE.value, "embedded-local")
         monkeypatch.delenv(EnvVar.PREPROCESS.value, raising=False)
         reset_config()
         try:

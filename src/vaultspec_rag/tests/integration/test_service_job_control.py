@@ -384,7 +384,7 @@ def test_json_cli_job_controls_use_full_ids_and_one_stable_outcome(
         assert missing["error"] == "job_not_found"
 
 
-def test_reindex_compatibility_keeps_mcp_incremental_refresh_only(
+def test_reindex_compatibility_keeps_mcp_refresh_distinct_from_clean(
     tmp_path: Path,
 ) -> None:
     project_root = tmp_path / "mcp-refresh"
@@ -394,9 +394,16 @@ def test_reindex_compatibility_keeps_mcp_incremental_refresh_only(
     assert {tool.name for tool in tools} == {
         "search_vault",
         "search_codebase",
+        "search_documents",
+        "search_combined",
         "get_code_file",
         "reindex_vault",
         "reindex_codebase",
+        "reindex_documents",
+        "reindex_all",
+        "get_index_status",
+        "clean_documents",
+        "clean_all",
     }
     assert {
         "show_job",
@@ -408,7 +415,12 @@ def test_reindex_compatibility_keeps_mcp_incremental_refresh_only(
         "get_jobs",
     }.isdisjoint(tool.name for tool in tools)
     for tool in tools:
-        if tool.name not in {"reindex_vault", "reindex_codebase"}:
+        if tool.name not in {
+            "reindex_vault",
+            "reindex_codebase",
+            "reindex_documents",
+            "reindex_all",
+        }:
             continue
         assert "clean" not in tool.inputSchema.get("properties", {})
         assert tool.annotations is not None
