@@ -141,11 +141,17 @@ class ContentScanResult:
 
 
 @dataclass(frozen=True, slots=True)
-class CodeIndexPreflight:
-    """Read-only policy and discovery authority for one code operation."""
+class CodePolicyPreflight:
+    """Read-only policy authority for one code operation."""
 
     root_dir: pathlib.Path
     policy: ResolvedIndexPolicy
+
+
+@dataclass(frozen=True, slots=True)
+class CodeIndexPreflight(CodePolicyPreflight):
+    """Read-only policy and discovery authority for one code operation."""
+
     scan: ContentScanResult
 
 
@@ -399,17 +405,24 @@ class CodebaseIndexer:
         sample_limit: int = _DEFAULT_SCAN_SAMPLE_LIMIT,
     ) -> CodeIndexPreflight:
         """Resolve and discover once before any mutable index resource."""
-        policy = self.resolve_policy_snapshot()
-        scan = self._scan_content(policy, sample_limit=sample_limit)
+        authority = self.preflight_policy()
+        scan = self._scan_content(authority.policy, sample_limit=sample_limit)
         return CodeIndexPreflight(
-            root_dir=self.root_dir.resolve(),
-            policy=policy,
+            root_dir=authority.root_dir,
+            policy=authority.policy,
             scan=scan,
+        )
+
+    def preflight_policy(self) -> CodePolicyPreflight:
+        """Resolve policy without scanning when scoped work is already known."""
+        return CodePolicyPreflight(
+            root_dir=self.root_dir.resolve(),
+            policy=self.resolve_policy_snapshot(),
         )
 
     def _accept_preflight(
         self,
-        preflight: CodeIndexPreflight | None,
+        preflight: CodePolicyPreflight | None,
     ) -> tuple[ResolvedIndexPolicy, tuple[pathlib.Path, ...] | None]:
         """Return exact caller authority or resolve policy once locally."""
         if preflight is None:
@@ -418,17 +431,25 @@ class CodebaseIndexer:
             raise ValueError(
                 "code index preflight root does not match the indexer root"
             )
-        if (
-            preflight.scan.policy_fingerprint
-            != preflight.policy.fingerprints.snapshot
-        ):
-            raise ValueError("code index preflight policy fingerprint is inconsistent")
-        root = preflight.root_dir
-        if any(
-            not path.resolve().is_relative_to(root) for path in preflight.scan.files
-        ):
-            raise ValueError("code index preflight contains a path outside its root")
-        return preflight.policy, preflight.scan.files
+        discovered_paths = None
+        if isinstance(preflight, CodeIndexPreflight):
+            if (
+                preflight.scan.policy_fingerprint
+                != preflight.policy.fingerprints.snapshot
+            ):
+                raise ValueError(
+                    "code index preflight policy fingerprint is inconsistent"
+                )
+            root = preflight.root_dir
+            if any(
+                not path.resolve().is_relative_to(root)
+                for path in preflight.scan.files
+            ):
+                raise ValueError(
+                    "code index preflight contains a path outside its root"
+                )
+            discovered_paths = preflight.scan.files
+        return preflight.policy, discovered_paths
 
     def _collect_gitignore_patterns(self) -> list[str]:
         """Collect the hardcoded and ``.gitignore``-sourced exclusion patterns.
@@ -2025,7 +2046,7 @@ class CodebaseIndexer:
         clean: bool = False,
         *,
         reporter: ProgressReporter,
-        preflight: CodeIndexPreflight | None = None,
+        preflight: CodePolicyPreflight | None = None,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Full codebase re-index serialized through the writer lock.
@@ -2248,7 +2269,7 @@ class CodebaseIndexer:
         *,
         reporter: ProgressReporter,
         changed_paths: Iterable[pathlib.Path] | None = None,
-        preflight: CodeIndexPreflight | None = None,
+        preflight: CodePolicyPreflight | None = None,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Incremental codebase re-index serialized through the writer lock.
