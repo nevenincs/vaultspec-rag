@@ -16,17 +16,22 @@ Three layers, no mocks/skips/monkeypatch:
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import http.server
 import json
+import os
 import re
+import socket
 import threading
 import time
 import urllib.parse
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
+import uvicorn
 from starlette.applications import Starlette
+from starlette.routing import Route
 from starlette.testclient import TestClient
 from typer.testing import CliRunner
 
@@ -37,8 +42,23 @@ import vaultspec_rag.mcp._admin_client as admin
 import vaultspec_rag.mcp._tools as tools
 import vaultspec_rag.server as _m
 
+from ... import jobs as _managed_jobs
+from ..._job_errors import JobError, JobErrorKind
 from ...cli import app
+from ...config import EnvVar, reset_config
+from ...job_control import RunControlToken
+from ...job_models import (
+    DesiredJobState,
+    IndexResilienceSnapshot,
+    JobInitiator,
+    JobMode,
+    JobOperation,
+    JobSource,
+    JobSpec,
+    JobState,
+)
 from ...server import _jobs
+from ...server._lifespan import health_handler
 from ...server._routes import ROUTES
 
 if TYPE_CHECKING:
@@ -118,6 +138,81 @@ def _jobs_http_server(
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def _free_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+@contextlib.contextmanager
+def _canonical_resilience_server(
+    tmp_path: Path,
+) -> Generator[tuple[int, str]]:
+    status_dir = tmp_path / "resilience-status"
+    status_dir.mkdir()
+    port = _free_loopback_port()
+    token = "canonical-resilience-token"
+    prior_status_dir = os.environ.get(EnvVar.STATUS_DIR)
+    prior_watch_enabled = os.environ.get(EnvVar.WATCH_ENABLED)
+    prior_token = _m._SERVICE_TOKEN
+    server: uvicorn.Server | None = None
+    thread: threading.Thread | None = None
+    stopped = True
+    try:
+        os.environ[EnvVar.STATUS_DIR] = str(status_dir)
+        os.environ[EnvVar.WATCH_ENABLED] = "false"
+        reset_config()
+        _managed_jobs.reset()
+        _jobs.reset()
+        _m._SERVICE_TOKEN = token
+        (status_dir / "service.json").write_text(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "port": port,
+                    "service_token": token,
+                }
+            ),
+            encoding="utf-8",
+        )
+        server = uvicorn.Server(
+            uvicorn.Config(
+                Starlette(routes=[Route("/health", health_handler), *ROUTES]),
+                host="127.0.0.1",
+                port=port,
+                log_config=None,
+                access_log=False,
+                lifespan="off",
+            )
+        )
+        thread = threading.Thread(target=server.run, daemon=True)
+        thread.start()
+        deadline = time.monotonic() + 5.0
+        while not server.started and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert server.started
+        yield port, token
+    finally:
+        if server is not None:
+            server.should_exit = True
+        if thread is not None:
+            thread.join(timeout=5.0)
+            stopped = not thread.is_alive()
+        _managed_jobs.reset()
+        _jobs.reset()
+        _m._SERVICE_TOKEN = prior_token
+        if prior_status_dir is None:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+        else:
+            os.environ[EnvVar.STATUS_DIR] = prior_status_dir
+        if prior_watch_enabled is None:
+            os.environ.pop(EnvVar.WATCH_ENABLED, None)
+        else:
+            os.environ[EnvVar.WATCH_ENABLED] = prior_watch_enabled
+        reset_config()
+        assert stopped
 
 
 def _cli_jobs_payload(now: float) -> dict[str, object]:
@@ -355,6 +450,8 @@ async def test_get_jobs_is_newest_first(
     # Trigger two jobs
     job1 = await tools.reindex_vault(project_root=str(tmp_path))
     job2 = await tools.reindex_codebase(project_root=str(tmp_path))
+    await _wait_for_terminal_jobs(cast("str", job1["job_id"]))
+    await _wait_for_terminal_jobs(cast("str", job2["job_id"]))
 
     jobs = (await admin.get_jobs())["jobs"]
     # The list is newest-first, so job2 should appear before job1
@@ -367,10 +464,12 @@ async def test_get_jobs_honours_limit(
     live_service: tuple[int, Path],  # noqa: ARG001
     tmp_path: Path,
 ) -> None:
-    (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
-    # Trigger multiple jobs
-    for _ in range(3):
-        await tools.reindex_vault(project_root=str(tmp_path))
+    # Distinct roots exercise the view limit without collapsing equivalent
+    # active work through the canonical deduplication contract.
+    for number in range(3):
+        project_root = tmp_path / f"project-{number}"
+        (project_root / ".vault").mkdir(parents=True, exist_ok=True)
+        await tools.reindex_vault(project_root=str(project_root))
 
     jobs = (await admin.get_jobs(limit=2))["jobs"]
     assert len(jobs) == 2
@@ -1471,7 +1570,10 @@ def test_jobs_job_id_detail_humanizes_cleanup_progress() -> None:
     values = _label_values(result.output)
     assert values["Status"] == "failed"
     assert values["Progress"] == "removing stale source files 0 of 1"
-    assert values["Error"] == "timed out"
+    assert (
+        values["Error"]
+        == "the vector store did not respond in time; check qdrant health and retry"
+    )
     assert "State:" not in result.output
     assert "delete removed" not in result.output
 
@@ -2338,3 +2440,224 @@ def test_jobs_route_job_id_prefix_can_return_multiple_matches(
     payload: dict[str, Any] = response.json()
     assert payload["returned"] >= 2
     assert all(str(job["id"]).startswith(prefix) for job in payload["jobs"])
+
+
+async def _seed_terminal_resilience_job(
+    project_root: Path,
+    *,
+    outcome_name: str,
+    error_kind: JobErrorKind | None,
+) -> dict[str, object]:
+    manager = _managed_jobs.get_job_manager()
+    created = manager.create(
+        JobSpec(
+            operation=JobOperation.INDEX,
+            source=JobSource.CODE,
+            project_root=str(project_root),
+            mode=JobMode.REBUILD,
+        ),
+        JobInitiator("cli", "server jobs", str(project_root)),
+        start_paused=outcome_name == "controlled",
+    )
+    assert created.job is not None
+    job_id = created.job.id
+    owner_task: asyncio.Task[object] | None = None
+    if outcome_name == "controlled":
+        terminal = manager.set_desired_state(job_id, DesiredJobState.CANCELLED)
+        terminal_outcome = JobState.CANCELLED.value
+    elif outcome_name == "interrupted":
+        owner_task = asyncio.create_task(asyncio.Event().wait())
+        started = manager.start_attempt(
+            job_id,
+            task=owner_task,
+            control=RunControlToken(),
+        )
+        assert started.code == "attempt_started"
+        terminal = manager.finish_attempt(
+            job_id,
+            attempt=1,
+            task=owner_task,
+            state=JobState.INTERRUPTED,
+            result="the service stopped before the attempt completed",
+            error_kind=JobState.INTERRUPTED.value,
+        )
+        terminal_outcome = JobState.INTERRUPTED.value
+    else:
+        assert error_kind is not None
+        terminal = manager.fail_unstarted(
+            job_id,
+            result=str(JobError(error_kind, f"{outcome_name} safety boundary reached")),
+        )
+        terminal_outcome = error_kind.value
+    try:
+        assert terminal.job is not None
+        resilience = IndexResilienceSnapshot(
+            generation_id=f"generation-{outcome_name}",
+            committed_units=41,
+            replayed_units=3,
+            checkpoint_compatible=True,
+            last_durable_progress_at=1_722_000_000.0,
+            no_progress_timeout_seconds=300.0,
+            no_progress_remaining_seconds=17.5,
+            circuit_state=(
+                "open"
+                if error_kind is JobErrorKind.WATCHER_CIRCUIT_OPEN
+                else "closed"
+            ),
+            next_retry_at=1_722_000_060.0,
+            peak_rss_mb=512.0,
+            rss_ceiling_mb=2048.0,
+            peak_cuda_allocated_mb=768.0,
+            peak_cuda_reserved_mb=896.0,
+            cuda_ceiling_mb=4096.0,
+            support_profile="embedded-local",
+            terminal_outcome=terminal_outcome,
+        )
+        assert manager.update_terminal_resilience(
+            job_id,
+            attempt=terminal.job.attempt.number,
+            resilience=resilience,
+        )
+        snapshot = manager.get(job_id)
+        assert snapshot is not None
+        return snapshot.to_dict()
+    finally:
+        if owner_task is not None:
+            owner_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await owner_task
+
+
+@pytest.mark.parametrize(
+    ("outcome_name", "error_kind", "expected_state", "expected_error_kind"),
+    [
+        ("controlled", None, JobState.CANCELLED, None),
+        ("interrupted", None, JobState.INTERRUPTED, "interrupted"),
+        (
+            "rss-limited",
+            JobErrorKind.RSS_MEMORY_CEILING,
+            JobState.FAILED,
+            "rss_memory_ceiling",
+        ),
+        (
+            "cuda-limited",
+            JobErrorKind.CUDA_MEMORY_CEILING,
+            JobState.FAILED,
+            "cuda_memory_ceiling",
+        ),
+        (
+            "timed-out",
+            JobErrorKind.NO_PROGRESS_TIMEOUT,
+            JobState.FAILED,
+            "no_progress_timeout",
+        ),
+        (
+            "circuit-open",
+            JobErrorKind.WATCHER_CIRCUIT_OPEN,
+            JobState.FAILED,
+            "watcher_circuit_open",
+        ),
+    ],
+)
+async def test_canonical_resilience_snapshot_has_http_health_and_cli_parity(
+    tmp_path: Path,
+    outcome_name: str,
+    error_kind: JobErrorKind | None,
+    expected_state: JobState,
+    expected_error_kind: str | None,
+) -> None:
+    import httpx
+
+    project_root = tmp_path / outcome_name
+    project_root.mkdir()
+    with _canonical_resilience_server(tmp_path) as (port, token):
+        canonical = await _seed_terminal_resilience_job(
+            project_root,
+            outcome_name=outcome_name,
+            error_kind=error_kind,
+        )
+        job_id = cast("str", canonical["id"])
+        headers = {"Authorization": f"Bearer {token}"}
+        with httpx.Client(base_url=f"http://127.0.0.1:{port}") as client:
+            collection_response = client.get("/jobs", headers=headers)
+            detail_response = client.get(f"/jobs/{job_id}", headers=headers)
+            health_response = client.get("/health")
+
+        assert collection_response.status_code == 200
+        assert detail_response.status_code == 200
+        assert health_response.status_code == 200
+        collection_job = cast(
+            "dict[str, object]", collection_response.json()["jobs"][0]
+        )
+        detail_job = cast("dict[str, object]", detail_response.json()["job"])
+        assert collection_job["id"] == detail_job["id"] == job_id
+        assert collection_job["state"] == detail_job["state"] == canonical["state"]
+        assert detail_job["state"] == expected_state.value
+        assert (
+            collection_job["error_kind"]
+            == detail_job["error_kind"]
+            == expected_error_kind
+        )
+        assert collection_job["resilience"] == detail_job["resilience"]
+        expected_terminal_outcome = (
+            expected_error_kind
+            if expected_error_kind is not None
+            else JobState.CANCELLED.value
+        )
+        detail_resilience = cast("dict[str, object]", detail_job["resilience"])
+        assert detail_resilience["terminal_outcome"] == expected_terminal_outcome
+
+        health_jobs = cast("dict[str, object]", health_response.json()["jobs"])
+        health_resilience = cast(
+            "dict[str, object]", health_jobs["resilience"]
+        ).copy()
+        assert health_resilience.pop("job_id") == job_id
+        assert health_resilience.pop("source") == "code"
+        assert health_resilience == detail_job["resilience"]
+        if error_kind is None or outcome_name == "interrupted":
+            assert health_jobs["last_failed"] is None
+        else:
+            last_failed = cast("dict[str, object]", health_jobs["last_failed"])
+            assert last_failed["id"] == job_id
+            assert last_failed["error_kind"] == error_kind.value
+
+        cli_json = runner.invoke(
+            app,
+            [
+                "server",
+                "jobs",
+                "--port",
+                str(port),
+                "--job-id",
+                job_id,
+                "--json",
+            ],
+        )
+        assert cli_json.exit_code == 0, cli_json.output
+        cli_job = cast(
+            "dict[str, object]", json.loads(cli_json.output)["data"]["jobs"][0]
+        )
+        assert cli_job["error_kind"] == detail_job["error_kind"]
+        assert cli_job["resilience"] == detail_job["resilience"]
+
+        cli_human = runner.invoke(
+            app,
+            ["server", "jobs", "--port", str(port), "--job-id", job_id],
+        )
+        assert cli_human.exit_code == 0, cli_human.output
+        expected_lines = (
+            "Index profile: embedded-local",
+            f"Checkpoint generation: generation-{outcome_name}",
+            "Checkpoint compatible: yes",
+            "Checkpoint units: 41 committed, 3 resumed",
+            "No-progress budget remaining: 17 seconds",
+            "Retry circuit: "
+            + ("open" if outcome_name == "circuit-open" else "closed"),
+            "Next retry: 2024-07-26 13:21:00 UTC",
+            "RSS high-water / ceiling: 512.0 MB / 2048.0 MB",
+            "CUDA allocated high-water: 768.0 MB",
+            "CUDA reserved high-water / ceiling: 896.0 MB / 4096.0 MB",
+            f"Index outcome: {expected_terminal_outcome}",
+        )
+        for line in expected_lines:
+            assert line in cli_human.output

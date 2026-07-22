@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sys
 from typing import TYPE_CHECKING
 
@@ -149,6 +150,16 @@ time.sleep(120)
 """
 
 
+def _free_loopback_ports() -> tuple[int, int]:
+    with (
+        socket.socket(socket.AF_INET, socket.SOCK_STREAM) as http_sock,
+        socket.socket(socket.AF_INET, socket.SOCK_STREAM) as grpc_sock,
+    ):
+        http_sock.bind(("127.0.0.1", 0))
+        grpc_sock.bind(("127.0.0.1", 0))
+        return int(http_sock.getsockname()[1]), int(grpc_sock.getsockname()[1])
+
+
 def _fake_binary(tmp_path: Path, source: str, name: str = "fake_qdrant") -> Path:
     """Write a fake qdrant 'binary' the supervisor can exec as ``[binary]``."""
     script = tmp_path / f"{name}.py"
@@ -162,6 +173,15 @@ def _fake_binary(tmp_path: Path, source: str, name: str = "fake_qdrant") -> Path
         f'#!/bin/sh\nexec "{sys.executable}" "{script}"\n', encoding="utf-8"
     )
     launcher.chmod(0o755)
+    return launcher
+
+
+def _non_ready_binary(tmp_path: Path) -> Path:
+    """Create one directly terminable child that never serves readiness."""
+    if sys.platform != "win32":
+        return _fake_binary(tmp_path, _FAKE_HANGS, name="hangs")
+    launcher = tmp_path / "hangs.bat"
+    launcher.write_text("@echo off\r\n:hang\r\ngoto hang\r\n", encoding="utf-8")
     return launcher
 
 
@@ -222,10 +242,12 @@ class TestBoundedRetry:
         """A healthy-but-slow child that times out must not be read as corrupt (QR4)."""
         storage = tmp_path / "qdrant-server" / "storage"
         _make_collection(storage, "r0000_vault_docs")
-        binary = _fake_binary(tmp_path, _FAKE_HANGS, name="hangs")
+        binary = _non_ready_binary(tmp_path)
+        http_port, grpc_port = _free_loopback_ports()
         sup = QdrantSupervisor(
             binary,
-            http_port=8993,
+            http_port=http_port,
+            grpc_port=grpc_port,
             storage_dir=storage,
             log_path=tmp_path / "qdrant.log",
         )
