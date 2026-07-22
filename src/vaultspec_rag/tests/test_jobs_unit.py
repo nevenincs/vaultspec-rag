@@ -362,6 +362,21 @@ class TestJobErrorKind:
 class TestJobStallShaping:
     """The /jobs shaping computes the service-domain ``stalled`` flag."""
 
+    def _paused_canonical_record(self) -> dict[str, object]:
+        manager = JobManager(max_nonterminal=2, state_path=None)
+        created = manager.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.VAULT,
+                "Y:/project",
+                JobMode.INCREMENTAL,
+            ),
+            JobInitiator("cli", "server job create", "Y:/project"),
+            start_paused=True,
+        )
+        assert created.job is not None
+        return created.job.to_dict()
+
     def _running_record(
         self,
         *,
@@ -399,6 +414,19 @@ class TestJobStallShaping:
         record = self._running_record(step="queued", age_seconds=400.0, now=now)
         assert _job_with_liveness(record, now=now)["stalled"] is False
 
+    def test_legacy_paused_projection_is_never_running_or_stalled(self) -> None:
+        from ..server._routes_jobs import _job_with_liveness
+
+        now = 1_000_000.0
+        record = self._running_record(step="paused", age_seconds=400.0, now=now)
+        record["resources"] = {}
+        shaped = _job_with_liveness(record, now=now)
+
+        assert shaped["state"] == "paused"
+        assert shaped["phase"] == "paused"
+        assert shaped["stalled"] is False
+        assert "current" not in cast("dict[str, object]", shaped["resources"])
+
     def test_fresh_progress_is_not_stalled(self) -> None:
         from ..server._routes_jobs import _job_with_liveness
 
@@ -421,6 +449,125 @@ class TestJobStallShaping:
         }
         summary = _job_summary([stalled, failed], now=now)
         assert summary["stalled"] == 1
+        assert summary["error_kinds"] == {"disk_full": 1}
+
+    def test_canonical_paused_snapshot_keeps_compatibility_shape(self) -> None:
+        from ..server._routes_jobs import _job_with_liveness
+
+        record = self._paused_canonical_record()
+        now = cast("float", record["created_at"]) + 400.0
+        shaped = _job_with_liveness(record, now=now)
+
+        assert shaped["state"] == "paused"
+        assert shaped["desired_state"] == "paused"
+        assert shaped["phase"] == "paused"
+        assert shaped["source"] == "vault"
+        assert shaped["trigger"] == "tool"
+        assert shaped["runtime_seconds"] is None
+        assert shaped["control_request_age_seconds"] == 400.0
+        assert shaped["control_acknowledged_age_seconds"] == 400.0
+        assert shaped["control_acknowledgement_seconds"] == 0.0
+        assert shaped["control_pending_age_seconds"] is None
+        assert shaped["stalled"] is False
+        assert "current" not in cast("dict[str, object]", shaped["resources"])
+
+    def test_canonical_filters_use_state_desired_state_and_capabilities(self) -> None:
+        from ..server._routes_jobs import _job_matches
+
+        record = self._paused_canonical_record()
+        now = cast("float", record["created_at"])
+        assert _job_matches(
+            record,
+            phase="paused",
+            source="vault",
+            trigger="tool",
+            query="y:/project",
+            failed=False,
+            job_id=str(record["id"])[:8],
+            since_seconds=0.0,
+            now=now,
+            state="paused",
+            desired_state="paused",
+            controllable=True,
+        )
+        assert not _job_matches(
+            record,
+            phase=None,
+            source=None,
+            trigger=None,
+            query=None,
+            failed=False,
+            job_id=None,
+            since_seconds=None,
+            now=now,
+            desired_state="running",
+        )
+
+    def test_transitional_stall_uses_pending_control_age(self) -> None:
+        from ..server._routes_jobs import _job_with_liveness
+
+        now = 1_000_000.0
+        record = self._paused_canonical_record()
+        record.update(
+            {
+                "state": "pausing",
+                "phase": "running",
+                "control_requested_at": now - 400.0,
+                "control_acknowledged_at": None,
+                "progress": None,
+                "resources": {},
+            }
+        )
+        shaped = _job_with_liveness(record, now=now)
+
+        assert shaped["phase"] == "pausing"
+        assert shaped["control_pending_age_seconds"] == 400.0
+        assert shaped["stalled"] is True
+        assert "current" not in cast("dict[str, object]", shaped["resources"])
+
+    def test_summary_and_ordering_are_canonical_and_actionable(self) -> None:
+        from ..server._routes_jobs import _job_summary, _prioritise_running_jobs
+
+        now = 1_000_000.0
+        paused = self._paused_canonical_record()
+        pausing = {
+            **paused,
+            "id": "pausing",
+            "state": "pausing",
+            "desired_state": "paused",
+            "control_requested_at": now - 10.0,
+            "control_acknowledged_at": None,
+        }
+        failed: dict[str, object] = {
+            "id": "failed",
+            "phase": "error",
+            "source": "codebase",
+            "trigger": "watcher",
+            "error_kind": "disk_full",
+        }
+        succeeded: dict[str, object] = {"id": "succeeded", "phase": "done"}
+        records = [succeeded, failed, paused, pausing]
+
+        ordered = _prioritise_running_jobs(records)
+        assert [record["id"] for record in ordered] == [
+            "pausing",
+            paused["id"],
+            "failed",
+            "succeeded",
+        ]
+        summary = _job_summary(records, now=now)
+        assert summary["states"] == {
+            "succeeded": 1,
+            "failed": 1,
+            "paused": 1,
+            "pausing": 1,
+        }
+        assert summary["desired_states"] == {"unknown": 2, "paused": 2}
+        assert summary["active"] == 2
+        assert summary["terminal"] == 2
+        assert summary["transitional"] == 1
+        assert summary["controllable"] == 2
+        assert summary["control_pending"] == 1
         assert summary["error_kinds"] == {"disk_full": 1}
 
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import cast
 
 from .._job_errors import STALL_THRESHOLD_SECONDS
+from ..job_models import JobState
 from . import _jobs
 
 __all__ = [
@@ -26,7 +27,95 @@ __all__ = [
     "_normalise_job_source_filter",
     "_parse_since_seconds",
     "_prioritise_running_jobs",
+    "job_state",
+    "job_updated_timestamp",
 ]
+
+_CANONICAL_STATES = frozenset(state.value for state in JobState)
+_TRANSITIONAL_STATES = frozenset({JobState.PAUSING.value, JobState.CANCELLING.value})
+_TERMINAL_STATES = frozenset(state.value for state in JobState if state.is_terminal)
+_LEGACY_TERMINAL_PHASES = {
+    "done": JobState.SUCCEEDED.value,
+    "error": JobState.FAILED.value,
+    "failed": JobState.FAILED.value,
+    "cancelled": JobState.CANCELLED.value,
+    "interrupted": JobState.INTERRUPTED.value,
+    "skipped": JobState.SUCCEEDED.value,
+    "superseded": JobState.SUCCEEDED.value,
+}
+
+
+def _job_mapping(record: dict[str, object], key: str) -> dict[str, object]:
+    value = record.get(key)
+    return cast("dict[str, object]", value) if isinstance(value, dict) else {}
+
+
+def job_state(record: dict[str, object]) -> str:
+    raw_state = record.get("state")
+    if isinstance(raw_state, str):
+        state = raw_state.strip().lower()
+        if state:
+            return state
+    phase = str(record.get("phase", "")).strip().lower()
+    progress_step = _job_progress_step(record)
+    if phase == JobState.RUNNING.value and progress_step in {
+        JobState.QUEUED.value,
+        JobState.PAUSED.value,
+    }:
+        return progress_step
+    return _LEGACY_TERMINAL_PHASES.get(phase, phase or "unknown")
+
+
+def _job_phase(record: dict[str, object], state: str) -> str:
+    """Return the truthful lifecycle phase with legacy terminal aliases."""
+    phase = str(record.get("phase", "")).strip().lower()
+    if state == JobState.SUCCEEDED.value:
+        return phase if phase in {"done", "skipped", "superseded"} else "done"
+    if state == JobState.FAILED.value:
+        return phase if phase in {"error", "failed"} else "failed"
+    if state in _CANONICAL_STATES:
+        return state
+    return phase or state
+
+
+def _job_spec_value(record: dict[str, object], key: str) -> object | None:
+    return _job_mapping(record, "spec").get(key)
+
+
+def _job_source(record: dict[str, object]) -> str:
+    source = _job_spec_value(record, "source")
+    if source is None:
+        source = record.get("source")
+    value = str(source).strip().lower() if source is not None else ""
+    return "code" if value == "codebase" else value or "unknown"
+
+
+def _job_trigger(record: dict[str, object]) -> str:
+    trigger = record.get("trigger")
+    if trigger is not None and str(trigger).strip():
+        return str(trigger).strip().lower()
+    initiator = _job_mapping(record, "initiator")
+    kind = str(initiator.get("kind", "")).strip().lower()
+    if kind in {"watcher", "schedule"}:
+        return kind
+    return "tool" if kind else "unknown"
+
+
+def _job_project_root(record: dict[str, object]) -> str | None:
+    project_root = _job_spec_value(record, "project_root")
+    if project_root is None:
+        project_root = _job_mapping(record, "initiator").get("project_root")
+    if project_root is None:
+        project_root = record.get("project_root")
+    return str(project_root) if project_root is not None else None
+
+
+def _job_desired_state(record: dict[str, object]) -> str:
+    desired_state = record.get("desired_state")
+    if not isinstance(desired_state, str):
+        return "unknown"
+    normalized = desired_state.strip().lower()
+    return normalized or "unknown"
 
 
 def _clamp_limit(raw: str | None) -> int | None:
@@ -84,24 +173,47 @@ def _job_progress_text(record: dict[str, object]) -> str:
     return " ".join(parts)
 
 
-def _job_updated_timestamp(record: dict[str, object]) -> float | None:
+def _job_progress_step(record: dict[str, object]) -> str:
+    progress = _job_mapping(record, "progress")
+    return str(progress.get("step", "")).strip().lower()
+
+
+def job_updated_timestamp(record: dict[str, object]) -> float | None:
+    candidates: list[float] = []
     progress = record.get("progress")
     if isinstance(progress, dict):
         last_updated = cast("dict[str, object]", progress).get("last_updated")
         if isinstance(last_updated, int | float):
-            return float(last_updated)
-    timestamp = record.get("finished_at") or record.get("started_at")
-    if isinstance(timestamp, int | float):
-        return float(timestamp)
-    return None
+            candidates.append(float(last_updated))
+    for key in (
+        "state_changed_at",
+        "finished_at",
+        "started_at",
+        "created_at",
+    ):
+        timestamp = record.get(key)
+        if isinstance(timestamp, int | float):
+            candidates.append(float(timestamp))
+    return max(candidates) if candidates else None
 
 
 def _job_runtime_seconds(record: dict[str, object], now: float) -> float | None:
     started_at = record.get("started_at")
     if not isinstance(started_at, int | float):
         return None
+    state = job_state(record)
+    if state == JobState.QUEUED.value:
+        return None
     finished_at = record.get("finished_at")
-    end = float(finished_at) if isinstance(finished_at, int | float) else now
+    if isinstance(finished_at, int | float):
+        end = float(finished_at)
+    elif state == JobState.PAUSED.value:
+        state_changed_at = record.get("state_changed_at")
+        if not isinstance(state_changed_at, int | float):
+            return None
+        end = float(state_changed_at)
+    else:
+        end = now
     return max(0.0, end - float(started_at))
 
 
@@ -118,23 +230,61 @@ def _job_last_progress_age_seconds(
     return max(0.0, now - float(last_updated))
 
 
+def _timestamp_age_seconds(
+    record: dict[str, object],
+    key: str,
+    now: float,
+) -> float | None:
+    timestamp = record.get(key)
+    if not isinstance(timestamp, int | float):
+        return None
+    return max(0.0, now - float(timestamp))
+
+
+def _control_acknowledgement_seconds(record: dict[str, object]) -> float | None:
+    requested = record.get("control_requested_at")
+    acknowledged = record.get("control_acknowledged_at")
+    if not isinstance(requested, int | float) or not isinstance(
+        acknowledged, int | float
+    ):
+        return None
+    duration = float(acknowledged) - float(requested)
+    return duration if duration >= 0 else None
+
+
+def _control_pending_age_seconds(
+    record: dict[str, object],
+    now: float,
+) -> float | None:
+    if job_state(record) not in _TRANSITIONAL_STATES:
+        return None
+    requested = record.get("control_requested_at")
+    acknowledged = record.get("control_acknowledged_at")
+    if not isinstance(requested, int | float):
+        return None
+    if isinstance(acknowledged, int | float) and float(acknowledged) >= float(
+        requested
+    ):
+        return None
+    return max(0.0, now - float(requested))
+
+
 def _job_is_waiting(record: dict[str, object]) -> bool:
-    progress = record.get("progress")
-    return (
-        isinstance(progress, dict)
-        and cast("dict[str, object]", progress).get("step") == "queued"
-    )
+    return _job_progress_step(record) == JobState.QUEUED.value
 
 
 def _job_stalled(record: dict[str, object], now: float) -> bool:
-    """Service-domain stall signal: running, working, no progress.
+    """Return the truthful service-domain stall signal.
 
-    A running, non-waiting job whose last progress update is older than
-    :data:`STALL_THRESHOLD_SECONDS` is flagged so every adapter (CLI,
-    MCP, HTTP consumers) sees the same "something is wrong" signal the
-    human jobs feed used to compute locally.
+    Running work is stalled only when real work has stopped reporting progress.
+    Queued and paused work are intentionally inert. Transitional work is stalled
+    only when its cooperative acknowledgement itself exceeds the threshold.
     """
-    if record.get("phase") != "running" or _job_is_waiting(record):
+    state = job_state(record)
+    if state in _TRANSITIONAL_STATES:
+        control_age = _control_pending_age_seconds(record, now)
+        return control_age is not None and control_age >= STALL_THRESHOLD_SECONDS
+    if state != "running" or _job_is_waiting(record):
         return False
     age = _job_last_progress_age_seconds(record, now)
     return age is not None and age >= STALL_THRESHOLD_SECONDS
@@ -146,8 +296,27 @@ def _job_with_liveness(
     now: float,
 ) -> dict[str, object]:
     enriched = dict(record)
+    state = job_state(record)
+    enriched["state"] = state
+    enriched["phase"] = _job_phase(record, state)
+    enriched["source"] = _job_source(record)
+    enriched["trigger"] = _job_trigger(record)
     enriched["runtime_seconds"] = _job_runtime_seconds(record, now)
     enriched["last_progress_age_seconds"] = _job_last_progress_age_seconds(record, now)
+    enriched["control_request_age_seconds"] = _timestamp_age_seconds(
+        record,
+        "control_requested_at",
+        now,
+    )
+    enriched["control_acknowledged_age_seconds"] = _timestamp_age_seconds(
+        record,
+        "control_acknowledged_at",
+        now,
+    )
+    enriched["control_acknowledgement_seconds"] = _control_acknowledgement_seconds(
+        record
+    )
+    enriched["control_pending_age_seconds"] = _control_pending_age_seconds(record, now)
     enriched["stalled"] = _job_stalled(record, now)
     resources = record.get("resources")
     if isinstance(resources, dict):
@@ -158,8 +327,15 @@ def _job_with_liveness(
             else value
             for key, value in resources_map.items()
         }
-        if record.get("phase") == "running":
+        legacy_running = (
+            "state" not in record
+            and state == JobState.RUNNING.value
+            and str(record.get("phase", "")).strip().lower() == JobState.RUNNING.value
+        )
+        if legacy_running:
             enriched_resources["current"] = _jobs.resource_snapshot()
+        else:
+            enriched_resources.pop("current", None)
         enriched["resources"] = enriched_resources
     return enriched
 
@@ -168,6 +344,39 @@ def _job_id_matches(record: dict[str, object], job_id: str | None) -> bool:
     if job_id is None:
         return True
     return str(record.get("id", "")).startswith(job_id)
+
+
+def _job_updated_since(
+    record: dict[str, object],
+    *,
+    since_seconds: float | None,
+    now: float,
+) -> bool:
+    if since_seconds is None:
+        return True
+    timestamp = job_updated_timestamp(record)
+    return timestamp is not None and timestamp >= now - since_seconds
+
+
+def _job_search_text(record: dict[str, object]) -> str:
+    return " ".join(
+        [
+            str(record.get("id", "")),
+            _job_source(record),
+            _job_trigger(record),
+            _job_phase(record, job_state(record)),
+            _job_desired_state(record),
+            str(record.get("operation", "")),
+            str(record.get("mode", "")),
+            str(_job_project_root(record) or ""),
+            str(record.get("result", "")),
+            _job_progress_text(record),
+            *_job_nested_values(record.get("spec")),
+            *_job_nested_values(record.get("capabilities")),
+            *_job_nested_values(record.get("initiator")),
+            *_job_nested_values(record.get("runtime")),
+        ]
+    ).lower()
 
 
 def _job_matches(
@@ -181,36 +390,25 @@ def _job_matches(
     job_id: str | None,
     since_seconds: float | None,
     now: float,
+    state: str | None = None,
+    desired_state: str | None = None,
+    controllable: bool | None = None,
 ) -> bool:
-    if not _job_id_matches(record, job_id):
-        return False
-    if failed and str(record.get("phase", "")).lower() not in ("error", "failed"):
-        return False
-    if since_seconds is not None:
-        timestamp = _job_updated_timestamp(record)
-        if timestamp is None or timestamp < now - since_seconds:
-            return False
-    if phase is not None and str(record.get("phase", "")).lower() != phase:
-        return False
-    if source is not None and str(record.get("source", "")).lower() != source:
-        return False
-    if trigger is not None and str(record.get("trigger", "")).lower() != trigger:
-        return False
-    if query is None:
-        return True
-    haystack = " ".join(
-        [
-            str(record.get("id", "")),
-            str(record.get("source", "")),
-            str(record.get("trigger", "")),
-            str(record.get("phase", "")),
-            str(record.get("result", "")),
-            _job_progress_text(record),
-            *_job_nested_values(record.get("initiator")),
-            *_job_nested_values(record.get("runtime")),
-        ]
-    ).lower()
-    return query in haystack
+    record_state = job_state(record)
+    matches_filters = all(
+        (
+            _job_id_matches(record, job_id),
+            not failed or record_state == JobState.FAILED.value,
+            _job_updated_since(record, since_seconds=since_seconds, now=now),
+            phase is None or _job_phase(record, record_state) == phase,
+            state is None or record_state == state,
+            desired_state is None or _job_desired_state(record) == desired_state,
+            controllable is None or _job_controllable(record) is controllable,
+            source is None or _job_source(record) == source,
+            trigger is None or _job_trigger(record) == trigger,
+        )
+    )
+    return matches_filters and (query is None or query in _job_search_text(record))
 
 
 def _job_nested_values(raw: object) -> list[str]:
@@ -220,50 +418,99 @@ def _job_nested_values(raw: object) -> list[str]:
     return [str(value) for value in raw_map.values() if value is not None]
 
 
+def _job_controllable(record: dict[str, object]) -> bool:
+    capability_map = _job_mapping(record, "capabilities")
+    return any(
+        capability_map.get(key) is True
+        for key in ("pausable", "resumable", "cancellable")
+    )
+
+
+def _job_capability(record: dict[str, object], key: str) -> bool:
+    return _job_mapping(record, "capabilities").get(key) is True
+
+
+def _increment(counts: dict[str, int], value: str) -> None:
+    counts[value] = counts.get(value, 0) + 1
+
+
 def _job_summary(
     records: list[dict[str, object]],
     *,
     now: float,
 ) -> dict[str, object]:
     phases: dict[str, int] = {}
+    states: dict[str, int] = {}
+    desired_states: dict[str, int] = {}
     sources: dict[str, int] = {}
     triggers: dict[str, int] = {}
     initiators: dict[str, int] = {}
     active_initiators: dict[str, int] = {}
     users: dict[str, int] = {}
     stalled = 0
+    controllable = 0
+    control_pending = 0
+    retryable = 0
     error_kinds: dict[str, int] = {}
     for record in records:
         if _job_stalled(record, now):
             stalled += 1
+        if _job_controllable(record):
+            controllable += 1
+        if _control_pending_age_seconds(record, now) is not None:
+            control_pending += 1
+        if _job_capability(record, "retryable"):
+            retryable += 1
         kind = record.get("error_kind")
         if isinstance(kind, str) and kind:
             error_kinds[kind] = error_kinds.get(kind, 0) + 1
-        phase = str(record.get("phase", "unknown"))
-        source = str(record.get("source", "unknown"))
-        trigger = str(record.get("trigger", "unknown"))
-        phases[phase] = phases.get(phase, 0) + 1
-        sources[source] = sources.get(source, 0) + 1
-        triggers[trigger] = triggers.get(trigger, 0) + 1
+        state = job_state(record)
+        phase = _job_phase(record, state)
+        desired_state = _job_desired_state(record)
+        source = _job_source(record)
+        trigger = _job_trigger(record)
+        _increment(phases, phase)
+        _increment(states, state)
+        _increment(desired_states, desired_state)
+        _increment(sources, source)
+        _increment(triggers, trigger)
         initiator = record.get("initiator")
         if isinstance(initiator, dict):
             kind = str(cast("dict[str, object]", initiator).get("kind", "unknown"))
-            initiators[kind] = initiators.get(kind, 0) + 1
-            if phase == "running":
-                active_initiators[kind] = active_initiators.get(kind, 0) + 1
+            _increment(initiators, kind)
+            if state not in _TERMINAL_STATES:
+                _increment(active_initiators, kind)
         runtime = record.get("runtime")
         if isinstance(runtime, dict):
             user = str(cast("dict[str, object]", runtime).get("user", "unknown"))
-            users[user] = users.get(user, 0) + 1
+            _increment(users, user)
     return {
         "phases": phases,
+        "states": states,
+        "desired_states": desired_states,
         "sources": sources,
         "triggers": triggers,
         "initiators": initiators,
         "active_initiators": active_initiators,
         "users": users,
-        "running": phases.get("running", 0),
+        # ``phases`` remains the compatibility aggregation; lifecycle rollups
+        # are always derived from canonical states.
+        "running": states.get("running", 0),
+        "queued": states.get("queued", 0),
+        "paused": states.get("paused", 0),
+        "transitional": sum(states.get(state, 0) for state in _TRANSITIONAL_STATES),
+        "active": sum(
+            count for state, count in states.items() if state not in _TERMINAL_STATES
+        ),
+        "terminal": sum(states.get(state, 0) for state in _TERMINAL_STATES),
+        "succeeded": states.get("succeeded", 0),
+        "failed": states.get("failed", 0),
+        "cancelled": states.get("cancelled", 0),
+        "interrupted": states.get("interrupted", 0),
         "stalled": stalled,
+        "control_pending": control_pending,
+        "controllable": controllable,
+        "retryable": retryable,
         "error_kinds": error_kinds,
     }
 
@@ -271,15 +518,25 @@ def _job_summary(
 def _prioritise_running_jobs(
     records: list[dict[str, object]],
 ) -> list[dict[str, object]]:
-    """Keep running and failed work visible before completed history."""
+    """Keep actionable lifecycle states visible before completed history."""
 
     def priority(record: dict[str, object]) -> int:
-        phase = record.get("phase")
-        if phase == "running":
+        state = job_state(record)
+        if state in _TRANSITIONAL_STATES:
             return 0
-        if phase in ("error", "failed"):
+        if state == "running":
             return 1
-        return 2
+        if state == "queued":
+            return 2
+        if state == "paused":
+            return 3
+        if state in ("failed", "interrupted"):
+            return 4
+        if state == "cancelled":
+            return 5
+        if state == "succeeded":
+            return 6
+        return 7
 
     return sorted(
         records,

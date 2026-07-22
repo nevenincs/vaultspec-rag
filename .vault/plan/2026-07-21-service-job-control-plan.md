@@ -121,7 +121,7 @@ Expose the proven lifecycle through exact-ID HTTP resources, service-client verb
 
 Expose create, exact detail, desired-state, retry, and terminal-only deletion while keeping collection views bounded and health semantics accurate.
 
-- [ ] `W04.P12.S23` - Extend job shaping, filtering, ordering, stall classification, control age, capabilities, and canonical state summaries using vaultspec-standard-executor; `src/vaultspec_rag/server/_routes_jobs.py`.
+- [x] `W04.P12.S23` - Extend job shaping, filtering, ordering, stall classification, control age, capabilities, and canonical state summaries using vaultspec-standard-executor; `src/vaultspec_rag/server/_routes_jobs.py`.
 - [ ] `W04.P12.S24` - Add create, exact detail, desired-state update, retry, and terminal deletion routes and retain reindex as a validated compatibility adapter using vaultspec-standard-executor; `src/vaultspec_rag/server/_routes.py`.
 - [ ] `W04.P12.S25` - Update service health rollups so paused and transitional jobs remain visible without false stall signals using vaultspec-standard-executor; `src/vaultspec_rag/server/_lifespan.py`.
 - [ ] `W04.P12.S26` - Verify authenticated real-ASGI job CRUD, exact mutations, revisions, idempotency, capacity, force rejection, retry linkage, deletion conflicts, and Location headers using vaultspec-standard-executor; `src/vaultspec_rag/tests/integration/test_service_jobs.py`.
