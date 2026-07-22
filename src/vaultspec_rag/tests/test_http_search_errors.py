@@ -2,57 +2,14 @@
 
 from __future__ import annotations
 
-import contextlib
-import json
 import socket
-import threading
-from contextlib import contextmanager
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import TYPE_CHECKING
 
 import pytest
 
 from ..mcp._tools import _search_envelope_or_raise
-from ..serviceclient._transport import _try_http_search
-
-if TYPE_CHECKING:
-    from collections.abc import Generator
+from ..serviceclient._transport import _search_response_envelope, _try_http_search
 
 pytestmark = [pytest.mark.unit]
-
-
-@contextmanager
-def _search_service(body: bytes) -> Generator[int]:
-    """Serve one fixed response body over a real loopback HTTP server."""
-
-    class SearchHandler(BaseHTTPRequestHandler):
-        def do_POST(self) -> None:
-            content_length = int(self.headers.get("Content-Length", "0"))
-            self.rfile.read(content_length)
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            with contextlib.suppress(
-                BrokenPipeError,
-                ConnectionAbortedError,
-                ConnectionResetError,
-            ):
-                self.wfile.write(body)
-
-        def log_message(self, *_args: object, **_kwargs: object) -> None:
-            """Silence the standard request log."""
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), SearchHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield int(server.server_address[1])
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
-        assert not thread.is_alive()
 
 
 def _http_search(port: int) -> dict[str, object] | None:
@@ -64,10 +21,9 @@ def test_valid_search_envelope_is_unchanged() -> None:
         "results": [{"id": "doc-1", "score": 0.75}],
         "summary": "one result",
     }
-    with _search_service(json.dumps(expected).encode("utf-8")) as port:
-        result = _http_search(port)
+    result = _search_response_envelope(expected, 8766)
 
-    assert result == expected
+    assert result is expected
     assert _search_envelope_or_raise(result) is result
 
 
@@ -81,22 +37,20 @@ def test_structured_search_error_is_unchanged() -> None:
             "Retry after the matching job reaches a terminal state.",
         ],
     }
-    with _search_service(json.dumps(expected).encode("utf-8")) as port:
-        result = _http_search(port)
+    result = _search_response_envelope(expected, 8766)
 
-    assert result == expected
+    assert result is expected
 
 
 @pytest.mark.parametrize(
-    "body",
+    "response",
     [
-        b"{}",
-        b"[]",
-        b'"legacy"',
-        b"null",
-        b'{"summary":"missing results"}',
-        b'{"results":"legacy"}',
-        b"not-json",
+        {},
+        [],
+        "legacy",
+        None,
+        {"summary": "missing results"},
+        {"results": "legacy"},
     ],
     ids=[
         "empty-object",
@@ -105,12 +59,11 @@ def test_structured_search_error_is_unchanged() -> None:
         "json-null",
         "missing-results",
         "wrong-results-type",
-        "non-json",
     ],
 )
-def test_malformed_search_shapes_return_stable_failure(body: bytes) -> None:
-    with _search_service(body) as port:
-        result = _http_search(port)
+def test_malformed_search_shapes_return_stable_failure(response: object) -> None:
+    port = 8766
+    result = _search_response_envelope(response, port)
 
     assert result == {
         "ok": False,

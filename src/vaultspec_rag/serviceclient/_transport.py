@@ -743,6 +743,15 @@ def _invalid_search_service_response(port: int) -> dict[str, object]:
     }
 
 
+def _search_response_envelope(response: object, port: int) -> dict[str, object]:
+    """Return a valid search envelope or the stable malformed-response error."""
+    if isinstance(response, dict) and response:
+        envelope = cast("dict[str, object]", response)
+        if envelope.get("ok") is False or isinstance(envelope.get("results"), list):
+            return envelope
+    return _invalid_search_service_response(port)
+
+
 def _try_http_search(
     query: str,
     search_type: str,
@@ -830,11 +839,7 @@ def _try_http_search(
 
     try:
         response: object = _do_http_call(port, "/search", payload, timeout=timeout)
-        if isinstance(response, dict) and response:
-            envelope = response
-            if envelope.get("ok") is False or isinstance(envelope.get("results"), list):
-                return envelope
-        return _invalid_search_service_response(port)
+        return _search_response_envelope(response, port)
     except TimeoutError:
         logger.debug("HTTP search on port %s timed out after %ss", port, timeout)
         return _timeout_diagnostics(port, timeout)
