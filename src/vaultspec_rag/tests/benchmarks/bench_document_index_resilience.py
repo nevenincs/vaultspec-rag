@@ -1,0 +1,356 @@
+"""Named production acceptance harness for bounded document indexing.
+
+The harness owns a marker-protected root and creates both directly decoded and
+out-of-process extracted inputs.  Ownership comes only from explicit route
+configuration; directory names have no routing meaning.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import threading
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Final, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from ...indexer._content_policy import RootContentPolicy
+
+_SCHEMA_VERSION: Final = 1
+_MARKER_NAME: Final = ".document-index-resilience-workload.json"
+_EXTRACTOR_NAME: Final = "document_workload_extractor.py"
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentWorkloadSpec:
+    """Deterministic dimensions for one generic document workload."""
+
+    raw_files: int = 4
+    extracted_files: int = 4
+    units_per_extracted_file: int = 3
+    words_per_unit: int = 160
+
+    def __post_init__(self) -> None:
+        for name in (
+            "raw_files",
+            "extracted_files",
+            "units_per_extracted_file",
+            "words_per_unit",
+        ):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+
+    @property
+    def source_files(self) -> int:
+        return self.raw_files + self.extracted_files
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedDocumentWorkload:
+    """Observable preparation result for a marker-owned workload root."""
+
+    created_files: int
+    retained_files: int
+    source_files: int
+    source_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentWorkloadMeasurement:
+    """All independently bounded document dimensions observed in production."""
+
+    source_files: int
+    source_bytes: int
+    extracted_bytes: int
+    generated_chunks: int
+    weighted_bytes: int
+    queue_bytes: int
+    rss_bytes: int
+    cuda_bytes: int
+
+
+class _RuntimeSampler:
+    """Observe process and CUDA high-water bytes at a bounded cadence."""
+
+    def __init__(self, interval_seconds: float = 0.05) -> None:
+        if interval_seconds <= 0:
+            raise ValueError("sample interval must be positive")
+        self._interval_seconds = interval_seconds
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.rss_bytes = 0
+        self.cuda_bytes = 0
+
+    def _observe(self) -> None:
+        from ...memory_probe import current_cuda_mb, current_rss_mb
+
+        _allocated_mb, reserved_mb = current_cuda_mb()
+        self.rss_bytes = max(self.rss_bytes, int(current_rss_mb() * 1024**2))
+        self.cuda_bytes = max(self.cuda_bytes, int(reserved_mb * 1024**2))
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._interval_seconds):
+            self._observe()
+
+    def __enter__(self) -> _RuntimeSampler:
+        self._observe()
+        self._thread = threading.Thread(
+            target=self._run,
+            name="document-workload-resource-sampler",
+            daemon=True,
+        )
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=max(1.0, self._interval_seconds * 4))
+            if self._thread.is_alive():
+                raise RuntimeError("document workload sampler did not terminate")
+        self._observe()
+
+
+def _policy() -> RootContentPolicy:
+    from ...indexer._content_policy import (
+        ContentKind,
+        ContentRoute,
+        RootContentPolicy,
+        SourceProfileVersion,
+    )
+
+    return RootContentPolicy(
+        SourceProfileVersion.CONVENTIONAL_V1,
+        (ContentRoute("inputs/raw/*.txt", ContentKind.DOCUMENT),),
+    )
+
+
+def _marker_payload(spec: DocumentWorkloadSpec) -> dict[str, object]:
+    return {"schema_version": _SCHEMA_VERSION, **asdict(spec)}
+
+
+def _write_json(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def _claim_root(root: Path, spec: DocumentWorkloadSpec) -> None:
+    expected = _marker_payload(spec)
+    marker = root / _MARKER_NAME
+    if marker.is_file():
+        actual = json.loads(marker.read_text(encoding="utf-8"))
+        if actual != expected:
+            raise RuntimeError("document workload marker does not match the request")
+        return
+    if root.exists() and next(root.iterdir(), None) is not None:
+        raise RuntimeError(f"refusing unmarked non-empty workload root: {root}")
+    root.mkdir(parents=True, exist_ok=True)
+    _write_json(marker, expected)
+
+
+def _extractor_source() -> str:
+    return """\
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1])
+raw = source.read_bytes()
+invocation = json.loads(os.environ["VAULTSPEC_PREPROCESS_INVOCATION"])
+units = int(invocation["options"]["units"])
+words = int(invocation["options"]["words"])
+token = hashlib.blake2b(raw, digest_size=8).hexdigest()
+payload = {
+    "schema_version": 1,
+    "preprocessor_id": "document-workload",
+    "preprocessor_version": invocation["extractor_version"],
+    "source_path": invocation["source_paths"][0],
+    "metadata": {"fixture": "generic-binary"},
+    "units": [
+        {
+            "title": f"Unit {ordinal}",
+            "section": "Acceptance",
+            "anchor": f"unit={ordinal}",
+            "locator": {"kind": "unit", "value": ordinal},
+            "text": " ".join(
+                f"document_{token}_{ordinal}_{word}" for word in range(words)
+            ),
+        }
+        for ordinal in range(units)
+    ],
+}
+print(json.dumps(payload, separators=(",", ":")))
+"""
+
+
+def _configuration(root: Path, spec: DocumentWorkloadSpec) -> str:
+    executable = str(Path(sys.executable).resolve()).replace("\\", "/")
+    extractor = str((root / _EXTRACTOR_NAME).resolve()).replace("\\", "/")
+    return (
+        "version = 2\n\n"
+        "[[rule]]\n"
+        'pattern = "inputs/extracted/*.blob"\n'
+        f"command = '\"{executable}\" \"{extractor}\" {{path}}'\n"
+        'target = "document"\n'
+        'extractor_version = "1"\n'
+        'on_error = "fail"\n'
+        "[rule.options]\n"
+        f"units = {spec.units_per_extracted_file}\n"
+        f"words = {spec.words_per_unit}\n"
+    )
+
+
+def _raw_text(file_index: int, words: int) -> str:
+    return " ".join(f"raw_document_{file_index}_{word}" for word in range(words))
+
+
+def _write_if_absent(path: Path, payload: bytes) -> bool:
+    if path.is_file():
+        if path.read_bytes() != payload:
+            raise RuntimeError(f"workload input differs from its marker: {path}")
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_bytes(payload)
+    temporary.replace(path)
+    return True
+
+
+def prepare_document_workload(
+    root: Path,
+    spec: DocumentWorkloadSpec,
+) -> PreparedDocumentWorkload:
+    """Create or resume one deterministic, marker-protected workload."""
+    resolved = root.resolve()
+    _claim_root(resolved, spec)
+    created = 0
+    retained = 0
+    source_bytes = 0
+    for index in range(spec.raw_files):
+        payload = _raw_text(index, spec.words_per_unit).encode("utf-8")
+        path = resolved / "inputs" / "raw" / f"record_{index:04d}.txt"
+        existed = path.is_file()
+        created += int(_write_if_absent(path, payload))
+        retained += int(existed)
+        source_bytes += len(payload)
+    for index in range(spec.extracted_files):
+        payload = bytes(range(256)) * (index + 1)
+        path = resolved / "inputs" / "extracted" / f"record_{index:04d}.blob"
+        existed = path.is_file()
+        created += int(_write_if_absent(path, payload))
+        retained += int(existed)
+        source_bytes += len(payload)
+    extractor = resolved / _EXTRACTOR_NAME
+    extractor.write_text(_extractor_source(), encoding="utf-8", newline="\n")
+    (resolved / ".vaultragpreprocess.toml").write_text(
+        _configuration(resolved, spec), encoding="utf-8", newline="\n"
+    )
+    return PreparedDocumentWorkload(
+        created,
+        retained,
+        spec.source_files,
+        source_bytes,
+    )
+
+
+def measure_document_workload(root: Path) -> DocumentWorkloadMeasurement:
+    """Measure production discovery, extraction, chunking, and queue weights."""
+    from ...config import get_config
+    from ...indexer import DocumentIndexer
+    from ...indexer._chunk_worker import chunk_document_and_hash_file
+    from ...indexer._streaming import iter_weighted_document_slices
+
+    resolved = root.resolve()
+    indexer = DocumentIndexer(
+        resolved,
+        cast("Any", None),
+        cast("Any", None),
+        content_policy=_policy(),
+    )
+    preflight = indexer.preflight_content()
+    limits = indexer._support_limits()
+    prep = indexer._preprocess_context(preflight.policy, limits)
+    execution_policy = indexer._execution_policy(preflight.policy)
+    source_bytes = sum(path.stat().st_size for path in preflight.files)
+    extracted_bytes = 0
+    generated_chunks = 0
+    weighted_bytes = 0
+    queue_bytes = 0
+    cfg = get_config()
+    with _RuntimeSampler() as sampler:
+        for path in preflight.files:
+            result = chunk_document_and_hash_file(
+                path,
+                resolved,
+                prep,
+                execution_policy,
+            )
+            extracted_bytes += sum(
+                len(chunk.payload.content.encode("utf-8")) for chunk in result.chunks
+            )
+            generated_chunks += len(result.chunks)
+            for weighted in iter_weighted_document_slices(
+                result.chunks,
+                max_chunks=int(cfg.embedding_batch_size),
+            ):
+                weighted_bytes += weighted.estimated_bytes
+                queue_bytes = max(queue_bytes, weighted.estimated_bytes)
+    return DocumentWorkloadMeasurement(
+        source_files=len(preflight.files),
+        source_bytes=source_bytes,
+        extracted_bytes=extracted_bytes,
+        generated_chunks=generated_chunks,
+        weighted_bytes=weighted_bytes,
+        queue_bytes=queue_bytes,
+        rss_bytes=sampler.rss_bytes,
+        cuda_bytes=sampler.cuda_bytes,
+    )
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--raw-files", type=int, default=4)
+    parser.add_argument("--extracted-files", type=int, default=4)
+    parser.add_argument("--units", type=int, default=3)
+    parser.add_argument("--words", type=int, default=160)
+    parser.add_argument("--prepare-only", action="store_true")
+    parser.add_argument("--json", type=Path, default=None)
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Prepare and measure the named document workload."""
+    args = _parser().parse_args(argv)
+    spec = DocumentWorkloadSpec(
+        args.raw_files,
+        args.extracted_files,
+        args.units,
+        args.words,
+    )
+    prepared = prepare_document_workload(args.root, spec)
+    payload: dict[str, object] = {
+        "schema_version": _SCHEMA_VERSION,
+        "root": str(args.root.resolve()),
+        "spec": asdict(spec),
+        "prepared": asdict(prepared),
+    }
+    if not args.prepare_only:
+        payload["measurement"] = asdict(measure_document_workload(args.root))
+    if args.json is not None:
+        _write_json(args.json, payload)
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
