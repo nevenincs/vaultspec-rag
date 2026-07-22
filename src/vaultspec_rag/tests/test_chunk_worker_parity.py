@@ -88,6 +88,30 @@ def test_full_worker_propagates_source_read_failure(tmp_path: Path) -> None:
         _chunk_worker.chunk_and_hash_file(missing, tmp_path)
 
 
+def test_batch_passthrough_hashes_the_bytes_it_chunks(tmp_path: Path) -> None:
+    source = tmp_path / "changed.py"
+    source.write_text("original = True\n", encoding="utf-8")
+    original_hash = hashlib.blake2b(source.read_bytes()).hexdigest()
+    member = _chunk_worker._BatchMember(  # pyright: ignore[reportPrivateUsage]
+        path=source,
+        rel_path=source.name,
+        content_hash=original_hash,
+        cached=None,
+    )
+
+    source.write_text("current = 'the bytes that are chunked'\n", encoding="utf-8")
+    current_bytes = source.read_bytes()
+    result = _chunk_worker._passthrough_batch_member(  # pyright: ignore[reportPrivateUsage]
+        member,
+        tmp_path,
+    )
+
+    assert result.content_hash == hashlib.blake2b(current_bytes).hexdigest()
+    assert result.content_hash != original_hash
+    assert result.chunks
+    assert "the bytes that are chunked" in result.chunks[0].content
+
+
 def test_scoped_worker_retains_readable_unsupported_encoding_disposition(
     tmp_path: Path,
 ) -> None:

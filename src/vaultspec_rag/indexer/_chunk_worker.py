@@ -50,7 +50,7 @@ class FileChunkResult:
     """One file's chunks plus its content hash, returned from a worker.
 
     Carrying the blake2b hash back from the same read that produced the chunks
-    lets the full-index path skip the separate hash pass - the tree is read
+    lets the shared code producer skip a separate hash pass - the tree is read
     once, not twice (#155 P03 / finding C4). ``slots=True`` keeps the pickled
     payload that crosses the process boundary lean (research O3).
 
@@ -269,7 +269,7 @@ def _chunk_decoded(
 class ScopedChunkResult:
     """A scoped-path file's chunks plus its preprocess disposition.
 
-    The scoped/incremental path hashes separately, so (unlike the full-index
+    The scoped path hashes separately, so (unlike the shared weighted
     ``FileChunkResult``) this carries no content hash - only the chunks and the
     preprocess status/reason, so the orchestrator can surface skip counts on the
     incremental and watcher paths too (#185 D11, review VIS-001).
@@ -346,12 +346,11 @@ def chunk_and_hash_file(
 ) -> FileChunkResult:
     """Read a file once, returning both its content hash and its chunks.
 
-    The full-index path uses this so the tree is read a single time rather than
-    once for hashing and again for chunking (#155 P03). The blake2b hash is
-    computed over the raw bytes, matching ``hashlib.file_digest`` exactly, so
-    incremental-index change detection is unaffected. A file that is readable
-    but not valid UTF-8 still yields its hash (with no chunks) so it remains
-    tracked in the index metadata.
+    Code indexing uses this so a production pass reads each selected file once
+    rather than once for hashing and again for chunking (#155 P03). The blake2b
+    hash is computed over the raw bytes, matching ``hashlib.file_digest`` exactly.
+    A file that is readable but not valid UTF-8 still yields its hash (with no
+    chunks) so it remains tracked in metadata.
 
     Args:
         path: Absolute path to the source file.
@@ -533,7 +532,11 @@ def _passthrough_batch_member(
         logger.warning("Cannot read %s: %s", member.path, e)
         raise
     return _raw_file_result(
-        member.path, root_dir, member.rel_path, member.content_hash, raw
+        member.path,
+        root_dir,
+        member.rel_path,
+        hashlib.blake2b(raw).hexdigest(),
+        raw,
     )
 
 

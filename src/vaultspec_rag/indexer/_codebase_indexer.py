@@ -92,6 +92,10 @@ BATCH_SIZE = 64
 _CHUNK_FUTURE_WINDOW_PER_WORKER = 2
 
 
+class _UnsettledCodeConsumerError(RuntimeError):
+    """The code consumer remained live after its bounded shutdown wait."""
+
+
 class _ScanInputs(NamedTuple):
     """Ignore specs and preprocess config resolved in one pass.
 
@@ -109,8 +113,8 @@ class _ScanInputs(NamedTuple):
     preprocess_config: PreprocessConfig
 
 
-class _FullPipelineLimits(NamedTuple):
-    """Frozen weighted limits shared by the full-index producer and consumer."""
+class _CodePipelineLimits(NamedTuple):
+    """Frozen weighted limits shared by code-index producers and consumer."""
 
     segment_max_chunks: int
     segment_max_bytes: int
@@ -1036,7 +1040,7 @@ class CodebaseIndexer:
         publish_result: Callable[[FileChunkResult], bool],
         reporter: ProgressReporter,
     ) -> int:
-        """Produce full-index file results serially into the same bounded queue."""
+        """Produce code-file results serially into the bounded queue."""
         advanced = 0
 
         for p in paths:
@@ -1050,7 +1054,7 @@ class CodebaseIndexer:
                 logger.warning("Failed to chunk %s", p, exc_info=True)
                 raise
             if not publish_result(res):
-                raise RuntimeError("full-index segment consumer terminated")
+                raise RuntimeError("code-index segment consumer terminated")
             advanced += 1
             reporter.advance()
         return advanced
@@ -1065,13 +1069,13 @@ class CodebaseIndexer:
 
         Each group still amortizes its hook spawn, but every returned file is
         segmented and transferred through the same bounded consumer used by
-        ordinary full-index files.
+        ordinary code files.
         """
 
         def _publish_group(results: list[FileChunkResult]) -> None:
             for res in results:
                 if not publish_result(res):
-                    raise RuntimeError("full-index segment consumer terminated")
+                    raise RuntimeError("code-index segment consumer terminated")
 
         self._run_batch_groups(batch_groups, reporter, _publish_group)
 
@@ -1160,7 +1164,7 @@ class CodebaseIndexer:
         self,
         segment_q: _WeightedCodeSegmentQueue,
         consumer_exc: list[BaseException],
-        limits: _FullPipelineLimits,
+        limits: _CodePipelineLimits,
         new_ids: set[str],
         total: list[int],
     ) -> threading.Thread:
@@ -1182,7 +1186,7 @@ class CodebaseIndexer:
         def _consumer_loop() -> None:
             probe: MemoryProbe | None = None
             try:
-                probe = MemoryProbe(name="codebase-full-index")
+                probe = MemoryProbe(name="codebase-index")
                 with probe:
                     slice_index = 0
                     for weighted_slice in iter_weighted_code_slices(
@@ -1240,12 +1244,12 @@ class CodebaseIndexer:
         consumer.join(timeout=max(0.0, deadline - time.monotonic()))
         return consumer.is_alive()
 
-    def _resolve_full_pipeline_limits(self) -> _FullPipelineLimits:
-        """Freeze full-index segment, queue, slice, and model limits."""
+    def _resolve_code_pipeline_limits(self) -> _CodePipelineLimits:
+        """Freeze code segment, queue, slice, and model limits."""
         from ..config import get_config
 
         cfg = get_config()
-        return _FullPipelineLimits(
+        return _CodePipelineLimits(
             segment_max_chunks=int(cfg.index_segment_max_chunks),
             segment_max_bytes=int(cfg.index_segment_max_bytes),
             queue_max_chunks=int(cfg.index_queue_max_chunks),
@@ -1259,17 +1263,17 @@ class CodebaseIndexer:
             flush_slices=max(1, int(cfg.index_cache_flush_slices)),
         )
 
-    def _enqueue_full_result(
+    def _enqueue_code_result(
         self,
         res: FileChunkResult,
         *,
-        limits: _FullPipelineLimits,
+        limits: _CodePipelineLimits,
         segment_q: _WeightedCodeSegmentQueue,
         consumer: threading.Thread,
         consumer_exc: list[BaseException],
         meta: dict[str, str],
     ) -> bool:
-        """Drain one full-index file result into weighted queue segments."""
+        """Drain one code file result into weighted queue segments."""
         meta[res.rel_path] = res.content_hash
         self._record_preprocess_result(res)
         segments = iter_code_file_segments(
@@ -1291,7 +1295,7 @@ class CodebaseIndexer:
                 return False
         return True
 
-    def _produce_full_singles(
+    def _produce_code_singles(
         self,
         singles: list[pathlib.Path],
         *,
@@ -1299,7 +1303,7 @@ class CodebaseIndexer:
         reporter: ProgressReporter,
         total: list[int],
     ) -> int:
-        """Produce ordinary full-index files serially or through the CPU pool."""
+        """Produce ordinary code files serially or through the CPU pool."""
         workers = self._plan_chunk_workers(singles)
         if workers <= 1:
             return self._run_serial_chunk_producer(
@@ -1346,14 +1350,16 @@ class CodebaseIndexer:
         segment_q: _WeightedCodeSegmentQueue,
         consumer_exc: list[BaseException],
     ) -> None:
-        """Stop the full-index consumer and surface its terminal state."""
+        """Stop the code-index consumer and surface its terminal state."""
         if self._shutdown_consumer(consumer, segment_q):
             logger.error(
                 "GPU consumer thread did not terminate within %.0fs; "
                 "aborting (a CUDA or Qdrant call may be wedged)",
                 _CONSUMER_SHUTDOWN_TIMEOUT_S,
             )
-            raise RuntimeError("codebase index GPU consumer thread did not terminate")
+            raise _UnsettledCodeConsumerError(
+                "codebase index GPU consumer thread did not terminate"
+            )
         if consumer_exc:
             raise consumer_exc[0]
 
@@ -1382,8 +1388,6 @@ class CodebaseIndexer:
             the total number of chunks embedded, and the relative-path to
             blake2b content-hash metadata for every readable file.
         """
-        limits = self._resolve_full_pipeline_limits()
-
         new_ids: set[str] = set()
         meta: dict[str, str] = {}
         total = [0]
@@ -1399,6 +1403,7 @@ class CodebaseIndexer:
             if not paths:
                 return new_ids, total[0], meta
 
+            limits = self._resolve_code_pipeline_limits()
             segment_q = _WeightedCodeSegmentQueue(
                 max_chunks=limits.queue_max_chunks,
                 max_bytes=limits.queue_max_bytes,
@@ -1414,7 +1419,7 @@ class CodebaseIndexer:
 
             def _publish_result(res: FileChunkResult) -> bool:
                 """Drain one file result into bounded ordered queue segments."""
-                return self._enqueue_full_result(
+                return self._enqueue_code_result(
                     res,
                     limits=limits,
                     segment_q=segment_q,
@@ -1435,7 +1440,7 @@ class CodebaseIndexer:
                     )
 
                 if singles:
-                    self._produce_full_singles(
+                    self._produce_code_singles(
                         singles,
                         publish_result=_publish_result,
                         reporter=reporter,
@@ -1766,10 +1771,7 @@ class CodebaseIndexer:
                 inputs=inputs,
             )
 
-        from ..config import get_config
-
         start = time.time()
-        slice_size = max(1, get_config().embedding_batch_size)
         self._begin_preprocess_run()
 
         prev_meta = self._load_meta()
@@ -1806,23 +1808,14 @@ class CodebaseIndexer:
         }
 
         to_index = new_files | modified_files
-        all_new_chunks: list[CodeChunk] = []
-
-        reporter.phase_start("chunk files", len(to_index))
-        try:
-            if to_index:
-                paths_to_index = [current_files[f] for f in sorted(to_index)]
-                all_new_chunks = self._chunk_paths(paths_to_index, reporter=reporter)
-        finally:
-            reporter.phase_end()
-
+        paths_to_index = [current_files[f] for f in sorted(to_index)]
         attempted_paths = to_index | deleted_files
-        self._publish_incremental_chunks(
-            chunks=all_new_chunks,
+        published_hashes = self._publish_incremental_paths(
+            paths=paths_to_index,
             attempted_paths=attempted_paths,
-            slice_size=slice_size,
             reporter=reporter,
         )
+        current_hashes.update(published_hashes)
 
         reporter.phase_start("write metadata", 1)
         try:
@@ -1845,6 +1838,53 @@ class CodebaseIndexer:
             preprocess_skipped=len(self._prep_skips),
             preprocess_failures=list(self._prep_skips),
         )
+
+    def _publish_incremental_paths(
+        self,
+        *,
+        paths: list[pathlib.Path],
+        attempted_paths: set[str],
+        reporter: ProgressReporter,
+    ) -> dict[str, str]:
+        """Stream changed paths before deleting their obsolete identities.
+
+        Existing identities are captured before the first bounded upsert. The
+        shared code producer returns hashes from the same reads that produced
+        the stored chunks, so the caller's final metadata publication cannot
+        describe a different file version. Any failure rolls back identities
+        introduced by this attempt and leaves metadata unpublished.
+        """
+        existing_ids: set[str] = (
+            set(self._get_chunk_ids_for_files(attempted_paths))
+            if attempted_paths
+            else set()
+        )
+
+        try:
+            published_ids, _total, published_hashes = self._pipeline_chunk_and_embed(
+                paths,
+                reporter=reporter,
+            )
+        except _UnsettledCodeConsumerError:
+            # The consumer may still complete a write after this stack unwinds.
+            # Querying and deleting concurrently would turn a bounded-shutdown
+            # failure into a destructive race. Durable run recovery owns
+            # convergence for this exceptional unsettled state.
+            raise
+        except BaseException:
+            self._discard_failed_incremental_additions(
+                attempted_paths=attempted_paths,
+                existing_ids=existing_ids,
+            )
+            raise
+
+        self._delete_obsolete_incremental_chunks(
+            existing_ids=existing_ids,
+            published_ids=published_ids,
+            files_count=len(attempted_paths),
+            reporter=reporter,
+        )
+        return published_hashes
 
     def _publish_incremental_chunks(
         self,
