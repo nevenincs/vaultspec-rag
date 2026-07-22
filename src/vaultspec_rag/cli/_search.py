@@ -5,12 +5,13 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-from typing import TYPE_CHECKING, Annotated, Literal, cast
+from typing import TYPE_CHECKING, Annotated, cast
 
 import typer
 
 import vaultspec_rag.cli as _cli
 
+from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from ..store import VaultStoreLockedError
 from ._app import CLIState, app
 from ._gpu_errors import _handle_gpu_error
@@ -29,7 +30,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator
     from typing import NoReturn
 
-    from ..search import SearchResult
+    from ..search import DocumentSearchResult, SearchResult
+    from ..search._outcomes import CombinedSearchOutcome
 
 __all__ = ["_suppress_hf_progress", "handle_search"]
 
@@ -123,6 +125,7 @@ def _handle_service_success(
         return
     if not results:
         _render_empty_service_results(payload, query, search_type)
+        _render_partial_domain_failures(payload)
         return
     _display_search_results(
         results,
@@ -131,6 +134,31 @@ def _handle_service_success(
         show_scores=show_scores,
         root=target,
     )
+    _render_partial_domain_failures(payload)
+
+
+def _render_partial_domain_failures(payload: dict[str, object]) -> None:
+    """Render visible failures from a canonical combined-search envelope."""
+    if payload.get("partial") is not True:
+        return
+    raw_domains = payload.get("domains")
+    if not isinstance(raw_domains, dict):
+        return
+    domains = cast("dict[object, object]", raw_domains)
+    for source in PublicSourceType:
+        if source is PublicSourceType.COMBINED:
+            continue
+        raw = domains.get(source.value)
+        if not isinstance(raw, dict):
+            continue
+        outcome = cast("dict[str, object]", raw)
+        if outcome.get("ok") is False:
+            _cli.console.print(
+                f"{_search_type_result_label(source.value).capitalize()} search "
+                f"failed ({outcome.get('error_kind')}): {outcome.get('detail')}",
+                markup=False,
+                highlight=False,
+            )
 
 
 def _render_empty_service_results(
@@ -165,6 +193,10 @@ def _search_type_result_label(search_type: str) -> str:
         return "source code"
     if search_type == "vault":
         return "vault document"
+    if search_type == "document":
+        return "document"
+    if search_type == "combined":
+        return "combined"
     return search_type.replace("_", " ")
 
 
@@ -173,6 +205,10 @@ def _search_type_count_label(search_type: str) -> str:
         return "source code sections"
     if search_type == "vault":
         return "vault documents"
+    if search_type == "document":
+        return "document sections"
+    if search_type == "combined":
+        return "combined results"
     return f"{search_type.replace('_', ' ')} items"
 
 
@@ -271,7 +307,7 @@ def _handle_vaultstore_locked_error(
 def _try_in_process_search(
     target: pathlib.Path,
     query: str,
-    search_type: str,
+    search_type: PublicSourceType,
     max_results: int,
     language: str | None,
     path: str | None,
@@ -286,8 +322,12 @@ def _try_in_process_search(
     feature: str | None,
     date: str | None,
     tag: str | None,
+    source_path: str | None,
+    extractor_id: str | None,
+    extractor_version: str | None,
+    locator_kind: str | None,
     json_mode: bool,
-) -> list[SearchResult]:
+) -> list[SearchResult | DocumentSearchResult] | CombinedSearchOutcome:
     import vaultspec_rag
 
     from ..registry import get_registry
@@ -296,19 +336,24 @@ def _try_in_process_search(
     # "Searching..." status spinner: the search returns an empty, actionable
     # result either way, and the spinner's control codes otherwise leak into
     # non-interactive (captured / piped) output as a spurious first line.
+    counts = {
+        PublicSourceType.VAULT: get_registry().vault_doc_count(target),
+        PublicSourceType.CODE: get_registry().code_chunk_count(target),
+        PublicSourceType.DOCUMENT: get_registry().document_chunk_count(target),
+    }
     has_index = (
-        get_registry().code_chunk_count(target) > 0
-        if search_type == "code"
-        else get_registry().vault_doc_count(target) > 0
+        any(counts.values())
+        if search_type is PublicSourceType.COMBINED
+        else counts[search_type] > 0
     )
     try:
         status_ctx = (
-            _cli.console.status(f"Searching {search_type}...")
+            _cli.console.status(f"Searching {search_type.value}...")
             if has_index and not json_mode
             else contextlib.nullcontext()
         )
         with status_ctx:
-            if search_type == "code":
+            if search_type is PublicSourceType.CODE:
                 results = vaultspec_rag.search_codebase(
                     target,
                     query,
@@ -323,7 +368,7 @@ def _try_in_process_search(
                     dedup_locales=dedup_locales,
                     prefer=prefer,
                 )
-            else:
+            elif search_type is PublicSourceType.VAULT:
                 results = vaultspec_rag.search_vault(
                     target,
                     query,
@@ -333,7 +378,26 @@ def _try_in_process_search(
                     date=date,
                     tag=tag,
                 )
-        return results
+            elif search_type is PublicSourceType.DOCUMENT:
+                results = vaultspec_rag.search_documents(
+                    target,
+                    query,
+                    top_k=max_results,
+                    source_path=source_path,
+                    extractor_id=extractor_id,
+                    extractor_version=extractor_version,
+                    locator_kind=locator_kind,
+                )
+            else:
+                results = vaultspec_rag.search_combined(
+                    target,
+                    query,
+                    top_k=max_results,
+                )
+        return cast(
+            "list[SearchResult | DocumentSearchResult] | CombinedSearchOutcome",
+            results,
+        )
     except VaultStoreLockedError as exc:
         _handle_vaultstore_locked_error(exc, json_mode)
         return []
@@ -343,7 +407,7 @@ def _try_in_process_search(
 
 
 def _validate_and_handle_filters(
-    search_type: Literal["vault", "docs", "code"],
+    search_type: PublicSourceType,
     language: str | None,
     path: str | None,
     node_type: str | None,
@@ -357,6 +421,10 @@ def _validate_and_handle_filters(
     exclude_paths: list[str] | None,
     dedup_locales: bool | None,
     prefer: str | None,
+    source_path: str | None,
+    extractor_id: str | None,
+    extractor_version: str | None,
+    locator_kind: str | None,
     json_mode: bool,
 ) -> None:
     from ..search import (
@@ -381,6 +449,10 @@ def _validate_and_handle_filters(
             exclude_paths=exclude_paths,
             dedup_locales=dedup_locales,
             prefer=prefer,
+            source_path=source_path,
+            extractor_id=extractor_id,
+            extractor_version=extractor_version,
+            locator_kind=locator_kind,
         )
     except InvalidPreferValueError as exc:
         msg = str(exc)
@@ -437,65 +509,93 @@ def _search_prefer_filter(prefer: str | None, *, json_mode: bool = False) -> str
 
 def _validate_search_type(
     search_type: str, *, json_mode: bool
-) -> Literal["vault", "docs", "code"]:
-    normalized = search_type.strip().lower()
-    if normalized in {"vault", "docs", "code"}:
-        return cast("Literal['vault', 'docs', 'code']", normalized)
-    msg = f"--type must be docs, vault, or code; got {search_type!r}."
-    if json_mode:
-        _emit_json_error_and_exit(
-            "search",
-            "invalid_search_type",
-            msg,
-            2,
-            value=search_type,
-        )
-    _cli.console.print(f"Error: {msg}", markup=False, highlight=False)
-    raise typer.Exit(code=2)
-
-
-def _canonical_search_type(
-    search_type: Literal["vault", "docs", "code"],
-) -> Literal["vault", "code"]:
-    return "vault" if search_type == "docs" else search_type
+) -> PublicSourceType:
+    try:
+        return parse_source_type(search_type, allow_aliases=True)
+    except SourceTypeParseError as exc:
+        if json_mode:
+            _emit_json_error_and_exit(
+                "search",
+                exc.error_kind,
+                str(exc),
+                2,
+                **exc.as_payload(),
+            )
+        _cli.console.print(f"Error: {exc}", markup=False, highlight=False)
+        raise typer.Exit(code=2) from None
 
 
 def _render_in_process_results(
-    results: list[SearchResult],
+    results: list[SearchResult | DocumentSearchResult] | CombinedSearchOutcome,
     query: str,
-    search_type: str,
+    search_type: PublicSourceType,
     json_mode: bool,
     show_scores: bool,
     target: pathlib.Path,
 ) -> None:
-    if json_mode:
-        from dataclasses import asdict
+    from dataclasses import asdict
 
+    if search_type is PublicSourceType.COMBINED:
+        outcome = cast("CombinedSearchOutcome", results)
+        result_items = outcome.results
+        domains = {
+            source.value: {
+                "ok": domain.ok,
+                "results_count": len(domain.results),
+                "error_kind": domain.error_kind,
+                "detail": domain.detail,
+            }
+            for source, domain in (
+                (PublicSourceType.VAULT, outcome.vault),
+                (PublicSourceType.CODE, outcome.code),
+                (PublicSourceType.DOCUMENT, outcome.document),
+            )
+        }
+    else:
+        result_items = cast("list[SearchResult | DocumentSearchResult]", results)
+        domains = None
+    if json_mode:
+        data: dict[str, object] = {
+            "query": query,
+            "search_type": search_type.value,
+            "via": "in-process",
+            "results": [asdict(r) for r in result_items],
+        }
+        if domains is not None:
+            data["partial"] = cast("CombinedSearchOutcome", results).partial
+            data["domains"] = domains
         _emit_json(
             True,
             "search",
-            data={
-                "query": query,
-                "search_type": search_type,
-                "via": "in-process",
-                "results": [asdict(r) for r in results],
-            },
+            data=data,
         )
         return
 
-    if not results:
-        _render_empty_in_process_results(query, search_type, target)
+    if not result_items:
+        _render_empty_in_process_results(query, search_type.value, target)
+        if domains is not None:
+            _render_partial_domain_failures(
+                {
+                    "partial": cast("CombinedSearchOutcome", results).partial,
+                    "domains": domains,
+                }
+            )
         return
 
-    from dataclasses import asdict
-
     _display_search_results(
-        [asdict(r) for r in results],
-        search_type,
+        [asdict(r) for r in result_items],
+        search_type.value,
         via="in-process",
         show_scores=show_scores,
         root=target,
     )
+    if domains is not None:
+        _render_partial_domain_failures(
+            {
+                "partial": cast("CombinedSearchOutcome", results).partial,
+                "domains": domains,
+            }
+        )
 
 
 def _render_empty_in_process_results(
@@ -679,16 +779,17 @@ def _local_search_deadline(
     ),
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
-def handle_search(
+def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explicitly.
     ctx: typer.Context,
     query: Annotated[str, typer.Argument(help="The search query text.")],
     search_type: Annotated[
         str,
         typer.Option(
             "--type",
-            metavar="docs|vault|code",
+            metavar="vault|code|document|combined",
             help=(
-                "Search area: 'docs' or 'vault' for documents; 'code' for source files."
+                "Search area: vault documentation, source code, extracted documents, "
+                "or all three with combined. Aliases: docs, codebase, all."
             ),
             show_default=True,
         ),
@@ -806,6 +907,34 @@ def handle_search(
             help="Only show document results with this tag, without '#'.",
         ),
     ] = None,
+    source_path: Annotated[
+        str | None,
+        typer.Option(
+            "--source-path",
+            help="Only show extracted-document results from this source path.",
+        ),
+    ] = None,
+    extractor_id: Annotated[
+        str | None,
+        typer.Option(
+            "--extractor-id",
+            help="Only show document results emitted by this extractor.",
+        ),
+    ] = None,
+    extractor_version: Annotated[
+        str | None,
+        typer.Option(
+            "--extractor-version",
+            help="Only show document results from this extractor version.",
+        ),
+    ] = None,
+    locator_kind: Annotated[
+        str | None,
+        typer.Option(
+            "--locator-kind",
+            help="Only show document results with this locator kind.",
+        ),
+    ] = None,
     show_scores: Annotated[
         bool,
         typer.Option(
@@ -877,9 +1006,12 @@ def handle_search(
         exclude_paths=exclude_paths,
         dedup_locales=dedup_locales,
         prefer=prefer,
+        source_path=source_path,
+        extractor_id=extractor_id,
+        extractor_version=extractor_version,
+        locator_kind=locator_kind,
         json_mode=json_mode,
     )
-    search_type = _canonical_search_type(search_type)
 
     # Search is service-first: local execution requires an explicit mandate
     # (--allow-fallback or configured local-only mode). Discovering a service
@@ -893,7 +1025,7 @@ def handle_search(
     if port is not None:
         service_results = _try_http_search(
             query,
-            search_type,
+            search_type.value,
             max_results,
             port,
             str(target),
@@ -911,12 +1043,18 @@ def handle_search(
             exclude_paths=exclude_paths,
             dedup_locales=dedup_locales,
             prefer=prefer,
+            document_filters={
+                "source_path": source_path,
+                "extractor_id": extractor_id,
+                "extractor_version": extractor_version,
+                "locator_kind": locator_kind,
+            },
         )
         if service_results is not None:
             _handle_service_results(
                 service_results,
                 query,
-                search_type,
+                search_type.value,
                 json_mode,
                 show_scores,
                 target,
@@ -956,6 +1094,10 @@ def handle_search(
                 feature,
                 date,
                 tag,
+                source_path,
+                extractor_id,
+                extractor_version,
+                locator_kind,
                 json_mode,
             )
 

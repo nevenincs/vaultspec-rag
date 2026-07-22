@@ -19,10 +19,15 @@ from ._render import (
 from ._service_status import _default_service_port
 
 
-def _status_counts(status: dict[str, object]) -> tuple[int, int]:
+def _status_counts(status: dict[str, object]) -> tuple[int, int, int | None]:
     vault_count = status.get("vault_documents", status.get("vault_count", 0))
     code_count = status.get("codebase_chunks", status.get("code_count", 0))
-    return int(cast("Any", vault_count)), int(cast("Any", code_count))
+    document_count = status.get("document_chunks", status.get("document_count"))
+    return (
+        int(cast("Any", vault_count)),
+        int(cast("Any", code_count)),
+        int(cast("Any", document_count)) if document_count is not None else None,
+    )
 
 
 def _human_index_data_location(
@@ -41,14 +46,75 @@ def _human_index_data_location(
     return raw
 
 
-def _status_next_action(vault_count: int, code_count: int) -> str | None:
-    if vault_count > 0 and code_count > 0:
+def _status_next_action(
+    vault_count: int,
+    code_count: int,
+    document_count: int | None,
+) -> str | None:
+    missing = [
+        source
+        for source, count in (
+            ("vault", vault_count),
+            ("code", code_count),
+            ("document", document_count),
+        )
+        if count is not None and count <= 0
+    ]
+    if not missing:
         return None
-    if vault_count <= 0 and code_count <= 0:
-        return "vaultspec-rag index --type all"
-    if vault_count <= 0:
-        return "vaultspec-rag index --type vault"
-    return "vaultspec-rag index --type code"
+    if len(missing) == 1:
+        return f"vaultspec-rag index --type {missing[0]}"
+    return "vaultspec-rag index --type all"
+
+
+def _support_profile_lines(status: dict[str, object]) -> list[str]:
+    raw_profile = status.get("support_profile")
+    if not isinstance(raw_profile, dict):
+        return []
+    profile = cast("dict[str, object]", raw_profile)
+    lines = [f"Support profile: {profile.get('name', 'not reported')}"]
+    backends = profile.get("accepted_backends")
+    if isinstance(backends, list):
+        lines.append(f"Accepted backends: {', '.join(map(str, backends))}")
+    lines.extend(
+        (
+            f"Minimum RAM bytes: {profile.get('minimum_ram_bytes', 0)}",
+            "Minimum free disk bytes: "
+            f"{profile.get('minimum_free_disk_bytes', 0)}",
+        )
+    )
+    domains = profile.get("domains")
+    if not isinstance(domains, dict):
+        return lines
+    for source in ("code", "document"):
+        raw_domain = domains.get(source)
+        if not isinstance(raw_domain, dict):
+            continue
+        domain = cast("dict[str, object]", raw_domain)
+        lines.append(
+            f"{source.capitalize()} support: "
+            f"source_files={domain.get('source_files', 0)}, "
+            f"source_bytes={domain.get('source_bytes', 0)}, "
+            f"generated_chunks={domain.get('generated_chunks', 0)}, "
+            f"weighted_bytes={domain.get('weighted_bytes', 0)}"
+        )
+    return lines
+
+
+def _status_diagnostics(status: dict[str, object]) -> list[str]:
+    """Render optional policy, generation, and degraded-state diagnostics."""
+    lines: list[str] = []
+    lines.extend(_support_profile_lines(status))
+    policy = status.get("policy", status.get("policy_fingerprint"))
+    generations = status.get("generations", status.get("generation"))
+    degraded = status.get("degraded_reasons", status.get("degraded"))
+    if policy not in (None, "", {}):
+        lines.append(f"Policy: {policy}")
+    if generations not in (None, "", {}):
+        lines.append(f"Generations: {generations}")
+    if degraded not in (None, "", [], {}):
+        lines.append(f"Degraded: {degraded}")
+    return lines
 
 
 def _render_status_text(
@@ -64,7 +130,7 @@ def _render_status_text(
         status["storage_path"],
         service_port=service_port,
     )
-    vault_count, code_count = _status_counts(status)
+    vault_count, code_count, document_count = _status_counts(status)
     device = (
         f"GPU - {gpu_name} ({vram_mb} MB VRAM)"
         if cuda_available
@@ -76,13 +142,16 @@ def _render_status_text(
         f"Index data: {index_data_path}",
         f"Vault documents: {vault_count}",
         f"Source code sections: {code_count}",
+        "Document sections: "
+        f"{document_count if document_count is not None else 'not reported'}",
         f"Compute: {device}",
+        *_status_diagnostics(status),
     ]
     if service_port is not None:
         lines.append("Server: running")
         lines.append(f"Address: http://127.0.0.1:{service_port}")
         lines.append("Server details:")
-    next_action = _status_next_action(vault_count, code_count)
+    next_action = _status_next_action(vault_count, code_count, document_count)
     for line in lines:
         _cli.console.print(
             line,
@@ -107,7 +176,7 @@ def _emit_status_json(
     target: object,
     service_port: int | None = None,
 ) -> None:
-    vault_count, code_count = _status_counts(status)
+    vault_count, code_count, document_count = _status_counts(status)
     data: dict[str, object] = {
         "cuda": bool(status["cuda"]),
         "gpu_name": status["gpu_name"],
@@ -115,9 +184,21 @@ def _emit_status_json(
         "storage_path": str(status["storage_path"]),
         "vault_documents": vault_count,
         "codebase_chunks": code_count,
+        "document_chunks": document_count,
         "target_dir": str(target),
         "backend_capabilities": status.get("backend_capabilities", {}),
     }
+    for key in (
+        "policy",
+        "policy_fingerprint",
+        "generations",
+        "generation",
+        "degraded_reasons",
+        "degraded",
+        "support_profile",
+    ):
+        if key in status:
+            data[key] = status[key]
     if service_port is not None:
         data["service_port"] = service_port
     _emit_json(True, "status", data=data)
