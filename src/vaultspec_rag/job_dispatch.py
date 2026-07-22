@@ -311,6 +311,7 @@ def _checkpoint_resilience(
     admitted: IndexResilienceSnapshot,
     *,
     peak_rss_mb: float | None,
+    peak_cuda_allocated_mb: float | None,
     peak_cuda_reserved_mb: float | None,
 ) -> IndexResilienceSnapshot:
     """Project one concrete checkpoint without adapter policy recomputation."""
@@ -332,6 +333,7 @@ def _checkpoint_resilience(
         no_progress_remaining_seconds=run.remaining_seconds,
         peak_rss_mb=peak_rss_mb,
         rss_ceiling_mb=admitted.rss_ceiling_mb,
+        peak_cuda_allocated_mb=peak_cuda_allocated_mb,
         peak_cuda_reserved_mb=peak_cuda_reserved_mb,
         cuda_ceiling_mb=admitted.cuda_ceiling_mb,
         support_profile=admitted.support_profile,
@@ -350,6 +352,9 @@ def _code_resilience(indexer: CodebaseIndexer) -> IndexResilienceSnapshot:
         peak_rss_mb=(
             budget.peak_rss_mb if budget is not None else measurement.rss_bytes / mib
         ),
+        peak_cuda_allocated_mb=(
+            budget.peak_cuda_allocated_mb if budget is not None else None
+        ),
         peak_cuda_reserved_mb=(
             budget.peak_cuda_reserved_mb
             if budget is not None
@@ -364,6 +369,7 @@ def _document_resilience(indexer: DocumentIndexer) -> IndexResilienceSnapshot:
         indexer.last_checkpoint,
         admitted,
         peak_rss_mb=None,
+        peak_cuda_allocated_mb=None,
         peak_cuda_reserved_mb=None,
     )
 
