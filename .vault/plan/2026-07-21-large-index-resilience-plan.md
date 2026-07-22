@@ -104,7 +104,7 @@ Create the per-root SQLite generation and commit-unit authority with corruption 
 Drive full, unscoped incremental, and scoped incremental work from storage-confirmed ledger units.
 
 - [x] `W02.P06.S22` - Drive full indexing from deterministic ledger segments and storage-confirmed commit records; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
-- [ ] `W02.P06.S23` - Drive unscoped incremental indexing from compatible generation and file completion records; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `W02.P06.S23` - Drive unscoped incremental indexing from compatible generation and file completion records; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [ ] `W02.P06.S24` - Drive scoped incremental indexing from compatible generation and deletion records; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [ ] `W02.P06.S25` - Stream metadata rows and deterministic point identities through the ledger contract; `src/vaultspec_rag/indexer/_code_meta.py`.
 
