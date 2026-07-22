@@ -23,9 +23,14 @@ from anyio.to_thread import run_sync as _run_in_thread
 
 import vaultspec_rag.server as _m
 
-from .._machine_lock import acquire_machine_lock, release_machine_lock
+from .._machine_lock import (
+    MachineLockLease,
+    acquire_machine_lock_lease,
+    release_machine_lock_lease,
+)
 from ..capabilities import backend_capabilities_dict
 from ..logging_config import log_event
+from ._lifecycle import _DiscoveryPublisher
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -43,46 +48,32 @@ class _CanonicalJobRestoreError(RuntimeError):
     """A fresh canonical manager could not restore its durable generation."""
 
 
-def _claim_machine_singleton() -> None:
+def _claim_machine_singleton() -> MachineLockLease:
     """Acquire the machine singleton lock or abort startup with a clear cause.
 
     A live holder means another resident service already owns this machine's
     single GPU and single-writer Qdrant storage; a stale lock from a dead holder
     is reclaimed by the acquire itself.
     """
-    acquired, holder = acquire_machine_lock()
-    if not acquired:
+    lease, holder = acquire_machine_lock_lease()
+    if lease is None:
         raise RuntimeError(
             f"another vaultspec-rag service (pid {holder}) already owns this "
             "machine; one resident service owns the GPU and the managed Qdrant. "
             "Stop it first, or run on a dedicated machine."
         )
+    return lease
 
 
-def _stamp_service_phase(phase: str) -> None:
-    """Publish the daemon lifecycle phase through the shared atomic merge."""
-    from ..serviceclient._discovery import (
-        SERVICE_DISCOVERY_SCHEMA,
-        SERVICE_DISCOVERY_VERSION,
-        _discovery_timestamp,
-        _merge_service_status,
-    )
-
-    fields: dict[str, object] = {
-        "schema": SERVICE_DISCOVERY_SCHEMA,
-        "version": SERVICE_DISCOVERY_VERSION,
-        "pid": os.getpid(),
-        "phase": phase,
-    }
-    if _m._launch_token:
-        fields["launch_token"] = _m._launch_token
-    if _m._service_port > 0:
-        fields["port"] = _m._service_port
-        fields["started_at"] = _discovery_timestamp()
-    _merge_service_status(fields)
+def _stamp_service_phase(publisher: _DiscoveryPublisher, phase: str) -> None:
+    """Publish one complete daemon-owned lifecycle snapshot."""
+    publisher.publish_phase(phase)
 
 
-def _stamp_qdrant_identity(supervisor: QdrantSupervisor) -> None:
+def _stamp_qdrant_identity(
+    supervisor: QdrantSupervisor,
+    publisher: _DiscoveryPublisher,
+) -> None:
     """Authoritatively publish the ready child before model warming begins."""
     from ..config import get_config
     from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
@@ -90,12 +81,6 @@ def _stamp_qdrant_identity(supervisor: QdrantSupervisor) -> None:
         probe_qdrant_endpoint,
         read_qdrant_identity,
         verify_attachable,
-    )
-    from ..serviceclient._discovery import (
-        SERVICE_DISCOVERY_SCHEMA,
-        SERVICE_DISCOVERY_VERSION,
-        _discovery_timestamp,
-        _merge_service_status,
     )
 
     identity = read_qdrant_identity()
@@ -124,40 +109,17 @@ def _stamp_qdrant_identity(supervisor: QdrantSupervisor) -> None:
         )
     if _m._service_port <= 0:
         raise RuntimeError("service port is unavailable during Qdrant publication")
-    qdrant_identity = {
-        "pid": identity.qdrant_pid,
-        "start_time": identity.qdrant_start_time,
-        "port": identity.http_port,
-        "version": identity.version,
-        "storage_path": identity.storage_path,
-    }
-    _merge_service_status(
-        {
-            "schema": SERVICE_DISCOVERY_SCHEMA,
-            "version": SERVICE_DISCOVERY_VERSION,
-            "pid": os.getpid(),
-            "port": _m._service_port,
-            "started_at": _discovery_timestamp(),
-            "phase": "warming",
-            "launch_token": _m._launch_token,
-            "qdrant_pid": child_pid,
-            "qdrant_alive": supervisor.is_alive(),
-            "qdrant_port": identity.http_port,
-            "qdrant_version": identity.version,
-            "qdrant_start_time": identity.qdrant_start_time,
-            "qdrant_identity": qdrant_identity,
-        }
-    )
+    publisher.publish_phase("warming")
 
 
-def _stop_active_qdrant() -> None:
-    """Stop and clear any process-owned supervisor, including failed startup."""
+def _stop_active_qdrant() -> bool:
+    """Stop the process-owned supervisor and report confirmed convergence."""
     from .. import qdrant_runtime as _qr
     from ..config import EnvVar
 
     supervisor = _qr.active_supervisor()
     if supervisor is None:
-        return
+        return True
     try:
         supervisor.stop()
     except Exception:
@@ -168,9 +130,10 @@ def _stop_active_qdrant() -> None:
             severity=logging.WARNING,
             exc_info=True,
         )
-    finally:
-        _qr.set_active_supervisor(None)
-        os.environ.pop(EnvVar.QDRANT_URL.value, None)
+        return False
+    _qr.set_active_supervisor(None)
+    os.environ.pop(EnvVar.QDRANT_URL.value, None)
+    return True
 
 
 def _reconcile_storage_manifest() -> None:
@@ -221,8 +184,8 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     Startup loads the shared ``EmbeddingModel`` with per-stage
     timing logs, registers daemon-owned shutdown hooks, and starts
     the heartbeat task.  Shutdown cancels the heartbeat, closes
-    all project stores, releases GPU memory, and unlinks
-    ``service.json``.
+    all project stores, releases GPU memory, removes both owner-published
+    discovery views, and releases the retained machine lease last.
 
     Args:
         _app: The Starlette application instance (unused but
@@ -242,7 +205,12 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     # Machine singleton (ADR D1 / P3): claim the machine before committing GPU
     # memory or spawning Qdrant. This is the authoritative, race-safe gate (the
     # CLI pre-check is advisory; this acquire wins or loses atomically).
-    _claim_machine_singleton()
+    machine_lease = _claim_machine_singleton()
+    discovery = _DiscoveryPublisher(machine_lease)
+    # Register the owner cleanup retry before the first discovery write or
+    # subordinate startup action. A pre-yield failure can therefore retain the
+    # lease after a transient cleanup failure and retry while still owner.
+    _m._install_daemon_shutdown_hooks(discovery)
 
     # Lock held but not yet serving: stamp the sidecar so ``server status``
     # reports "warming" instead of a contradictory "stopped" while models load.
@@ -260,8 +228,8 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     cleanup_started = False
     startup_started = time.perf_counter()
     try:
-        _stamp_service_phase(SERVICE_PHASE_WARMING)
-        periodic_tasks = await _start_components()
+        _stamp_service_phase(discovery, SERVICE_PHASE_WARMING)
+        periodic_tasks = await _start_components(discovery)
         from .. import jobs as _jobs_module
 
         manager = _jobs_module.get_job_manager()
@@ -277,12 +245,12 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
             "Service startup complete in %.2fs",
             time.perf_counter() - startup_started,
         )
-        _stamp_service_phase(SERVICE_PHASE_RUNNING)
+        _stamp_service_phase(discovery, SERVICE_PHASE_RUNNING)
         try:
             yield
         finally:
             cleanup_started = True
-            await _shutdown_components(periodic_tasks, manager)
+            await _shutdown_components(periodic_tasks, manager, discovery)
     except BaseException:
         # The post-yield ``finally`` releases the lock on a clean run; this
         # branch covers the pre-yield startup failure (and a cancelled startup)
@@ -292,11 +260,13 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
         # guarantee. Release exactly once after the child is gone.
         if not cleanup_started:
             cleanup_started = True
-            await _shutdown_components(periodic_tasks, manager)
+            await _shutdown_components(periodic_tasks, manager, discovery)
         raise
 
 
-async def _start_components() -> list[asyncio.Task[None]]:
+async def _start_components(
+    discovery: _DiscoveryPublisher,
+) -> list[asyncio.Task[None]]:
     """Run the pre-yield startup: qdrant, models, hooks, periodic tasks.
 
     Factored out of :func:`service_lifespan` so the machine-lock
@@ -369,7 +339,7 @@ async def _start_components() -> list[asyncio.Task[None]]:
             # config read (registry stores, watcher reindexes) sees
             # server mode for the daemon's lifetime.
             os.environ[EnvVar.QDRANT_URL.value] = supervisor.url
-            _stamp_qdrant_identity(supervisor)
+            _stamp_qdrant_identity(supervisor, discovery)
             logger.info(
                 "qdrant server ready in %.2fs at %s (pid %s)",
                 time.perf_counter() - t_q,
@@ -396,10 +366,6 @@ async def _start_components() -> list[asyncio.Task[None]]:
         await _run_in_thread(_m._registry.get_reranker)
     logger.info("All models loaded in %.2fs", time.perf_counter() - t0)
 
-    # Daemon now owns end-of-life cleanup. The CLI parent created
-    # service.json; the daemon's hooks remove it on exit so a stale
-    # file never misleads ``service status``.
-    _m._install_daemon_shutdown_hooks()
     _m._lifecycle_log("startup", pid=os.getpid())
 
     # Surface jobs a dead prior daemon left running: without this, a
@@ -414,11 +380,11 @@ async def _start_components() -> list[asyncio.Task[None]]:
             interrupted,
         )
 
-    heartbeat_task = asyncio.create_task(_m._heartbeat_loop())
+    heartbeat_task = asyncio.create_task(_m._heartbeat_loop(discovery))
     # First heartbeat right away so a freshly started service is
     # immediately distinguishable from a stale CLI-only write.
     try:
-        await asyncio.to_thread(_m._heartbeat_tick_sync)
+        await asyncio.to_thread(_m._heartbeat_tick_sync, discovery)
     except Exception:
         log_event(
             logger,
@@ -614,6 +580,7 @@ def _begin_managed_shutdown(
 async def _shutdown_components(
     tasks: list[asyncio.Task[None]],
     manager: JobManager | None,
+    discovery: _DiscoveryPublisher,
 ) -> None:
     """Tear down the daemon's data components and release the machine lock.
 
@@ -622,12 +589,19 @@ async def _shutdown_components(
     drains execution owners before stores and stores before the qdrant child,
     then releases the machine singleton last.
     """
+    # Mark publication stopped before cancelling the asyncio task. A cancelled
+    # ``to_thread`` await does not stop its worker thread; the publisher's
+    # synchronous guard joins an in-flight tick and makes every later one inert.
+    discovery.quiesce()
     requested, initial_reasons, watcher_stop_ok = _begin_managed_shutdown(manager)
     for task in tasks:
         task.cancel()
     for task in tasks:
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await task
+    # Both views are removed while the owner lease remains held. This is
+    # idempotent and happens before any early unclean-shutdown return.
+    discovery_clean = discovery.cleanup()
     resources_released, clean, survivors, reason = await _drain_managed_work(
         manager,
         requested,
@@ -653,16 +627,54 @@ async def _shutdown_components(
     # Shutdown ordering: released watchers and manager workers BEFORE stores,
     # stores BEFORE the qdrant child, and the machine singleton last.
     try:
-        try:
-            _m._registry.close_all()
-        finally:
-            _stop_active_qdrant()
-            # Release the machine singleton last, so the slot is free for the
-            # next service only after GPU and Qdrant are fully torn down.
-            release_machine_lock()
+        _m._registry.close_all()
     except BaseException as exc:
+        # Preserve the primary store teardown failure, but still make one real
+        # attempt to stop Qdrant. Ownership remains held whichever stop result
+        # follows, so no successor can overlap surviving store authority.
+        _stop_active_qdrant()
         _m._record_shutdown("unclean", detail=f"component teardown failed: {exc}")
         raise
+    qdrant_clean = _stop_active_qdrant()
+    if not qdrant_clean:
+        qdrant_reason = "managed Qdrant shutdown did not converge"
+        log_event(
+            logger,
+            "service.lifecycle",
+            "shutdown_unclean",
+            severity=logging.ERROR,
+            reason=qdrant_reason,
+            surviving_job_ids=survivors,
+        )
+        _m._record_shutdown(
+            "unclean",
+            detail=qdrant_reason,
+            surviving_job_ids=",".join(survivors),
+        )
+        return
+    # Release the machine singleton last, so the slot is free for the next
+    # service only after stores, GPU, and Qdrant are fully torn down and both
+    # owner-published discovery views are confirmed absent. Any teardown or
+    # discovery failure retains the lease for the registered atexit retry.
+    if discovery_clean:
+        release_machine_lock_lease(discovery.lease)
+    if not discovery_clean:
+        discovery_reason = "owner discovery cleanup did not converge"
+        combined_reason = "; ".join(part for part in (reason, discovery_reason) if part)
+        log_event(
+            logger,
+            "service.lifecycle",
+            "shutdown_unclean",
+            severity=logging.ERROR,
+            reason=combined_reason,
+            surviving_job_ids=survivors,
+        )
+        _m._record_shutdown(
+            "unclean",
+            detail=combined_reason,
+            surviving_job_ids=",".join(survivors),
+        )
+        return
     if clean:
         logger.info("Service shutdown complete")
         _m._record_shutdown("clean")

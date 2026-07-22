@@ -150,7 +150,10 @@ class TestServerModeRoundTrip:
             assert result.added > 0
 
             code_indexer = CodebaseIndexer(tmp_path, embedding_model, store)
-            code_indexer.full_index(reporter=NullProgressReporter())
+            code_indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=code_indexer.preflight_content(),
+            )
             assert store.count() > 0
             assert store.count_code() > 0
 
@@ -193,7 +196,10 @@ class TestServerModeRoundTrip:
         try:
             assert store._server_mode is True
             code_indexer = CodebaseIndexer(tmp_path, embedding_model, store)
-            code_indexer.full_index(reporter=NullProgressReporter())
+            code_indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=code_indexer.preflight_content(),
+            )
 
             keep_rel = str(keep.relative_to(tmp_path)).replace("\\", "/")
             gone_rel = str(gone.relative_to(tmp_path)).replace("\\", "/")
@@ -203,6 +209,7 @@ class TestServerModeRoundTrip:
             result = code_indexer.incremental_index(
                 reporter=NullProgressReporter(),
                 changed_paths={gone},
+                preflight=code_indexer.preflight_changed_paths({gone}),
             )
 
             assert result.removed == 1
@@ -284,7 +291,10 @@ class TestServerModeDeletionEviction:
         try:
             assert store._server_mode is True
             code_indexer = CodebaseIndexer(tmp_path, embedding_model, store)
-            code_indexer.full_index(reporter=NullProgressReporter())
+            code_indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=code_indexer.preflight_content(),
+            )
 
             gone_rel = str(gone.relative_to(tmp_path)).replace("\\", "/")
             assert code_indexer._get_chunk_ids_for_files({gone_rel}), (
@@ -303,6 +313,7 @@ class TestServerModeDeletionEviction:
             result = code_indexer.incremental_index(
                 reporter=NullProgressReporter(),
                 changed_paths={gone},
+                preflight=code_indexer.preflight_changed_paths({gone}),
             )
             assert result.removed == 1
 
@@ -483,7 +494,10 @@ class TestServerModeWatcherEviction:
         vault_indexer = VaultIndexer(tmp_path, embedding_model, store)
         code_indexer = CodebaseIndexer(tmp_path, embedding_model, store)
         graph_cache = GraphCache()
-        code_indexer.full_index(reporter=NullProgressReporter())
+        code_indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=code_indexer.preflight_content(),
+        )
         searcher = VaultSearcher(tmp_path, embedding_model, store)
 
         def _hits() -> bool:

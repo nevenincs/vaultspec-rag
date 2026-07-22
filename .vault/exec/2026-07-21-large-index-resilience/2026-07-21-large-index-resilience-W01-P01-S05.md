@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#large-index-resilience'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-22'
 step_id: 'S05'
 related:
   - "[[2026-07-21-large-index-resilience-plan]]"

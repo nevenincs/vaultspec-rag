@@ -126,6 +126,9 @@ class PreprocessRule:
             outputs, so one subprocess amortises the spawn cost across many
             files. Valid only on ``command`` rules whose command carries
             ``{paths}``; never combined with ``entry_point``.
+        path_independent: Permit cache reuse between byte-identical inputs at
+            different paths. Defaults to false because most extractors embed
+            source identity in locators or metadata.
     """
 
     pattern: str
@@ -139,6 +142,7 @@ class PreprocessRule:
     options: Mapping[str, object]
     order: int
     batch: bool = False
+    path_independent: bool = False
 
 
 class PreprocessConfig:
@@ -383,6 +387,7 @@ def _build_rule(
     priority = _resolve_priority(rule_map, reject)
     timeout_s = _resolve_timeout(rule_map, reject)
     batch = _resolve_batch(rule_map, command, entry_point, reject)
+    path_independent = _resolve_path_independent(rule_map, reject)
 
     options_raw = rule_map.get("options", {})
     if not isinstance(options_raw, dict):
@@ -401,7 +406,19 @@ def _build_rule(
         options=options,
         order=order,
         batch=batch,
+        path_independent=path_independent,
     )
+
+
+def _resolve_path_independent(
+    rule_map: dict[str, object],
+    reject: Callable[[str], _RuleRejectedError],
+) -> bool:
+    """Resolve explicit cross-path cache reuse authority."""
+    value = rule_map.get("path_independent", False)
+    if not isinstance(value, bool):
+        raise reject("'path_independent' must be a boolean")
+    return value
 
 
 def _resolve_target(

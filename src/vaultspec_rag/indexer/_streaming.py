@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from ..job_control import RunControl
     from ..memory_probe import MemoryProbe
     from ..progress import ProgressReporter
-    from ..store import CodeChunk, VaultChunk, VaultDocument, VaultStore
+    from ..store import CodeChunk, DocumentChunk, VaultChunk, VaultDocument, VaultStore
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,7 @@ __all__ = [
     "_stream_encode_and_upsert_codebase",
     "_stream_encode_and_upsert_vault",
     "encode_and_upsert_code_slice",
+    "encode_and_upsert_document_slice",
     "estimate_code_chunk_bytes",
     "iter_code_file_segments",
     "iter_weighted_code_slices",
@@ -247,7 +248,7 @@ def _dense_vector_to_list(value: object) -> list[float]:
 
 
 def _release_vector_fields(
-    chunks: Iterable[CodeChunk | VaultChunk],
+    chunks: Iterable[CodeChunk | DocumentChunk | VaultChunk],
 ) -> None:
     """Release vector-bearing fields retained by chunk objects."""
     for chunk in chunks:
@@ -257,7 +258,7 @@ def _release_vector_fields(
 
 
 def _populate_vector_fields(
-    chunks: Sequence[CodeChunk | VaultChunk],
+    chunks: Sequence[CodeChunk | DocumentChunk | VaultChunk],
     dense_cpu: object,
     sparse: Iterable[_SparseVectorLike | None],
 ) -> None:
@@ -279,7 +280,7 @@ def _populate_vector_fields(
 
 def _encode_slice_vector_fields(
     *,
-    chunks: Sequence[CodeChunk | VaultChunk],
+    chunks: Sequence[CodeChunk | DocumentChunk | VaultChunk],
     slice_texts: list[str],
     model: EmbeddingModel,
     gpu_lock: threading.Lock | None,
@@ -452,6 +453,57 @@ def _code_embed_text(chunk: CodeChunk) -> str:
     if chunk.function_name:
         parts.append(chunk.function_name)
     return " :: ".join(parts) + "\n" + chunk.content
+
+
+def _document_embed_text(chunk: DocumentChunk) -> str:
+    """Build document embedding input without altering the stored payload."""
+    payload = chunk.payload
+    context = [payload.source_path]
+    if payload.title:
+        context.append(payload.title)
+    if payload.section:
+        context.append(payload.section)
+    return " :: ".join(context) + "\n" + payload.content
+
+
+def encode_and_upsert_document_slice(
+    slice_chunks: list[DocumentChunk],
+    *,
+    model: EmbeddingModel,
+    store: VaultStore,
+    gpu_lock: threading.Lock | None,
+    release_cache: bool = True,
+    encode_batch_size: int | None = None,
+    write_policy: StoreWritePolicy | None = None,
+    on_storage_confirmed: Callable[[], None] | None = None,
+    run_control: RunControl = NO_RUN_CONTROL,
+) -> None:
+    """Encode and synchronously publish one bounded document-only slice."""
+    from ..config import get_config
+
+    if not slice_chunks:
+        return
+    try:
+        run_control.checkpoint()
+        _encode_slice_vector_fields(
+            chunks=slice_chunks,
+            slice_texts=[_document_embed_text(chunk) for chunk in slice_chunks],
+            model=model,
+            gpu_lock=gpu_lock,
+            sparse_enabled=bool(get_config().sparse_enabled),
+            encode_batch_size=encode_batch_size,
+        )
+        run_control.checkpoint()
+        store.upsert_document_content_chunks(
+            slice_chunks,
+            write_policy=write_policy,
+        )
+        if on_storage_confirmed is not None:
+            on_storage_confirmed()
+    finally:
+        _release_vector_fields(slice_chunks)
+        if release_cache:
+            _release_cuda_cache()
 
 
 def _utf8_size(value: str | None) -> int:

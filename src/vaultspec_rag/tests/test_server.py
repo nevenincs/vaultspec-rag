@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import typing
+from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, cast
 
@@ -40,6 +41,7 @@ from ..server import (
     _validate_vault_root,
     health_handler,
 )
+from ..server._lifecycle import _DiscoveryPublisher
 
 pytestmark = [pytest.mark.unit]
 
@@ -87,6 +89,47 @@ class TestPackageEntryPoint:
         )
         assert result.returncode == 0, result.stderr
         assert "--port" in result.stdout
+
+
+@pytest.fixture
+def discovery_publisher(tmp_path: Path) -> Iterator[_DiscoveryPublisher]:
+    """Retain a real isolated discovery owner for lifecycle helper tests."""
+    from .. import server as server_state
+    from .._machine_lock import (
+        acquire_machine_lock_lease,
+        release_machine_lock_lease,
+    )
+    status_key = EnvVar.STATUS_DIR.value
+    storage_key = EnvVar.QDRANT_STORAGE_DIR.value
+    previous_env = {
+        status_key: os.environ.get(status_key),
+        storage_key: os.environ.get(storage_key),
+    }
+    previous_port = server_state._service_port
+    previous_token = server_state._SERVICE_TOKEN
+    os.environ[status_key] = str(tmp_path / "status")
+    os.environ[storage_key] = str(tmp_path / "qdrant" / "storage")
+    reset_config()
+    server_state._service_port = 8766
+    server_state._SERVICE_TOKEN = "test-owner-token"
+    lease, holder = acquire_machine_lock_lease()
+    assert lease is not None
+    assert holder == os.getpid()
+    publisher = _DiscoveryPublisher(lease)
+    try:
+        yield publisher
+    finally:
+        publisher.quiesce()
+        publisher.cleanup()
+        release_machine_lock_lease(lease)
+        server_state._service_port = previous_port
+        server_state._SERVICE_TOKEN = previous_token
+        for key, value in previous_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        reset_config()
 
 
 class TestToolRegistration:
@@ -1000,44 +1043,40 @@ class TestDaemonLifecycleHelpers:
         assert "port=8766" in rendered
 
     def test_heartbeat_tick_sync_no_status_file(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        discovery_publisher: _DiscoveryPublisher,
     ) -> None:
-        """Missing service.json → no-op (no exception, no file created)."""
+        """The owner publishes a complete snapshot when no status file exists."""
         from .. import server
 
-        monkeypatch.setattr(
-            server,
-            "_status_file_path",
-            lambda: tmp_path / "service.json",
-        )
-        # Should not raise and should not create the file.
-        server._heartbeat_tick_sync()
-        assert not (tmp_path / "service.json").exists()
+        sf = server._status_file_path()
+        assert not sf.exists()
+        server._heartbeat_tick_sync(discovery_publisher)
+        assert sf.exists()
 
     def test_heartbeat_tick_sync_writes_last_heartbeat(
         self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        discovery_publisher: _DiscoveryPublisher,
     ) -> None:
-        """Existing service.json gets last_heartbeat merged in atomically."""
+        """The owner replaces stale discovery fields with its current snapshot."""
         from datetime import UTC, datetime
 
         from .. import server
 
-        sf: Path = tmp_path / "service.json"
+        sf = server._status_file_path()
+        sf.parent.mkdir(parents=True, exist_ok=True)
         sf.write_text(
             json.dumps({"pid": 1, "port": 2, "started_at": "x"}),
             encoding="utf-8",
         )
-        monkeypatch.setattr(server, "_status_file_path", lambda: sf)
 
-        server._heartbeat_tick_sync()
+        server._heartbeat_tick_sync(discovery_publisher)
 
         data: dict[str, Any] = json.loads(sf.read_text(encoding="utf-8"))
         assert data["pid"] == os.getpid()
         assert data["parent_pid"] == os.getppid()
-        assert data["port"] == 2
-        assert data["started_at"] == "x"
+        assert data["port"] == 8766
+        assert data["started_at"] == discovery_publisher.started_at
         assert "last_heartbeat" in data
         # Parses as a valid ISO-8601 timestamp.
         ts = datetime.fromisoformat(cast("str", data["last_heartbeat"]))
@@ -1047,42 +1086,26 @@ class TestDaemonLifecycleHelpers:
 
     def test_heartbeat_tick_sync_merges_service_token(
         self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        discovery_publisher: _DiscoveryPublisher,
     ) -> None:
-        """Non-empty _SERVICE_TOKEN gets written into the heartbeat.
-
-        Empty token (initial state before service_lifespan fires) is
-        skipped so a stale token from a previous daemon does not get
-        overwritten with empty.
-        """
+        """The retained owner's service token is published authoritatively."""
         from .. import server
 
-        sf: Path = tmp_path / "service.json"
-        sf.write_text(
-            json.dumps({"pid": 1, "port": 2, "started_at": "x"}),
-            encoding="utf-8",
-        )
-        monkeypatch.setattr(server, "_status_file_path", lambda: sf)
-        monkeypatch.setattr(server, "_SERVICE_TOKEN", "deadbeef" * 4)
-
-        server._heartbeat_tick_sync()
+        sf = server._status_file_path()
+        server._heartbeat_tick_sync(discovery_publisher)
 
         data: dict[str, Any] = json.loads(sf.read_text(encoding="utf-8"))
-        assert data["service_token"] == "deadbeef" * 4
+        assert data["service_token"] == "test-owner-token"
 
-    def test_heartbeat_tick_sync_skips_empty_token(
+    def test_heartbeat_tick_sync_replaces_stale_token(
         self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        discovery_publisher: _DiscoveryPublisher,
     ) -> None:
-        """Empty _SERVICE_TOKEN must not overwrite an existing token."""
+        """A stale token cannot survive an owner-authenticated heartbeat."""
         from .. import server
 
-        sf: Path = tmp_path / "service.json"
-        # Simulate a service.json that already has a token (e.g.
-        # written by a previous tick that fired before this guard
-        # check was introduced).
+        sf = server._status_file_path()
+        sf.parent.mkdir(parents=True, exist_ok=True)
         sf.write_text(
             json.dumps(
                 {
@@ -1094,49 +1117,35 @@ class TestDaemonLifecycleHelpers:
             ),
             encoding="utf-8",
         )
-        monkeypatch.setattr(server, "_status_file_path", lambda: sf)
-        monkeypatch.setattr(server, "_SERVICE_TOKEN", "")
 
-        server._heartbeat_tick_sync()
+        server._heartbeat_tick_sync(discovery_publisher)
 
         data: dict[str, Any] = json.loads(sf.read_text(encoding="utf-8"))
-        # Token preserved - empty token guard prevents the overwrite.
-        assert data["service_token"] == "previous-token"
+        assert data["service_token"] == "test-owner-token"
 
-    def test_unlink_status_file_silently_missing_is_noop(
+    def test_discovery_cleanup_missing_is_idempotent(
         self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        discovery_publisher: _DiscoveryPublisher,
     ) -> None:
-        """Calling cleanup with no file does not raise."""
-        from .. import server
-
-        monkeypatch.setattr(
-            server,
-            "_status_file_path",
-            lambda: tmp_path / "nope.json",
-        )
-        server._unlink_status_file_silently()  # no exception
+        """Repeated owner cleanup converges when both views are absent."""
+        assert discovery_publisher.cleanup() is True
+        assert discovery_publisher.cleanup() is True
 
     def test_record_shutdown_is_idempotent(
         self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """First call wins; subsequent calls do not log or unlink twice."""
+        """First call wins; subsequent calls do not emit a second record."""
         from .. import server
 
-        sf: Path = tmp_path / "service.json"
-        sf.write_text(json.dumps({"pid": 1, "port": 2}), encoding="utf-8")
-        monkeypatch.setattr(server, "_status_file_path", lambda: sf)
-        # Reset the module-level guard so this test is isolated.
-        monkeypatch.setattr(server, "_shutdown_recorded", False)
-
-        with caplog.at_level("INFO", logger="vaultspec_rag.server"):
-            server._record_shutdown("test-first")
-            assert not sf.exists()
-            server._record_shutdown("test-second")
+        prior = server._shutdown_recorded
+        server._shutdown_recorded = False
+        try:
+            with caplog.at_level("INFO", logger="vaultspec_rag.server"):
+                server._record_shutdown("test-first")
+                server._record_shutdown("test-second")
+        finally:
+            server._shutdown_recorded = prior
 
         first: list[logging.LogRecord] = [
             r

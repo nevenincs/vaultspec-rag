@@ -648,7 +648,10 @@ def _build_watched_code_project(
 
     slot = registry.peek_project(tmp_path)
     slot.vault_indexer.full_index(reporter=NullProgressReporter())
-    slot.code_indexer.full_index(reporter=NullProgressReporter())
+    slot.code_indexer.full_index(
+        reporter=NullProgressReporter(),
+        preflight=slot.code_indexer.preflight_content(),
+    )
     return slot, trigger, target
 
 

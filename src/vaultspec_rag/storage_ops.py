@@ -32,7 +32,13 @@ from typing import TYPE_CHECKING, cast
 
 from . import store_schema
 from ._store_writes import DISK_FLOOR_BYTES as _DISK_FLOOR_BYTES
-from .storage_manifest import load_manifest, remove_prefix
+from .storage_manifest import (
+    SnapshotCollection,
+    StorageSnapshotManifest,
+    load_manifest,
+    remove_prefix,
+    write_snapshot_manifest,
+)
 from .storage_survey import NamespaceSurvey, classify_namespaces
 
 if TYPE_CHECKING:
@@ -288,6 +294,10 @@ def backend_totals(surveys: list[NamespaceSurvey]) -> dict[str, object]:
     return {
         "total_bytes": total,
         "namespaces": len(surveys),
+        "points": sum(survey.points for survey in surveys),
+        "vault_points": sum(survey.vault_points for survey in surveys),
+        "code_points": sum(survey.code_points for survey in surveys),
+        "document_points": sum(survey.document_points for survey in surveys),
         "by_status_bytes": by_status,
     }
 
@@ -912,11 +922,11 @@ def delete_prefix(
     if not _CANONICAL_PREFIX_RE.match(prefix):
         return DeleteResult(prefix, "skipped", reason="invalid_prefix")
     manifest = load_manifest()
-    targets = [
+    targets = sorted(
         c.name
         for c in client.get_collections().collections
         if c.name.startswith(prefix)
-    ]
+    )
     if not targets:
         return DeleteResult(prefix, "skipped", reason="no_such_namespace")
     if prefix not in manifest and not allow_unknown:
@@ -1384,14 +1394,15 @@ def archive_prefix(
     Returns:
         The archived snapshot paths.
     """
-    targets = [
+    targets = sorted(
         c.name
         for c in client.get_collections().collections
         if c.name.startswith(prefix)
-    ]
+    )
     dest_dir = archive_dir / prefix.rstrip("_")
     dest_dir.mkdir(parents=True, exist_ok=True)
     archived: list[Path] = []
+    collection_artifacts: list[SnapshotCollection] = []
     for name in targets:
         description = client.create_snapshot(collection_name=name, wait=True)
         if description is None or not description.name:
@@ -1402,6 +1413,40 @@ def archive_prefix(
         dest = dest_dir / description.name
         os.replace(source, dest)
         archived.append(dest)
+        collection_artifacts.append(
+            SnapshotCollection(
+                name=name,
+                snapshot_file=dest.name,
+                points=int(client.count(collection_name=name).count),
+            )
+        )
+    entry = load_manifest().get(prefix)
+    metadata_files: list[str] = []
+    if entry is not None:
+        from shutil import copy2
+
+        from .indexer._document_meta import document_metadata_path
+
+        document_meta = document_metadata_path(Path(entry.root))
+        if document_meta.is_file():
+            metadata_dest = dest_dir / document_meta.name
+            copy2(document_meta, metadata_dest)
+            metadata_files.append(metadata_dest.name)
+    manifest_path = write_snapshot_manifest(
+        dest_dir,
+        StorageSnapshotManifest(
+            prefix=prefix,
+            root=entry.root if entry is not None else None,
+            storage_schema_version=(
+                entry.storage_schema_version
+                if entry is not None
+                else store_schema.STORAGE_SCHEMA_VERSION
+            ),
+            collections=tuple(sorted(collection_artifacts, key=lambda item: item.name)),
+            metadata_files=tuple(sorted(metadata_files)),
+        ),
+    )
+    archived.append(manifest_path)
     return archived
 
 

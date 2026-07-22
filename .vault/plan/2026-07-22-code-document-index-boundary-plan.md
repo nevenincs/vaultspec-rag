@@ -105,7 +105,7 @@ Create document-native identity, payload, collection, metadata, lock, lifecycle,
 - [x] `W02.P03.S97` - Include document collections and metadata in snapshot manifests; `src/vaultspec_rag/storage_manifest.py, src/vaultspec_rag/storage_ops.py`.
 - [x] `W02.P03.S98` - Migrate document collections idempotently between local and resident-service storage; `src/vaultspec_rag/cli/_service_storage.py`.
 - [x] `W02.P03.S99` - Include document collections in prefix pruning, debris classification, and storage maintenance routes; `src/vaultspec_rag/storage_ops.py, src/vaultspec_rag/server/_routes_storage.py`.
-- [ ] `W02.P03.S100` - Verify older and newer storage descriptors fail or migrate according to the direct-consumer compatibility contract; `src/vaultspec_rag/tests/integration/test_document_store.py`.
+- [x] `W02.P03.S100` - Verify older and newer storage descriptors fail or migrate according to the direct-consumer compatibility contract; `src/vaultspec_rag/tests/integration/test_document_store.py`.
 - [ ] `W02.P03.S121` - Verify document collection counts appear in real storage survey output; `src/vaultspec_rag/tests/integration/test_document_store.py`.
 - [ ] `W02.P03.S122` - Verify document collection and metadata appear in a real snapshot manifest; `src/vaultspec_rag/tests/integration/test_document_store.py`.
 - [ ] `W02.P03.S123` - Verify real local-to-service document migration is idempotent; `src/vaultspec_rag/tests/integration/test_service_storage_migration.py`.

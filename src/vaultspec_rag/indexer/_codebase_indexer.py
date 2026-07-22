@@ -47,8 +47,8 @@ from ._content_policy import (
     SourceProfileVersion,
 )
 from ._preprocess_runner import PreprocessAbortError
-from ._run_checkpoint import CodeRunCheckpoint
-from ._run_ledger import RunOperation
+from ._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
+from ._run_ledger import CommitUnitKind, RunLedgerCompatibilityError, RunOperation
 from ._run_policy import RunPolicy
 from ._streaming import (
     CodeFileSegment,
@@ -1728,52 +1728,56 @@ class CodebaseIndexer:
                         max_bytes=limits.slice_max_bytes,
                         run_control=run_control,
                     ):
-                        run_control.checkpoint()
-                        slice_chunks = sorted(
-                            weighted_slice.chunks,
-                            key=lambda chunk: -len(chunk.content),
-                        )
-                        try:
-                            probe.checkpoint(f"slice-{slice_index}-before-encode")
-                            slice_index += 1
+                        for segment in weighted_slice.segments:
+                            run_control.checkpoint()
+                            slice_chunks = sorted(
+                                segment.chunks,
+                                key=lambda chunk: -len(chunk.content),
+                            )
+                            try:
+                                probe.checkpoint(
+                                    f"slice-{slice_index}-before-encode"
+                                )
+                                slice_index += 1
 
-                            def _record_storage_confirmed(
-                                segments: tuple[CodeFileSegment, ...] = (
-                                    weighted_slice.segments
-                                ),
-                            ) -> None:
-                                assert checkpoint is not None
-                                for segment in segments:
+                                def _record_storage_confirmed(
+                                    confirmed: CodeFileSegment = segment,
+                                ) -> None:
+                                    assert checkpoint is not None
                                     checkpoint.record_confirmed_segment(
-                                        segment,
-                                        metadata[segment.path],
+                                        confirmed,
+                                        metadata[confirmed.path],
                                     )
 
-                            encode_and_upsert_code_slice(
-                                slice_chunks,
-                                model=self.model,
-                                store=self.store,
-                                gpu_lock=self._gpu_lock,
-                                release_cache=(slice_index % limits.flush_slices == 0),
-                                encode_batch_size=limits.encode_batch_size,
-                                write_policy=(
-                                    checkpoint.run_policy.store_write_policy
-                                    if checkpoint is not None
-                                    else None
-                                ),
-                                on_storage_confirmed=(
-                                    _record_storage_confirmed
-                                    if checkpoint is not None
-                                    else None
-                                ),
-                                run_control=run_control,
-                            )
-                            run_control.checkpoint()
-                            new_ids.update(chunk.id for chunk in slice_chunks)
-                            total[0] += len(slice_chunks)
-                            probe.checkpoint(f"slice-{slice_index}-after-store")
-                        finally:
-                            del slice_chunks
+                                encode_and_upsert_code_slice(
+                                    slice_chunks,
+                                    model=self.model,
+                                    store=self.store,
+                                    gpu_lock=self._gpu_lock,
+                                    release_cache=(
+                                        slice_index % limits.flush_slices == 0
+                                    ),
+                                    encode_batch_size=limits.encode_batch_size,
+                                    write_policy=(
+                                        checkpoint.run_policy.store_write_policy
+                                        if checkpoint is not None
+                                        else None
+                                    ),
+                                    on_storage_confirmed=(
+                                        _record_storage_confirmed
+                                        if checkpoint is not None
+                                        else None
+                                    ),
+                                    run_control=run_control,
+                                )
+                                run_control.checkpoint()
+                                new_ids.update(chunk.id for chunk in slice_chunks)
+                                total[0] += len(slice_chunks)
+                                probe.checkpoint(
+                                    f"slice-{slice_index}-after-store"
+                                )
+                            finally:
+                                del slice_chunks
             except BaseException as exc:
                 consumer_exceptions.append(exc)
             finally:
@@ -1857,17 +1861,18 @@ class CodebaseIndexer:
             sort_keys=True,
             separators=(",", ":"),
         )
-        checkpoint_configuration = {
-            "segment_max_chunks": limits.segment_max_chunks,
-            "segment_max_bytes": limits.segment_max_bytes,
-            "queue_max_chunks": limits.queue_max_chunks,
-            "queue_max_bytes": limits.queue_max_bytes,
-            "slice_max_chunks": limits.slice_max_chunks,
-            "slice_max_bytes": limits.slice_max_bytes,
-            "sparse_enabled": limits.sparse_enabled,
-            "sparse_dimension": limits.sparse_dimension,
-            "encode_batch_size": limits.encode_batch_size,
-        }
+        checkpoint_configuration = CodeRunConfiguration(
+            segment_max_chunks=limits.segment_max_chunks,
+            segment_max_bytes=limits.segment_max_bytes,
+            queue_max_chunks=limits.queue_max_chunks,
+            queue_max_bytes=limits.queue_max_bytes,
+            slice_max_chunks=limits.slice_max_chunks,
+            slice_max_bytes=limits.slice_max_bytes,
+            sparse_enabled=limits.sparse_enabled,
+            sparse_dimension=limits.sparse_dimension,
+            encode_batch_size=limits.encode_batch_size,
+            flush_slices=limits.flush_slices,
+        )
         return CodeRunCheckpoint.open(
             data_root=self._data_root,
             root_dir=self.root_dir,
@@ -2016,11 +2021,16 @@ class CodebaseIndexer:
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> tuple[set[str], int, dict[str, str]]:
         """Overlap bounded CPU production with one weighted GPU consumer."""
-        new_ids = (
-            set(checkpoint.ledger.iter_point_ids(checkpoint.generation_id))
-            if checkpoint is not None
-            else set()
-        )
+        new_ids: set[str] = set()
+        if checkpoint is not None:
+            new_ids.update(
+                checkpoint.ledger.iter_point_ids(checkpoint.generation_id)
+            )
+            new_ids.update(
+                checkpoint.ledger.iter_retained_point_ids(
+                    checkpoint.generation_id
+                )
+            )
         metadata: dict[str, str] = {}
         total = [len(new_ids)]
         self.store.disk_headroom_preflight(len(paths) * _CHUNKS_PER_FILE_ESTIMATE)
@@ -2129,6 +2139,8 @@ class CodebaseIndexer:
         attempted_paths: set[str],
         existing_ids: set[str],
         reporter: ProgressReporter,
+        checkpoint: CodeRunCheckpoint | None = None,
+        limits: _CodePipelineLimits | None = None,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> tuple[set[str], dict[str, str]]:
         """Stream changed paths and roll back attempt-introduced IDs."""
@@ -2136,6 +2148,8 @@ class CodebaseIndexer:
             published_ids, _total, published_hashes = self._pipeline_chunk_and_embed(
                 paths,
                 reporter=reporter,
+                checkpoint=checkpoint,
+                limits=limits,
                 run_control=run_control,
             )
         except _UnsettledCodeConsumerError:
@@ -2144,6 +2158,15 @@ class CodebaseIndexer:
             self._discard_failed_incremental_additions(
                 attempted_paths=attempted_paths,
                 existing_ids=existing_ids,
+                protected_ids=(
+                    set(
+                        checkpoint.ledger.iter_point_ids(
+                            checkpoint.generation_id
+                        )
+                    )
+                    if checkpoint is not None
+                    else set()
+                ),
             )
             raise
         return published_ids, published_hashes
@@ -2153,13 +2176,16 @@ class CodebaseIndexer:
         *,
         attempted_paths: set[str],
         existing_ids: set[str],
+        protected_ids: set[str] | None = None,
     ) -> None:
         """Best-effort rollback after every consumer has settled."""
         if not attempted_paths:
             return
         try:
             current_ids = set(self._get_chunk_ids_for_files(attempted_paths))
-            introduced_ids = sorted(current_ids - existing_ids)
+            introduced_ids = sorted(
+                current_ids - existing_ids - (protected_ids or set())
+            )
             if introduced_ids:
                 self.store.delete_code_chunks(introduced_ids)
         except Exception:
@@ -2168,12 +2194,101 @@ class CodebaseIndexer:
                 exc_info=True,
             )
 
+    def _checkpoint_ids_by_path(
+        self,
+        checkpoint: CodeRunCheckpoint,
+        rel_paths: set[str],
+        *,
+        retained: bool,
+    ) -> dict[str, set[str]]:
+        """Return bounded deterministic point evidence grouped by path."""
+        result = {rel: set() for rel in rel_paths}
+        if retained:
+            for rel in rel_paths:
+                result[rel].update(
+                    checkpoint.ledger.iter_retained_point_ids(
+                        checkpoint.generation_id,
+                        rel_path=rel,
+                    )
+                )
+            return result
+        for unit in checkpoint.ledger.iter_units(checkpoint.generation_id):
+            if unit.kind is CommitUnitKind.UPSERT and unit.rel_path in result:
+                result[unit.rel_path].update(unit.point_ids)
+        return result
+
+    def _incremental_prior_ids_by_path(
+        self,
+        checkpoint: CodeRunCheckpoint,
+        rel_paths: set[str],
+    ) -> dict[str, set[str]]:
+        """Combine carried evidence with real current storage observations."""
+        result = self._checkpoint_ids_by_path(
+            checkpoint,
+            rel_paths,
+            retained=True,
+        )
+        for rel in rel_paths:
+            result[rel].update(self._get_chunk_ids_for_files({rel}))
+        return result
+
+    def _delete_incremental_obsolete(
+        self,
+        *,
+        existing_ids: set[str],
+        published_ids: set[str],
+        prior_ids_by_path: dict[str, set[str]] | None,
+        deleted_paths: set[str] | None,
+        checkpoint: CodeRunCheckpoint | None,
+    ) -> None:
+        """Delete and checkpoint exact obsolete identities path by path."""
+        if checkpoint is None or prior_ids_by_path is None:
+            obsolete_ids = sorted(existing_ids - published_ids)
+            if obsolete_ids:
+                self.store.delete_code_chunks(obsolete_ids)
+            return
+        current_ids_by_path = self._checkpoint_ids_by_path(
+            checkpoint,
+            set(prior_ids_by_path),
+            retained=False,
+        )
+        committed_deletions = {
+            (unit.rel_path, unit.kind)
+            for unit in checkpoint.ledger.iter_units(checkpoint.generation_id)
+            if unit.kind
+            in (CommitUnitKind.DELETE_PATH, CommitUnitKind.DELETE_STALE)
+        }
+        for rel in sorted(prior_ids_by_path):
+            deletion_kind = (
+                CommitUnitKind.DELETE_PATH
+                if rel in (deleted_paths or set())
+                else CommitUnitKind.DELETE_STALE
+            )
+            if (rel, deletion_kind) in committed_deletions:
+                continue
+            obsolete_ids = tuple(
+                sorted(
+                    prior_ids_by_path[rel]
+                    - current_ids_by_path.get(rel, set())
+                )
+            )
+            if not obsolete_ids:
+                continue
+            self.store.delete_code_chunks(list(obsolete_ids))
+            if deletion_kind is CommitUnitKind.DELETE_PATH:
+                checkpoint.record_confirmed_deletion(rel, obsolete_ids)
+            else:
+                checkpoint.record_confirmed_stale_deletion(rel, obsolete_ids)
+
     def _commit_incremental_replacement(
         self,
         *,
         policy: ResolvedIndexPolicy,
         existing_ids: set[str],
         published_ids: set[str],
+        prior_ids_by_path: dict[str, set[str]] | None = None,
+        deleted_paths: set[str] | None = None,
+        checkpoint: CodeRunCheckpoint | None = None,
         metadata: dict[str, str],
         files_count: int,
         protect_replacement: bool,
@@ -2191,11 +2306,15 @@ class CodebaseIndexer:
             )
             with publication_span:
                 commit_started = True
-                obsolete_ids = sorted(existing_ids - published_ids)
                 reporter.phase_start("delete removed", files_count)
                 try:
-                    if obsolete_ids:
-                        self.store.delete_code_chunks(obsolete_ids)
+                    self._delete_incremental_obsolete(
+                        existing_ids=existing_ids,
+                        published_ids=published_ids,
+                        prior_ids_by_path=prior_ids_by_path,
+                        deleted_paths=deleted_paths,
+                        checkpoint=checkpoint,
+                    )
                     reporter.advance(files_count)
                 finally:
                     reporter.phase_end()
@@ -2694,7 +2813,32 @@ class CodebaseIndexer:
         to_index = new_files | modified_files
         paths_to_index = [current_files[rel] for rel in sorted(to_index)]
         attempted_paths = to_index | deleted_files
+        limits = self._resolve_code_pipeline_limits()
+        try:
+            checkpoint = self._open_run_checkpoint(
+                policy=policy,
+                operation=RunOperation.INCREMENTAL,
+                clean=False,
+                limits=limits,
+                run_control=run_control,
+            )
+        except RunLedgerCompatibilityError:
+            logger.info(
+                "No compatible published code manifest; running a full "
+                "failure-safe reconciliation"
+            )
+            return self._full_index_locked(
+                clean=False,
+                policy=policy,
+                discovered_paths=discovered_paths,
+                reporter=reporter,
+                run_control=run_control,
+            )
         run_control.checkpoint()
+        prior_ids_by_path = self._incremental_prior_ids_by_path(
+            checkpoint,
+            attempted_paths,
+        )
         existing_ids: set[str] = (
             set(self._get_chunk_ids_for_files(attempted_paths))
             if attempted_paths
@@ -2706,6 +2850,8 @@ class CodebaseIndexer:
             attempted_paths=attempted_paths,
             existing_ids=existing_ids,
             reporter=reporter,
+            checkpoint=checkpoint,
+            limits=limits,
             run_control=run_control,
         )
         current_hashes.update(published_hashes)
@@ -2713,6 +2859,9 @@ class CodebaseIndexer:
             policy=policy,
             existing_ids=existing_ids,
             published_ids=published_ids,
+            prior_ids_by_path=prior_ids_by_path,
+            deleted_paths=deleted_files,
+            checkpoint=checkpoint,
             metadata=current_hashes,
             files_count=len(attempted_paths),
             protect_replacement=bool(modified_files or deleted_files),
@@ -2853,7 +3002,31 @@ class CodebaseIndexer:
         to_index = new_files | modified_files
         paths_to_index = [to_hash[rel] for rel in sorted(to_index)]
         attempted_paths = to_index | delete_files
+        limits = self._resolve_code_pipeline_limits()
+        try:
+            checkpoint = self._open_run_checkpoint(
+                policy=policy,
+                operation=RunOperation.SCOPED_INCREMENTAL,
+                clean=False,
+                limits=limits,
+                run_control=run_control,
+            )
+        except RunLedgerCompatibilityError:
+            logger.info(
+                "No compatible published code manifest; running a full "
+                "failure-safe reconciliation"
+            )
+            return self._full_index_locked(
+                clean=False,
+                policy=policy,
+                reporter=reporter,
+                run_control=run_control,
+            )
         run_control.checkpoint()
+        prior_ids_by_path = self._incremental_prior_ids_by_path(
+            checkpoint,
+            attempted_paths,
+        )
         existing_ids: set[str] = (
             set(self._get_chunk_ids_for_files(attempted_paths))
             if attempted_paths
@@ -2865,6 +3038,8 @@ class CodebaseIndexer:
             attempted_paths=attempted_paths,
             existing_ids=existing_ids,
             reporter=reporter,
+            checkpoint=checkpoint,
+            limits=limits,
             run_control=run_control,
         )
         new_metadata = dict(previous_metadata)
@@ -2875,6 +3050,9 @@ class CodebaseIndexer:
             policy=policy,
             existing_ids=existing_ids,
             published_ids=published_ids,
+            prior_ids_by_path=prior_ids_by_path,
+            deleted_paths=delete_files,
+            checkpoint=checkpoint,
             metadata=new_metadata,
             files_count=len(attempted_paths),
             protect_replacement=bool(modified_files or delete_files),
