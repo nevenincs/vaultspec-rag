@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import re
 import socket
+import sys
 import threading
 import time
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
+from datetime import timedelta
 from typing import TYPE_CHECKING, cast
 
 import pytest
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+from mcp.types import CallToolResult, TextContent
 
 from ...cli._http_search import _do_http_call, _timeout_diagnostics, _try_http_search
 from ..corpus import build_synthetic_vault
@@ -21,6 +28,21 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 type RawSearchResponse = tuple[int, dict[str, str], dict[str, object]]
+type RawSearchPayloads = tuple[
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+]
+type ConcurrentProbeResponses = tuple[
+    RawSearchResponse,
+    RawSearchResponse,
+    RawSearchResponse,
+    RawSearchResponse,
+    dict[str, object],
+    CallToolResult,
+]
+type RebuildProbeRun = tuple[str, dict[str, object], ConcurrentProbeResponses]
 
 
 def _assert_empty_search_phase_timing(
@@ -327,6 +349,33 @@ def _search_after_concurrent_admission(
     label: str,
     last_job: dict[str, object],
 ) -> RawSearchResponse:
+    _wait_for_concurrent_admission(
+        admission,
+        port,
+        token,
+        job_id,
+        label=label,
+        last_job=last_job,
+    )
+    return _search_with_failure_evidence(
+        port,
+        token,
+        job_id,
+        payload,
+        label=label,
+        last_job=last_job,
+    )
+
+
+def _wait_for_concurrent_admission(
+    admission: threading.Barrier,
+    port: int,
+    token: str,
+    job_id: str,
+    *,
+    label: str,
+    last_job: dict[str, object],
+) -> None:
     try:
         admission.wait(timeout=10)
     except threading.BrokenBarrierError as exc:
@@ -339,14 +388,283 @@ def _search_after_concurrent_admission(
                 last_job=last_job,
             )
         )
-    return _search_with_failure_evidence(
+
+
+def _shared_search_after_concurrent_admission(
+    admission: threading.Barrier,
+    port: int,
+    token: str,
+    job_id: str,
+    query: str,
+    root: Path,
+    *,
+    last_job: dict[str, object],
+) -> dict[str, object]:
+    label = "shared-client matching empty search request"
+    _wait_for_concurrent_admission(
+        admission,
         port,
         token,
         job_id,
-        payload,
         label=label,
         last_job=last_job,
     )
+    try:
+        result = _try_http_search(
+            query,
+            "vault",
+            5,
+            port,
+            str(root),
+            timeout=300,
+        )
+    except Exception as exc:
+        pytest.fail(
+            f"{label} failed: {exc}\n"
+            + _bounded_failure_evidence(
+                port,
+                token,
+                job_id,
+                last_job=last_job,
+            )
+        )
+    if not isinstance(result, dict):
+        pytest.fail(
+            f"{label} returned {result!r}\n"
+            + _bounded_failure_evidence(
+                port,
+                token,
+                job_id,
+                last_job=last_job,
+            )
+        )
+    return result
+
+
+async def _mcp_search_after_concurrent_admission_async(
+    admission: threading.Barrier,
+    initialized: threading.Event,
+    port: int,
+    status_dir: Path,
+    root: Path,
+    query: str,
+) -> CallToolResult:
+    env = dict(os.environ)
+    env.update(
+        {
+            "VAULTSPEC_RAG_PORT": str(port),
+            "VAULTSPEC_RAG_ROOT": str(root),
+            "VAULTSPEC_RAG_STATUS_DIR": str(status_dir),
+        }
+    )
+    server = StdioServerParameters(
+        command=sys.executable,
+        args=["-c", "from vaultspec_rag.server import main; main()"],
+        env=env,
+    )
+    async with (
+        stdio_client(server) as (read_stream, write_stream),
+        ClientSession(read_stream, write_stream) as session,
+    ):
+        await asyncio.wait_for(session.initialize(), timeout=60)
+        initialized.set()
+        await asyncio.wait_for(
+            asyncio.to_thread(admission.wait, 10),
+            timeout=15,
+        )
+        return await asyncio.wait_for(
+            session.call_tool(
+                "search_vault",
+                arguments={
+                    "query": query,
+                    "top_k": 5,
+                    "project_root": str(root),
+                },
+                read_timeout_seconds=timedelta(seconds=300),
+            ),
+            timeout=310,
+        )
+
+
+def _mcp_search_after_concurrent_admission(
+    admission: threading.Barrier,
+    initialized: threading.Event,
+    port: int,
+    status_dir: Path,
+    root: Path,
+    query: str,
+) -> CallToolResult:
+    return asyncio.run(
+        _mcp_search_after_concurrent_admission_async(
+            admission,
+            initialized,
+            port,
+            status_dir,
+            root,
+            query,
+        )
+    )
+
+
+def _wait_for_mcp_initialization(
+    initialized: threading.Event,
+    mcp_future: Future[CallToolResult],
+    port: int,
+    token: str,
+) -> None:
+    if initialized.wait(timeout=65):
+        return
+    failure = "session initialization did not complete"
+    if mcp_future.done():
+        try:
+            mcp_future.result()
+        except Exception as exc:
+            failure = f"session initialization failed: {exc}"
+    pytest.fail(
+        f"MCP {failure}\n"
+        + _bounded_failure_evidence(
+            port,
+            token,
+            "not-submitted",
+        )
+    )
+
+
+def _run_concurrent_search_probes(
+    executor: ThreadPoolExecutor,
+    admission: threading.Barrier,
+    mcp_future: Future[CallToolResult],
+    port: int,
+    token: str,
+    job_id: str,
+    root: Path,
+    matching_empty_query: str,
+    raw_payloads: RawSearchPayloads,
+    *,
+    last_job: dict[str, object],
+) -> ConcurrentProbeResponses:
+    (
+        search_payload,
+        unrelated_payload,
+        unrelated_source_payload,
+        matching_nonempty_payload,
+    ) = raw_payloads
+    search_future = executor.submit(
+        _search_after_concurrent_admission,
+        admission,
+        port,
+        token,
+        job_id,
+        search_payload,
+        label="matching empty search request",
+        last_job=last_job,
+    )
+    unrelated_future = executor.submit(
+        _search_after_concurrent_admission,
+        admission,
+        port,
+        token,
+        job_id,
+        unrelated_payload,
+        label="unrelated-root empty search request",
+        last_job=last_job,
+    )
+    unrelated_source_future = executor.submit(
+        _search_after_concurrent_admission,
+        admission,
+        port,
+        token,
+        job_id,
+        unrelated_source_payload,
+        label="unrelated-source empty search request",
+        last_job=last_job,
+    )
+    matching_nonempty_future = executor.submit(
+        _search_after_concurrent_admission,
+        admission,
+        port,
+        token,
+        job_id,
+        matching_nonempty_payload,
+        label="matching nonempty search request",
+        last_job=last_job,
+    )
+    shared_client_future = executor.submit(
+        _shared_search_after_concurrent_admission,
+        admission,
+        port,
+        token,
+        job_id,
+        matching_empty_query,
+        root,
+        last_job=last_job,
+    )
+    try:
+        mcp_response = mcp_future.result(timeout=390)
+    except Exception as exc:
+        pytest.fail(
+            f"MCP matching empty search request failed: {exc}\n"
+            + _bounded_failure_evidence(
+                port,
+                token,
+                job_id,
+                last_job=last_job,
+            )
+        )
+    return (
+        search_future.result(timeout=330),
+        unrelated_future.result(timeout=330),
+        unrelated_source_future.result(timeout=330),
+        matching_nonempty_future.result(timeout=330),
+        shared_client_future.result(timeout=330),
+        mcp_response,
+    )
+
+
+def _run_probes_during_matching_rebuild(
+    port: int,
+    token: str,
+    status_dir: Path,
+    root: Path,
+    matching_empty_query: str,
+    raw_payloads: RawSearchPayloads,
+) -> RebuildProbeRun:
+    admission = threading.Barrier(6)
+    initialized = threading.Event()
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        mcp_future = executor.submit(
+            _mcp_search_after_concurrent_admission,
+            admission,
+            initialized,
+            port,
+            status_dir,
+            root,
+            matching_empty_query,
+        )
+        _wait_for_mcp_initialization(initialized, mcp_future, port, token)
+        reindex = _do_http_call(
+            port,
+            "/reindex",
+            {"type": "vault", "clean": True, "project_root": str(root)},
+            timeout=30,
+        )
+        assert isinstance(reindex, dict) and reindex.get("ok") is True, reindex
+        job_id = reindex.get("job_id")
+        assert isinstance(job_id, str) and job_id, reindex
+        running_job = _wait_for_running_job(port, token, job_id)
+        responses = _run_concurrent_search_probes(
+            executor,
+            admission,
+            mcp_future,
+            port,
+            token,
+            job_id,
+            root,
+            matching_empty_query,
+            raw_payloads,
+            last_job=running_job,
+        )
+    return job_id, running_job, responses
 
 
 def _assert_unavailable_search_response(
@@ -489,12 +807,49 @@ def _assert_matching_nonempty_response(
     ), evidence
 
 
+def _assert_shared_unavailable_response(
+    body: dict[str, object],
+    *,
+    job_id: str,
+    evidence: str,
+) -> None:
+    assert body["ok"] is False, evidence
+    assert body["error"] == "index_unavailable", evidence
+    assert "results" not in body, evidence
+    raw_index_state = body["index_state"]
+    assert isinstance(raw_index_state, dict), evidence
+    index_state = cast("dict[str, object]", raw_index_state)
+    raw_matching_jobs = index_state["matching_jobs"]
+    assert isinstance(raw_matching_jobs, list), evidence
+    matching_jobs = cast("list[object]", raw_matching_jobs)
+    assert any(
+        isinstance(raw_job, dict)
+        and cast("dict[str, object]", raw_job).get("id") == job_id
+        for raw_job in matching_jobs
+    ), evidence
+
+
+def _assert_mcp_unavailable_response(
+    response: CallToolResult,
+    *,
+    evidence: str,
+) -> None:
+    assert response.isError is True, evidence
+    text = " ".join(
+        block.text for block in response.content if isinstance(block, TextContent)
+    )
+    assert "index_unavailable" in text, evidence
+    assert "vaultspec-rag server jobs" in text, evidence
+    structured = response.structuredContent
+    assert structured is None or "results" not in structured, evidence
+
+
 @pytest.mark.subprocess_gpu
 def test_search_index_unavailable_during_matching_rebuild(
     live_service: tuple[int, Path],
     tmp_path: Path,
 ) -> None:
-    port, _status_dir = live_service
+    port, status_dir = live_service
     manifest = build_synthetic_vault(
         tmp_path / "availability-authority-project",
         n_docs=256,
@@ -511,29 +866,9 @@ def test_search_index_unavailable_during_matching_rebuild(
     token = health.get("service_token")
     assert isinstance(token, str) and token, health
 
-    reindex = _do_http_call(
-        port,
-        "/reindex",
-        {"type": "vault", "clean": True, "project_root": str(root)},
-        timeout=30,
-    )
-    assert isinstance(reindex, dict) and reindex.get("ok") is True, reindex
-    job_id = reindex.get("job_id")
-    assert isinstance(job_id, str) and job_id, reindex
-    running_job = _wait_for_running_job(port, token, job_id)
-    if "spec" in running_job:
-        raw_spec = running_job["spec"]
-        assert isinstance(raw_spec, dict), running_job
-        spec = cast("dict[str, object]", raw_spec)
-        assert spec.get("mode") == "rebuild", running_job
-        expected_job_mode: str | None = "rebuild"
-        expected_index_status = "rebuilding"
-    else:
-        expected_job_mode = None
-        expected_index_status = "updating"
-
+    matching_empty_query = "type:nonexistent availability authority probe"
     search_payload: dict[str, object] = {
-        "query": "type:nonexistent availability authority probe",
+        "query": matching_empty_query,
         "type": "vault",
         "top_k": 5,
         "project_root": str(root),
@@ -553,52 +888,37 @@ def test_search_index_unavailable_during_matching_rebuild(
         "top_k": 5,
         "project_root": str(root),
     }
-    admission = threading.Barrier(4)
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        search_future = executor.submit(
-            _search_after_concurrent_admission,
-            admission,
-            port,
-            token,
-            job_id,
+    job_id, running_job, probe_responses = _run_probes_during_matching_rebuild(
+        port,
+        token,
+        status_dir,
+        root,
+        matching_empty_query,
+        (
             search_payload,
-            label="matching empty search request",
-            last_job=running_job,
-        )
-        unrelated_future = executor.submit(
-            _search_after_concurrent_admission,
-            admission,
-            port,
-            token,
-            job_id,
             unrelated_payload,
-            label="unrelated-root empty search request",
-            last_job=running_job,
-        )
-        unrelated_source_future = executor.submit(
-            _search_after_concurrent_admission,
-            admission,
-            port,
-            token,
-            job_id,
             unrelated_source_payload,
-            label="unrelated-source empty search request",
-            last_job=running_job,
-        )
-        matching_nonempty_future = executor.submit(
-            _search_after_concurrent_admission,
-            admission,
-            port,
-            token,
-            job_id,
             matching_nonempty_payload,
-            label="matching nonempty search request",
-            last_job=running_job,
-        )
-        search_response = search_future.result(timeout=330)
-        unrelated_response = unrelated_future.result(timeout=330)
-        unrelated_source_response = unrelated_source_future.result(timeout=330)
-        matching_nonempty_response = matching_nonempty_future.result(timeout=330)
+        ),
+    )
+    (
+        search_response,
+        unrelated_response,
+        unrelated_source_response,
+        matching_nonempty_response,
+        shared_client_response,
+        mcp_response,
+    ) = probe_responses
+    if "spec" in running_job:
+        raw_spec = running_job["spec"]
+        assert isinstance(raw_spec, dict), running_job
+        spec = cast("dict[str, object]", raw_spec)
+        assert spec.get("mode") == "rebuild", running_job
+        expected_job_mode: str | None = "rebuild"
+        expected_index_status = "rebuilding"
+    else:
+        expected_job_mode = None
+        expected_index_status = "updating"
     evidence = _bounded_failure_evidence(
         port,
         token,
@@ -653,6 +973,32 @@ def test_search_index_unavailable_during_matching_rebuild(
         expected_doc_id=known_doc.doc_id,
         evidence=matching_nonempty_evidence,
     )
+    shared_client_evidence = (
+        _bounded_failure_evidence(
+            port,
+            token,
+            job_id,
+            last_job=running_job,
+        )[:12000]
+        + "\nshared_client_response="
+        + json.dumps(shared_client_response, default=str)[:12000]
+    )
+    _assert_shared_unavailable_response(
+        shared_client_response,
+        job_id=job_id,
+        evidence=shared_client_evidence,
+    )
+    mcp_evidence = (
+        _bounded_failure_evidence(
+            port,
+            token,
+            job_id,
+            last_job=running_job,
+        )[:12000]
+        + "\nmcp_response="
+        + repr(mcp_response)[:12000]
+    )
+    _assert_mcp_unavailable_response(mcp_response, evidence=mcp_evidence)
     terminal_job = _wait_for_succeeded_job(
         port,
         token,

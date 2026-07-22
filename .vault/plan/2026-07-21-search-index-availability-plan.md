@@ -13,6 +13,16 @@ related:
   - '[[2026-07-21-large-index-resilience-plan]]'
 ---
 
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
+
 <!-- RETIRED: S02, S03, S04, S05, S10, S11, S12, S13, S14, S15, S16, S17 -->
 
 # `search-index-availability` plan
@@ -39,7 +49,7 @@ Prove the availability decision is scoped to the exact resolved project root and
 
 Lock the shared service client and downstream consumer boundary to structured unavailable data without a results key.
 
-- [ ] `W01.P06.S09` - Prove the shared service client preserves the structured unavailable error without manufacturing results using Sol medium; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
+- [x] `W01.P06.S09` - Prove the shared service client preserves the structured unavailable error without manufacturing results using Sol medium; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
 - [ ] `W01.P06.S18` - Add a real MCP stdio call proving unavailable search yields CallToolResult isError true and never structured empty results using Sol medium; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
 
 ## Wave `W02` - service availability contract
