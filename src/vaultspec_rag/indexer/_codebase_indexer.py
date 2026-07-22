@@ -1408,6 +1408,14 @@ class CodebaseIndexer:
         from ..config import get_config
 
         config = get_config()
+        sparse_enabled = bool(config.sparse_enabled)
+        sparse_dimension_value = getattr(self.model, "sparse_dimension", None)
+        if sparse_enabled:
+            if type(sparse_dimension_value) is not int or sparse_dimension_value <= 0:
+                raise RuntimeError("loaded sparse model has no valid output dimension")
+            sparse_dimension = sparse_dimension_value
+        else:
+            sparse_dimension = 1
         return _CodePipelineLimits(
             segment_max_chunks=int(config.index_segment_max_chunks),
             segment_max_bytes=int(config.index_segment_max_bytes),
@@ -1416,8 +1424,8 @@ class CodebaseIndexer:
             slice_max_chunks=int(config.index_queue_max_chunks),
             slice_max_bytes=int(config.index_queue_max_bytes),
             dense_dimension=int(config.embedding_dimension),
-            sparse_enabled=bool(config.sparse_enabled),
-            sparse_dimension=int(self.model.sparse_dimension),
+            sparse_enabled=sparse_enabled,
+            sparse_dimension=sparse_dimension,
             encode_batch_size=int(config.embedding_code_encode_batch_size),
             flush_slices=max(1, int(config.index_cache_flush_slices)),
         )
@@ -2245,13 +2253,11 @@ class CodebaseIndexer:
                 except OSError:
                     return
                 if too_big or _is_binary(path):
-                    if rel in prev_meta:
-                        delete_files.add(rel)
+                    delete_files.add(rel)
                     return
                 to_hash[rel] = path
                 return
-        if rel in prev_meta:
-            delete_files.add(rel)
+        delete_files.add(rel)
         run_control.checkpoint()
 
     def _hash_changed_paths(
@@ -2353,7 +2359,7 @@ class CodebaseIndexer:
             total=total,
             added=len(new_files),
             updated=len(modified_files),
-            removed=len(delete_files),
+            removed=len(delete_files.intersection(previous_metadata)),
             duration_ms=duration_ms,
             device=self.model.device,
             files=len(to_index),
