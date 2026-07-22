@@ -289,13 +289,19 @@ def _admitted_resilience(source: JobSource) -> IndexResilienceSnapshot:
     from .config import get_config
     from .index_profiles import IndexDomain, get_index_support_profile
 
-    profile = get_index_support_profile(get_config().index_support_profile)
+    config = get_config()
+    profile = get_index_support_profile(config.index_support_profile)
     domain = IndexDomain.CODE if source is JobSource.CODE else IndexDomain.DOCUMENT
     limits = profile.limits_for(domain)
     mib = 1024**2
+    rss_ceiling_mb = limits.rss_bytes / mib
+    cuda_ceiling_mb = limits.cuda_bytes / mib
+    if source is JobSource.CODE:
+        rss_ceiling_mb = min(rss_ceiling_mb, config.index_rss_ceiling_mb)
+        cuda_ceiling_mb = min(cuda_ceiling_mb, config.index_cuda_ceiling_mb)
     return IndexResilienceSnapshot(
-        rss_ceiling_mb=limits.rss_bytes / mib,
-        cuda_ceiling_mb=limits.cuda_bytes / mib,
+        rss_ceiling_mb=rss_ceiling_mb,
+        cuda_ceiling_mb=cuda_ceiling_mb,
         support_profile=profile.name,
     )
 
@@ -336,12 +342,19 @@ def _checkpoint_resilience(
 def _code_resilience(indexer: CodebaseIndexer) -> IndexResilienceSnapshot:
     admitted = _admitted_resilience(JobSource.CODE)
     measurement = indexer.support_measurement
+    budget = indexer.memory_budget_snapshot
     mib = 1024**2
     return _checkpoint_resilience(
         indexer.last_checkpoint,
         admitted,
-        peak_rss_mb=measurement.rss_bytes / mib,
-        peak_cuda_reserved_mb=measurement.cuda_bytes / mib,
+        peak_rss_mb=(
+            budget.peak_rss_mb if budget is not None else measurement.rss_bytes / mib
+        ),
+        peak_cuda_reserved_mb=(
+            budget.peak_cuda_reserved_mb
+            if budget is not None
+            else measurement.cuda_bytes / mib
+        ),
     )
 
 

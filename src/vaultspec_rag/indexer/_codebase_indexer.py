@@ -82,6 +82,7 @@ if TYPE_CHECKING:
     from ..config import PreprocessMode
     from ..embeddings import EmbeddingModel
     from ..job_control import RunControl
+    from ..memory_probe import MemoryBudget, MemoryBudgetSnapshot
     from ..progress import ProgressReporter
     from ..store import CodeChunk, VaultStore
     from ._chunk_worker import FileChunkResult
@@ -408,6 +409,7 @@ class CodebaseIndexer:
         self._support_limits: SupportProfileLimits | None = None
         self._support_profile_name: str | None = None
         self._last_checkpoint: CodeRunCheckpoint | None = None
+        self._memory_budget: MemoryBudget | None = None
 
     @property
     def support_measurement(self) -> SupportMeasurement:
@@ -418,6 +420,40 @@ class CodebaseIndexer:
     def last_checkpoint(self) -> CodeRunCheckpoint | None:
         """Return the latest run authority for service-domain projection."""
         return getattr(self, "_last_checkpoint", None)
+
+    @property
+    def memory_budget_snapshot(self) -> MemoryBudgetSnapshot | None:
+        """Return the latest immutable enforced-memory observation."""
+        budget = getattr(self, "_memory_budget", None)
+        return budget.snapshot if budget is not None else None
+
+    def _begin_memory_budget(self) -> None:
+        """Freeze and sample one production memory budget before dispatch."""
+        from ..config import get_config
+        from ..memory_probe import MemoryBudget
+
+        config = get_config()
+        self._memory_budget = MemoryBudget(
+            rss_ceiling_mb=config.index_rss_ceiling_mb,
+            cuda_ceiling_mb=(
+                config.index_cuda_ceiling_mb
+                if getattr(self.model, "device", None) == "cuda"
+                else None
+            ),
+        )
+        self._sample_memory_budget("before code dispatch")
+
+    def _sample_memory_budget(self, label: str) -> MemoryBudgetSnapshot:
+        """Enforce the current budget and retain its resource high-water."""
+        budget = self._memory_budget
+        if budget is None:
+            raise RuntimeError("code memory budget was not admitted")
+        snapshot = budget.sample(label)
+        self._record_resource_measurement(
+            rss_bytes=int(snapshot.peak_rss_mb * 1024**2),
+            cuda_bytes=int(snapshot.peak_cuda_reserved_mb * 1024**2),
+        )
+        return snapshot
 
     def _begin_support_measurement(
         self,
@@ -1856,7 +1892,7 @@ class CodebaseIndexer:
         import queue as queue_module
         import threading
 
-        from ..memory_probe import MemoryProbe, current_cuda_mb, current_rss_mb
+        from ..memory_probe import MemoryProbe
 
         def _segments() -> Iterator[CodeFileSegment]:
             while True:
@@ -1864,25 +1900,19 @@ class CodebaseIndexer:
                 try:
                     segment = segment_queue.get(timeout=_CONTROL_POLL_SECONDS)
                 except queue_module.Empty:
+                    self._sample_memory_budget("code consumer queue wait")
                     continue
                 run_control.checkpoint()
                 if segment is None:
                     return
                 yield segment
 
-        def _sample_support_resources() -> None:
-            _allocated_mb, reserved_mb = current_cuda_mb()
-            self._record_resource_measurement(
-                rss_bytes=int(current_rss_mb() * 1024**2),
-                cuda_bytes=int(reserved_mb * 1024**2),
-            )
-
         def _consumer_loop() -> None:
             probe: MemoryProbe | None = None
             try:
                 probe = MemoryProbe(name="codebase-index")
                 with probe:
-                    _sample_support_resources()
+                    self._sample_memory_budget("code consumer start")
                     slice_index = 0
                     for weighted_slice in iter_weighted_code_slices(
                         _segments(),
@@ -1891,6 +1921,7 @@ class CodebaseIndexer:
                         run_control=run_control,
                     ):
                         run_control.checkpoint()
+                        self._sample_memory_budget(f"slice-{slice_index}-before-encode")
                         slice_chunks = sorted(
                             weighted_slice.chunks,
                             key=lambda chunk: -len(chunk.content),
@@ -1933,14 +1964,16 @@ class CodebaseIndexer:
                             new_ids.update(chunk.id for chunk in slice_chunks)
                             total[0] += len(slice_chunks)
                             probe.checkpoint(f"slice-{slice_index}-after-store")
-                            _sample_support_resources()
+                            self._sample_memory_budget(
+                                f"slice-{slice_index}-after-store"
+                            )
                         finally:
                             del slice_chunks
             except BaseException as exc:
                 consumer_exceptions.append(exc)
             finally:
                 try:
-                    _sample_support_resources()
+                    self._sample_memory_budget("code consumer cleanup")
                 except BaseException as exc:
                     consumer_exceptions.append(exc)
                 try:
@@ -1961,6 +1994,7 @@ class CodebaseIndexer:
         consumer: threading.Thread,
         segment_queue: _WeightedCodeSegmentQueue,
         run_policy: RunPolicy,
+        sample_memory: Callable[[str], object] | None = None,
     ) -> None:
         """Finish normal work under the durable no-progress authority."""
         sentinel_delivered = False
@@ -1973,6 +2007,8 @@ class CodebaseIndexer:
             try:
                 segment_queue.put(None, timeout=timeout)
             except queue.Full:
+                if sample_memory is not None:
+                    sample_memory("code consumer drain sentinel wait")
                 continue
             sentinel_delivered = True
         while consumer.is_alive():
@@ -1983,6 +2019,8 @@ class CodebaseIndexer:
                     run_policy.remaining_seconds(),
                 )
             )
+            if consumer.is_alive() and sample_memory is not None:
+                sample_memory("code consumer drain wait")
 
     def _cleanup_consumer(
         self,
@@ -2206,6 +2244,7 @@ class CodebaseIndexer:
                 try:
                     segment_queue.put(segment, timeout=_CONTROL_POLL_SECONDS)
                 except queue.Full:
+                    self._sample_memory_budget("code producer queue wait")
                     continue
                 run_control.checkpoint()
                 break
@@ -2277,6 +2316,7 @@ class CodebaseIndexer:
                     consumer,
                     segment_queue,
                     checkpoint.run_policy,
+                    self._sample_memory_budget,
                 )
             except BaseException as exc:
                 drain_failure = exc
@@ -2338,6 +2378,7 @@ class CodebaseIndexer:
         try:
             if not paths:
                 return new_ids, total[0], metadata
+            self._begin_memory_budget()
             if limits is None:
                 limits = self._resolve_code_pipeline_limits()
             segment_queue = _WeightedCodeSegmentQueue(
