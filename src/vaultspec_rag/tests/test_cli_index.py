@@ -183,7 +183,7 @@ class TestIndexRebuild:
         assert result.exit_code == 2
         lines = _plain_lines(result.output)
         assert lines == [
-            "Dry run is available for source-code indexing only.",
+            "Dry run is available for code and document indexing.",
             "Run:",
             "vaultspec-rag index --type code --dry-run",
         ]
@@ -213,11 +213,14 @@ class TestIndexRebuild:
         envelope = json.loads(result.output)
         assert envelope["ok"] is False
         assert envelope["command"] == "index"
-        assert envelope["error"] == "dry_run_requires_code"
-        assert (
-            envelope["message"] == "Dry run is available for source-code indexing only."
+        assert envelope["error"] == "dry_run_requires_supported_type"
+        assert envelope["message"] == (
+            "Dry run is available for code and document indexing."
         )
-        assert envelope["remediation"] == ["vaultspec-rag index --type code --dry-run"]
+        assert envelope["remediation"] == [
+            "vaultspec-rag index --type code --dry-run",
+            "vaultspec-rag index --type document --dry-run",
+        ]
 
     def test_index_dry_run_human_output_is_bounded(self, tmp_path: Path) -> None:
         (tmp_path / ".vault").mkdir()
@@ -241,16 +244,15 @@ class TestIndexRebuild:
 
         assert result.exit_code == 0, result.output
         lines = _plain_lines(result.output)
-        assert lines == [
-            "Dry run: 3 source-code files would be indexed.",
-            "Files shown:",
-            "- alpha.py",
-            "- beta.py",
-            (
-                "1 more file not shown. Use --dry-run-limit 3 "
-                "or --json for the full list."
-            ),
-        ]
+        assert lines[0] == "Dry run: 3 source-code files would be indexed."
+        assert "Admission summary:" in lines
+        assert "Files shown:" in lines
+        assert "- alpha.py" in lines
+        assert "- beta.py" in lines
+        assert lines[-1] == (
+            "1 more file not shown. Use --dry-run-limit 3 "
+            "or --json for the full list."
+        )
         assert "gamma.py" not in result.output
 
     def test_index_dry_run_json_keeps_full_file_list(self, tmp_path: Path) -> None:
@@ -402,28 +404,21 @@ class TestIndexSummaryCLI:
                 body = json.loads(self.rfile.read(length).decode("utf-8"))
                 requests.append(body)
 
-                response_by_type = {
-                    "vault": {
-                        "ok": True,
-                        "added": 1,
-                        "updated": 2,
-                        "removed": 3,
-                        "total": 6,
-                        "duration_ms": 1234,
-                    },
-                    "codebase": {
-                        "ok": True,
-                        "added": "4",
-                        "updated": "5",
-                        "removed": "6",
-                        "total": "15",
-                        "duration_ms": "50",
+                response = {
+                    "ok": True,
+                    "partial": False,
+                    "status": "queued",
+                    "domains": {
+                        source: {
+                            "ok": True,
+                            "job_id": f"{source}-job",
+                            "error_kind": None,
+                            "detail": None,
+                            "outcome": {"status": "created"},
+                        }
+                        for source in ("vault", "code", "document")
                     },
                 }
-                response = response_by_type.get(
-                    body.get("type"),
-                    {"ok": False, "error": "unexpected_type"},
-                )
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -454,19 +449,17 @@ class TestIndexSummaryCLI:
             thread.join(timeout=1)
 
         assert result.exit_code == 0, result.output
-        assert [req["type"] for req in requests] == ["vault", "codebase"]
+        assert [req["type"] for req in requests] == ["combined"]
         assert {req["project_root"] for req in requests} == {str(tmp_path)}
         assert {req["initiator_kind"] for req in requests} == {"cli"}
         assert {req["clean"] for req in requests} == {False}
 
         lines = [line.strip() for line in result.output.splitlines() if line.strip()]
         assert lines == [
-            "Indexing summary: ran in running service.",
-            "Vault: added 1; updated 2; removed 3; total 6; finished in 1.2 seconds",
-            (
-                "Source code: added 4; updated 5; removed 6; total 15; "
-                "finished in 50 milliseconds"
-            ),
+            "Vault re-index job queued on service: vault-job",
+            "Source code re-index job queued on service: code-job",
+            "Documents re-index job queued on service: document-job",
+            "Check progress with: vaultspec-rag server jobs",
         ]
 
     def test_index_all_handles_sparse_service_summary_without_unknown_text(
@@ -484,28 +477,34 @@ class TestIndexSummaryCLI:
                 body = json.loads(self.rfile.read(length).decode("utf-8"))
                 requests.append(body)
 
-                response_by_type: dict[str, dict[str, object]] = {
-                    "vault": {
-                        "ok": True,
-                        "added": "not-a-number",
-                        "updated": "2",
-                        "removed": None,
-                        "total": [],
-                        "duration_ms": "not-a-duration",
-                    },
-                    "codebase": {
-                        "ok": True,
-                        "added": "4",
-                        "updated": "5",
-                        "removed": "6",
-                        "total": "15",
-                        "duration_ms": "50",
+                response: dict[str, object] = {
+                    "ok": False,
+                    "partial": True,
+                    "status": "partial",
+                    "domains": {
+                        "vault": {
+                            "ok": False,
+                            "job_id": None,
+                            "error_kind": "busy",
+                            "detail": "vault busy",
+                            "outcome": None,
+                        },
+                        "code": {
+                            "ok": True,
+                            "job_id": "code-job",
+                            "error_kind": None,
+                            "detail": None,
+                            "outcome": {"status": "created"},
+                        },
+                        "document": {
+                            "ok": False,
+                            "job_id": None,
+                            "error_kind": "busy",
+                            "detail": "document busy",
+                            "outcome": None,
+                        },
                     },
                 }
-                response = response_by_type.get(
-                    body.get("type"),
-                    {"ok": False, "error": "unexpected_type"},
-                )
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -536,19 +535,15 @@ class TestIndexSummaryCLI:
             thread.join(timeout=1)
 
         assert result.exit_code == 0, result.output
-        assert [req["type"] for req in requests] == ["vault", "codebase"]
+        assert [req["type"] for req in requests] == ["combined"]
 
         lines = [line.strip() for line in result.output.splitlines() if line.strip()]
         assert lines == [
-            "Indexing summary: ran in running service.",
-            "Vault: added 0; updated 2; removed 0; total 0; duration not reported",
-            (
-                "Source code: added 4; updated 5; removed 6; total 15; "
-                "finished in 50 milliseconds"
-            ),
+            "Vault: failed: busy: vault busy",
+            "Source code re-index job queued on service: code-job",
+            "Documents: failed: busy: document busy",
+            "Check progress with: vaultspec-rag server jobs",
         ]
-        assert "unknown" not in result.output.lower()
-        assert "finished in not reported" not in result.output.lower()
 
     def test_index_summary_spells_out_reported_durations(
         self, capsys: pytest.CaptureFixture[str]
@@ -781,9 +776,8 @@ try:
     assert index_envelope["command"] == "index", index_envelope
     assert index_envelope["data"] == {
         "via": "service",
-        "async": True,
-        "vault_job_id": "isolated-vault-job",
-        "codebase_job_id": None,
+        "source": "vault",
+        "outcome": {"ok": True, "job_id": "isolated-vault-job"},
     }, index_envelope
 
     assert requests == [
@@ -793,7 +787,7 @@ try:
                 "query": "anything",
                 "top_k": 10,
                 "project_root": str(target),
-                "type": "codebase",
+                "type": "code",
             },
         },
         {

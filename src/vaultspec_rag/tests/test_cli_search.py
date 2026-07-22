@@ -63,9 +63,12 @@ class TestMcpFastPath:
         assert result is None
 
     def test_invalid_search_type(self):
-        """Unknown search_type falls back to search_vault, returns None on failure."""
+        """Unknown search types fail explicitly without a transport fallback."""
         result = _try_http_search("test query", "invalid", 5, 1, "/tmp/proj")
-        assert result is None
+        assert isinstance(result, dict)
+        assert result["ok"] is False
+        assert result["error"] == "unknown_source_type"
+        assert result["received"] == "invalid"
 
     def test_code_filters_with_vault_returns_usage_error(self):
         """Filter kwargs with --type vault yield a structured usage error."""
@@ -82,8 +85,8 @@ class TestMcpFastPath:
         assert result.get("error") == "invalid_filter_for_search_type"
         assert "--function-name" in str(result.get("message", ""))
 
-    def test_code_filters_with_all_returns_usage_error(self):
-        """search_type='all' is also incompatible with code-only filters."""
+    def test_code_filters_with_all_reach_combined_transport(self):
+        """The explicit all alias accepts code filters for combined search."""
         result = _try_http_search(
             "q",
             "all",
@@ -93,10 +96,7 @@ class TestMcpFastPath:
             language="python",
             class_name="Foo",
         )
-        assert isinstance(result, dict)
-        assert result.get("error") == "invalid_filter_for_search_type"
-        msg = str(result.get("message", ""))
-        assert "--language" in msg and "--class-name" in msg
+        assert result is None
 
     def test_code_filters_unset_dont_short_circuit(self):
         """All filters None must not trigger the usage error path."""

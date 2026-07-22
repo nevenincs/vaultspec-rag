@@ -393,7 +393,7 @@ async def _reindex_source(
 ) -> dict[str, Any]:
     """Delegate one canonical incremental reindex without local fallback."""
     port = _require_port()
-    return await _delegate(
+    result = await _delegate(
         partial(
             _try_http_reindex,
             _canonical_tool_source(source),
@@ -403,6 +403,11 @@ async def _reindex_source(
             initiator_kind="mcp",
         )
     )
+    if result.get("ok") is False and result.get("partial") is not True:
+        error = str(result.get("error") or "reindex_failed")
+        message = str(result.get("message") or "The reindex request failed.")
+        raise RuntimeError(f"{error}: {message}")
+    return result
 
 
 @mcp.tool(title="Reindex documents", annotations=_INDEX_REFRESH)
