@@ -33,7 +33,7 @@ Prove the availability decision is scoped to the exact resolved project root and
 
 - [x] `W01.P05.S06` - Add a real-service assertion that same-source work for another resolved project root preserves empty HTTP 200 using Sol medium; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
 - [x] `W01.P05.S07` - Add a real-service assertion that same-root work for another normalized source preserves empty HTTP 200 using Sol medium; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
-- [ ] `W01.P05.S08` - Add a real-service assertion that matching nonterminal work preserves usable nonempty HTTP 200 using Sol medium; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
+- [x] `W01.P05.S08` - Add a real-service assertion that matching nonterminal work preserves usable nonempty HTTP 200 using Sol medium; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
 
 ### Phase `W01.P06` - consumer semantics
 
