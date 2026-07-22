@@ -25,6 +25,7 @@ from ._document_meta import (
     read_document_meta,
 )
 from ._file_state import FileStateKind
+from ._route_migration import reconcile_generation_storage
 from ._run_ledger import FinalizationPhase, RunOperation
 from ._run_policy import RunPolicy
 from ._streaming import (
@@ -513,6 +514,12 @@ class DocumentIndexer:
             return None
         reporter.phase_start("resume document publication", 1)
         try:
+            reconcile_generation_storage(
+                self.store,
+                checkpoint,
+                checkpoint.policy,
+                ContentKind.DOCUMENT,
+            )
             checkpoint.publish_metadata(self._meta_path)
             checkpoint.publish_generation()
             reporter.advance(1)
@@ -813,6 +820,12 @@ class DocumentIndexer:
                 if failures:
                     checkpoint.mark_failed("; ".join(failures))
                 else:
+                    reconcile_generation_storage(
+                        self.store,
+                        checkpoint,
+                        policy,
+                        ContentKind.DOCUMENT,
+                    )
                     checkpoint.publish_metadata(self._meta_path)
                     checkpoint.publish_generation()
             return self._finish_result(
@@ -905,6 +918,12 @@ class DocumentIndexer:
             if failures:
                 checkpoint.mark_failed("; ".join(failures))
             else:
+                reconcile_generation_storage(
+                    self.store,
+                    checkpoint,
+                    policy,
+                    ContentKind.DOCUMENT,
+                )
                 checkpoint.publish_metadata(self._meta_path)
                 checkpoint.publish_generation()
             return self._finish_result(

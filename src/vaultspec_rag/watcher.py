@@ -28,6 +28,7 @@ from watchfiles import (
 from . import jobs as _jobs
 from .indexer._content_policy import ContentKind
 from .indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
+from .indexer._route_migration import prior_stored_owners
 from .job_manager import JobAttemptContext, JobExecutionResult
 from .job_models import (
     JobInitiator,
@@ -710,6 +711,17 @@ def _record_watcher_changes(
             vault_slot.add_dirty(path)
             observed[0] = True
             continue
+        if change_type is Change.deleted:
+            prior_code, prior_document = _record_deleted_prior_owners(
+                path,
+                root_dir=root_dir,
+                code_slot=code_slot,
+                document_slot=document_slot,
+            )
+            observed[1] = observed[1] or prior_code
+            observed[2] = observed[2] or prior_document
+            if prior_code or prior_document:
+                continue
         if _is_code_change(path, root_dir, vault_dir, policy):
             code_slot.add_dirty(path)
             observed[1] = True
@@ -719,6 +731,34 @@ def _record_watcher_changes(
             document_slot.add_dirty(path)
             observed[2] = True
     return observed[0], observed[1], observed[2]
+
+
+def _record_deleted_prior_owners(
+    path: Path,
+    *,
+    root_dir: Path,
+    code_slot: _WatcherConvergenceSlot,
+    document_slot: _WatcherConvergenceSlot | None,
+) -> tuple[bool, bool]:
+    """Schedule a missing path from its last durable per-kind ownership."""
+    try:
+        rel_path = path.relative_to(root_dir).as_posix()
+        prior_owners = prior_stored_owners(root_dir, rel_path)
+    except (OSError, RuntimeError, ValueError):
+        logger.warning(
+            "watcher could not resolve prior ownership for deleted path %s",
+            path,
+            exc_info=True,
+        )
+        return False, False
+    code_owned = ContentKind.CODE in prior_owners
+    document_owned = document_slot is not None and ContentKind.DOCUMENT in prior_owners
+    if code_owned:
+        code_slot.add_dirty(path)
+    if document_owned:
+        assert document_slot is not None
+        document_slot.add_dirty(path)
+    return code_owned, document_owned
 
 
 async def _reconcile_watcher_slots(

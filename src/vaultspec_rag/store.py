@@ -1083,6 +1083,59 @@ class VaultStore(_VaultSearchMixin):
         with self._point_lock(self.CODE_TABLE_NAME):
             return self._scroll_all_ids(self.CODE_TABLE_NAME, "chunk_id")
 
+    def scroll_code_content(
+        self,
+        *,
+        limit: int = 100,
+        offset: Any = None,
+        source_paths: set[str] | None = None,
+        with_vectors: bool = False,
+    ) -> tuple[list[dict[str, Any]], Any]:
+        """Return one bounded page from the code collection."""
+        from qdrant_client import models
+
+        raw_limit = cast("object", limit)
+        if (
+            isinstance(raw_limit, bool)
+            or not isinstance(raw_limit, int)
+            or raw_limit <= 0
+        ):
+            raise ValueError("code scroll limit must be a positive integer")
+        if raw_limit > 1000:
+            raise ValueError("code scroll limit must not exceed 1000")
+        limit = raw_limit
+        scroll_filter = None
+        if source_paths is not None:
+            if not source_paths:
+                return [], None
+            scroll_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="path",
+                        match=models.MatchAny(any=sorted(source_paths)),
+                    )
+                ]
+            )
+        self.ensure_code_table()
+        with self._point_lock(self.CODE_TABLE_NAME):
+            records, next_offset = self.client.scroll(
+                collection_name=self.CODE_TABLE_NAME,
+                scroll_filter=scroll_filter,
+                limit=limit,
+                offset=offset,
+                with_payload=True,
+                with_vectors=with_vectors,
+            )
+        rows = [
+            {
+                "id": str(record.id),
+                "payload": dict(record.payload or {}),
+                "vector": record.vector if with_vectors else None,
+            }
+            for record in records
+        ]
+        return rows, next_offset
+
     def get_all_document_content_ids(self) -> set[str]:
         """Return every deterministic ID in the document collection."""
         self.ensure_document_table()
