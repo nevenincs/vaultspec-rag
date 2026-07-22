@@ -40,7 +40,7 @@ __all__ = [
     "RunTerminalState",
 ]
 
-_SCHEMA_VERSION: Final = 1
+_SCHEMA_VERSION: Final = 2
 _FETCH_BATCH: Final = 256
 _DIGEST_REPR_LENGTH: Final = 128
 
@@ -163,7 +163,7 @@ class CommitUnit:
     rel_path: str
     kind: CommitUnitKind
     segment_ordinal: int
-    segment_count: int
+    is_file_end: bool
     point_ids: tuple[str, ...]
     source_digest: str | None = None
 
@@ -171,10 +171,10 @@ class CommitUnit:
         _validate_rel_path(self.rel_path)
         if not isinstance(self.kind, CommitUnitKind):
             raise TypeError("kind must be a CommitUnitKind")
-        if self.segment_ordinal < 0 or self.segment_count <= 0:
-            raise ValueError("segment ordinals require a positive segment count")
-        if self.segment_ordinal >= self.segment_count:
-            raise ValueError("segment_ordinal must be less than segment_count")
+        if isinstance(self.segment_ordinal, bool) or self.segment_ordinal < 0:
+            raise ValueError("segment_ordinal must be a non-negative integer")
+        if not isinstance(self.is_file_end, bool):
+            raise TypeError("is_file_end must be a bool")
         if not self.point_ids or any(not point_id for point_id in self.point_ids):
             raise ValueError("point_ids must contain non-empty identifiers")
         if len(set(self.point_ids)) != len(self.point_ids):
@@ -185,7 +185,7 @@ class CommitUnit:
         elif self.source_digest is not None:
             raise ValueError("deletion units must not carry a source digest")
         if self.kind is CommitUnitKind.DELETE and (
-            self.segment_ordinal != 0 or self.segment_count != 1
+            self.segment_ordinal != 0 or not self.is_file_end
         ):
             raise ValueError("a deletion is exactly one commit unit")
 
@@ -197,7 +197,7 @@ class CommitUnit:
             "path": self.rel_path,
             "source_digest": self.source_digest,
             "segment_ordinal": self.segment_ordinal,
-            "segment_count": self.segment_count,
+            "is_file_end": self.is_file_end,
             "point_ids": self.point_ids,
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -336,7 +336,7 @@ class RunLedger:
                     existing["rel_path"] != unit.rel_path
                     or existing["unit_kind"] != unit.kind.value
                     or existing["segment_ordinal"] != unit.segment_ordinal
-                    or existing["segment_count"] != unit.segment_count
+                    or bool(existing["is_file_end"]) is not unit.is_file_end
                     or existing["source_digest"] != unit.source_digest
                     or existing["point_ids_json"] != point_ids_json
                 ):
@@ -344,7 +344,7 @@ class RunLedger:
                 return False
             sibling = connection.execute(
                 """
-                SELECT source_digest, segment_count FROM commit_units
+                SELECT source_digest FROM commit_units
                 WHERE generation_id = ? AND rel_path = ? AND unit_kind = ?
                 LIMIT 1
                 """,
@@ -352,16 +352,15 @@ class RunLedger:
             ).fetchone()
             if sibling is not None and (
                 sibling["source_digest"] != unit.source_digest
-                or sibling["segment_count"] != unit.segment_count
             ):
                 raise RunLedgerStateError(
-                    "segments for one path must share digest and segment count"
+                    "segments for one path must share one source digest"
                 )
             connection.execute(
                 """
                 INSERT INTO commit_units (
                     generation_id, unit_id, rel_path, unit_kind,
-                    source_digest, segment_ordinal, segment_count,
+                    source_digest, segment_ordinal, is_file_end,
                     point_ids_json, committed_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -372,7 +371,7 @@ class RunLedger:
                     unit.kind.value,
                     unit.source_digest,
                     unit.segment_ordinal,
-                    unit.segment_count,
+                    int(unit.is_file_end),
                     point_ids_json,
                     now,
                 ),
@@ -401,7 +400,7 @@ class RunLedger:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT unit_kind, segment_ordinal, segment_count
+                SELECT unit_kind, segment_ordinal, is_file_end
                 FROM commit_units
                 WHERE generation_id = ? AND rel_path = ?
                 ORDER BY segment_ordinal
@@ -413,11 +412,15 @@ class RunLedger:
         kinds = {row["unit_kind"] for row in rows}
         if len(kinds) != 1:
             return False
-        expected = rows[0]["segment_count"]
+        end_ordinals = [
+            row["segment_ordinal"] for row in rows if bool(row["is_file_end"])
+        ]
+        if len(end_ordinals) != 1:
+            return False
+        expected = end_ordinals[0] + 1
         return (
             len(rows) == expected
             and [row["segment_ordinal"] for row in rows] == list(range(expected))
-            and all(row["segment_count"] == expected for row in rows)
         )
 
     def iter_units(
@@ -445,14 +448,18 @@ class RunLedger:
                         kind=CommitUnitKind(row["unit_kind"]),
                         source_digest=row["source_digest"],
                         segment_ordinal=row["segment_ordinal"],
-                        segment_count=row["segment_count"],
+                        is_file_end=bool(row["is_file_end"]),
                         point_ids=tuple(json.loads(row["point_ids_json"])),
                     )
 
     def record_file_state(self, generation_id: str, state: FileState) -> None:
         """Upsert the latest explicit per-file convergence outcome."""
         with self._transaction() as connection:
-            self._require_mutable_generation(connection, generation_id)
+            generation = self._require_mutable_generation(connection, generation_id)
+            if generation["finalization_phase"] != FinalizationPhase.INGESTING.value:
+                raise RunLedgerStateError(
+                    "cannot change file state after finalization begins"
+                )
             connection.execute(
                 """
                 INSERT INTO file_states (
@@ -680,7 +687,7 @@ class RunLedger:
                     unit_kind TEXT NOT NULL,
                     source_digest TEXT,
                     segment_ordinal INTEGER NOT NULL,
-                    segment_count INTEGER NOT NULL,
+                    is_file_end INTEGER NOT NULL CHECK(is_file_end IN (0, 1)),
                     point_ids_json TEXT NOT NULL,
                     committed_at REAL NOT NULL,
                     PRIMARY KEY(generation_id, unit_id),
