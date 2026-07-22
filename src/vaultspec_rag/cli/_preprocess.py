@@ -195,11 +195,9 @@ def _report_preprocess_no_match(
 ) -> None:
     """Report that no preprocess rule matched *rel*, honoring the off kill switch.
 
-    The non-strict load applied the ``off`` kill switch, so an empty config can
-    mean "rules exist but are switched off" rather than "no rule matches this
-    file". Surface the actionable off notice instead of a misleading no-match
-    line. Extracted from :func:`handle_preprocess_run_one` so its match path
-    reads without the nested gated/json branches.
+    Routing remains resolved while execution is off. Surface the actionable
+    off notice before considering a matching rule so this diagnostic command
+    obeys the same execution gate as indexing.
     """
     gate = _gated_rule_state(root, config)
     if gate is not None:
@@ -250,6 +248,9 @@ def handle_preprocess_run_one(
         rel = str(abs_path.resolve().relative_to(root.resolve())).replace("\\", "/")
     except ValueError:
         rel = str(path).replace("\\", "/")
+    if _gated_rule_state(root, config) is not None:
+        _report_preprocess_no_match(root, config, rel, json_mode=json_mode)
+        return
     rule = config.match(rel)
     if rule is None:
         _report_preprocess_no_match(root, config, rel, json_mode=json_mode)
@@ -311,10 +312,9 @@ def handle_preprocess_run_one(
 def _gated_rule_state(root: Path, nonstrict_config: PreprocessConfig) -> int | None:
     """Return the rule count when a root's rules are switched off, else ``None``.
 
-    The non-strict loader returns an empty config both when a root genuinely
-    defines no rules and when the ``off`` kill switch dropped them. The two are
-    distinguished by re-resolving in strict mode, which bypasses the gate: a
-    non-empty strict result over an empty non-strict one is the gated (off) case.
+    Policy routing stays available while the execution kill switch is off, so
+    the resolved mode is authoritative and the retained rules provide the
+    diagnostic count.
 
     Args:
         root: The workspace root.
@@ -324,8 +324,12 @@ def _gated_rule_state(root: Path, nonstrict_config: PreprocessConfig) -> int | N
         The strict rule count when the rules exist but are switched off, else
         ``None`` (no config, an invalid config, or genuinely no rules).
     """
-    if nonstrict_config:
+    from ..config import get_config
+
+    if get_config().preprocess_mode != "off":
         return None
+    if nonstrict_config.rules:
+        return len(nonstrict_config.rules)
     if not (root / PREPROCESS_CONFIG_FILENAME).is_file():
         return None
     try:

@@ -77,7 +77,9 @@ def test_path_dependent_cache_does_not_alias_identical_files(tmp_path: Path) -> 
     ) is None
 
 
-def test_path_independent_cache_reuse_requires_explicit_identity(tmp_path: Path) -> None:
+def test_path_independent_cache_reuse_requires_explicit_identity(
+    tmp_path: Path,
+) -> None:
     root = preprocess_cache_dir(tmp_path)
     first = _identity(path_independent=True)
     second = _identity(source_path="docs/b.pdf", path_independent=True)

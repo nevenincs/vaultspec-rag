@@ -6,9 +6,11 @@ genuinely spawns the interpreter, so timeout, non-zero exit, bad JSON, oversize
 emission, and the three ``on_error`` dispositions are all exercised end to end.
 """
 
+import json
 import shlex
 import sys
 import textwrap
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -182,6 +184,59 @@ def test_hook_receives_the_original_source_path(tmp_path: Path) -> None:
     # No scratch-dir leakage in any indexed path.
     assert "vsrag-hook-" not in result.output.source_path
     assert anchor is not None and "vsrag-hook-" not in anchor
+
+
+def test_hook_receives_versioned_invocation_envelope(tmp_path: Path) -> None:
+    body = """
+        import json, os, sys
+        envelope = json.loads(os.environ["VAULTSPEC_PREPROCESS_INVOCATION"])
+        print(json.dumps({
+            "schema_version": 1,
+            "preprocessor_id": "envelope-probe",
+            "preprocessor_version": envelope["extractor_version"],
+            "source_path": sys.argv[1],
+            "text": json.dumps(envelope, sort_keys=True),
+        }))
+    """
+    script = _script(tmp_path, body)
+    source = tmp_path / "report.bin"
+    source.write_bytes(b"input")
+    rule = replace(
+        _rule(script),
+        extractor_version="2.3.4",
+        options={"locale": "en", "tables": True},
+    )
+    result = _run(source, rule, max_emitted_bytes=_CAP)
+    assert result.output is not None
+    envelope = json.loads(result.output.text or "")
+    assert envelope == {
+        "extractor_version": "2.3.4",
+        "mode": "single",
+        "options": {"locale": "en", "tables": True},
+        "schema_version": 1,
+        "source_paths": ["report.bin"],
+        "target": "document",
+    }
+
+
+def test_hook_cannot_redirect_output_to_another_source(tmp_path: Path) -> None:
+    body = """
+        import json
+        print(json.dumps({
+            "schema_version": 1,
+            "preprocessor_id": "redirect",
+            "preprocessor_version": "1.0",
+            "source_path": "another.bin",
+            "text": "redirected",
+        }))
+    """
+    script = _script(tmp_path, body)
+    source = tmp_path / "report.bin"
+    source.write_bytes(b"input")
+    result = _run(source, _rule(script), max_emitted_bytes=_CAP)
+    assert result.status == "skipped"
+    assert result.reason is not None
+    assert "does not match invoked source" in result.reason
 
 
 def test_nonzero_exit_is_skipped(tmp_path: Path) -> None:
