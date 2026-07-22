@@ -25,9 +25,8 @@ are accepted. General setup and search usage remain in `README.md`,
 Here, HTTP means Hypertext Transfer Protocol, MCP means Model Context Protocol, ADR means
 architectural decision record, REST means representational state transfer, and JSON means
 JavaScript Object Notation. A convergence job is one index operation for an exact resolved
-project root and normalized `vault` or `code` source. A compatibility snapshot is the legacy
-flat job record. A canonical snapshot is the service-job-control resource with a nested `spec`
-mapping.
+project root and normalized `vault` or `code` source. A canonical snapshot is the copied
+`JobManager` resource with a nested `spec` mapping.
 
 ## Summary
 
@@ -43,39 +42,31 @@ mapping.
   emits fields outside that Pydantic model.
 - `src/vaultspec_rag/server/_routes.py:254-321` exposes copied job snapshots through `/jobs`.
 
-### Current and canonical job fields
-
-The compatibility snapshot exposed by `src/vaultspec_rag/server/_jobs.py` carries top-level
-`source`, `phase`, and `initiator.project_root`. It does not retain clean or generation state.
-Current reindex workers originate in `start_reindex_vault` and
-`start_reindex_codebase`. The route reads their copied records through legacy `snapshot`.
-Line numbers are intentionally omitted because the service-job-control campaign has
-uncommitted ownership of `jobs.py`.
+### Canonical job fields
 
 The canonical job-control model carries `spec.operation`, `spec.source`,
-`spec.project_root`, `spec.mode`, observed `state`, and an exact ID in `JobSnapshot`. The
-active large-index-resilience plan will add generation and publication fields. Snapshot
-normalization must therefore match the resolved requested root and normalized source exactly,
-remain bounded, and tolerate both shapes without creating another state authority.
+`spec.project_root`, `spec.mode`, observed `state`, and an exact ID in `JobSnapshot`. Search
+availability reads copied records from `JobManager`. The active large-index-resilience plan
+will add generation and publication fields. Snapshot normalization must match the resolved
+requested root and normalized source exactly, remain bounded, and avoid creating another state
+authority.
 
 The classification contract is exact:
 
-| Shape         | Identity and match                                                                                          | Nonterminal state                                         | Mode evidence                                      |
-| ------------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------- |
-| Canonical     | Nonempty `id`; `spec.operation == "index"`; exact normalized `spec.source` and resolved `spec.project_root` | `queued`, `running`, `pausing`, `paused`, or `cancelling` | Only `spec.mode == "rebuild"` proves rebuilding    |
-| Compatibility | Used only when `spec` is absent; nonempty `id`; exact top-level `source` and `initiator.project_root`       | `phase == "running"`                                      | None; expose `mode: null` and `status: "updating"` |
+| Identity and match                                                                                          | Nonterminal state                                         | Mode evidence                             |
+| ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | ----------------------------------------- |
+| Nonempty `id`; `spec.operation == "index"`; exact normalized `spec.source` and resolved `spec.project_root` | `queued`, `running`, `pausing`, `paused`, or `cancelling` | `spec.mode` is `incremental` or `rebuild` |
 
 The request root is already resolved by `_resolve_root`. Snapshot roots are expanded, resolved
 without requiring existence, normalized with host path-case rules, and compared for equality.
 The search route maps the vault branch to `vault` and the code or codebase branch to `code`.
-If the `spec` key exists, the record is canonical. A non-mapping or malformed canonical record
-is ignored instead of falling back. Terminal states, resource flags, and progress prose never
-override the observed-state predicate. Exact mode `rebuild` stays `rebuild`, exact
-`incremental` stays `incremental`, and missing, null, non-string, or unrecognized mode becomes
-`null`.
+Records with a missing, non-mapping, or malformed `spec` are ignored. Terminal states,
+resource flags, and progress prose never override the observed-state predicate. Exact mode
+`rebuild` stays `rebuild`, and exact `incremental` stays `incremental`. Missing, null,
+non-string, and unrecognized modes do not match.
 
 An unrelated job from another root or source is never evidence for this request. Each copied
-registry snapshot is already bounded. The response exposes at most eight unique references,
+`JobManager` snapshot is already bounded. The response exposes at most eight unique references,
 ordered from the second observation followed by first-observation-only jobs and deduplicated
 by exact job ID. Rebuilding evidence is computed across every unique match before truncation.
 A Boolean truncation member records whether more than eight matched.
@@ -85,25 +76,26 @@ A Boolean truncation member records whether more than eight matched.
 `src/vaultspec_rag/serviceclient/_transport.py:171-205` parses non-2xx JSON bodies.
 `src/vaultspec_rag/serviceclient/_transport.py:232-299` returns the body without retaining the
 numeric status. `src/vaultspec_rag/serviceclient/_transport.py:733-824` preserves an
-`ok: false` search body, while `src/vaultspec_rag/cli/_search.py:50-73` treats any dictionary
-containing `results` as success.
+`ok: false` search body. It accepts a success only when a nonempty dictionary contains a
+`results` list. Empty dictionaries, bare lists, invalid JSON, and other malformed daemon
+shapes become the stable `invalid_service_response` failure.
 
-A compatible 503 body contains only `ok`, `error`, `message`, `request_id`, `index_state`, and
+The 503 body contains only `ok`, `error`, `message`, `request_id`, `index_state`, and
 `remediation`. `index_state` preserves its existing source, count, and target members. It
 changes `status` to `updating` or `rebuilding` and adds `matching_jobs` plus
 `matching_jobs_truncated`. Each job reference contains exactly `id`, `state`, and `mode`; the
-mode is `incremental`, `rebuild`, or `null`. The complete example and message template are in
-the accepted feature ADR. The body omits `results`, `summary`, `empty`, and `timing`. Direct
-HTTP clients observe 503. The shared client preserves the body, and the command-line
-interface (CLI) takes its existing structured-failure path because `results` is absent.
+mode is `incremental` or `rebuild`. The complete example and message template are in the
+accepted feature ADR. The body omits `results`, `summary`, `empty`, and `timing`. Direct HTTP
+clients observe 503. The shared client preserves the body, and the command-line interface
+(CLI) takes its existing structured-failure path because `results` is absent.
 
-The MCP adapter needs a separate guard before `SearchResults.model_validate`. Its current
-default `results` list would otherwise turn `ok: false` into a successful empty tool result.
-For every structured daemon search failure, the adapter raises an actionable `RuntimeError`
-containing the error code, message, and remediation; FastMCP maps that recoverable failure to
-`isError: true`. The regression uses the official client against the real MCP stdio shim. It
-asserts `CallToolResult.isError is True`, actionable `index_unavailable` text, and no
-structured `results` member.
+The MCP adapter guards the response before `SearchResults.model_validate`. It accepts only a
+dictionary success envelope containing a `results` list. For every structured daemon search
+failure, the adapter raises an actionable `RuntimeError` containing the error code, message,
+and remediation. Non-dictionaries and malformed successes raise `invalid_service_response`.
+FastMCP maps these recoverable failures to `isError: true`. The regression uses the official
+client against the real MCP stdio shim. It asserts `CallToolResult.isError is True`, actionable
+`index_unavailable` text, and no structured `results` member.
 
 Successful nonempty responses and stable empty responses retain their existing HTTP 200
 shape. No response performs an implicit reindex. No `Retry-After` header is emitted without a
@@ -127,10 +119,9 @@ generation policy.
 `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py:52-122` already owns
 real-service empty-index diagnostics. The regression uses the existing synthetic corpus
 builder with 256 documents and seed 252, a real clean vault reindex, and the returned exact
-job ID. It polls authenticated `/jobs` every 50 milliseconds for at most 10 seconds. A
-compatibility job is ready when `phase: running` and `progress.step` is not `queued`. A
-canonical job is ready when `state: running` and `resources.project_lease_held: true`. It then
-admits the concurrent probes and sends raw `POST /search` with the query
+job ID. It polls authenticated `/jobs` every 50 milliseconds for at most 10 seconds until the
+submitted job is running. It then admits the concurrent probes and sends raw `POST /search`
+with the query
 `type:nonexistent availability authority probe` and a 300-second deadline. It asserts:
 
 - an exact matching nonterminal convergence job plus an empty outcome returns HTTP 503;
@@ -149,12 +140,11 @@ vault with the first manifest needle. Shared-client and MCP requests use the pri
 guaranteed no-match query. One primary clean job is sufficient because every probe is admitted
 concurrently after that job owns the primary project lease.
 
-The test polls the exact job every 100 milliseconds for at most 300 seconds until compatibility
-`phase: done` or canonical `state: succeeded`. Other terminal outcomes fail with exact job
-evidence. Timeout diagnostics include `/health`, the exact `/jobs` response, `/metrics`, and
-the last search response. All invariants are staged into one real service-and-job lifecycle so
-the local graphics processing unit (GPU) model is loaded once, but each plan Step remains a
-separate commit.
+The test polls the exact job every 100 milliseconds for at most 300 seconds until it succeeds.
+Other terminal outcomes fail with exact job evidence. Timeout diagnostics include `/health`,
+the exact `/jobs` response, `/metrics`, and the last search response. All invariants are staged
+into one real service-and-job lifecycle so the local graphics processing unit (GPU) model is
+loaded once, but each plan Step remains a separate commit.
 
 The test imports production code and uses real files, Qdrant, and GPU models. It introduces no
 fake, stub, mock, monkeypatch, skip, expected failure, or mirrored policy.
