@@ -48,7 +48,12 @@ from ._content_policy import (
 )
 from ._preprocess_runner import PreprocessAbortError
 from ._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
-from ._run_ledger import CommitUnitKind, RunLedgerCompatibilityError, RunOperation
+from ._run_ledger import (
+    CommitUnitKind,
+    FinalizationPhase,
+    RunLedgerCompatibilityError,
+    RunOperation,
+)
 from ._run_policy import RunPolicy
 from ._streaming import (
     CodeFileSegment,
@@ -1881,6 +1886,36 @@ class CodebaseIndexer:
             configuration=checkpoint_configuration,
         )
 
+    def _resume_pending_finalization(
+        self,
+        checkpoint: CodeRunCheckpoint,
+        *,
+        reporter: ProgressReporter,
+        started_at: float,
+    ) -> IndexResult | None:
+        """Finish an ingestion-complete generation without re-entering writes."""
+        if checkpoint.generation.finalization_phase is FinalizationPhase.INGESTING:
+            return None
+        reporter.phase_start("resume publication", 1)
+        try:
+            checkpoint.publish_metadata(self._meta_path)
+            checkpoint.publish_generation()
+            reporter.advance(1)
+        finally:
+            reporter.phase_end()
+        return IndexResult(
+            total=self.store.count_code(),
+            added=0,
+            updated=0,
+            removed=0,
+            duration_ms=int((time.time() - started_at) * 1000),
+            device=self.model.device,
+            files=0,
+            preprocess_ok=self._prep_ok,
+            preprocess_skipped=len(self._prep_skips),
+            preprocess_failures=list(self._prep_skips),
+        )
+
     def _enqueue_code_result(
         self,
         result: FileChunkResult,
@@ -2570,6 +2605,13 @@ class CodebaseIndexer:
             limits=limits,
             run_control=run_control,
         )
+        resumed_publication = self._resume_pending_finalization(
+            checkpoint,
+            reporter=reporter,
+            started_at=start,
+        )
+        if resumed_publication is not None:
+            return resumed_publication
         clean_has_confirmed_units = effective_clean and next(
             checkpoint.ledger.iter_units(checkpoint.generation_id),
             None,
@@ -2870,6 +2912,13 @@ class CodebaseIndexer:
                 reporter=reporter,
                 run_control=run_control,
             )
+        resumed_publication = self._resume_pending_finalization(
+            checkpoint,
+            reporter=reporter,
+            started_at=start,
+        )
+        if resumed_publication is not None:
+            return resumed_publication
         run_control.checkpoint()
         prior_ids_by_path = self._incremental_prior_ids_by_path(
             checkpoint,
@@ -3058,6 +3107,13 @@ class CodebaseIndexer:
                 reporter=reporter,
                 run_control=run_control,
             )
+        resumed_publication = self._resume_pending_finalization(
+            checkpoint,
+            reporter=reporter,
+            started_at=start,
+        )
+        if resumed_publication is not None:
+            return resumed_publication
         run_control.checkpoint()
         prior_ids_by_path = self._incremental_prior_ids_by_path(
             checkpoint,
