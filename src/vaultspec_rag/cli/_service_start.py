@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal
@@ -59,6 +60,7 @@ if TYPE_CHECKING:
     from rich.status import Status
 
 __all__ = [
+    "_caller_ephemeral_warning",
     "_ephemeral_env_warning",
     "_existing_service_running",
     "_fail_start",
@@ -500,8 +502,19 @@ def service_start(
     # SUCCESS (`already_running`, exit 0), decided before the port/machine guards
     # so the friendly path is no longer shadowed by the port-guard exit 1 - a
     # supervising broker attaches instead of seeing a gateway fault.
+    # The attach paths below never resolve a daemon interpreter, so the
+    # daemon-side ephemeral warning cannot fire for them. The caller's own env
+    # is the condition that matters here: an operator invoking from a uvx cache
+    # env still walks into the forced-reinstall trap, and `already_running` is
+    # the outcome a long-lived daemon returns almost every time.
+    caller_warnings = _caller_ephemeral_warning()
     existing = _existing_service_running()
     if existing is not None:
+        if caller_warnings and not json_mode:
+            _print_lifecycle_lines(*caller_warnings)
+        attach_extra: dict[str, object] = (
+            {"warnings": list(caller_warnings)} if caller_warnings else {}
+        )
         existing_pid, existing_port, health_status = existing
         if health_status == "ready":
             _start_success(
@@ -514,6 +527,7 @@ def service_start(
                 ),
                 pid=existing_pid,
                 port=existing_port,
+                **attach_extra,
             )
         else:
             # The daemon answers /health but cannot serve yet (models loading,
@@ -534,6 +548,7 @@ def service_start(
                 pid=existing_pid,
                 port=existing_port,
                 health=health_status,
+                **attach_extra,
             )
         return
 
@@ -648,6 +663,33 @@ def _ephemeral_env_warning(interpreter: str) -> tuple[str, ...]:
         f"  {interpreter}",
         "uvx falls back to a cached environment when the installed tool env "
         "is broken or the request does not match it.",
+        "Reinstall the tool with the service stopped (the Scripts lock during "
+        "a forced reinstall is the running service itself):",
+        f"  {durable_tool_install_command()}",
+    )
+
+
+def _caller_ephemeral_warning(interpreter: str | None = None) -> tuple[str, ...]:
+    """Warning lines when *this* CLI process runs from a uvx ephemeral env.
+
+    Distinct from :func:`_ephemeral_env_warning`, which describes the daemon
+    interpreter of a service being spawned. On the attach paths no daemon is
+    spawned and the running service may be entirely healthy, so the subject is
+    the caller: a forced reinstall from here still fails mid-removal while the
+    service holds the Scripts dir. Returns ``()`` for every other env kind.
+
+    ``interpreter`` defaults to the running interpreter; it is a parameter so
+    the classification can be exercised against real path shapes.
+    """
+    resolved = sys.executable if interpreter is None else interpreter
+    if classify_interpreter_env(resolved) is not RuntimeEnvKind.UVX_EPHEMERAL:
+        return ()
+    return (
+        "WARNING: this command is running from a uvx EPHEMERAL cache "
+        "environment - not the installed tool:",
+        f"  {resolved}",
+        "The already-running service was started from a different "
+        "environment; this env disappears when the uvx run ends.",
         "Reinstall the tool with the service stopped (the Scripts lock during "
         "a forced reinstall is the running service itself):",
         f"  {durable_tool_install_command()}",
