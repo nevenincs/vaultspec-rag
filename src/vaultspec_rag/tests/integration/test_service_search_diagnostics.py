@@ -81,6 +81,39 @@ def _assert_request_id(result: dict[str, object]) -> str:
     return request_id
 
 
+def _wait_for_search_log_line(port: int, request_id: str) -> str:
+    deadline = time.monotonic() + 5.0
+    last_logs: object = None
+    while time.monotonic() < deadline:
+        last_logs = _do_http_call(
+            port,
+            f"/logs/json?contains={request_id}",
+            None,
+            timeout=5,
+        )
+        if isinstance(last_logs, dict):
+            raw_groups = last_logs.get("groups")
+            if isinstance(raw_groups, list):
+                for raw_group in cast("list[object]", raw_groups):
+                    if not isinstance(raw_group, dict):
+                        continue
+                    group = cast("dict[str, object]", raw_group)
+                    if group.get("source") != "service":
+                        continue
+                    raw_lines = group.get("lines")
+                    if not isinstance(raw_lines, list):
+                        continue
+                    for raw_line in cast("list[object]", raw_lines):
+                        line = str(raw_line)
+                        if request_id in line and "service.search" in line:
+                            return line
+        time.sleep(0.1)
+    pytest.fail(
+        "service.search log line did not become queryable via /logs/json: "
+        f"request_id={request_id} logs={last_logs!r}"
+    )
+
+
 def _exact_job_snapshot(port: int, job_id: str) -> dict[str, object] | None:
     result = _do_http_call(
         port,
@@ -1004,6 +1037,17 @@ def test_search_index_unavailable_during_matching_rebuild(
         job_id=job_id,
         evidence=evidence,
     )
+    unavailable_request_id = _assert_request_id(search_response[2])
+    unavailable_log = _wait_for_search_log_line(port, unavailable_request_id)
+    assert (
+        "service.search event=unavailable status_code=503 error=index_unavailable"
+    ) in unavailable_log, evidence
+    assert f"request_id={unavailable_request_id}" in unavailable_log, evidence
+    assert "source=vault" in unavailable_log, evidence
+    assert "search_type=vault" in unavailable_log, evidence
+    assert f"root={root}" in unavailable_log, evidence
+    assert "results=0" in unavailable_log, evidence
+    assert re.search(r"\btotal_seconds=\d+\.\d{3}\b", unavailable_log), evidence
     unrelated_evidence = _bounded_failure_evidence(
         port,
         token,
@@ -1211,27 +1255,14 @@ def test_search_request_id_is_log_correlatable(
 
     assert isinstance(result, dict)
     request_id = _assert_request_id(result)
-    logs: dict[str, object] | None = None
-    for _ in range(10):
-        logs = _do_http_call(
-            port,
-            f"/logs/json?contains={request_id}",
-            None,
-            timeout=5,
-        )
-        if isinstance(logs, dict) and logs.get("lines"):
-            break
-        time.sleep(0.1)
-
-    assert isinstance(logs, dict)
-    lines = cast("list[object]", logs["lines"])
-    assert isinstance(lines, list)
-    assert any(
-        request_id in str(line)
-        and "service.search" in str(line)
-        and "event=completed" in str(line)
-        for line in lines
-    )
+    completed_log = _wait_for_search_log_line(port, request_id)
+    assert "service.search event=completed status_code=200" in completed_log
+    assert f"request_id={request_id}" in completed_log
+    assert "source=code" in completed_log
+    assert "search_type=code" in completed_log
+    assert f"root={root}" in completed_log
+    assert "results=0" in completed_log
+    assert re.search(r"\btotal_seconds=\d+\.\d{3}\b", completed_log)
 
 
 @pytest.mark.subprocess_gpu

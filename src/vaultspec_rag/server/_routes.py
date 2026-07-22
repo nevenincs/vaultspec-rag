@@ -524,15 +524,24 @@ async def search_route(request: Request) -> JSONResponse:
         _m._ensure_watcher_soon(root)
         hits = result.get("results")
         hit_count = len(cast("list[object]", hits)) if isinstance(hits, list) else 0
+        search_source = "code" if search_type in ("code", "codebase") else "vault"
+        unavailable = (
+            response_status == 503 and result.get("error") == "index_unavailable"
+        )
         log_event(
             logger,
             "service.search",
-            "completed",
-            request_id=request_id,
-            search_type=search_type,
-            root=root,
-            results=hit_count,
-            total_seconds=f"{total_seconds:.3f}",
+            "unavailable" if unavailable else "completed",
+            fields={
+                "status_code": response_status,
+                **({"error": "index_unavailable"} if unavailable else {}),
+                "request_id": request_id,
+                "source": search_source,
+                "search_type": search_source,
+                "root": root,
+                "results": hit_count,
+                "total_seconds": f"{total_seconds:.3f}",
+            },
         )
     return JSONResponse(result, status_code=response_status)
 
