@@ -19,7 +19,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from ..storage_ops import MaintenanceResult
+    from ..storage_ops import (
+        MaintenanceResult,
+        ReclaimPolicy,
+        ReconcileBatch,
+        ReconcileResult,
+    )
 
 __all__ = [
     "_heartbeat_loop",
@@ -349,6 +354,149 @@ def _maintenance_paths() -> tuple[Path, Path, Path] | None:
     )
 
 
+def _build_reclaim_policy() -> ReclaimPolicy:
+    """Translate the storage-maintenance knobs into one cycle policy.
+
+    A disabled auto-prune is expressed as a zero reclaim cap rather than a
+    skipped cycle: the destructive stages still classify and report, they
+    simply never act, so an operator who turns destruction off keeps the
+    survey and the non-destructive reconcile.
+    """
+    from ..config import get_config
+    from ..storage_ops import ReclaimPolicy
+
+    cfg = get_config()
+    autoprune = bool(cfg.storage_autoprune)
+    return ReclaimPolicy(
+        grace_hours=float(cfg.storage_autoprune_grace_hours),
+        grace_hours_data=float(cfg.storage_autoprune_grace_hours_data),
+        max_per_cycle=int(cfg.storage_autoprune_max_per_cycle) if autoprune else 0,
+        archive_retention_days=float(cfg.storage_autoprune_archive_retention_days),
+        archive_max_bytes=int(float(cfg.storage_autoprune_archive_max_gb) * 1024**3),
+        ephemeral_idle_hours=float(cfg.storage_autoprune_ephemeral_idle_hours),
+        reconcile=bool(cfg.storage_reconcile),
+        reconcile_max_per_cycle=int(cfg.storage_reconcile_max_per_cycle),
+        reconcile_budget_seconds=float(cfg.storage_reconcile_budget_seconds),
+    )
+
+
+def _removed_prefixes(result: MaintenanceResult) -> list[str]:
+    """Namespaces this cycle actually destroyed."""
+    return [
+        d.prefix
+        for d in result.decisions
+        if d.action in ("removed", "archived_removed")
+    ]
+
+
+def _report_cycle_outcome(
+    result: MaintenanceResult, *, job_id: str, disk_free: int
+) -> None:
+    """Record the cycle's job result and emit its rollup log lines."""
+    from .. import jobs as _jobs_registry
+
+    removed = _removed_prefixes(result)
+    failed = [d.prefix for d in result.decisions if d.action == "failed"]
+    reconciled = _report_reconcile(result.reconcile)
+    batch = result.reconcile
+    summary = (
+        f"removed={len(removed)} failed={len(failed)} "
+        f"pending={result.pending_grace} reclaimed_bytes={result.reclaimed_bytes}"
+    )
+    if batch is not None:
+        summary += (
+            f" reconciled={len(reconciled)} reconciled_bytes={batch.reclaimed_bytes}"
+        )
+    _jobs_registry.record_finish(
+        job_id,
+        result=summary,
+        phase="error" if failed else "done",
+    )
+    disk_low = 0 <= disk_free < _DISK_FREE_WARN_BYTES
+    log_event(
+        logger,
+        "service.maintenance",
+        "cycle",
+        severity=logging.WARNING if (failed or disk_low) else logging.INFO,
+        removed=len(removed),
+        failed=len(failed),
+        pending_grace=result.pending_grace,
+        reclaimed_bytes=result.reclaimed_bytes,
+        dangling_bytes=result.dangling_bytes,
+        archived=len(result.archived),
+        swept=len(result.swept),
+        reconciled=len(reconciled),
+        reconciled_bytes=batch.reclaimed_bytes if batch else 0,
+        drifted_remaining=batch.drifted_remaining if batch else 0,
+        disk_free_bytes=disk_free,
+        namespaces=json.dumps(result.namespace_counts, sort_keys=True),
+    )
+    if disk_low:
+        log_event(
+            logger,
+            "service.maintenance",
+            "disk_low",
+            severity=logging.WARNING,
+            disk_free_bytes=disk_free,
+            threshold_bytes=_DISK_FREE_WARN_BYTES,
+        )
+
+
+def _publish_cycle_metrics(
+    result: MaintenanceResult, *, disk_free: int, removed: int
+) -> None:
+    """Publish one cycle's reclamation gauges and counters."""
+    from ..storage_ops import backend_totals
+    from ._state import incr, observe
+
+    incr("maintenance_cycles_total")
+    incr("maintenance_reclaims_total", removed)
+    observe("maintenance_disk_free_bytes", float(max(disk_free, 0)))
+    observe("maintenance_dangling_bytes", float(result.dangling_bytes))
+    observe("maintenance_pending_grace", float(result.pending_grace))
+    observe(
+        "maintenance_orphaned_namespaces",
+        float(result.namespace_counts.get("orphaned", 0)),
+    )
+    observe("maintenance_last_reclaimed_bytes", float(result.reclaimed_bytes))
+    # Whole-backend size gauges: dangling_bytes counts only orphans, so a
+    # pile of live-but-leaked namespaces is invisible without a total.
+    totals = backend_totals(result.surveys)
+    observe("store_total_bytes", float(cast("int", totals["total_bytes"])))
+    observe("store_namespaces", float(cast("int", totals["namespaces"])))
+
+
+def _report_reconcile(batch: ReconcileBatch | None) -> list[ReconcileResult]:
+    """Publish the geometry-reconcile pass and return its converged entries.
+
+    The drifted gauge reaching zero is the operator's signal that the
+    backend has finished converging. Only converged entries are logged:
+    a still-converging collection has no honest footprint to report,
+    because the optimizer inflates size mid-merge before shrinking it.
+    """
+    if batch is None:
+        return []
+    from ._state import incr, observe
+
+    reconciled = [r for r in batch.results if r.status == "reconciled"]
+    incr("maintenance_reconciled_total", len(reconciled))
+    incr("maintenance_reconciled_bytes_total", batch.reclaimed_bytes)
+    observe("store_drifted_collections", float(batch.drifted_remaining))
+    for entry in reconciled:
+        log_event(
+            logger,
+            "service.maintenance",
+            "reconciled",
+            collection=entry.collection,
+            segments_before=entry.segments_before,
+            segments_after=entry.segments_after,
+            bytes_before=entry.bytes_before,
+            bytes_after=entry.bytes_after,
+            reclaimed_bytes=entry.reclaimed_bytes,
+        )
+    return reconciled
+
+
 def _storage_maintenance_tick_sync() -> None:
     """Run one scheduled storage-maintenance cycle (pure storage IO).
 
@@ -365,23 +513,21 @@ def _storage_maintenance_tick_sync() -> None:
     from qdrant_client import QdrantClient
 
     from ..config import get_config
-    from ..storage_ops import ReclaimPolicy, run_maintenance_cycle
+    from ..storage_ops import run_maintenance_cycle
 
     cfg = get_config()
-    if not cfg.effective_server_mode() or not bool(cfg.storage_autoprune):
+    # Reconcile is non-destructive and independent of the grace machinery, so
+    # an operator who disables auto-prune for safety must not silently lose it.
+    # The cycle runs while EITHER stage is enabled; each stage gates itself.
+    if not cfg.effective_server_mode() or not (
+        bool(cfg.storage_autoprune) or bool(cfg.storage_reconcile)
+    ):
         return
     paths = _maintenance_paths()
     if paths is None:
         return
     collections_dir, snapshots_dir, archive_dir = paths
-    policy = ReclaimPolicy(
-        grace_hours=float(cfg.storage_autoprune_grace_hours),
-        grace_hours_data=float(cfg.storage_autoprune_grace_hours_data),
-        max_per_cycle=int(cfg.storage_autoprune_max_per_cycle),
-        archive_retention_days=float(cfg.storage_autoprune_archive_retention_days),
-        archive_max_bytes=int(float(cfg.storage_autoprune_archive_max_gb) * 1024**3),
-        ephemeral_idle_hours=float(cfg.storage_autoprune_ephemeral_idle_hours),
-    )
+    policy = _build_reclaim_policy()
     from .. import jobs as _jobs_registry
 
     job_id = _jobs_registry.record_start(
@@ -413,66 +559,12 @@ def _storage_maintenance_tick_sync() -> None:
         disk_free = shutil.disk_usage(str(collections_dir.parent)).free
     except OSError:
         disk_free = -1
-    removed = [
-        d.prefix
-        for d in result.decisions
-        if d.action in ("removed", "archived_removed")
-    ]
-    failed = [d.prefix for d in result.decisions if d.action == "failed"]
-    from ._state import incr, observe
-
-    incr("maintenance_cycles_total")
-    incr("maintenance_reclaims_total", len(removed))
-    observe("maintenance_disk_free_bytes", float(max(disk_free, 0)))
-    observe("maintenance_dangling_bytes", float(result.dangling_bytes))
-    observe("maintenance_pending_grace", float(result.pending_grace))
-    observe(
-        "maintenance_orphaned_namespaces",
-        float(result.namespace_counts.get("orphaned", 0)),
+    _publish_cycle_metrics(
+        result,
+        disk_free=disk_free,
+        removed=len(_removed_prefixes(result)),
     )
-    observe("maintenance_last_reclaimed_bytes", float(result.reclaimed_bytes))
-    # Whole-backend size gauges: dangling_bytes counts only orphans, so a
-    # pile of live-but-leaked namespaces is invisible without a total.
-    from ..storage_ops import backend_totals
-
-    totals = backend_totals(result.surveys)
-    observe("store_total_bytes", float(cast("int", totals["total_bytes"])))
-    observe("store_namespaces", float(cast("int", totals["namespaces"])))
-    summary = (
-        f"removed={len(removed)} failed={len(failed)} "
-        f"pending={result.pending_grace} reclaimed_bytes={result.reclaimed_bytes}"
-    )
-    _jobs_registry.record_finish(
-        job_id,
-        result=summary,
-        phase="error" if failed else "done",
-    )
-    log_event(
-        logger,
-        "service.maintenance",
-        "cycle",
-        severity=logging.WARNING
-        if failed or 0 <= disk_free < _DISK_FREE_WARN_BYTES
-        else logging.INFO,
-        removed=len(removed),
-        failed=len(failed),
-        pending_grace=result.pending_grace,
-        reclaimed_bytes=result.reclaimed_bytes,
-        dangling_bytes=result.dangling_bytes,
-        archived=len(result.archived),
-        swept=len(result.swept),
-        disk_free_bytes=disk_free,
-        namespaces=json.dumps(result.namespace_counts, sort_keys=True),
-    )
-    if 0 <= disk_free < _DISK_FREE_WARN_BYTES:
-        log_event(
-            logger,
-            "service.maintenance",
-            "disk_low",
-            severity=logging.WARNING,
-            disk_free_bytes=disk_free,
-            threshold_bytes=_DISK_FREE_WARN_BYTES,
-        )
+    _report_cycle_outcome(result, job_id=job_id, disk_free=disk_free)
 
 
 # Warn threshold for free disk on the volume holding the qdrant storage

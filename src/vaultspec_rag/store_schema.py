@@ -29,6 +29,8 @@ __all__ = [
     "DEFAULT_DENSE_DIM",
     "DENSE_DISTANCE",
     "DENSE_VECTOR_NAME",
+    "SERVER_SEGMENT_NUMBER",
+    "SERVER_WAL_CAPACITY_MB",
     "SPARSE_VECTOR_NAME",
     "STORAGE_SCHEMA_VERSION",
     "VAULT_COLLECTION",
@@ -70,6 +72,19 @@ DENSE_DISTANCE = "Cosine"
 # EFFECTIVE dimension is read from config in describe_storage_schema because an
 # operator may override ``embedding_dimension`` or swap the model.
 DEFAULT_DENSE_DIM = 1024
+
+# Bounded per-collection geometry (server mode only; local mode preallocates
+# nothing). Server defaults derive the segment count from host CPU count, and
+# every segment preallocates a 32 MiB payload page, a 32 MiB sparse page, and a
+# page set per indexed payload field - so on a 24-core host an EMPTY namespace
+# cost 1243.8 MiB measured against the pinned 1.18.2. Seeding two segments and
+# capping the WAL segment brings that to ~327 MiB while keeping ingest and
+# intra-collection search headroom; the optimizer still grows segments with real
+# data. Declared here rather than at the create call site because the storage
+# domain reconciles pre-existing collections toward the same target, and the two
+# must not drift apart.
+SERVER_WAL_CAPACITY_MB = 16
+SERVER_SEGMENT_NUMBER = 2
 
 # Point-ID schemes, named for the reference and the consumer recipe (documented,
 # not enforced here): a vault document keys on its stem (relative path without

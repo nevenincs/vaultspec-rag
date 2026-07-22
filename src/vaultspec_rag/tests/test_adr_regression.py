@@ -485,6 +485,62 @@ assert not loaded, loaded
             )
 
 
+class TestGeometryReconcileIsNonDestructive:
+    """Reconcile shrinks preallocation; it must never destroy anything.
+
+    The reconcile stage runs inside the same maintenance cycle as the
+    reclamation stages and shares its client, so the one thing that must
+    never happen is a geometry fix that drops a collection or its points.
+    The reconcile path is confined to an optimizer-config update plus
+    read-only observation, and this pins that shape against a future edit
+    that reaches for a delete to "reset" a stubborn collection.
+    """
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_reconcile_sources_never_name_destructive_helpers(self):
+        import inspect
+
+        from .. import storage_ops
+
+        forbidden = (
+            "delete_collection",
+            "delete_prefix",
+            "_delete_collection_hard",
+            "rmtree",
+            "delete_points",
+        )
+        for fn in (
+            storage_ops.reconcile_collection,
+            storage_ops.reconcile_collections,
+            storage_ops.read_geometry,
+            storage_ops.plan_reconcile,
+            storage_ops._await_convergence,
+        ):
+            src = inspect.getsource(fn)
+            hits = [name for name in forbidden if name in src]
+            assert not hits, (
+                f"{fn.__qualname__} references destructive helpers {hits}; "
+                f"geometry reconcile is non-destructive by contract"
+            )
+
+    def test_reconcile_target_matches_the_create_time_geometry(self):
+        """Reconcile and creation must converge on one geometry.
+
+        If these drift apart, the maintenance cycle would perpetually
+        "fix" collections toward a target that creation never uses, and
+        every new collection would immediately read as drifted.
+        """
+        import inspect
+
+        from .. import store, store_schema
+
+        src = inspect.getsource(store.VaultStore._ensure_collection)
+        assert "store_schema.SERVER_SEGMENT_NUMBER" in src
+        assert "store_schema.SERVER_WAL_CAPACITY_MB" in src
+        assert store_schema.SERVER_SEGMENT_NUMBER == 2
+
+
 class TestJobErrorTaxonomyStaysLight:
     """The shared job-failure taxonomy must stay torch- and CLI-free.
 

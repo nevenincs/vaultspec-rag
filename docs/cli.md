@@ -38,6 +38,7 @@ Complete reference for the `vaultspec-rag` command line. For task-oriented walkt
 - [server qdrant clean](#server-qdrant-clean)
 - [server storage survey](#server-storage-survey)
 - [server storage prune](#server-storage-prune)
+- [server storage reconcile](#server-storage-reconcile)
 - [server storage delete](#server-storage-delete)
 - [preprocess list](#preprocess-list)
 - [preprocess check](#preprocess-check)
@@ -646,6 +647,28 @@ Options:
 | `--json`    | flag | off     | Emit one JSON envelope to stdout. Requires `--yes` (no prompt may corrupt the stream). |
 
 Exit/JSON: `0` on success; `2` when server mode is off or `--json` lacks `--yes`; `3` when the managed server is unreachable.
+
+## server storage reconcile
+
+`vaultspec-rag server storage reconcile`
+
+Shrink existing collections onto the bounded segment geometry. A collection keeps the geometry it was created with, so collections predating the bound hold far more preallocated space than they need; reconcile converges them in place, reclaiming 63-84% of each. It is non-destructive - no point is moved or deleted and the collection stays searchable - and idempotent, so a converged backend reports `already_converged` and does nothing. The service also reconciles a few collections per maintenance cycle automatically; see the [storage and maintenance guide](storage-maintenance.md).
+
+Merging happens in the background, and a collection transiently grows before it shrinks, so the command waits for each collection to stop changing before reporting a reclaimed figure. A run that does not wait reports none at all rather than an unreliable one.
+
+Arguments: none.
+
+Options:
+
+| Flag                | Type    | Default  | Description                                                                                            |
+| ------------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------ |
+| `--dry-run`         | flag    | off      | Preview which collections would be reconciled without changing anything.                               |
+| `--yes`             | flag    | off      | Apply the reconcile. Without it the command prints the preview.                                        |
+| `--limit`           | integer | `0`      | Maximum collections to reconcile; `0` means every drifted collection.                                  |
+| `--wait\|--no-wait` | flag    | `--wait` | Wait for convergence before reporting. `--no-wait` returns immediately and reports no reclaimed bytes. |
+| `--json`            | flag    | off      | Emit one JSON envelope to stdout. Requires `--yes` (no prompt may corrupt the stream).                 |
+
+Exit/JSON: `0` on success, including a backend with nothing to do (`status: already_converged`); `1` when a preview lists targets but `--yes` was not given; `2` when server mode is off or `--json` lacks `--yes`; `3` when the managed server is unreachable.
 
 ## server storage delete
 
