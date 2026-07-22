@@ -27,7 +27,7 @@ def _write_document_route(root: Path, extractor: Path) -> None:
         "version = 2\n\n"
         "[[rule]]\n"
         'pattern = "*.blob"\n'
-        f"command = '\"{python}\" \"{executable}\" {{path}}'\n"
+        f'command = \'"{python}" "{executable}" {{path}}\'\n'
         'target = "document"\n'
         'extractor_version = "1"\n'
         'on_error = "fail"\n',

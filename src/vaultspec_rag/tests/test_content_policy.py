@@ -132,9 +132,9 @@ def test_snapshot_rejects_route_transform_conflict_before_use() -> None:
         )
     )
     with pytest.raises(AdmissionPolicyError):
-            ResolvedIndexPolicy(
-                Path.cwd().resolve(),
-                1,
+        ResolvedIndexPolicy(
+            Path.cwd().resolve(),
+            1,
             policy,
             2,
             (rule,),

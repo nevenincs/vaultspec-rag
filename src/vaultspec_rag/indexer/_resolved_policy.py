@@ -149,10 +149,7 @@ def _freeze_option(value: object) -> CanonicalOption:
     if isinstance(value, tuple):
         return (
             "tuple",
-            tuple(
-                _freeze_option(item)
-                for item in cast("tuple[object, ...]", value)
-            ),
+            tuple(_freeze_option(item) for item in cast("tuple[object, ...]", value)),
         )
     if isinstance(value, (datetime.date, datetime.time)):
         return _freeze_temporal(value)
@@ -339,17 +336,21 @@ class ResolvedIndexPolicy:
                 f"unsupported policy schema version {self.policy_schema_version}"
             )
         preprocess_schema_version = cast("object", self.preprocess_schema_version)
-        if isinstance(preprocess_schema_version, bool) or not isinstance(
-            preprocess_schema_version, int
-        ) or preprocess_schema_version <= 0:
+        if (
+            isinstance(preprocess_schema_version, bool)
+            or not isinstance(preprocess_schema_version, int)
+            or preprocess_schema_version <= 0
+        ):
             raise ValueError("preprocess_schema_version must be a positive integer")
         html_strip = cast("object", self.html_strip)
         if not isinstance(html_strip, bool):
             raise ValueError("html_strip must be a boolean")
         max_emitted_bytes = cast("object", self.max_emitted_bytes)
-        if isinstance(max_emitted_bytes, bool) or not isinstance(
-            max_emitted_bytes, int
-        ) or max_emitted_bytes <= 0:
+        if (
+            isinstance(max_emitted_bytes, bool)
+            or not isinstance(max_emitted_bytes, int)
+            or max_emitted_bytes <= 0
+        ):
             raise ValueError("max_emitted_bytes must be a positive integer")
         if self.execution_mode not in {"default", "off"}:
             raise ValueError(

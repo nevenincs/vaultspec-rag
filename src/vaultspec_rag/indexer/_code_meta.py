@@ -221,8 +221,7 @@ def publish_meta_from_file_states(
                 assert state.content_hash is not None
                 stream.write(",\n")
                 stream.write(
-                    f"  {json.dumps(state.rel_path)}: "
-                    f"{json.dumps(state.content_hash)}"
+                    f"  {json.dumps(state.rel_path)}: {json.dumps(state.content_hash)}"
                 )
                 count += 1
             stream.write("\n}\n")

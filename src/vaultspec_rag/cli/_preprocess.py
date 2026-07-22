@@ -434,9 +434,7 @@ def handle_preprocess_status(
             extractor_versions = sorted(
                 {rule.extractor_version for rule in config.rules}
             )
-            path_independent_rules = sum(
-                rule.path_independent for rule in config.rules
-            )
+            path_independent_rules = sum(rule.path_independent for rule in config.rules)
 
     effective = _would_run(mode, rule_count)
 
