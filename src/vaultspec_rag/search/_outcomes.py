@@ -83,6 +83,11 @@ class CombinedSearchOutcome:
         return any(statuses) and not all(statuses)
 
     @property
+    def ok(self) -> bool:
+        """Return whether at least one domain completed successfully."""
+        return any((self.vault.ok, self.code.ok, self.document.ok))
+
+    @property
     def results(self) -> list[AnySearchResult]:
         """Select deterministic top-k from every successful domain."""
         candidates = [

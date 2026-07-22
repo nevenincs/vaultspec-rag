@@ -59,3 +59,29 @@ def test_failed_domain_cannot_smuggle_results() -> None:
             "failed",
             "failure",
         )
+
+
+def test_combined_outcome_distinguishes_complete_failure_from_empty_success() -> None:
+    outcome = CombinedSearchOutcome(
+        SearchDomainOutcome.failure(
+            PublicSourceType.VAULT,
+            "vault_unavailable",
+            "vault count failed",
+        ),
+        SearchDomainOutcome.failure(
+            PublicSourceType.CODE,
+            "code_unavailable",
+            "code count failed",
+        ),
+        SearchDomainOutcome.failure(
+            PublicSourceType.DOCUMENT,
+            "document_unavailable",
+            "document count failed",
+        ),
+        top_k=5,
+    )
+
+    assert not outcome.ok
+    assert not outcome.partial
+    assert outcome.results == []
+    assert all(not domain["ok"] for domain in outcome.domain_status_payload().values())

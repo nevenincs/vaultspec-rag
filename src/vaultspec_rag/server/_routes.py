@@ -1092,6 +1092,12 @@ def _dispatch_public_search(
     """Dispatch one canonical source without adapter fallback."""
     import vaultspec_rag
 
+    from .._public_search import (
+        CodeCombinedSearchFilters,
+        DocumentCombinedSearchFilters,
+        VaultCombinedSearchFilters,
+    )
+
     if search_type is PublicSourceType.VAULT:
         results, timings = vaultspec_rag.search_vault_timed(
             root,
@@ -1143,6 +1149,33 @@ def _dispatch_public_search(
         root,
         query,
         top_k=top_k,
+        vault_filters=VaultCombinedSearchFilters(
+            doc_type=payload.get("doc_type"),
+            feature=payload.get("feature"),
+            date=payload.get("date"),
+            tag=payload.get("tag"),
+            intent=payload.get("intent"),
+        ),
+        code_filters=CodeCombinedSearchFilters(
+            language=payload.get("language"),
+            path=payload.get("path"),
+            node_type=payload.get("node_type"),
+            function_name=payload.get("function_name"),
+            class_name=payload.get("class_name"),
+            include_paths=tuple(payload.get("include_paths") or ()),
+            exclude_paths=tuple(payload.get("exclude_paths") or ()),
+            dedup_locales=payload.get("dedup_locales"),
+            prefer=payload.get("prefer"),
+            exclude_domains=tuple(payload.get("exclude_domains") or ()),
+            only_domains=tuple(payload.get("only_domains") or ()),
+            include_domains=tuple(payload.get("include_domains") or ()),
+        ),
+        document_filters=DocumentCombinedSearchFilters(
+            source_path=payload.get("source_path"),
+            extractor_id=payload.get("extractor_id"),
+            extractor_version=payload.get("extractor_version"),
+            locator_kind=payload.get("locator_kind"),
+        ),
     )
     return combined.results, timings, combined
 
@@ -1208,8 +1241,17 @@ def _execute_search_request(
             "index_state": index_state,
         }
         if combined is not None:
+            response["ok"] = combined.ok
             response["partial"] = combined.partial
             response["domains"] = combined.domain_status_payload()
+            if not combined.ok:
+                response.update(
+                    {
+                        "error": "combined_search_failed",
+                        "message": "Every combined-search domain failed.",
+                        "summary": "Combined search failed in every domain.",
+                    }
+                )
         return response
     except RegistryFullError as exc:
         return _m._registry_full_error_dict(exc)
@@ -1275,6 +1317,8 @@ async def search_route(request: Request) -> JSONResponse:
     _m.incr("search_total")
     _m.observe("search_last_duration_seconds", total_seconds)
     response_status = 200
+    if search_type is PublicSourceType.COMBINED and result.get("ok") is False:
+        response_status = 503
     if (
         classification is None
         and "results" in result
@@ -1359,7 +1403,127 @@ def _preprocess_preflight(
     }
 
 
-async def reindex_route(request: Request) -> JSONResponse:  # noqa: PLR0912
+def _reindex_sources(source_type: PublicSourceType) -> tuple[PublicSourceType, ...]:
+    """Expand the combined compatibility source into independent domains."""
+    if source_type is not PublicSourceType.COMBINED:
+        return (source_type,)
+    return (
+        PublicSourceType.VAULT,
+        PublicSourceType.CODE,
+        PublicSourceType.DOCUMENT,
+    )
+
+
+def _reindex_failure(*, error_kind: str, detail: str) -> dict[str, object]:
+    """Return one stable failed-domain response."""
+    return {
+        "ok": False,
+        "job_id": None,
+        "error_kind": error_kind,
+        "detail": detail,
+        "outcome": {
+            "status": "error",
+            "code": error_kind,
+            "message": detail,
+        },
+    }
+
+
+async def _validate_reindex_domains(
+    request: Request,
+    payload: dict[str, object],
+    source_type: PublicSourceType,
+    *,
+    clean: bool,
+) -> tuple[list[tuple[PublicSourceType, Any]], dict[str, dict[str, object]]]:
+    """Validate every requested domain without collapsing combined admission."""
+    validated: list[tuple[PublicSourceType, Any]] = []
+    failures: dict[str, dict[str, object]] = {}
+    for source in _reindex_sources(source_type):
+        canonical_payload = {
+            **payload,
+            "operation": "index",
+            "source": source.value,
+            "mode": "rebuild" if clean else "incremental",
+            "start_paused": False,
+        }
+        try:
+            request_parts = await _validated_index_request(
+                request,
+                canonical_payload,
+                idempotency_suffix=(
+                    source.value if source_type is PublicSourceType.COMBINED else None
+                ),
+            )
+        except _InvalidJobRequestError as exc:
+            if source_type is not PublicSourceType.COMBINED:
+                raise
+            failures[source.value] = _reindex_failure(
+                error_kind=exc.code,
+                detail=str(exc),
+            )
+        else:
+            validated.append((source, request_parts))
+    return validated, failures
+
+
+async def _create_reindex_domains(
+    validated: list[tuple[PublicSourceType, Any]],
+    source_type: PublicSourceType,
+    domain_responses: dict[str, dict[str, object]],
+) -> tuple[Path | None, CodeIndexPreflight | None]:
+    """Create independently validated jobs and retain per-domain failures."""
+    from ..job_models import JobOutcomeStatus
+    from ..jobs import get_job_manager
+
+    manager = get_job_manager()
+    first_root: Path | None = None
+    first_admission: CodeIndexPreflight | None = None
+    for source, request_parts in validated:
+        spec, initiator, start_paused, idempotency_key, admission = request_parts
+        try:
+            outcome = await _run_in_thread(
+                partial(
+                    manager.create,
+                    spec,
+                    initiator,
+                    start_paused=start_paused,
+                    idempotency_key=idempotency_key,
+                )
+            )
+            outcome = await _activate_index_job(outcome, admission)
+        except Exception as exc:
+            if source_type is not PublicSourceType.COMBINED:
+                raise
+            logger.exception("Combined reindex failed for %s", source.value)
+            domain_responses[source.value] = _reindex_failure(
+                error_kind=type(exc).__name__,
+                detail=str(exc) or type(exc).__name__,
+            )
+            continue
+        ok = outcome.status is not JobOutcomeStatus.ERROR
+        domain: dict[str, object] = {
+            "ok": ok,
+            "job_id": outcome.job.id if outcome.job is not None else None,
+            "error_kind": None if ok else outcome.code,
+            "detail": outcome.message,
+            "outcome": outcome.to_dict(),
+        }
+        if admission is not None:
+            domain["admission"] = _index_admission_preflight(admission)
+        domain_responses[source.value] = domain
+        if outcome.job is not None:
+            first_root = Path(str(outcome.job.spec.project_root))
+        if (
+            first_admission is None
+            and source is PublicSourceType.CODE
+            and admission is not None
+        ):
+            first_admission = cast("CodeIndexPreflight", admission)
+    return first_root, first_admission
+
+
+async def reindex_route(request: Request) -> JSONResponse:
     """Validated compatibility adapter over canonical ``POST /jobs`` creation."""
     denied = require_token(request)
     if denied is not None:
@@ -1382,81 +1546,20 @@ async def reindex_route(request: Request) -> JSONResponse:  # noqa: PLR0912
                 "invalid_job_spec",
                 "clean must be a boolean when provided.",
             )
-        sources = (
-            (
-                PublicSourceType.VAULT,
-                PublicSourceType.CODE,
-                PublicSourceType.DOCUMENT,
-            )
-            if source_type is PublicSourceType.COMBINED
-            else (source_type,)
+        validated, domain_responses = await _validate_reindex_domains(
+            request,
+            payload,
+            source_type,
+            clean=clean,
         )
-        validated = []
-        for source in sources:
-            canonical_payload = dict(payload)
-            canonical_payload.update(
-                {
-                    "operation": "index",
-                    "source": source.value,
-                    "mode": "rebuild" if clean else "incremental",
-                    "start_paused": False,
-                }
-            )
-            validated.append(
-                (
-                    source,
-                    await _validated_index_request(
-                        request,
-                        canonical_payload,
-                        idempotency_suffix=(
-                            source.value
-                            if source_type is PublicSourceType.COMBINED
-                            else None
-                        ),
-                    ),
-                )
-            )
     except _InvalidJobRequestError as exc:
         return _job_error("create", exc.code, str(exc))
 
-    from ..job_models import JobOutcomeStatus
-    from ..jobs import get_job_manager
-
-    manager = get_job_manager()
-    domain_responses: dict[str, dict[str, object]] = {}
-    first_root: Path | None = None
-    first_admission: CodeIndexPreflight | None = None
-    for source, request_parts in validated:
-        spec, initiator, start_paused, idempotency_key, admission = request_parts
-        outcome = await _run_in_thread(
-            partial(
-                manager.create,
-                spec,
-                initiator,
-                start_paused=start_paused,
-                idempotency_key=idempotency_key,
-            )
-        )
-        outcome = await _activate_index_job(outcome, admission)
-        ok = outcome.status is not JobOutcomeStatus.ERROR
-        domain: dict[str, object] = {
-            "ok": ok,
-            "job_id": outcome.job.id if outcome.job is not None else None,
-            "error_kind": None if ok else outcome.code,
-            "detail": outcome.message,
-            "outcome": outcome.to_dict(),
-        }
-        if admission is not None:
-            domain["admission"] = _index_admission_preflight(admission)
-        domain_responses[source.value] = domain
-        if outcome.job is not None:
-            first_root = Path(str(outcome.job.spec.project_root))
-        if (
-            first_admission is None
-            and source is PublicSourceType.CODE
-            and admission is not None
-        ):
-            first_admission = cast("CodeIndexPreflight", admission)
+    first_root, first_admission = await _create_reindex_domains(
+        validated,
+        source_type,
+        domain_responses,
+    )
 
     if first_root is not None:
         _m._ensure_watcher_soon(first_root)

@@ -37,6 +37,9 @@ if TYPE_CHECKING:
     # so it does not defeat the lazy loading the runtime path provides.
     from ._public_index import DocumentScanResult, scan_documents
     from ._public_search import (
+        CodeCombinedSearchFilters,
+        DocumentCombinedSearchFilters,
+        VaultCombinedSearchFilters,
         search_combined,
         search_combined_timed,
         search_documents,
@@ -86,6 +89,9 @@ if TYPE_CHECKING:
 # Maps each lazily-exported public name to the submodule that defines it.
 # Accessing ``vaultspec_rag.<name>`` imports the owning submodule on demand.
 _LAZY_EXPORTS: dict[str, str] = {
+    "CodeCombinedSearchFilters": "_public_search",
+    "DocumentCombinedSearchFilters": "_public_search",
+    "VaultCombinedSearchFilters": "_public_search",
     "DocumentScanResult": "_public_index",
     "scan_documents": "_public_index",
     "search_combined": "_public_search",
@@ -133,8 +139,10 @@ _LAZY_EXPORTS: dict[str, str] = {
 
 __all__ = [
     "CodeChunk",
+    "CodeCombinedSearchFilters",
     "CodebaseIndexer",
     "CombinedSearchOutcome",
+    "DocumentCombinedSearchFilters",
     "DocumentIndexer",
     "DocumentScanResult",
     "DocumentSearchResult",
@@ -145,6 +153,7 @@ __all__ = [
     "SearchDomainOutcome",
     "SearchResult",
     "SparseResult",
+    "VaultCombinedSearchFilters",
     "VaultDocument",
     "VaultIndexer",
     "VaultSearcher",

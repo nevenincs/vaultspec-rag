@@ -924,14 +924,16 @@ def _build_http_search_payload(
     if unlike_ids:
         payload["unlike_ids"] = list(unlike_ids)
     selected_filters: dict[str, object | None] = {}
-    if source is PublicSourceType.CODE:
-        selected_filters = {
-            "language": language,
-            "path": path,
-            "node_type": node_type,
-            "function_name": function_name,
-            "class_name": class_name,
-        }
+    if source in {PublicSourceType.CODE, PublicSourceType.COMBINED}:
+        selected_filters.update(
+            {
+                "language": language,
+                "path": path,
+                "node_type": node_type,
+                "function_name": function_name,
+                "class_name": class_name,
+            }
+        )
         if include_paths:
             payload["include_paths"] = list(include_paths)
         if exclude_paths:
@@ -942,16 +944,18 @@ def _build_http_search_payload(
             payload["dedup_locales"] = bool(dedup_locales)
         if prefer is not None:
             payload["prefer"] = prefer
-    elif source is PublicSourceType.VAULT:
-        selected_filters = {
-            "doc_type": doc_type,
-            "feature": feature,
-            "date": date,
-            "tag": tag,
-            "intent": intent,
-        }
-    elif source is PublicSourceType.DOCUMENT:
-        selected_filters = dict(document_filters or {})
+    if source in {PublicSourceType.VAULT, PublicSourceType.COMBINED}:
+        selected_filters.update(
+            {
+                "doc_type": doc_type,
+                "feature": feature,
+                "date": date,
+                "tag": tag,
+                "intent": intent,
+            }
+        )
+    if source in {PublicSourceType.DOCUMENT, PublicSourceType.COMBINED}:
+        selected_filters.update(document_filters or {})
     for key, value in selected_filters.items():
         if value is not None:
             payload[key] = value
@@ -1024,6 +1028,18 @@ def _try_http_search(
             "error": exc.error_kind,
             "message": str(exc),
             **exc.as_payload(),
+        }
+
+    if source in {PublicSourceType.DOCUMENT, PublicSourceType.COMBINED} and (
+        like_ids or unlike_ids
+    ):
+        return {
+            "ok": False,
+            "error": "unsupported_feedback_for_search_type",
+            "message": (
+                f"feedback point ids are not supported for {source.value} search; "
+                "omit like_ids and unlike_ids"
+            ),
         }
 
     try:

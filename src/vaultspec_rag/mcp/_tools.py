@@ -304,8 +304,6 @@ async def search_documents(
     extractor_id: str | None = None,
     extractor_version: str | None = None,
     locator_kind: str | None = None,
-    like_ids: list[str | int] | None = None,
-    unlike_ids: list[str | int] | None = None,
     project_root: str | None = None,
 ) -> SearchResults:
     """Search independently indexed extracted-document content."""
@@ -324,19 +322,36 @@ async def search_documents(
                 "extractor_version": extractor_version,
                 "locator_kind": locator_kind,
             },
-            like_ids=like_ids,
-            unlike_ids=unlike_ids,
         )
     )
     return SearchResults.model_validate(_search_envelope_or_raise(result))
 
 
 @mcp.tool(title="Search all index domains", annotations=_READ_ONLY)
-async def search_combined(
+async def search_combined(  # noqa: PLR0913 - MCP exposes each owned filter explicitly.
     query: str,
     top_k: int = _DEFAULT_TOP_K,
-    like_ids: list[str | int] | None = None,
-    unlike_ids: list[str | int] | None = None,
+    language: str | None = None,
+    path: str | None = None,
+    node_type: str | None = None,
+    function_name: str | None = None,
+    class_name: str | None = None,
+    include_paths: list[str] | None = None,
+    exclude_paths: list[str] | None = None,
+    dedup_locales: bool | None = None,
+    prefer: str | None = None,
+    exclude_domains: list[str] | None = None,
+    only_domains: list[str] | None = None,
+    include_domains: list[str] | None = None,
+    doc_type: str | None = None,
+    feature: str | None = None,
+    date: str | None = None,
+    tag: str | None = None,
+    intent: str | None = None,
+    source_path: str | None = None,
+    extractor_id: str | None = None,
+    extractor_version: str | None = None,
+    locator_kind: str | None = None,
     project_root: str | None = None,
 ) -> SearchResults:
     """Search vault, code, and document domains with partial outcomes intact."""
@@ -344,13 +359,36 @@ async def search_combined(
     result = await _delegate(
         partial(
             _try_http_search,
-            query,
+            _with_domain_tokens(
+                query,
+                exclude_domains=exclude_domains,
+                only_domains=only_domains,
+                include_domains=include_domains,
+            ),
             _canonical_tool_source("combined"),
             top_k,
             port,
             project_root or "",
-            like_ids=like_ids,
-            unlike_ids=unlike_ids,
+            language=language,
+            path=path,
+            node_type=node_type,
+            function_name=function_name,
+            class_name=class_name,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            dedup_locales=dedup_locales,
+            prefer=prefer,
+            doc_type=doc_type,
+            feature=feature,
+            date=date,
+            tag=tag,
+            intent=intent,
+            document_filters={
+                "source_path": source_path,
+                "extractor_id": extractor_id,
+                "extractor_version": extractor_version,
+                "locator_kind": locator_kind,
+            },
         )
     )
     return SearchResults.model_validate(_search_envelope_or_raise(result))
