@@ -46,7 +46,11 @@ class TestBlake2bFileHashing:
         """CodebaseIndexer._write_meta produces blake2b hex digests."""
         from ..indexer import CodebaseIndexer
 
-        indexer = object.__new__(CodebaseIndexer)
+        indexer = CodebaseIndexer(
+            tmp_path,
+            typing.cast("typing.Any", None),
+            typing.cast("typing.Any", None),
+        )
         indexer._meta_path = tmp_path / ".rag" / "code_meta.json"
 
         test_file = tmp_path / "test.py"
@@ -58,7 +62,10 @@ class TestBlake2bFileHashing:
         assert len(digest) == 128
 
         # Round-trip: write and load back
-        indexer._write_meta({"test.py": digest})
+        indexer._write_meta(
+            {"test.py": digest},
+            policy=indexer._resolve_operation_policy(),
+        )
         loaded = indexer._load_meta()
         assert loaded["test.py"] == digest
         assert len(loaded["test.py"]) == 128
@@ -338,13 +345,21 @@ class TestGraphCacheInvalidation:
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
     def test_reindex_vault_resets_graph_cache(self):
+        """The vault attempt must invalidate the graph cache when it finishes.
+
+        Job control moved the indexing body out of ``start_reindex_vault``,
+        which now only admits and dispatches; the attempt runner owns the
+        post-index work. The invariant is unchanged - a vault reindex that
+        does not invalidate leaves the next search re-ranking on a stale
+        graph - so the guard follows the behaviour to its new home.
+        """
         import inspect
 
-        from ..jobs import start_reindex_vault
+        from .. import job_dispatch
 
-        src = inspect.getsource(start_reindex_vault)
+        src = inspect.getsource(job_dispatch._run_vault_attempt)
         assert "graph_cache" in src and "invalidate" in src, (
-            "start_reindex_vault must call slot.graph_cache.invalidate() "
+            "the vault index attempt must call slot.graph_cache.invalidate() "
             "after indexing to prevent stale graph re-ranking "
             "(R29-H3 fix, unified in D3)"
         )

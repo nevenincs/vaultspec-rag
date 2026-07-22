@@ -8,6 +8,7 @@ constructed - the classification methods operate on the resolved config alone.
 """
 
 import json
+import os
 from collections.abc import Generator
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -17,10 +18,12 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  
     reset_config,
 )
 
+from ..config import EnvVar
 from ..config import reset_config as reset_rag_config
 from ..indexer import CodebaseIndexer
 from ..indexer import _config_epoch as ce
-from ..indexer._preprocess_config import OnError, PreprocessConfig, PreprocessRule
+from ..indexer._content_policy import ContentKind
+from ..indexer._preprocess_config import OnError, PreprocessRule
 from ..progress import NullProgressReporter
 
 if TYPE_CHECKING:
@@ -55,6 +58,8 @@ def _rule(
         command=command,
         entry_point=entry_point,
         priority=priority,
+        target=ContentKind.DOCUMENT,
+        extractor_version="1.0",
         on_error=on_error,
         timeout_s=timeout_s,
         options=options or {},
@@ -73,22 +78,49 @@ def _make_indexer(root: Path) -> CodebaseIndexer:
 
 def _stamp(indexer: CodebaseIndexer) -> tuple[str, str]:
     """Resolve current epochs and persist a sidecar stamped with them."""
-    inputs = indexer._resolve_scan_inputs()
-    membership, content = indexer._compute_code_epochs(inputs)
+    policy = indexer._resolve_operation_policy()
+    membership, content = indexer._compute_code_epochs(policy)
     indexer._membership_epoch = membership
     indexer._content_epoch = content
-    indexer._write_meta({"anchor.py": "0" * 128})
+    indexer._write_meta(
+        {"anchor.py": "0" * 128},
+        policy=policy,
+    )
     return membership, content
 
 
 def _classify_current(indexer: CodebaseIndexer) -> str:
-    inputs = indexer._resolve_scan_inputs()
-    membership, content = indexer._compute_code_epochs(inputs)
+    policy = indexer._resolve_operation_policy()
+    membership, content = indexer._compute_code_epochs(policy)
     return indexer._classify_config_drift(membership, content)
 
 
+def _write_preprocess_rule(
+    root: Path,
+    *,
+    pattern: str,
+    command: str,
+    target: ContentKind = ContentKind.DOCUMENT,
+) -> None:
+    """Write one real versioned preprocessing rule for drift coverage."""
+    (root / ".vaultragpreprocess.toml").write_text(
+        "\n".join(
+            (
+                "version = 2",
+                "[[rule]]",
+                f"pattern = {json.dumps(pattern)}",
+                f"command = {json.dumps(command)}",
+                f"target = {json.dumps(target.value)}",
+                'extractor_version = "1.0"',
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+
 class TestMembershipEpochFunction:
-    def test_stable_across_gitignore_reorder(self) -> None:
+    def test_changes_across_gitignore_reorder(self) -> None:
         a = ce.code_membership_epoch(
             gitignore_patterns=["a/", "b/", "c/"],
             vaultragignore_patterns=[],
@@ -99,7 +131,7 @@ class TestMembershipEpochFunction:
             vaultragignore_patterns=[],
             preprocess_rules=[],
         )
-        assert a == b
+        assert a != b
 
     def test_changes_on_gitignore_pattern_add(self) -> None:
         a = ce.code_membership_epoch(
@@ -280,14 +312,21 @@ class TestCodeDriftClassification:
         ignore.write_text("\n", encoding="utf-8")
         assert _classify_current(indexer) == "unscoped"
 
-    def test_html_strip_flip_forces_clean(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_html_strip_flip_forces_clean(self, tmp_path: Path) -> None:
         indexer = _make_indexer(tmp_path)
         _stamp(indexer)
-        monkeypatch.setenv("VAULTSPEC_RAG_HTML_STRIP", "0")
-        reset_rag_config()
-        assert _classify_current(indexer) == "clean"
+        name = EnvVar.HTML_STRIP.value
+        previous = os.environ.get(name)
+        try:
+            os.environ[name] = "0"
+            reset_rag_config()
+            assert _classify_current(indexer) == "clean"
+        finally:
+            if previous is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = previous
+            reset_rag_config()
 
     def test_legacy_sidecar_forces_unscoped_once(self, tmp_path: Path) -> None:
         indexer = _make_indexer(tmp_path)
@@ -300,71 +339,51 @@ class TestCodeDriftClassification:
         )
         assert _classify_current(indexer) == "unscoped"
 
-    def test_preprocess_pattern_change_forces_unscoped(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_preprocess_pattern_change_forces_unscoped(self, tmp_path: Path) -> None:
         indexer = _make_indexer(tmp_path)
-        cfg1 = PreprocessConfig([_rule("*.pdf", command="x {path}")])
-        monkeypatch.setattr(indexer, "_build_preprocess_rules", lambda: cfg1)
+        _write_preprocess_rule(tmp_path, pattern="*.pdf", command="x {path}")
         _stamp(indexer)
-        cfg2 = PreprocessConfig([_rule("*.docx", command="x {path}")])
-        monkeypatch.setattr(indexer, "_build_preprocess_rules", lambda: cfg2)
+        _write_preprocess_rule(tmp_path, pattern="*.docx", command="x {path}")
         assert _classify_current(indexer) == "unscoped"
 
-    def test_preprocess_command_change_forces_clean(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_preprocess_command_change_forces_clean(self, tmp_path: Path) -> None:
         indexer = _make_indexer(tmp_path)
-        cfg1 = PreprocessConfig([_rule("*.pdf", command="old {path}")])
-        monkeypatch.setattr(indexer, "_build_preprocess_rules", lambda: cfg1)
+        _write_preprocess_rule(
+            tmp_path,
+            pattern="*.pdf",
+            command="old {path}",
+            target=ContentKind.CODE,
+        )
         _stamp(indexer)
-        cfg2 = PreprocessConfig([_rule("*.pdf", command="new {path}")])
-        monkeypatch.setattr(indexer, "_build_preprocess_rules", lambda: cfg2)
+        _write_preprocess_rule(
+            tmp_path,
+            pattern="*.pdf",
+            command="new {path}",
+            target=ContentKind.CODE,
+        )
         assert _classify_current(indexer) == "clean"
 
 
-class TestScopedEpochCost:
-    def test_scoped_scan_reuses_inputs_without_extra_walk(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+class TestScopedSnapshot:
+    def test_scoped_scan_uses_resolved_ignore_snapshot(self, tmp_path: Path) -> None:
         (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
         indexer = _make_indexer(tmp_path)
-
-        walks = {"n": 0}
-        original = indexer._collect_gitignore_patterns
-
-        def _spy() -> list[str]:
-            walks["n"] += 1
-            return original()
-
-        monkeypatch.setattr(indexer, "_collect_gitignore_patterns", _spy)
-
-        # Resolving inputs walks the tree exactly once for the .gitignore rglob.
-        inputs = indexer._resolve_scan_inputs()
-        assert walks["n"] == 1
-
-        # The scoped scan, handed the resolved inputs, adds no second walk.
-        indexer._begin_preprocess_run()
+        policy = indexer._resolve_operation_policy()
+        (tmp_path / ".vaultragignore").write_text("a.py\n", encoding="utf-8")
+        indexer._begin_preprocess_run(policy)
         to_hash, _delete = indexer._scan_changed_paths(
-            [tmp_path / "a.py"], NullProgressReporter(), inputs
+            [tmp_path / "a.py"], NullProgressReporter(), policy
         )
-        assert walks["n"] == 1
         assert "a.py" in to_hash
 
-    def test_scoped_scan_without_inputs_walks_once(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_fresh_snapshot_observes_new_ignore(self, tmp_path: Path) -> None:
         (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+        (tmp_path / ".vaultragignore").write_text("a.py\n", encoding="utf-8")
         indexer = _make_indexer(tmp_path)
-
-        walks = {"n": 0}
-        original = indexer._collect_gitignore_patterns
-
-        def _spy() -> list[str]:
-            walks["n"] += 1
-            return original()
-
-        monkeypatch.setattr(indexer, "_collect_gitignore_patterns", _spy)
-        indexer._begin_preprocess_run()
-        indexer._scan_changed_paths([tmp_path / "a.py"], NullProgressReporter(), None)
-        assert walks["n"] == 1
+        policy = indexer._resolve_operation_policy()
+        indexer._begin_preprocess_run(policy)
+        to_hash, deleted = indexer._scan_changed_paths(
+            [tmp_path / "a.py"], NullProgressReporter(), policy
+        )
+        assert not to_hash
+        assert deleted == {"a.py"}
