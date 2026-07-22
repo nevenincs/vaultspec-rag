@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import json
 import os
 import pathlib
 import threading
@@ -15,14 +17,16 @@ from ..index_profiles import get_index_support_profile
 from ..job_control import NO_RUN_CONTROL
 from . import _chunk_worker, _preprocess_glue
 from ._content_policy import ContentKind, RootContentPolicy, SourceProfileVersion
+from ._document_checkpoint import DocumentRunCheckpoint, DocumentRunConfiguration
 from ._document_meta import (
     DocumentFileMetadata,
-    DocumentIndexMetadata,
     document_meta_compatible,
     document_metadata_path,
     read_document_meta,
-    write_document_meta,
 )
+from ._file_state import FileStateKind
+from ._run_ledger import FinalizationPhase, RunOperation
+from ._run_policy import RunPolicy
 from ._streaming import (
     encode_and_upsert_document_slice,
     iter_weighted_document_slices,
@@ -266,6 +270,7 @@ class DocumentIndexer:
         policy: ResolvedIndexPolicy,
         prep: PreprocessContext | None,
         budget: _DocumentResourceBudget,
+        checkpoint: DocumentRunCheckpoint,
         reporter: ProgressReporter,
         run_control: RunControl,
     ) -> tuple[DocumentFileMetadata | None, int, str | None]:
@@ -284,6 +289,12 @@ class DocumentIndexer:
         )
         if result.preprocess_status == "skipped":
             reason = result.preprocess_reason or "document extraction skipped"
+            checkpoint.record_processing_failure(
+                result.rel_path,
+                FileStateKind.EXTRACT_RETRYABLE,
+                reason,
+                content_hash=result.content_hash,
+            )
             return None, 0, f"{result.rel_path}: {reason}"
         from ..config import get_config
 
@@ -297,24 +308,45 @@ class DocumentIndexer:
         point_ids: list[str] = []
         reporter.phase_start("embed + upsert document chunks", None)
         try:
-            for weighted in weighted_slices:
+            iterator = iter(weighted_slices)
+            weighted = next(iterator, None)
+            ordinal = 0
+            while weighted is not None:
                 run_control.checkpoint()
+                following = next(iterator, None)
                 selected = list(weighted.chunks)
                 budget.reserve(len(selected), weighted.estimated_bytes)
-                self.store.disk_headroom_preflight(len(selected))
-                encode_and_upsert_document_slice(
-                    selected,
-                    model=self.model,
-                    store=self.store,
-                    gpu_lock=self._gpu_lock,
-                    encode_batch_size=int(cfg.embedding_encode_batch_size),
-                    run_control=run_control,
+                unit = checkpoint.unit_for(
+                    result.rel_path,
+                    result.content_hash,
+                    ordinal,
+                    is_file_end=following is None,
+                    point_ids=tuple(chunk.id for chunk in selected),
                 )
+                if not checkpoint.slice_committed(unit):
+                    self.store.disk_headroom_preflight(len(selected))
+                    encode_and_upsert_document_slice(
+                        selected,
+                        model=self.model,
+                        store=self.store,
+                        gpu_lock=self._gpu_lock,
+                        encode_batch_size=int(cfg.embedding_encode_batch_size),
+                        run_control=run_control,
+                    )
+                    checkpoint.record_confirmed_slice(unit)
                 point_ids.extend(chunk.id for chunk in selected)
                 reporter.advance(len(selected))
+                ordinal += 1
+                weighted = following
         finally:
             reporter.phase_end()
         if not point_ids:
+            checkpoint.record_processing_failure(
+                result.rel_path,
+                FileStateKind.CHUNK_FAILED,
+                "document produced no decodable content",
+                content_hash=result.content_hash,
+            )
             return None, 0, f"{result.rel_path}: document produced no decodable content"
         return (
             DocumentFileMetadata(
@@ -326,20 +358,90 @@ class DocumentIndexer:
             None,
         )
 
-    @staticmethod
-    def _metadata(
-        policy: ResolvedIndexPolicy,
-        files: Iterable[DocumentFileMetadata],
+    def _open_checkpoint(
+        self,
         *,
-        complete: bool,
-    ) -> DocumentIndexMetadata:
-        fingerprints = policy.fingerprints_for(ContentKind.DOCUMENT)
-        return DocumentIndexMetadata(
-            fingerprints.membership,
-            fingerprints.content,
-            policy.fingerprints.snapshot,
-            tuple(sorted(files, key=lambda item: item.source_path)),
-            complete=complete,
+        policy: ResolvedIndexPolicy,
+        operation: RunOperation,
+        clean: bool,
+        limits: SupportProfileLimits,
+        run_control: RunControl,
+    ) -> DocumentRunCheckpoint:
+        """Open one compatible storage-confirmed document generation."""
+        from ..config import get_config
+
+        config = get_config()
+        sparse_enabled = bool(config.sparse_enabled)
+        sparse_dimension_value = getattr(self.model, "sparse_dimension", None)
+        if sparse_enabled:
+            if type(sparse_dimension_value) is not int or sparse_dimension_value <= 0:
+                raise RuntimeError("loaded sparse model has no valid output dimension")
+            sparse_dimension = sparse_dimension_value
+        else:
+            sparse_dimension = 1
+        model_identity = json.dumps(
+            {
+                "dense": str(config.embedding_model),
+                "sparse": str(config.sparse_model) if sparse_enabled else None,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return DocumentRunCheckpoint.open(
+            data_root=self._data_root,
+            root_dir=self.root_dir,
+            policy=policy,
+            run_policy=RunPolicy.from_config(run_control=run_control),
+            operation=operation,
+            clean=clean,
+            model_identity=model_identity,
+            dense_dimensions=int(config.embedding_dimension),
+            configuration=DocumentRunConfiguration(
+                slice_max_chunks=max(1, int(config.embedding_batch_size)),
+                source_bytes=limits.source_bytes,
+                generated_chunks=limits.generated_chunks,
+                weighted_bytes=limits.weighted_bytes,
+                sparse_enabled=sparse_enabled,
+                sparse_dimension=sparse_dimension,
+                encode_batch_size=int(config.embedding_encode_batch_size),
+            ),
+        )
+
+    @staticmethod
+    def _checkpoint_files(
+        checkpoint: DocumentRunCheckpoint,
+    ) -> dict[str, DocumentFileMetadata]:
+        """Project the carried ledger manifest into document metadata rows."""
+        return {
+            rel: DocumentFileMetadata(rel, content_hash, point_ids)
+            for rel, (content_hash, point_ids) in checkpoint.current_files().items()
+        }
+
+    def _resume_pending_finalization(
+        self,
+        checkpoint: DocumentRunCheckpoint,
+        *,
+        reporter: ProgressReporter,
+        started: float,
+    ) -> IndexResult | None:
+        """Finish a storage-complete document generation without re-ingestion."""
+        if checkpoint.generation.finalization_phase is FinalizationPhase.INGESTING:
+            return None
+        reporter.phase_start("resume document publication", 1)
+        try:
+            checkpoint.publish_metadata(self._meta_path)
+            checkpoint.publish_generation()
+            reporter.advance(1)
+        finally:
+            reporter.phase_end()
+        return self._finish_result(
+            started=started,
+            added=0,
+            updated=0,
+            removed=0,
+            files=0,
+            preprocess_ok=0,
+            failures=[],
         )
 
     def _finish_result(
@@ -373,6 +475,7 @@ class DocumentIndexer:
         policy: ResolvedIndexPolicy,
         prep: PreprocessContext | None,
         budget: _DocumentResourceBudget,
+        checkpoint: DocumentRunCheckpoint,
         previous_files: dict[str, DocumentFileMetadata],
         reporter: ProgressReporter,
         run_control: RunControl,
@@ -396,6 +499,7 @@ class DocumentIndexer:
                 policy=policy,
                 prep=prep,
                 budget=budget,
+                checkpoint=checkpoint,
                 reporter=reporter,
                 run_control=run_control,
             )
@@ -415,21 +519,30 @@ class DocumentIndexer:
                 counts.preprocess_ok += 1
         return published, counts, failures
 
-    @staticmethod
-    def _stale_point_ids(
+    def _reconcile_full_stale(
+        self,
         previous_files: dict[str, DocumentFileMetadata],
         published: Iterable[DocumentFileMetadata],
-    ) -> list[str]:
-        """Return prior point IDs absent from the new per-path publication."""
+        checkpoint: DocumentRunCheckpoint,
+    ) -> int:
+        """Delete and checkpoint points absent from the replacement manifest."""
         published_by_path = {item.source_path: item for item in published}
-        stale_ids: list[str] = []
+        removed = 0
         for rel, old in previous_files.items():
             current = published_by_path.get(rel)
             if current is None:
-                stale_ids.extend(old.point_ids)
+                stale_ids = old.point_ids
             else:
-                stale_ids.extend(set(old.point_ids) - set(current.point_ids))
-        return stale_ids
+                stale_ids = tuple(sorted(set(old.point_ids) - set(current.point_ids)))
+            if not stale_ids:
+                continue
+            self.store.delete_document_content_chunks(list(stale_ids))
+            if current is None:
+                checkpoint.record_confirmed_deletion(rel, stale_ids)
+            else:
+                checkpoint.record_confirmed_stale_deletion(rel, stale_ids)
+            removed += len(stale_ids)
+        return removed
 
     def _select_incremental_paths(
         self,
@@ -461,6 +574,7 @@ class DocumentIndexer:
         policy: ResolvedIndexPolicy,
         prep: PreprocessContext | None,
         budget: _DocumentResourceBudget,
+        checkpoint: DocumentRunCheckpoint,
         previous_files: dict[str, DocumentFileMetadata],
         reporter: ProgressReporter,
         run_control: RunControl,
@@ -477,6 +591,7 @@ class DocumentIndexer:
                 old = current.pop(rel, None)
                 if old is not None:
                     self.store.delete_document_content_chunks(list(old.point_ids))
+                    checkpoint.record_confirmed_deletion(rel, old.point_ids)
                     counts.removed += len(old.point_ids)
                 continue
             if policy.execution_mode == "off" and policy.match_preprocess(rel):
@@ -490,6 +605,7 @@ class DocumentIndexer:
                 policy=policy,
                 prep=prep,
                 budget=budget,
+                checkpoint=checkpoint,
                 reporter=reporter,
                 run_control=run_control,
             )
@@ -505,6 +621,7 @@ class DocumentIndexer:
                 metadata=metadata,
                 chunk_count=chunk_count,
                 counts=counts,
+                checkpoint=checkpoint,
             )
             if policy.match_preprocess(rel) is not None:
                 counts.preprocess_ok += 1
@@ -519,12 +636,15 @@ class DocumentIndexer:
         metadata: DocumentFileMetadata,
         chunk_count: int,
         counts: _DocumentRunCounts,
+        checkpoint: DocumentRunCheckpoint,
     ) -> None:
         """Replace one file generation and account for obsolete points."""
         current[rel] = metadata
         obsolete = set(old.point_ids if old else ()) - set(metadata.point_ids)
         if obsolete:
-            self.store.delete_document_content_chunks(sorted(obsolete))
+            obsolete_ids = tuple(sorted(obsolete))
+            self.store.delete_document_content_chunks(list(obsolete_ids))
+            checkpoint.record_confirmed_stale_deletion(rel, obsolete_ids)
             counts.removed += len(obsolete)
         if old is None:
             counts.added += chunk_count
@@ -545,41 +665,73 @@ class DocumentIndexer:
         limits = self._support_limits()
         prep = self._preprocess_context(policy, limits)
         budget = _DocumentResourceBudget(limits)
+        preprocessing_disabled = policy.execution_mode == "off" and any(
+            policy.match_preprocess(path.relative_to(self.root_dir).as_posix())
+            is not None
+            for path in paths
+        )
+        effective_clean = clean and not preprocessing_disabled
+        checkpoint = self._open_checkpoint(
+            policy=policy,
+            operation=RunOperation.FULL,
+            clean=effective_clean,
+            limits=limits,
+            run_control=run_control,
+        )
+        resumed = self._resume_pending_finalization(
+            checkpoint,
+            reporter=reporter,
+            started=started,
+        )
+        if resumed is not None:
+            return resumed
         with self._writer_lock:
             previous = read_document_meta(self._meta_path)
-            previous_files = (
-                {item.source_path: item for item in previous.files} if previous else {}
-            )
-            preprocessing_disabled = policy.execution_mode == "off" and any(
-                policy.match_preprocess(path.relative_to(self.root_dir).as_posix())
+            previous_files = self._checkpoint_files(checkpoint)
+            if not previous_files and previous is not None:
+                previous_files = {item.source_path: item for item in previous.files}
+            clean_has_confirmed_units = (
+                effective_clean
+                and next(
+                    checkpoint.ledger.iter_units(checkpoint.generation_id),
+                    None,
+                )
                 is not None
-                for path in paths
             )
-            if clean and not preprocessing_disabled:
-                self.store.drop_document_table()
-                previous_files = {}
-            self.store.ensure_document_table()
-            published, counts, failures = self._publish_full_paths(
-                paths,
-                policy=policy,
-                prep=prep,
-                budget=budget,
-                previous_files=previous_files,
-                reporter=reporter,
-                run_control=run_control,
+            publication_span = (
+                checkpoint.run_policy.protected("clean document publication")
+                if effective_clean
+                else contextlib.nullcontext()
             )
-            stale_ids = self._stale_point_ids(previous_files, published)
-            if stale_ids:
-                self.store.delete_document_content_chunks(sorted(stale_ids))
-            write_document_meta(
-                self._meta_path,
-                self._metadata(policy, published, complete=not failures),
-            )
+            with checkpoint.preserve_incomplete_generation(), publication_span:
+                if effective_clean and not clean_has_confirmed_units:
+                    self.store.drop_document_table()
+                self.store.ensure_document_table()
+                published, counts, failures = self._publish_full_paths(
+                    paths,
+                    policy=policy,
+                    prep=prep,
+                    budget=budget,
+                    checkpoint=checkpoint,
+                    previous_files=previous_files,
+                    reporter=reporter,
+                    run_control=run_control,
+                )
+                removed = self._reconcile_full_stale(
+                    previous_files,
+                    published,
+                    checkpoint,
+                )
+                if failures:
+                    checkpoint.mark_failed("; ".join(failures))
+                else:
+                    checkpoint.publish_metadata(self._meta_path)
+                    checkpoint.publish_generation()
             return self._finish_result(
                 started=started,
                 added=counts.added,
                 updated=counts.updated,
-                removed=len(stale_ids),
+                removed=removed,
                 files=len(paths),
                 preprocess_ok=counts.preprocess_ok,
                 failures=failures,
@@ -622,27 +774,50 @@ class DocumentIndexer:
                 run_control=run_control,
             )
 
-        previous_files = {item.source_path: item for item in previous.files}
+        operation = (
+            RunOperation.SCOPED_INCREMENTAL
+            if changed_paths is not None
+            else RunOperation.INCREMENTAL
+        )
+        checkpoint = self._open_checkpoint(
+            policy=policy,
+            operation=operation,
+            clean=False,
+            limits=limits,
+            run_control=run_control,
+        )
+        resumed = self._resume_pending_finalization(
+            checkpoint,
+            reporter=reporter,
+            started=started,
+        )
+        if resumed is not None:
+            return resumed
+        previous_files = self._checkpoint_files(checkpoint)
+        if not previous_files:
+            previous_files = {item.source_path: item for item in previous.files}
         selected = self._select_incremental_paths(
             authorized_paths,
             previous_files,
             scoped=changed_paths is not None,
         )
 
-        with self._writer_lock:
-            current, counts, failures = self._reconcile_incremental_paths(
+        with self._writer_lock, checkpoint.preserve_incomplete_generation():
+            _current, counts, failures = self._reconcile_incremental_paths(
                 selected,
                 policy=policy,
                 prep=prep,
                 budget=budget,
+                checkpoint=checkpoint,
                 previous_files=previous_files,
                 reporter=reporter,
                 run_control=run_control,
             )
-            write_document_meta(
-                self._meta_path,
-                self._metadata(policy, current.values(), complete=not failures),
-            )
+            if failures:
+                checkpoint.mark_failed("; ".join(failures))
+            else:
+                checkpoint.publish_metadata(self._meta_path)
+                checkpoint.publish_generation()
             return self._finish_result(
                 started=started,
                 added=counts.added,

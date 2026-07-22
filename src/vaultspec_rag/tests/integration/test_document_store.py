@@ -330,6 +330,7 @@ def test_document_collection_and_metadata_appear_in_real_snapshot_manifest(
             membership_fingerprint="membership-v1",
             content_fingerprint="content-v1",
             policy_snapshot="policy-v1",
+            generation_id="generation-v1",
             files=(
                 DocumentFileMetadata(
                     source_path=chunk.payload.source_path,

@@ -11,9 +11,13 @@ from .. import store_schema
 from ._document_identity import normalize_document_source_path
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
     from pathlib import Path
 
+    from ._file_state import FileState
+
 __all__ = [
+    "DOCUMENT_EMBED_SCHEMA",
     "DOCUMENT_META_FILENAME",
     "DOCUMENT_META_SCHEMA_VERSION",
     "DocumentFileMetadata",
@@ -21,12 +25,14 @@ __all__ = [
     "DocumentMetadataError",
     "document_meta_compatible",
     "document_metadata_path",
+    "publish_document_meta_from_file_states",
     "read_document_meta",
     "write_document_meta",
 ]
 
 DOCUMENT_META_FILENAME = "document_index_meta.json"
-DOCUMENT_META_SCHEMA_VERSION = 1
+DOCUMENT_META_SCHEMA_VERSION = 2
+DOCUMENT_EMBED_SCHEMA = 1
 
 
 class DocumentMetadataError(ValueError):
@@ -61,12 +67,13 @@ class DocumentIndexMetadata:
     content_fingerprint: str
     policy_snapshot: str
     files: tuple[DocumentFileMetadata, ...]
+    generation_id: str | None = None
     meta_schema_version: int = DOCUMENT_META_SCHEMA_VERSION
     storage_schema_version: int = store_schema.STORAGE_SCHEMA_VERSION
     complete: bool = True
 
     def __post_init__(self) -> None:
-        if self.meta_schema_version != DOCUMENT_META_SCHEMA_VERSION:
+        if self.meta_schema_version not in (1, DOCUMENT_META_SCHEMA_VERSION):
             raise ValueError("unsupported document metadata schema version")
         if self.storage_schema_version != store_schema.STORAGE_SCHEMA_VERSION:
             raise ValueError("unsupported document storage schema version")
@@ -78,6 +85,11 @@ class DocumentIndexMetadata:
             )
         ):
             raise ValueError("document metadata fingerprints must not be empty")
+        if self.meta_schema_version == DOCUMENT_META_SCHEMA_VERSION:
+            if self.generation_id is None or not self.generation_id.strip():
+                raise ValueError("current document metadata requires a generation ID")
+        elif self.generation_id is not None:
+            raise ValueError("legacy document metadata cannot carry a generation ID")
         paths = tuple(file.source_path for file in self.files)
         if paths != tuple(sorted(paths)) or len(set(paths)) != len(paths):
             raise ValueError("document metadata files must be uniquely path-sorted")
@@ -91,6 +103,7 @@ class DocumentIndexMetadata:
             "membership_fingerprint": self.membership_fingerprint,
             "content_fingerprint": self.content_fingerprint,
             "policy_snapshot": self.policy_snapshot,
+            "generation_id": self.generation_id,
             "complete": self.complete,
             "files": [
                 {
@@ -161,14 +174,22 @@ def _from_payload(value: object) -> DocumentIndexMetadata:
         complete = payload.get("complete")
         if not isinstance(complete, bool):
             raise DocumentMetadataError("document metadata completeness is invalid")
+        meta_schema_version = _required_int(payload, "meta_schema_version")
+        raw_generation_id = payload.get("generation_id")
+        generation_id = (
+            _required_str(payload, "generation_id")
+            if raw_generation_id is not None
+            else None
+        )
         return DocumentIndexMetadata(
             _required_str(payload, "membership_fingerprint"),
             _required_str(payload, "content_fingerprint"),
             _required_str(payload, "policy_snapshot"),
             files,
-            _required_int(payload, "meta_schema_version"),
-            _required_int(payload, "storage_schema_version"),
-            complete,
+            generation_id=generation_id,
+            meta_schema_version=meta_schema_version,
+            storage_schema_version=_required_int(payload, "storage_schema_version"),
+            complete=complete,
         )
     except (TypeError, ValueError) as exc:
         if isinstance(exc, DocumentMetadataError):
@@ -207,6 +228,53 @@ def write_document_meta(meta_path: Path, metadata: DocumentIndexMetadata) -> Non
             tmp_path.unlink()
 
 
+def publish_document_meta_from_file_states(
+    meta_path: Path,
+    states: Iterable[FileState],
+    *,
+    point_ids_for_path: Callable[[str], Iterable[str]],
+    generation_id: str,
+    membership_fingerprint: str,
+    content_fingerprint: str,
+    policy_snapshot: str,
+) -> int:
+    """Atomically publish one complete document manifest from ledger evidence."""
+    from ._file_state import FileStateKind
+
+    files: list[DocumentFileMetadata] = []
+    previous_path: str | None = None
+    for state in states:
+        if not state.converged:
+            raise ValueError(
+                f"cannot publish unresolved file state for {state.rel_path}"
+            )
+        if previous_path is not None and state.rel_path <= previous_path:
+            raise ValueError("ledger file states must be uniquely path-sorted")
+        previous_path = state.rel_path
+        if state.state is not FileStateKind.INDEXED:
+            continue
+        assert state.content_hash is not None
+        point_ids = tuple(point_ids_for_path(state.rel_path))
+        if not point_ids:
+            raise ValueError(
+                f"indexed document state has no retained points for {state.rel_path}"
+            )
+        files.append(
+            DocumentFileMetadata(state.rel_path, state.content_hash, point_ids)
+        )
+    write_document_meta(
+        meta_path,
+        DocumentIndexMetadata(
+            membership_fingerprint,
+            content_fingerprint,
+            policy_snapshot,
+            tuple(files),
+            generation_id=generation_id,
+        ),
+    )
+    return len(files)
+
+
 def document_meta_compatible(
     metadata: DocumentIndexMetadata | None,
     *,
@@ -217,6 +285,7 @@ def document_meta_compatible(
     return bool(
         metadata is not None
         and metadata.complete
+        and metadata.generation_id is not None
         and metadata.membership_fingerprint == membership_fingerprint
         and metadata.content_fingerprint == content_fingerprint
         and metadata.meta_schema_version == DOCUMENT_META_SCHEMA_VERSION
