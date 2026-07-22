@@ -39,7 +39,8 @@ completion, row-wise iteration, compaction ownership, concurrent access, and
 test integrity. Follow-up commits `5a45e96`, `7a97d85`, and `3746e99` were
 re-reviewed as remediation landed. Commit `ec6fa09` was then reviewed for the
 four remaining medium-severity remediations and the bounded atomic metadata
-publication helper.
+publication helper. Commit `19e23de` was reviewed as the final publication-temp
+ownership remediation.
 
 ## Findings
 
@@ -181,6 +182,13 @@ partially written sidecar and breaking the atomic replacement guarantee. Give
 each invocation a unique temporary file in the target directory, replace only
 that owned file, and add a real overlapping-publisher regression.
 
+Commit `19e23de` resolves this finding. Each invocation now creates and owns a
+unique temporary file in the target directory, writes through its original file
+descriptor, and replaces the target only after synchronization and close. The
+real two-thread regression overlaps publication after both temporary files are
+open, requires both publishers to complete, proves the resulting sidecar
+contains one whole generation, and verifies that no temporary file remains.
+
 ### test-integrity | low | Existing tests use production behavior and real SQLite
 
 The reviewed test module imports production types directly and uses real
@@ -191,14 +199,12 @@ decisions.
 
 ## Recommendations
 
-All original high- and medium-severity ledger findings were resolved by
-`5a45e96`, `7a97d85`, `3746e99`, and `ec6fa09`. Before the metadata helper is
-integrated into concurrent or recoverable publication, isolate each temporary
-file by invocation and verify overlapping real publishers. A forced
+All high- and medium-severity ledger and metadata-publication findings were
+resolved by `5a45e96`, `7a97d85`, `3746e99`, `ec6fa09`, and `19e23de`. A forced
 mid-transaction rollback and additional malformed file-state and commit-unit
-rows are lower-severity test-matrix expansions.
+rows remain lower-severity test-matrix expansions.
 
-The final focused review run passed all seven ledger tests in 1.43 seconds.
-Ruff and Ty reported no finding in the reviewed production and test files. A
-real overlapping metadata-publication probe reproduced the temporary-file
-ownership conflict without altering production code.
+The final focused review run passed all eight ledger tests in 1.47 seconds.
+Ruff and Ty reported no finding in the reviewed production and test files. The
+real overlapping metadata-publication regression passed and left no temporary
+files behind.
