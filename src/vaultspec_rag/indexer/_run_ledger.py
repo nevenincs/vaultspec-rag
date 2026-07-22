@@ -374,19 +374,39 @@ class RunLedger:
                 ):
                     raise RunLedgerStateError("commit-unit identity collision")
                 return False
+            indexed = connection.execute(
+                """
+                SELECT 1 FROM file_states
+                WHERE generation_id = ? AND rel_path = ? AND state = ?
+                """,
+                (generation_id, unit.rel_path, FileStateKind.INDEXED.value),
+            ).fetchone()
+            if indexed is not None:
+                raise RunLedgerStateError(
+                    "cannot add commit units after a path is indexed"
+                )
             sibling = connection.execute(
                 """
-                SELECT source_digest FROM commit_units
+                SELECT source_digest, MAX(segment_ordinal) AS last_ordinal,
+                       MAX(is_file_end) AS has_file_end, COUNT(*) AS unit_count
+                FROM commit_units
                 WHERE generation_id = ? AND rel_path = ? AND unit_kind = ?
-                LIMIT 1
                 """,
                 (generation_id, unit.rel_path, unit.kind.value),
             ).fetchone()
-            if sibling is not None and (
-                sibling["source_digest"] != unit.source_digest
-            ):
+            assert sibling is not None
+            sibling_count = int(sibling["unit_count"])
+            if sibling_count and sibling["source_digest"] != unit.source_digest:
                 raise RunLedgerStateError(
                     "segments for one path must share one source digest"
+                )
+            if sibling_count and bool(sibling["has_file_end"]):
+                raise RunLedgerStateError(
+                    "cannot add a segment after the file-end commit unit"
+                )
+            if unit.segment_ordinal != sibling_count:
+                raise RunLedgerStateError(
+                    "commit-unit segment ordinals must be contiguous"
                 )
             for point_id in unit.point_ids:
                 owner = connection.execute(
@@ -453,21 +473,22 @@ class RunLedger:
         """Return whether every segment (or the deletion unit) is committed."""
         _validate_rel_path(rel_path)
         with self._connect() as connection:
-            return self._file_complete_in_connection(
+            complete, _digest = self._file_completion_evidence(
                 connection,
                 generation_id,
                 rel_path,
             )
+            return complete
 
     @staticmethod
-    def _file_complete_in_connection(
+    def _file_completion_evidence(
         connection: sqlite3.Connection,
         generation_id: str,
         rel_path: str,
-    ) -> bool:
+    ) -> tuple[bool, str | None]:
         rows = connection.execute(
             """
-            SELECT unit_kind, segment_ordinal, is_file_end
+            SELECT unit_kind, source_digest, segment_ordinal, is_file_end
             FROM commit_units
             WHERE generation_id = ? AND rel_path = ?
             ORDER BY segment_ordinal
@@ -475,20 +496,26 @@ class RunLedger:
             (generation_id, rel_path),
         ).fetchall()
         if not rows:
-            return False
-        kinds = {row["unit_kind"] for row in rows}
-        if len(kinds) != 1:
-            return False
-        end_ordinals = [
-            row["segment_ordinal"] for row in rows if bool(row["is_file_end"])
-        ]
-        if len(end_ordinals) != 1:
-            return False
-        expected = end_ordinals[0] + 1
-        return (
-            len(rows) == expected
-            and [row["segment_ordinal"] for row in rows] == list(range(expected))
-        )
+            return False, None
+        by_kind: dict[str, list[sqlite3.Row]] = {}
+        for row in rows:
+            by_kind.setdefault(str(row["unit_kind"]), []).append(row)
+        for kind_rows in by_kind.values():
+            end_ordinals = [
+                row["segment_ordinal"]
+                for row in kind_rows
+                if bool(row["is_file_end"])
+            ]
+            if len(end_ordinals) != 1:
+                return False, None
+            expected = end_ordinals[0] + 1
+            if len(kind_rows) != expected or [
+                row["segment_ordinal"] for row in kind_rows
+            ] != list(range(expected)):
+                return False, None
+        upserts = by_kind.get(CommitUnitKind.UPSERT.value)
+        digest = str(upserts[0]["source_digest"]) if upserts else None
+        return True, digest
 
     def iter_units(
         self,
@@ -554,17 +581,24 @@ class RunLedger:
                 raise RunLedgerStateError(
                     "cannot change file state after finalization begins"
                 )
-            if (
-                state.state is FileStateKind.INDEXED
-                and not self._file_complete_in_connection(
+            if state.state is FileStateKind.INDEXED:
+                complete, committed_digest = self._file_completion_evidence(
                     connection,
                     generation_id,
                     state.rel_path,
                 )
-            ):
-                raise RunLedgerStateError(
-                    "indexed file state requires every storage-confirmed segment"
-                )
+                if not complete:
+                    raise RunLedgerStateError(
+                        "indexed file state requires every storage-confirmed segment"
+                    )
+                if committed_digest is None:
+                    raise RunLedgerStateError(
+                        "indexed file state requires storage-confirmed upsert units"
+                    )
+                if committed_digest != state.content_hash:
+                    raise RunLedgerStateError(
+                        "indexed file hash differs from storage-confirmed units"
+                    )
             connection.execute(
                 """
                 INSERT INTO file_states (
@@ -869,9 +903,14 @@ class RunLedger:
             signature_payload["source_type"]
         )
         signature_payload["operation"] = RunOperation(signature_payload["operation"])
+        signature = RunSignature(**signature_payload)
+        if signature.fingerprint != row["signature_fingerprint"]:
+            raise RunLedgerCorruptionError(
+                "stored generation signature does not match its fingerprint"
+            )
         return RunGeneration(
             generation_id=row["generation_id"],
-            signature=RunSignature(**signature_payload),
+            signature=signature,
             finalization_phase=FinalizationPhase(row["finalization_phase"]),
             terminal_state=RunTerminalState(row["terminal_state"]),
             destructive_intent=bool(row["destructive_intent"]),
