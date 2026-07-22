@@ -10,6 +10,8 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from .._job_errors import JobError, JobErrorKind
+from ..index_profiles import get_index_support_profile
 from ..job_control import NO_RUN_CONTROL
 from . import _chunk_worker, _preprocess_glue
 from ._content_policy import ContentKind, RootContentPolicy, SourceProfileVersion
@@ -21,19 +23,24 @@ from ._document_meta import (
     read_document_meta,
     write_document_meta,
 )
-from ._streaming import encode_and_upsert_document_slice
+from ._streaming import (
+    encode_and_upsert_document_slice,
+    iter_weighted_document_slices,
+)
 from ._vault_prep import IndexResult
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from ..embeddings import EmbeddingModel
+    from ..index_profiles import SupportProfileLimits
     from ..job_control import RunControl
     from ..progress import ProgressReporter
-    from ..store import DocumentChunk, VaultStore
+    from ..store import VaultStore
+    from ._preprocess_config import PreprocessContext
     from ._resolved_policy import ResolvedIndexPolicy
 
-__all__ = ["DocumentIndexPreflight", "DocumentIndexer"]
+__all__ = ["DocumentIndexPreflight", "DocumentIndexer", "DocumentScopedPreflight"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +50,45 @@ class DocumentIndexPreflight:
     root_dir: pathlib.Path
     policy: ResolvedIndexPolicy
     files: tuple[pathlib.Path, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentScopedPreflight:
+    """Read-only authority for one exact set of changed document paths."""
+
+    root_dir: pathlib.Path
+    policy: ResolvedIndexPolicy
+    changed_paths: tuple[pathlib.Path, ...]
+
+
+type DocumentExecutionPreflight = DocumentIndexPreflight | DocumentScopedPreflight
+
+
+@dataclass(slots=True)
+class _DocumentResourceBudget:
+    """Aggregate generated-chunk and weighted-byte ceiling for one operation."""
+
+    limits: SupportProfileLimits
+    generated_chunks: int = 0
+    weighted_bytes: int = 0
+
+    def reserve(self, chunks: int, weighted_bytes: int) -> None:
+        next_chunks = self.generated_chunks + chunks
+        next_weight = self.weighted_bytes + weighted_bytes
+        if next_chunks > self.limits.generated_chunks:
+            raise JobError(
+                JobErrorKind.CORPUS_LIMIT_EXCEEDED,
+                f"document generated_chunks is {next_chunks}; support profile permits "
+                f"{self.limits.generated_chunks}",
+            )
+        if next_weight > self.limits.weighted_bytes:
+            raise JobError(
+                JobErrorKind.CORPUS_LIMIT_EXCEEDED,
+                f"document weighted_bytes is {next_weight}; support profile permits "
+                f"{self.limits.weighted_bytes}",
+            )
+        self.generated_chunks = next_chunks
+        self.weighted_bytes = next_weight
 
 
 class DocumentIndexer:
@@ -66,7 +112,7 @@ class DocumentIndexer:
         self._content_policy = content_policy or RootContentPolicy(
             SourceProfileVersion.CONVENTIONAL_V1
         )
-        self._writer_lock = threading.Lock()
+        self._writer_lock = threading.RLock()
         from ..config import get_config
 
         self._data_root = self.root_dir / get_config().data_dir
@@ -110,35 +156,92 @@ class DocumentIndexer:
         policy = self.resolve_policy_snapshot()
         return DocumentIndexPreflight(self.root_dir, policy, self._discover(policy))
 
+    def _normalize_changed_paths(
+        self,
+        changed_paths: Iterable[pathlib.Path],
+    ) -> tuple[pathlib.Path, ...]:
+        normalized = {path.resolve() for path in changed_paths}
+        if any(not path.is_relative_to(self.root_dir) for path in normalized):
+            raise ValueError("document index scope contains a path outside its root")
+        return tuple(sorted(normalized, key=lambda path: path.as_posix()))
+
+    def preflight_changed_paths(
+        self,
+        changed_paths: Iterable[pathlib.Path],
+    ) -> DocumentScopedPreflight:
+        """Resolve policy and classify only the exact caller-selected scope."""
+        policy = self.resolve_policy_snapshot()
+        normalized = self._normalize_changed_paths(changed_paths)
+        for path in normalized:
+            policy.classify(path.relative_to(self.root_dir).as_posix())
+        return DocumentScopedPreflight(self.root_dir, policy, normalized)
+
     def _accept_preflight(
         self,
-        preflight: DocumentIndexPreflight | None,
+        preflight: DocumentExecutionPreflight | None,
+        *,
+        changed_paths: Iterable[pathlib.Path] | None,
     ) -> tuple[ResolvedIndexPolicy, tuple[pathlib.Path, ...]]:
-        authority = preflight or self.preflight_content()
-        if authority.root_dir != self.root_dir or authority.policy.root_dir != self.root_dir:
+        authority = preflight or (
+            self.preflight_content()
+            if changed_paths is None
+            else self.preflight_changed_paths(changed_paths)
+        )
+        if (
+            authority.root_dir != self.root_dir
+            or authority.policy.root_dir != self.root_dir
+        ):
             raise ValueError("document index preflight belongs to another root")
-        if any(not path.resolve().is_relative_to(self.root_dir) for path in authority.files):
-            raise ValueError("document preflight contains a path outside its root")
-        for path in authority.files:
-            rel = path.relative_to(self.root_dir).as_posix()
-            disposition = authority.policy.classify(rel).disposition
-            if not (disposition.admitted and disposition.kind is ContentKind.DOCUMENT):
-                raise ValueError("document preflight contains a non-document path")
-        return authority.policy, authority.files
+        if isinstance(authority, DocumentIndexPreflight):
+            if changed_paths is not None:
+                raise ValueError("full document preflight cannot authorize scoped work")
+            if any(
+                not path.resolve().is_relative_to(self.root_dir)
+                for path in authority.files
+            ):
+                raise ValueError("document preflight contains a path outside its root")
+            for path in authority.files:
+                rel = path.relative_to(self.root_dir).as_posix()
+                disposition = authority.policy.classify(rel).disposition
+                if not (
+                    disposition.admitted and disposition.kind is ContentKind.DOCUMENT
+                ):
+                    raise ValueError("document preflight contains a non-document path")
+            return authority.policy, authority.files
+        if changed_paths is None:
+            raise ValueError("scoped document preflight requires changed paths")
+        normalized = self._normalize_changed_paths(changed_paths)
+        if normalized != authority.changed_paths:
+            raise ValueError("document index scope does not match its preflight")
+        return authority.policy, authority.changed_paths
 
     @staticmethod
     def _hash_path(path: pathlib.Path) -> str:
-        return hashlib.blake2b(path.read_bytes()).hexdigest()
+        with path.open("rb") as stream:
+            return hashlib.file_digest(stream, "blake2b").hexdigest()
 
-    def _preprocess_context(self, policy: ResolvedIndexPolicy):
+    @staticmethod
+    def _support_limits() -> SupportProfileLimits:
+        from ..config import get_config
+
+        return get_index_support_profile(get_config().index_support_profile).document
+
+    def _preprocess_context(
+        self,
+        policy: ResolvedIndexPolicy,
+        limits: SupportProfileLimits,
+    ) -> PreprocessContext | None:
         return _preprocess_glue.resolve_policy_preprocess_context(
             self.root_dir,
             self._data_root,
             policy,
+            max_source_bytes=limits.source_bytes,
         )
 
     @staticmethod
-    def _execution_policy(policy: ResolvedIndexPolicy) -> _chunk_worker.ChunkExecutionPolicy:
+    def _execution_policy(
+        policy: ResolvedIndexPolicy,
+    ) -> _chunk_worker.ChunkExecutionPolicy:
         return _chunk_worker.ChunkExecutionPolicy(
             encoding=policy.decoder.encoding,
             errors=policy.decoder.errors,
@@ -151,6 +254,8 @@ class DocumentIndexer:
         path: pathlib.Path,
         *,
         policy: ResolvedIndexPolicy,
+        prep: PreprocessContext | None,
+        budget: _DocumentResourceBudget,
         reporter: ProgressReporter,
         run_control: RunControl,
     ) -> tuple[DocumentFileMetadata | None, int, str | None]:
@@ -159,8 +264,9 @@ class DocumentIndexer:
         result = _chunk_worker.chunk_document_and_hash_file(
             path,
             self.root_dir,
-            self._preprocess_context(policy),
+            prep,
             self._execution_policy(policy),
+            run_control,
         )
         if result.preprocess_status == "skipped":
             reason = result.preprocess_reason or "document extraction skipped"
@@ -171,19 +277,31 @@ class DocumentIndexer:
 
         from ..config import get_config
 
-        slice_size = max(1, int(get_config().embedding_batch_size))
+        cfg = get_config()
+        slice_size = max(1, int(cfg.embedding_batch_size))
+        weighted_slices = tuple(
+            iter_weighted_document_slices(
+                chunks,
+                max_chunks=slice_size,
+                run_control=run_control,
+            )
+        )
+        budget.reserve(
+            len(chunks),
+            sum(weighted.estimated_bytes for weighted in weighted_slices),
+        )
         self.store.disk_headroom_preflight(len(chunks))
         reporter.phase_start("embed + upsert document chunks", len(chunks))
         try:
-            for offset in range(0, len(chunks), slice_size):
+            for weighted in weighted_slices:
                 run_control.checkpoint()
-                selected = chunks[offset : offset + slice_size]
+                selected = list(weighted.chunks)
                 encode_and_upsert_document_slice(
                     selected,
                     model=self.model,
                     store=self.store,
                     gpu_lock=self._gpu_lock,
-                    encode_batch_size=int(get_config().embedding_encode_batch_size),
+                    encode_batch_size=int(cfg.embedding_encode_batch_size),
                     run_control=run_control,
                 )
                 reporter.advance(len(selected))
@@ -203,6 +321,8 @@ class DocumentIndexer:
     def _metadata(
         policy: ResolvedIndexPolicy,
         files: Iterable[DocumentFileMetadata],
+        *,
+        complete: bool,
     ) -> DocumentIndexMetadata:
         fingerprints = policy.fingerprints_for(ContentKind.DOCUMENT)
         return DocumentIndexMetadata(
@@ -210,6 +330,7 @@ class DocumentIndexer:
             fingerprints.content,
             policy.fingerprints.snapshot,
             tuple(sorted(files, key=lambda item: item.source_path)),
+            complete=complete,
         )
 
     def _finish_result(
@@ -236,7 +357,7 @@ class DocumentIndexer:
             preprocess_failures=failures,
         )
 
-    def full_index(
+    def full_index(  # noqa: PLR0912 - explicit reconciliation dispositions
         self,
         *,
         clean: bool = False,
@@ -246,11 +367,21 @@ class DocumentIndexer:
     ) -> IndexResult:
         """Reconcile the complete explicitly routed document set."""
         started = time.monotonic()
-        policy, paths = self._accept_preflight(preflight)
+        policy, paths = self._accept_preflight(preflight, changed_paths=None)
+        limits = self._support_limits()
+        prep = self._preprocess_context(policy, limits)
+        budget = _DocumentResourceBudget(limits)
         with self._writer_lock:
             previous = read_document_meta(self._meta_path)
-            previous_files = {item.source_path: item for item in previous.files} if previous else {}
-            if clean:
+            previous_files = (
+                {item.source_path: item for item in previous.files} if previous else {}
+            )
+            preprocessing_disabled = policy.execution_mode == "off" and any(
+                policy.match_preprocess(path.relative_to(self.root_dir).as_posix())
+                is not None
+                for path in paths
+            )
+            if clean and not preprocessing_disabled:
                 self.store.drop_document_table()
                 previous_files = {}
             self.store.ensure_document_table()
@@ -259,15 +390,22 @@ class DocumentIndexer:
             failures: list[str] = []
             for path in paths:
                 rel = path.relative_to(self.root_dir).as_posix()
-                if policy.execution_mode == "off" and policy.match_preprocess(rel) is not None:
+                if (
+                    policy.execution_mode == "off"
+                    and policy.match_preprocess(rel) is not None
+                ):
                     retained = previous_files.get(rel)
                     if retained is not None:
                         published.append(retained)
-                    failures.append(f"{rel}: preprocessing disabled; retained work as stale")
+                    failures.append(
+                        f"{rel}: preprocessing disabled; retained work as stale"
+                    )
                     continue
                 metadata, chunk_count, failure = self._publish_file(
                     path,
                     policy=policy,
+                    prep=prep,
+                    budget=budget,
                     reporter=reporter,
                     run_control=run_control,
                 )
@@ -296,7 +434,10 @@ class DocumentIndexer:
                     stale_ids.extend(set(old.point_ids) - set(current.point_ids))
             if stale_ids:
                 self.store.delete_document_content_chunks(sorted(stale_ids))
-            write_document_meta(self._meta_path, self._metadata(policy, published))
+            write_document_meta(
+                self._meta_path,
+                self._metadata(policy, published, complete=not failures),
+            )
             return self._finish_result(
                 started=started,
                 added=added,
@@ -307,17 +448,23 @@ class DocumentIndexer:
                 failures=failures,
             )
 
-    def incremental_index(
+    def incremental_index(  # noqa: PLR0912 - explicit reconciliation dispositions
         self,
         *,
         reporter: ProgressReporter,
         changed_paths: Iterable[pathlib.Path] | None = None,
-        preflight: DocumentIndexPreflight | None = None,
+        preflight: DocumentExecutionPreflight | None = None,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Reconcile changed documents, or discover changes when scope is omitted."""
         started = time.monotonic()
-        policy, discovered = self._accept_preflight(preflight)
+        policy, authorized_paths = self._accept_preflight(
+            preflight,
+            changed_paths=changed_paths,
+        )
+        limits = self._support_limits()
+        prep = self._preprocess_context(policy, limits)
+        budget = _DocumentResourceBudget(limits)
         fingerprints = policy.fingerprints_for(ContentKind.DOCUMENT)
         with self._writer_lock:
             previous = read_document_meta(self._meta_path)
@@ -326,20 +473,24 @@ class DocumentIndexer:
                 membership_fingerprint=fingerprints.membership,
                 content_fingerprint=fingerprints.content,
             ):
-                # Release before delegating because full_index owns the same lock.
                 previous = None
         if previous is None:
             return self.full_index(
                 reporter=reporter,
-                preflight=DocumentIndexPreflight(self.root_dir, policy, discovered),
+                preflight=DocumentIndexPreflight(
+                    self.root_dir,
+                    policy,
+                    self._discover(policy),
+                ),
                 run_control=run_control,
             )
 
         previous_files = {item.source_path: item for item in previous.files}
-        discovered_by_path = {
-            path.relative_to(self.root_dir).as_posix(): path for path in discovered
-        }
         if changed_paths is None:
+            discovered_by_path = {
+                path.relative_to(self.root_dir).as_posix(): path
+                for path in authorized_paths
+            }
             selected = {
                 rel
                 for rel, path in discovered_by_path.items()
@@ -348,10 +499,9 @@ class DocumentIndexer:
             }
             selected.update(set(previous_files) - set(discovered_by_path))
         else:
-            normalized = {path.resolve() for path in changed_paths}
-            if any(not path.is_relative_to(self.root_dir) for path in normalized):
-                raise ValueError("document index scope contains a path outside its root")
-            selected = {path.relative_to(self.root_dir).as_posix() for path in normalized}
+            selected = {
+                path.relative_to(self.root_dir).as_posix() for path in authorized_paths
+            }
 
         with self._writer_lock:
             current = dict(previous_files)
@@ -368,13 +518,20 @@ class DocumentIndexer:
                         self.store.delete_document_content_chunks(list(old.point_ids))
                         removed += len(old.point_ids)
                     continue
-                if policy.execution_mode == "off" and policy.match_preprocess(rel) is not None:
-                    failures.append(f"{rel}: preprocessing disabled; retained work as stale")
+                if (
+                    policy.execution_mode == "off"
+                    and policy.match_preprocess(rel) is not None
+                ):
+                    failures.append(
+                        f"{rel}: preprocessing disabled; retained work as stale"
+                    )
                     continue
                 old = current.get(rel)
                 metadata, chunk_count, failure = self._publish_file(
                     path,
                     policy=policy,
+                    prep=prep,
+                    budget=budget,
                     reporter=reporter,
                     run_control=run_control,
                 )
@@ -393,7 +550,10 @@ class DocumentIndexer:
                     updated += chunk_count
                 if policy.match_preprocess(rel) is not None:
                     preprocess_ok += 1
-            write_document_meta(self._meta_path, self._metadata(policy, current.values()))
+            write_document_meta(
+                self._meta_path,
+                self._metadata(policy, current.values(), complete=not failures),
+            )
             return self._finish_result(
                 started=started,
                 added=added,

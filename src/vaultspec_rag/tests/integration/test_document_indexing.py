@@ -76,16 +76,27 @@ def test_raw_document_full_and_scoped_incremental_stay_isolated(
         assert [row["payload"]["source_path"] for row in rows] == ["reference.txt"]
         assert rows[0]["payload"]["content"] == "Initial document-only material."
 
-        source.write_text("Changed document-only material.", encoding="utf-8")
-        outcome = document_indexer.incremental_index(
+        source.write_text("Discovered document-only change.", encoding="utf-8")
+        discovered_outcome = document_indexer.incremental_index(
             reporter=NullProgressReporter(),
-            changed_paths=[source],
             preflight=document_indexer.preflight_content(),
         )
+        assert (discovered_outcome.added, discovered_outcome.updated) == (0, 1)
+
+        source.write_text("Scoped document-only change.", encoding="utf-8")
+        scoped_outcome = document_indexer.incremental_index(
+            reporter=NullProgressReporter(),
+            changed_paths=[source],
+            preflight=document_indexer.preflight_changed_paths([source]),
+        )
         rows, _ = store.scroll_document_content(limit=10)
-        assert (outcome.added, outcome.updated, outcome.preprocess_skipped) == (0, 1, 0)
+        assert (
+            scoped_outcome.added,
+            scoped_outcome.updated,
+            scoped_outcome.preprocess_skipped,
+        ) == (0, 1, 0)
         assert len(rows) == 1
-        assert rows[0]["payload"]["content"] == "Changed document-only material."
+        assert rows[0]["payload"]["content"] == "Scoped document-only change."
         assert store.get_code_ids_by_paths({"reference.txt"}) == []
     finally:
         store.close()
@@ -170,7 +181,9 @@ def test_extracted_document_preserves_native_metadata_without_code_points(
         assert payload["title"] == "Revenue"
         assert payload["section"] == "Summary"
         assert payload["anchor"].endswith("#page=7")
-        assert payload["locator"] == {"kind": "page", "value": 7, "end": None}
+        assert payload["locator_kind"] == "page"
+        assert payload["locator_value_int"] == 7
+        assert payload["locator_end_int"] is None
         assert payload["document_metadata"] == {"category": "finance"}
         assert payload["unit_metadata"] == {"confidence": "verified"}
         assert payload["extractor_id"] == "record-extractor"

@@ -18,13 +18,15 @@ from . import store_schema
 from ._store_locks import FileLock, VaultStoreLockedError, acquire_collection_locks
 from ._store_models import (
     CodeChunk,
-    DocumentChunk,
     VaultChunk,
     VaultDocument,
     _code_chunk_payload,
     _vault_chunk_payload,
     _vault_doc_payload,
     root_collection_prefix,
+)
+from ._store_models import (
+    DocumentChunk as _DocumentChunk,
 )
 from ._store_search import _VaultSearchMixin
 from ._store_writes import StoreWritePolicy, ensure_disk_headroom, run_write_with_retry
@@ -46,7 +48,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "CodeChunk",
-    "DocumentChunk",
     "VaultDocument",
     "VaultStore",
     "VaultStoreLockedError",
@@ -634,7 +635,7 @@ class VaultStore(_VaultSearchMixin):
 
     @staticmethod
     def _document_chunk_payload(
-        chunk: DocumentChunk,
+        chunk: _DocumentChunk,
     ) -> store_schema.DocumentChunkPayload:
         """Build the canonical document collection payload."""
         locator = chunk.payload.locator
@@ -804,7 +805,7 @@ class VaultStore(_VaultSearchMixin):
 
     def upsert_document_content_chunks(
         self,
-        chunks: list[DocumentChunk],
+        chunks: list[_DocumentChunk],
         *,
         write_policy: StoreWritePolicy | None,
     ) -> None:
@@ -1099,10 +1100,16 @@ class VaultStore(_VaultSearchMixin):
         """Return one bounded page from the document collection."""
         from qdrant_client import models
 
-        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+        raw_limit = cast("object", limit)
+        if (
+            isinstance(raw_limit, bool)
+            or not isinstance(raw_limit, int)
+            or raw_limit <= 0
+        ):
             raise ValueError("document scroll limit must be a positive integer")
-        if limit > 1000:
+        if raw_limit > 1000:
             raise ValueError("document scroll limit must not exceed 1000")
+        limit = raw_limit
         scroll_filter = None
         if source_paths is not None:
             if not source_paths:

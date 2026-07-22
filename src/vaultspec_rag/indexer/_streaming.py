@@ -19,26 +19,30 @@ if TYPE_CHECKING:
     import threading
     from collections.abc import Callable, Iterable, Iterator, Sequence
 
+    from .._store_models import DocumentChunk
     from .._store_writes import StoreWritePolicy
     from ..embeddings import EmbeddingModel
     from ..job_control import RunControl
     from ..memory_probe import MemoryProbe
     from ..progress import ProgressReporter
-    from ..store import CodeChunk, DocumentChunk, VaultChunk, VaultDocument, VaultStore
+    from ..store import CodeChunk, VaultChunk, VaultDocument, VaultStore
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "CodeFileSegment",
     "WeightedCodeSlice",
+    "WeightedDocumentSlice",
     "_release_cuda_cache",
     "_stream_encode_and_upsert_codebase",
     "_stream_encode_and_upsert_vault",
     "encode_and_upsert_code_slice",
     "encode_and_upsert_document_slice",
     "estimate_code_chunk_bytes",
+    "estimate_document_chunk_bytes",
     "iter_code_file_segments",
     "iter_weighted_code_slices",
+    "iter_weighted_document_slices",
 ]
 
 
@@ -62,6 +66,20 @@ class _CodeSegmentLimits:
     dense_dimension: int
     sparse_enabled: bool
     sparse_dimension: int
+
+
+@dataclass(frozen=True, slots=True)
+class WeightedDocumentSlice:
+    """One document slice with an exact conservative retained-byte weight."""
+
+    chunks: tuple[DocumentChunk, ...]
+    estimated_bytes: int
+
+    def __post_init__(self) -> None:
+        if not self.chunks:
+            raise ValueError("document slices must contain at least one chunk")
+        if self.estimated_bytes <= 0:
+            raise ValueError("document slice weight must be positive")
 
 
 def _validate_segment_transition(
@@ -583,6 +601,133 @@ def estimate_code_chunk_bytes(
         + dense_bytes
         + sparse_bytes
     )
+
+
+def estimate_document_chunk_bytes(
+    chunk: DocumentChunk,
+    *,
+    dense_dimension: int,
+    sparse_enabled: bool,
+    sparse_dimension: int = _DEFAULT_SPARSE_DIMENSION,
+) -> int:
+    """Estimate retained source, payload, dense, and sparse document bytes."""
+    if dense_dimension <= 0:
+        raise ValueError(
+            f"dense_dimension must be a positive integer, got {dense_dimension}"
+        )
+    if sparse_enabled and (isinstance(sparse_dimension, bool) or sparse_dimension <= 0):
+        raise ValueError(
+            f"sparse_dimension must be a positive integer, got {sparse_dimension}"
+        )
+    payload = chunk.payload
+    locator = payload.locator
+    payload_bytes = sum(
+        _utf8_size(value)
+        for value in (
+            chunk.id,
+            payload.source_path,
+            payload.content_fingerprint,
+            payload.content,
+            payload.title,
+            payload.section,
+            payload.anchor,
+            locator.kind if locator is not None else None,
+            str(locator.value) if locator is not None else None,
+            (
+                str(locator.end)
+                if locator is not None and locator.end is not None
+                else None
+            ),
+            payload.document_metadata.canonical_json,
+            payload.unit_metadata.canonical_json,
+            payload.extractor_id,
+            payload.extractor_version,
+        )
+    )
+    dense_entries = max(dense_dimension, len(chunk.vector))
+    dense_bytes = dense_entries * _DENSE_ELEMENT_LIFETIME_BYTES
+    sparse_bytes = 0
+    if sparse_enabled:
+        sparse_entries = max(
+            sparse_dimension,
+            len(chunk.sparse_indices),
+            len(chunk.sparse_values),
+        )
+        sparse_bytes = sparse_entries * _SPARSE_ENTRY_LIFETIME_BYTES
+    return (
+        _CODE_POINT_FIXED_OVERHEAD_BYTES
+        + _utf8_size(payload.content)
+        + _utf8_size(_document_embed_text(chunk))
+        + payload_bytes
+        + dense_bytes
+        + sparse_bytes
+    )
+
+
+def iter_weighted_document_slices(
+    chunks: Iterable[DocumentChunk],
+    *,
+    max_chunks: int | None = None,
+    max_bytes: int | None = None,
+    dense_dimension: int | None = None,
+    sparse_enabled: bool | None = None,
+    sparse_dimension: int | None = None,
+    run_control: RunControl = NO_RUN_CONTROL,
+) -> Iterator[WeightedDocumentSlice]:
+    """Yield document slices within the configured queue count and byte caps."""
+    from ..config import get_config
+
+    cfg = get_config()
+    chunk_limit = _positive_limit(
+        "max_chunks",
+        int(cfg.index_queue_max_chunks) if max_chunks is None else max_chunks,
+    )
+    byte_limit = _positive_limit(
+        "max_bytes",
+        int(cfg.index_queue_max_bytes) if max_bytes is None else max_bytes,
+    )
+    dimension = _positive_limit(
+        "dense_dimension",
+        int(cfg.embedding_dimension) if dense_dimension is None else dense_dimension,
+    )
+    include_sparse = (
+        bool(cfg.sparse_enabled) if sparse_enabled is None else sparse_enabled
+    )
+    sparse_output_dimension = (
+        _DEFAULT_SPARSE_DIMENSION if sparse_dimension is None else sparse_dimension
+    )
+    if include_sparse:
+        sparse_output_dimension = _positive_limit(
+            "sparse_dimension", sparse_output_dimension
+        )
+
+    selected: list[DocumentChunk] = []
+    selected_bytes = 0
+    for chunk in chunks:
+        run_control.checkpoint()
+        weight = estimate_document_chunk_bytes(
+            chunk,
+            dense_dimension=dimension,
+            sparse_enabled=include_sparse,
+            sparse_dimension=sparse_output_dimension,
+        )
+        if weight > byte_limit:
+            raise ValueError(
+                f"document chunk {chunk.id!r} estimated at {weight} bytes exceeds "
+                f"the queue ceiling {byte_limit}"
+            )
+        if selected and (
+            len(selected) >= chunk_limit or selected_bytes + weight > byte_limit
+        ):
+            yield WeightedDocumentSlice(tuple(selected), selected_bytes)
+            selected.clear()
+            selected_bytes = 0
+            run_control.checkpoint()
+        selected.append(chunk)
+        selected_bytes += weight
+    if selected:
+        yield WeightedDocumentSlice(tuple(selected), selected_bytes)
+    run_control.checkpoint()
 
 
 def _positive_limit(name: str, value: int) -> int:
