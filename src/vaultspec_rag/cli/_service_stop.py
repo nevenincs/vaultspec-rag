@@ -21,9 +21,9 @@ import vaultspec_rag.cli as _cli
 
 from ._app import server_app
 from ._core import logger
+from ._http_search import _try_http_health
 from ._process import (
     _DEFAULT_GRACEFUL_DRAIN_SECONDS,
-    _health_probe,
     _port_is_listening,
 )
 from ._render import _emit_json
@@ -241,7 +241,7 @@ def _service_pid_on_port(port: int) -> tuple[int, str | None] | None:
     """
     if not _port_is_listening(port):
         return None
-    health = _health_probe(port)
+    health = _try_http_health(port)
     if health is None:
         return None
     serving_pid = health.get("pid")

@@ -16,7 +16,6 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
 from ..cli import (
     _display_search_results,
     _display_service_error,
-    _health_probe,
     _is_our_service,
     _is_pid_alive,
     _read_service_status,
@@ -895,7 +894,6 @@ __all__ = [
     "_expected_code_search_request",
     "_find_free_port",
     "_get_search_timeout",
-    "_health_probe",
     "_help_option_descriptions",
     "_hold_local_index_lock",
     "_invoke_search_contract",

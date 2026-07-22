@@ -1,18 +1,16 @@
 """Process, port, and health-probe helpers for the background service.
 
 Liveness (``_is_pid_alive``), identity (``_is_our_service`` via a
-``/health`` service-token round-trip with an executable-name
-fallback), port probes, heartbeat staleness, the SSRF-safe health
-probe, the detached-daemon spawn, and graceful termination all live
-here. Helpers that tests monkeypatch on ``vaultspec_rag.cli`` (e.g.
-``_is_pid_alive``, ``_health_probe``) are referenced through the
+``/health`` service-token round-trip through the service client, with
+an executable-name fallback), port probes, heartbeat staleness, the
+detached-daemon spawn, and graceful termination all live here. Helpers that tests monkeypatch on ``vaultspec_rag.cli`` (e.g.
+``_is_pid_alive``) are referenced through the
 package namespace at call time so the substitution is observed.
 """
 
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import signal
 import subprocess
@@ -35,6 +33,7 @@ from .._machine_lock import (
     release_machine_lock,
 )
 from ..config import EnvVar
+from ..serviceclient._transport import _try_http_health
 from ._core import logger
 
 if TYPE_CHECKING:
@@ -44,7 +43,6 @@ __all__ = [
     "_DEFAULT_GRACEFUL_DRAIN_SECONDS",
     "_HEARTBEAT_STALENESS_SECONDS",
     "DaemonBreakawayError",
-    "_health_probe",
     "_heartbeat_age_seconds",
     "_is_our_service",
     "_is_pid_alive",
@@ -159,7 +157,7 @@ def _is_our_service(
     # daemons and falsy for daemons whose first heartbeat tick has
     # not landed yet.
     if port is not None and expected_token:
-        probe = _cli._health_probe(port)
+        probe = _try_http_health(port)
         if probe is not None:
             response_token = probe.get("service_token")
             if isinstance(response_token, str) and response_token:
@@ -235,22 +233,6 @@ def _port_is_available(port: int) -> bool:
             return False
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """Reject HTTP redirects to prevent SSRF via health endpoint."""
-
-    def redirect_request(
-        self,
-        req: urllib.request.Request,
-        fp: object,
-        code: int,
-        msg: str,
-        headers: object,
-        newurl: str,
-    ) -> urllib.request.Request | None:
-        _ = req, fp, code, msg, headers, newurl
-        return None
-
-
 # Mirrored from server._HEARTBEAT_STALENESS_SECONDS - kept as a
 # local constant so cli.py does not import server (which would
 # pull in FastMCP + heavy deps at CLI startup time). Bump both in
@@ -267,7 +249,7 @@ _DEFAULT_GRACEFUL_DRAIN_SECONDS = 2.0
 def _port_is_listening(port: int) -> bool:
     """Return True when ``127.0.0.1:port`` accepts a TCP connection.
 
-    Cheaper than ``_health_probe`` (no HTTP round-trip, no JSON
+    Cheaper than a health probe (no HTTP round-trip, no JSON
     parsing) and answers the "is anything listening" question that
     ``service status`` needs to distinguish "PID alive but socket
     silent" from "PID alive and serving".
@@ -302,45 +284,6 @@ def _heartbeat_age_seconds(status: dict[str, Any]) -> float | None:
         ts = ts.replace(tzinfo=UTC)
     delta = datetime.now(UTC) - ts
     return delta.total_seconds()
-
-
-def _health_probe(port: int, timeout: float = 5.0) -> dict[str, Any] | None:
-    """Probe the service health endpoint via HTTP GET.
-
-    Args:
-        port: TCP port to connect to on 127.0.0.1.
-        timeout: Maximum seconds for the HTTP request.
-
-    Returns:
-        Parsed JSON dict on success, a dict with ``status``
-        ``"error"`` and ``http_code`` for HTTP errors (server
-        running but unhealthy), or None for connection errors
-        (server not running).
-
-    """
-    url = f"http://127.0.0.1:{port}/health"
-    opener = urllib.request.build_opener(_NoRedirect)
-    try:
-        with opener.open(url, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        # HTTP errors mean the server answered but unhealthy - surface
-        # the structured shape so callers can render the http code.
-        return {"status": "error", "http_code": exc.code}
-    except Exception as exc:
-        # Connection failures (no server, bad SSL, timeout, malformed
-        # JSON) yield None so callers can render "unreachable". The
-        # broad catch is intentional because urllib raises many
-        # distinct exception classes here; the debug log keeps the
-        # swallow observable per the no-swallow rule. The narrower
-        # codebase-wide sweep is filed as gh #130.
-        logger.debug(
-            "health probe failed for port=%d: %s",
-            port,
-            exc,
-            exc_info=True,
-        )
-        return None
 
 
 def _service_child_env(

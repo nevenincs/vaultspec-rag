@@ -29,9 +29,9 @@ from ._gpu_errors import (
     durable_tool_install_command,
     gpu_escape_hatch_command,
 )
+from ._http_search import _try_http_health
 from ._process import (
     DaemonBreakawayError,
-    _health_probe,
     _port_is_available,
     _probe_daemon_cuda,
     _resolve_daemon_interpreter,
@@ -183,7 +183,7 @@ def _existing_service_running() -> tuple[int, int, str] | None:
         port=existing_port,
         expected_token=existing_token_str,
     ):
-        health = _health_probe(existing_port)
+        health = _try_http_health(existing_port)
         if health is not None:
             raw_status = health.get("status")
             health_status = (
@@ -806,7 +806,7 @@ def _await_service_ready(
                         log=str(log_path),
                     )
 
-                health = _health_probe(port)
+                health = _try_http_health(port)
                 if health is not None and health.get("status") == "ready":
                     # Persist the token from /health into service.json so
                     # auto-delegation auth works before the first heartbeat

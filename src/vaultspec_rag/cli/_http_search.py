@@ -27,6 +27,7 @@ from ..serviceclient._transport import (
     _try_http_admin,
     _try_http_clean,
     _try_http_code_file,
+    _try_http_health,
     _try_http_reindex,
     _try_http_search,
 )
@@ -41,6 +42,7 @@ __all__ = [
     "_try_http_admin",
     "_try_http_clean",
     "_try_http_code_file",
+    "_try_http_health",
     "_try_http_reindex",
     "_try_http_search",
 ]
