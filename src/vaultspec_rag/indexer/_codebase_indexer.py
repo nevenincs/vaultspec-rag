@@ -47,6 +47,9 @@ from ._content_policy import (
     SourceProfileVersion,
 )
 from ._preprocess_runner import PreprocessAbortError
+from ._run_checkpoint import CodeRunCheckpoint
+from ._run_ledger import RunOperation
+from ._run_policy import RunPolicy
 from ._streaming import (
     CodeFileSegment,
     _release_cuda_cache,
@@ -700,7 +703,7 @@ class CodebaseIndexer:
             previous_metadata,
         )
         try:
-            preserved_ids = (
+            preserved_ids: set[str] | None = (
                 set(self._get_chunk_ids_for_files(set(preserved_metadata)))
                 if preserved_metadata
                 else set()
@@ -1690,6 +1693,8 @@ class CodebaseIndexer:
         limits: _CodePipelineLimits,
         new_ids: set[str],
         total: list[int],
+        metadata: dict[str, str],
+        checkpoint: CodeRunCheckpoint | None,
         *,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> threading.Thread:
@@ -1731,6 +1736,19 @@ class CodebaseIndexer:
                         try:
                             probe.checkpoint(f"slice-{slice_index}-before-encode")
                             slice_index += 1
+
+                            def _record_storage_confirmed(
+                                segments: tuple[CodeFileSegment, ...] = (
+                                    weighted_slice.segments
+                                ),
+                            ) -> None:
+                                assert checkpoint is not None
+                                for segment in segments:
+                                    checkpoint.record_confirmed_segment(
+                                        segment,
+                                        metadata[segment.path],
+                                    )
+
                             encode_and_upsert_code_slice(
                                 slice_chunks,
                                 model=self.model,
@@ -1738,6 +1756,16 @@ class CodebaseIndexer:
                                 gpu_lock=self._gpu_lock,
                                 release_cache=(slice_index % limits.flush_slices == 0),
                                 encode_batch_size=limits.encode_batch_size,
+                                write_policy=(
+                                    checkpoint.run_policy.store_write_policy
+                                    if checkpoint is not None
+                                    else None
+                                ),
+                                on_storage_confirmed=(
+                                    _record_storage_confirmed
+                                    if checkpoint is not None
+                                    else None
+                                ),
                                 run_control=run_control,
                             )
                             run_control.checkpoint()
@@ -1806,6 +1834,52 @@ class CodebaseIndexer:
             flush_slices=max(1, int(config.index_cache_flush_slices)),
         )
 
+    def _open_run_checkpoint(
+        self,
+        *,
+        policy: ResolvedIndexPolicy,
+        operation: RunOperation,
+        clean: bool,
+        limits: _CodePipelineLimits,
+        run_control: RunControl,
+    ) -> CodeRunCheckpoint:
+        """Open one compatible storage-confirmed code generation."""
+        from ..config import get_config
+
+        config = get_config()
+        model_identity = json.dumps(
+            {
+                "dense": str(config.embedding_model),
+                "sparse": (
+                    str(config.sparse_model) if limits.sparse_enabled else None
+                ),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        checkpoint_configuration = {
+            "segment_max_chunks": limits.segment_max_chunks,
+            "segment_max_bytes": limits.segment_max_bytes,
+            "queue_max_chunks": limits.queue_max_chunks,
+            "queue_max_bytes": limits.queue_max_bytes,
+            "slice_max_chunks": limits.slice_max_chunks,
+            "slice_max_bytes": limits.slice_max_bytes,
+            "sparse_enabled": limits.sparse_enabled,
+            "sparse_dimension": limits.sparse_dimension,
+            "encode_batch_size": limits.encode_batch_size,
+        }
+        return CodeRunCheckpoint.open(
+            data_root=self._data_root,
+            root_dir=self.root_dir,
+            policy=policy,
+            run_policy=RunPolicy.from_config(run_control=run_control),
+            operation=operation,
+            clean=clean,
+            model_identity=model_identity,
+            dense_dimensions=limits.dense_dimension,
+            configuration=checkpoint_configuration,
+        )
+
     def _enqueue_code_result(
         self,
         result: FileChunkResult,
@@ -1815,6 +1889,7 @@ class CodebaseIndexer:
         consumer: threading.Thread,
         consumer_exceptions: list[BaseException],
         metadata: dict[str, str],
+        checkpoint: CodeRunCheckpoint | None,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> bool:
         """Drain one file result into bounded weighted segments."""
@@ -1830,7 +1905,12 @@ class CodebaseIndexer:
             sparse_dimension=limits.sparse_dimension,
             run_control=run_control,
         )
-        for segment in segments:
+        pending_segments = (
+            checkpoint.pending_segments(segments, result.content_hash)
+            if checkpoint is not None
+            else segments
+        )
+        for segment in pending_segments:
             while not consumer_exceptions and consumer.is_alive():
                 run_control.checkpoint()
                 try:
@@ -1931,19 +2011,26 @@ class CodebaseIndexer:
         paths: list[pathlib.Path],
         *,
         reporter: ProgressReporter,
+        checkpoint: CodeRunCheckpoint | None = None,
+        limits: _CodePipelineLimits | None = None,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> tuple[set[str], int, dict[str, str]]:
         """Overlap bounded CPU production with one weighted GPU consumer."""
-        new_ids: set[str] = set()
+        new_ids = (
+            set(checkpoint.ledger.iter_point_ids(checkpoint.generation_id))
+            if checkpoint is not None
+            else set()
+        )
         metadata: dict[str, str] = {}
-        total = [0]
+        total = [len(new_ids)]
         self.store.disk_headroom_preflight(len(paths) * _CHUNKS_PER_FILE_ESTIMATE)
         run_control.checkpoint()
         reporter.phase_start("chunk + embed", len(paths))
         try:
             if not paths:
                 return new_ids, total[0], metadata
-            limits = self._resolve_code_pipeline_limits()
+            if limits is None:
+                limits = self._resolve_code_pipeline_limits()
             segment_queue = _WeightedCodeSegmentQueue(
                 max_chunks=limits.queue_max_chunks,
                 max_bytes=limits.queue_max_bytes,
@@ -1955,6 +2042,8 @@ class CodebaseIndexer:
                 limits,
                 new_ids,
                 total,
+                metadata,
+                checkpoint,
                 run_control=run_control,
             )
 
@@ -1966,6 +2055,7 @@ class CodebaseIndexer:
                     consumer=consumer,
                     consumer_exceptions=consumer_exceptions,
                     metadata=metadata,
+                    checkpoint=checkpoint,
                     run_control=run_control,
                 )
 
@@ -2312,6 +2402,14 @@ class CodebaseIndexer:
                 clean=clean,
             )
         )
+        limits = self._resolve_code_pipeline_limits()
+        checkpoint = self._open_run_checkpoint(
+            policy=policy,
+            operation=RunOperation.FULL,
+            clean=effective_clean,
+            limits=limits,
+            run_control=run_control,
+        )
 
         # Failure-safe rebuild (mirrors VaultIndexer.full_index): snapshot the
         # existing chunk ids BEFORE streaming, keep the old chunks live, and
@@ -2366,6 +2464,8 @@ class CodebaseIndexer:
             new_ids, total_chunks, meta = self._pipeline_chunk_and_embed(
                 paths,
                 reporter=reporter,
+                checkpoint=checkpoint,
+                limits=limits,
                 run_control=run_control,
             )
             new_ids.update(
