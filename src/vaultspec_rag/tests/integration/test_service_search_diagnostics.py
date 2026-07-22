@@ -1024,8 +1024,9 @@ def test_search_index_unavailable_during_matching_rebuild(
     )
     assert post_status == 200, post_evidence
     assert post_body["results"] == [], post_evidence
-    post_empty = post_body["empty"]
-    assert isinstance(post_empty, dict), post_evidence
+    raw_post_empty = post_body["empty"]
+    assert isinstance(raw_post_empty, dict), post_evidence
+    post_empty = cast("dict[str, object]", raw_post_empty)
     assert post_empty["reason"] == "no_match", post_evidence
 
 
