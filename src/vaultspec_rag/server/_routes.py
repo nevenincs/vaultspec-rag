@@ -25,7 +25,7 @@ import logging
 import time
 import uuid
 from functools import partial
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 from starlette.responses import JSONResponse, PlainTextResponse
@@ -273,6 +273,32 @@ def _empty_search_diagnostics(
     }
 
 
+def _classify_search_result(
+    result: dict[str, object],
+    *,
+    job_snapshot_before: list[dict[str, object]],
+    root: Path,
+    source: Literal["vault", "code"],
+    request_id: str,
+    port: int | None,
+) -> tuple[dict[str, object], int]:
+    """Apply availability classification and stable-empty diagnostics."""
+    index_state = cast("dict[str, object]", result.get("index_state", {}))
+    classified, status_code = classify_search_response(
+        result,
+        before_snapshot=job_snapshot_before,
+        after_snapshot=_canonical_job_snapshot(),
+        requested_root=root,
+        source=source,
+        request_id=request_id,
+        index_state=index_state,
+        port=port,
+    )
+    if status_code == 200 and not classified["results"]:
+        classified["empty"] = _empty_search_diagnostics(index_state, port=port)
+    return classified, status_code
+
+
 def _canonical_job_snapshot() -> list[dict[str, object]]:
     """Return the canonical manager's copied, JSON-ready job view."""
     from ..jobs import get_job_manager
@@ -512,22 +538,14 @@ async def search_route(request: Request) -> JSONResponse:
         timing = result.get("timing")
         if isinstance(timing, dict):
             timing["server_total_seconds"] = total_seconds
-        index_state = cast("dict[str, object]", result.get("index_state", {}))
-        result, response_status = classify_search_response(
+        result, response_status = _classify_search_result(
             result,
-            before_snapshot=job_snapshot_before,
-            after_snapshot=_canonical_job_snapshot(),
-            requested_root=root,
+            job_snapshot_before=job_snapshot_before,
+            root=root,
             source=search_source,
             request_id=request_id,
-            index_state=index_state,
             port=request.url.port,
         )
-        if response_status == 200 and not result["results"]:
-            result["empty"] = _empty_search_diagnostics(
-                index_state,
-                port=request.url.port,
-            )
         _m._ensure_watcher_soon(root)
         hits = result.get("results")
         hit_count = len(cast("list[object]", hits)) if isinstance(hits, list) else 0
