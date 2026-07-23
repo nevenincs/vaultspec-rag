@@ -783,6 +783,18 @@ async def _reconcile_watcher_slots(
         await _reconcile_watcher_slot(document_slot, cooldown=cooldown, now=now)
 
 
+class WatcherInitializationError(RuntimeError):
+    """A watcher could not initialize its durable retry state.
+
+    Raised when retry-policy setup fails deterministically (an unreadable or
+    unwritable retry ledger). It is distinct from an indexing error taken
+    during the watch loop, which is caught and logged rather than propagated:
+    a failed initialization cannot be recovered by restarting into the same
+    unreadable state, so the owner terminally removes the watcher instead of
+    re-arming it.
+    """
+
+
 async def watch_and_reindex(
     root_dir: Path,
     vault_dir: Path,
@@ -825,6 +837,8 @@ async def watch_and_reindex(
             server passes its rebindable registry explicitly.
 
     Raises:
+        WatcherInitializationError: Retry-state initialization failed
+            deterministically; the owner terminally removes the watcher.
         This coroutine does not propagate exceptions from indexing.
         Indexing errors are caught and logged via ``logger.exception``.
     """
@@ -843,7 +857,7 @@ async def watch_and_reindex(
             root=root_dir,
             error=exc,
         )
-        return
+        raise WatcherInitializationError(str(exc)) from exc
 
     log_event(
         logger,

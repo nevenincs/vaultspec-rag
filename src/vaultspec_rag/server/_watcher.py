@@ -83,6 +83,10 @@ _watcher_restarts: dict[Path, tuple[int | None, float | None]] = {}
 
 def _watcher_task_done(root: Path, task: asyncio.Task[None]) -> None:
     """Turn a natural intake exit into the normal drain/restart lifecycle."""
+    from ..watcher import WatcherInitializationError
+
+    error = None if task.cancelled() else task.exception()
+    init_failed = isinstance(error, WatcherInitializationError)
     drain: _WatcherDrain | None = None
     with _m._watcher_lock:
         if _m._watcher_tasks.get(root) is not task:
@@ -95,10 +99,13 @@ def _watcher_task_done(root: Path, task: asyncio.Task[None]) -> None:
         drain = _WatcherDrain(task, stop_event)
         _watcher_drains[root] = drain
         # A watcher is expected to remain enabled until an explicit stop. A
-        # natural return or failure therefore converges through the same
-        # bounded drain before publishing one replacement generation.
-        _watcher_restarts[root] = (None, None)
-    error = None if task.cancelled() else task.exception()
+        # natural return or runtime failure therefore converges through the
+        # same bounded drain before publishing one replacement generation. A
+        # failed initialization is not recoverable by restarting into the same
+        # unreadable state, so it terminally removes the watcher (no re-arm)
+        # rather than looping a doomed replacement generation.
+        if not init_failed:
+            _watcher_restarts[root] = (None, None)
     log_event(
         logger,
         "service.watcher",
