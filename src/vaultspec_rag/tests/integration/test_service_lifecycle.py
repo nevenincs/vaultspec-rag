@@ -19,6 +19,7 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING, cast
@@ -45,6 +46,7 @@ from .._model_setup import (
 from ._helpers import (
     _get_ephemeral_port,
     _poll_health,
+    _poll_own_health,
     _service_env,
     _wait_for_exit,
 )
@@ -541,7 +543,8 @@ def test_live_service_readiness_expiry_uses_reserved_cleanup_budget(
     assert spawned is not None
     launcher_pid = int(spawned.group(1))
     service_port = int(spawned.group(2))
-    identity = json.loads((tmp_path / "identity.json").read_text(encoding="utf-8"))
+    identity_path = tmp_path / "qdrant-server" / "identity.json"
+    identity = json.loads(identity_path.read_text(encoding="utf-8"))
     owner_pid = int(identity["owner_pid"])
     qdrant_pid = int(identity["qdrant_pid"])
     qdrant_port = int(identity["http_port"])
@@ -1816,6 +1819,190 @@ def _assert_discovery_absent(paths: tuple[Path, ...], *, held_for: float) -> Non
                 f"{path.read_text(encoding='utf-8')[:400]!r}"
             )
         time.sleep(0.5)
+
+
+def _terminate_identity_process(
+    process: subprocess.Popen[bytes],
+    serving_pid: int,
+    log_path: Path,
+) -> None:
+    """Stop the spawned identity child, and its serving pid when they differ."""
+    # A plain ``Popen`` helper is not a process-group leader, so a Windows
+    # console-group break must not be addressed to it.
+    _terminate_pid(process.pid, console_group_signal=False)
+    if serving_pid != process.pid:
+        _terminate_pid(serving_pid, console_group_signal=False)
+        _wait_for_exit(serving_pid, timeout=15.0)
+    assert _wait_for_exit(process.pid, timeout=15.0), (
+        "identity health process did not stop; log="
+        + log_path.read_text(encoding="utf-8", errors="replace")[-2000:]
+    )
+
+
+@contextmanager
+def _identity_health_process(
+    tmp_path: Path,
+    *,
+    hold_machine_lock: bool,
+) -> Generator[tuple[int, int, str]]:
+    """Run the production health route in a real isolated child process.
+
+    Re-rolls a fresh ephemeral port when a lost bind race or a stray listener
+    takes the intended one, and gates readiness on the child's own identity
+    token, so a foreign responder on that port can never stand in for the child.
+    """
+    token = f"reconcile-identity-{uuid.uuid4().hex}"
+    child_script = """
+import os
+
+import uvicorn
+from starlette.applications import Starlette
+from starlette.routing import Route
+
+import vaultspec_rag.server as server
+from vaultspec_rag._machine_lock import (
+    acquire_machine_lock_lease,
+    release_machine_lock_lease,
+)
+from vaultspec_rag.server._lifespan import health_handler
+
+server._SERVICE_TOKEN = os.environ["VAULTSPEC_TEST_HEALTH_TOKEN"]
+lease = None
+if os.environ["VAULTSPEC_TEST_HOLD_MACHINE_LOCK"] == "1":
+    lease, holder = acquire_machine_lock_lease()
+    if lease is None:
+        raise RuntimeError(f"machine lock held by {holder}")
+try:
+    uvicorn.run(
+        Starlette(routes=[Route("/health", health_handler)]),
+        host="127.0.0.1",
+        port=int(os.environ["VAULTSPEC_TEST_HEALTH_PORT"]),
+        lifespan="off",
+        log_level="critical",
+    )
+finally:
+    if lease is not None:
+        release_machine_lock_lease(lease)
+"""
+    log_path = tmp_path / "identity-health.log"
+    with log_path.open("w", encoding="utf-8") as log_stream:
+        failures: list[str] = []
+        for _ in range(5):
+            port = _get_ephemeral_port()
+            child_env = os.environ.copy()
+            child_env["VAULTSPEC_TEST_HEALTH_PORT"] = str(port)
+            child_env["VAULTSPEC_TEST_HEALTH_TOKEN"] = token
+            child_env["VAULTSPEC_TEST_HOLD_MACHINE_LOCK"] = (
+                "1" if hold_machine_lock else "0"
+            )
+            process = subprocess.Popen(
+                [sys.executable, "-c", child_script],
+                env=child_env,
+                stdout=log_stream,
+                stderr=subprocess.STDOUT,
+            )
+            health = _poll_own_health(process, port, token=token, timeout=20.0)
+            if health is None:
+                failures.append(f"port={port} rc={process.poll()}")
+                _terminate_pid(process.pid, console_group_signal=False)
+                _wait_for_exit(process.pid, timeout=15.0)
+                continue
+            # The real serving pid equals the Popen pid normally, or a descendant
+            # when the interpreter relaunches through a stub; the token match
+            # already proved this is the child either way.
+            serving_pid = int(health["pid"])
+            try:
+                yield serving_pid, port, token
+            finally:
+                _terminate_identity_process(process, serving_pid, log_path)
+            return
+        raise AssertionError(
+            "identity health child never bound its own port in 5 attempts "
+            f"({'; '.join(failures)}); log="
+            + log_path.read_text(encoding="utf-8", errors="replace")[-2000:]
+        )
+
+
+def test_reconcile_rejects_live_legacy_status_without_singleton_owner(
+    tmp_path: Path,
+) -> None:
+    """A reachable legacy record cannot stand in for singleton ownership."""
+    from ..._machine_lock import machine_lock_live_holder
+
+    with (
+        _service_env(tmp_path),
+        _identity_health_process(tmp_path, hold_machine_lock=False) as (
+            pid,
+            port,
+            token,
+        ),
+    ):
+        assert machine_lock_live_holder() == 0
+        _status_file().write_text(
+            json.dumps({"pid": pid, "port": port, "service_token": token}),
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            app,
+            ["server", "reconcile", "--json", "--timeout", "0"],
+        )
+
+        assert result.exit_code == 1, result.stdout
+        payload = json.loads(result.stdout)
+        assert payload["ok"] is False
+        assert payload["error"] == "unresolved"
+        discovery = payload["data"]["service"]["discovery"]
+        assert discovery["source"] == "status_file"
+        assert discovery["holder_pid"] == 0
+        assert _is_pid_alive(pid)
+
+
+@pytest.mark.parametrize("missing_field", ["pid", "service_token"])
+def test_reconcile_rejects_machine_pointer_with_incomplete_identity(
+    tmp_path: Path,
+    missing_field: str,
+) -> None:
+    """A live holder cannot converge until every pointer identity field exists."""
+    from datetime import UTC, datetime
+
+    from ..._machine_lock import machine_discovery_path, machine_lock_live_holder
+
+    with (
+        _service_env(tmp_path),
+        _identity_health_process(tmp_path, hold_machine_lock=True) as (
+            pid,
+            port,
+            token,
+        ),
+    ):
+        assert machine_lock_live_holder() == pid
+        pointer = {
+            "pid": pid,
+            "port": port,
+            "service_token": token,
+            "last_heartbeat": datetime.now(UTC).isoformat(timespec="seconds"),
+            "stale_after_s": 60,
+        }
+        pointer.pop(missing_field)
+        machine_discovery_path().write_text(
+            json.dumps(pointer),
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            app,
+            ["server", "reconcile", "--json", "--timeout", "0"],
+        )
+
+        assert result.exit_code == 1, result.stdout
+        payload = json.loads(result.stdout)
+        assert payload["ok"] is False
+        assert payload["error"] == "unresolved"
+        discovery = payload["data"]["service"]["discovery"]
+        assert discovery["source"] == "machine_pointer"
+        assert discovery["holder_pid"] == pid
+        assert _is_pid_alive(pid)
 
 
 @pytest.mark.subprocess_gpu
