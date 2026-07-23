@@ -37,6 +37,8 @@ __all__ = [
     "_SENSITIVE_PATTERNS",
     "_SERVICE_TOKEN",
     "SurveySnapshot",
+    "_daemon_log_capture",
+    "_daemon_process",
     "_http_mode",
     "_launch_token",
     "_registry",
