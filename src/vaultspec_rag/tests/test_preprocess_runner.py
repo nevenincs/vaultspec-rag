@@ -1,7 +1,8 @@
 """Unit tests for the command-form preprocessor runner (no GPU).
 
-Exercises D6/D9/D10 with a *real* subprocess: a tiny Python extractor script is
-written to ``tmp_path`` and invoked through the runner. No mocks - the runner
+Exercises the runner's contract with a *real* subprocess: a tiny Python
+extractor script is written to ``tmp_path`` and invoked through the runner.
+No mocks - the runner
 genuinely spawns the interpreter, so timeout, non-zero exit, bad JSON, oversize
 emission, and the three ``on_error`` dispositions are all exercised end to end.
 """
@@ -28,7 +29,7 @@ pytestmark = [pytest.mark.unit]
 
 
 def test_dash_leading_path_operand_is_neutralised() -> None:
-    """H2 (CWE-88): a bare path operand beginning with - is prefixed with ./ so
+    """CWE-88: a bare path operand beginning with - is prefixed with ./ so
     the child parses it as a path, not an option."""
     rule = PreprocessRule(
         pattern="*",

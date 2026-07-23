@@ -101,7 +101,7 @@ logger = logging.getLogger(__name__)
 # to drain its final batch and terminate. Generous enough for any healthy
 # final encode (a couple of slices) yet finite, so a wedged CUDA/Qdrant call
 # escalates to a raised error instead of hanging the producer and holding the
-# indexer's writer lock forever (#155 index-gpu-pipeline review C1/H1/H2).
+# indexer's writer lock forever (#155).
 _CONSUMER_SHUTDOWN_TIMEOUT_S = 300.0
 
 # Polling bound for cooperative control while the parent waits on CPU workers
@@ -383,8 +383,8 @@ class CodebaseIndexer:
             SourceProfileVersion.CONVENTIONAL_V1
         )
         # Indexer-level writer lock that serializes full_index and
-        # incremental_index against each other on the same instance
-        # (#68 audit F6.6 - concurrent reindex race).
+        # incremental_index against each other on the same instance,
+        # preventing a concurrent reindex race.
         import threading as _threading
 
         self._writer_lock: _threading.Lock = _threading.Lock()
@@ -405,7 +405,7 @@ class CodebaseIndexer:
         self._prep_stale_paths: set[str] = set()
         self._prep_rule_total: int = 0
         self._prep_ok: int = 0
-        # Config epochs for the current run (D1-D3). Set at the start of each
+        # Config epochs for the current run. Set at the start of each
         # locked run from the same resolved inputs the scan uses, then stamped
         # by ``_write_meta``; ``None`` means "not yet resolved this run" and the
         # writer recomputes them as a fallback.
@@ -3008,8 +3008,7 @@ class CodebaseIndexer:
 
         Thin wrapper that acquires ``self._writer_lock`` and delegates
         to :meth:`_full_index_locked`. Mirrors the VaultIndexer wrapper
-        and serializes against concurrent reindex callers (#68 audit
-        F6.6).
+        and serializes against concurrent reindex callers (#68).
         """
         run_control.checkpoint()
         resolved_policy, discovered_paths = self._accept_preflight(
@@ -3095,9 +3094,8 @@ class CodebaseIndexer:
         Args:
             clean: When ``True``, drop and recreate the codebase
                 collection up front so schema-level changes (e.g.
-                a new embedding dimension) take effect (#68 audit
-                F9.6 - codex P2). The default ``clean=False`` path
-                is failure-safe: it streams upserts in place and
+                a new embedding dimension) take effect (#68). The default
+                ``clean=False`` path is failure-safe: it streams upserts in place and
                 purges only the stale chunk IDs after a successful
                 rebuild, so an interrupted run never leaves the
                 collection empty.
@@ -3158,10 +3156,10 @@ class CodebaseIndexer:
         # purge only the ids absent from the new corpus afterwards. When
         # ``clean=True`` is passed, ALSO drop the collection up front so
         # schema-level changes (e.g. a new embedding dimension) take effect
-        # (#68 audit F9.6). The snapshot must precede the pipeline because the
+        # (#68). The snapshot must precede the pipeline because the
         # pipeline upserts as it goes; an empty tree still falls through to the
         # purge below so a rebuild after deleting every source file clears the
-        # old collection (F3.11 regression guard).
+        # old collection.
         # A request already pending is delivered by ``protected`` before a
         # clean collection can be dropped. Once the drop begins, defer new
         # requests through recreation, the bounded producer/consumer pipeline,
@@ -3248,7 +3246,7 @@ class CodebaseIndexer:
             updated=0,
             # Mirror VaultIndexer.full_index - surface the post-stream
             # purge count so MCP / CLI clients can observe how many
-            # stale chunks were swept (#68 audit F6.3 / F6.10).
+            # stale chunks were swept (#68).
             removed=len(stale_ids),
             duration_ms=duration_ms,
             device=self.model.device,
@@ -3270,7 +3268,7 @@ class CodebaseIndexer:
 
         Thin wrapper that acquires ``self._writer_lock`` and delegates
         to :meth:`_incremental_index_locked`. Mirrors VaultIndexer
-        and serializes concurrent reindex callers (#68 audit F6.6).
+        and serializes concurrent reindex callers (#68).
 
         Args:
             reporter: Required progress reporter.

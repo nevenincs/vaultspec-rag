@@ -296,8 +296,7 @@ class VaultSearcher:
 
         When a ``graph_provider`` was supplied at construction time,
         delegates entirely to it.  Otherwise falls back to an
-        internal lock+TTL cache (fixes R36-C1 for the fallback
-        path).
+        internal lock+TTL cache for the fallback path.
 
         Returns:
             Cached VaultGraph, or ``None`` if the build fails.

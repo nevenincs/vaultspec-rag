@@ -3,7 +3,7 @@
 No mocks, no GPU: the port-resolution path is exercised against real loopback
 sockets. ``server stop --port`` resolves the running instance from its /health
 identity rather than the status file, so a non-default-port service whose status
-file is missing or divergent (research F7) is still stoppable. The terminate
+file is missing or divergent is still stoppable. The terminate
 path itself is covered end to end against a real daemon in the integration
 suite; here the focus is the deterministic, side-effect-free resolution paths.
 """

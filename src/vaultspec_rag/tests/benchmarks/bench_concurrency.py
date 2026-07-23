@@ -4,9 +4,8 @@ Drives N parallel ``POST /search`` requests against a *live* service
 (same-root, cross-root, vault+code mixed, optionally while a reindex
 job runs) and reports throughput, latency percentiles, and the
 service's own per-phase timings (embedding, qdrant, rerank, GPU queue
-wait, project lease). This is the D1 instrument from the
-service-concurrency ADR: it freezes the pre-rework baseline and
-re-measures after every wave.
+wait, project lease). This benchmark freezes the pre-rework baseline
+and re-measures after every wave.
 
 Run standalone (service must be running):
 

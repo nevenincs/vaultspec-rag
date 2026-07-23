@@ -2,7 +2,7 @@
 
 The resident service daemon is spawned as
 ``python -m vaultspec_rag.server --port N`` (see the CLI service
-spawn). When ``server`` became a package (module-split ADR), the
+spawn). When ``server`` became a package, the
 ``-m`` invocation stopped working because a package needs a
 ``__main__`` module to be directly executable. This thin module
 restores it by delegating to ``main``, which parses ``--port`` /

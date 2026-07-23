@@ -1,6 +1,6 @@
 """Worker-level integration of the preprocess hook (no GPU).
 
-Exercises D6: a document-targeted rule runs through the document worker and
+Exercises how a document-targeted rule runs through the document worker and
 turns its output into ``DocumentChunk``s with anchor/locator payload, the code
 worker refuses that same rule rather than storing the extraction as source, the
 ``PreprocessContext`` is picklable (so it can cross the process boundary), and

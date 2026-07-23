@@ -70,7 +70,7 @@ class IndexResult:
             "no rules matched".
         preprocess_skipped: Number of files a document-preprocessing rule
             skipped this run (``on_error=skip``), surfaced so coverage gaps are
-            never silent (#185, D11).
+            never silent (#185).
         preprocess_failures: ``"rel_path: reason"`` for each skipped file.
     """
 

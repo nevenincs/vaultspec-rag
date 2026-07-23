@@ -1396,7 +1396,7 @@ def _preprocess_preflight(
 
     The ``/reindex`` route returns ``queued`` before the background job runs,
     so a non-interactive client otherwise has no way to know whether the root's
-    document-preprocessing hooks will fire (preprocess-sandbox ADR D9). This
+    document-preprocessing hooks will fire. This
     mirrors the ``server start`` operator notice as JSON: whether the root ships
     a preprocess configuration, its resolved rule count, the effective mode,
     and whether hooks will run under it (``off`` skips; ``default`` runs).

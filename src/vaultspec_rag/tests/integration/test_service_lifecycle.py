@@ -1568,7 +1568,7 @@ def test_stop_running_service_by_port_without_status_file(
         serving_pid = int(health["pid"])
 
         # The daemon now publishes before the parent. Remove that authoritative
-        # file to recreate the F7 case where discovery is absent even though the
+        # file to recreate the case where discovery is absent even though the
         # daemon is genuinely running.
         _status_file().unlink()
         assert not _status_file().exists()

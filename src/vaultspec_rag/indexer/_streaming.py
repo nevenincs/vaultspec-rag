@@ -1027,7 +1027,7 @@ def encode_and_upsert_code_slice(
     and conversion run outside the lock, so the I/O-bound upsert does not block
     concurrent searches on the same device. When
     ``release_cache`` is True the CUDA caching pool is returned to the driver
-    on every exit path (#68 audit F6.9); the chunk-to-embed pipeline passes
+    on every exit path (#68); the chunk-to-embed pipeline passes
     False on most slices and flushes periodically instead (#155).
 
     Args:

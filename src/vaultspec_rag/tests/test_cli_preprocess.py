@@ -1,11 +1,11 @@
 """Unit tests for the ``preprocess`` CLI verb group (no GPU).
 
-Exercises the inspection verbs (``list`` / ``check`` / ``run-one``, D13) plus the
+Exercises the inspection verbs (``list`` / ``check`` / ``run-one``) plus the
 amended ``status`` surface and the ``server start`` / ``index`` ``--no-preprocess``
 flag over a real tmp workspace with a real ``.vaultragpreprocess.toml`` and a real
 extractor script (no mocks). The OS sandbox and its ``--preprocess-unsandboxed``
-escape hatch were removed (preprocess-sandbox-removal ADR): rules resolve for any
-root and run directly, gated only by the ``off`` kill switch.
+escape hatch were removed: rules resolve for any root and run directly, gated
+only by the ``off`` kill switch.
 """
 
 from __future__ import annotations
@@ -194,7 +194,7 @@ def test_list_human_output_uses_plain_labels(tmp_path: Path) -> None:
     assert "Preprocess rules: 1" in result.output
     assert "Files: *.pdf" in result.output
     assert "Failure handling: skip file on failure" in result.output
-    # H1: an omitted timeout_s now resolves to the bounded default, not "none".
+    # An omitted timeout_s now resolves to the bounded default, not "none".
     assert "Timeout: 120s" in result.output
     assert "Target: document" in result.output
     assert "Extractor version: 1.0.0" in result.output

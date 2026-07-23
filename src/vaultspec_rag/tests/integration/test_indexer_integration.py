@@ -786,10 +786,9 @@ class TestIndexEdgeCases:
         embedding_model: EmbeddingModel,
         tmp_path_factory: TempPathFactory,
     ) -> None:
-        """Regression guard for F3.10 / F3.11: a clean full_index on a
-        vault whose every source file has been deleted must leave the
-        collection empty. Previously the empty-docs early-return
-        silently preserved the old rows.
+        """A clean full_index on a vault whose every source file has been
+        deleted must leave the collection empty. Previously the
+        empty-docs early-return silently preserved the old rows.
         """
         from ...indexer import VaultIndexer
         from ...store import VaultStore

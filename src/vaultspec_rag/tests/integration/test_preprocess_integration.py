@@ -7,9 +7,9 @@ the scoped/incremental path routes a changed binary through the preprocessor;
 and a failing preprocessor remains unresolved and retryable rather than
 publishing a silently converged gap.
 
-Hooks run BY DEFAULT for any root - there is no trust step and no OS containment
-(preprocess-sandbox-removal ADR): a root's preprocess config is repo-authored
-code that runs directly with the operator's privileges. The tests below prove
+Hooks run BY DEFAULT for any root - there is no trust step and no OS containment:
+a root's preprocess config is repo-authored code that runs directly with the
+operator's privileges. The tests below prove
 the direct-execution path end to end: a hook runs through the local index, its
 unit is indexed and searchable with a deep-link anchor to the real source, and
 the ``off`` kill switch skips hooks entirely.

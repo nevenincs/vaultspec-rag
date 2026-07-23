@@ -1,6 +1,6 @@
 """Unit tests for the preprocess output cache (no GPU).
 
-Exercises D7: content-addressed hit/miss, command-change (version-bump)
+Exercises content-addressed hit/miss, command-change (version-bump)
 invalidation, corrupt-entry tolerance, and clean-rebuild clearing. Real files
 under ``tmp_path``; no mocks.
 """

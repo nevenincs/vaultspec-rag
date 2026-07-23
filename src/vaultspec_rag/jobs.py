@@ -391,7 +391,7 @@ def record_start(
         "progress": None,
         # Document-preprocessing outcome, surfaced through /jobs so a
         # non-interactive client sees which files failed extraction rather than
-        # only a summary count (preprocess-sandbox ADR D9), and how many files
+        # only a summary count, and how many files
         # rules actually fed, so a missing rule-fed corpus is diagnosable from
         # the job record alone. Populated at finish.
         "preprocess_ok": 0,
@@ -544,8 +544,7 @@ def record_finish(
             the index this run, threaded onto the record so a working
             preprocess pipeline is positively visible through /jobs.
         preprocess_skipped: Count of files a document-preprocessing rule
-            skipped this run, threaded onto the record so /jobs can surface it
-            (preprocess-sandbox ADR D9).
+            skipped this run, threaded onto the record so /jobs can surface it.
         preprocess_failures: ``"rel_path: reason"`` per skipped file, threaded
             onto the record so a client sees which files failed extraction and
             why - not just a count.

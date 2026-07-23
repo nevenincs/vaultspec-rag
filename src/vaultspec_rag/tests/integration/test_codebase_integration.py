@@ -1310,7 +1310,7 @@ class TestVaultragignore:
     def test_vaultragignore_negation_cannot_override_gitignore(
         self, rag_components: RagComponentsWithManifest, tmp_path: Path
     ) -> None:
-        """D1: .vaultragignore negation cannot un-ignore .gitignore entries."""
+        """.vaultragignore negation cannot un-ignore .gitignore entries."""
         from ... import CodebaseIndexer, VaultStore
 
         model = rag_components["model"]

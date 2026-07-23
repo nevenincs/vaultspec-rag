@@ -660,7 +660,7 @@ class TestPerRootLocks:
 
 
 class TestLeaseApi:
-    """ADR D3/D4/D6 - lease, refcount, idle sweep, LRU admission, drain."""
+    """Lease, refcount, idle sweep, LRU admission, drain."""
 
     pytestmark: ClassVar = [pytest.mark.integration]
 

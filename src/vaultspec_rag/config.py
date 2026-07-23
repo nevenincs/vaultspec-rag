@@ -254,9 +254,8 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "index_cuda_ceiling_mb": EnvVar.INDEX_CUDA_CEILING_MB,
     "index_cuda_allocator_fraction": EnvVar.INDEX_CUDA_ALLOCATOR_FRACTION,
     "index_support_profile": EnvVar.INDEX_SUPPORT_PROFILE,
-    # Performance tuning knobs (#68 audit F9.1) - surface them via
-    # env vars too so deploy-time tuning does not require CLI flags
-    # or config file edits.
+    # Performance tuning knobs - surface them via env vars too so
+    # deploy-time tuning does not require CLI flags or config file edits.
     "embedding_batch_size": EnvVar.EMBEDDING_BATCH_SIZE,
     "embedding_encode_batch_size": EnvVar.EMBEDDING_ENCODE_BATCH_SIZE,
     "embedding_max_seq_length": EnvVar.EMBEDDING_MAX_SEQ_LENGTH,
