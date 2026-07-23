@@ -304,10 +304,21 @@ _dev-test target='all':
   switch ("{{target}}") { \
     "python" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "not (integration or quality or performance or robustness or subprocess_gpu or cuda)" ; break } \
     "fast" { {{uvr}} pytest src/vaultspec_rag/tests/ -x -q --tb=short -m unit ; break } \
+    "gpu" { \
+      # The real-GPU tier, run on a CUDA host. Two invocations because \
+      # subprocess_gpu tests spawn their own model-loading process whose VRAM \
+      # is outside the in-process gpu_lock and must not co-schedule with the \
+      # serialized integration/quality/performance/robustness/cuda tests on a \
+      # 16 GB card. \
+      {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "integration or quality or performance or robustness or cuda" ; \
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
+      {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "subprocess_gpu" ; \
+      break \
+    } \
     "all" { just _dev-test python ; break } \
     default { \
       Write-Host "unknown dev test target: {{target}}" -ForegroundColor Red ; \
-      Write-Host "  targets: python fast all" -ForegroundColor Red ; \
+      Write-Host "  targets: python fast gpu all" -ForegroundColor Red ; \
       exit 1 \
     } \
   }
