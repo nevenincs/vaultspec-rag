@@ -1,7 +1,7 @@
 """Async admin/observability client for the running RAG daemon.
 
 These are **not** MCP tools. The MCP search surface is narrowed to search,
-index-refresh, and read-only retrieval (see the ``mcp-search-scope`` ADR); the
+index-refresh, and read-only retrieval; the
 mutating and observability admin verbs - project listing/eviction, watcher
 control, service-state, storage survey, jobs, and logs - are CLI-only on the
 public surface and are not registered on the FastMCP instance.
