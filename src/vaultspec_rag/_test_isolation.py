@@ -12,6 +12,8 @@ values can neither disable the guard nor move its boundary.
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -29,6 +31,7 @@ __all__ = [
     "enforce_pytest_singleton_containment",
     "pytest_singleton_containment_active",
     "register_pytest_singleton_root",
+    "sweep_orphaned_singleton_roots",
 ]
 
 # This is deliberately separate from the two operator-facing path overrides.
@@ -145,6 +148,74 @@ def register_pytest_singleton_root(root: str | PathLike[str]) -> Path:
         pinned_root = _registered_root
         _publish_registered_root(pinned_root)
         return pinned_root
+
+
+_PYTEST_SINGLETON_ROOT_PREFIX = "vaultspec-rag-pytest-"
+# A concurrently live pytest run writes into its session root throughout the
+# run, so a root untouched for this long cannot be a live session and is a
+# leftover from a run killed before its cleanup ran. Generous, so a parallel
+# run is never reclaimed out from under it.
+_ORPHAN_SWEEP_LIVENESS_WINDOW_SECONDS = 3600.0
+
+
+def _root_recently_touched(root: Path, *, now: float) -> bool:
+    """Return whether *root* or a direct child was modified within the window.
+
+    A stat failure is treated as recently touched so an unreadable or
+    disappearing root is never reclaimed on a guess.
+    """
+    try:
+        newest = root.stat().st_mtime
+        for child in root.iterdir():
+            newest = max(newest, child.stat().st_mtime)
+    except OSError:
+        return True
+    return (now - newest) < _ORPHAN_SWEEP_LIVENESS_WINDOW_SECONDS
+
+
+def sweep_orphaned_singleton_roots(
+    *,
+    keep: str | PathLike[str],
+    now: float,
+    base_dir: str | PathLike[str] | None = None,
+) -> list[Path]:
+    """Reclaim leftover pytest singleton roots from prior killed sessions.
+
+    A pytest run killed externally (a sandbox timeout, ``taskkill``) never
+    reaches ``pytest_unconfigure`` or its atexit backstop, so its session root -
+    the isolated machine-singleton status and Qdrant storage dirs, on the order
+    of 100 MB - leaks. On the next run's startup, reclaim every
+    ``vaultspec-rag-pytest-*`` root that is neither *keep* (the current run's
+    own root) nor touched within the liveness window, which cannot be a
+    concurrently live run. *now* is supplied by the caller and *base_dir*
+    defaults to the system temp dir, so the sweep is deterministic and testable.
+    Returns the roots actually reclaimed.
+    """
+    parent = (
+        _canonical_path(base_dir)
+        if base_dir is not None
+        else Path(tempfile.gettempdir())
+    )
+    keep_resolved = _canonical_path(keep)
+    reclaimed: list[Path] = []
+    try:
+        candidates = sorted(parent.glob(f"{_PYTEST_SINGLETON_ROOT_PREFIX}*"))
+    except OSError:
+        return reclaimed
+    for candidate in candidates:
+        if not candidate.is_dir():
+            continue
+        try:
+            if _canonical_path(candidate) == keep_resolved:
+                continue
+            if _root_recently_touched(candidate, now=now):
+                continue
+        except OSError:
+            continue
+        shutil.rmtree(candidate, ignore_errors=True)
+        if not candidate.exists():
+            reclaimed.append(candidate)
+    return reclaimed
 
 
 def _adopt_inherited_pytest_singleton_root() -> None:

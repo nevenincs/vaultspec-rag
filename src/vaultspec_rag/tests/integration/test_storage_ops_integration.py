@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import os
 import socket
-import tempfile
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -35,6 +33,7 @@ from ...store import root_collection_prefix
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
     from qdrant_client import QdrantClient
 
@@ -65,15 +64,18 @@ def _qdrant_binary() -> Path:  # pyright: ignore[reportUnusedFunction]
 
 
 @pytest.fixture
-def ops_qdrant(_qdrant_binary: Path) -> Iterator[QdrantSupervisor]:
-    """A fresh, isolated qdrant server per test (no cross-test state)."""
-    tmp = Path(tempfile.mkdtemp(prefix="storage-ops-qdrant-"))
+def ops_qdrant(_qdrant_binary: Path, tmp_path: Path) -> Iterator[QdrantSupervisor]:
+    """A fresh, isolated qdrant server per test (no cross-test state).
+
+    Uses ``tmp_path`` so pytest reclaims the storage on teardown; a raw
+    ``mkdtemp`` here leaked its directory on every run.
+    """
     supervisor = QdrantSupervisor(
         _qdrant_binary,
         http_port=_free_port(),
         grpc_port=_free_port(),
-        storage_dir=tmp / "storage",
-        log_path=tmp / "qdrant.log",
+        storage_dir=tmp_path / "storage",
+        log_path=tmp_path / "qdrant.log",
     )
     supervisor.start()
     yield supervisor

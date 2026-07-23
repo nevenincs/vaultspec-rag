@@ -4,9 +4,11 @@ RAG test constants and fixtures live in
 src/vaultspec_rag/tests/conftest.py and src/vaultspec_rag/tests/constants.py.
 """
 
+import atexit
 import os
 import shutil
 import tempfile
+import time
 import warnings
 from pathlib import Path
 
@@ -139,10 +141,21 @@ def pytest_configure(config: pytest.Config) -> None:
     os.environ[_STATUS_DIR_ENV] = str(status_dir)
     os.environ[_QDRANT_STORAGE_DIR_ENV] = str(qdrant_storage_dir)
 
-    from vaultspec_rag._test_isolation import register_pytest_singleton_root
+    from vaultspec_rag._test_isolation import (
+        register_pytest_singleton_root,
+        sweep_orphaned_singleton_roots,
+    )
 
     _singleton_root = register_pytest_singleton_root(root)
     _reset_singleton_config_caches()
+    if _singleton_root_owned:
+        # Register an atexit backstop so a soft exit that bypasses
+        # pytest_unconfigure still reclaims this run's ~100MB root, and reclaim
+        # leftover roots from prior runs killed before any cleanup ran. A hard
+        # external kill skips atexit too; its leftover is reclaimed by the next
+        # run's sweep here.
+        atexit.register(_atexit_reclaim_singleton_root)
+        sweep_orphaned_singleton_roots(keep=root, now=time.time())
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
@@ -173,6 +186,21 @@ def pytest_unconfigure(config: pytest.Config) -> None:
             )
     _singleton_prior_env = None
     _singleton_root = None
+
+
+def _atexit_reclaim_singleton_root() -> None:
+    """Reclaim the owned session root if pytest_unconfigure did not run.
+
+    pytest_unconfigure is the normal-exit cleanup and clears ``_singleton_root``
+    once it removes the root; this backstop covers a pytest process that exits
+    without it (an aborted or errored session), so the root is not leaked. It is
+    idempotent - a no-op once pytest_unconfigure has cleared the root - and a
+    hard external kill bypasses it, leaving the next run's startup sweep to
+    reclaim the leftover.
+    """
+    root = _singleton_root
+    if _singleton_root_owned and root is not None:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def _has_hf_token() -> bool:
