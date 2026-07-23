@@ -22,6 +22,7 @@ import psutil
 import pytest
 from typer.testing import CliRunner
 
+from .._machine_lock import machine_lock_live_holder
 from ..cli import app
 from ..cli._service_lifecycle import _service_pid_on_port, _stop_service_on_port
 from ..cli._service_status import _write_service_status
@@ -154,6 +155,50 @@ def _reap_via_subprocess(port: int) -> dict[str, object]:
     raise AssertionError(msg)
 
 
+def _spawn_lock_holding_daemon(port: int) -> subprocess.Popen[bytes]:
+    """Spawn a witness that HOLDS the machine lock, publishing no pointer.
+
+    Models the singleton in the no-pointer recovery scenario the reap must
+    tolerate: the resident daemon holds the machine-lock lease (so it is the
+    reap's ``machine_lock_live_holder`` anchor) but wrote no service-status
+    pointer, so the lock anchor is the ONLY thing sparing it. The lease-acquire
+    runs in the worker the shim spawns, so the worker's pid is recorded in the
+    lock file and the trailing witness argv keeps the whole pair enumerable.
+    """
+    code = (
+        "import time;"
+        "from vaultspec_rag.config import reset_config;"
+        "reset_config();"
+        "from vaultspec_rag._machine_lock import acquire_machine_lock_lease;"
+        "lease, holder = acquire_machine_lock_lease();"
+        "assert lease is not None, holder;"
+        "time.sleep(120)"
+    )
+    argv = [
+        sys.executable,
+        "-c",
+        code,
+        "-m",
+        "vaultspec_rag.server",
+        "--port",
+        str(port),
+    ]
+    if sys.platform == "win32":
+        return subprocess.Popen(argv, creationflags=0x00000200)
+    return subprocess.Popen(argv, start_new_session=True)
+
+
+def _wait_for_lock_holder(candidates: set[int]) -> int:
+    """Wait until the machine lock is held by a pid in *candidates*; return it."""
+    for _ in range(100):
+        holder = machine_lock_live_holder()
+        if holder in candidates:
+            return holder
+        time.sleep(0.1)
+    msg = f"no candidate in {candidates} acquired the machine lock"
+    raise AssertionError(msg)
+
+
 class TestOrphanReapSafety:
     """``server stop --orphans`` must spare the singleton pair and foreign daemons.
 
@@ -254,6 +299,57 @@ class TestOrphanReapSafety:
             assert all(psutil.pid_exists(pid) for pid in singleton_pair), (
                 f"the singleton pair {singleton_pair} (worker + shim launcher) "
                 "must be spared"
+            )
+        finally:
+            reset_config()
+            for proc in procs:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait(timeout=5)
+            for pid in _orphan_daemon_pids(port):
+                with contextlib.suppress(Exception):
+                    psutil.Process(pid).kill()
+
+    def test_reap_spares_the_lock_holding_singleton_without_a_pointer(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The no-pointer recovery scenario the ADR targets: the singleton holds
+        # the machine lock but published NO service-status pointer, so the lock
+        # anchor is the only thing sparing it. Proves machine_lock_live_holder
+        # feeds the reap's anchor set, distinct from the pointer-anchored cases.
+        monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", str(tmp_path / "status"))
+        monkeypatch.setenv(
+            "VAULTSPEC_RAG_QDRANT_STORAGE_DIR", str(tmp_path / "qdrant" / "storage")
+        )
+        reset_config()
+
+        port = _free_port()
+        procs: list[subprocess.Popen[bytes]] = []
+        try:
+            singleton = _spawn_lock_holding_daemon(port)
+            orphan = _spawn_witness_daemon(port)
+            procs = [singleton, orphan]
+            matched = _wait_for_matched(port, count=4)
+            singleton_pair = _pair_of(singleton.pid, matched)
+            orphan_pair = _pair_of(orphan.pid, matched)
+
+            # The lease holder is the singleton's worker; wait until it holds.
+            holder = _wait_for_lock_holder(singleton_pair)
+            assert holder in singleton_pair, (holder, singleton_pair)
+
+            # No pointer written - only the machine-lock anchor protects.
+            envelope = _reap_via_subprocess(port)
+            assert envelope["ok"] is True, envelope
+
+            _await_all_gone(orphan_pair)
+            assert not any(psutil.pid_exists(pid) for pid in orphan_pair), (
+                f"the whole orphan pair {orphan_pair} must be reaped"
+            )
+            assert all(psutil.pid_exists(pid) for pid in singleton_pair), (
+                f"the lock-holding singleton pair {singleton_pair} must be "
+                "spared by the machine-lock anchor alone"
             )
         finally:
             reset_config()
