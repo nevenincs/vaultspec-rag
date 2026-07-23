@@ -13,7 +13,7 @@ import threading
 import time
 import warnings
 from contextlib import contextmanager, nullcontext
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from . import store_schema
 from ._store_locks import (
@@ -438,7 +438,7 @@ class VaultStore(_VaultSearchMixin):
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
         exc_tb: object,
-    ) -> bool:
+    ) -> Literal[False]:
         """Close the store on context-manager exit.
 
         Returns:

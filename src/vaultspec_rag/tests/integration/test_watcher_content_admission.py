@@ -7,7 +7,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from watchfiles import Change, awatch
+from watchfiles import (
+    Change,
+    awatch,  # pyright: ignore[reportUnknownVariableType] - watchfiles stub gap
+)
 
 from ...indexer import SUPPORTED_EXTENSIONS, CodebaseIndexer
 from ...indexer._content_policy import (
@@ -37,7 +40,7 @@ async def _wait_for_exact_changes(
     seen: set[Path] = set()
     loop = asyncio.get_running_loop()
     deadline = loop.time() + _EVENT_TIMEOUT_SECONDS
-    while seen != targets:
+    while seen != targets:  # pyright: ignore[reportUnnecessaryComparison] - set == frozenset compares by content
         remaining = deadline - loop.time()
         if remaining <= 0:
             raise AssertionError(

@@ -109,7 +109,7 @@ def _chunk_only_indexer(root: Path) -> CodebaseIndexer:
     indexer.root_dir = root
     indexer._extra_excludes = []
     indexer._data_root = root / get_config().data_dir
-    indexer._begin_preprocess_run()
+    indexer._begin_preprocess_run(indexer.resolve_policy_snapshot())
     return indexer
 
 

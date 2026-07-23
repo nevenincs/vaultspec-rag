@@ -26,7 +26,7 @@ from ...indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
 from ...progress import NullProgressReporter
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
     from pathlib import Path
 
     from ...embeddings import EmbeddingModel
@@ -150,7 +150,7 @@ def _write_snapshot_project(root: Path) -> _SnapshotPaths:
 
 
 @contextmanager
-def _snapshot_environment() -> Iterator[str]:
+def _snapshot_environment() -> Generator[str]:
     values = {
         EnvVar.HTML_STRIP.value: "true",
         EnvVar.INDEX_CHUNK_WORKERS.value: "1",

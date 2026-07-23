@@ -1794,7 +1794,7 @@ def _commit_unit_from_row(row: Mapping[str, Any]) -> CommitUnit:
             kind=CommitUnitKind(row["unit_kind"]),
             source_digest=row["source_digest"],
             segment_ordinal=row["segment_ordinal"],
-            is_file_end=bool(cast(int, row["is_file_end"])),
+            is_file_end=bool(cast("int", row["is_file_end"])),
             point_ids=tuple(cast("list[str]", point_ids)),
         )
     except (KeyError, TypeError, ValueError) as exc:
