@@ -32,6 +32,7 @@ __all__ = [
     "current_cuda_mb",
     "current_rss_mb",
     "is_enabled",
+    "reset_cuda_peak_memory_stats",
 ]
 
 
@@ -142,6 +143,42 @@ def current_cuda_mb() -> tuple[float, float]:
     """
     measured = _measure_cuda_mb()
     return measured if measured is not None else (0.0, 0.0)
+
+
+def _measure_cuda_budget_mb() -> tuple[float, float, float, float] | None:
+    """Return live and allocator high-water CUDA readings in MiB."""
+    measured = _measure_cuda_mb()
+    if measured is None or _torch_module is None:
+        return None
+    try:
+        peak_allocated = _torch_module.cuda.max_memory_allocated() / (1024.0 * 1024.0)
+        peak_reserved = _torch_module.cuda.max_memory_reserved() / (1024.0 * 1024.0)
+    except (RuntimeError, AssertionError):
+        return None
+    allocated, reserved = measured
+    return (
+        allocated,
+        reserved,
+        max(allocated, peak_allocated),
+        max(reserved, peak_reserved),
+    )
+
+
+def reset_cuda_peak_memory_stats() -> bool:
+    """Reset allocator high-water tracking for one admitted indexing run.
+
+    The reset is process-wide, matching the process-wide CUDA ceiling. It is
+    invoked after models are resident and before indexing dispatch so later
+    budget samples retain transient forward peaks even after tensors release.
+    """
+    measured = _measure_cuda_mb()
+    if measured is None or _torch_module is None:
+        return False
+    try:
+        _torch_module.cuda.reset_peak_memory_stats()
+    except (RuntimeError, AssertionError):
+        return False
+    return True
 
 
 @dataclass
@@ -282,13 +319,21 @@ class MemoryBudget:
         """
         self._raise_if_latched()
         measured_rss = _measure_rss_mb()
-        measured_cuda = _measure_cuda_mb() if self.cuda_ceiling_mb is not None else None
+        measured_cuda = (
+            _measure_cuda_budget_mb() if self.cuda_ceiling_mb is not None else None
+        )
         return self._record(
             label=label,
             rss_mb=measured_rss if measured_rss is not None else 0.0,
             rss_available=measured_rss is not None,
             cuda_allocated_mb=measured_cuda[0] if measured_cuda is not None else 0.0,
             cuda_reserved_mb=measured_cuda[1] if measured_cuda is not None else 0.0,
+            cuda_peak_allocated_mb=(
+                measured_cuda[2] if measured_cuda is not None else 0.0
+            ),
+            cuda_peak_reserved_mb=(
+                measured_cuda[3] if measured_cuda is not None else 0.0
+            ),
             cuda_available=measured_cuda is not None,
         )
 
@@ -322,8 +367,24 @@ class MemoryBudget:
             rss_available=True,
             cuda_allocated_mb=allocated,
             cuda_reserved_mb=reserved,
+            cuda_peak_allocated_mb=allocated,
+            cuda_peak_reserved_mb=reserved,
             cuda_available=True,
         )
+
+    def fail_cuda_oom(self, *, label: str, detail: str) -> None:
+        """Latch allocator exhaustion as the canonical CUDA ceiling outcome."""
+        snapshot = self.sample(label)
+        failure = (
+            JobErrorKind.CUDA_MEMORY_CEILING,
+            f"CUDA allocator exhausted at {snapshot.label}: {detail}",
+        )
+        with self._lock:
+            if self._failure is None:
+                object.__setattr__(self, "_failure", failure)
+            else:
+                failure = self._failure
+        raise JobError(*failure)
 
     def _raise_if_latched(self) -> None:
         """Raise the first terminal budget failure, if one has been recorded."""
@@ -340,6 +401,8 @@ class MemoryBudget:
         rss_available: bool,
         cuda_allocated_mb: float,
         cuda_reserved_mb: float,
+        cuda_peak_allocated_mb: float,
+        cuda_peak_reserved_mb: float,
         cuda_available: bool,
     ) -> MemoryBudgetSnapshot:
         """Atomically retain one observation and latch its first violation."""
@@ -365,12 +428,12 @@ class MemoryBudget:
                     cuda_allocated_mb=cuda_allocated_mb,
                     cuda_available=cuda_available,
                     peak_cuda_allocated_mb=max(
-                        cuda_allocated_mb if cuda_available else 0.0,
+                        cuda_peak_allocated_mb if cuda_available else 0.0,
                         previous.peak_cuda_allocated_mb if previous else 0.0,
                     ),
                     cuda_reserved_mb=cuda_reserved_mb,
                     peak_cuda_reserved_mb=max(
-                        cuda_reserved_mb if cuda_available else 0.0,
+                        cuda_peak_reserved_mb if cuda_available else 0.0,
                         previous.peak_cuda_reserved_mb if previous else 0.0,
                     ),
                     cuda_ceiling_mb=self.cuda_ceiling_mb,
@@ -422,23 +485,23 @@ class MemoryBudget:
                         ceiling_mb=self.cuda_ceiling_mb,
                     ),
                 )
-            if snapshot.cuda_allocated_mb > self.cuda_ceiling_mb:
+            if snapshot.peak_cuda_allocated_mb > self.cuda_ceiling_mb:
                 return (
                     JobErrorKind.CUDA_MEMORY_CEILING,
                     _ceiling_detail(
                         label=snapshot.label,
-                        measure="CUDA allocated",
-                        current_mb=snapshot.cuda_allocated_mb,
+                        measure="CUDA allocated high-water",
+                        current_mb=snapshot.peak_cuda_allocated_mb,
                         ceiling_mb=self.cuda_ceiling_mb,
                     ),
                 )
-            if snapshot.cuda_reserved_mb > self.cuda_ceiling_mb:
+            if snapshot.peak_cuda_reserved_mb > self.cuda_ceiling_mb:
                 return (
                     JobErrorKind.CUDA_MEMORY_CEILING,
                     _ceiling_detail(
                         label=snapshot.label,
-                        measure="CUDA reserved",
-                        current_mb=snapshot.cuda_reserved_mb,
+                        measure="CUDA reserved high-water",
+                        current_mb=snapshot.peak_cuda_reserved_mb,
                         ceiling_mb=self.cuda_ceiling_mb,
                     ),
                 )
