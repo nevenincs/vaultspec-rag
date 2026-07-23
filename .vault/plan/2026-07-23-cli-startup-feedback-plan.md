@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#cli-startup-feedback'
 date: '2026-07-23'
-modified: '2026-07-23'
+modified: '2026-07-24'
 tier: L1
 related:
   - '[[2026-07-23-cli-startup-feedback-adr]]'
@@ -35,7 +35,7 @@ scope; index-build progress stays with the jobs-operability surface.
 - [x] `S03` - Render a determinate Rich bar in the start wait when total is present, falling back to the named spinner for a descriptor-less daemon; `src/vaultspec_rag/cli/_service_start.py`.
 - [x] `S04` - Investigate whether the Hugging Face and pinned-binary downloaders expose incremental byte callbacks, and record whether download-percentage bars are feasible; `src/vaultspec_rag/tests/quality/ab_report.md`.
 - [x] `S05` - Add unit tests for the descriptor round-trip and the CLI bar/spinner rendering, including the older-daemon fallback guard; `src/vaultspec_rag/tests/test_machine_discovery.py`.
-- [ ] `S06` - Verify on a real GPU cold start that provisioning, per-model load count, and reranker stages render live, and record the execution; `src/vaultspec_rag/cli/_service_start.py`.
+- [x] `S06` - Verify on a real GPU cold start that provisioning, per-model load count, and reranker stages render live, and record the execution; `src/vaultspec_rag/cli/_service_start.py`.
 
 ## Parallelization
 
