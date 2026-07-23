@@ -10,13 +10,25 @@ suite; here the focus is the deterministic, side-effect-free resolution paths.
 
 from __future__ import annotations
 
+import contextlib
 import socket
+import subprocess
+import sys
+import time
+from typing import TYPE_CHECKING
 
+import psutil
 import pytest
 from typer.testing import CliRunner
 
 from ..cli import app
 from ..cli._service_lifecycle import _service_pid_on_port, _stop_service_on_port
+from ..cli._service_status import _write_service_status
+from ..cli._service_stop import _orphan_daemon_pids, _reap_orphan_daemons
+from ..config import reset_config
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
@@ -54,3 +66,114 @@ class TestStopCliPortOption:
         assert result.exit_code == 0, result.output
         assert "no such option" not in result.output.lower()
         assert "not running" in result.output.lower()
+
+
+def _spawn_witness_daemon(port: int) -> subprocess.Popen[bytes]:
+    """Spawn a harmless sleeper whose cmdline carries the launch witness.
+
+    The marker tokens ride as trailing argv to ``-c`` so ``psutil`` reports the
+    subsequence ``-m vaultspec_rag.server --port <port>`` without the process
+    ever importing the daemon or touching a GPU. Spawned in its own process
+    group / session (as the real detached daemon is) so the reap's group-scoped
+    termination signal cannot cascade back to this test process.
+    """
+    argv = [
+        sys.executable,
+        "-c",
+        "import time; time.sleep(120)",
+        "-m",
+        "vaultspec_rag.server",
+        "--port",
+        str(port),
+    ]
+    if sys.platform == "win32":
+        # CREATE_NEW_PROCESS_GROUP (0x00000200): isolate the CTRL_BREAK group.
+        return subprocess.Popen(argv, creationflags=0x00000200)
+    return subprocess.Popen(argv, start_new_session=True)
+
+
+def _wait_for_matched(port: int, count: int) -> dict[int, int]:
+    """Wait until at least *count* witness processes enumerate for *port*."""
+    matched: dict[int, int] = {}
+    for _ in range(100):
+        matched = _orphan_daemon_pids(port)
+        if len(matched) >= count:
+            return matched
+        time.sleep(0.1)
+    msg = f"only {len(matched)} of {count} witness processes enumerated on {port}"
+    raise AssertionError(msg)
+
+
+def _pair_of(launcher_pid: int, matched: dict[int, int]) -> set[int]:
+    """Return a launcher pid plus its matched worker children (the daemon pair)."""
+    return {launcher_pid} | {
+        pid for pid, ppid in matched.items() if ppid == launcher_pid
+    }
+
+
+def _await_all_gone(pids: set[int]) -> None:
+    for _ in range(100):
+        if not any(psutil.pid_exists(pid) for pid in pids):
+            return
+        time.sleep(0.1)
+
+
+class TestOrphanReapSafety:
+    """``server stop --orphans`` must spare the singleton pair and foreign daemons.
+
+    A venv shim makes each witness spawn a launcher+worker PAIR, so the invariant
+    is proven against real pairs on isolated dirs and a unique port: the whole
+    singleton pair (pointer plus shim) is spared, the whole orphan pair is reaped,
+    and a daemon on a different port is never enumerated.
+    """
+
+    def test_reap_spares_singleton_pair_and_reaps_the_orphan_pair(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", str(tmp_path / "status"))
+        monkeypatch.setenv(
+            "VAULTSPEC_RAG_QDRANT_STORAGE_DIR", str(tmp_path / "qdrant" / "storage")
+        )
+        reset_config()
+
+        port = _free_port()
+        foreign_port = _free_port()
+        procs: list[subprocess.Popen[bytes]] = []
+        try:
+            singleton = _spawn_witness_daemon(port)
+            orphan = _spawn_witness_daemon(port)
+            foreign = _spawn_witness_daemon(foreign_port)
+            procs = [singleton, orphan, foreign]
+
+            # Each witness spawn is a shim launcher + worker pair; wait for both.
+            matched = _wait_for_matched(port, count=4)
+            singleton_pair = _pair_of(singleton.pid, matched)
+            orphan_pair = _pair_of(orphan.pid, matched)
+
+            # The singleton launcher is the recorded discovery-pointer pid.
+            _write_service_status(singleton.pid, port)
+            _reap_orphan_daemons(port, json_mode=False)
+
+            _await_all_gone(orphan_pair)
+            assert not any(psutil.pid_exists(pid) for pid in orphan_pair), (
+                f"the whole orphan pair {orphan_pair} must be reaped"
+            )
+            assert all(psutil.pid_exists(pid) for pid in singleton_pair), (
+                f"the singleton pair {singleton_pair} (pointer plus shim) "
+                "must be spared"
+            )
+            assert psutil.pid_exists(foreign.pid), (
+                "a daemon launched for a different port must be spared"
+            )
+        finally:
+            reset_config()
+            for proc in procs:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait(timeout=5)
+            for straggler_port in (port, foreign_port):
+                for pid in _orphan_daemon_pids(straggler_port):
+                    with contextlib.suppress(Exception):
+                        psutil.Process(pid).kill()
