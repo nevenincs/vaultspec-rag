@@ -211,17 +211,59 @@ class _DiscoveryPublisher:
                 return None
             return self._publish_locked()
 
-    def quiesce(self) -> None:
-        """Prevent new publication and join any in-flight synchronous tick."""
-        with self._guard:
-            self._stopping = True
+    def quiesce(self, *, timeout: float | None = None) -> None:
+        """Prevent new publication and join any in-flight synchronous tick.
 
-    def cleanup(self) -> bool:
-        """Delete both views under the retained lease and report convergence."""
+        With ``timeout`` (shutdown) the wait for an in-flight tick's guard is
+        bounded. This is the first step of daemon teardown, and a heartbeat
+        worker wedged inside a synchronous publish - slow or contended
+        status/pointer file I/O - holds ``_guard`` and would otherwise strand
+        the whole shutdown here before any shutdown line is logged. Past the
+        deadline the stop flag is set without the guard (a later tick then
+        observes it and goes inert) so a bounded shutdown proceeds; the wedged
+        worker dies with the process at the forced exit. Without ``timeout`` the
+        acquire is unbounded, as for a normal non-shutdown quiesce.
+        """
+        acquired = self._guard.acquire(
+            timeout=-1 if timeout is None else max(0.0, timeout)
+        )
+        if not acquired:
+            self._stopping = True
+            log_event(
+                logger,
+                "service.lifecycle",
+                "quiesce_unjoined",
+                severity=logging.WARNING,
+            )
+            return
+        try:
+            self._stopping = True
+        finally:
+            self._guard.release()
+
+    def cleanup(self, *, timeout: float | None = None) -> bool:
+        """Delete both views under the retained lease and report convergence.
+
+        As with :meth:`quiesce`, ``timeout`` bounds the guard acquisition at
+        shutdown: a worker still wedged inside a synchronous publish must not
+        hold teardown open. Past the deadline the deletion runs unguarded -
+        safe because the caller is discarding state and about to force-exit -
+        so cleanup converges instead of blocking.
+        """
         from .._machine_lock import delete_machine_discovery
         from ..serviceclient._discovery import _delete_service_status
 
-        with self._guard:
+        acquired = self._guard.acquire(
+            timeout=-1 if timeout is None else max(0.0, timeout)
+        )
+        if not acquired:
+            log_event(
+                logger,
+                "service.lifecycle",
+                "cleanup_unguarded",
+                severity=logging.WARNING,
+            )
+        try:
             if self._cleaned:
                 return True
             self._stopping = True
@@ -257,6 +299,9 @@ class _DiscoveryPublisher:
                 pointer_clean = True
             self._cleaned = status_clean and pointer_clean
             return self._cleaned
+        finally:
+            if acquired:
+                self._guard.release()
 
     def _publish_locked(self) -> dict[str, object]:
         """Publish each view independently while holding the lifecycle gate."""

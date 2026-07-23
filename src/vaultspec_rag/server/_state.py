@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
+    from ..logging_config import DaemonLogCapture
     from ..storage_survey import NamespaceSurvey
 
 logger = logging.getLogger("vaultspec_rag.server")
@@ -74,6 +75,18 @@ _start_time: float = 0.0
 _http_mode: bool = False  # set once in main() before event loop starts
 _service_port: int = 0  # set by main() before the HTTP lifespan starts
 _launch_token: str = ""  # unique CLI launch-attempt witness, HTTP mode only
+
+# Standalone-daemon exit backstop. ``_daemon_process`` is set True exactly once
+# in ``main()`` right before ``uvicorn.run`` on the HTTP daemon path, and never
+# by a test or the in-process embedded-reuse lifespan. It gates the
+# post-shutdown ``os._exit``: only the real spawned daemon forces a prompt
+# process exit after a bounded teardown (a wedged ``to_thread`` worker would
+# otherwise hang the interpreter-exit executor join); the embedded-reuse
+# contract, which retries the lifespan in-process, must never be terminated.
+# ``_daemon_log_capture`` is that daemon's log-pipe drain, stashed so the
+# backstop can flush ``service.log`` before ``os._exit`` skips the drain thread.
+_daemon_process: bool = False
+_daemon_log_capture: DaemonLogCapture | None = None
 
 # Per-process identity token. Generated once in ``service_lifespan``
 # startup, written into ``service.json`` via the first heartbeat

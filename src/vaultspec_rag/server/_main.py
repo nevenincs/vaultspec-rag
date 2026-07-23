@@ -164,6 +164,15 @@ def main(port: int | None = None) -> None:
                 lifespan=service_lifespan,
             )
 
+            # Arm the standalone-daemon exit backstop before the event loop
+            # starts. ``service_lifespan`` forces a prompt ``os._exit`` after its
+            # bounded shutdown so a wedged ``to_thread`` worker cannot hang the
+            # interpreter-exit executor join. The stashed capture lets that exit
+            # flush ``service.log`` first. Both are read only via the package
+            # alias; the in-process embedded-reuse lifespan never sets them.
+            _m._daemon_process = True
+            _m._daemon_log_capture = log_capture
+
             uvicorn.run(
                 app,
                 host="127.0.0.1",

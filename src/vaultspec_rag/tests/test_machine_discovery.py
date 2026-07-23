@@ -110,3 +110,55 @@ class TestMachineDiscoveryPointer:
         assert machine_discovery_path().exists()
         assert owner_publisher.cleanup() is True
         assert not machine_discovery_path().exists()
+
+
+class TestBoundedShutdownGuard:
+    """Shutdown-time discovery guard waits are bounded, not unbounded."""
+
+    def test_quiesce_does_not_block_on_a_wedged_publish_guard(self) -> None:
+        """A heartbeat worker wedged mid-publish must not strand teardown.
+
+        ``quiesce`` is the first step of daemon shutdown and holds the same
+        ``_guard`` a synchronous heartbeat tick takes across its file I/O. If a
+        tick wedges (slow or contended status/pointer write), an unbounded
+        ``with self._guard:`` would block quiesce forever before any shutdown
+        line is logged. The bounded form abandons the join past its deadline,
+        sets the stop flag anyway, and returns. Reverting to the unbounded
+        acquire makes this block until the wedged holder releases at ~15s and
+        the timing assertion fails - so it guards the bound, not merely the
+        call.
+        """
+        import threading
+        import time
+
+        from .._machine_lock import MachineLockLease
+
+        publisher = _DiscoveryPublisher(
+            MachineLockLease(machine_lock_path(), os.getpid(), 0)
+        )
+        held = threading.Event()
+        release = threading.Event()
+
+        def wedged_publish() -> None:
+            # A different thread holds the guard (the mid-publish tick) and does
+            # not release it within the bound.
+            publisher._guard.acquire()  # pyright: ignore[reportPrivateUsage]
+            held.set()
+            release.wait(timeout=15.0)
+            publisher._guard.release()  # pyright: ignore[reportPrivateUsage]
+
+        worker = threading.Thread(target=wedged_publish)
+        worker.start()
+        try:
+            assert held.wait(timeout=5.0), "holder never took the publish guard"
+            started = time.monotonic()
+            publisher.quiesce(timeout=1.0)
+            elapsed = time.monotonic() - started
+            assert elapsed < 3.0, f"quiesce blocked for {elapsed:.1f}s"
+            assert elapsed >= 1.0, "quiesce should honour its acquire bound"
+            # Stop is flagged even though the guard was abandoned, so a later
+            # tick that finishes observes it and goes inert.
+            assert publisher._stopping is True  # pyright: ignore[reportPrivateUsage]
+        finally:
+            release.set()
+            worker.join(timeout=5.0)
