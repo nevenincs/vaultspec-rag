@@ -2536,12 +2536,11 @@ class CodebaseIndexer:
     ) -> tuple[set[str], int, dict[str, str]]:
         """Overlap bounded CPU production with one weighted GPU consumer."""
         new_ids: set[str] = set()
-        if checkpoint is not None:
-            new_ids.update(checkpoint.ledger.iter_point_ids(checkpoint.generation_id))
-            if checkpoint.generation.signature.operation is not RunOperation.FULL:
-                new_ids.update(
-                    checkpoint.ledger.iter_retained_point_ids(checkpoint.generation_id)
-                )
+        new_ids.update(checkpoint.ledger.iter_point_ids(checkpoint.generation_id))
+        if checkpoint.generation.signature.operation is not RunOperation.FULL:
+            new_ids.update(
+                checkpoint.ledger.iter_retained_point_ids(checkpoint.generation_id)
+            )
         metadata: dict[str, str] = {}
         total = [len(new_ids)]
         self._begin_support_measurement(paths)
@@ -2552,8 +2551,6 @@ class CodebaseIndexer:
             if not paths:
                 return new_ids, total[0], metadata
             self._begin_memory_budget()
-            if limits is None:
-                limits = self._resolve_code_pipeline_limits()
             segment_queue = _WeightedCodeSegmentQueue(
                 max_chunks=limits.queue_max_chunks,
                 max_bytes=limits.queue_max_bytes,
@@ -2710,7 +2707,7 @@ class CodebaseIndexer:
         retained: bool,
     ) -> dict[str, set[str]]:
         """Return bounded deterministic point evidence grouped by path."""
-        result = {rel: set() for rel in rel_paths}
+        result: dict[str, set[str]] = {rel: set() for rel in rel_paths}
         if retained:
             for rel in rel_paths:
                 result[rel].update(
