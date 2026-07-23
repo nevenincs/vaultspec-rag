@@ -587,7 +587,9 @@ def _cleanup_late_service_spawn(
         if remaining <= 0.0:
             break
         if _pid_matches_start_time(candidate, candidates[candidate]):
-            _terminate_pid(candidate, timeout=remaining)
+            # Arbitrary discovered pid, not a known process-group leader: a
+            # Windows CTRL_BREAK to it is unsafe (see _terminate_pid).
+            _terminate_pid(candidate, timeout=remaining, console_group_signal=False)
 
     while time.monotonic() < deadline:
         discovered, last_error = _discover_late_service_pids(
@@ -607,7 +609,7 @@ def _cleanup_late_service_spawn(
             remaining = deadline - time.monotonic()
             if remaining <= 0.0:
                 break
-            _terminate_pid(candidate, timeout=remaining)
+            _terminate_pid(candidate, timeout=remaining, console_group_signal=False)
         time.sleep(min(0.02, max(0.0, deadline - time.monotonic())))
     survivors = sorted(
         pid
@@ -823,6 +825,7 @@ def _terminate_pid(
     timeout: float = 4.0,
     *,
     graceful_drain: float = _DEFAULT_GRACEFUL_DRAIN_SECONDS,
+    console_group_signal: bool = True,
 ) -> None:
     """Send a termination signal to a process.
 
@@ -846,6 +849,15 @@ def _terminate_pid(
             therefore passes a drain budget large enough for the lifespan
             ``finally`` to complete its owner cleanup; callers that only need
             the process gone keep the short default.
+        console_group_signal: Whether a Windows ``CTRL_BREAK_EVENT`` is a
+            legitimate graceful signal for *pid*. True only when the caller
+            knows *pid* is a daemon it spawned with ``CREATE_NEW_PROCESS_GROUP``
+            (the operator-driven stop). It MUST be False for an arbitrary
+            discovered pid - a late-spawn cleanup target has no known process
+            group, and ``GenerateConsoleCtrlEvent`` addressed to a pid that is
+            not a group leader is undefined on Windows: it can block the caller
+            or deliver the break to the caller's own console group instead. When
+            False, Windows goes straight to a pid-targeted ``TerminateProcess``.
 
     """
     from .._test_isolation import enforce_pytest_managed_singleton_containment
@@ -857,7 +869,13 @@ def _terminate_pid(
     qdrant_identity = _owned_qdrant_identity(pid, deadline=deadline)
     if sys.platform == "win32":
         with contextlib.suppress(OSError):
-            os.kill(pid, signal.CTRL_BREAK_EVENT)
+            if console_group_signal:
+                os.kill(pid, signal.CTRL_BREAK_EVENT)
+            else:
+                # TerminateProcess: targets this exact pid, never a console
+                # group, so a stray with no known process group cannot block
+                # the caller or signal it by accident.
+                os.kill(pid, signal.SIGTERM)
     else:
         with contextlib.suppress(OSError):
             os.kill(pid, signal.SIGTERM)
