@@ -444,8 +444,11 @@ from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 
-from vaultspec_rag.logging_config import configure_logging, install_daemon_log_capture  # absolute-import-ok: standalone subprocess script, no package context
-from vaultspec_rag.server._lifespan import health_handler  # absolute-import-ok: standalone subprocess script, no package context
+from vaultspec_rag.logging_config import (  # absolute-import-ok
+    configure_logging,
+    install_daemon_log_capture,
+)
+from vaultspec_rag.server._lifespan import health_handler  # absolute-import-ok
 
 log_path = Path(sys.argv[1])
 port = int(sys.argv[2])
