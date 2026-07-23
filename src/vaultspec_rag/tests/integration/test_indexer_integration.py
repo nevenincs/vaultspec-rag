@@ -93,6 +93,21 @@ def _write_code_memory_corpus(root: Path, count: int = 4) -> None:
         )
 
 
+def _document_policy(pattern: str):
+    """Route one explicit pattern through the production document domain."""
+    from ...indexer._content_policy import (
+        ContentKind,
+        ContentRoute,
+        RootContentPolicy,
+        SourceProfileVersion,
+    )
+
+    return RootContentPolicy(
+        SourceProfileVersion.CONVENTIONAL_V1,
+        (ContentRoute(pattern, ContentKind.DOCUMENT),),
+    )
+
+
 def _assert_code_pipeline_released(indexer: object) -> None:
     """Assert physical consumer, worker, and writer ownership is released."""
     from ...indexer import CodebaseIndexer
@@ -106,6 +121,20 @@ def _assert_code_pipeline_released(indexer: object) -> None:
     assert not multiprocessing.active_children()
     assert indexer._writer_lock.acquire(blocking=False)
     indexer._writer_lock.release()
+
+
+def _wait_for_document_write_lock(indexer: object, *, timeout: float = 10.0) -> None:
+    """Wait until a real document run has encoded and reached its store write."""
+    from ...indexer import DocumentIndexer
+
+    assert isinstance(indexer, DocumentIndexer)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        snapshot = indexer.memory_budget_snapshot
+        if snapshot is not None and "after-dense-forward" in snapshot.label:
+            return
+        time.sleep(0.01)
+    raise AssertionError("document run did not reach the contended write lock")
 
 
 # ---- Indexer Tests ----
@@ -351,7 +380,7 @@ class TestCodeIndexMemoryCeilings:
         allocated_mb, reserved_mb = current_cuda_mb()
         measured_cuda_mb = max(allocated_mb, reserved_mb)
         assert measured_cuda_mb > 0.0
-        ceiling_mb = max(0.001, measured_cuda_mb / 2.0)
+        ceiling_mb = measured_cuda_mb + 0.001
         get_config(
             {
                 "index_cuda_ceiling_mb": ceiling_mb,
@@ -371,7 +400,7 @@ class TestCodeIndexMemoryCeilings:
             assert stopped.value.error_kind is JobErrorKind.CUDA_MEMORY_CEILING
             snapshot = indexer.memory_budget_snapshot
             assert snapshot is not None
-            assert snapshot.label == "before code dispatch"
+            assert "after-dense-forward" in snapshot.label
             assert snapshot.cuda_available
             cuda_ceiling_mb = snapshot.cuda_ceiling_mb
             assert cuda_ceiling_mb is not None
@@ -458,6 +487,205 @@ class TestCodeIndexBlockedStoreDeadline:
                     point_lock.release()
 
         _assert_code_pipeline_released(indexer)
+
+
+class TestDocumentIndexMemoryAndWriteDeadline:
+    """Document indexing enforces the same memory and write-liveness account."""
+
+    @pytest.mark.timeout(30)
+    def test_document_memory_budget_projects_real_peaks_and_effective_ceilings(
+        self,
+        cpu_code_embedding_model: EmbeddingModel,
+        tmp_path: Path,
+    ) -> None:
+        from ... import DocumentIndexer, VaultStore
+        from ...config import get_config
+        from ...job_dispatch import _document_resilience
+
+        _configure_cpu_code_index(
+            cpu_code_embedding_model.dimension,
+            index_rss_ceiling_mb=4096.0,
+        )
+        source = tmp_path / "bounded.txt"
+        source.write_text("alpha beta document memory", encoding="utf-8")
+        policy = _document_policy("bounded.txt")
+
+        with VaultStore(
+            tmp_path,
+            embedding_dim=cpu_code_embedding_model.dimension,
+        ) as store:
+            indexer = DocumentIndexer(
+                tmp_path,
+                cpu_code_embedding_model,
+                store,
+                content_policy=policy,
+            )
+            result = indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+            )
+
+            assert result.total > 0
+            snapshot = indexer.memory_budget_snapshot
+            assert snapshot is not None
+            assert snapshot.peak_rss_mb > 0.0
+            assert snapshot.rss_ceiling_mb == min(
+                4096.0,
+                indexer._support_limits().rss_bytes / 1024**2,
+            )
+            resilience = _document_resilience(indexer)
+            assert resilience.peak_rss_mb == snapshot.peak_rss_mb
+            assert resilience.peak_cuda_allocated_mb == 0.0
+            assert resilience.peak_cuda_reserved_mb == 0.0
+            assert resilience.rss_ceiling_mb == snapshot.rss_ceiling_mb
+            assert resilience.support_profile == get_config().index_support_profile
+
+    @pytest.mark.timeout(30)
+    def test_low_document_rss_ceiling_is_typed_and_canonical(
+        self,
+        cpu_code_embedding_model: EmbeddingModel,
+        tmp_path: Path,
+    ) -> None:
+        from ... import DocumentIndexer, VaultStore
+        from ..._job_errors import JobError, JobErrorKind
+        from ...job_dispatch import _document_resilience
+
+        _configure_cpu_code_index(
+            cpu_code_embedding_model.dimension,
+            index_rss_ceiling_mb=1.0,
+        )
+        source = tmp_path / "limited.txt"
+        source.write_text("alpha beta document ceiling", encoding="utf-8")
+        policy = _document_policy("limited.txt")
+
+        with VaultStore(
+            tmp_path,
+            embedding_dim=cpu_code_embedding_model.dimension,
+        ) as store:
+            indexer = DocumentIndexer(
+                tmp_path,
+                cpu_code_embedding_model,
+                store,
+                content_policy=policy,
+            )
+            with pytest.raises(JobError) as stopped:
+                indexer.full_index(
+                    reporter=NullProgressReporter(),
+                    preflight=indexer.preflight_content(),
+                )
+
+            assert stopped.value.error_kind is JobErrorKind.RSS_MEMORY_CEILING
+            snapshot = indexer.memory_budget_snapshot
+            assert snapshot is not None
+            assert snapshot.peak_rss_mb > 1.0
+            resilience = _document_resilience(indexer)
+            assert resilience.peak_rss_mb == snapshot.peak_rss_mb
+            assert resilience.rss_ceiling_mb == snapshot.rss_ceiling_mb == 1.0
+            assert resilience.terminal_outcome == "failed"
+            assert store.count_document() == 0
+
+    @pytest.mark.timeout(30)
+    def test_blocked_document_write_polls_cancel_and_releases_writer(
+        self,
+        cpu_code_embedding_model: EmbeddingModel,
+        tmp_path: Path,
+    ) -> None:
+        from ... import DocumentIndexer, VaultStore
+        from ...job_control import CancelRequested, RunControlToken
+
+        _configure_cpu_code_index(
+            cpu_code_embedding_model.dimension,
+            index_no_progress_timeout_seconds=10.0,
+        )
+        source = tmp_path / "cancelled.txt"
+        source.write_text("alpha beta blocked document write", encoding="utf-8")
+        policy = _document_policy("cancelled.txt")
+        control = RunControlToken()
+
+        with VaultStore(
+            tmp_path,
+            embedding_dim=cpu_code_embedding_model.dimension,
+        ) as store:
+            store.ensure_document_table()
+            indexer = DocumentIndexer(
+                tmp_path,
+                cpu_code_embedding_model,
+                store,
+                content_policy=policy,
+            )
+            point_lock = store._collection_locks[store.DOCUMENT_TABLE_NAME]
+            point_lock.acquire()
+            try:
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    indexing = executor.submit(
+                        indexer.full_index,
+                        reporter=NullProgressReporter(),
+                        preflight=indexer.preflight_content(),
+                        run_control=control,
+                    )
+                    _wait_for_document_write_lock(indexer)
+
+                    cancelled_at = time.monotonic()
+                    control.request_cancel()
+                    with pytest.raises(CancelRequested):
+                        indexing.result(timeout=3.0)
+                    assert time.monotonic() - cancelled_at < 2.0
+            finally:
+                point_lock.release()
+
+            assert store.count_document() == 0
+            assert indexer._writer_lock.acquire(blocking=False)
+            indexer._writer_lock.release()
+
+    @pytest.mark.timeout(30)
+    def test_blocked_document_write_expires_at_no_progress_deadline(
+        self,
+        cpu_code_embedding_model: EmbeddingModel,
+        tmp_path: Path,
+    ) -> None:
+        from ... import DocumentIndexer, VaultStore
+        from ..._job_errors import JobError, JobErrorKind
+
+        _configure_cpu_code_index(
+            cpu_code_embedding_model.dimension,
+            index_no_progress_timeout_seconds=2.0,
+        )
+        source = tmp_path / "timed-out.txt"
+        source.write_text("alpha beta blocked document deadline", encoding="utf-8")
+        policy = _document_policy("timed-out.txt")
+
+        with VaultStore(
+            tmp_path,
+            embedding_dim=cpu_code_embedding_model.dimension,
+        ) as store:
+            store.ensure_document_table()
+            indexer = DocumentIndexer(
+                tmp_path,
+                cpu_code_embedding_model,
+                store,
+                content_policy=policy,
+            )
+            point_lock = store._collection_locks[store.DOCUMENT_TABLE_NAME]
+            point_lock.acquire()
+            try:
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    indexing = executor.submit(
+                        indexer.full_index,
+                        reporter=NullProgressReporter(),
+                        preflight=indexer.preflight_content(),
+                    )
+                    _wait_for_document_write_lock(indexer)
+                    blocked_at = time.monotonic()
+                    with pytest.raises(JobError) as stopped:
+                        indexing.result(timeout=4.0)
+                    assert stopped.value.error_kind is JobErrorKind.NO_PROGRESS_TIMEOUT
+                    assert time.monotonic() - blocked_at < 3.0
+            finally:
+                point_lock.release()
+
+            assert store.count_document() == 0
+            assert indexer._writer_lock.acquire(blocking=False)
+            indexer._writer_lock.release()
 
 
 # ---- Document Preparation Tests ----
