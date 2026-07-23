@@ -779,7 +779,7 @@ class CodebaseIndexer:
     def preprocess_config(self) -> PreprocessConfig:
         """Resolve the project's preprocess rules (public accessor, #185).
 
-        Used by the watcher to make its change filter preprocess-aware (D8).
+        Used by the watcher to make its change filter preprocess-aware.
         """
         return self._build_preprocess_rules()
 
@@ -909,7 +909,7 @@ class CodebaseIndexer:
         return preserved_metadata, preserved_ids, effective_clean
 
     def _record_preprocess_result(self, res: FileChunkResult) -> None:
-        """Accumulate a worker result's preprocess disposition (D11)."""
+        """Accumulate a worker result's preprocess disposition."""
         self._prep_ok += _preprocess_glue.record_preprocess_result(
             res, self._prep_skips
         )
@@ -919,7 +919,7 @@ class CodebaseIndexer:
         path: pathlib.Path,
         result: _chunk_worker.ScopedChunkResult,
     ) -> None:
-        """Accumulate a scoped-path preprocess disposition (D11)."""
+        """Accumulate a scoped-path preprocess disposition."""
         self._prep_ok += _preprocess_glue.record_scoped_preprocess(
             self.root_dir, path, result, self._prep_skips
         )
@@ -1085,7 +1085,7 @@ class CodebaseIndexer:
         Ignore always wins (this is only consulted after the ignore gate), but a
         match expands the indexable set: a matched file is admitted even when its
         extension is unsupported, it exceeds ``_MAX_FILE_SIZE``, or it is binary,
-        because the preprocessor extracts indexable text from it (D2, D10).
+        because the preprocessor extracts indexable text from it.
         """
         return _preprocess_glue.matches_preprocess_rule(
             getattr(self, "_prep_ctx", None), rel

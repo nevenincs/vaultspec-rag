@@ -1,10 +1,10 @@
 """Service lifespan and the raw ``/health`` endpoint.
 
-Split out of the original ``server.py`` monolith per the
-``2026-06-01-module-split-adr``. ``service_lifespan`` reassigns the
-process-wide ``_start_time`` / ``_SERVICE_TOKEN`` on the package
-namespace so ``health_handler`` (and tests that rebind ``_registry`` /
-``_start_time``) observe the live values through the package alias.
+Split out of the original ``server.py`` monolith. ``service_lifespan``
+reassigns the process-wide ``_start_time`` / ``_SERVICE_TOKEN`` on the
+package namespace so ``health_handler`` (and tests that rebind
+``_registry`` / ``_start_time``) observe the live values through the
+package alias.
 """
 
 from __future__ import annotations
@@ -205,7 +205,7 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     # /health for CLI-side identity verification (gh #124/#125).
     _m._SERVICE_TOKEN = uuid.uuid4().hex
 
-    # Machine singleton (ADR D1 / P3): claim the machine before committing GPU
+    # Machine singleton: claim the machine before committing GPU
     # memory or spawning Qdrant. This is the authoritative, race-safe gate (the
     # CLI pre-check is advisory; this acquire wins or loses atomically).
     machine_lease = _claim_machine_singleton()
