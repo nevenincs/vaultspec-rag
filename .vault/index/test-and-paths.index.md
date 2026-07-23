@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#test-and-paths'
-date: '2026-06-08'
-modified: '2026-06-30'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-04-04-test-and-paths-adr]]'
   - '[[2026-04-04-test-and-paths-exec-phase1]]'

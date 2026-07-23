@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#server-mcp-route'
-date: '2026-06-08'
-modified: '2026-06-30'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-05-31-server-mcp-route-adr]]'
   - '[[2026-05-31-server-mcp-route-plan]]'
@@ -19,7 +19,7 @@ Auto-generated index of all documents tagged with `#server-mcp-route`.
 
 ### adr
 
-- `2026-05-31-server-mcp-route-adr` - `server-mcp-route` adr: `asgi path-rewrite middleware to skip starlette mount redirect` | (**status:** `accepted`)
+- `2026-05-31-server-mcp-route-adr` - `server-mcp-route` adr: `asgi path-rewrite middleware to skip starlette mount redirect` | (**status:** `superseded`)
 
 ### plan
 

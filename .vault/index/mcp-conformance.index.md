@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#mcp-conformance'
-date: '2026-06-30'
-modified: '2026-06-30'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-06-30-mcp-conformance-P01-S01]]'
   - '[[2026-06-30-mcp-conformance-P01-S02]]'

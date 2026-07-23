@@ -154,8 +154,6 @@ asyncio_mode = "auto"
 # root; retaining every run's directories once filled a system drive
 # (50k+ leftover dirs). Keep temp only for failing tests and only for
 # the most recent run.
-tmp_path_retention_count = 1
-tmp_path_retention_policy = "failed"
 log_cli = true
 log_cli_date_format = "%H:%M:%S"
 log_cli_format = "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"
@@ -176,6 +174,8 @@ markers = [
 testpaths = ["src/vaultspec_rag/tests"]
 timeout = 300
 timeout_func_only = true
+tmp_path_retention_count = 1
+tmp_path_retention_policy = "failed"
 
 [tool.ruff]
 line-length = 88
@@ -255,5 +255,5 @@ typeCheckingMode = "strict"
   # the test tree (fixing it by making internals public would damage the
   # design). Every other strict rule stays ON for tests.
   [[tool.basedpyright.executionEnvironments]]
-  root = "src/vaultspec_rag/tests"
   reportPrivateUsage = false
+  root = "src/vaultspec_rag/tests"

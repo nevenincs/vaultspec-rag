@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#code-document-index-boundary'
-date: '2026-07-22'
-modified: '2026-07-22'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-07-21-code-document-index-boundary-adr]]'
   - '[[2026-07-21-code-document-index-boundary-reference]]'
@@ -102,6 +102,7 @@ related:
   - '[[2026-07-22-code-document-index-boundary-W06-P13-S134]]'
   - '[[2026-07-22-code-document-index-boundary-W06-P13-S135]]'
   - '[[2026-07-22-code-document-index-boundary-W06-P13-S136]]'
+  - '[[2026-07-22-code-document-index-boundary-W06-P13-S137]]'
   - '[[2026-07-22-code-document-index-boundary-audit]]'
   - '[[2026-07-22-code-document-index-boundary-p06-resource-bounds-audit]]'
   - '[[2026-07-22-code-document-index-boundary-plan]]'
@@ -281,6 +282,7 @@ Auto-generated index of all documents tagged with `#code-document-index-boundary
 - `2026-07-22-code-document-index-boundary-W06-P13-S134` - Reconcile CLI help-text metavar expectations with the current Typer rendering convention
 - `2026-07-22-code-document-index-boundary-W06-P13-S135` - Clear the redundant-cast type diagnostics blocking the lint gate
 - `2026-07-22-code-document-index-boundary-W06-P13-S136` - Remove the first-failure and narrowed-marker shortcuts from the test recipe so the harness gate reports the complete result
+- `2026-07-22-code-document-index-boundary-W06-P13-S137` - Reconcile the command reference with the shipped source-type vocabulary so the document kind and the combined alias appear wherever a type is accepted
 
 ### plan
 

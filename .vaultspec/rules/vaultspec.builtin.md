@@ -19,19 +19,23 @@ The workflow persists the following documents, bound by a single feature tag:
 - `.vault/adr/yyyy-mm-dd-<feature>-adr.md`: Research-derived `<ADR>`.
 
 - `.vault/plan/yyyy-mm-dd-<feature>-plan.md`: The `<Plan>` to execute, authored and
-  managed by the vaultspec-core CLI (`vaultspec-core vault plan`).
+  managed through the plan verbs - the `plan_progress` and `plan_edit` MCP tools where
+  connected, the `vaultspec-core vault plan` CLI otherwise.
 
 - `.vault/exec/yyyy-mm-dd-<feature>/.../<step>.md`: The individual `<Step Record>`.
 
 - `.vault/exec/yyyy-mm-dd-<feature>/...-summary.md`: The `<Phase Summary>`.
 
 - `.vault/audit/yyyy-mm-dd-<feature>-audit.md`: The `<Audit>` report. A feature with
-  multiple audits disambiguates each with an optional narrative infix:
-  `yyyy-mm-dd-<feature>-<topic>-audit.md`.
+  multiple audits, references, or research documents disambiguates each with an optional
+  narrative infix - `yyyy-mm-dd-<feature>-<topic>-<type>.md` - scaffolded through the
+  owning verb's `--topic` flag (`vault add` for audit, reference, and research only),
+  never by hand-picking a filename.
 
 - `.vault/index/<feature>.index.md`: The auto-generated `<Feature Index>` linking every
-  document for a feature. Managed by `vaultspec-core vault feature index`; do not author
-  by hand.
+  document for a feature. The index regenerates as a side effect of the `create` and
+  `edit` tools; regenerate it manually with `vaultspec-core vault feature index` when
+  working through the CLI, and never author it by hand.
 
 Use the following pipeline skills:
 
@@ -52,7 +56,10 @@ The following helper skills are available:
 ## Documentation Hierarchy
 
 The documentation trail follows a strict dependency graph. Artifacts lower in the
-hierarchy should reference those above them.
+hierarchy should reference those above them. Source code sits outside this hierarchy
+entirely: vault documents cite code by `path:line` locator, and tracked source-file
+content never references `.vault/` documents, identifiers, or harness contents (opt-in
+git commit trailers are the sanctioned linkage channel).
 
 - **Brainstorm** / **Research** / **Reference** (`.vault/research/`,
   `.vault/reference/`)
@@ -70,6 +77,9 @@ hierarchy should reference those above them.
 - **Implementation Plans** (`.vault/plan/`)
 
   - *Depends on:* ADRs, research, audits, (previous or related feature plans)
+  - *Cardinality:* one plan executes one ADR or a cluster of ADRs (the epic roll-up);
+    every governing ADR is listed in `related:`. One ADR is never spread across several
+    concurrent plans.
 
 - **Execution Records**
   (`.vault/exec/{yyyy-mm-dd-feature}/{yyyy-mm-dd-feature-{phase}-{step}}.md`)
@@ -102,7 +112,9 @@ hierarchy should reference those above them.
 
 - **Feature Indexes** (`.vault/index/{feature}.index.md`)
 
-  - *Auto-generated* by `vaultspec-core vault feature index`; never authored by hand.
+  - *Auto-generated* as a side effect of the `create` and `edit` tools; regenerate
+    manually with `vaultspec-core vault feature index` when working through the CLI,
+    never authored by hand.
   - *Filename:* `{feature}.index.md` (no date prefix).
   - *Example:* `.vault/index/editor-demo.index.md`
 
@@ -263,6 +275,11 @@ instead.
 
   - Top-level docs: `yyyy-mm-dd-{feature}-{type}.md` (e.g.,
     `2026-02-04-editor-demo-plan.md`)
+
+  - Narrative infix (audit, reference, research only):
+    `yyyy-mm-dd-{feature}-{topic}-{type}.md` (e.g.,
+    `2026-02-04-editor-demo-engine-wire-reference.md`), scaffolded with the owning
+    verb's `--topic` flag
 
   - Exec Steps (L1): `yyyy-mm-dd-{feature}-{step}.md` (e.g.,
     `2026-02-04-editor-demo-S01.md`)

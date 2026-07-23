@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#rag-broker-affordances'
-date: '2026-06-27'
-modified: '2026-07-03'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-06-27-rag-broker-affordances-P01-S01]]'
   - '[[2026-06-27-rag-broker-affordances-P01-S02]]'

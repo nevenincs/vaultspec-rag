@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#cli-tree-overhaul'
-date: '2026-06-08'
-modified: '2026-06-30'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-06-06-cli-tree-overhaul-W01-P01-S36]]'
   - '[[2026-06-06-cli-tree-overhaul-W01-P01-S37]]'
@@ -47,7 +47,7 @@ Auto-generated index of all documents tagged with `#cli-tree-overhaul`.
 
 ### adr
 
-- `2026-06-06-cli-tree-overhaul-adr` - `cli-tree-overhaul` adr: `CLI Tree Overhaul` | (**status:** `{accepted|rejected|deprecated}`)
+- `2026-06-06-cli-tree-overhaul-adr` - `cli-tree-overhaul` adr: `CLI Tree Overhaul` | (**status:** `accepted`)
 
 ### exec
 

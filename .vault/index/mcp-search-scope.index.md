@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#mcp-search-scope'
-date: '2026-07-22'
-modified: '2026-07-22'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-06-30-mcp-search-scope-adr]]'
   - '[[2026-07-22-mcp-search-scope-surface-drift-audit]]'

@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#runtime-performance-audit'
-date: '2026-07-21'
-modified: '2026-07-22'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-07-21-runtime-performance-audit-codebase-hot-paths-reference]]'
   - '[[2026-07-21-runtime-performance-audit-implementation-review-audit]]'
@@ -18,7 +18,7 @@ Auto-generated index of all documents tagged with `#runtime-performance-audit`.
 
 ### audit
 
-- `2026-07-21-runtime-performance-audit-implementation-review-audit` - `runtime-performance-audit` audit: `service, indexing, search, and log performance fixes`
+- `2026-07-21-runtime-performance-audit-implementation-review-audit` - Runtime performance audit: service, indexing, search, and logs
 
 ### reference
 

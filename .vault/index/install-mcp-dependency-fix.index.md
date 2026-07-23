@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#install-mcp-dependency-fix'
-date: '2026-06-10'
-modified: '2026-06-30'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-06-10-install-mcp-dependency-fix-S01]]'
   - '[[2026-06-10-install-mcp-dependency-fix-S02]]'
@@ -23,7 +23,7 @@ Auto-generated index of all documents tagged with `#install-mcp-dependency-fix`.
 
 ### adr
 
-- `2026-06-10-install-mcp-dependency-fix-adr` - `install-mcp-dependency-fix` adr: `declare mcp as a core dependency; reject pywin32 dll shim` | (**status:** `accepted`)
+- `2026-06-10-install-mcp-dependency-fix-adr` - `install-mcp-dependency-fix` adr: `declare mcp as a core dependency; reject pywin32 dll shim` | (**status:** `superseded`)
 
 ### exec
 

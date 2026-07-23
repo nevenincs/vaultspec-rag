@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#service-job-control'
-date: '2026-07-22'
-modified: '2026-07-22'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-07-21-service-job-control-W01-P01-S01]]'
   - '[[2026-07-21-service-job-control-W01-P01-S02]]'

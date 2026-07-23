@@ -161,6 +161,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6.0.2
 
+      # Pin 3.13 to match the rest of CI: requires-python admits newer
+      # interpreters, and letting uv auto-select grabs 3.14, whose native
+      # extension wheels crash this GPU stack on import.
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
         with:
