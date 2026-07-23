@@ -301,11 +301,16 @@ _dev-audit target:
 # "-m unit", is the accurate full-population selector. No -x here: a
 # repo-health recipe must report every failure, not stop at the first one.
 #
-# "gpu" is the real-GPU tier, run on a CUDA host, as two invocations: the
-# serialized integration/quality/performance/robustness/cuda tests share the
-# in-process gpu_lock, but subprocess_gpu tests spawn their own model-loading
-# process whose VRAM is outside that lock and must not co-schedule with the
-# first group on a 16 GB card. NOTE: this recipe body is one continuation-
+# "gpu" is the real-GPU CORRECTNESS tier, run on a CUDA host, as two
+# invocations: the serialized integration/quality/robustness/cuda tests share
+# the in-process gpu_lock, but subprocess_gpu tests spawn their own
+# model-loading process whose VRAM is outside that lock and must not
+# co-schedule with the first group on a 16 GB card. "perf" is a separate
+# quiet-machine-ONLY lane: the performance tests' wall-clock latency/footprint
+# assertions ARE the system under test, so a loaded machine fails them for
+# reasons unrelated to a regression - they are excluded from "gpu" and run
+# only on explicit `just dev test perf`, never as a correctness gate.
+# NOTE: this recipe body is one continuation-
 # joined logical line for `just`/PowerShell, so it must never contain a `#`
 # comment inside the switch - PowerShell's `#` runs to the end of the joined
 # line and silently swallows every case after it, including the closing
@@ -315,15 +320,16 @@ _dev-test target='all':
     "python" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "not (integration or quality or performance or robustness or subprocess_gpu or cuda)" ; break } \
     "fast" { {{uvr}} pytest src/vaultspec_rag/tests/ -x -q --tb=short -m unit ; break } \
     "gpu" { \
-      {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "integration or quality or performance or robustness or cuda" ; \
+      {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "integration or quality or robustness or cuda" ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
       {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "subprocess_gpu" ; \
       break \
     } \
+    "perf" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "performance" ; break } \
     "all" { just _dev-test python ; break } \
     default { \
       Write-Host "unknown dev test target: {{target}}" -ForegroundColor Red ; \
-      Write-Host "  targets: python fast gpu all" -ForegroundColor Red ; \
+      Write-Host "  targets: python fast gpu perf all" -ForegroundColor Red ; \
       exit 1 \
     } \
   }
