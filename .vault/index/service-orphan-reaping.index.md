@@ -6,6 +6,7 @@ tags:
 date: '2026-07-23'
 modified: '2026-07-23'
 related:
+  - '[[2026-07-23-service-orphan-reaping-adr]]'
   - '[[2026-07-23-service-orphan-reaping-research]]'
 ---
 
@@ -14,6 +15,10 @@ related:
 Auto-generated index of all documents tagged with `#service-orphan-reaping`.
 
 ## Documents
+
+### adr
+
+- `2026-07-23-service-orphan-reaping-adr` - `service-orphan-reaping` adr: `guaranteed daemon self-exit on a failed claim, plus a bounded signature-scoped reap` | (**status:** `proposed`)
 
 ### research
 
