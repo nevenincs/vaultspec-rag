@@ -3,17 +3,13 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: 2026-03-07
-modified: '2026-06-30'
+modified: '2026-07-23'
 related:
   - '[[2026-03-08-qdrant-hybrid-search-patterns-research]]'
   - '[[2026-03-07-libdoc-verification-research]]'
 ---
 
-# ADR: Payload indexes are no-ops in local mode; add for forward compatibility
-
-## Status
-
-Accepted
+# `gpu-rag-stack` adr: `Payload indexes are no-ops in local mode; add for forward compatibility` | (**status:** `accepted`)
 
 ## Context
 

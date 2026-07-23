@@ -7,16 +7,14 @@ related:
   - "[[2026-03-07-threading-lock-for-singleton-adr]]"
   - "[[2026-03-07-continuous-research]]"
 superseded_by: '2026-06-18-mcp-service-client-adr'
-modified: '2026-06-30'
+modified: '2026-07-23'
 ---
 
-# ADR: MCP tools use `async def` + `anyio.to_thread.run_sync`
-
-## Status
-
-Accepted (corrected same day; original sync-def approach was wrong)
+# `gpu-rag-stack` adr: `MCP tools use async def + anyio.to_thread.run_sync` | (**status:** `superseded`)
 
 ## Context
+
+Corrected same day; the original sync-def approach was wrong.
 
 MCP tool handlers in `mcp_server.py` call synchronous blocking code: GPU
 inference (`SentenceTransformer.encode`, `CrossEncoder.predict`) and Qdrant

@@ -3,17 +3,13 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: 2026-03-07
-modified: '2026-06-30'
+modified: '2026-07-23'
 related:
   - '[[2026-03-06-codebase-indexer-tech-stack-research]]'
   - '[[2026-03-07-api-verification-research]]'
 ---
 
-# ADR: Manual tree-sitter node walking over Query API for metadata extraction
-
-## Status
-
-Accepted
+# `gpu-rag-stack` adr: `Manual tree-sitter node walking over Query API for metadata extraction` | (**status:** `accepted`)
 
 ## Context
 

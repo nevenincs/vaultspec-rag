@@ -3,17 +3,13 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: 2026-03-07
-modified: '2026-06-30'
+modified: '2026-07-23'
 related:
   - '[[2026-03-07-mcp-sync-tools-adr]]'
   - '[[2026-03-08-fastmcp-lifespan-research]]'
 ---
 
-# ADR: Use `threading.Lock` for `get_comp()` singleton
-
-## Status
-
-Accepted
+# `gpu-rag-stack` adr: `Use threading.Lock for get_comp() singleton` | (**status:** `accepted`)
 
 ## Context
 

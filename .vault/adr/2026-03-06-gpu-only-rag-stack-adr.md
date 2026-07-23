@@ -3,25 +3,17 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: 2026-03-06
-modified: '2026-06-30'
+modified: '2026-07-23'
 related:
   - '[[2026-03-06-gpu-rag-architecture-research]]'
   - '[[2026-03-06-gpu-vector-search-deep-dive-research]]'
 ---
 
-# ADR: GPU-Only RAG Stack — sentence-transformers + Qwen3 + SPLADE v3
-
-## Date
-
-2026-03-06
-
-## Status
-
-Accepted (supersedes 2026-03-06-rag-stack-migration)
+# `gpu-rag-stack` adr: `GPU-Only RAG Stack — sentence-transformers + Qwen3 + SPLADE v3` | (**status:** `accepted`)
 
 ## Context
 
-The previous ADR migrated from sentence-transformers/torch/lancedb to fastembed/ONNX/qdrant-client with a CPU-first design. This created a new problem: **all embedding inference runs on CPU via ONNX Runtime**, which is significantly slower than GPU inference for batch indexing and leaves available GPU hardware idle.
+Supersedes the prior sentence-transformers/torch/lancedb-to-fastembed/ONNX/qdrant-client migration. The previous ADR migrated from sentence-transformers/torch/lancedb to fastembed/ONNX/qdrant-client with a CPU-first design. This created a new problem: **all embedding inference runs on CPU via ONNX Runtime**, which is significantly slower than GPU inference for batch indexing and leaves available GPU hardware idle.
 
 The user mandates GPU-only inference. No CPU fallback. No fastembed. No ONNX.
 
