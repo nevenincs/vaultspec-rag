@@ -1,11 +1,13 @@
 """Intent-aware ranking harness: graded-relevance metrics over a real-vault copy.
 
 Drives the labeled query set (``tests/quality/intent_queries.toml``) against a
-real GPU index built from a hermetic copy of the project's own ``.vault/`` -
-the corpus where a feature's adr, research, plan, and exec genuinely compete on
-the same vocabulary, which is where the ranking failure lives. Each query's
-results are scored with the role-aware metrics (``tests/quality/metrics.py``)
-using the rubric-derived gold grades, per declared intent.
+real GPU index built from the frozen reference vault (see
+``tests/quality/_frozen_corpus.py``) - the tree at the gold's calibration
+commit, where a feature's adr, research, plan, and exec genuinely compete on
+the same vocabulary and where the ranking failure lives. Freezing the corpus
+keeps the gate measuring ranking quality rather than racing an ever-growing
+vault. Each query's results are scored with the role-aware metrics
+(``tests/quality/metrics.py``) using the rubric-derived gold grades, per intent.
 
 This module builds the evaluator and a structural gate. The strict per-intent
 thresholds and the named orientation regression (the accepted ADR must outrank
@@ -18,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 import tempfile
 import tomllib
@@ -31,6 +32,10 @@ from .._model_setup import (
     model_setup_timeout_seconds,
     models_are_cached,
     run_bounded_process,
+)
+from ..quality._frozen_corpus import (
+    frozen_vault_document_count,
+    materialize_frozen_vault,
 )
 from ..quality.metrics import (
     authoritative_at_k,
@@ -125,11 +130,11 @@ def real_vault_evidence(
 ) -> IntentRankingEvidence:
     """Run the complete real-GPU ranking setup inside one bounded process.
 
-    The worker copies the complete live project vault, excluding only index
-    storage and lock files, so the original ADR/research/plan/exec competition
-    remains unchanged. Model construction, production indexing, and every
-    production search run under one deadline; the parent consumes the worker's
-    JSON evidence for normal assertions.
+    The worker materialises the frozen reference vault (the tree at the gold's
+    calibration commit) so the ADR/research/plan/exec competition the gold was
+    scored against stays fixed as the live vault grows. Model construction,
+    production indexing, and every production search run under one deadline; the
+    parent consumes the worker's JSON evidence for normal assertions.
     """
     from ...config import get_config
 
@@ -174,13 +179,13 @@ def real_vault_evidence(
 
 
 def _copy_real_vault_corpus(destination_root: Path) -> int:
-    """Copy the complete real vault except mutable index data and lock files."""
-    source_vault = _repo_root() / ".vault"
-    destination_vault = destination_root / ".vault"
-    shutil.copytree(
-        source_vault,
-        destination_vault,
-        ignore=shutil.ignore_patterns("data", "*.lock"),
+    """Materialise the frozen reference vault so the gold cannot drift.
+
+    See :mod:`.._frozen_corpus`: the gold is scored against the vault at its
+    calibration commit, not the live, still-growing tree.
+    """
+    destination_vault = materialize_frozen_vault(
+        destination_root, repo_root=_repo_root()
     )
     (destination_root / ".vaultspec").mkdir(parents=True, exist_ok=True)
 
@@ -193,10 +198,18 @@ def _copy_real_vault_corpus(destination_root: Path) -> int:
 
 
 def _real_vault_document_count(vault_root: Path | None = None) -> int:
-    """Count the Markdown documents in the complete immutable corpus surface."""
-    root = vault_root or (_repo_root() / ".vault")
+    """Count the Markdown documents in the frozen reference corpus.
+
+    With no explicit root, count the frozen ref's tree directly so the
+    harness corpus-count invariant matches the materialised frozen corpus,
+    not the live vault that keeps growing under it.
+    """
+    if vault_root is None:
+        return frozen_vault_document_count(repo_root=_repo_root())
     return sum(
-        1 for path in root.rglob("*.md") if "data" not in path.relative_to(root).parts
+        1
+        for path in vault_root.rglob("*.md")
+        if "data" not in path.relative_to(vault_root).parts
     )
 
 
