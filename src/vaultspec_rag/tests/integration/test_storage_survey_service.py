@@ -23,7 +23,7 @@ from ...store import root_collection_prefix
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.subprocess_gpu]
+pytestmark = [pytest.mark.integration, pytest.mark.subprocess_gpu]
 
 
 def _survey_root_call(port: int, root: Path, *, fresh: bool = False) -> dict[str, Any]:

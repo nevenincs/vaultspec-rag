@@ -970,6 +970,7 @@ class TestManagedJobPersistence:
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 @pytest.mark.usefixtures("live_service")
 async def test_reindex_vault_records_finished_tool_job(
@@ -991,6 +992,7 @@ async def test_reindex_vault_records_finished_tool_job(
     assert isinstance(job["result"], str)
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 @pytest.mark.usefixtures("live_service")
 async def test_reindex_codebase_records_finished_tool_job(
