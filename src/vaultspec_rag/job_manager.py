@@ -248,7 +248,8 @@ class JobManager:
         self._max_idempotency = resolved_max + max_terminal_history
         if state_path is _CONFIGURED_STATE_PATH:
             self._state_path = (
-                Path(str(get_config().status_dir)) / _MANAGED_STATE_FILENAME
+                Path(str(get_config().status_dir)).expanduser()
+                / _MANAGED_STATE_FILENAME
             )
         else:
             resolved_path = cast("str | os.PathLike[str] | None", state_path)
