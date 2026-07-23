@@ -1,4 +1,4 @@
-"""Tests for the Tier-2b jobs surface (#142, plan P04).
+"""Tests for the managed jobs surface.
 
 Three layers, no mocks/skips/monkeypatch:
 
@@ -232,7 +232,7 @@ def _cli_jobs_payload(now: float) -> dict[str, object]:
                 "initiator": {
                     "kind": "watcher",
                     "command": "watcher_code_index",
-                    "project_root": "Y:\\code\\proj-a",
+                    "project_root": "C:\\projects\\proj-a",
                 },
                 "runtime": {"pid": 123, "user": "operator"},
                 "resources": {"current": {"rss_mb": 10.0}},
@@ -251,7 +251,7 @@ def _cli_jobs_payload(now: float) -> dict[str, object]:
                 "initiator": {
                     "kind": "cli",
                     "command": "reindex_vault",
-                    "project_root": "Y:\\code\\proj-b",
+                    "project_root": "C:\\projects\\proj-b",
                 },
                 "runtime": {"pid": 124, "user": "operator"},
                 "resources": {"finished": {"rss_mb": 11.0}},
@@ -270,7 +270,7 @@ def _cli_jobs_payload(now: float) -> dict[str, object]:
                 "initiator": {
                     "kind": "cli",
                     "command": "reindex_codebase",
-                    "project_root": "Y:\\code\\proj-c",
+                    "project_root": "C:\\projects\\proj-c",
                 },
                 "runtime": {"pid": 125, "user": "operator"},
                 "resources": {"finished": {"rss_mb": 12.0}},
@@ -1029,7 +1029,7 @@ def test_jobs_humanizes_subsecond_finish_duration() -> None:
                 "finished_at": now,
                 "runtime_seconds": 0.1,
                 "result": "+0/1-0 (50ms)",
-                "initiator": {"kind": "tool", "project_root": r"Y:\code\fast"},
+                "initiator": {"kind": "tool", "project_root": r"C:\projects\fast"},
             }
         ],
         "total": 1,
@@ -1070,7 +1070,7 @@ def test_jobs_failure_detail_stays_on_one_feed_line() -> None:
                     "Search for cudaErrorIllegalAddress in the CUDA docs.\n"
                     "For debugging consider passing CUDA_LAUNCH_BLOCKING=1"
                 ),
-                "initiator": {"kind": "tool", "project_root": r"Y:\code\proj-cuda"},
+                "initiator": {"kind": "tool", "project_root": r"C:\projects\proj-cuda"},
             }
         ],
         "total": 1,
@@ -1118,7 +1118,7 @@ def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> 
                     "runtime_seconds": 20.0,
                     "initiator": {
                         "kind": "watcher",
-                        "project_root": r"Y:\code\proj-waiting",
+                        "project_root": r"C:\projects\proj-waiting",
                     },
                 }
             ],
@@ -1167,7 +1167,7 @@ def test_jobs_filtered_header_separates_matches_from_service_total(
                     "phase": "running",
                     "started_at": now - 40,
                     "progress": {"step": "embed", "completed": 1, "total": 4},
-                    "initiator": {"project_root": r"Y:\code\proj-a"},
+                    "initiator": {"project_root": r"C:\projects\proj-a"},
                 },
                 {
                     "id": "running-b",
@@ -1176,7 +1176,7 @@ def test_jobs_filtered_header_separates_matches_from_service_total(
                     "phase": "running",
                     "started_at": now - 20,
                     "progress": {"step": "embed + upsert documents"},
-                    "initiator": {"project_root": r"Y:\code\proj-b"},
+                    "initiator": {"project_root": r"C:\projects\proj-b"},
                 },
             ],
             "total": 58,
@@ -1227,7 +1227,7 @@ def test_jobs_state_active_only_shows_processing_jobs() -> None:
                 "started_at": now - 30,
                 "progress": {"step": "queued", "completed": 0},
                 "runtime_seconds": 30.0,
-                "initiator": {"project_root": r"Y:\code\waiting-project"},
+                "initiator": {"project_root": r"C:\projects\waiting-project"},
             },
             {
                 "id": "active-job",
@@ -1237,7 +1237,7 @@ def test_jobs_state_active_only_shows_processing_jobs() -> None:
                 "started_at": now - 10,
                 "progress": {"step": "embed", "completed": 2, "total": 4},
                 "runtime_seconds": 10.0,
-                "initiator": {"project_root": r"Y:\code\active-project"},
+                "initiator": {"project_root": r"C:\projects\active-project"},
             },
         ],
         "total": 7,
@@ -1290,7 +1290,7 @@ def test_jobs_state_waiting_only_shows_queued_jobs() -> None:
                 "started_at": now - 10,
                 "progress": {"step": "embed", "completed": 2, "total": 4},
                 "runtime_seconds": 10.0,
-                "initiator": {"project_root": r"Y:\code\active-project"},
+                "initiator": {"project_root": r"C:\projects\active-project"},
             },
             {
                 "id": "waiting-job",
@@ -1300,7 +1300,7 @@ def test_jobs_state_waiting_only_shows_queued_jobs() -> None:
                 "started_at": now - 30,
                 "progress": {"step": "queued", "completed": 0},
                 "runtime_seconds": 30.0,
-                "initiator": {"project_root": r"Y:\code\waiting-project"},
+                "initiator": {"project_root": r"C:\projects\waiting-project"},
             },
         ],
         "total": 7,
@@ -1420,7 +1420,7 @@ def test_jobs_humanizes_cancelled_automatic_update(
                     "result": "watcher task cancelled",
                     "initiator": {
                         "kind": "watcher",
-                        "project_root": r"Y:\code\example",
+                        "project_root": r"C:\projects\example",
                     },
                 }
             ],
@@ -1460,13 +1460,13 @@ def test_job_detail_uses_plain_runtime_and_resource_language(
             "initiator": {
                 "kind": "watcher",
                 "command": "watcher_code_index",
-                "project_root": r"Y:\code\proj-a",
+                "project_root": r"C:\projects\proj-a",
             },
             "runtime": {
                 "pid": 123,
                 "user": "operator",
-                "executable": r"Y:\code\.venv\Scripts\python.exe",
-                "virtual_env": r"Y:\code\.venv",
+                "executable": r"C:\projects\.venv\Scripts\python.exe",
+                "virtual_env": r"C:\projects\.venv",
             },
             "resources": {
                 "current": {
@@ -1488,7 +1488,7 @@ def test_job_detail_uses_plain_runtime_and_resource_language(
     assert values["Python"] == ".venv/Scripts/python.exe"
     assert values["Python environment"] == ".venv"
     assert values["Memory"] == "process 10.0 MB, GPU used 20.0 MB, GPU reserved 30.0 MB"
-    assert r"Y:\code\.venv\Scripts\python.exe" not in output
+    assert r"C:\projects\.venv\Scripts\python.exe" not in output
     for forbidden in (
         "Initiator:",
         "Command:",
@@ -1530,7 +1530,7 @@ def test_jobs_job_id_detail_uses_precise_process_label() -> None:
     assert values["Address"] == f"http://127.0.0.1:{port}"
     assert values["Status"] == "active"
     assert values["Project"] == "proj-a"
-    assert values["Path"] == r"Y:\code\proj-a"
+    assert values["Path"] == r"C:\projects\proj-a"
     assert values["Job process id"] == "123"
     assert values["User"] == "operator"
     assert values["Started by"] == "automatic updates"
@@ -1558,7 +1558,7 @@ def test_jobs_job_id_detail_humanizes_cleanup_progress() -> None:
                 "initiator": {
                     "kind": "watcher",
                     "command": "watcher_code_index",
-                    "project_root": r"Y:\code\proj-a",
+                    "project_root": r"C:\projects\proj-a",
                 },
             }
         ],
@@ -1605,7 +1605,7 @@ def test_job_detail_only_reports_progress_freshness_while_running(
         "initiator": {
             "kind": "watcher",
             "command": "watcher_code_index",
-            "project_root": r"Y:\code\proj-a",
+            "project_root": r"C:\projects\proj-a",
         },
     }
 

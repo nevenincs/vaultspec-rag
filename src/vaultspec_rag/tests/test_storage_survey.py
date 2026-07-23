@@ -138,4 +138,4 @@ def test_temp_rooted_false_for_project_roots_and_none() -> None:
     from ..storage_survey import is_temp_rooted
 
     assert is_temp_rooted(None) is False
-    assert is_temp_rooted(r"Y:\code\real-project") is False
+    assert is_temp_rooted(r"C:\projects\real-project") is False

@@ -505,7 +505,7 @@ class TestServiceProjectsCli:
         _print_projects_summary(
             [
                 {
-                    "root": r"Y:\code\example",
+                    "root": r"C:\projects\example",
                     "idle_seconds": 125,
                     "ref_count": 1,
                     "last_access_iso": "2026-06-12T14:05:06Z",
@@ -563,12 +563,12 @@ class TestServiceProjectsCli:
             "Capacity: 2 of 8 projects loaded",
             "Automatic unload: after 10 minutes idle",
             "- Project: busy",
-            r"Path: Y:\code\busy",
+            r"Path: C:\projects\busy",
             "Active requests: 2",
             "Last activity: 1 minute 5 seconds ago",
             "Last request: 14:05:06",
             "- Project: ready",
-            r"Path: Y:\code\ready",
+            r"Path: C:\projects\ready",
             "Active requests: none",
             "Last activity: 4 seconds ago",
         ]
@@ -578,7 +578,7 @@ class TestServiceProjectsCli:
         ready_block = lines[ready_index : ready_index + 4]
         assert ready_block == [
             "- Project: ready",
-            r"Path: Y:\code\ready",
+            r"Path: C:\projects\ready",
             "Active requests: none",
             "Last activity: 4 seconds ago",
         ]
@@ -615,7 +615,7 @@ class TestServiceProjectsCli:
                     "server",
                     "projects",
                     "unload",
-                    r"Y:\code\example",
+                    r"C:\projects\example",
                     "--port",
                     str(server.server_port),
                 ],
@@ -626,11 +626,11 @@ class TestServiceProjectsCli:
             thread.join(timeout=1)
 
         assert result.exit_code == 1, result.output
-        assert requests == [{"root": r"Y:\code\example"}]
+        assert requests == [{"root": r"C:\projects\example"}]
         labels = _label_values(result.output)
         assert labels["Address"] == f"http://127.0.0.1:{server.server_port}"
         assert labels["Project"] == "example"
-        assert labels["Path"] == r"Y:\code\example"
+        assert labels["Path"] == r"C:\projects\example"
         assert labels["Unload"] == "service could not confirm unload"
         assert (
             labels["Next action"]
@@ -650,7 +650,7 @@ class TestServiceProjectsCli:
                     "server",
                     "projects",
                     "unload",
-                    r"Y:\code\not-loaded",
+                    r"C:\projects\not-loaded",
                     "--port",
                     str(server.server_port),
                 ],
@@ -661,11 +661,11 @@ class TestServiceProjectsCli:
             thread.join(timeout=1)
 
         assert result.exit_code == 2, result.output
-        assert requests == [{"root": r"Y:\code\not-loaded"}]
+        assert requests == [{"root": r"C:\projects\not-loaded"}]
         labels = _label_values(result.output)
         assert labels["Address"] == f"http://127.0.0.1:{server.server_port}"
         assert labels["Project"] == "not-loaded"
-        assert labels["Path"] == r"Y:\code\not-loaded"
+        assert labels["Path"] == r"C:\projects\not-loaded"
         assert labels["Unload"] == "project is not loaded"
         assert "Project is not loaded:" not in result.output
         _assert_no_table_borders(result.output)
@@ -679,7 +679,7 @@ class TestServiceProjectsCli:
                     "server",
                     "projects",
                     "unload",
-                    r"Y:\code\example",
+                    r"C:\projects\example",
                     "--port",
                     str(server.server_port),
                     "--json",
@@ -691,12 +691,12 @@ class TestServiceProjectsCli:
             thread.join(timeout=1)
 
         assert result.exit_code == 1, result.output
-        assert requests == [{"root": r"Y:\code\example"}]
+        assert requests == [{"root": r"C:\projects\example"}]
         envelope = json.loads(result.output)
         assert envelope["ok"] is False
         assert envelope["command"] == "service.projects.unload"
         assert envelope["error"] == "unexpected_response"
-        assert r"Y:\code\example" in envelope["message"]
+        assert r"C:\projects\example" in envelope["message"]
         assert "vaultspec-rag server status" in envelope["message"]
         assert "Eviction failed" not in envelope["message"]
         assert "reason=" not in envelope["message"]

@@ -317,7 +317,7 @@ def _status_contract_jobs_payload(
         running_job["initiator"] = {
             "command": "reindex_codebase",
             "project_root": (
-                r"Y:\code\vaultspec-rag-worktrees"
+                r"C:\projects\vaultspec-rag-worktrees"
                 r"\feature-server-supervision"
             ),
         }
@@ -340,7 +340,7 @@ def _status_contract_jobs_payload(
                 "last_progress_age_seconds": 3.0,
                 "initiator": {
                     "command": "watcher_vault_index",
-                    "project_root": r"Y:\code\other-project",
+                    "project_root": r"C:\projects\other-project",
                 },
             }
         )
@@ -627,13 +627,13 @@ def _projects_list_contract_server() -> tuple[typing.Any, typing.Any, list[str]]
                     {
                         "projects": [
                             {
-                                "root": r"Y:\code\busy",
+                                "root": r"C:\projects\busy",
                                 "idle_seconds": 65,
                                 "ref_count": 2,
                                 "last_access_iso": "2026-06-12T14:05:06Z",
                             },
                             {
-                                "root": r"Y:\code\ready",
+                                "root": r"C:\projects\ready",
                                 "idle_seconds": 4,
                                 "ref_count": 0,
                                 "last_access_iso": "",
@@ -675,7 +675,7 @@ def _logs_contract_server() -> (  # pyright: ignore[reportUnusedFunction]
                             "2026-06-13 10:05:06 INFO vaultspec_rag.service: "
                             "service.lifecycle event=search search_type=code "
                             "results=3 total_seconds=0.42 "
-                            r"root=Y:\code\feature-server-supervision "
+                            r"root=C:\projects\feature-server-supervision "
                             "request_id=abcdef123456"
                         ]
                     }
@@ -773,7 +773,7 @@ def _jobs_populated_contract_server() -> tuple[typing.Any, typing.Any, list[str]
                         "result": "+1 /0 -0 (1000ms)",
                         "initiator": {
                             "command": "reindex_codebase",
-                            "project_root": r"Y:\code\finished-project",
+                            "project_root": r"C:\projects\finished-project",
                         },
                     },
                     {
@@ -790,7 +790,7 @@ def _jobs_populated_contract_server() -> tuple[typing.Any, typing.Any, list[str]
                         "runtime_seconds": 7,
                         "initiator": {
                             "command": "watcher_vault_index",
-                            "project_root": r"Y:\code\running-project",
+                            "project_root": r"C:\projects\running-project",
                         },
                     },
                 ],
@@ -844,7 +844,7 @@ def _assert_project_summary_language(out: str) -> None:
         "Capacity: 1 of 16 projects loaded",
         "Automatic unload: after 30 minutes idle",
         "- Project: example",
-        r"  Path: Y:\code\example",
+        r"  Path: C:\projects\example",
         "  Active requests: 1",
         "  Last activity: 2 minutes 5 seconds ago",
         "  Last request: 14:05:06",
