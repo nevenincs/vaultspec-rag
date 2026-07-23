@@ -75,7 +75,7 @@ def _canonical_option(value: object) -> CanonicalOption:
     """Validate and narrow one canonical tagged option pair."""
     if not isinstance(value, tuple):
         raise TypeError("canonical preprocess option must be a tagged pair")
-    pair = value
+    pair = cast("tuple[object, ...]", value)
     if len(pair) != 2:
         raise TypeError("canonical preprocess option must be a tagged pair")
     if pair[0] not in _CANONICAL_OPTION_TAGS:
@@ -90,10 +90,10 @@ def _mapping_payload(
     if not isinstance(payload, tuple):
         raise TypeError("canonical mapping payload must be a tuple")
     items: list[tuple[str, CanonicalOption]] = []
-    for item in payload:
+    for item in cast("tuple[object, ...]", payload):
         if not isinstance(item, tuple):
             raise TypeError("canonical mapping entries must be key-value pairs")
-        pair = item
+        pair = cast("tuple[object, ...]", item)
         if len(pair) != 2:
             raise TypeError("canonical mapping entries must be key-value pairs")
         key, nested = pair
@@ -107,7 +107,9 @@ def _sequence_payload(payload: object) -> tuple[CanonicalOption, ...]:
     """Validate and narrow a canonical sequence payload."""
     if not isinstance(payload, tuple):
         raise TypeError("canonical sequence payload must be a tuple")
-    return tuple(_canonical_option(nested) for nested in payload)
+    return tuple(
+        _canonical_option(nested) for nested in cast("tuple[object, ...]", payload)
+    )
 
 
 def _freeze_temporal(
