@@ -13,13 +13,14 @@ from __future__ import annotations
 
 from typing import cast
 
-from .._job_errors import STALL_THRESHOLD_SECONDS
+from .._job_errors import STALL_THRESHOLD_SECONDS, remediation
 from ..job_models import JobState
 from . import _jobs
 
 __all__ = [
     "_clamp_limit",
     "_job_matches",
+    "_job_resilience",
     "_job_stalled",
     "_job_summary",
     "_job_with_liveness",
@@ -290,12 +291,65 @@ def _job_stalled(record: dict[str, object], now: float) -> bool:
     return age is not None and age >= STALL_THRESHOLD_SECONDS
 
 
+def _round_measure(value: object) -> float | None:
+    """Round a megabyte or second measure to operator precision, or drop it."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return round(float(value), 1)
+
+
+def _job_resilience(record: dict[str, object]) -> dict[str, object] | None:
+    """Project the canonical resilience snapshot into a bounded response shape.
+
+    The raw snapshot is not passed through. Each field is named explicitly, so
+    a field added to the snapshot later cannot leak to a broker without a
+    deliberate change here; the megabyte and second measures are rounded to the
+    same one-decimal operator precision the CLI renders; and a remediation hint
+    is derived from the terminal outcome so a broker reading the response can
+    act on a failure without re-deriving it. This is the REST peer of the
+    health rollup and the CLI render, which expose the same resilience state.
+    """
+    resilience = record.get("resilience")
+    if not isinstance(resilience, dict):
+        return None
+    data = cast("dict[str, object]", resilience)
+    terminal = data.get("terminal_outcome")
+    return {
+        "generation_id": data.get("generation_id"),
+        "committed_units": data.get("committed_units"),
+        "replayed_units": data.get("replayed_units"),
+        "checkpoint_compatible": data.get("checkpoint_compatible"),
+        "last_durable_progress_at": data.get("last_durable_progress_at"),
+        "no_progress_timeout_seconds": _round_measure(
+            data.get("no_progress_timeout_seconds")
+        ),
+        "no_progress_remaining_seconds": _round_measure(
+            data.get("no_progress_remaining_seconds")
+        ),
+        "circuit_state": data.get("circuit_state"),
+        "next_retry_at": data.get("next_retry_at"),
+        "peak_rss_mb": _round_measure(data.get("peak_rss_mb")),
+        "rss_ceiling_mb": _round_measure(data.get("rss_ceiling_mb")),
+        "peak_cuda_allocated_mb": _round_measure(data.get("peak_cuda_allocated_mb")),
+        "peak_cuda_reserved_mb": _round_measure(data.get("peak_cuda_reserved_mb")),
+        "cuda_ceiling_mb": _round_measure(data.get("cuda_ceiling_mb")),
+        "support_profile": data.get("support_profile"),
+        "terminal_outcome": terminal,
+        "remediation": remediation(terminal) if isinstance(terminal, str) else None,
+    }
+
+
 def _job_with_liveness(
     record: dict[str, object],
     *,
     now: float,
 ) -> dict[str, object]:
     enriched = dict(record)
+    shaped_resilience = _job_resilience(record)
+    if shaped_resilience is not None:
+        enriched["resilience"] = shaped_resilience
+    else:
+        enriched.pop("resilience", None)
     state = job_state(record)
     enriched["state"] = state
     enriched["phase"] = _job_phase(record, state)

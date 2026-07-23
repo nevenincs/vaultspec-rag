@@ -175,3 +175,81 @@ def test_resilience_rejects_invalid_operability_values() -> None:
         IndexResilienceSnapshot(peak_rss_mb=float("inf"))
     with pytest.raises(ValueError):
         IndexResilienceSnapshot(cuda_ceiling_mb=-0.5)
+
+
+def test_route_shaping_bounds_rounds_and_derives_remediation() -> None:
+    """The REST job response shapes resilience explicitly, not by pass-through.
+
+    S33: the broker-facing job collection and detail responses must not leak
+    the raw snapshot. The shaper names each field (so a field added to the
+    snapshot later cannot leak without a deliberate change), rounds the
+    megabyte and second measures to operator precision, and derives a
+    remediation hint from the terminal outcome.
+    """
+    from ..server._routes_jobs import _job_resilience
+
+    record: dict[str, object] = {
+        "resilience": {
+            "generation_id": "gen-1",
+            "committed_units": 5,
+            "replayed_units": 2,
+            "checkpoint_compatible": True,
+            "last_durable_progress_at": 1784.5,
+            "no_progress_timeout_seconds": 30.049,
+            "no_progress_remaining_seconds": 12.371,
+            "circuit_state": "closed",
+            "next_retry_at": None,
+            "peak_rss_mb": 1215.52734375,
+            "rss_ceiling_mb": 1940.5,
+            "peak_cuda_allocated_mb": 1363.827,
+            "peak_cuda_reserved_mb": 1368.0,
+            "cuda_ceiling_mb": 1366.001,
+            "support_profile": "managed-service",
+            "terminal_outcome": "cuda_memory_ceiling",
+            # A field the snapshot might grow later must not reach the broker.
+            "an_internal_field_added_later": "must-not-leak",
+        }
+    }
+
+    shaped = _job_resilience(record)
+    assert shaped is not None
+    # Bounded: only the named canonical fields plus the derived remediation.
+    assert "an_internal_field_added_later" not in shaped
+    assert set(shaped) == {
+        "generation_id",
+        "committed_units",
+        "replayed_units",
+        "checkpoint_compatible",
+        "last_durable_progress_at",
+        "no_progress_timeout_seconds",
+        "no_progress_remaining_seconds",
+        "circuit_state",
+        "next_retry_at",
+        "peak_rss_mb",
+        "rss_ceiling_mb",
+        "peak_cuda_allocated_mb",
+        "peak_cuda_reserved_mb",
+        "cuda_ceiling_mb",
+        "support_profile",
+        "terminal_outcome",
+        "remediation",
+    }
+    # Rounded to one-decimal operator precision, the same the CLI renders.
+    assert shaped["peak_rss_mb"] == 1215.5
+    assert shaped["no_progress_remaining_seconds"] == 12.4
+    assert shaped["cuda_ceiling_mb"] == 1366.0
+    # State the operator reads unrounded is preserved exactly.
+    assert shaped["generation_id"] == "gen-1"
+    assert shaped["committed_units"] == 5
+    assert shaped["circuit_state"] == "closed"
+    # Remediation is derived from the terminal outcome so a broker can act.
+    assert isinstance(shaped["remediation"], str)
+    assert shaped["remediation"]
+
+
+def test_route_shaping_is_absent_when_no_resilience_recorded() -> None:
+    """A record without a resilience snapshot yields no shaped block."""
+    from ..server._routes_jobs import _job_resilience
+
+    assert _job_resilience({}) is None
+    assert _job_resilience({"resilience": None}) is None
