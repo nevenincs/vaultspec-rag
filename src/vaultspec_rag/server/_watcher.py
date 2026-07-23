@@ -711,8 +711,9 @@ async def _wait_for_watcher_cleanup(
 ) -> bool:
     """Boundedly await current watcher drains without cancelling them.
 
-    This is the lifecycle hand-off for S20. A failed or timed-out private drain
-    remains retryable and never changes the corresponding canonical job state.
+    This is the bounded lifecycle hand-off for a watcher drain. A failed or
+    timed-out private drain remains retryable and never changes the
+    corresponding canonical job state.
     """
     from ..config import get_config
 
