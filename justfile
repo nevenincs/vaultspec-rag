@@ -300,16 +300,21 @@ _dev-audit target:
 # are silently dropped by "-m unit"), so this full-exclusion expression, not
 # "-m unit", is the accurate full-population selector. No -x here: a
 # repo-health recipe must report every failure, not stop at the first one.
+#
+# "gpu" is the real-GPU tier, run on a CUDA host, as two invocations: the
+# serialized integration/quality/performance/robustness/cuda tests share the
+# in-process gpu_lock, but subprocess_gpu tests spawn their own model-loading
+# process whose VRAM is outside that lock and must not co-schedule with the
+# first group on a 16 GB card. NOTE: this recipe body is one continuation-
+# joined logical line for `just`/PowerShell, so it must never contain a `#`
+# comment inside the switch - PowerShell's `#` runs to the end of the joined
+# line and silently swallows every case after it, including the closing
+# braces (this broke every target, not just "gpu", the last time it happened).
 _dev-test target='all':
   switch ("{{target}}") { \
     "python" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "not (integration or quality or performance or robustness or subprocess_gpu or cuda)" ; break } \
     "fast" { {{uvr}} pytest src/vaultspec_rag/tests/ -x -q --tb=short -m unit ; break } \
     "gpu" { \
-      # The real-GPU tier, run on a CUDA host. Two invocations because \
-      # subprocess_gpu tests spawn their own model-loading process whose VRAM \
-      # is outside the in-process gpu_lock and must not co-schedule with the \
-      # serialized integration/quality/performance/robustness/cuda tests on a \
-      # 16 GB card. \
       {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "integration or quality or performance or robustness or cuda" ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
       {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "subprocess_gpu" ; \
