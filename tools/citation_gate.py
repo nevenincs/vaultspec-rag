@@ -104,6 +104,47 @@ PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(r":doc:`[^`]*\.vault/"),
     ),
     ("codification-candidate", re.compile(r"codification candidate")),
+    # Bare decision token. An ADR enumerates its decisions D1, D2, ...; a lone
+    # ``D7``/``ADR D6``/``D1-D3`` in prose cites that enumeration. No product
+    # vocabulary uses ``D`` + digits, so the bare form is unambiguous (the
+    # parenthesised ``(D7)`` form is already caught by ``decision-token``).
+    ("bare-decision-token", re.compile(r"\bD\d{1,2}\b")),
+    # Audit finding reference. The rolling audit numbers findings
+    # ``F<section>.<n>`` (F6.6, F9.1); the dotted form is distinctive and no
+    # product vocabulary uses it.
+    ("audit-finding-ref", re.compile(r"\bF\d+\.\d+\b")),
+    # Review finding tag. ``H#``/``C#`` ALSO name markdown headings (an ADR's H1
+    # title, an H2 subsection) which are core product vocabulary, so a bare
+    # ``H1`` is NOT a citation. Only the unambiguous review shapes match: an
+    # R-round prefix (``R36-C1``), a slash-run of tags (``C1/H1/H2``, ``H3/H4``),
+    # an explicit ``review C1``, or a CWE/security-tagged finding.
+    (
+        "review-finding-tag",
+        re.compile(
+            r"\bR\d+-[HCD]\d+\b"
+            r"|\b[HC]\d+(?:/[HC]\d+)+\b"
+            r"|\breview\s+[HC]\d+\b"
+            r"|\bH\d+\s*\((?:CWE|security)"
+        ),
+    ),
+    # Research finding reference. Research documents label findings by a letter
+    # and number (``research O3``, ``research A1``); matched only behind the
+    # ``research`` lead word so a bare ``A1``/``O3`` value elsewhere is untouched.
+    ("research-finding-ref", re.compile(r"\bresearch\s+[A-Z]\d+\b")),
+    # Quality-review token ``QR#``. No product vocabulary uses it; kept so a
+    # reintroduced ``QR4`` cannot slip in even though none remain today.
+    ("quality-review-token", re.compile(r"\bQR\d{1,2}\b")),
+    # Feature-named ADR / review reference. A kebab-case feature name immediately
+    # before ``ADR`` or ``review`` points at a specific record
+    # (``index-gpu-pipeline review``, ``service-graph ADR``). Domain phrases that
+    # describe a KIND of ADR rather than name one - a ``no-marker ADR``, a
+    # ``0-based ADR ordinal`` - are excluded by the leading lookahead.
+    (
+        "feature-named-adr",
+        re.compile(
+            r"\b(?!no-marker\b|0-based\b)[a-z0-9]+(?:-[a-z0-9]+)+\s+(?:ADR|review)\b"
+        ),
+    ),
     # Bare plan coordinates the dotted ``plan-container-id`` pattern misses: a
     # lone ``P03``/``S07``/``W04`` in a comment (e.g. ``# ... (#155 P03)`` or
     # ``S10: token persistence``) is a plan reference, not domain vocabulary -
