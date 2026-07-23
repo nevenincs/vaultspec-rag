@@ -220,6 +220,7 @@ class TestBoundedRetry:
         assert not (storage / "quarantine").exists()
         assert _list_on_disk_collections(storage) == {"r0000_vault_docs"}
 
+    @pytest.mark.integration
     def test_readiness_timeout_with_a_live_child_quarantines_nothing(
         self,
         tmp_path: Path,
