@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
+    "_QDRANT_CLIENT_OP_TIMEOUT_SECONDS",
     "_DiscoveryPublisher",
     "_daemon_discovery_snapshot",
     "_heartbeat_loop",

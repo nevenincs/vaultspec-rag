@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "QdrantEndpointProbe",
     "QdrantIdentity",
+    "_bounded_call",
     "asset_for_platform",
     "binary_filename",
     "classify_qdrant_state",

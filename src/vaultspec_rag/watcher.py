@@ -1820,7 +1820,10 @@ def _watcher_attempt_resilience(
 ) -> IndexResilienceSnapshot:
     """Project admission and retry truth before model acquisition."""
     if slot.source in {JobSource.CODE, JobSource.DOCUMENT}:
-        from .job_dispatch import _admitted_resilience
+        # Package-internal resilience projectors, shared with the dispatcher.
+        from .job_dispatch import (
+            _admitted_resilience,  # pyright: ignore[reportPrivateUsage]
+        )
 
         base = _admitted_resilience(slot.source)
     else:
@@ -1834,10 +1837,11 @@ def _publish_watcher_index_resilience(
     context: JobAttemptContext,
 ) -> None:
     """Publish checkpoint evidence for watcher-owned code and document work."""
+    # Package-internal resilience projectors, shared with the dispatcher.
     from .job_dispatch import (
-        _code_resilience,
-        _document_resilience,
-        _publish_resilience,
+        _code_resilience,  # pyright: ignore[reportPrivateUsage]
+        _document_resilience,  # pyright: ignore[reportPrivateUsage]
+        _publish_resilience,  # pyright: ignore[reportPrivateUsage]
     )
 
     if slot.source not in {JobSource.CODE, JobSource.DOCUMENT}:
