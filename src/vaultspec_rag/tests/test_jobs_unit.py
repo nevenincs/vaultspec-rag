@@ -828,9 +828,38 @@ class TestManagedJobAdmission:
         memory_only = JobManager(max_nonterminal=1, state_path=None)
 
         assert managed.state_path == (
-            Path(str(get_config().status_dir)) / "jobs-state.json"
+            Path(str(get_config().status_dir)).expanduser() / "jobs-state.json"
         )
         assert memory_only.state_path is None
+
+    def test_managed_state_path_expands_home_relative_status_dir(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A ``~``-prefixed status dir never resolves to a cwd-relative ``~``.
+
+        Binds to the ``expanduser()`` in the managed state-path resolution:
+        without it, a service started from any working directory persists its
+        canonical job state under ``./~/...`` relative to that directory,
+        forking durable job state per start directory instead of sharing the
+        one managed home location.
+        """
+        from pathlib import Path
+
+        from ..config import EnvVar, reset_config
+
+        monkeypatch.setenv(EnvVar.STATUS_DIR.value, "~/.vaultspec-rag-jobs-guard")
+        reset_config()
+        try:
+            managed = JobManager(max_nonterminal=1)
+            assert managed.state_path is not None
+            assert "~" not in managed.state_path.parts
+            assert managed.state_path == (
+                Path.home() / ".vaultspec-rag-jobs-guard" / "jobs-state.json"
+            )
+        finally:
+            monkeypatch.undo()
+            reset_config()
 
     def test_idempotency_aliases_and_key_length_are_bounded(self) -> None:
         manager = JobManager(
