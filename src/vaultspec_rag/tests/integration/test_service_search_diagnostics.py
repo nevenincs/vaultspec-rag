@@ -1376,7 +1376,12 @@ def test_direct_http_search_type_contract(
     token = health.get("service_token")
     assert isinstance(token, str) and token, health
 
-    for invalid_type in ("all", ["code"]):
+    # Compatibility aliases ("all", "codebase", ...) are accepted only at the
+    # CLI/MCP boundary, which normalizes them before the wire; the /search
+    # route itself requires the canonical vocabulary (allow_aliases=False),
+    # so both an alias and a malformed (non-string) type are rejected the
+    # same way here.
+    for invalid_type in ("all", "codebase", ["code"]):
         status, _headers, body = _raw_search(
             port,
             token,
@@ -1389,31 +1394,33 @@ def test_direct_http_search_type_contract(
         )
         assert status == 400, body
         assert body["ok"] is False, body
-        assert body["error"] == "bad_request", body
+        assert body["error"] == "unknown_source_type", body
+        assert body["error_kind"] == "unknown_source_type", body
+        assert body["aliases_allowed"] is False, body
         message = str(body["message"])
         assert "'vault'" in message, body
         assert "'code'" in message, body
-        assert "'codebase'" in message, body
+        assert "'document'" in message, body
+        assert "'combined'" in message, body
 
-    alias_status, _alias_headers, alias_body = _raw_search(
+    canonical_status, _canonical_headers, canonical_body = _raw_search(
         port,
         token,
         {
             "query": "nothing should match this empty code workspace",
-            "type": "codebase",
+            "type": "code",
             "top_k": 3,
             "project_root": str(root),
         },
         timeout=120,
     )
-    assert alias_status == 200, alias_body
-    index_state = cast("dict[str, object]", alias_body["index_state"])
-    assert index_state["source"] == "code", alias_body
-    request_id = _assert_request_id(alias_body)
-    alias_log = _wait_for_search_log_line(port, request_id)
-    assert "source=code" in alias_log
-    assert "search_type=code" in alias_log
-    assert "search_type=codebase" not in alias_log
+    assert canonical_status == 200, canonical_body
+    index_state = cast("dict[str, object]", canonical_body["index_state"])
+    assert index_state["source"] == "code", canonical_body
+    request_id = _assert_request_id(canonical_body)
+    canonical_log = _wait_for_search_log_line(port, request_id)
+    assert "source=code" in canonical_log
+    assert "search_type=code" in canonical_log
 
 
 @pytest.mark.integration
