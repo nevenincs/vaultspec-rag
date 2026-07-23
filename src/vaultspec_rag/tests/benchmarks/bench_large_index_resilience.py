@@ -28,7 +28,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, cast
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -326,7 +326,9 @@ def _load_marker(root: Path) -> dict[str, object] | None:
     parsed: object = json.loads(marker.read_text(encoding="utf-8"))
     if not isinstance(parsed, dict):
         raise RuntimeError(f"invalid corpus marker at {marker}")
-    return {str(key): value for key, value in parsed.items()}
+    return {
+        str(key): value for key, value in cast("dict[object, object]", parsed).items()
+    }
 
 
 def _assert_owned_root(root: Path, spec: CorpusSpec) -> None:

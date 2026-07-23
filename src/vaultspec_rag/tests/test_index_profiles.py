@@ -7,6 +7,7 @@ import pytest
 from .._job_errors import JobError, JobErrorKind
 from ..index_profiles import (
     IndexDomain,
+    StorageBackend,
     SupportMeasurement,
     get_index_support_profile,
     index_support_profile_status,
@@ -103,7 +104,7 @@ def test_profile_rejects_backend_host_and_disk_before_corpus() -> None:
                 profile.name,
                 IndexDomain.DOCUMENT,
                 SupportMeasurement(1, 1),
-                backend=backend,
+                backend=cast("StorageBackend", backend),  # ty: ignore[redundant-cast]
                 available_ram_bytes=ram,
                 free_disk_bytes=disk,
             )

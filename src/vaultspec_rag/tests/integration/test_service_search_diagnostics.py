@@ -106,7 +106,7 @@ def _matching_search_log_line(logs: object, request_id: str) -> str | None:
     """Find one correlated service-search event in a structured log payload."""
     if not isinstance(logs, dict):
         return None
-    raw_groups = logs.get("groups")
+    raw_groups = cast("dict[str, object]", logs).get("groups")
     if not isinstance(raw_groups, list):
         return None
     for raw_group in cast("list[object]", raw_groups):
