@@ -110,3 +110,18 @@ def test_load_torch_contract_holds_for_the_real_interpreter() -> None:
     else:
         with pytest.raises(RuntimeError):
             load_torch()
+
+
+@pytest.mark.cuda
+def test_load_torch_applies_configured_process_allocator_fraction(
+    clean_config: None,
+) -> None:
+    """The real centralized gate applies headroom before callers load models."""
+    del clean_config
+    from .._gpu import load_torch
+    from ..config import get_config
+
+    configured = 0.73
+    get_config({"index_cuda_allocator_fraction": configured})
+    torch = load_torch()
+    assert torch.cuda.get_per_process_memory_fraction() == pytest.approx(configured)
