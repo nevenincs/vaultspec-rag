@@ -233,19 +233,15 @@ def _wait_for_qdrant_publication(
     )
 
 
-def _cleanup_service_process(
-    *,
-    pid: int,
-    port: int,
-    log_path: Path,
-    timeout: float,
-) -> None:
-    """Terminate and verify one test-owned service inside the supplied budget."""
-    from ...cli import (
-        _read_service_status,
-        _terminate_pid,
-    )
-    from ._helpers import _wait_for_exit
+def _resolve_owned_pids(*, port: int, fallback_pid: int) -> tuple[int, int | None]:
+    """Resolve the daemon and qdrant pids the status file attributes to *port*.
+
+    The daemon pid comes from the status file only when it records a valid
+    integer pid for this exact port; otherwise it falls back to
+    ``fallback_pid`` (the spawned process). The qdrant pid is returned when the
+    status file records a valid integer, else ``None``.
+    """
+    from ...cli import _read_service_status
 
     status = _read_service_status()
     raw_daemon_pid = (
@@ -256,7 +252,7 @@ def _cleanup_service_process(
         if isinstance(raw_daemon_pid, int)
         and not isinstance(raw_daemon_pid, bool)
         and raw_daemon_pid > 0
-        else pid
+        else fallback_pid
     )
     raw_qdrant_pid = status.get("qdrant_pid") if status else None
     qdrant_pid = (
@@ -264,6 +260,21 @@ def _cleanup_service_process(
         if isinstance(raw_qdrant_pid, int) and not isinstance(raw_qdrant_pid, bool)
         else None
     )
+    return daemon_pid, qdrant_pid
+
+
+def _cleanup_service_process(
+    *,
+    pid: int,
+    port: int,
+    log_path: Path,
+    timeout: float,
+) -> None:
+    """Terminate and verify one test-owned service inside the supplied budget."""
+    from ...cli import _terminate_pid
+    from ._helpers import _wait_for_exit
+
+    daemon_pid, qdrant_pid = _resolve_owned_pids(port=port, fallback_pid=pid)
     started = time.monotonic()
     # The daemon runs in the process group led by ``pid`` (the process spawned
     # with CREATE_NEW_PROCESS_GROUP). When the interpreter relaunches through a
