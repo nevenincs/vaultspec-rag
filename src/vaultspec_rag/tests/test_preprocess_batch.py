@@ -8,7 +8,7 @@ Three layers over real subprocesses and real temp dirs:
   manifest and emits a JSON array; per-file mapping, per-file ``on_error``, and
   the scaled wall-clock timeout are exercised end to end.
 - The batch worker (:func:`_chunk_worker.chunk_batch_files`): one spawn produces
-  per-file chunks and populates the D7 cache, so a second pass hits the cache
+  per-file chunks and populates the cache, so a second pass hits the cache
   with no further spawn - verified by a spawn-counting side effect the hook
   itself writes.
 """
@@ -474,7 +474,7 @@ def test_batch_relative_echoed_path_resolves_against_project_root(
 
 
 # --------------------------------------------------------------------------
-# The batch worker: one spawn, per-file chunks, and D7 cache reuse.
+# The batch worker: one spawn, per-file chunks, and cache reuse.
 # --------------------------------------------------------------------------
 
 _COUNTING_BODY = """

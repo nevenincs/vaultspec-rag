@@ -35,14 +35,14 @@ __all__ = [
 # fnmatch filter may discard the majority of candidates. Overfetch
 # aggressively so top_k is still satisfied for common glob shapes.
 # Module-level constant so it can be tuned later without changing
-# the call site. See cli-path-glob ADR.
+# the call site.
 GLOB_FETCH_MULTIPLIER = 10
 
 # Locale-variant dedup window. Two results whose paths share a
 # locale stem AND whose scores are within this window collapse to
 # the highest-scoring one. Tight enough that genuinely-different
 # translations stay separate; loose enough that the same string in
-# en/es/ca/hu collapses. See search-postprocess ADR.
+# en/es/ca/hu collapses.
 _LOCALE_DEDUP_SCORE_WINDOW = 0.10
 
 # --prefer prod/tests/docs score nudge magnitude. Roughly one

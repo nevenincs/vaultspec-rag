@@ -403,7 +403,7 @@ class TestHelpCleanup:
         assert "No such command" in result.output
 
     def test_benchmark_verb_removed(self):
-        # D9: dev-only quality/benchmark tooling no longer ships as production
+        # Dev-only quality/benchmark tooling no longer ships as production
         # CLI verbs; the capability is retained in the marked test suite.
         result = runner.invoke(app, ["benchmark", "--help"])
         assert result.exit_code != 0

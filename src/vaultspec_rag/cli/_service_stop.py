@@ -239,7 +239,7 @@ def _service_pid_on_port(port: int) -> tuple[int, str | None] | None:
     The service domain owns identity: ``/health`` reports the serving pid and
     the per-process token, so a service on a non-default port is resolvable
     without the status file (which is keyed per status dir and may diverge from
-    the running instance - research F7). Returns ``None`` when nothing healthy
+    the running instance). Returns ``None`` when nothing healthy
     is serving the port.
     """
     if not _port_is_listening(port):
@@ -310,7 +310,7 @@ def _stop_service_on_port(port: int, json_mode: bool = False) -> None:
     """Stop the service answering on *port*, status-file independent.
 
     Targets the running instance the operator named with ``--port`` even when
-    the status file is missing or records a divergent port (research F7). The
+    the status file is missing or records a divergent port. The
     discovery file is only removed when it actually points at this port, so
     stopping one config's service never erases another's discovery file.
     """
@@ -408,7 +408,7 @@ def service_stop(
 
     With ``--port`` the running instance on that port is targeted directly via
     its ``/health`` identity, so a non-default-port service whose status file is
-    missing or divergent (research F7) is still stoppable.
+    missing or divergent is still stoppable.
 
     Exit codes: 0 for every satisfied outcome (``stopped``, ``already_stopped``,
     ``cleaned``, ``reclaimed``); 1 when the stop is skipped because a live

@@ -158,7 +158,7 @@ class VaultIndexer:
         # Without this, two concurrent MCP / CLI / watcher reindex
         # calls on the same indexer instance could race their
         # ``existing_ids_before`` snapshots and overwrite each other's
-        # contributions (#68 audit F6.6).
+        # contributions (#68).
         import threading as _threading
 
         self._writer_lock: _threading.Lock = _threading.Lock()
@@ -177,8 +177,7 @@ class VaultIndexer:
         to :meth:`_full_index_locked`. The lock guarantees that two
         concurrent ``full_index`` (or ``incremental_index``) calls on
         the same indexer instance run sequentially, eliminating the
-        ``existing_ids_before`` snapshot race documented in the #68
-        rolling audit (F6.6).
+        ``existing_ids_before`` snapshot race documented in #68.
 
         ``run_control`` defaults to the inert implementation so direct and
         legacy callers retain their existing behavior.
@@ -256,8 +255,8 @@ class VaultIndexer:
         Args:
             clean: When ``True``, drop and recreate the vault
                 collection up front so schema-level changes (e.g.
-                a new embedding dimension) take effect (#68 audit
-                F9.6 - codex P2). On the ``clean=True`` path an
+                a new embedding dimension) take effect (#68). On the
+                ``clean=True`` path an
                 interrupted run (CUDA OOM, process kill, Qdrant
                 I/O failure mid-stream) may leave the collection
                 empty until the next successful run - this is
@@ -278,7 +277,7 @@ class VaultIndexer:
             An ``IndexResult`` where ``added`` equals the total number
             of documents written, ``updated`` is ``0``, and ``removed``
             reports the post-stream stale-document purge count
-            (#68 audit F10.5). If the vault is empty the returned
+            (#68). If the vault is empty the returned
             counts are ``added=0`` and ``removed`` reflects every
             previously-indexed row that was purged.
 
@@ -312,8 +311,7 @@ class VaultIndexer:
         # empty. The streaming helper handles a zero-length list
         # correctly, and falling through the main path means
         # ``full_index(clean=True)`` on a now-empty vault still
-        # purges every previously-indexed row (F3.10 regression
-        # guard).
+        # purges every previously-indexed row.
 
         # Failure-safe rebuild: ensure the table exists, snapshot the
         # current ID set, stream upsert (idempotent by doc_id - existing
@@ -325,7 +323,7 @@ class VaultIndexer:
         #
         # When ``clean=True`` is explicitly passed, we ALSO drop the
         # collection up front so that schema-level changes (e.g. a
-        # new embedding dimension) take effect (#68 audit F9.6).
+        # new embedding dimension) take effect (#68).
         # This re-introduces a narrow data-loss window between the
         # drop and the streaming upsert - but only on the explicit
         # opt-in path. ``clean=False`` (the default + watcher path)
@@ -385,12 +383,12 @@ class VaultIndexer:
                         raise
                     run_control.checkpoint()
                     reporter.advance(len(stale_ids))
-            # F10.1: removed dead `if clean and not stale_ids and
-            # existing_ids_before` debug log. After iter 9, clean=True
-            # drops the collection up front, so existing_ids_before is
-            # always empty on that path and the condition could never
-            # fire. The non-clean path with no stale_ids is the no-op
-            # case and doesn't need a log line.
+            # Removed a dead `if clean and not stale_ids and
+            # existing_ids_before` debug log: clean=True drops the
+            # collection up front, so existing_ids_before is always empty
+            # on that path and the condition could never fire. The
+            # non-clean path with no stale_ids is the no-op case and
+            # doesn't need a log line.
 
             with _controlled_phase(reporter, run_control, "write metadata", 1):
                 self._save_meta(docs, run_control=run_control)
@@ -404,7 +402,7 @@ class VaultIndexer:
             updated=0,
             # Report the post-stream stale-purge count so MCP / CLI /
             # watcher observability reflects the rows actually deleted
-            # by the failure-safe rebuild (#68 audit F6.3 / F6.10).
+            # by the failure-safe rebuild (#68).
             removed=len(stale_ids),
             duration_ms=duration_ms,
             device=self.model.device,
@@ -422,7 +420,7 @@ class VaultIndexer:
         Thin wrapper that acquires ``self._writer_lock`` and delegates
         to :meth:`_incremental_index_locked`. Serializes against
         concurrent ``full_index`` / ``incremental_index`` callers on
-        the same indexer (#68 audit F6.6).
+        the same indexer (#68).
 
         Args:
             reporter: Required progress reporter.
@@ -1058,7 +1056,7 @@ class VaultIndexer:
                 # Qdrant client errors and lock contention
                 # (VaultStoreLockedError). Either way the safest
                 # response is to skip the stale-document purge so
-                # the rebuild can still complete (#68 audit F9.4).
+                # the rebuild can still complete (#68).
                 logger.warning(
                     "Could not snapshot existing vault IDs before "
                     "rebuild; stale-document purge will be skipped",

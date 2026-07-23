@@ -99,8 +99,8 @@ class TestGraphCacheInvalidate:
 class TestGraphCacheConcurrency:
     """Concurrent access at TTL boundary produces exactly one rebuild.
 
-    This is the R36-C1 fix: multiple threads hitting get() when the
-    cache is stale must not trigger parallel VaultGraph constructions.
+    Multiple threads hitting get() when the cache is stale must not
+    trigger parallel VaultGraph constructions.
     """
 
     pytestmark: ClassVar = [pytest.mark.unit]
@@ -266,7 +266,7 @@ class TestVaultSearcherGraphProvider:
         assert g1 is g2
 
     def test_fallback_lock_prevents_concurrent_builds(self, tmp_path: Path):
-        """Internal fallback path has a lock for R36-C1 safety."""
+        """Internal fallback path has a lock preventing concurrent builds."""
         root = _make_vault_dir(tmp_path)
 
         from ..search import VaultSearcher

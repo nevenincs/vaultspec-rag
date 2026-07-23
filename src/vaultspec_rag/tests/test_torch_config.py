@@ -745,7 +745,7 @@ def test_is_torch_requirement_rejects_non_strings() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Edge-case TOML shapes (rolling audit findings)
+# Edge-case TOML shapes
 # ---------------------------------------------------------------------------
 
 

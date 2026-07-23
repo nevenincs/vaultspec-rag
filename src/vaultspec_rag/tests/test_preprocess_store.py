@@ -1,6 +1,6 @@
 """Store-level tests for preprocess-hook chunk payload (real local Qdrant, no GPU).
 
-Exercises D12: a preprocessed ``CodeChunk`` carries its source path, preprocessor
+Exercises how a preprocessed ``CodeChunk`` carries its source path, preprocessor
 id, anchor, and split locator (int vs str) into the codebase collection payload,
 and is reconcilable by source path. Uses a real local Qdrant with a tiny
 embedding dimension and dummy vectors - no model, no mocks.

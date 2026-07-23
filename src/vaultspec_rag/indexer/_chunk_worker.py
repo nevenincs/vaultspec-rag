@@ -58,7 +58,7 @@ _SOURCE_READ_BLOCK_BYTES = 1024 * 1024
 # Per-worker reusable chunker. ``ASTChunker`` itself is cheap to build, but the
 # tree-sitter parsers it drives are cached inside ``tree_sitter_language_pack``
 # across calls, so a single instance per process avoids repeated lookups over
-# tens of thousands of files (research O3).
+# tens of thousands of files.
 _CHUNKER: ASTChunker | None = None
 
 
@@ -149,7 +149,7 @@ class FileChunkResult:
     Carrying the blake2b hash back from the same read that produced the chunks
     lets the shared code producer skip a separate hash pass - the tree is read
     once, not twice (#155). ``slots=True`` keeps the pickled
-    payload that crosses the process boundary lean (research O3).
+    payload that crosses the process boundary lean.
 
     ``preprocess_status`` records the disposition of a document-preprocessing
     rule when one matched this file (#185): ``ok`` (chunks came from the

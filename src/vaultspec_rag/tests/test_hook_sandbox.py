@@ -1,6 +1,6 @@
 """Direct-launch tests for the preprocess-hook helpers (no GPU).
 
-The OS containment layer was removed (preprocess-sandbox-removal ADR): a root's
+The OS containment layer was removed: a root's
 ``.vaultragpreprocess.toml`` is repo-authored code that runs directly with the
 operator's privileges. What survives is the cheap, load-bearing hygiene proven
 here with *real* child processes and no mocks: ``curated_child_env`` builds a

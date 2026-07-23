@@ -1,6 +1,6 @@
 """Unit tests for the preprocess output schema (no GPU).
 
-Exercises D4/D5: the PreprocOutput/PreprocUnit/Locator models, ``extra=forbid``,
+Exercises the PreprocOutput/PreprocUnit/Locator models, ``extra=forbid``,
 the units/text XOR validator, and the schema-version gate.
 """
 

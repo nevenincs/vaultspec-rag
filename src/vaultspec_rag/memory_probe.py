@@ -94,7 +94,7 @@ def current_rss_mb() -> float:
     Returns ``0.0`` (rather than raising) on any psutil failure -
     the sampler thread must survive transient errors so a single
     bad reading does not silently kill RSS tracking for the rest
-    of the run. See F6.7 / F6.8 in the rolling audit.
+    of the run.
     """
     measured = _measure_rss_mb()
     return measured if measured is not None else 0.0
@@ -596,7 +596,7 @@ class MemoryProbe:
             # The sampler must survive transient errors. A single
             # bad sample (psutil hiccup, signal interruption) is
             # logged once and the loop continues so peak_rss_mb
-            # keeps tracking. F6.8 in the rolling audit.
+            # keeps tracking.
             while not self._sampler_stop.wait(0.25):
                 try:
                     rss = current_rss_mb()

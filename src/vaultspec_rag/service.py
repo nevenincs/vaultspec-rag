@@ -288,10 +288,9 @@ class ServiceRegistry:
         preload, tests).  Request-path callers MUST use :meth:`lease`
         instead so eviction refcount accounting is honored.
 
-        Thread-safe: uses the same three-level lock dance as the
-        service-graph ADR so that concurrent callers for *different*
-        roots proceed in parallel, while concurrent callers for the
-        *same* root are serialized.
+        Thread-safe: uses a three-level lock dance so that concurrent
+        callers for *different* roots proceed in parallel, while
+        concurrent callers for the *same* root are serialized.
 
         Args:
             root: Workspace root directory (resolved internally).
@@ -490,8 +489,8 @@ class ServiceRegistry:
         Must NOT be called outside :meth:`lease`.  Holds ``_lock`` for
         the slot lookup / admission / refcount mutation / opportunistic
         idle sweep.  Slot creation itself runs outside ``_lock`` via
-        :meth:`peek_project` to preserve the service-graph ADR's
-        parallel cold-start guarantee.  Returns the acquired slot
+        :meth:`peek_project` to preserve the parallel cold-start
+        guarantee.  Returns the acquired slot
         plus a (possibly empty) list of victims that the caller MUST
         tear down after the lock is fully released.
 
@@ -800,22 +799,22 @@ class ServiceRegistry:
     def close_all(self) -> None:
         """Shut down the registry with a bounded 5-second busy drain.
 
-        Implements ADR D6 "graceful drain": sets ``_shutting_down``
+        Implements a "graceful drain": sets ``_shutting_down``
         first so new :meth:`lease` calls raise, polls every 100ms for
         busy slots and transient model-free stores to drain, and force-closes
         any still-busy stores after a 5-second deadline (logging a warning for
         each). A transient constructor racing shutdown closes its store before
         unregistering its pending construction.
 
-        The 5.0s constant is intentionally NOT configurable per
-        ADR D6 - long enough for worst-case search latency, short
-        enough that uvicorn lifespan shutdown never looks hung.
+        The 5.0s constant is intentionally NOT configurable - long
+        enough for worst-case search latency, short enough that
+        uvicorn lifespan shutdown never looks hung.
         """
         with self._lock:
             self._shutting_down = True
             self._shutdown_complete = False
 
-        # ADR D6: bounded drain.  5.0 seconds is intentionally hardcoded.
+        # Bounded drain: 5.0 seconds is intentionally hardcoded.
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             with self._lock:

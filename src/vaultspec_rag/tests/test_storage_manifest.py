@@ -118,7 +118,7 @@ def test_classify_live_then_orphaned(tmp_path: Path) -> None:
 
 
 def test_classify_unverifiable_when_anchor_unknown() -> None:
-    # H2: a root whose anchor cannot be confirmed (an absent root on an
+    # A root whose anchor cannot be confirmed (an absent root on an
     # unreachable drive/share; here exercised via an anchorless root) is
     # unverifiable, never orphaned - so prune never deletes a live-but-offline
     # index on a disconnected volume.

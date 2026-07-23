@@ -89,7 +89,7 @@ def test_operator_symlink_binary_is_refused(
     isolated_status_dir: Path,  # noqa: ARG001  # managed-dir isolation
     tmp_path: Path,
 ) -> None:
-    # H5 (security): an operator-supplied binary path that is a symlink must be
+    # Security: an operator-supplied binary path that is a symlink must be
     # refused, never followed - copying it would dereference the link and could
     # register attacker content (TOCTOU) under an operator-blessed manifest.
     from ..qdrant_runtime import QdrantProvisionAction, provision
@@ -112,7 +112,7 @@ def test_operator_symlink_binary_is_refused(
 def test_has_provisioned_binary_reflects_managed_install(
     isolated_status_dir: Path,  # noqa: ARG001  # managed-dir isolation
 ) -> None:
-    # H3/H4 helper: drives the "unverified env/PATH binary shadows a verified
+    # Helper that drives the "unverified env/PATH binary shadows a verified
     # install" warning. False with no managed install, True once one is seeded.
     from ..qdrant_runtime._resolve import has_provisioned_binary
 

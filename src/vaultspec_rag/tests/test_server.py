@@ -972,7 +972,7 @@ class TestRegistryFullErrorShape:
     """MCP tool handlers translate RegistryFullError into a structured dict."""
 
     def test_error_dict_shape(self) -> None:
-        """_registry_full_error_dict contains every ADR D4 key."""
+        """_registry_full_error_dict contains every expected key."""
         from ..server import (
             _registry,
             _registry_full_error_dict,
@@ -1463,7 +1463,7 @@ class TestReindexPreprocessPreflight:
 
     The route returns ``queued`` before the background job runs, so a
     non-interactive client cannot otherwise tell whether the root's
-    document-preprocessing hooks will fire (preprocess-hooks ADR D9). The
+    document-preprocessing hooks will fire. The
     response now carries a ``preprocess`` pre-flight object mirroring the
     ``server start`` operator notice.
 
