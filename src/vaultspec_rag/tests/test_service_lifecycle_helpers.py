@@ -111,3 +111,56 @@ class TestUpdateServiceToken:
 
         tmp = isolated_status_dir / "service.tmp"
         assert not tmp.exists()
+
+
+# ---------------------------------------------------------------------------
+# _startup_phase_label — the cold-start stage the CLI start spinner renders
+# ---------------------------------------------------------------------------
+
+
+class TestStartupPhaseLabel:
+    """The wait spinner names the daemon's current cold-start stage."""
+
+    def _write_status(self, status_dir: Path, data: dict[str, object]) -> None:
+        (status_dir / "service.json").write_text(json.dumps(data), encoding="utf-8")
+
+    def test_serving_health_status_wins(self, isolated_status_dir: Path) -> None:
+        from ..cli._service_start import _startup_phase_label
+
+        self._write_status(
+            isolated_status_dir,
+            {"pid": 1, "port": 8766, "phase": "warming", "phase_detail": "x"},
+        )
+        assert _startup_phase_label({"status": "ready"}) == "serving, health: ready"
+
+    def test_renders_granular_phase_detail_while_warming(
+        self, isolated_status_dir: Path
+    ) -> None:
+        from ..cli._service_start import _startup_phase_label
+
+        self._write_status(
+            isolated_status_dir,
+            {
+                "pid": 1,
+                "port": 8766,
+                "phase": "warming",
+                "phase_detail": "provisioning the qdrant server",
+            },
+        )
+        assert _startup_phase_label(None) == "provisioning the qdrant server"
+
+    def test_falls_back_to_generic_warming_without_detail(
+        self, isolated_status_dir: Path
+    ) -> None:
+        from ..cli._service_start import _startup_phase_label
+
+        self._write_status(
+            isolated_status_dir, {"pid": 1, "port": 8766, "phase": "warming"}
+        )
+        assert _startup_phase_label(None) == "warming (loading models)"
+
+    @pytest.mark.usefixtures("isolated_status_dir")
+    def test_waiting_when_no_status_published_yet(self) -> None:
+        from ..cli._service_start import _startup_phase_label
+
+        assert _startup_phase_label(None) == "waiting for the daemon to come up"

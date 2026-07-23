@@ -410,6 +410,10 @@ async def _start_components(
                 cfg.qdrant_url,
             )
         else:
+            # First-use provisioning downloads and verifies the qdrant binary,
+            # which can take many seconds; surface it so the start spinner is
+            # not a silent wait before the daemon even binds a port.
+            discovery.publish_phase("warming", detail="provisioning the qdrant server")
             t_q = time.perf_counter()
             try:
                 supervisor = await _run_in_thread(_qr.start_supervised_from_config)
@@ -460,10 +464,14 @@ async def _start_components(
     # Wire watcher lifecycle into registry so close_project() stops watchers
     _m._registry._on_close_project = _m._stop_watcher  # pyright: ignore[reportPrivateUsage]
 
-    # Load models (raises RuntimeError if no CUDA via _check_rag_deps)
+    # Load models (raises RuntimeError if no CUDA via _check_rag_deps). This is
+    # the longest cold-start stage - a first run downloads the weights - so the
+    # spinner names it, then names the reranker separately.
     t0 = time.perf_counter()
+    discovery.publish_phase("warming", detail="loading models")
     await _run_in_thread(_m._registry.load_model)
     if bool(get_config().reranker_enabled):
+        discovery.publish_phase("warming", detail="loading the reranker")
         await _run_in_thread(_m._registry.get_reranker)
     logger.info("All models loaded in %.2fs", time.perf_counter() - t0)
 

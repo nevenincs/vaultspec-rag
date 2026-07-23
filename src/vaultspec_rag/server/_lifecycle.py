@@ -150,8 +150,17 @@ def _daemon_discovery_snapshot(
     *,
     phase: str,
     started_at: str,
+    phase_detail: str = "",
 ) -> dict[str, object]:
-    """Build one complete discovery view from daemon-owned live state."""
+    """Build one complete discovery view from daemon-owned live state.
+
+    ``phase_detail`` is an optional human-readable description of the current
+    cold-start stage (provisioning the qdrant server, loading models, warming)
+    that the CLI start spinner renders so a minutes-long warm-up shows visible
+    progress instead of a static wait. It is advisory only: the coarse ``phase``
+    (``warming``/``running``) remains the authoritative machine-readable state,
+    and a reader that ignores ``phase_detail`` sees unchanged behaviour.
+    """
     from ..serviceclient._discovery import (
         SERVICE_PHASE_RUNNING,
         SERVICE_PHASE_WARMING,
@@ -173,6 +182,7 @@ def _daemon_discovery_snapshot(
         "parent_pid": os.getppid(),
         "port": _m._service_port,
         "phase": phase,
+        "phase_detail": phase_detail,
         "started_at": started_at,
         "last_heartbeat": _discovery_timestamp(),
         "heartbeat_interval_s": _HEARTBEAT_INTERVAL_SECONDS,
@@ -210,6 +220,7 @@ class _DiscoveryPublisher:
     lease: MachineLockLease
     started_at: str = field(default_factory=_discovery_timestamp)
     phase: str = SERVICE_PHASE_WARMING
+    phase_detail: str = ""
     _guard: threading.RLock = field(
         default_factory=threading.RLock,
         init=False,
@@ -219,9 +230,9 @@ class _DiscoveryPublisher:
     _cleaned: bool = field(default=False, init=False, repr=False)
 
     def publish_phase(
-        self, phase: str, *, require: bool = False
+        self, phase: str, *, detail: str = "", require: bool = False
     ) -> dict[str, object] | None:
-        """Set *phase* and publish it unless shutdown has begun.
+        """Set *phase* (and optional cold-start *detail*) and publish it.
 
         With ``require`` the service-status publication is authoritative: a
         failure to record it is raised rather than swallowed. This is for the
@@ -230,11 +241,18 @@ class _DiscoveryPublisher:
         the status write lock), it must NOT serve, because a second daemon may
         own the machine's single GPU and Qdrant storage. WARMING and heartbeat
         publications stay best-effort (``require=False``).
+
+        ``detail`` is a human-readable description of the current warm-up stage
+        (e.g. "provisioning the qdrant server", "loading models") that the CLI
+        start spinner renders. It is carried on every subsequent publication -
+        including heartbeats - until the next ``publish_phase`` changes it, so a
+        stage set here stays visible while that stage runs.
         """
         with self._guard:
             if self._stopping:
                 return None
             self.phase = phase
+            self.phase_detail = detail
             return self._publish_locked(require=require)
 
     def heartbeat(self) -> dict[str, object] | None:
@@ -351,6 +369,7 @@ class _DiscoveryPublisher:
         snapshot = _daemon_discovery_snapshot(
             phase=self.phase,
             started_at=self.started_at,
+            phase_detail=self.phase_detail,
         )
         try:
             status_path = _m._status_file_path()

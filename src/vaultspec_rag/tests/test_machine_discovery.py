@@ -94,6 +94,27 @@ class TestMachineDiscoveryPointer:
         assert got["service_token"] == "test-owner-token"
         assert got["pid"] == os.getpid()
 
+    def test_publish_phase_detail_round_trips_and_persists_across_heartbeats(
+        self,
+        owner_publisher: _DiscoveryPublisher,
+    ) -> None:
+        # The cold-start detail the CLI spinner renders must round-trip through
+        # the published view, and stay set on subsequent heartbeats until the
+        # next publish_phase changes it - otherwise the spinner would blank out
+        # between the stage publish and the next heartbeat tick.
+        published = owner_publisher.publish_phase("warming", detail="loading models")
+        assert published is not None
+        assert published["phase_detail"] == "loading models"
+        assert read_machine_discovery()["phase_detail"] == "loading models"  # type: ignore[index]
+
+        beat = owner_publisher.heartbeat()
+        assert beat is not None
+        assert beat["phase_detail"] == "loading models"
+
+        # A later stage publish replaces the detail.
+        owner_publisher.publish_phase("warming", detail="loading the reranker")
+        assert read_machine_discovery()["phase_detail"] == "loading the reranker"  # type: ignore[index]
+
     def test_read_tolerates_garbage_and_non_object_json(self) -> None:
         pointer = machine_discovery_path()
         pointer.parent.mkdir(parents=True, exist_ok=True)
