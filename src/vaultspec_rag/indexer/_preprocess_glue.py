@@ -31,7 +31,7 @@ def build_preprocess_rules(root_dir: pathlib.Path) -> PreprocessConfig:
 
     Root-only resolution, mirroring ``build_vaultragignore_spec``: read
     fresh from the project root on each call so an edited config is picked
-    up on the next scan. Degrades to an empty config on any defect (D1, D3).
+    up on the next scan. Degrades to an empty config on any defect.
 
     Returns:
         The resolved :class:`PreprocessConfig` (empty when no rules apply).
@@ -40,7 +40,7 @@ def build_preprocess_rules(root_dir: pathlib.Path) -> PreprocessConfig:
 
 
 def clear_preprocess_cache_for(data_root: pathlib.Path) -> None:
-    """Remove the preprocess output cache subtree for a clean rebuild (D7)."""
+    """Remove the preprocess output cache subtree for a clean rebuild."""
     clear_preprocess_cache(preprocess_cache_dir(data_root))
 
 
@@ -105,7 +105,7 @@ def matches_preprocess_rule(prep_ctx: PreprocessContext | None, rel: str) -> boo
     Ignore always wins (this is only consulted after the ignore gate), but a
     match expands the indexable set: a matched file is admitted even when its
     extension is unsupported, it exceeds ``_MAX_FILE_SIZE``, or it is binary,
-    because the preprocessor extracts indexable text from it (D2, D10).
+    because the preprocessor extracts indexable text from it.
     """
     if prep_ctx is None:
         return False
@@ -116,7 +116,7 @@ def record_preprocess_result(
     res: FileChunkResult,
     prep_skips: list[str],
 ) -> int:
-    """Score a worker result's preprocess disposition (D11).
+    """Score a worker result's preprocess disposition.
 
     Returns ``1`` for a rule-fed success (so the caller can bump its ok
     tally) and ``0`` otherwise, appending a ``"rel_path: reason"`` line to
@@ -139,7 +139,7 @@ def record_scoped_preprocess(
     result: _chunk_worker.ScopedChunkResult,
     prep_skips: list[str],
 ) -> int:
-    """Score a scoped-path preprocess disposition (D11).
+    """Score a scoped-path preprocess disposition.
 
     Mirrors :func:`record_preprocess_result` for the scoped/incremental path
     (used by the watcher) so coverage gaps and rule-fed successes are

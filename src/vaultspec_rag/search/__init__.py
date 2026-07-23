@@ -2,8 +2,8 @@
 
 Implements query parsing, hybrid search, and graph-aware re-ranking.
 
-This module was split into a package (``search/``) per the
-``2026-06-01-module-split-adr``. The verbatim public surface - the
+This module was split into a package (``search/``) from a former
+monolith. The verbatim public surface - the
 ``VaultSearcher`` orchestration class, the ``ParsedQuery`` and
 ``SearchResult`` dataclasses, the ``parse_query`` and
 ``rerank_with_graph`` functions, plus the ``_locale_variant_key`` /

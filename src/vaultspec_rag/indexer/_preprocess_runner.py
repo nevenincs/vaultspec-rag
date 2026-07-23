@@ -3,7 +3,7 @@
 Runs a project-supplied ``command`` rule against one source file in a
 ``subprocess`` grandchild, parses and validates its stdout JSON against the
 :mod:`._preprocess_schema` contract, enforces the emitted-text cap, and maps the
-outcome onto the rule's ``on_error`` disposition (D6, D9, D10).
+outcome onto the rule's ``on_error`` disposition.
 
 Running the real extraction in a separate OS process is what makes the command
 form CPU-only-safe *by construction*: the child has its own interpreter and
@@ -14,8 +14,8 @@ token-wise (never via a shell), so source paths with spaces or shell
 metacharacters cannot inject.
 
 The hook runs directly with the operator's privileges: a root's preprocess
-config is repo-authored code, the same trust class as building that repo
-(preprocess-sandbox-removal ADR). The child still gets a curated, secret-free
+config is repo-authored code, the same trust class as building that repo.
+The child still gets a curated, secret-free
 environment and runs with the project root as its cwd, and every
 output/timeout bound below applies unchanged.
 """
@@ -89,7 +89,7 @@ PreprocessStatus = Literal["ok", "skipped", "passthrough"]
 class PreprocessAbortError(RuntimeError):
     """Raised when a failing rule has ``on_error = "fail"``.
 
-    Propagates out of the worker to abort the whole index run, per the D1
+    Propagates out of the worker to abort the whole index run, per the
     failure semantics. ``skip`` and ``passthrough`` never raise.
     """
 
@@ -467,7 +467,7 @@ def run_preprocessor(
     Args:
         source_path: Absolute path to the source file to preprocess.
         rule: The matched, validated command rule.
-        max_emitted_bytes: The emitted-text length cap (D10).
+        max_emitted_bytes: The emitted-text length cap.
         project_root: The project root, placed on the child's ``PYTHONPATH`` so
             an ``entry_point`` or project-local hook can import its module tree.
 
@@ -749,7 +749,7 @@ def run_preprocessor_batch(
     Args:
         source_paths: Absolute paths of the files in this batch.
         rule: The matched, validated batch command rule.
-        max_emitted_bytes: The per-file emitted-text length cap (D10).
+        max_emitted_bytes: The per-file emitted-text length cap.
         project_root: The project root, placed on the child's ``PYTHONPATH`` and
             used as its working directory.
 

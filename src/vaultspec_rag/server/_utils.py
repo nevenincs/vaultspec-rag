@@ -1,7 +1,6 @@
 """Validation, clamping, root resolution, and structured-error helpers.
 
-Split out of the original ``server.py`` monolith per the
-``2026-06-01-module-split-adr``. Rebindable globals (``_http_mode``,
+Split out of the original ``server.py`` monolith. Rebindable globals (``_http_mode``,
 ``_registry``) are read at call time through the package alias so a
 test rebind on ``vaultspec_rag.server`` is observed.
 """
@@ -51,7 +50,7 @@ class ProjectRootRequiredError(ValueError):
 
 
 def _registry_full_error_dict(exc: RegistryFullError) -> dict[str, Any]:
-    """Build the ADR D4 structured error dict for registry-full errors."""
+    """Build the structured error dict for registry-full errors."""
     return {
         "ok": False,
         "error": "registry_full",

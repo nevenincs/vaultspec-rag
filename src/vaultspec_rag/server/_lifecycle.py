@@ -1,7 +1,6 @@
 """Daemon lifecycle helpers: log paths, heartbeat, and shutdown hooks.
 
-Split out of the original ``server.py`` monolith per the
-``2026-06-01-module-split-adr``. ``_heartbeat_tick_sync`` reads the
+Split out of the original ``server.py`` monolith. ``_heartbeat_tick_sync`` reads the
 rebindable ``_status_file_path`` and ``_SERVICE_TOKEN`` through the
 package alias so test monkeypatches on ``vaultspec_rag.server`` are
 observed.

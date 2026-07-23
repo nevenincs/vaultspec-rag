@@ -1,6 +1,6 @@
 """Intent-conditioned multiplicative ranking prior for vault results.
 
-Implements the ADR's D2 decision: after the CrossEncoder rerank and chunk
+The prior is applied after the CrossEncoder rerank and chunk
 grouping, each vault result's calibrated score is multiplied by a
 per-(doc_type, status) weight drawn from the active intent profile, and the
 list is re-sorted. Unlike the bounded graph nudges, this prior is allowed to

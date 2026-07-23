@@ -12,8 +12,8 @@ rework, the ``mcp`` FastMCP instance is defined only in
 forwarder; the daemon exposes native REST only and no longer mounts an
 MCP app.
 
-This module was split into a package (``server/``) per the
-``2026-06-01-module-split-adr``. The verbatim public surface - the
+This module was split into a package (``server/``) from a former
+monolith. The verbatim public surface - the
 response models, the shared globals, and the ``_``-prefixed helpers
 tests import or monkeypatch directly - is re-exported here unchanged
 through an explicit ``__all__``.

@@ -1,7 +1,6 @@
 """Shared module-level state for the RAG daemon (server) package.
 
-Split out of the original ``server.py`` monolith per the
-``2026-06-01-module-split-adr``. This module is the canonical home of
+Split out of the original ``server.py`` monolith. This module is the canonical home of
 the daemon's process-wide globals (registry, watcher bookkeeping,
 identity token, HTTP-mode flag). The package ``__init__`` re-imports
 these names so they live in the ``vaultspec_rag.server`` namespace,
@@ -171,14 +170,14 @@ def survey_snapshot() -> SurveySnapshot | None:
 
 
 # --------------------------------------------------------------------------- #
-# Inline metrics holder (#142, plan P05).                                     #
+# Inline metrics holder (#142).                                     #
 # --------------------------------------------------------------------------- #
 #
 # A tiny, dependency-free metrics surface for the ``/metrics`` Prometheus
 # route. Counters and last-duration gauges are mutated *inline* by the
 # search/reindex tool paths under ``_metrics_lock`` - there is **no**
-# background collector thread (honours the standing rejection of background
-# sweepers per the ``service-observability`` ADR). GPU memory is read
+# background collector thread: the standing rejection of background
+# sweepers means metrics are mutated inline, never sampled. GPU memory is read
 # on-demand inside :func:`render_prometheus` so it reflects the value at
 # scrape time, never a sampled snapshot.
 

@@ -341,7 +341,7 @@ class VaultSearcher:
         if not cfg.vault_intent_ranking_enabled:
             return None
         name = (intent or cfg.vault_intent_default or "orientation").strip().lower()
-        # Accept the ADR-prose spelling ``debug`` as an alias for the canonical
+        # Accept the alternate spelling ``debug`` as an alias for the canonical
         # ``debugging`` profile so a literal ``intent:debug`` is not a silent no-op.
         if name == "debug":
             name = "debugging"
@@ -441,7 +441,7 @@ class VaultSearcher:
         _record_seconds(timings, "qdrant_seconds", phase_started)
 
         # Auto-generated feature-index documents are navigational document-lists
-        # with no semantic content (ADR D6); they are never searchable and are
+        # with no semantic content; they are never searchable and are
         # dropped before rerank so they cannot crowd or top the results (a real
         # vault search lists every feature doc inside one index file, which the
         # cross-encoder otherwise scores very high on feature-name queries).

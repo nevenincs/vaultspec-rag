@@ -1,7 +1,6 @@
 """Filesystem-watcher lifecycle for resident projects.
 
-Split out of the original ``server.py`` monolith per the
-``2026-06-01-module-split-adr``. The watcher bookkeeping dicts and lock
+Split out of the original ``server.py`` monolith. The watcher bookkeeping dicts and lock
 are mutated in place; the registry is read through the package alias so
 a test rebind of ``_registry`` is observed. ``_ensure_watcher`` keeps
 its literal ``_registry.peek_project`` call - a source-inspection
