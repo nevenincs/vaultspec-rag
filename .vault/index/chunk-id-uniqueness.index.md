@@ -6,6 +6,10 @@ tags:
 date: '2026-07-23'
 modified: '2026-07-23'
 related:
+  - '[[2026-07-23-chunk-id-uniqueness-S01]]'
+  - '[[2026-07-23-chunk-id-uniqueness-S02]]'
+  - '[[2026-07-23-chunk-id-uniqueness-S03]]'
+  - '[[2026-07-23-chunk-id-uniqueness-S04]]'
   - '[[2026-07-23-chunk-id-uniqueness-adr]]'
   - '[[2026-07-23-chunk-id-uniqueness-plan]]'
   - '[[2026-07-23-chunk-id-uniqueness-research]]'
@@ -19,7 +23,14 @@ Auto-generated index of all documents tagged with `#chunk-id-uniqueness`.
 
 ### adr
 
-- `2026-07-23-chunk-id-uniqueness-adr` - `chunk-id-uniqueness` adr: `ordinal-disambiguated chunk identifiers` | (**status:** `{proposed|accepted|rejected|superseded|deprecated}`)
+- `2026-07-23-chunk-id-uniqueness-adr` - `chunk-id-uniqueness` adr: `ordinal-disambiguated chunk identifiers` | (**status:** `accepted`)
+
+### exec
+
+- `2026-07-23-chunk-id-uniqueness-S01` - Add the zero-based per-file emit ordinal as a leading discriminator to the AST-path chunk identifier so byte-identical slices of one line cannot collide
+- `2026-07-23-chunk-id-uniqueness-S02` - Add the same per-file emit ordinal discriminator to the text-splitter fallback chunk identifier
+- `2026-07-23-chunk-id-uniqueness-S03` - Add a guard test that chunks a repeated-content over-budget line through the real chunker, asserts unique identifiers and commit-unit acceptance, and record it failing against the pre-fix construction then passing after
+- `2026-07-23-chunk-id-uniqueness-S04` - Run the indexer test suite plus lint and type checks for the touched modules and record them green with no new suppressions
 
 ### plan
 

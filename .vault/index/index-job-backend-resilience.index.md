@@ -6,6 +6,13 @@ tags:
 date: '2026-07-23'
 modified: '2026-07-23'
 related:
+  - '[[2026-07-23-index-job-backend-resilience-S01]]'
+  - '[[2026-07-23-index-job-backend-resilience-S02]]'
+  - '[[2026-07-23-index-job-backend-resilience-S03]]'
+  - '[[2026-07-23-index-job-backend-resilience-S04]]'
+  - '[[2026-07-23-index-job-backend-resilience-S05]]'
+  - '[[2026-07-23-index-job-backend-resilience-S06]]'
+  - '[[2026-07-23-index-job-backend-resilience-S07]]'
   - '[[2026-07-23-index-job-backend-resilience-adr]]'
   - '[[2026-07-23-index-job-backend-resilience-plan]]'
   - '[[2026-07-23-index-job-backend-resilience-research]]'
@@ -19,7 +26,17 @@ Auto-generated index of all documents tagged with `#index-job-backend-resilience
 
 ### adr
 
-- `2026-07-23-index-job-backend-resilience-adr` - `index-job-backend-resilience` adr: `bounded transient retry across all store operations` | (**status:** `{proposed|accepted|rejected|superseded|deprecated}`)
+- `2026-07-23-index-job-backend-resilience-adr` - `index-job-backend-resilience` adr: `bounded transient retry across all store operations` | (**status:** `accepted`)
+
+### exec
+
+- `2026-07-23-index-job-backend-resilience-S01` - Generalise the write-only bounded transient retry into a store-operation retry that any store call can run under, preserving the transient/unrecoverable classification, capped backoff, and durable no-progress budget clamp
+- `2026-07-23-index-job-backend-resilience-S02` - Run the collection-ensure paths (existence check and payload-index creation) under the bounded retry
+- `2026-07-23-index-job-backend-resilience-S03` - Run the read operations (count, scroll, retrieve) under the bounded retry
+- `2026-07-23-index-job-backend-resilience-S04` - Run the point-delete operations under the bounded retry
+- `2026-07-23-index-job-backend-resilience-S05` - Confirm the unrecoverable storage-exhaustion path still raises on the first attempt for a wrapped read as for a write
+- `2026-07-23-index-job-backend-resilience-S06` - Add a guard test driving a store operation against a backend that refuses then accepts, asserting bounded-retry survival, and record it failing against the pre-change single-shot path then passing after
+- `2026-07-23-index-job-backend-resilience-S07` - Run the store and indexer test suites plus lint and type checks for the touched modules and record them green with no new suppressions
 
 ### plan
 
