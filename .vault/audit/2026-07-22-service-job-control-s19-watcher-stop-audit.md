@@ -60,10 +60,10 @@ Revision is required before closing `W03.P08.S19`.
 
 1. Make a retained timed-out drain self-retrying, or have every subsequent start
    path reschedule and await it before claiming intake restarted.
-2. Replace the fire-and-forget synchronous close callback with a boundary that
+1. Replace the fire-and-forget synchronous close callback with a boundary that
    prevents `close_project` from closing until exact watcher attempts and leases
    release, without cancelling or mutating canonical jobs.
-3. Decompose the watcher lifecycle until the project complexity gate is green,
+1. Decompose the watcher lifecycle until the project complexity gate is green,
    then rerun the stop/timeout/restart and concurrent-close probes.
 
 ## Revision response
