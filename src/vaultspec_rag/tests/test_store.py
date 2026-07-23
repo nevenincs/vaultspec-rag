@@ -834,3 +834,46 @@ class TestStoreBoundedForceClose:
         finally:
             release.set()
             worker.join(timeout=5.0)
+
+    def test_force_close_completes_when_the_lifecycle_lock_is_wedged(
+        self, tmp_path: Path
+    ) -> None:
+        """A held lifecycle lock must not block a bounded shutdown close.
+
+        The lifecycle lock is taken before any collection lock, so an
+        unbounded acquisition of it would strand a bounded shutdown before the
+        collection-lock bound ever mattered - a wedged open/create/drop would
+        hang the daemon just as a wedged consumer would. ``force_after_seconds``
+        must bound the lifecycle-lock wait too, abandon it past the deadline,
+        and force-close anyway.
+        """
+        from ..store import VaultStore
+
+        store = VaultStore(tmp_path)
+        held = threading.Event()
+        release = threading.Event()
+
+        def wedged_lifecycle() -> None:
+            # A different thread holds the lifecycle lock (an in-flight
+            # open/create/drop) and does not release it within the bound.
+            store._lifecycle_lock.acquire()  # pyright: ignore[reportPrivateUsage]
+            held.set()
+            release.wait(timeout=15.0)
+            store._lifecycle_lock.release()  # pyright: ignore[reportPrivateUsage]
+
+        worker = threading.Thread(target=wedged_lifecycle)
+        worker.start()
+        try:
+            assert held.wait(timeout=5.0), "holder never took the lifecycle lock"
+            started = time.monotonic()
+            store.close(force_after_seconds=1.0)
+            elapsed = time.monotonic() - started
+            # Bounded: it waited ~1s for the wedged lifecycle lock, then
+            # force-closed instead of blocking forever (the unbounded
+            # ``with self._lifecycle_lock:`` regression would hang here).
+            assert elapsed < 5.0, f"force close blocked for {elapsed:.1f}s"
+            assert elapsed >= 1.0, "force close should honour its acquire bound"
+            assert store._client is None  # pyright: ignore[reportPrivateUsage]
+        finally:
+            release.set()
+            worker.join(timeout=5.0)
