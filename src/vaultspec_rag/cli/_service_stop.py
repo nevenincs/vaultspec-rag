@@ -215,13 +215,16 @@ def _terminate_and_confirm(pid: int) -> None:
     if not _cli._is_pid_alive(pid):
         _clean_orphaned_machine_pointer()
 
-    # A forced kill (drain window expired) still bypasses the daemon's atexit
-    # handler and lifespan ``finally`` on Windows, where os.kill(SIGTERM) is
-    # TerminateProcess; the CLI parent emits this mirror line so Windows
-    # operators keep the audit trail in that case. POSIX flows through
-    # uvicorn's signal handler → lifespan finally → ``_record_shutdown("clean")``
-    # and logs its own clean shutdown, but the CLI-side initiator attribution is
-    # valuable on every platform, so the line is emitted unconditionally.
+    # On Windows this is always a force-kill: the daemon is spawned detached
+    # from any shell, so this separate stop process shares no console with it
+    # and a console-scoped CTRL_BREAK cannot reach it - the graceful signal
+    # fails and the escalation TerminateProcess is what actually stops it,
+    # bypassing the daemon's atexit handler and lifespan ``finally``. The CLI
+    # parent emits this mirror line so Windows operators keep the audit trail
+    # the daemon never got to write. POSIX flows through SIGTERM → uvicorn's
+    # signal handler → lifespan finally → ``_record_shutdown("clean")`` and the
+    # daemon logs its own clean shutdown, but the CLI-side initiator attribution
+    # is valuable on every platform, so the line is emitted unconditionally.
     _cli._append_lifecycle_shutdown_log(
         "cli_terminate",
         pid=pid,
@@ -387,10 +390,21 @@ def service_stop(
     """Stop the background search service.
 
     Reads the status file from ``~/.vaultspec-rag/service.json``, verifies
-    the PID is still alive and belongs to a vaultspec-rag process, sends
-    a graceful termination signal (SIGTERM on Unix, CTRL_BREAK_EVENT on
-    Windows), waits briefly for graceful shutdown, and removes the status file.
-    Force-kills (SIGKILL/TerminateProcess) if graceful shutdown fails.
+    the PID is still alive and belongs to a vaultspec-rag process, requests
+    termination, waits briefly, then removes the status file.
+
+    Graceful shutdown reaches the daemon only on Unix, where ``SIGTERM`` is
+    delivered cross-process and drives the daemon's own lifespan teardown
+    (escalating to ``SIGKILL`` if the drain window expires). On Windows the
+    daemon is spawned detached from any shell (its own or no console), so a
+    separate stop process cannot deliver a console-scoped ``CTRL_BREAK_EVENT``
+    to it - the attempt fails and the stop degrades to a ``TerminateProcess``
+    force-kill. That force-kill is abrupt - the daemon runs none of its own
+    teardown - but it is tolerated: the vector store recovers from an abrupt
+    stop, and this stop process itself reaps the daemon's owned Qdrant child
+    and clears its discovery pointer. It is not a graceful in-daemon shutdown,
+    and the audit trail is the CLI-side mirror line rather than the daemon's
+    own shutdown record.
 
     With ``--port`` the running instance on that port is targeted directly via
     its ``/health`` identity, so a non-default-port service whose status file is
