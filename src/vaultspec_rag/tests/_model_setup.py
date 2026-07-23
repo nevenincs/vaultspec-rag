@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, NoReturn, cast
 from urllib.parse import quote
 
 if TYPE_CHECKING:
@@ -129,6 +129,52 @@ def models_are_cached(
     return not _missing_model_ids(model_ids, cache_dir=cache_dir)
 
 
+def _terminate_kill_and_raise(
+    process: subprocess.Popen[str],
+    *,
+    deadline: float,
+    operation: str,
+    timeout_seconds: float,
+    termination_grace: float,
+    context: str,
+    output: str,
+) -> NoReturn:
+    """Escalate a deadline miss to terminate then hard-kill, then raise.
+
+    Reached only from the single deadline path in ``run_bounded_process`` -
+    whether the worker overran its own timeout or a slow ``Popen`` return left
+    no remaining budget - so the outcome (the worker had to be killed) is what
+    is reported, not which wall-clock check tripped.
+    """
+    process.terminate()
+    try:
+        trailing, _ = process.communicate(
+            timeout=max(0.001, deadline - time.monotonic())
+        )
+    except subprocess.TimeoutExpired:
+        process.kill()
+        try:
+            trailing, _ = process.communicate(
+                timeout=max(0.001, deadline - time.monotonic())
+            )
+        except subprocess.TimeoutExpired as kill_exc:
+            output += _coerce_output(kill_exc.output)
+            msg = (
+                f"{operation} exceeded {timeout_seconds:.3f}s whole-operation "
+                "deadline and the killed worker did not exit; "
+                f"termination_grace={termination_grace:.3f}s; {context}\n"
+                f"worker output tail:\n{_output_tail(output)}"
+            )
+            raise RuntimeError(msg) from kill_exc
+    output += trailing or ""
+    msg = (
+        f"{operation} exceeded {timeout_seconds:.3f}s whole-operation deadline; "
+        f"termination_grace={termination_grace:.3f}s; {context}\n"
+        f"worker output tail:\n{_output_tail(output)}"
+    )
+    raise RuntimeError(msg)
+
+
 def run_bounded_process(
     command: Sequence[str],
     *,
@@ -156,69 +202,25 @@ def run_bounded_process(
         encoding="utf-8",
         errors="replace",
     )
-    output = ""
-    worker_timeout = worker_deadline - time.monotonic()
-    if worker_timeout <= 0.0:
-        process.terminate()
-        try:
-            trailing, _ = process.communicate(
-                timeout=max(0.001, deadline - time.monotonic())
-            )
-        except subprocess.TimeoutExpired:
-            process.kill()
-            try:
-                trailing, _ = process.communicate(
-                    timeout=max(0.001, deadline - time.monotonic())
-                )
-            except subprocess.TimeoutExpired as kill_exc:
-                output += _coerce_output(kill_exc.output)
-                msg = (
-                    f"{operation} exceeded {timeout_seconds:.3f}s "
-                    "whole-operation deadline during process creation and the "
-                    "killed worker did not exit; "
-                    f"termination_grace={termination_grace:.3f}s; {context}\n"
-                    f"worker output tail:\n{_output_tail(output)}"
-                )
-                raise RuntimeError(msg) from kill_exc
-        output += trailing or ""
-        msg = (
-            f"{operation} exceeded {timeout_seconds:.3f}s whole-operation "
-            "deadline during process creation; "
-            f"termination_grace={termination_grace:.3f}s; {context}\n"
-            f"worker output tail:\n{_output_tail(output)}"
-        )
-        raise RuntimeError(msg)
+    # One deadline path keyed on outcome, not on which wall-clock check tripped:
+    # a slow Popen return leaves a non-positive remaining budget, so
+    # communicate raises TimeoutExpired at once and funnels into the same
+    # terminate/kill escalation as a worker that overran - collapsing the
+    # former duplicate "during process creation" branch.
     try:
-        output, _ = process.communicate(timeout=worker_timeout)
-    except subprocess.TimeoutExpired as exc:
-        output = _coerce_output(exc.output)
-        process.terminate()
-        try:
-            trailing, _ = process.communicate(
-                timeout=max(0.001, deadline - time.monotonic())
-            )
-        except subprocess.TimeoutExpired:
-            process.kill()
-            try:
-                trailing, _ = process.communicate(
-                    timeout=max(0.001, deadline - time.monotonic())
-                )
-            except subprocess.TimeoutExpired as kill_exc:
-                output += _coerce_output(kill_exc.output)
-                msg = (
-                    f"{operation} exceeded {timeout_seconds:.3f}s "
-                    "whole-operation deadline and the killed worker did not "
-                    f"exit; termination_grace={termination_grace:.3f}s; "
-                    f"{context}\nworker output tail:\n{_output_tail(output)}"
-                )
-                raise RuntimeError(msg) from kill_exc
-        output += trailing or ""
-        msg = (
-            f"{operation} exceeded {timeout_seconds:.3f}s whole-operation "
-            f"deadline; termination_grace={termination_grace:.3f}s; {context}\n"
-            f"worker output tail:\n{_output_tail(output)}"
+        output, _ = process.communicate(
+            timeout=max(0.0, worker_deadline - time.monotonic())
         )
-        raise RuntimeError(msg) from exc
+    except subprocess.TimeoutExpired as exc:
+        _terminate_kill_and_raise(
+            process,
+            deadline=deadline,
+            operation=operation,
+            timeout_seconds=timeout_seconds,
+            termination_grace=termination_grace,
+            context=context,
+            output=_coerce_output(exc.output),
+        )
 
     if process.returncode != 0:
         msg = (
