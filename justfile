@@ -287,15 +287,22 @@ _dev-audit target:
     } \
   }
 
-# "not integration" matches the population the project actually gates on: the
-# registered "unit" marker is not applied to every fast test (~500+ tests carry
-# no marker at all and are silently dropped by "-m unit"), while "integration"
-# is applied consistently, so excluding it is the accurate full-population
-# selector. No -x here: a repo-health recipe must report every failure, not
-# stop at the first one.
+# Excludes the exact marker set conftest.py's own pytest_runtestloop guard
+# checks before requiring HF_TOKEN (_GPU_MARKERS | {"subprocess_gpu"} =
+# integration/quality/performance/robustness/subprocess_gpu), plus "cuda" for
+# tests that need a real GPU but carry no HF-auth dependency. Excluding only
+# "integration" here let a quality/performance/robustness/subprocess_gpu/cuda
+# test slip through gateless and hard-abort this recipe on a GPU-less runner;
+# matching conftest's own needs-real-infra set here is the durable fix so a
+# newly-added GPU-marked test is excluded automatically, with no marker to
+# remember to also duplicate onto "integration". The registered "unit" marker
+# is not applied to every fast test (~500+ tests carry no marker at all and
+# are silently dropped by "-m unit"), so this full-exclusion expression, not
+# "-m unit", is the accurate full-population selector. No -x here: a
+# repo-health recipe must report every failure, not stop at the first one.
 _dev-test target='all':
   switch ("{{target}}") { \
-    "python" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "not integration" ; break } \
+    "python" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "not (integration or quality or performance or robustness or subprocess_gpu or cuda)" ; break } \
     "fast" { {{uvr}} pytest src/vaultspec_rag/tests/ -x -q --tb=short -m unit ; break } \
     "all" { just _dev-test python ; break } \
     default { \

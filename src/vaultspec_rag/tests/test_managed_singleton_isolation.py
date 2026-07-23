@@ -369,6 +369,7 @@ def test_in_test_path_changes_cannot_control_processes() -> None:
                 sentinel.wait(timeout=5.0)
 
 
+@pytest.mark.integration
 def test_in_test_path_changes_cannot_stop_live_supervised_qdrant(
     required_host_provisioned_qdrant_source: tuple[Path, Path],
     tmp_path: Path,

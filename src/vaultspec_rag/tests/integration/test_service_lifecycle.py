@@ -60,6 +60,8 @@ if TYPE_CHECKING:
 
 runner = CliRunner()
 
+pytestmark = [pytest.mark.integration]
+
 
 def _assert_expired_startup_torn_down(
     *,
