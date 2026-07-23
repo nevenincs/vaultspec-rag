@@ -36,18 +36,25 @@ _VERSION = "1.18.2"
 _STORAGE = "/srv/storage"
 
 
-def _race_worker(storage_dir: str) -> bool:
-    """Acquire the machine lock in a fresh process; report whether won.
+def _race_worker(storage_dir: str) -> int:
+    """Acquire the machine lock; return this process's pid on win, else 0.
 
     Top-level (picklable) so it survives the spawn start method. The winner
     holds the OS lock for its whole process lifetime (the open fd lives in the
     worker until the pool shuts down), so every loser - whenever it runs - sees
     the lock held and fails. No timing/sleep dependency.
+
+    Returning the pid rather than a bare bool lets the caller count distinct
+    WINNING PROCESSES. A ProcessPoolExecutor is free to run several tasks in one
+    worker; a worker that already holds the lock re-acquires it through the
+    same-process re-entrancy path and would report a win for every task it runs,
+    so a True-count overcounts. Distinct winning pids cannot: one OS-lock holder
+    means one pid, no matter how the pool schedules the tasks onto workers.
     """
     os.environ[_STORAGE_ENV] = storage_dir
     reset_config()
     acquired, _holder = acquire_machine_lock()
-    return acquired
+    return os.getpid() if acquired else 0
 
 
 class TestConcurrentStartRace:
@@ -58,7 +65,8 @@ class TestConcurrentStartRace:
         workers = 8
         with ProcessPoolExecutor(max_workers=workers) as pool:
             results = list(pool.map(_race_worker, [storage] * workers))
-        assert sum(results) == 1, f"expected exactly one winner, got {results}"
+        winners = {pid for pid in results if pid}
+        assert len(winners) == 1, f"expected exactly one winning process, got {results}"
 
     def test_n_concurrent_acquires_over_dead_holder_yield_one_winner(
         self, isolated_lock: Path
@@ -73,7 +81,8 @@ class TestConcurrentStartRace:
         workers = 8
         with ProcessPoolExecutor(max_workers=workers) as pool:
             results = list(pool.map(_race_worker, [storage] * workers))
-        assert sum(results) == 1, f"expected exactly one winner, got {results}"
+        winners = {pid for pid in results if pid}
+        assert len(winners) == 1, f"expected exactly one winning process, got {results}"
 
 
 class TestInjectedHolderNeverYieldsCompetitor:
