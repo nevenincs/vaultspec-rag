@@ -33,7 +33,7 @@ _JOB_CONFIG_VARS = (
 _CONFIG_PROBE = """
 import sys
 
-from vaultspec_rag.config import get_config
+from vaultspec_rag.config import get_config  # absolute-import-ok
 
 try:
     value = getattr(get_config(), sys.argv[1])

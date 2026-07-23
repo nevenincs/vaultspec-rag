@@ -152,9 +152,11 @@ def test_api_rejects_invalid_policy_before_model_or_store_acquisition(
 import pathlib
 import sys
 
-from vaultspec_rag.api import index_codebase
-from vaultspec_rag.indexer._preprocess_config import PreprocessPolicyError
-from vaultspec_rag.registry import get_registry
+from vaultspec_rag.api import index_codebase  # absolute-import-ok
+from vaultspec_rag.indexer._preprocess_config import (  # absolute-import-ok
+    PreprocessPolicyError,
+)
+from vaultspec_rag.registry import get_registry  # absolute-import-ok
 
 registry = get_registry()
 before = registry.health()

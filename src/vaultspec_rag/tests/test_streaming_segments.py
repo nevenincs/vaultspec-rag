@@ -13,14 +13,14 @@ from itertools import chain
 import numpy as np
 import pytest
 
-from vaultspec_rag._store_models import CodeChunk, VaultChunk
-from vaultspec_rag.indexer._codebase_indexer import (
+from .._store_models import CodeChunk, VaultChunk
+from ..indexer._codebase_indexer import (
     CodebaseIndexer,
     _drain_code_chunks,
     _WeightedCodeSegmentQueue,
 )
-from vaultspec_rag.indexer._run_policy import DurableProgressKind, RunPolicy
-from vaultspec_rag.indexer._streaming import (
+from ..indexer._run_policy import DurableProgressKind, RunPolicy
+from ..indexer._streaming import (
     CodeFileSegment,
     WeightedCodeSlice,
     _dense_vector_to_list,
@@ -301,8 +301,8 @@ def test_explicit_stream_limits_do_not_resolve_global_configuration() -> None:
     env["VAULTSPEC_RAG_INDEX_SEGMENT_MAX_CHUNKS"] = "0"
     env["VAULTSPEC_RAG_INDEX_QUEUE_MAX_CHUNKS"] = "0"
     script = """
-from vaultspec_rag._store_models import CodeChunk
-from vaultspec_rag.indexer._streaming import (
+from vaultspec_rag._store_models import CodeChunk  # absolute-import-ok
+from vaultspec_rag.indexer._streaming import (  # absolute-import-ok
     iter_code_file_segments,
     iter_weighted_code_slices,
 )

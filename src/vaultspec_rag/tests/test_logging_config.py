@@ -318,7 +318,10 @@ import os
 import sys
 from pathlib import Path
 
-from vaultspec_rag.logging_config import configure_logging, install_daemon_log_capture
+from vaultspec_rag.logging_config import (  # absolute-import-ok
+    configure_logging,
+    install_daemon_log_capture,
+)
 
 log_path = Path(sys.argv[1])
 capture = None
@@ -367,7 +370,10 @@ import sys
 import time
 from pathlib import Path
 
-from vaultspec_rag.logging_config import configure_logging, install_daemon_log_capture
+from vaultspec_rag.logging_config import (  # absolute-import-ok
+    configure_logging,
+    install_daemon_log_capture,
+)
 
 log_path = Path(sys.argv[1])
 capture = None
