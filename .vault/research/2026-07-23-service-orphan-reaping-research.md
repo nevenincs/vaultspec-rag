@@ -45,15 +45,23 @@ accumulation is per-attempt and install-path-agnostic.
 (`_lifespan.py:64-70`). Because that raise originates before line 306, it never
 reaches `_exit_standalone_daemon(1)`; it propagates out of the lifespan
 `@asynccontextmanager` to uvicorn's ASGI-lifespan startup handler, which logs
-"Application startup failed" and stops serving but does not itself force the OS
-process to exit. Under the detached spawn (below), no later stage forces exit,
-so the interpreter lingers — a live process owning nothing. This is the precise
-mechanism behind every accumulated race-loser; the port-bind failure path is a
-sibling (a second daemon on the same port fails to bind but is subject to the
-same missing-exit gap). Not yet verified: the exact uvicorn version's behavior
-on lifespan-startup exception (`uvicorn@?` — pin during ADR) and whether a
-non-daemon thread started before `:284` (e.g. the log-pipe drain) is what keeps
-the interpreter alive versus uvicorn's own event loop.
+"Application startup failed", stops serving, and RETURNS from `uvicorn.run`
+(`src/vaultspec_rag/server/_main.py:185`) rather than exiting. `main()`'s
+`finally` (`_main.py:193-200`) then runs and `main` returns — but
+`_m._daemon_process` was already set `True` at `_main.py:182`, and
+`_exit_standalone_daemon`'s whole reason to exist is that a normal
+return-from-`main` interpreter exit HANGS on the interpreter-exit executor join
+when a `to_thread`/pool worker is wedged (`_lifespan.py:176-181`, `:227`,
+`:332-335`). The clean-serving and guarded-failure paths force `os._exit` to
+skip that join; the pre-`try` claim failure skips the `os._exit`, so the process
+reaches interpreter shutdown and wedges there — a live process owning nothing.
+That confirms option (a) below (move the claim inside the `try` guard) is
+sufficient: it routes the claim failure through the same `_exit_standalone_daemon(1)`
+the serving path already relies on. The port-bind failure is a sibling (uvicorn
+fails to bind, `run` returns, same missing-`os._exit`). Not yet verified: the
+exact wedged thread (candidate: the daemon log-capture drain installed at
+`_main.py:146` before the claim) and the exact uvicorn version's
+lifespan-exception behaviour (`uvicorn@?` — pin during ADR).
 
 ### Each failed start leaks a launcher+daemon PAIR, and the leak is install-path-agnostic
 
