@@ -10,16 +10,6 @@ related:
   - '[[2026-07-23-chunk-id-uniqueness-research]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 # `chunk-id-uniqueness` plan
 
 - [x] `S01` - Add the zero-based per-file emit ordinal as a leading discriminator to the AST-path chunk identifier so byte-identical slices of one line cannot collide; `src/vaultspec_rag/indexer/_chunk_worker.py`.
