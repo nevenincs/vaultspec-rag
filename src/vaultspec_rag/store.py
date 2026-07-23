@@ -15,7 +15,12 @@ from contextlib import contextmanager, nullcontext
 from typing import TYPE_CHECKING, Any, cast
 
 from . import store_schema
-from ._store_locks import FileLock, VaultStoreLockedError, acquire_collection_locks
+from ._store_locks import (
+    FileLock,
+    VaultStoreLockedError,
+    acquire_collection_locks,
+    acquire_collection_locks_bounded,
+)
 from ._store_models import (
     CodeChunk,
     VaultChunk,
@@ -346,19 +351,51 @@ class VaultStore(_VaultSearchMixin):
             if acquired:
                 lock.release()
 
-    def close(self) -> None:
+    def close(self, *, force_after_seconds: float | None = None) -> None:
         """Release the Qdrant client and set it to ``None``.
 
         Takes the lifecycle lock and then every collection lock in a
         fixed order so no point operation is in flight when the client
         goes away.
+
+        Normal callers pass nothing and get that fully-ordered, unbounded
+        acquisition, so a legitimate slow point operation is always awaited
+        rather than abandoned.
+
+        A shutdown or rollback caller may pass ``force_after_seconds`` to bound
+        the collection-lock acquisition: the lifecycle lock and then the
+        collection locks are still taken in the same fixed order, but each
+        collection-lock wait is bounded, and if a lock is still held past the
+        deadline the client is closed anyway - aborting a wedged consumer's
+        in-flight write so a bounded daemon shutdown can complete instead of
+        blocking forever on the writer lock. That abort is safe only because
+        the caller is discarding state, which is why the bound is opt-in.
         """
-        with self._lifecycle_lock, acquire_collection_locks(self._collection_locks):
-            if self._client is not None:
-                self._client.close()
-                self._client = None
-            if hasattr(self, "_lock_helper") and self._lock_helper is not None:
-                self._lock_helper.release()
+        with self._lifecycle_lock:
+            if force_after_seconds is None:
+                with acquire_collection_locks(self._collection_locks):
+                    self._release_client_locked()
+                return
+            with acquire_collection_locks_bounded(
+                self._collection_locks,
+                deadline_seconds=force_after_seconds,
+            ) as all_held:
+                if not all_held:
+                    logger.warning(
+                        "Force-closing store %s past a held collection lock; a "
+                        "wedged consumer's in-flight write is aborted so "
+                        "shutdown can complete",
+                        self.db_path,
+                    )
+                self._release_client_locked()
+
+    def _release_client_locked(self) -> None:
+        """Close the Qdrant client and lock helper (caller holds the locks)."""
+        if self._client is not None:
+            self._client.close()
+            self._client = None
+        if hasattr(self, "_lock_helper") and self._lock_helper is not None:
+            self._lock_helper.release()
 
     def __enter__(self) -> VaultStore:
         """Return *self* to support use as a context manager.

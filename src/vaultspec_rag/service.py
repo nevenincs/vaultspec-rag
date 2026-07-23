@@ -31,6 +31,13 @@ from .graph_cache import GraphCache
 
 logger = logging.getLogger(__name__)
 
+# Bound the per-store collection-lock acquisition during shutdown teardown.
+# close_all() reaches store.close() only after its 5s busy drain, so a lock
+# still held here belongs to a wedged consumer that the graceful drain could
+# not release; a short bound then force-closes the client rather than blocking
+# the daemon's bounded shutdown on the writer lock indefinitely.
+_STORE_FORCE_CLOSE_SECONDS = 5.0
+
 __all__ = [
     "ProjectBusyError",
     "ProjectSlot",
@@ -838,14 +845,14 @@ class ServiceRegistry:
                         root,
                         slot.ref_count,
                     )
-                slot.store.close()
+                slot.store.close(force_after_seconds=_STORE_FORCE_CLOSE_SECONDS)
                 logger.info("ProjectSlot closed for %s", root)
             for store in tuple(self._transient_stores):
                 logger.warning(
                     "Force-closing busy transient store %s",
                     store.root_dir,
                 )
-                store.close()
+                store.close(force_after_seconds=_STORE_FORCE_CLOSE_SECONDS)
             self._transient_stores.clear()
             if self._transient_store_constructions:
                 logger.warning(
