@@ -19,7 +19,7 @@ related:
 - [x] `S05` - Confirm the unrecoverable storage-exhaustion path still raises on the first attempt for a wrapped read as for a write; `src/vaultspec_rag/_store_writes.py`.
 - [x] `S06` - Add a guard test driving a store operation against a backend that refuses then accepts, asserting bounded-retry survival, and record it failing against the pre-change single-shot path then passing after; `src/vaultspec_rag/tests/`.
 - [x] `S07` - Run the store and indexer test suites plus lint and type checks for the touched modules and record them green with no new suppressions; `src/vaultspec_rag/tests/`.
-Extend the bounded transient store retry from the upsert write to connection, ensure, read, and delete operations so a brief backend outage no longer aborts background index jobs.
+  Extend the bounded transient store retry from the upsert write to connection, ensure, read, and delete operations so a brief backend outage no longer aborts background index jobs.
 
 ## Description
 

@@ -163,22 +163,14 @@ def run_store_operation_with_retry[T](
     max_delay = cfg.store_write_retry_max_seconds
     started = time.monotonic()
 
-    def _elapsed_budget() -> float | None:
-        """Return the wall clock this operation has left, if it is capped."""
-        if max_elapsed_seconds is None:
-            return None
-        return max_elapsed_seconds - (time.monotonic() - started)
-
     for attempt in range(1, attempts + 1):
-        remaining = remaining_write_seconds(policy, description=description)
-        elapsed_left = _elapsed_budget()
-        if elapsed_left is not None:
-            remaining = (
-                elapsed_left if remaining is None else min(remaining, elapsed_left)
-            )
+        elapsed_left = _elapsed_left(max_elapsed_seconds, started)
         attempt_timeout = _attempt_timeout_seconds(
             operation_timeout,
-            remaining,
+            _tighter(
+                remaining_write_seconds(policy, description=description),
+                elapsed_left,
+            ),
             description=description,
         )
         try:
@@ -190,36 +182,25 @@ def run_store_operation_with_retry[T](
                 )
                 raise
 
-            remaining = remaining_write_seconds(
-                policy,
-                description=description,
-            )
-            if attempt == attempts:
-                logger.error(
-                    "store operation %s failed after %d attempts: %s",
-                    description,
-                    attempts,
+            remaining = remaining_write_seconds(policy, description=description)
+            elapsed_left = _elapsed_left(max_elapsed_seconds, started)
+            if (
+                _terminal_reason(
+                    attempt=attempt, attempts=attempts, elapsed_left=elapsed_left
+                )
+                is not None
+            ):
+                _log_give_up(
                     exc,
+                    description=description,
+                    attempt=attempt,
+                    attempts=attempts,
+                    elapsed_left=elapsed_left,
+                    max_elapsed_seconds=max_elapsed_seconds,
                 )
                 raise
-            # A wall-clock ceiling ends the operation on the original error
-            # rather than a liveness outcome: an unmanaged read that ran out
-            # of its own budget has not stalled a managed run, it has simply
-            # spent the time this call was allowed.
-            elapsed_left = _elapsed_budget()
-            if elapsed_left is not None and elapsed_left <= 0.0:
-                logger.error(
-                    "store operation %s exhausted its %.1fs budget after "
-                    "%d attempt(s): %s",
-                    description,
-                    max_elapsed_seconds,
-                    attempt,
-                    exc,
-                )
-                raise
-            wait_seconds = delay if remaining is None else min(delay, remaining)
-            if elapsed_left is not None:
-                wait_seconds = min(wait_seconds, elapsed_left)
+
+            wait_seconds = _retry_wait_seconds(delay, remaining, elapsed_left)
             logger.warning(
                 "transient store operation failure in %s (attempt %d/%d), "
                 "retrying in %.1fs: %s",
@@ -229,13 +210,131 @@ def run_store_operation_with_retry[T](
                 wait_seconds,
                 exc,
             )
-            if policy is None:
-                time.sleep(wait_seconds)
-            else:
-                policy.wait(wait_seconds)
+            _wait_before_retry(
+                wait_seconds=wait_seconds,
+                policy=policy,
+                failure=exc,
+                description=description,
+            )
             delay = min(delay * 2.0, max_delay)
     msg = "unreachable: retry loop must return or raise"  # pragma: no cover
     raise AssertionError(msg)  # pragma: no cover
+
+
+def _wait_before_retry(
+    *,
+    wait_seconds: float,
+    policy: StoreWritePolicy | None,
+    failure: BaseException,
+    description: str,
+) -> None:
+    """Back off before the next attempt, letting the failure outrank a cancel.
+
+    The run policy's wait doubles as the cooperative control channel, so an
+    operator pause or cancel that arrives while backing off is raised from
+    inside it. Those signals derive from ``BaseException``, so they escape
+    the retry's ``except Exception`` and would otherwise replace the store
+    failure that caused the backoff - the attempt would be recorded as
+    cancelled even though it genuinely failed. The failure is re-raised
+    instead: the request stays pending and unacknowledged, and the worker
+    observes it at its next checkpoint.
+
+    A shutdown is deliberately NOT absorbed. It is not a verdict on the
+    work but the process going away, and the attempt is classified as
+    interrupted (and so resumable) rather than failed.
+    """
+    from .job_control import CancelRequested, PauseRequested
+
+    try:
+        if policy is None:
+            time.sleep(wait_seconds)
+        else:
+            policy.wait(wait_seconds)
+    except (PauseRequested, CancelRequested) as signal:
+        logger.warning(
+            "store operation %s already failed when %s arrived during "
+            "backoff; reporting the failure and leaving the request "
+            "pending: %s",
+            description,
+            type(signal).__name__,
+            failure,
+        )
+        raise failure from signal
+
+
+def _elapsed_left(max_elapsed_seconds: float | None, started: float) -> float | None:
+    """Return the wall clock an operation has left, or ``None`` if uncapped."""
+    if max_elapsed_seconds is None:
+        return None
+    return max_elapsed_seconds - (time.monotonic() - started)
+
+
+def _tighter(value: float | None, ceiling: float | None) -> float | None:
+    """Return the stricter of two optional budgets."""
+    if ceiling is None:
+        return value
+    return ceiling if value is None else min(value, ceiling)
+
+
+def _terminal_reason(
+    *,
+    attempt: int,
+    attempts: int,
+    elapsed_left: float | None,
+) -> Literal["attempts", "budget"] | None:
+    """Return why this failure ends the operation, or ``None`` to retry.
+
+    A wall-clock ceiling ends the operation on the original error rather
+    than a liveness outcome: an unmanaged read that spent its own
+    allowance has not stalled a managed run.
+    """
+    if attempt >= attempts:
+        return "attempts"
+    if elapsed_left is not None and elapsed_left <= 0.0:
+        return "budget"
+    return None
+
+
+def _log_give_up(
+    exc: BaseException,
+    *,
+    description: str,
+    attempt: int,
+    attempts: int,
+    elapsed_left: float | None,
+    max_elapsed_seconds: float | None,
+) -> None:
+    """Record why a transient failure was not retried again."""
+    if (
+        _terminal_reason(attempt=attempt, attempts=attempts, elapsed_left=elapsed_left)
+        == "attempts"
+    ):
+        logger.error(
+            "store operation %s failed after %d attempts: %s",
+            description,
+            attempts,
+            exc,
+        )
+        return
+    logger.error(
+        "store operation %s exhausted its %.1fs budget after %d attempt(s): %s",
+        description,
+        max_elapsed_seconds,
+        attempt,
+        exc,
+    )
+
+
+def _retry_wait_seconds(
+    delay: float,
+    remaining: float | None,
+    elapsed_left: float | None,
+) -> float:
+    """Return the backoff wait clamped to whichever budgets are finite."""
+    wait_seconds = delay if remaining is None else min(delay, remaining)
+    if elapsed_left is not None:
+        wait_seconds = min(wait_seconds, elapsed_left)
+    return wait_seconds
 
 
 def _attempt_timeout_seconds(
