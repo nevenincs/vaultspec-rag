@@ -330,6 +330,7 @@ class VaultStore(_VaultSearchMixin):
         acquired = False
         try:
             while not acquired:
+                policy.wait(0.0)
                 remaining = remaining_write_seconds(
                     policy,
                     description=f"{collection} write lock",
@@ -339,6 +340,7 @@ class VaultStore(_VaultSearchMixin):
                 acquired = lock.acquire(
                     timeout=min(_WRITE_LOCK_POLL_SECONDS, remaining)
                 )
+            policy.wait(0.0)
             yield
         finally:
             if acquired:
@@ -871,7 +873,7 @@ class VaultStore(_VaultSearchMixin):
             )
 
         self.ensure_document_table()
-        with self._point_lock(self.DOCUMENT_TABLE_NAME):
+        with self._point_write_lock(self.DOCUMENT_TABLE_NAME, write_policy):
             self._guarded_upsert(
                 self.DOCUMENT_TABLE_NAME,
                 points,
