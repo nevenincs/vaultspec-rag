@@ -1684,7 +1684,10 @@ class TestDryRunInstall:
         preview_providers = preview.to_dict()["sync_providers"]
         actual_providers = actual.to_dict()["sync_providers"]
         for provider in ("claude", "codex"):
-            assert preview_providers[provider]["skipped"] == 1
+            # Core 0.1.48 reports a refreshed-but-otherwise-unchanged entry as
+            # separate updated/unchanged counts rather than folding it into
+            # skipped.
+            assert preview_providers[provider]["unchanged"] == 1
             assert preview_providers[provider]["updated"] == 1
             assert preview_providers[provider] == actual_providers[provider]
         entry = _read_mcp_json(fresh_workspace)["mcpServers"]["vaultspec-rag"]
@@ -1724,13 +1727,16 @@ class TestDryRunInstall:
         preview_providers = preview.to_dict()["sync_providers"]
         actual_providers = actual.to_dict()["sync_providers"]
         for provider in ("claude", "codex"):
-            assert preview_providers[provider]["skipped"] == 1
+            # Core 0.1.48 reports a refreshed-but-otherwise-unchanged entry as
+            # separate updated/unchanged counts rather than folding it into
+            # skipped.
+            assert preview_providers[provider]["unchanged"] == 1
             assert preview_providers[provider]["updated"] == 1
             assert preview_providers[provider] == actual_providers[provider]
         entry = _read_mcp_json(fresh_workspace)["mcpServers"]["vaultspec-rag"]
         assert entry == {
             "command": "uv",
-            "args": ["run", "python", "-m", "vaultspec_rag.server"],
+            "args": ["run", "--no-sync", "python", "-m", "vaultspec_rag.server"],
         }
 
     @pytest.mark.parametrize("missing_provider", ["claude", "codex"])
@@ -1785,7 +1791,10 @@ class TestDryRunInstall:
         actual_providers = actual.to_dict()["sync_providers"]
         assert preview_providers == actual_providers
         existing_provider = "codex" if missing_provider == "claude" else "claude"
-        assert preview_providers[existing_provider]["skipped"] == 1
+        # Core 0.1.48 reports a refreshed-but-otherwise-unchanged entry as
+        # separate updated/unchanged counts rather than folding it into
+        # skipped.
+        assert preview_providers[existing_provider]["unchanged"] == 1
         assert preview_providers[existing_provider]["updated"] == 1
         assert preview_providers[missing_provider]["added"] == 1
         assert preview_providers[missing_provider]["unchanged"] == 1
