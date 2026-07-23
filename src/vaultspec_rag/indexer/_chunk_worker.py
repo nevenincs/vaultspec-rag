@@ -1259,23 +1259,28 @@ def chunk_with_ast(
         return chunk_with_splitter(content, rel_path, language)
 
     chunks: list[CodeChunk] = []
-    for (
+    for index, (
         text,
         line_start,
         line_end,
         node_type,
         function_name,
         class_name,
-    ) in ast_chunks:
+    ) in enumerate(ast_chunks):
         if not text.strip():
             continue
         chunk_hash = hashlib.blake2b(
             text.encode("utf-8"),
             digest_size=6,
         ).hexdigest()
+        # The per-file emit ordinal makes the identifier unique by
+        # construction: two chunks of one file can share a line span and
+        # content (a repeated-content long line split into byte-identical
+        # fixed-width slices), which the span-plus-hash form alone cannot
+        # tell apart.
         chunks.append(
             CodeChunk(
-                id=f"{rel_path}:{line_start}-{line_end}:{chunk_hash}",
+                id=f"{rel_path}:{index}:{line_start}-{line_end}:{chunk_hash}",
                 path=rel_path,
                 language=language,
                 content=text,
@@ -1306,7 +1311,7 @@ def chunk_with_splitter(
     search_offset = 0
     line_cursor_offset = 0
     line_cursor = 1
-    for text in text_chunks:
+    for index, text in enumerate(text_chunks):
         idx = content.find(text, search_offset)
         if idx != -1:
             chunk_offset = idx
@@ -1325,9 +1330,12 @@ def chunk_with_splitter(
             text.encode("utf-8"),
             digest_size=6,
         ).hexdigest()
+        # See chunk_with_ast: the emit ordinal keeps the identifier unique
+        # when a repeated-content line yields byte-identical slices on one
+        # line span.
         chunks.append(
             CodeChunk(
-                id=f"{rel_path}:{line_start}-{line_end}:{chunk_hash}",
+                id=f"{rel_path}:{index}:{line_start}-{line_end}:{chunk_hash}",
                 path=rel_path,
                 language=language,
                 content=text,

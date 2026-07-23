@@ -388,6 +388,61 @@ class TestChunkIdentityParity:
         assert len(meta) == len(paths)
 
 
+class TestChunkIdentityUniqueness:
+    """A file's chunk identifiers must be unique so a commit unit is accepted.
+
+    Guard for the repeated-content collision: an over-budget line of one
+    repeated character is split into byte-identical fixed-width slices that
+    share a line span, so the pre-fix ``{path}:{span}:{hash}`` identifier
+    form collided and failed the whole code-index update. These assertions
+    bind to the emit-ordinal discriminator in ``chunk_with_ast`` /
+    ``chunk_with_splitter``; removing that ordinal makes both fail on the
+    uniqueness/commit-unit assertion, not on any incidental error.
+    """
+
+    def test_repeated_content_long_line_yields_unique_ids(
+        self, tmp_path: Path
+    ) -> None:
+        # A single 6000-char line of one repeated character: an oversized
+        # childless leaf routed through _split_large_leaf, whose slices are
+        # byte-identical and share one (line_start, line_end) span.
+        source = f"DATA = '{'x' * 6000}'\n"
+        path = tmp_path / "generated_blob.py"
+        path.write_text(source, encoding="utf-8")
+
+        chunks = _chunk_worker.chunk_file(path, tmp_path)
+
+        # More than one chunk (the leaf was split), and every id distinct.
+        assert len(chunks) > 1
+        ids = [c.id for c in chunks]
+        assert len(set(ids)) == len(ids), f"duplicate chunk ids: {ids}"
+
+    def test_repeated_content_chunks_form_valid_commit_unit(
+        self, tmp_path: Path
+    ) -> None:
+        from ..indexer._run_ledger import CommitUnit, CommitUnitKind
+
+        source = f"DATA = '{'x' * 6000}'\n"
+        path = tmp_path / "generated_blob.py"
+        path.write_text(source, encoding="utf-8")
+
+        chunks = _chunk_worker.chunk_file(path, tmp_path)
+        digest = hashlib.blake2b(source.encode("utf-8")).hexdigest()
+
+        # The commit-unit uniqueness invariant is the exact check that failed
+        # in production; building one from a real file's chunk ids must not
+        # raise. This is the assertion the emit-ordinal defends.
+        unit = CommitUnit(
+            rel_path="generated_blob.py",
+            kind=CommitUnitKind.UPSERT,
+            source_digest=digest,
+            segment_ordinal=0,
+            is_file_end=True,
+            point_ids=tuple(c.id for c in chunks),
+        )
+        assert len(set(unit.point_ids)) == len(unit.point_ids)
+
+
 class _MinBytes:
     """Context manager overriding ``index_parallel_min_bytes`` (real env)."""
 
