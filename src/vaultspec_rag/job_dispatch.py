@@ -296,9 +296,8 @@ def _admitted_resilience(source: JobSource) -> IndexResilienceSnapshot:
     mib = 1024**2
     rss_ceiling_mb = limits.rss_bytes / mib
     cuda_ceiling_mb = limits.cuda_bytes / mib
-    if source is JobSource.CODE:
-        rss_ceiling_mb = min(rss_ceiling_mb, config.index_rss_ceiling_mb)
-        cuda_ceiling_mb = min(cuda_ceiling_mb, config.index_cuda_ceiling_mb)
+    rss_ceiling_mb = min(rss_ceiling_mb, config.index_rss_ceiling_mb)
+    cuda_ceiling_mb = min(cuda_ceiling_mb, config.index_cuda_ceiling_mb)
     return IndexResilienceSnapshot(
         rss_ceiling_mb=rss_ceiling_mb,
         cuda_ceiling_mb=cuda_ceiling_mb,
@@ -365,12 +364,17 @@ def _code_resilience(indexer: CodebaseIndexer) -> IndexResilienceSnapshot:
 
 def _document_resilience(indexer: DocumentIndexer) -> IndexResilienceSnapshot:
     admitted = _admitted_resilience(JobSource.DOCUMENT)
+    budget = indexer.memory_budget_snapshot
     return _checkpoint_resilience(
         indexer.last_checkpoint,
         admitted,
-        peak_rss_mb=None,
-        peak_cuda_allocated_mb=None,
-        peak_cuda_reserved_mb=None,
+        peak_rss_mb=budget.peak_rss_mb if budget is not None else None,
+        peak_cuda_allocated_mb=(
+            budget.peak_cuda_allocated_mb if budget is not None else None
+        ),
+        peak_cuda_reserved_mb=(
+            budget.peak_cuda_reserved_mb if budget is not None else None
+        ),
     )
 
 
