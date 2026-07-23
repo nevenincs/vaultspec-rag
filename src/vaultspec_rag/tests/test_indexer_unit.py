@@ -366,17 +366,25 @@ class TestASTChunkerPythonBoundaries:
             "python",
         )
         assert len(chunks) >= 1
+        seen_ordinals: list[int] = []
         for chunk in chunks:
-            # ID format: rel_path:line_start-line_end:blake2b_prefix
+            # ID format: rel_path:emit_ordinal:line_start-line_end:blake2b_prefix.
+            # The emit ordinal is what keeps the id unique when a
+            # repeated-content long line splits into byte-identical slices
+            # sharing one line span; span plus hash alone cannot.
             parts = chunk.id.split(":")
-            assert len(parts) == 3, f"Expected 3 colon-separated parts, got {parts}"
+            assert len(parts) == 4, f"Expected 4 colon-separated parts, got {parts}"
             assert parts[0] == "example.py"
+            seen_ordinals.append(int(parts[1]))
             # Verify the hash matches the chunk content.
             expected_hash = hashlib.blake2b(
                 chunk.content.encode("utf-8"),
                 digest_size=6,
             ).hexdigest()
-            assert parts[2] == expected_hash
+            assert parts[3] == expected_hash
+        # Ordinals are per-file and non-repeating (they may skip values where
+        # a blank chunk was dropped, but must never collide).
+        assert len(set(seen_ordinals)) == len(seen_ordinals)
 
 
 class TestASTChunkerJavaScript:
@@ -446,9 +454,9 @@ class TestASTChunkerFallback:
         chunks = indexer._chunk_file(src)
         assert len(chunks) >= 1
         assert chunks[0].language == "yaml"
-        # ID should still have hash suffix.
+        # ID should still carry the emit ordinal and the hash suffix.
         parts = chunks[0].id.split(":")
-        assert len(parts) == 3
+        assert len(parts) == 4
 
 
 class TestChunkIDUniqueness:
