@@ -16,7 +16,7 @@ related:
 - [x] `S02` - Add the same per-file emit ordinal discriminator to the text-splitter fallback chunk identifier; `src/vaultspec_rag/indexer/_chunk_worker.py`.
 - [x] `S03` - Add a guard test that chunks a repeated-content over-budget line through the real chunker, asserts unique identifiers and commit-unit acceptance, and record it failing against the pre-fix construction then passing after; `src/vaultspec_rag/tests/test_chunk_worker_parity.py`.
 - [x] `S04` - Run the indexer test suite plus lint and type checks for the touched modules and record them green with no new suppressions; `src/vaultspec_rag/tests/`.
-Make code-chunk identifiers unique by construction so a repeated-content long line can no longer collide two chunks and fail an entire code-index update.
+  Make code-chunk identifiers unique by construction so a repeated-content long line can no longer collide two chunks and fail an entire code-index update.
 
 ## Description
 

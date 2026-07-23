@@ -70,6 +70,88 @@ def _retry_policy(
         reset_config()
 
 
+class TestFailureOutranksPendingControl:
+    """A store failure must survive a cancel that lands during backoff.
+
+    The run policy's wait doubles as the cooperative control channel, and
+    the signals it raises derive from ``BaseException``, so they escape the
+    retry's ``except Exception``. Left alone they replace the store failure
+    that caused the backoff, and the attempt is recorded as cancelled even
+    though it genuinely failed - application failure must win over a
+    pending cancel.
+
+    These bind to WHICH exception escapes, not merely that one does:
+    asserting only "it raised" would pass whether the store failure or the
+    control signal came out, which is the entire distinction under test.
+    """
+
+    @staticmethod
+    def _policy_raising(signal: BaseException) -> StoreWritePolicy:
+        """A real policy whose wait delivers *signal*, as the run policy does."""
+
+        def wait(_seconds: float) -> None:
+            raise signal
+
+        return StoreWritePolicy(remaining_seconds=lambda: 600.0, wait=wait)
+
+    def test_cancel_during_backoff_does_not_mask_the_failure(self) -> None:
+        from ..job_control import CancelRequested
+
+        store_failure = RuntimeError("dimension mismatch on upsert")
+
+        def op(_attempt_timeout: int) -> None:
+            raise store_failure
+
+        with _retry_policy(attempts=5), pytest.raises(RuntimeError) as caught:
+            run_store_operation_with_retry(
+                op,
+                description="code chunks",
+                policy=self._policy_raising(CancelRequested()),
+            )
+
+        # The store failure escapes, not the cancel; the cancel is kept as
+        # context so the sequence is still visible in a traceback.
+        assert caught.value is store_failure
+        assert isinstance(caught.value.__cause__, CancelRequested)
+
+    def test_pause_during_backoff_does_not_mask_the_failure(self) -> None:
+        from ..job_control import PauseRequested
+
+        store_failure = RuntimeError("dimension mismatch on upsert")
+
+        def op(_attempt_timeout: int) -> None:
+            raise store_failure
+
+        with _retry_policy(attempts=5), pytest.raises(RuntimeError) as caught:
+            run_store_operation_with_retry(
+                op,
+                description="code chunks",
+                policy=self._policy_raising(PauseRequested()),
+            )
+        assert caught.value is store_failure
+
+    def test_shutdown_during_backoff_still_wins(self) -> None:
+        """Shutdown is the process ending, not a verdict on the work.
+
+        It must keep propagating so the attempt is classified interrupted
+        and resumable rather than failed.
+        """
+        from ..job_control import ShutdownRequested
+
+        def op(_attempt_timeout: int) -> None:
+            raise RuntimeError("dimension mismatch on upsert")
+
+        with (
+            _retry_policy(attempts=5),
+            pytest.raises(ShutdownRequested),
+        ):
+            run_store_operation_with_retry(
+                op,
+                description="code chunks",
+                policy=self._policy_raising(ShutdownRequested()),
+            )
+
+
 class TestUnrecoverableOnReadOperations:
     """Storage exhaustion must raise on the first attempt for a read too.
 
