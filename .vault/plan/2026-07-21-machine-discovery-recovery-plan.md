@@ -3,13 +3,23 @@ tags:
   - '#plan'
   - '#machine-discovery-recovery'
 date: '2026-07-21'
-modified: '2026-07-22'
+modified: '2026-07-23'
 tier: L3
 related:
   - '[[2026-07-21-machine-discovery-recovery-adr]]'
   - '[[2026-07-21-machine-discovery-recovery-research]]'
   - '[[2026-07-21-machine-discovery-recovery-reference]]'
 ---
+
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
 
 # `machine-discovery-recovery` plan
 
@@ -107,7 +117,7 @@ Poll boundedly for owner heartbeat convergence and expose an idempotent non-dest
 
 Revise the consumer-facing discovery contract through the mandatory documentation pipeline after behavior is verified.
 
-- [ ] `W03.P09.S23` - Revise the public discovery schema, ownership, degraded-state, and reconcile contract through vaultspec-documentation; `docs/service-discovery.md`.
+- [x] `W03.P09.S23` - Revise the public discovery schema, ownership, degraded-state, and reconcile contract through vaultspec-documentation; `docs/service-discovery.md`.
 
 ## Wave `W04` - system verification and review
 
@@ -117,14 +127,21 @@ Prove the complete discovery lifecycle with real processes and finish with the m
 
 Exercise repair, mismatch, fallback, status, transport, reconcile, and loser behavior through production entry points.
 
-- [ ] `W04.P10.S24` - Run the focused discovery, status, doctor, transport, lifecycle, and singleton regression suites; `src/vaultspec_rag/tests`.
+- [x] `W04.P10.S24` - Run the focused discovery, status, doctor, transport, lifecycle, and singleton regression suites; `src/vaultspec_rag/tests`.
 - [ ] `W04.P10.S25` - Exercise isolated end-to-end start, corruption, heartbeat repair, reconcile, search resolution, and clean shutdown; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
+- [x] `W04.P10.S27` - Bound the late-spawn cleanup process-control waits so the cleanup honours its timeout: bound the process-table discovery scan by the caller's remaining deadline, and stop sending a Windows console-group break to arbitrary discovered pids that are not process-group leaders; `src/vaultspec_rag/cli/_process.py`.
+- [x] `W04.P10.S28` - Bound the daemon shutdown store teardown so a wedged consumer's writer lock cannot hold the daemon in an unbounded shutdown: acquire the store's collection locks under a finite deadline at shutdown and force-close the client past a lock still held past that deadline; `src/vaultspec_rag/store.py, src/vaultspec_rag/_store_locks.py, src/vaultspec_rag/service.py`.
+- [x] `W04.P10.S29` - Backstop the daemon shutdown with a gated os._exit so a wedged periodic to_thread worker cannot hang the interpreter-exit executor join; `server/_lifespan.py, server/_main.py, server/_state.py, server/__init__.py`.
+- [x] `W04.P10.S30` - Bound the discovery-publisher guard acquisitions at shutdown so a heartbeat worker wedged mid-publish cannot strand teardown before any shutdown line is logged, and bound the pre-exit log flush; `server/_lifecycle.py, server/_lifespan.py, tests/test_machine_discovery.py`.
+- [x] `W04.P10.S31` - Make the authoritative RUNNING-phase publication fail-loud so a machine-singleton daemon that cannot record its running-owner claim rolls back instead of serving; `server/_lifecycle.py, server/_lifespan.py, tests/test_machine_discovery.py`.
+- [x] `W04.P10.S32` - Correct the server stop path documentation to state that on Windows the stop degrades to a TerminateProcess force-kill because the daemon is spawned detached and cannot receive a cross-console CTRL_BREAK from a separate stop process, which is bounded and safe but not a graceful in-daemon shutdown; `src/vaultspec_rag/cli/_service_stop.py`.
+- [x] `W04.P10.S33` - Route the real-daemon test cleanup graceful signal to the spawned group-leader process rather than the discovered descendant daemon pid so a relaunched daemon receives the console break and shuts down gracefully, escalating to a pid-targeted force-kill on both when the graceful drain does not complete; `src/vaultspec_rag/tests/integration/conftest.py`.
 
 ### Phase `W04.P11` - architecture and safety audit
 
 Review the completed implementation against the accepted ADR, lifecycle rules, and real-behavior test mandate.
 
-- [ ] `W04.P11.S26` - Perform the mandatory code review for authority, shutdown ordering, adapter convergence, isolation, and test integrity; `.vault/audit/2026-07-21-machine-discovery-recovery-audit.md`.
+- [x] `W04.P11.S26` - Perform the mandatory code review for authority, shutdown ordering, adapter convergence, isolation, and test integrity; `.vault/audit/2026-07-21-machine-discovery-recovery-audit.md`.
 
 ## Parallelization
 
