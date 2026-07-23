@@ -47,36 +47,36 @@ The tables in this section, together with the backend selection table, list ever
 
 ### Service runtime and logging
 
-| Variable                                 | Type    | Default            | Controls                                                       | CLI flag                              |
-| ---------------------------------------- | ------- | ------------------ | -------------------------------------------------------------- | ------------------------------------- |
-| `VAULTSPEC_RAG_STATUS_DIR`               | path    | `~/.vaultspec-rag` | Directory for service status, marker, binary, and log files    | `--status-dir`                        |
-| `VAULTSPEC_RAG_LOG_FILE`                 | path    | `service.log`      | Resident service log filename inside the status dir            | `--log-file`                          |
-| `VAULTSPEC_RAG_PORT`                     | integer | `8766`             | HTTP service port and MCP fast path                            | `--port`                              |
-| `VAULTSPEC_RAG_LOG_LEVEL`                | string  | `WARNING`          | Root logger level                                              | `--verbose` (INFO), `--debug` (DEBUG) |
-| `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS` | integer | `1800`             | Seconds an idle project slot stays resident before eviction    | -                                     |
-| `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS`     | integer | `16`               | Maximum simultaneously cached project slots                    | -                                     |
+| Variable                                 | Type    | Default            | Controls                                                        | CLI flag                              |
+| ---------------------------------------- | ------- | ------------------ | --------------------------------------------------------------- | ------------------------------------- |
+| `VAULTSPEC_RAG_STATUS_DIR`               | path    | `~/.vaultspec-rag` | Directory for service status, marker, binary, and log files     | `--status-dir`                        |
+| `VAULTSPEC_RAG_LOG_FILE`                 | path    | `service.log`      | Resident service log filename inside the status dir             | `--log-file`                          |
+| `VAULTSPEC_RAG_PORT`                     | integer | `8766`             | HTTP service port and MCP fast path                             | `--port`                              |
+| `VAULTSPEC_RAG_LOG_LEVEL`                | string  | `WARNING`          | Root logger level                                               | `--verbose` (INFO), `--debug` (DEBUG) |
+| `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS` | integer | `1800`             | Seconds an idle project slot stays resident before eviction     | -                                     |
+| `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS`     | integer | `16`               | Maximum simultaneously cached project slots                     | -                                     |
 | `VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES`    | integer | `10485760`         | Active-file size threshold for each managed log source (10 MiB) | -                                     |
-| `VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT` | integer | `5`                | Rotated backups retained for each managed log source           | -                                     |
+| `VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT` | integer | `5`                | Rotated backups retained for each managed log source            | -                                     |
 
 The policy applies independently to `service.log` and `qdrant.log`. With the defaults, each source keeps one active file and five backups. The aggregate budget is approximately 120 MiB.
 
 ### Job lifecycle
 
-| Variable                                  | Type    | Default | Controls                                                       | CLI flag |
-| ----------------------------------------- | ------- | ------- | -------------------------------------------------------------- | -------- |
-| `VAULTSPEC_RAG_JOB_MAX_NONTERMINAL`       | integer | `64`    | Maximum simultaneously tracked non-terminal (queued/running) jobs | -    |
-| `VAULTSPEC_RAG_JOB_SHUTDOWN_TIMEOUT_SECONDS` | float | `300`   | Seconds to drain running jobs during a graceful daemon stop    | -        |
+| Variable                                     | Type    | Default | Controls                                                          | CLI flag |
+| -------------------------------------------- | ------- | ------- | ----------------------------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_JOB_MAX_NONTERMINAL`          | integer | `64`    | Maximum simultaneously tracked non-terminal (queued/running) jobs | -        |
+| `VAULTSPEC_RAG_JOB_SHUTDOWN_TIMEOUT_SECONDS` | float   | `300`   | Seconds to drain running jobs during a graceful daemon stop       | -        |
 
 ### Store write resilience
 
 A transient store-write failure (disk pressure, a write-ahead-log stall) is retried with bounded exponential backoff before the operation is abandoned.
 
-| Variable                                       | Type    | Default | Controls                                                    | CLI flag |
-| ---------------------------------------------- | ------- | ------- | ----------------------------------------------------------- | -------- |
-| `VAULTSPEC_RAG_STORE_OPERATION_TIMEOUT_SECONDS` | float  | `120`   | Per-operation deadline before a store write is abandoned    | -        |
-| `VAULTSPEC_RAG_STORE_WRITE_RETRY_ATTEMPTS`     | integer | `5`     | Retry attempts for a transient store-write failure          | -        |
-| `VAULTSPEC_RAG_STORE_WRITE_RETRY_BASE_SECONDS` | float   | `0.5`   | Initial backoff before the first store-write retry          | -        |
-| `VAULTSPEC_RAG_STORE_WRITE_RETRY_MAX_SECONDS`  | float   | `8`     | Maximum backoff between store-write retries                 | -        |
+| Variable                                        | Type    | Default | Controls                                                 | CLI flag |
+| ----------------------------------------------- | ------- | ------- | -------------------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_STORE_OPERATION_TIMEOUT_SECONDS` | float   | `120`   | Per-operation deadline before a store write is abandoned | -        |
+| `VAULTSPEC_RAG_STORE_WRITE_RETRY_ATTEMPTS`      | integer | `5`     | Retry attempts for a transient store-write failure       | -        |
+| `VAULTSPEC_RAG_STORE_WRITE_RETRY_BASE_SECONDS`  | float   | `0.5`   | Initial backoff before the first store-write retry       | -        |
+| `VAULTSPEC_RAG_STORE_WRITE_RETRY_MAX_SECONDS`   | float   | `8`     | Maximum backoff between store-write retries              | -        |
 
 ### Embedding and reranking
 
@@ -104,17 +104,17 @@ A transient store-write failure (disk pressure, a write-ahead-log stall) is retr
 
 These bound one index run's segment/queue geometry, its memory use, and its liveness. The defaults suit a managed multi-root service; lower them on a smaller host.
 
-| Variable                                        | Type    | Default     | Controls                                                              | CLI flag |
-| ----------------------------------------------- | ------- | ----------- | -------------------------------------------------------------------- | -------- |
-| `VAULTSPEC_RAG_INDEX_SEGMENT_MAX_CHUNKS`        | integer | `64`        | Chunks per index upsert segment                                      | -        |
-| `VAULTSPEC_RAG_INDEX_SEGMENT_MAX_BYTES`         | integer | `8388608`   | Byte cap per index upsert segment (8 MiB)                            | -        |
-| `VAULTSPEC_RAG_INDEX_QUEUE_MAX_CHUNKS`          | integer | `512`       | Chunks buffered in the producer-to-consumer index queue             | -        |
-| `VAULTSPEC_RAG_INDEX_QUEUE_MAX_BYTES`           | integer | `134217728` | Byte cap on the buffered index queue, applying backpressure (128 MiB) | -        |
-| `VAULTSPEC_RAG_INDEX_NO_PROGRESS_TIMEOUT_SECONDS` | float | `900`       | Seconds without index progress before the run is failed             | -        |
-| `VAULTSPEC_RAG_INDEX_RSS_CEILING_MB`            | float   | `16384`     | Resident-memory ceiling enforced at index checkpoints (MiB)         | -        |
-| `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB`           | float   | `12288`     | CUDA-memory ceiling enforced at index checkpoints (MiB)             | -        |
-| `VAULTSPEC_RAG_INDEX_CUDA_ALLOCATOR_FRACTION`   | float   | `0.8`       | Fraction of CUDA memory the index allocator may reserve             | -        |
-| `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE`           | string  | `managed-service` | Index resource profile advertised to the service              | -        |
+| Variable                                          | Type    | Default           | Controls                                                              | CLI flag |
+| ------------------------------------------------- | ------- | ----------------- | --------------------------------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_INDEX_SEGMENT_MAX_CHUNKS`          | integer | `64`              | Chunks per index upsert segment                                       | -        |
+| `VAULTSPEC_RAG_INDEX_SEGMENT_MAX_BYTES`           | integer | `8388608`         | Byte cap per index upsert segment (8 MiB)                             | -        |
+| `VAULTSPEC_RAG_INDEX_QUEUE_MAX_CHUNKS`            | integer | `512`             | Chunks buffered in the producer-to-consumer index queue               | -        |
+| `VAULTSPEC_RAG_INDEX_QUEUE_MAX_BYTES`             | integer | `134217728`       | Byte cap on the buffered index queue, applying backpressure (128 MiB) | -        |
+| `VAULTSPEC_RAG_INDEX_NO_PROGRESS_TIMEOUT_SECONDS` | float   | `900`             | Seconds without index progress before the run is failed               | -        |
+| `VAULTSPEC_RAG_INDEX_RSS_CEILING_MB`              | float   | `16384`           | Resident-memory ceiling enforced at index checkpoints (MiB)           | -        |
+| `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB`             | float   | `12288`           | CUDA-memory ceiling enforced at index checkpoints (MiB)               | -        |
+| `VAULTSPEC_RAG_INDEX_CUDA_ALLOCATOR_FRACTION`     | float   | `0.8`             | Fraction of CUDA memory the index allocator may reserve               | -        |
+| `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE`             | string  | `managed-service` | Index resource profile advertised to the service                      | -        |
 
 ### Concurrency limits
 
@@ -148,12 +148,12 @@ These bound one index run's segment/queue geometry, its memory use, and its live
 
 A failed auto-reindex retries with exponential backoff and a circuit breaker that stops retrying a persistently failing source.
 
-| Variable                                    | Type    | Default | Controls                                                     | CLI flag |
-| ------------------------------------------- | ------- | ------- | ------------------------------------------------------------ | -------- |
-| `VAULTSPEC_RAG_WATCH_RETRY_BASE_SECONDS`    | float   | `30`    | Initial backoff before retrying a failed auto-reindex        | -        |
-| `VAULTSPEC_RAG_WATCH_RETRY_MAX_SECONDS`     | float   | `1800`  | Maximum backoff between auto-reindex retries                 | -        |
-| `VAULTSPEC_RAG_WATCH_RETRY_JITTER_FRACTION` | float   | `0.1`   | Random jitter fraction added to each retry backoff           | -        |
-| `VAULTSPEC_RAG_WATCH_CIRCUIT_FAILURE_THRESHOLD` | integer | `3`  | Consecutive failures before the watch circuit opens          | -        |
+| Variable                                        | Type    | Default | Controls                                              | CLI flag |
+| ----------------------------------------------- | ------- | ------- | ----------------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_WATCH_RETRY_BASE_SECONDS`        | float   | `30`    | Initial backoff before retrying a failed auto-reindex | -        |
+| `VAULTSPEC_RAG_WATCH_RETRY_MAX_SECONDS`         | float   | `1800`  | Maximum backoff between auto-reindex retries          | -        |
+| `VAULTSPEC_RAG_WATCH_RETRY_JITTER_FRACTION`     | float   | `0.1`   | Random jitter fraction added to each retry backoff    | -        |
+| `VAULTSPEC_RAG_WATCH_CIRCUIT_FAILURE_THRESHOLD` | integer | `3`     | Consecutive failures before the watch circuit opens   | -        |
 
 ### Stdio MCP lifetime
 
@@ -214,14 +214,14 @@ An unset variable falls back to the built-in default.
 
 vaultspec-rag downloads its dense, sparse, and reranker model files through the Hugging Face Hub. The Hub client honours its own environment variables, which vaultspec-rag does not wrap. These are third-party variables (no `VAULTSPEC_RAG_` prefix), so they sit outside the reference tables above:
 
-| Variable                         | Type    | Controls                                                                        |
-| -------------------------------- | ------- | ------------------------------------------------------------------------------- |
-| `HF_HOME`                        | path    | Hub cache root (where model files are stored)                                   |
-| `HF_ENDPOINT`                    | string  | Hub mirror base URL                                                             |
-| `HF_HUB_DOWNLOAD_TIMEOUT`        | integer | Per-file download timeout                                                        |
-| `HF_HUB_OFFLINE`                 | boolean | Cache-only mode; no network access to the Hub                                    |
-| `TRANSFORMERS_OFFLINE`           | boolean | Cache-only model loading for Transformers                                        |
-| `DISABLE_SAFETENSORS_CONVERSION` | boolean | Skip on-the-fly safetensors conversion                                          |
+| Variable                         | Type    | Controls                                      |
+| -------------------------------- | ------- | --------------------------------------------- |
+| `HF_HOME`                        | path    | Hub cache root (where model files are stored) |
+| `HF_ENDPOINT`                    | string  | Hub mirror base URL                           |
+| `HF_HUB_DOWNLOAD_TIMEOUT`        | integer | Per-file download timeout                     |
+| `HF_HUB_OFFLINE`                 | boolean | Cache-only mode; no network access to the Hub |
+| `TRANSFORMERS_OFFLINE`           | boolean | Cache-only model loading for Transformers     |
+| `DISABLE_SAFETENSORS_CONVERSION` | boolean | Skip on-the-fly safetensors conversion        |
 
 `HF_HUB_OFFLINE` is the authoritative offline switch; vaultspec-rag also honours `TRANSFORMERS_OFFLINE`, and when either is set it loads every model cache-only. See the [Hugging Face environment variable reference](https://huggingface.co/docs/huggingface_hub/en/package_reference/environment_variables).
 
