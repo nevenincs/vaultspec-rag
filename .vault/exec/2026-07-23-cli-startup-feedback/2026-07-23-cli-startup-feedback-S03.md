@@ -17,7 +17,7 @@ related:
 
 ## Description
 
-- Added `_startup_count_suffix`, and had `_startup_phase_label` append a `(done/total)` suffix when the published status carries `phase_total`.
+- Added `_startup_count_suffix`, and had `_startup_phase_label` append a space-prefixed `(done/total)` suffix when the published status carries `phase_total`.
 
 ## Outcome
 

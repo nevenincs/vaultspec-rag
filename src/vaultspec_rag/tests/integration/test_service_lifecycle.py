@@ -1885,11 +1885,11 @@ from starlette.applications import Starlette
 from starlette.routing import Route
 
 import vaultspec_rag.server as server
-from vaultspec_rag._machine_lock import (
+from vaultspec_rag._machine_lock import (  # absolute-import-ok
     acquire_machine_lock_lease,
     release_machine_lock_lease,
 )
-from vaultspec_rag.server._lifespan import health_handler
+from vaultspec_rag.server._lifespan import health_handler  # absolute-import-ok
 
 server._SERVICE_TOKEN = os.environ["VAULTSPEC_TEST_HEALTH_TOKEN"]
 lease = None
@@ -2247,3 +2247,58 @@ def test_reconcile_recovers_discovery_without_touching_the_daemon(
         )
         assert again.exit_code == 0
         assert json.loads(again.stdout)["data"]["status"] == "already_converged"
+
+
+def test_race_losing_daemon_self_exits(tmp_path: Path) -> None:
+    """A daemon that loses the machine-singleton claim terminates, never hangs.
+
+    Positive smoke for the orphan-accumulation fix: this process holds the
+    machine lock, so the spawned daemon must fail its claim and must terminate on
+    its own within the bound rather than hang the machine as a lingering,
+    unmanaged process. It does not reproduce the specific interpreter-exit wedge
+    the fix targets (that needs a hung non-daemon thread, absent this early in
+    startup), so it guards against a gross hang, not the subtle wedge; the wedge
+    fix is covered by the claim-inside-the-guard change and its end-to-end proof.
+    """
+    from ..._machine_lock import (
+        acquire_machine_lock_lease,
+        machine_lock_path,
+        release_machine_lock_lease,
+    )
+
+    with _service_env(tmp_path):
+        machine_lock_path().parent.mkdir(parents=True, exist_ok=True)
+        lease, _holder = acquire_machine_lock_lease()
+        assert lease is not None, "test must hold the machine lock"
+        creationflags = (
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            if sys.platform == "win32"
+            else 0
+        )
+        port = _get_ephemeral_port()
+        log_path = tmp_path / "service.log"
+        try:
+            with log_path.open("ab") as output:
+                process = subprocess.Popen(
+                    [sys.executable, "-m", "vaultspec_rag.server", "--port", str(port)],
+                    stdin=subprocess.DEVNULL,
+                    stdout=output,
+                    stderr=subprocess.STDOUT,
+                    cwd=tmp_path,
+                    creationflags=creationflags,
+                    start_new_session=sys.platform != "win32",
+                )
+            try:
+                deadline = time.monotonic() + 60.0
+                while time.monotonic() < deadline and process.poll() is None:
+                    time.sleep(0.1)
+                assert process.poll() is not None, (
+                    "a race-losing daemon must self-exit, not linger"
+                )
+                assert process.returncode != 0, "a failed claim must exit non-zero"
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=5)
+        finally:
+            release_machine_lock_lease(lease)
