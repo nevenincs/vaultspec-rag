@@ -12,16 +12,6 @@ related:
   - '[[2026-07-21-large-index-resilience-plan]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 # `code-document-index-boundary` plan
 
 ## Description
@@ -268,10 +258,10 @@ Run focused and complete verification without test shortcuts, then close only af
 - [x] `W06.P13.S135` - Clear the redundant-cast type diagnostics blocking the lint gate; `src/vaultspec_rag/indexer/_resolved_policy.py, src/vaultspec_rag/search/_result_shaping.py, src/vaultspec_rag/server/_routes.py`.
 - [x] `W06.P13.S136` - Remove the first-failure and narrowed-marker shortcuts from the test recipe so the harness gate reports the complete result; `justfile`.
 - [x] `W06.P13.S84` - Run focused policy, preprocessing, indexer, migration, store, search, watcher, jobs, service, CLI, MCP, restart, and resource suites; `src/vaultspec_rag/tests`.
-- [ ] `W06.P13.S137` - Reconcile the command reference with the shipped source-type vocabulary so the document kind and the combined alias appear wherever a type is accepted; `docs/cli.md`.
+- [x] `W06.P13.S137` - Reconcile the command reference with the shipped source-type vocabulary so the document kind and the combined alias appear wherever a type is accepted; `docs/cli.md`.
 - [ ] `W06.P13.S85` - Run the complete project test suite without fakes, mocks, stubs, patches, monkeypatches, skips, or expected failures; `pyproject.toml`.
 - [x] `W06.P13.S86` - Run formatting, lint, type, import-boundary, GPU, storage, and policy checks over the completed change; `.pre-commit-config.yaml`.
-- [ ] `W06.P13.S87` - Perform the mandatory review for generic routing, fail-closed mutation, document isolation, migration replay, bounded resources, GPU discipline, public exhaustiveness, and test integrity; `.vault/audit/2026-07-22-code-document-index-boundary-audit.md`.
+- [x] `W06.P13.S87` - Perform the mandatory review for generic routing, fail-closed mutation, document isolation, migration replay, bounded resources, GPU discipline, public exhaustiveness, and test integrity; `.vault/audit/2026-07-22-code-document-index-boundary-audit.md`.
 
 ## Parallelization
 

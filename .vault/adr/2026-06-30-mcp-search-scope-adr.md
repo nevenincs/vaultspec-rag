@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#mcp-search-scope'
 date: '2026-06-30'
-modified: '2026-06-30'
+modified: '2026-07-23'
 related:
   - "[[2026-06-30-mcp-conformance-research]]"
   - "[[2026-06-30-mcp-conformance-reference]]"
@@ -110,6 +110,16 @@ The MCP server is narrowed to a semantic-search surface and brought into line wi
   idempotent. The destructive drop-and-recreate rebuild (the `clean` path) is removed from
   the MCP refresh tools and remains a CLI responsibility, so the MCP refresh annotation is
   honestly non-destructive rather than carrying a hidden destructive mode.
+
+- **SB7 - Amendment (2026-07-23): the surface is kind-parametric, and status plus index-cleaning are readmitted.** SB1 through SB3 are superseded on their tool set, not on their principle. The principle stands: MCP exposes search and index-refresh, and does not manage the daemon. But SB1 enumerated five tools by name at a time when only two content kinds existed; the document kind arrived later and the boundary work extended search and index-refresh to it through checked plan steps without this record being consulted. That extension is ratified here rather than reverted, because it is the same two verb families SB1 already permits, applied to a third kind. The rule is therefore restated parametrically: for each indexed content kind (vault, code, document) the surface carries a search verb and an index-refresh verb, plus the union conveniences `search_combined` and `reindex_all`, the search-adjacent `get_code_file`, and the `analyze_feature` prompt.
+
+  SB2's removal of mutating administration is narrowed rather than reversed wholesale: the destructive index-cleaning verbs `clean_documents` and `clean_all` are readmitted as the cleanup counterpart of the index-refresh family an agent already drives, annotated destructive and closed-world; lifecycle and operational administration (project eviction, watcher control, service state, storage survey, jobs, logs, and service start/stop/warmup/doctor) remain CLI-only exactly as SB2 decided, on the unchanged reasoning that an agent-facing search tool does not operate the daemon it depends on.
+
+  SB3's removal of `get_index_status` is reversed on a narrower ground than SB3 rejected it. SB3 removed it as a duplicate of the operator-facing `get_service_state`. It is readmitted not as service-state inspection but as index-readiness: an agent choosing whether to search a kind needs to know that kind is indexed, and while the search route already attaches an `index_state` structure reactively to a result, an agent cannot consult it before deciding to search. The tool exposes index readiness only, and the operator-facing service-state surface remains CLI-only.
+
+  SB4's retirement of the parity-matrix framing is unaffected and reaffirmed: this amendment does not mandate CLI/MCP mirroring. It defines the MCP surface by a kind-parametric rule of its own, which happens to grow with content kinds rather than by matching the CLI verb for verb.
+
+  The conformance guard is updated to assert this rule - a search and refresh verb per kind, the named conveniences, status, and clean - rather than a frozen five-name list, so it keeps enforcing the boundary as kinds are added rather than failing the next time the surface legitimately grows. The prior five-name enumeration in SB1 and the removals in SB2/SB3 are retained above as the superseded record.
 
 ## Rationale
 

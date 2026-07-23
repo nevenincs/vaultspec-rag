@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#large-index-resilience'
 date: '2026-07-21'
-modified: '2026-07-22'
+modified: '2026-07-23'
 tier: L3
 related:
   - '[[2026-07-21-large-index-resilience-adr]]'
@@ -13,6 +13,16 @@ related:
   - '[[2026-07-21-service-job-control-plan]]'
   - '[[2026-07-21-index-backpressure-storage-hygiene-plan]]'
 ---
+
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
 
 <!-- RETIRED: S04 -->
 
@@ -58,6 +68,13 @@ Remove whole-corpus and device-retention amplifiers across full and both increme
 - [x] `W01.P02.S08` - Convert full indexing to weighted production without whole-corpus vector sorting or retention; `src/vaultspec_rag/indexer/_codebase_indexer.py, src/vaultspec_rag/indexer/_chunk_worker.py, src/vaultspec_rag/indexer/_preprocess_glue.py`.
 - [x] `W01.P02.S09` - Convert unscoped incremental indexing to bounded file-segment streaming; `src/vaultspec_rag/indexer/_codebase_indexer.py, src/vaultspec_rag/indexer/_chunk_worker.py`.
 - [x] `W01.P02.S10` - Convert scoped incremental indexing to bounded file-segment streaming; `src/vaultspec_rag/indexer/_codebase_indexer.py, src/vaultspec_rag/indexer/_streaming.py`.
+- [x] `W01.P02.S56` - Stop the retained-point lookup excluding carried-forward evidence, so points inherited from a parent generation are no longer classified obsolete and deleted; `src/vaultspec_rag/indexer/_run_ledger.py`.
+- [x] `W01.P02.S57` - Confirm the scan-bounding intent of the retained-point lookup survives the correction, measuring rather than assuming; `src/vaultspec_rag/indexer/_run_ledger.py`.
+- [x] `W01.P02.S58` - Cover carried-forward retention end to end: index, carry a generation forward, and assert inherited points survive an incremental run; `src/vaultspec_rag/tests/integration/test_codebase_integration.py`.
+- [x] `W01.P02.S52` - Re-open a resumed generation's path whose source digest no longer matches the digest recorded when it was marked indexed, superseding its prior units instead of refusing the write; `src/vaultspec_rag/indexer/_run_ledger.py, src/vaultspec_rag/indexer/_run_checkpoint.py`.
+- [x] `W01.P02.S53` - Decide and enforce whether a repeatedly failing generation retires instead of remaining resumable indefinitely; `src/vaultspec_rag/indexer/_run_ledger.py`.
+- [x] `W01.P02.S54` - Treat a source file that reads as empty mid-save as a re-queued path rather than a job-level failure; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `W01.P02.S55` - Cover the cascade end to end: fail an incremental attempt, edit a file it had already indexed, and assert the next attempt succeeds; `src/vaultspec_rag/tests/integration/test_index_job_control.py`.
 - [ ] `W01.P02.S11` - Verify sparse CPU retention and bounded slice cleanup on real CUDA; `src/vaultspec_rag/tests/integration/test_embeddings.py`.
 
 ### Phase `W01.P03` - workflow retry and no-progress policy
