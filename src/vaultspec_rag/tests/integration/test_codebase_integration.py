@@ -615,6 +615,7 @@ class TestCodebaseIncrementalIndex:
         import textwrap
 
         from ...config import EnvVar, reset_config
+        from ...indexer import _chunk_worker
         from ...indexer._preprocess_runner import PreprocessAbortError
         from .test_indexer_progress_integration import (
             CountingProgressReporter,
@@ -698,7 +699,27 @@ class TestCodebaseIncrementalIndex:
 
             _assert_phase_balanced(failure_reporter.events)
             assert "chunk + embed" in failure_reporter.phase_names()
-            assert store.get_code_ids_by_paths(attempted) == []
+            # Resume contract (the checkpoint-resume model): a failed attempt
+            # RETAINS the points it already storage-confirmed, so the retry
+            # resumes rather than re-encoding from scratch. a_good.py was fully
+            # processed and checkpointed before the preprocessor aborted the
+            # attempt on z_fail.fatal, so its points survive; z_fail.fatal
+            # never produced any. The rollback protects the current attempt's
+            # own storage-confirmed commits (its ledger units still describe
+            # them, so deleting the store points would strand those units);
+            # carried-forward points from a prior generation are protected
+            # separately by existing_ids. The never-retried case is covered by
+            # generation retirement and reconcile/invalidation, not by deleting
+            # durable progress here.
+            good_expected = {
+                chunk.id
+                for chunk in _chunk_worker.chunk_and_hash_file(good, root).chunks
+            }
+            assert good_expected
+            assert set(store.get_code_ids_by_paths({"src/a_good.py"})) == good_expected
+            assert store.get_code_ids_by_paths({"src/z_fail.fatal"}) == []
+            # Metadata publishes only at finalization, so a failed attempt
+            # leaves the sidecar at its pre-attempt baseline.
             assert (
                 indexer._load_meta()  # pyright: ignore[reportPrivateUsage]
                 == metadata_before
