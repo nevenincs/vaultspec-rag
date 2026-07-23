@@ -10,7 +10,6 @@ related:
   - '[[2026-07-23-index-job-backend-resilience-research]]'
 ---
 
-
 # `index-job-backend-resilience` plan
 
 - [x] `S01` - Generalise the write-only bounded transient retry into a store-operation retry that any store call can run under, preserving the transient/unrecoverable classification, capped backoff, and durable no-progress budget clamp; `src/vaultspec_rag/_store_writes.py`.
