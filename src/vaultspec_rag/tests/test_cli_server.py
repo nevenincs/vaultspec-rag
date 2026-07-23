@@ -803,6 +803,7 @@ class TestWinShutdownLog:
                 timeout: float = 4.0,
                 *,
                 graceful_drain: float = 2.0,
+                console_group_signal: bool = True,
             ) -> None:
                 budgets.append((timeout, graceful_drain))
 
@@ -864,6 +865,7 @@ class TestWinShutdownLog:
                 timeout: float = 4.0,
                 *,
                 graceful_drain: float = 2.0,
+                console_group_signal: bool = True,
             ) -> None:
                 assert timeout > graceful_drain
 
