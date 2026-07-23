@@ -114,6 +114,7 @@ def run_store_operation_with_retry[T](
     *,
     description: str,
     policy: StoreWritePolicy | None,
+    max_elapsed_seconds: float | None = None,
 ) -> T:
     """Run a store operation under configured retry and a caller-owned budget.
 
@@ -145,6 +146,13 @@ def run_store_operation_with_retry[T](
         description: Bounded operator context for diagnostics.
         policy: Caller-owned durable no-progress policy, or ``None`` for a
             direct store call outside a managed indexing run.
+        max_elapsed_seconds: Optional ceiling on this operation's total wall
+            clock across every attempt. Without it the attempt count is the
+            only bound, so a backend that accepts the connection and then
+            stalls costs the full per-attempt timeout once per attempt -
+            multiplying, not capping, the pre-retry worst case. Callers that
+            run many operations back to back under one lock supply this so a
+            stalled backend cannot extend the hold proportionally.
     """
     from .config import get_config
 
@@ -153,9 +161,21 @@ def run_store_operation_with_retry[T](
     operation_timeout = cfg.store_operation_timeout_seconds
     delay = cfg.store_write_retry_base_seconds
     max_delay = cfg.store_write_retry_max_seconds
+    started = time.monotonic()
+
+    def _elapsed_budget() -> float | None:
+        """Return the wall clock this operation has left, if it is capped."""
+        if max_elapsed_seconds is None:
+            return None
+        return max_elapsed_seconds - (time.monotonic() - started)
 
     for attempt in range(1, attempts + 1):
         remaining = remaining_write_seconds(policy, description=description)
+        elapsed_left = _elapsed_budget()
+        if elapsed_left is not None:
+            remaining = (
+                elapsed_left if remaining is None else min(remaining, elapsed_left)
+            )
         attempt_timeout = _attempt_timeout_seconds(
             operation_timeout,
             remaining,
@@ -182,7 +202,24 @@ def run_store_operation_with_retry[T](
                     exc,
                 )
                 raise
+            # A wall-clock ceiling ends the operation on the original error
+            # rather than a liveness outcome: an unmanaged read that ran out
+            # of its own budget has not stalled a managed run, it has simply
+            # spent the time this call was allowed.
+            elapsed_left = _elapsed_budget()
+            if elapsed_left is not None and elapsed_left <= 0.0:
+                logger.error(
+                    "store operation %s exhausted its %.1fs budget after "
+                    "%d attempt(s): %s",
+                    description,
+                    max_elapsed_seconds,
+                    attempt,
+                    exc,
+                )
+                raise
             wait_seconds = delay if remaining is None else min(delay, remaining)
+            if elapsed_left is not None:
+                wait_seconds = min(wait_seconds, elapsed_left)
             logger.warning(
                 "transient store operation failure in %s (attempt %d/%d), "
                 "retrying in %.1fs: %s",

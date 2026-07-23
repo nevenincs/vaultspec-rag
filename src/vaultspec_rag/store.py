@@ -298,12 +298,20 @@ class VaultStore(_VaultSearchMixin):
         """
         from .config import get_config
 
+        operation_timeout = get_config().store_operation_timeout_seconds
         if not self._server_mode:
-            return op(math.ceil(get_config().store_operation_timeout_seconds))
+            return op(math.ceil(operation_timeout))
+        # One operation may not outlast the single-attempt timeout however
+        # many attempts it takes. Without that ceiling a backend that
+        # accepts the connection and then stalls would cost the full
+        # timeout per attempt, and the ensure path runs a dozen operations
+        # back to back under the lifecycle lock - so the retry would
+        # multiply the worst-case hold rather than bound it.
         return run_store_operation_with_retry(
             op,
             description=description,
             policy=None,
+            max_elapsed_seconds=operation_timeout,
         )
 
     def _collection_exists(self, name: str) -> bool:
@@ -329,15 +337,23 @@ class VaultStore(_VaultSearchMixin):
         Creating an index that already exists is a no-op in Qdrant, so the
         operation is safe to replay.
         """
-        with _suppress_local_qdrant_warnings():
-            self._retried(
-                f"create payload index {collection_name}.{field_name}",
-                lambda _timeout: self.client.create_payload_index(
+
+        def attempt(timeout: int) -> object:
+            # The suppression mutates process-global warning filters and is
+            # not thread-safe, so it stays inside one attempt rather than
+            # spanning the retry's backoff sleeps.
+            with _suppress_local_qdrant_warnings():
+                return self.client.create_payload_index(
                     collection_name=collection_name,
                     field_name=field_name,
                     field_schema=field_schema,
-                ),
-            )
+                    timeout=timeout,
+                )
+
+        self._retried(
+            f"create payload index {collection_name}.{field_name}",
+            attempt,
+        )
 
     def _scroll(self, **kwargs: Any) -> tuple[list[Record], Any]:
         """Page a collection under the bounded retry.
@@ -347,14 +363,14 @@ class VaultStore(_VaultSearchMixin):
         """
         return self._retried(
             f"scroll {kwargs.get('collection_name')}",
-            lambda _timeout: self.client.scroll(**kwargs),
+            lambda timeout: self.client.scroll(timeout=timeout, **kwargs),
         )
 
     def _retrieve(self, **kwargs: Any) -> list[Record]:
         """Fetch points by id under the bounded retry (a query, replay-safe)."""
         return self._retried(
             f"retrieve {kwargs.get('collection_name')}",
-            lambda _timeout: self.client.retrieve(**kwargs),
+            lambda timeout: self.client.retrieve(timeout=timeout, **kwargs),
         )
 
     def _delete_points(self, **kwargs: Any) -> None:
@@ -368,7 +384,7 @@ class VaultStore(_VaultSearchMixin):
         """
         self._retried(
             f"delete points {kwargs.get('collection_name')}",
-            lambda _timeout: self.client.delete(**kwargs),
+            lambda timeout: self.client.delete(timeout=timeout, **kwargs),
         )
 
     def _id_scan_page_limit(self, collection: str) -> int:
@@ -1505,8 +1521,10 @@ class VaultStore(_VaultSearchMixin):
         with self._point_lock(self.TABLE_NAME):
             return self._retried(
                 f"count {self.TABLE_NAME}",
-                lambda _timeout: (
-                    self.client.count(collection_name=self.TABLE_NAME).count
+                lambda timeout: (
+                    self.client.count(
+                        collection_name=self.TABLE_NAME, timeout=timeout
+                    ).count
                 ),
             )
 
@@ -1520,8 +1538,10 @@ class VaultStore(_VaultSearchMixin):
         with self._point_lock(self.CODE_TABLE_NAME):
             return self._retried(
                 f"count {self.CODE_TABLE_NAME}",
-                lambda _timeout: (
-                    self.client.count(collection_name=self.CODE_TABLE_NAME).count
+                lambda timeout: (
+                    self.client.count(
+                        collection_name=self.CODE_TABLE_NAME, timeout=timeout
+                    ).count
                 ),
             )
 
@@ -1531,8 +1551,10 @@ class VaultStore(_VaultSearchMixin):
         with self._point_lock(self.DOCUMENT_TABLE_NAME):
             return self._retried(
                 f"count {self.DOCUMENT_TABLE_NAME}",
-                lambda _timeout: (
-                    self.client.count(collection_name=self.DOCUMENT_TABLE_NAME).count
+                lambda timeout: (
+                    self.client.count(
+                        collection_name=self.DOCUMENT_TABLE_NAME, timeout=timeout
+                    ).count
                 ),
             )
 

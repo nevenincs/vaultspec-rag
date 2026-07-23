@@ -29,4 +29,6 @@ One read is deliberately left unwrapped: the count inside the id-scan page-limit
 
 ## Notes
 
-None.
+Code review found the helpers were discarding the retry's admitted per-attempt timeout (the lambdas ignored it) even though the count, scroll, retrieve, delete, and payload-index client calls all accept a timeout. That made the retry's clamp inert and left each attempt bounded only by the client-level default. Every such call now receives the admitted value.
+
+Also recorded from review: the interactive search reads in the search mixin deliberately stay single-shot rather than routing through this retry, because a user-facing query should fail fast and fall back instead of spending backoff. That divergence was previously silent and is now stated at the call site.
