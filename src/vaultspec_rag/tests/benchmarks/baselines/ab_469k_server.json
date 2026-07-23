@@ -1,7 +1,7 @@
 {
   "port": 8766,
   "roots": [
-    "Y:\\code\\sample-project\\main"
+    "/projects/sample"
   ],
   "requests": 6,
   "concurrency": 3,

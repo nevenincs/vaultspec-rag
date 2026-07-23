@@ -1,8 +1,8 @@
 {
   "port": 8766,
   "roots": [
-    "Y:\\code\\sample-project\\main",
-    "Y:\\code\\vaultspec-rag-worktrees\\main"
+    "/projects/sample",
+    "/projects/main"
   ],
   "requests": 8,
   "concurrency": 4,

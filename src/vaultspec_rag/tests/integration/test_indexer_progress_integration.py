@@ -170,9 +170,9 @@ class TestCodebaseIndexerProgress:
             )
 
             names = reporter.phase_names()
-            # The codebase full index reads each file once (#155 P03): the
+            # The codebase full index reads each file once (#155): the
             # separate "hash files" phase is gone, and chunking + embedding are
-            # pipelined into a single "chunk + embed" phase (#155 P02) that
+            # pipelined into a single "chunk + embed" phase (#155) that
             # advances once per file as workers complete.
             expected = [
                 "scan codebase",

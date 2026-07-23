@@ -11,8 +11,8 @@ re-measures after every wave.
 Run standalone (service must be running):
 
     uv run python -m vaultspec_rag.tests.benchmarks.bench_concurrency \
-        --root Y:/code/vaultspec-rag-worktrees/main \
-        --root Y:/code/another-project/main \
+        --root /projects/main \
+        --root /projects/another \
         --requests 32 --concurrency 8 --json results.json
 
 Not collected by pytest (no ``test_`` functions): saturating a live

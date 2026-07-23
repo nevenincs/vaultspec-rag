@@ -3,7 +3,7 @@
 Two confirmed flapping causes are exercised here with real objects - no mocks,
 patches, fakes, or skips:
 
-- **Breakaway fallback (S07/S09).** ``_spawn_windows`` must never silently spawn
+- **Breakaway fallback.** ``_spawn_windows`` must never silently spawn
   a daemon bound to the launching shell's Job Object. When breakaway is denied
   it attempts a console-detached spawn, and when that too is impossible it
   raises :class:`DaemonBreakawayError` instead of producing a doomed daemon.
@@ -11,7 +11,7 @@ patches, fakes, or skips:
   command that cannot start, so both creation attempts raise a real ``OSError``
   and the escalation to ``DaemonBreakawayError`` is observed end to end.
 
-- **Discovery-file unlink guard (S08/S10).** A lifecycle command may remove the
+- **Discovery-file unlink guard.** A lifecycle command may remove the
   discovery file only when the holder is confirmed dead. The pure decision
   helper and the live ``_existing_service_running`` path are exercised against a
   real discovery file on disk with a live PID (this test process) so a transient
@@ -72,7 +72,7 @@ def isolated_status_dir(tmp_path: Path) -> Iterator[Path]:
 
 
 # ---------------------------------------------------------------------------
-# S08/S10: the discovery-file unlink guard
+# The discovery-file unlink guard
 # ---------------------------------------------------------------------------
 
 
@@ -135,7 +135,7 @@ class TestExistingServiceRunningUnlink:
 
 
 # ---------------------------------------------------------------------------
-# S07/S09: the breakaway fallback never silently produces a shell-bound daemon
+# The breakaway fallback never silently produces a shell-bound daemon
 # ---------------------------------------------------------------------------
 
 
