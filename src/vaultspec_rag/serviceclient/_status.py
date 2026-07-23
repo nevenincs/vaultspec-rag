@@ -24,7 +24,7 @@ from ._discovery import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from typing import Any
+    from typing import Any, TypeGuard
 
 #: Canonical operator states. ``running`` and ``warming`` are healthy live
 #: states; ``stopped`` means nothing is running; ``crashed`` means a recorded
@@ -308,6 +308,71 @@ class ReconcileOutcome:
         }
 
 
+def _is_finite_number(value: object) -> TypeGuard[float]:
+    """Whether *value* is a concrete, non-boolean, finite real number."""
+    return (
+        isinstance(value, int | float)
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+    )
+
+
+def _pointer_identity_matches(resolution: MachineResolution) -> bool:
+    """The pointer advertises one live machine-pointer owner with a token.
+
+    Source is the machine pointer, the holder and pointer pids are the same
+    concrete process, and a non-empty identity token was published.
+    """
+    token = resolution.service_token
+    return (
+        resolution.source == DISCOVERY_SOURCE_MACHINE_POINTER
+        and _is_positive_pid(resolution.holder_pid)
+        and _is_positive_pid(resolution.pointer_pid)
+        and resolution.pointer_pid == resolution.holder_pid
+        and isinstance(token, str)
+        and bool(token)
+    )
+
+
+def _heartbeat_within_stale_window(resolution: MachineResolution) -> bool:
+    """The heartbeat age and stale window are finite and the age is within it."""
+    heartbeat_age = resolution.heartbeat_age_s
+    stale_after = resolution.stale_after_s
+    if not _is_finite_number(heartbeat_age):
+        return False
+    if not _is_finite_number(stale_after):
+        return False
+    return stale_after > 0 and heartbeat_age <= stale_after
+
+
+def _signals_confirm_pointer(
+    signals: LivenessSignals, resolution: MachineResolution
+) -> bool:
+    """The live-probe signals all agree with the pointer's advertised identity."""
+    return (
+        signals.pid == resolution.pointer_pid
+        and signals.pid_alive
+        and signals.pid_matches_service
+        and signals.port_listening
+        and signals.service_token_match is True
+    )
+
+
+def _health_matches_pointer(
+    health: dict[str, Any], resolution: MachineResolution
+) -> bool:
+    """The live ``/health`` response's pid and token match the pointer's."""
+    served_token = health.get("service_token")
+    served_pid = health.get("pid")
+    return (
+        _is_positive_pid(served_pid)
+        and served_pid == resolution.pointer_pid
+        and isinstance(served_token, str)
+        and bool(served_token)
+        and served_token == resolution.service_token
+    )
+
+
 def _identity_confirmed(
     verdict: DiscoveryStatus, health: dict[str, Any] | None
 ) -> bool:
@@ -316,45 +381,17 @@ def _identity_confirmed(
     Convergence requires agreement across every axis the pointer claims, not
     merely a reachable port: a live service answering on the advertised address
     is only the *right* service when its own identity token and process match
-    what the owner published.
+    what the owner published. Each axis is checked by a cohesive predicate; all
+    must hold.
     """
-    resolution = verdict.resolution
-    holder_pid = resolution.holder_pid
-    pointer_pid = resolution.pointer_pid
-    pointer_token = resolution.service_token
-    heartbeat_age = resolution.heartbeat_age_s
-    stale_after = resolution.stale_after_s
-    if (
-        health is None
-        or resolution.source != DISCOVERY_SOURCE_MACHINE_POINTER
-        or not _is_positive_pid(holder_pid)
-        or not _is_positive_pid(pointer_pid)
-        or pointer_pid != holder_pid
-        or not isinstance(pointer_token, str)
-        or not pointer_token
-        or not isinstance(heartbeat_age, int | float)
-        or isinstance(heartbeat_age, bool)
-        or not math.isfinite(float(heartbeat_age))
-        or not isinstance(stale_after, int | float)
-        or isinstance(stale_after, bool)
-        or not math.isfinite(float(stale_after))
-        or stale_after <= 0
-        or heartbeat_age > stale_after
-        or verdict.signals.pid != pointer_pid
-        or not verdict.signals.pid_alive
-        or not verdict.signals.pid_matches_service
-        or not verdict.signals.port_listening
-        or verdict.signals.service_token_match is not True
-    ):
+    if health is None:
         return False
-    served_token = health.get("service_token")
-    served_pid = health.get("pid")
+    resolution = verdict.resolution
     return (
-        _is_positive_pid(served_pid)
-        and served_pid == pointer_pid
-        and isinstance(served_token, str)
-        and bool(served_token)
-        and served_token == pointer_token
+        _pointer_identity_matches(resolution)
+        and _heartbeat_within_stale_window(resolution)
+        and _signals_confirm_pointer(verdict.signals, resolution)
+        and _health_matches_pointer(health, resolution)
     )
 
 
