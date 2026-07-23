@@ -14,12 +14,13 @@ two ways.
 
 from __future__ import annotations
 
-import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+
+from ..quality._frozen_corpus import materialize_frozen_vault
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -97,16 +98,17 @@ def testimonial_searcher(
     embedding_model: EmbeddingModel,
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Generator[VaultSearcher]:
-    """Index a hermetic copy of the project vault and yield a searcher."""
+    """Index a hermetic frozen-reference vault and yield a searcher.
+
+    The corpus is pinned to the gold-calibration commit (see _frozen_corpus)
+    so the pre-declared authorities cannot be outranked by documents added to
+    the live vault after they were calibrated.
+    """
     from ... import VaultSearcher
     from ..conftest import _index_corpus
 
     root = tmp_path_factory.mktemp("testimonial-vault")
-    shutil.copytree(
-        _repo_root() / ".vault",
-        root / ".vault",
-        ignore=shutil.ignore_patterns("data", "*.lock"),
-    )
+    materialize_frozen_vault(root, repo_root=_repo_root())
     (root / ".vaultspec").mkdir(parents=True, exist_ok=True)
     components = _index_corpus(root, embedding_model)
     searcher = VaultSearcher(root, components["model"], components["store"])
