@@ -26,6 +26,7 @@ Complete reference for the `vaultspec-rag` command line. For task-oriented walkt
 - [server doctor](#server-doctor)
 - [server warmup](#server-warmup)
 - [server jobs](#server-jobs)
+- [server job](#server-job)
 - [server logs](#server-logs)
 - [server projects list](#server-projects-list)
 - [server projects unload](#server-projects-unload)
@@ -36,6 +37,7 @@ Complete reference for the `vaultspec-rag` command line. For task-oriented walkt
 - [server qdrant install](#server-qdrant-install)
 - [server qdrant status](#server-qdrant-status)
 - [server qdrant clean](#server-qdrant-clean)
+- [server qdrant quarantine](#server-qdrant-quarantine)
 - [server storage survey](#server-storage-survey)
 - [server storage prune](#server-storage-prune)
 - [server storage reconcile](#server-storage-reconcile)
@@ -82,6 +84,7 @@ These codes are consistent across commands.
 | `2`  | A usage error such as an invalid argument, filter, or flag combination.                                                                                                     |
 | `3`  | Service stopped. No `service.json` was found for the targeted service.                                                                                                      |
 | `4`  | Service crashed or divergent. `service.json` is present but a signal contradicts it (dead PID, reused PID, silent port, or stale heartbeat).                                |
+| `5`  | Service warming. The daemon holds the machine lock and is loading models but is not yet serving; retry shortly.                                                             |
 
 Per-command exit lines below note the codes each command can return.
 
@@ -324,13 +327,13 @@ Options:
 
 When no `service.json` exists and no `--port` is given, the command returns exit `3` without probing the default port.
 
-Exit/JSON: `0` when `running` (all signals green); `3` when `stopped` (no `service.json`); `4` when crashed or divergent (`crashed_pid_dead`, `crashed_pid_reused`, `crashed_port_silent`, or `crashed_heartbeat_stale`). With `--json`, the result is one envelope on stdout.
+Exit/JSON: `0` when `running` (all signals green); `3` when `stopped` (no `service.json`); `4` when crashed or divergent (`crashed_pid_dead`, `crashed_pid_reused`, `crashed_port_silent`, or `crashed_heartbeat_stale`); `5` when `warming` (the daemon holds the machine lock and is loading models but is not yet serving; retry shortly). With `--json`, the result is one envelope on stdout.
 
 ## server doctor
 
 `vaultspec-rag server doctor`
 
-Report a read-only readiness snapshot for every external dependency server mode needs. The command provisions nothing. It reports the backend in use, torch CUDA availability, model-snapshot presence, the Qdrant binary's resolution source, and the supervised server's liveness. The same snapshot is served over HTTP at the token-gated `GET /readiness` route.
+Report a read-only readiness snapshot for every external dependency server mode needs. The command provisions nothing. It reports the backend in use, torch CUDA availability, model-snapshot presence, the Qdrant binary's resolution source, and the supervised server's liveness. It also reports a provisioning axis for the `vaultspec-rag` package itself - its declared install mode, any declared-versus-observed mode mismatch, and whether the running package meets its declared version floor. The same snapshot is served over HTTP at the token-gated `GET /readiness` route.
 
 Arguments: none.
 
@@ -340,7 +343,7 @@ Options:
 | -------- | ---- | ------- | ----------------------------------------------- |
 | `--json` | flag | off     | Emit the readiness snapshot as a JSON envelope. |
 
-Exit/JSON: `0` when ready for requests; the report's `ready` field carries the overall verdict and each dependency carries its own status. With `--json`, the result is one envelope whose `data` holds `{ready, server_mode, dependencies}`.
+Exit/JSON: `0` when everything actionable is in order; `1` for a warning (a daemon is expected but not live, or the declared install mode does not match what is observed); `2` for an error (the running `vaultspec-rag` is below its declared version floor). The highest severity wins, and a pre-install run with no committed rag declaration stays exit `0` even when dependencies are not yet ready. The report's `ready` field carries the overall verdict and each dependency carries its own status. With `--json`, the result is one envelope whose `data` holds `{ready, status, server_mode, dependencies_ready, dependencies, service, mode}` - note `dependencies_ready` (not `ready`) is the installed-dependency flag, while `ready` is the overall verdict.
 
 ## server warmup
 
@@ -381,6 +384,23 @@ Options:
 | `--refresh-count` | integer | unset                | Stop `--watch` after this many refreshes.                                          |
 
 Exit/JSON: `0` on success; `2` on an invalid filter value (`invalid_filter`); `3` when the service is not running. With `--json`, the result is one envelope on stdout.
+
+## server job
+
+`vaultspec-rag server job <subcommand> <job-id>`
+
+Act on one job by id - the singular `job`, distinct from the plural `server jobs` list view. Every subcommand resolves the job on the running service; human output accepts a unique id prefix, while `--json` requires an exact id. Each subcommand takes the same two options: `--port` (target a specific service port; defaults to the running service) and `--json` (emit one structured outcome).
+
+| Subcommand      | Extra options | Description                                                                                                     |
+| --------------- | ------------- | ------------------------------------------------------------------------------------------------------------- |
+| `show <job-id>`   |               | Show one job's full detail.                                                                                    |
+| `pause <job-id>`  |               | Request a cooperative pause.                                                                                   |
+| `resume <job-id>` |               | Resume a paused job through reconciliation.                                                                    |
+| `stop <job-id>`   | `--force`     | Request cancellation without disabling automatic updates. `--force` requests force termination and is currently rejected when unsupported. |
+| `retry <job-id>`  |               | Create a linked retry for one retryable terminal job.                                                         |
+| `delete <job-id>` |               | Delete one terminal job from retained history.                                                                |
+
+Exit/JSON: `0` on success; non-zero when the target job id is unknown or ambiguous, or the service is not running. With `--json`, each subcommand emits one envelope on stdout.
 
 ## server logs
 
@@ -609,6 +629,28 @@ Options:
 | `--json`         | flag | off     | Emit one JSON envelope to stdout.                                             |
 
 Exit/JSON: `0` on success or an empty preview; `1` when a preview lists targets but `--yes` was not given. With `--json`, the result is one envelope on stdout.
+
+## server qdrant quarantine
+
+`vaultspec-rag server qdrant quarantine [collection]`
+
+Move a corrupt collection out of the shared managed store so the server can start again. Run with no argument to list the store's collections; name one to quarantine it. The move is reversible - the files are preserved under `quarantine/`, and nothing is deleted - and the affected root re-indexes on its next use. This is the operator escape hatch for when a supervised start cannot identify a corrupt collection automatically.
+
+Arguments:
+
+| Argument     | Type   | Description                                        |
+| ------------ | ------ | -------------------------------------------------- |
+| `collection` | string | Collection to quarantine; omit to list the store. |
+
+Options:
+
+| Flag        | Type | Default | Description                                                                          |
+| ----------- | ---- | ------- | ------------------------------------------------------------------------------------ |
+| `--yes`     | flag | off     | Confirm moving the named collection aside. Required to quarantine; otherwise refused. |
+| `--dry-run` | flag | off     | Preview the move without touching the store.                                         |
+| `--json`    | flag | off     | Emit JSON for scripts instead of human text.                                         |
+
+Exit/JSON: `0` on success, a listing, or a dry-run preview; non-zero when the named collection is unknown (`unknown_collection`), `--yes` was not given (`confirmation_required`), or the move failed because the running server holds the files (`quarantine_failed`). With `--json`, the result is one `server.qdrant.quarantine` envelope on stdout.
 
 ## server storage survey
 
