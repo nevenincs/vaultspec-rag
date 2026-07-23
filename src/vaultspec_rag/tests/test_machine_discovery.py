@@ -105,7 +105,9 @@ class TestMachineDiscoveryPointer:
         published = owner_publisher.publish_phase("warming", detail="loading models")
         assert published is not None
         assert published["phase_detail"] == "loading models"
-        assert read_machine_discovery()["phase_detail"] == "loading models"  # type: ignore[index]
+        discovered = read_machine_discovery()
+        assert discovered is not None
+        assert discovered["phase_detail"] == "loading models"
 
         beat = owner_publisher.heartbeat()
         assert beat is not None
@@ -113,7 +115,9 @@ class TestMachineDiscoveryPointer:
 
         # A later stage publish replaces the detail.
         owner_publisher.publish_phase("warming", detail="loading the reranker")
-        assert read_machine_discovery()["phase_detail"] == "loading the reranker"  # type: ignore[index]
+        rediscovered = read_machine_discovery()
+        assert rediscovered is not None
+        assert rediscovered["phase_detail"] == "loading the reranker"
 
     def test_publish_phase_count_is_carried_only_when_a_total_is_given(
         self,
