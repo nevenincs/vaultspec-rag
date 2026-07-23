@@ -1665,11 +1665,18 @@ def test_jobs_watch_refreshes_managed_terminal_view() -> None:
         )
 
     assert result.exit_code == 0, result.output
-    assert "Watch: refresh 2 of 2." in result.output
-    assert "press Ctrl+C" not in result.output
-    assert result.output.count("\nJobs\n") == 1
-    assert result.output.startswith("Jobs\n")
-    assert "Jobs on service port" not in result.output
+    # Rich's per-refresh screen clear (\x1b[2J\x1b[H) precedes every "Jobs"
+    # header, including the first, whenever the console believes it is
+    # writing to a real terminal (e.g. FORCE_COLOR set to any non-empty
+    # value, which some CI environments do even when trying to disable
+    # color) - strip it before checking header boundaries so the assertion
+    # verifies the render shape, not incidental clear-screen bytes.
+    clean_output = _ANSI_RE.sub("", result.output)
+    assert "Watch: refresh 2 of 2." in clean_output
+    assert "press Ctrl+C" not in clean_output
+    assert clean_output.count("\nJobs\n") == 1
+    assert clean_output.startswith("Jobs\n")
+    assert "Jobs on service port" not in clean_output
 
 
 def test_jobs_watch_bounded_empty_view_reports_refresh_count() -> None:
