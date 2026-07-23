@@ -163,7 +163,7 @@ lifecycle-inertness invariant as a codification candidate
 
 ## Sources
 
-- `C:\Users\hello\.vaultspec-rag\service.log` lines ~29585, ~50086 (the two
+- `C:\Users\user\.vaultspec-rag\service.log` lines ~29585, ~50086 (the two
   `cli_terminate` events), qdrant.log recovery window
 - `src/vaultspec_rag/cli/_service_lifecycle.py` - `_terminate_and_confirm`
   and its three stop-flow callers

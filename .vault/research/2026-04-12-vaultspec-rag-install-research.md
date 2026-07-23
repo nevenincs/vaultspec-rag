@@ -115,10 +115,10 @@ shaped the ADR:
 
 Investigation was performed by parallel sub-agents against:
 
-- `Y:/code/vaultspec-core-worktrees/main/src/vaultspec_core/` —
+- `C:/projects/worktrees/main/src/vaultspec_core/` —
   core's source tree, focused on `cli/`, `core/`, `builtins/`,
   and `config/`.
-- `Y:/code/vaultspec-rag-worktrees/feature-54-55-install-command/src/vaultspec_rag/` —
+- `C:/projects/worktrees/feature-54-55-install-command/src/vaultspec_rag/` —
   rag's existing layout and dependency declarations.
 - `.vault/adr/` and `.vault/audit/` of both repos — prior decisions
   on layer separation, ecosystem integration, and module exports.

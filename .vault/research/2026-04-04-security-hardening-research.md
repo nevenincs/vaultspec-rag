@@ -101,7 +101,7 @@ credentials files, and `service.json`.
   "status": "ready",
   "cuda": true,
   "models_loaded": true,
-  "projects": ["Y:/code/vaultspec-rag-worktrees/main"],
+  "projects": ["C:/projects/worktrees/main"],
   "uptime_s": 42.5
 }
 ```

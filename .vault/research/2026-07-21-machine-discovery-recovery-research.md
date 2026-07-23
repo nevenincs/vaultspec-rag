@@ -20,7 +20,7 @@ apparently live losing process. This research separates established mechanisms f
 unverified process attribution and defines the decision boundary for repair.
 
 Primary incident evidence is
-`C:/Users/hello/AppData/Local/Temp/claude/copy.markdown:42-131`, with B1 through B6 at
+`C:/Users/user/AppData/Local/Temp/claude/copy.markdown:42-131`, with B1 through B6 at
 lines 56, 62, 68, 75, 79, and 88.
 
 ## Findings

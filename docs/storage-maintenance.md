@@ -41,7 +41,7 @@ uv run vaultspec-rag server storage survey
 ```
 144 namespaces  (orphaned=79 unknown=0 unverifiable=0 live=65)  300.8GB on disk
   orphaned r02c5d80096c3_         0 pts      2.1GB  C:\Users\me\AppData\Local\Temp\.tmpMum3wV
-  live     r45b56789f389_     12408 pts      3.4GB  Y:\code\my-project
+  live     r45b56789f389_     12408 pts      3.4GB  C:\projects\my-project
 ```
 
 Each row reads left to right as the classification, the namespace prefix, the document count, the on-disk footprint, and the attributed root path; a namespace no root can be attributed to shows `(unattributable)` in the final column. `--orphaned` and `--unknown` narrow the list to those states. With a running daemon the survey is answered by the service itself, so the CLI, the MCP tools, and HTTP consumers all see one classification; without a daemon the CLI reads the store directly.
@@ -51,7 +51,7 @@ A running daemon answers from a cached survey snapshot rather than re-measuring 
 To look up a single root - which namespace and collection prefix belong to it - pass `--root`:
 
 ```
-uv run vaultspec-rag server storage survey --root Y:\code\my-project
+uv run vaultspec-rag server storage survey --root C:\projects\my-project
 ```
 
 The output leads with `Queried root: <resolved path>  prefix: r..._`, and the same lookup is available as `queried_root` in `--json` output. This works even for a root that has never been indexed: the service computes the authoritative prefix, so an external consumer never has to reimplement the hash.

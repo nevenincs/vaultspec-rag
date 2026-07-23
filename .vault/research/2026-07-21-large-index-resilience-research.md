@@ -22,7 +22,7 @@ from about 3.6 GB to 30 GB on a 16 GB GPU. It exposed no cancellation route and 
 complete a corpus below the project's accepted large-repository target.
 
 Primary incident evidence is
-`C:/Users/hello/AppData/Local/Temp/claude/copy.markdown:42-131`, with B7 through B10 at
+`C:/Users/user/AppData/Local/Temp/claude/copy.markdown:42-131`, with B7 through B10 at
 lines 94, 99, 105, and 109.
 
 ## Findings

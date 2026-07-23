@@ -66,7 +66,7 @@ Observed:
 - trigger `tool`
 - initiator `cli`
 - command `reindex_codebase`
-- project root `Y:\code\vaultspec-rag-worktrees\feature-server-supervision`
+- project root `C:\projects\worktrees\feature-server-supervision`
 - runtime about 8.37s
 - progress `write metadata (1/1)`
 - failed filter returned an empty, bounded result with `failed: true` in filters.

@@ -2840,7 +2840,7 @@ the independently checked `msvcp140.dll` and `vcomp140.dll` RECORD payloads
 matched their locked sizes and digests.
 
 A new exact-commit archive at
-`/home/hello/vaultspec-rag-s67-83ecbad` created a fresh POSIX environment under
+`/home/user/vaultspec-rag-s67-83ecbad` created a fresh POSIX environment under
 CPython 3.13.14. Frozen sync installed 138 compatible packages, lock validation
 resolved 141 packages, direct scikit-learn import reported 1.9.0, and published
 `vaultspec-core==0.1.45` was present.

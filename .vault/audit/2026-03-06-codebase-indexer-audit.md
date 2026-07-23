@@ -315,7 +315,7 @@ Audited files:
 ### MAJOR Issues
 
 **R6-M1. `vaultspec` dependency uses absolute local path** (pyproject.toml:20)
-`"vaultspec @ file:///Y:/code/vaultspec-worktrees/main"` — this hard-codes a Windows-specific absolute path. The package cannot be installed by anyone else, in CI, or on any machine where `Y:/code/vaultspec-worktrees/main` doesn't exist. Should use a relative path or proper package registry.
+`"vaultspec @ file:///C:/projects/worktrees/main"` — this hard-codes a Windows-specific absolute path. The package cannot be installed by anyone else, in CI, or on any machine where `C:/projects/worktrees/main` doesn't exist. Should use a relative path or proper package registry.
 
 **R6-M2. Duplicate dev dependencies in both `[project.optional-dependencies]` and `[dependency-groups]`** (pyproject.toml:31-57)
 Lines 32-43 (`[project.optional-dependencies] dev`) and lines 46-57 (`[dependency-groups] dev`) contain the same packages. This is confusing — uv reads `[dependency-groups]` (PEP 735) while `[project.optional-dependencies]` is the older PEP 621 surface. If one is updated and the other forgotten, they'll diverge silently.

@@ -61,7 +61,7 @@ require org-level setup — overkill for this project currently.
 #### vaultspec-core dependency for CI and publishing
 
 The current `pyproject.toml` has a local file path dependency:
-`vaultspec-core @ file:///Y:/code/vaultspec-core-worktrees/main`. This is a
+`vaultspec-core @ file:///C:/projects/worktrees/main`. This is a
 hard blocker for both CI runners and PyPI publishing (PyPI rejects path deps).
 
 **Solution:** Use uv's source override pattern:
