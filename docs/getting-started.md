@@ -23,7 +23,7 @@ uv run vaultspec-rag --version
 ```
 
 ```
-vaultspec-rag v0.3.3
+vaultspec-rag v0.3.4
 ```
 
 ## Step 2: Start the service and index your project
