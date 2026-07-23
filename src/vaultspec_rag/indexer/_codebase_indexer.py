@@ -3202,8 +3202,8 @@ class CodebaseIndexer:
             # Pipelined chunk -> embed: process-pool workers read, hash, and chunk
             # files while the single in-process GPU consumer encodes and upserts
             # completed slices, so the GPU never idles waiting for the whole tree
-            # to be chunked (#155 ADR P02). The workers return the content hash
-            # from the same read, so ``meta`` needs no separate hash pass (P03).
+            # to be chunked (#155). The workers return the content hash
+            # from the same read, so ``meta`` needs no separate hash pass.
             new_ids, total_chunks, meta = self._pipeline_chunk_and_embed(
                 paths,
                 reporter=reporter,

@@ -1028,7 +1028,7 @@ def encode_and_upsert_code_slice(
     concurrent searches on the same device. When
     ``release_cache`` is True the CUDA caching pool is returned to the driver
     on every exit path (#68 audit F6.9); the chunk-to-embed pipeline passes
-    False on most slices and flushes periodically instead (#155 P03).
+    False on most slices and flushes periodically instead (#155).
 
     Args:
         slice_chunks: Chunks to encode and upsert. Dense/sparse fields are
@@ -1040,7 +1040,7 @@ def encode_and_upsert_code_slice(
         release_cache: Whether to flush the CUDA caching allocator afterwards.
         encode_batch_size: Inner encode sub-batch size; ``None`` uses the
             model default. The codebase path passes the larger
-            ``embedding_code_encode_batch_size`` (#155 P03) since code chunks
+            ``embedding_code_encode_batch_size`` (#155) since code chunks
             are short and length-uniform.
         run_control: Cooperative control checked outside the GPU lock before
             and after this bounded slice.
