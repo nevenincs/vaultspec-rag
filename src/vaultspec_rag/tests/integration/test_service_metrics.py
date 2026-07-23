@@ -99,6 +99,20 @@ def test_incr_unknown_name_is_noop(_clean_metrics: None) -> None:
     assert "does_not_exist" not in text
 
 
+def test_maintenance_reconcile_metrics_are_registered(_clean_metrics: None) -> None:
+    # The scheduled geometry-reconcile pass emits these three keys; they must
+    # be registered or ``incr``/``observe`` silently drop them (unknown names
+    # are no-ops), leaving them permanently absent from ``/metrics``.
+    server.incr("maintenance_reconciled_total", 3)
+    server.incr("maintenance_reconciled_bytes_total", 4096)
+    server.observe("store_drifted_collections", 2.0)
+
+    text = server.render_prometheus()
+    assert "vaultspec_rag_maintenance_reconciled_total 3" in text
+    assert "vaultspec_rag_maintenance_reconciled_bytes_total 4096" in text
+    assert "vaultspec_rag_store_drifted_collections 2.0" in text
+
+
 def test_reset_zeroes_counters(_clean_metrics: None) -> None:
     server.incr("search_total", 5)
     server.reset_metrics()

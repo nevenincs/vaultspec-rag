@@ -64,7 +64,7 @@ def _make_root(tmp_path: Path) -> Path:
 
 
 @pytest.mark.subprocess_gpu
-@pytest.mark.usefixtures("live_service")
+@pytest.mark.usefixtures("live_service_with_watch")
 async def test_start_then_stop_watcher(tmp_path: Path) -> None:
     root = _make_root(tmp_path)
     resolved = str(root.resolve())
@@ -85,7 +85,7 @@ async def test_start_then_stop_watcher(tmp_path: Path) -> None:
 
 
 @pytest.mark.subprocess_gpu
-@pytest.mark.usefixtures("live_service")
+@pytest.mark.usefixtures("live_service_with_watch")
 async def test_reconfigure_restarts_with_new_values(tmp_path: Path) -> None:
     root = _make_root(tmp_path)
     await admin.start_watcher(str(root))
@@ -105,8 +105,9 @@ async def test_start_watcher_disabled_is_pull_only(
     tmp_path: Path,
     request: pytest.FixtureRequest,
 ) -> None:
-    from ...cli import _spawn_service, _terminate_pid, _write_service_status
+    from ...cli import _spawn_service, _write_service_status
     from ._helpers import _get_ephemeral_port, _poll_health, _service_env
+    from .conftest import _cleanup_service_process
 
     root = _make_root(tmp_path)
 
@@ -114,7 +115,11 @@ async def test_start_watcher_disabled_is_pull_only(
         port = _get_ephemeral_port()
         log_path = tmp_path / "service.log"
         pid = _spawn_service(port, log_path)
-        request.addfinalizer(lambda: _terminate_pid(pid))
+        request.addfinalizer(
+            lambda: _cleanup_service_process(
+                pid=pid, port=port, log_path=log_path, timeout=15.0
+            )
+        )
         _write_service_status(pid, port)
         _poll_health(port)
 
