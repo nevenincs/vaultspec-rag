@@ -8,6 +8,7 @@ Three independent fixes surfaced by the server-mode quality audit:
   query still proceeds.
 """
 
+import os
 from typing import ClassVar, cast
 
 import httpx
@@ -106,7 +107,7 @@ class TestEmptyQueryRejected:
                 "type": "code",
                 "query": query,
                 "top_k": 5,
-                "project_root": "Y:/nonexistent",
+                "project_root": os.path.abspath(os.path.join(os.sep, "nonexistent")),
             },
             headers={"Authorization": f"Bearer {token}"},
         )

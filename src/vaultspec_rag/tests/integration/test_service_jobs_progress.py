@@ -65,7 +65,7 @@ def test_jobs_running_output_flags_jobs_without_recent_progress() -> None:
                 "initiator": {
                     "kind": "watcher",
                     "command": "watcher_code_index",
-                    "project_root": "Y:\\code\\fresh-project",
+                    "project_root": "C:\\projects\\fresh-project",
                 },
             },
             {
@@ -86,7 +86,7 @@ def test_jobs_running_output_flags_jobs_without_recent_progress() -> None:
                 "initiator": {
                     "kind": "watcher",
                     "command": "watcher_vault_index",
-                    "project_root": "Y:\\code\\quiet-project",
+                    "project_root": "C:\\projects\\quiet-project",
                 },
             },
         ],

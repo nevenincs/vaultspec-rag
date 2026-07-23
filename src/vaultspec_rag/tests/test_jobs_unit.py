@@ -56,13 +56,15 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.unit]
 
-# A dedup-identity placeholder, never touched on disk. Built with os.sep so it
-# resolves absolute on both platforms: POSIX joins to "/project" outright,
-# Windows' abspath resolves the drive-relative "\project" against the current
-# drive - unlike a hardcoded drive-letter literal (e.g. "Y:/project"), which is
-# absolute only on a host whose current drive happens to match and is a plain
-# relative path (and therefore rejected by job_models.job_spec_error) on POSIX.
+# Dedup-identity placeholders, never touched on disk. Built with os.sep so
+# each resolves absolute on both platforms: POSIX joins to "/name" outright,
+# Windows' abspath resolves the drive-relative "\name" against the current
+# drive - unlike a hardcoded drive-letter literal, which is absolute only on a
+# host whose current drive happens to match and is a plain relative path (and
+# therefore rejected by job_models.job_spec_error) on POSIX.
 _TEST_PROJECT_ROOT = os.path.abspath(os.path.join(os.sep, "project"))
+_TEST_PROJECT_ROOT_OTHER = os.path.abspath(os.path.join(os.sep, "other"))
+_TEST_PROJECT_ROOT_DIFFERENT = os.path.abspath(os.path.join(os.sep, "different"))
 
 
 def test_canonical_job_models_are_reexported_by_identity() -> None:
@@ -792,7 +794,7 @@ class TestManagedJobAdmission:
             JobSpec(
                 JobOperation.INDEX,
                 JobSource.CODE,
-                "Y:/other",
+                _TEST_PROJECT_ROOT_OTHER,
                 JobMode.REBUILD,
             ),
             initiator,
@@ -815,7 +817,7 @@ class TestManagedJobAdmission:
             JobSpec(
                 JobOperation.INDEX,
                 JobSource.CODE,
-                "Y:/different",
+                _TEST_PROJECT_ROOT_DIFFERENT,
                 JobMode.REBUILD,
             ),
             initiator,
