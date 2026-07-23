@@ -6,6 +6,9 @@ tags:
 date: '2026-07-23'
 modified: '2026-07-23'
 related:
+  - '[[2026-07-23-service-orphan-reaping-P02-S01]]'
+  - '[[2026-07-23-service-orphan-reaping-P02-S03]]'
+  - '[[2026-07-23-service-orphan-reaping-P02-S04]]'
   - '[[2026-07-23-service-orphan-reaping-adr]]'
   - '[[2026-07-23-service-orphan-reaping-plan]]'
   - '[[2026-07-23-service-orphan-reaping-research]]'
@@ -20,6 +23,12 @@ Auto-generated index of all documents tagged with `#service-orphan-reaping`.
 ### adr
 
 - `2026-07-23-service-orphan-reaping-adr` - `service-orphan-reaping` adr: `guaranteed daemon self-exit on a failed claim, plus a bounded signature-scoped reap` | (**status:** `accepted`)
+
+### exec
+
+- `2026-07-23-service-orphan-reaping-P02-S01` - Move the machine-singleton claim inside the lifespan startup try-guard so its failure routes through \_exit_standalone_daemon
+- `2026-07-23-service-orphan-reaping-P02-S03` - Make the release-on-failure teardown tolerate a claim that produced no lease
+- `2026-07-23-service-orphan-reaping-P02-S04` - Add a top-level entrypoint os.\_exit backstop on any startup exception escaping uvicorn.run
 
 ### plan
 
