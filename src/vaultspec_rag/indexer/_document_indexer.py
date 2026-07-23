@@ -9,7 +9,7 @@ import os
 import pathlib
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from .._job_errors import JobError, JobErrorKind
@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from ..embeddings import EmbeddingModel
     from ..index_profiles import SupportProfileLimits
     from ..job_control import RunControl
+    from ..memory_probe import MemoryBudget, MemoryBudgetSnapshot
     from ..progress import ProgressReporter
     from ..store import VaultStore
     from ._preprocess_config import PreprocessContext
@@ -74,11 +75,34 @@ class _DocumentResourceBudget:
     """Aggregate document ceilings enforced at each measurable runtime edge."""
 
     limits: SupportProfileLimits
+    rss_ceiling_mb: float | None = None
+    cuda_ceiling_mb: float | None = None
+    enforce_cuda: bool = True
     generated_chunks: int = 0
     weighted_bytes: int = 0
     extracted_bytes: int = 0
     rss_bytes: int = 0
     cuda_bytes: int = 0
+    memory_budget: MemoryBudget = field(init=False)
+
+    def __post_init__(self) -> None:
+        from ..memory_probe import MemoryBudget
+
+        mib = 1024**2
+        rss_ceiling_mb = (
+            self.limits.rss_bytes / mib
+            if self.rss_ceiling_mb is None
+            else self.rss_ceiling_mb
+        )
+        cuda_ceiling_mb = (
+            self.limits.cuda_bytes / mib
+            if self.cuda_ceiling_mb is None
+            else self.cuda_ceiling_mb
+        )
+        self.memory_budget = MemoryBudget(
+            rss_ceiling_mb=rss_ceiling_mb,
+            cuda_ceiling_mb=cuda_ceiling_mb if self.enforce_cuda else None,
+        )
 
     def reserve(
         self,
@@ -111,30 +135,62 @@ class _DocumentResourceBudget:
         self.weighted_bytes = next_weight
         self.extracted_bytes = next_extracted
 
-    def checkpoint_runtime_resources(self) -> None:
-        """Enforce peak process and CUDA measurements around document work."""
-        from ..memory_probe import current_cuda_mb, current_rss_mb
+    @property
+    def snapshot(self) -> MemoryBudgetSnapshot | None:
+        """Return the latest enforced resource observation."""
+        return self.memory_budget.snapshot
 
-        _allocated_mb, reserved_mb = current_cuda_mb()
-        self.record_runtime_resources(
-            rss_bytes=int(current_rss_mb() * 1024**2),
-            cuda_bytes=int(reserved_mb * 1024**2),
+    def checkpoint_runtime_resources(
+        self,
+        label: str = "document runtime resource checkpoint",
+    ) -> None:
+        """Enforce peak process and CUDA measurements around document work."""
+        try:
+            snapshot = self.memory_budget.sample(label)
+        except JobError:
+            snapshot = self.memory_budget.snapshot
+            if snapshot is not None:
+                self._retain_snapshot(snapshot)
+            raise
+        self._retain_snapshot(snapshot)
+
+    def _retain_snapshot(self, snapshot: MemoryBudgetSnapshot) -> None:
+        """Project a budget snapshot into profile-compatible byte counters."""
+        self.rss_bytes = max(self.rss_bytes, int(snapshot.peak_rss_mb * 1024**2))
+        self.cuda_bytes = max(
+            self.cuda_bytes,
+            int(snapshot.peak_cuda_reserved_mb * 1024**2),
         )
 
-    def record_runtime_resources(self, *, rss_bytes: int, cuda_bytes: int) -> None:
+    def record_runtime_resources(
+        self,
+        *,
+        rss_bytes: int,
+        cuda_bytes: int,
+        cuda_allocated_bytes: int | None = None,
+        label: str = "document supplied resource observation",
+    ) -> None:
         """Record measured peaks and enforce both independent ceilings."""
-        self.rss_bytes = max(self.rss_bytes, rss_bytes)
-        self.cuda_bytes = max(self.cuda_bytes, cuda_bytes)
-        for dimension, measured, limit in (
-            ("rss_bytes", self.rss_bytes, self.limits.rss_bytes),
-            ("cuda_bytes", self.cuda_bytes, self.limits.cuda_bytes),
-        ):
-            if measured > limit:
-                raise JobError(
-                    JobErrorKind.CORPUS_LIMIT_EXCEEDED,
-                    f"document {dimension} is {measured}; support profile permits "
-                    f"{limit}",
-                )
+        allocated_bytes = (
+            cuda_bytes if cuda_allocated_bytes is None else cuda_allocated_bytes
+        )
+        try:
+            snapshot = self.memory_budget.observe(
+                label=label,
+                rss_mb=rss_bytes / 1024**2,
+                cuda_allocated_mb=allocated_bytes / 1024**2,
+                cuda_reserved_mb=cuda_bytes / 1024**2,
+            )
+        except JobError:
+            snapshot = self.memory_budget.snapshot
+            if snapshot is not None:
+                self._retain_snapshot(snapshot)
+            raise
+        self._retain_snapshot(snapshot)
+
+    def fail_cuda_oom(self, label: str, exc: BaseException) -> None:
+        """Translate allocator exhaustion into the admitted typed outcome."""
+        self.memory_budget.fail_cuda_oom(label=label, detail=str(exc))
 
 
 @dataclass(slots=True)
@@ -174,11 +230,18 @@ class DocumentIndexer:
         self._data_root = self.root_dir / get_config().data_dir
         self._meta_path = document_metadata_path(self.root_dir)
         self._last_checkpoint: DocumentRunCheckpoint | None = None
+        self._memory_budget: MemoryBudget | None = None
 
     @property
     def last_checkpoint(self) -> DocumentRunCheckpoint | None:
         """Return the latest run authority for service-domain projection."""
         return self._last_checkpoint
+
+    @property
+    def memory_budget_snapshot(self) -> MemoryBudgetSnapshot | None:
+        """Return the latest immutable enforced-memory observation."""
+        budget = self._memory_budget
+        return budget.snapshot if budget is not None else None
 
     def resolve_policy_snapshot(self) -> ResolvedIndexPolicy:
         """Resolve the immutable admission and extraction policy for one run."""
@@ -334,6 +397,32 @@ class DocumentIndexer:
             max_source_bytes=limits.source_bytes,
         )
 
+    def _begin_resource_budget(
+        self,
+        limits: SupportProfileLimits,
+    ) -> _DocumentResourceBudget:
+        """Freeze effective document ceilings and sample before dispatch."""
+        from ..config import get_config
+        from ..memory_probe import reset_cuda_peak_memory_stats
+
+        config = get_config()
+        mib = 1024**2
+        uses_cuda = getattr(self.model, "device", None) == "cuda"
+        if uses_cuda:
+            reset_cuda_peak_memory_stats()
+        budget = _DocumentResourceBudget(
+            limits,
+            rss_ceiling_mb=min(config.index_rss_ceiling_mb, limits.rss_bytes / mib),
+            cuda_ceiling_mb=min(
+                config.index_cuda_ceiling_mb,
+                limits.cuda_bytes / mib,
+            ),
+            enforce_cuda=uses_cuda,
+        )
+        self._memory_budget = budget.memory_budget
+        budget.checkpoint_runtime_resources("before document dispatch")
+        return budget
+
     @staticmethod
     def _execution_policy(
         policy: ResolvedIndexPolicy,
@@ -360,7 +449,7 @@ class DocumentIndexer:
         from ._run_policy import RunPolicy
 
         run_control.checkpoint()
-        budget.checkpoint_runtime_resources()
+        budget.checkpoint_runtime_resources(f"{path.name} before extraction")
         extractor_policy = RunPolicy.from_config(run_control=run_control)
         result = _chunk_worker.stream_document_and_hash_file(
             path,
@@ -405,7 +494,9 @@ class DocumentIndexer:
                         len(chunk.payload.content.encode("utf-8")) for chunk in selected
                     ),
                 )
-                budget.checkpoint_runtime_resources()
+                budget.checkpoint_runtime_resources(
+                    f"{result.rel_path} slice-{ordinal} before encode"
+                )
                 unit = checkpoint.unit_for(
                     result.rel_path,
                     result.content_hash,
@@ -415,16 +506,42 @@ class DocumentIndexer:
                 )
                 if not checkpoint.slice_committed(unit):
                     self.store.disk_headroom_preflight(len(selected))
+
+                    def _after_forward(
+                        kind: str,
+                        slice_ordinal: int = ordinal,
+                    ) -> None:
+                        run_control.checkpoint()
+                        budget.checkpoint_runtime_resources(
+                            f"{result.rel_path} slice-{slice_ordinal} "
+                            f"after-{kind}-forward"
+                        )
+                        run_control.checkpoint()
+
+                    def _on_cuda_oom(
+                        exc: BaseException,
+                        slice_ordinal: int = ordinal,
+                    ) -> None:
+                        budget.fail_cuda_oom(
+                            f"{result.rel_path} slice-{slice_ordinal} allocator-oom",
+                            exc,
+                        )
+
                     encode_and_upsert_document_slice(
                         selected,
                         model=self.model,
                         store=self.store,
                         gpu_lock=self._gpu_lock,
                         encode_batch_size=int(cfg.embedding_encode_batch_size),
+                        write_policy=checkpoint.run_policy.store_write_policy,
+                        after_forward=_after_forward,
+                        on_cuda_oom=_on_cuda_oom,
                         run_control=run_control,
                     )
                     checkpoint.record_confirmed_slice(unit)
-                    budget.checkpoint_runtime_resources()
+                    budget.checkpoint_runtime_resources(
+                        f"{result.rel_path} slice-{ordinal} after store"
+                    )
                 point_ids.extend(chunk.id for chunk in selected)
                 reporter.advance(len(selected))
                 ordinal += 1
@@ -767,7 +884,6 @@ class DocumentIndexer:
         )
         limits = self._support_limits()
         prep = self._preprocess_context(policy, limits)
-        budget = _DocumentResourceBudget(limits)
         preprocessing_disabled = policy.execution_mode == "off" and any(
             policy.match_preprocess(path.relative_to(self.root_dir).as_posix())
             is not None
@@ -781,6 +897,8 @@ class DocumentIndexer:
             limits=limits,
             run_control=run_control,
         )
+        with checkpoint.preserve_incomplete_generation():
+            budget = self._begin_resource_budget(limits)
         resumed = self._resume_pending_finalization(
             checkpoint,
             reporter=reporter,
@@ -863,7 +981,6 @@ class DocumentIndexer:
         )
         limits = self._support_limits()
         prep = self._preprocess_context(policy, limits)
-        budget = _DocumentResourceBudget(limits)
         fingerprints = policy.fingerprints_for(ContentKind.DOCUMENT)
         with self._writer_lock:
             previous = read_document_meta(self._meta_path)
@@ -896,6 +1013,8 @@ class DocumentIndexer:
             limits=limits,
             run_control=run_control,
         )
+        with checkpoint.preserve_incomplete_generation():
+            budget = self._begin_resource_budget(limits)
         resumed = self._resume_pending_finalization(
             checkpoint,
             reporter=reporter,
