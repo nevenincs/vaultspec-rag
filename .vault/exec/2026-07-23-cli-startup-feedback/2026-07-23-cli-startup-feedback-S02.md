@@ -26,3 +26,5 @@ The model-load stage now carries a determinate `N of M` count the start spinner 
 ## Notes
 
 The count is milestone-granular: `load_model` brings up the dense and sparse encoders in one call, so `done` steps 0 -> 2 -> (3), not per-model. Finer per-model or per-byte progress depends on the downloader-callback question investigated in `S04`.
+
+Code-review follow-up (count-progression): the count now advances at each real boundary and reaches its terminal value - `done=0` before load, `done=2` once the encoders are up, and a final `done=total` "models ready" publish - rather than sitting static at `0/N` through the load. This keeps the determinate signal genuinely determinate.
