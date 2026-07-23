@@ -11,7 +11,11 @@ if TYPE_CHECKING:
     from .._public_index import DocumentScanResult
     from ..api import AllIndexOutcomes
     from ..indexer import IndexResult
-    from ..indexer._codebase_indexer import ContentScanResult
+    from ..indexer._codebase_indexer import (
+        AdmissionCount,
+        AdmissionSample,
+        ContentScanResult,
+    )
 
 import typer
 
@@ -263,6 +267,8 @@ def _scan_dry_run_sources(
 
 def _dry_run_admission(scan: ContentScanResult | None) -> dict[str, object]:
     """Project code admission evidence into the stable JSON shape."""
+    counts: tuple[AdmissionCount, ...] = scan.counts if scan is not None else ()
+    samples: tuple[AdmissionSample, ...] = scan.samples if scan is not None else ()
     return {
         "policy_fingerprint": scan.policy_fingerprint if scan is not None else None,
         "counts": [
@@ -272,7 +278,7 @@ def _dry_run_admission(scan: ContentScanResult | None) -> dict[str, object]:
                 "reason": count.reason.value,
                 "count": count.count,
             }
-            for count in (scan.counts if scan is not None else [])
+            for count in counts
         ],
         "samples": [
             {
@@ -281,7 +287,7 @@ def _dry_run_admission(scan: ContentScanResult | None) -> dict[str, object]:
                 "admitted": sample.admitted,
                 "reason": sample.reason.value,
             }
-            for sample in (scan.samples if scan is not None else [])
+            for sample in samples
         ],
     }
 
@@ -542,84 +548,6 @@ def _print_service_domain_outcomes(raw_domains: object) -> bool:
     if rendered:
         _cli.console.print("Check progress with: vaultspec-rag server jobs")
     return rendered
-
-
-def _print_service_async_results(
-    v_data: dict[str, object] | None, c_data: dict[str, object] | None, json_mode: bool
-) -> bool:
-    if json_mode:
-        _emit_json(
-            True,
-            "index",
-            data={
-                "via": "service",
-                "async": True,
-                "vault_job_id": (v_data.get("job_id") if v_data else None),
-                "codebase_job_id": (c_data.get("job_id") if c_data else None),
-            },
-        )
-        return True
-    if v_data:
-        _cli.console.print(
-            f"Vault re-index job queued on service: {v_data.get('job_id')}",
-            markup=False,
-            highlight=False,
-        )
-    if c_data:
-        _cli.console.print(
-            f"Codebase re-index job queued on service: {c_data.get('job_id')}",
-            markup=False,
-            highlight=False,
-        )
-    _cli.console.print("Check progress with: vaultspec-rag server jobs")
-    return True
-
-
-def _print_service_results(
-    v_data: dict[str, object] | None, c_data: dict[str, object] | None, json_mode: bool
-) -> bool:
-    is_async = False
-    for data in (v_data, c_data):
-        if isinstance(data, dict) and "job_id" in data:
-            is_async = True
-
-    if is_async:
-        return _print_service_async_results(v_data, c_data, json_mode)
-
-    def _row(label: str, data: dict[str, object]) -> dict[str, object]:
-        def _i(key: str) -> int:
-            raw = data.get(key, 0)
-            if not isinstance(raw, int | float | str):
-                return 0
-            try:
-                return int(raw)
-            except (OverflowError, ValueError):
-                return 0
-
-        return {
-            "source": label,
-            "added": _i("added"),
-            "updated": _i("updated"),
-            "removed": _i("removed"),
-            "total": _i("total"),
-            "duration_ms": data.get("duration_ms"),
-        }
-
-    sources: list[dict[str, object]] = []
-    if v_data:
-        sources.append(_row("vault", v_data))
-    if c_data:
-        sources.append(_row("codebase", c_data))
-    if json_mode:
-        _emit_json(
-            True,
-            "index",
-            data={"via": "service", "sources": sources},
-        )
-        return True
-
-    _print_index_summary(sources, via="service")
-    return True
 
 
 @app.command(
