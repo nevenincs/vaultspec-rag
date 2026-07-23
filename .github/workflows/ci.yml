@@ -24,7 +24,7 @@ env:
 jobs:
   workflow-lint:
     name: Workflow Lint
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
@@ -36,7 +36,7 @@ jobs:
 
   lint-and-type:
     name: Lint, Type, Config, Link, and Markdown Checks
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
@@ -110,7 +110,7 @@ jobs:
 
   tests:
     name: Tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
@@ -157,17 +157,16 @@ jobs:
     runs-on: [self-hosted, windows, gpu, cuda]
     permissions:
       contents: read
+    env:
+      # requires-python admits newer interpreters, so uv would otherwise grab
+      # 3.14, whose native extension wheels crash this GPU stack on import.
+      # Pinning here makes uv provision 3.13 for both sync and run without
+      # actions/setup-python, whose MSI registry cleanup fails under the
+      # runner's service account (no HKLM write).
+      UV_PYTHON: "3.13"
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
-
-      # Pin 3.13 to match the rest of CI: requires-python admits newer
-      # interpreters, and letting uv auto-select grabs 3.14, whose native
-      # extension wheels crash this GPU stack on import.
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
@@ -207,7 +206,7 @@ jobs:
 
   vault-audit:
     name: Vault Audit
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
@@ -233,7 +232,7 @@ jobs:
 
   dependency-audit:
     name: Dependency Audit (uv audit)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
