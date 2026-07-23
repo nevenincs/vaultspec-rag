@@ -540,9 +540,12 @@ def test_failed_document_extraction_never_publishes_complete_hash_metadata(
         )
         metadata = read_document_meta(document_metadata_path(tmp_path))
         assert first.preprocess_skipped == 1
-        assert metadata is not None
-        assert not metadata.complete
-        assert metadata.files == ()
+        # A failed extraction must never publish complete/certified hash
+        # metadata. A failed generation stays resumable without certifying a
+        # sidecar at all - no sidecar is written (previously an empty,
+        # incomplete sidecar was), which is the stronger guarantee: any
+        # published metadata here, complete or not, fails this assertion.
+        assert metadata is None
         assert store.count_document() == 0
 
         second = indexer.incremental_index(
