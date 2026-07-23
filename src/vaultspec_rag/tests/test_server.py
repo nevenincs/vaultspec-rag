@@ -1483,7 +1483,7 @@ from starlette.testclient import TestClient
 
 import vaultspec_rag.jobs as jobs
 import vaultspec_rag.server as server
-from vaultspec_rag.server._routes import ROUTES  # absolute-import-ok
+from vaultspec_rag.server._routes import ROUTES
 
 token = "isolated-preflight-token"
 jobs.reset()
