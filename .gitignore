@@ -150,6 +150,21 @@ _work/
 .credentials_rsaparams
 runner-*.zip
 actions-runner-*.zip
+actions-runner-*.tar.gz
+# extracted self-hosted runner install tree (never commit)
+/bin/
+/externals/
+/_work/
+/_diag/
+/config.sh
+/config.cmd
+/run.sh
+/run.cmd
+/run-helper.sh.template
+/run-helper.cmd.template
+/env.sh
+/svc.sh
+/safe_sleep.sh
 
 # >>> vaultspec-managed (do not edit this block) >>>
 .vault/.obsidian/
