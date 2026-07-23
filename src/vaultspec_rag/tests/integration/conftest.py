@@ -43,6 +43,13 @@ from ..corpus import build_synthetic_vault
 
 _MAX_STARTUP_CLEANUP_RESERVE_SECONDS = 15.0
 
+#: Upper bound on the graceful-exit courtesy wait during teardown before
+#: escalating to a hard, pid-targeted force-kill. Kept short because the
+#: graceful console signal often never reaches a stub-relaunched descendant
+#: daemon; the remainder of the teardown budget is reserved so the force-kill
+#: and its confirmation always have time to run.
+_TEARDOWN_GRACEFUL_COURTESY_SECONDS = 5.0
+
 
 def _service_output(log_path: Path) -> str:
     """Return the complete retained service log, or an empty string."""
@@ -276,56 +283,61 @@ def _cleanup_service_process(
 
     daemon_pid, qdrant_pid = _resolve_owned_pids(port=port, fallback_pid=pid)
     started = time.monotonic()
-    # The daemon runs in the process group led by ``pid`` (the process spawned
-    # with CREATE_NEW_PROCESS_GROUP). When the interpreter relaunches through a
-    # stub, the serving daemon is a descendant of ``pid`` and is NOT itself a
-    # group leader, so a graceful Windows CTRL_BREAK must be addressed to the
-    # group leader ``pid`` - it propagates to the whole group, reaching the
-    # descendant - never to the discovered non-leader ``daemon_pid``, which
-    # would misfire. Send the bare graceful signal (as an operator-driven stop
-    # does), give the daemon the full remaining budget to run its own graceful
-    # shutdown, then escalate to a pid-targeted force-kill that never touches a
-    # console group.
+
+    def _budget_left() -> float:
+        return max(0.0, timeout - (time.monotonic() - started))
+
+    def _graceful_window() -> float:
+        # The graceful Windows CTRL_BREAK is addressed to the group leader
+        # ``pid`` in the hope it propagates to the serving daemon. But a
+        # stub-relaunched daemon is a descendant that is not the console group
+        # leader, so the event frequently never reaches it and the daemon never
+        # begins shutting down. Waiting the whole budget for a graceful exit
+        # that cannot happen would starve the pid-targeted force-kill and its
+        # confirmation, spuriously failing teardown. So the graceful wait is a
+        # short courtesy only; the reserve escalates to a hard kill that always
+        # has budget left to confirm. Force-killing is safe here: state is a
+        # per-test tmp dir, the machine lock is OS-advisory (freed on exit), and
+        # the Qdrant child dies with the daemon via its kill-on-close job.
+        return min(_budget_left(), _TEARDOWN_GRACEFUL_COURTESY_SECONDS)
+
+    # Send the bare graceful signal (as an operator-driven stop does), then
+    # escalate to a pid-targeted force-kill that never touches a console group.
     with suppress(OSError):
         if sys.platform == "win32":
             os.kill(pid, signal.CTRL_BREAK_EVENT)
         else:
             os.kill(pid, signal.SIGTERM)
-    remaining = max(0.0, timeout - (time.monotonic() - started))
-    if not _wait_for_exit(daemon_pid, timeout=remaining):
+    if not _wait_for_exit(daemon_pid, timeout=_graceful_window()):
         _terminate_pid(
             daemon_pid,
-            timeout=max(0.0, timeout - (time.monotonic() - started)),
+            timeout=_budget_left(),
             console_group_signal=False,
         )
-        remaining = max(0.0, timeout - (time.monotonic() - started))
-        if not _wait_for_exit(daemon_pid, timeout=remaining):
+        if not _wait_for_exit(daemon_pid, timeout=_budget_left()):
             raise AssertionError(
                 f"Test-owned service process {daemon_pid} did not exit.\n"
                 f"Service output:\n{_service_diagnostics(log_path)}"
             )
-    if daemon_pid != pid:
-        remaining = max(0.0, timeout - (time.monotonic() - started))
-        if not _wait_for_exit(pid, timeout=remaining):
-            _terminate_pid(
-                pid,
-                timeout=max(0.0, timeout - (time.monotonic() - started)),
-                console_group_signal=False,
-            )
-            remaining = max(0.0, timeout - (time.monotonic() - started))
-            if not _wait_for_exit(pid, timeout=remaining):
-                raise AssertionError(
-                    f"Test-owned service launcher {pid} did not exit with daemon "
-                    f"{daemon_pid}.\nService output:\n{_service_diagnostics(log_path)}"
-                )
-    if qdrant_pid is not None:
-        remaining = max(0.0, timeout - (time.monotonic() - started))
-        if not _wait_for_exit(qdrant_pid, timeout=remaining):
+    if daemon_pid != pid and not _wait_for_exit(pid, timeout=_graceful_window()):
+        _terminate_pid(
+            pid,
+            timeout=_budget_left(),
+            console_group_signal=False,
+        )
+        if not _wait_for_exit(pid, timeout=_budget_left()):
             raise AssertionError(
-                f"Test-owned Qdrant process {qdrant_pid} did not exit with its "
-                f"service {pid}.\nService output:\n"
-                f"{_service_diagnostics(log_path)}"
+                f"Test-owned service launcher {pid} did not exit with daemon "
+                f"{daemon_pid}.\nService output:\n{_service_diagnostics(log_path)}"
             )
+    if qdrant_pid is not None and not _wait_for_exit(
+        qdrant_pid, timeout=_budget_left()
+    ):
+        raise AssertionError(
+            f"Test-owned Qdrant process {qdrant_pid} did not exit with its "
+            f"service {pid}.\nService output:\n"
+            f"{_service_diagnostics(log_path)}"
+        )
 
 
 def _cleanup_failed_startup(
@@ -337,7 +349,17 @@ def _cleanup_failed_startup(
     budget: float,
     stages: list[str],
 ) -> None:
-    """Attempt startup-failure teardown and append its bounded diagnostic."""
+    """Attempt startup-failure teardown and append its bounded diagnostic.
+
+    Cleanup always gets at least the originally-reserved window
+    (``_startup_cleanup_reserve(budget)``), never less. A bounded wait's
+    nominal timeout is not a wall-clock guarantee: under heavy concurrent
+    machine load every stage before this one can genuinely overrun its own
+    deadline by some margin (OS scheduling delay on a saturated box, not a
+    logic bug), which would otherwise eat directly into the reserve carved
+    out for the one thing that must not be starved - actually terminating
+    the process this test spawned.
+    """
     cleanup_started = time.monotonic()
     cleanup_error = ""
     try:
@@ -345,7 +367,10 @@ def _cleanup_failed_startup(
             pid=pid,
             port=port,
             log_path=log_path,
-            timeout=max(0.0, budget - (cleanup_started - startup_started)),
+            timeout=max(
+                _startup_cleanup_reserve(budget),
+                budget - (cleanup_started - startup_started),
+            ),
         )
     except BaseException as exc:
         cleanup_error = f" cleanup_error={exc.__class__.__name__}: {exc}"
