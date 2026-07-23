@@ -39,9 +39,9 @@ Provisioning happens as part of `install`. For the setup command and its flags, 
 
 ## How to operate the managed server
 
-Three commands under `server qdrant` cover the managed server's lifecycle. For the full flag list, see the [CLI reference](cli.md).
+Four commands under `server qdrant` manage the server: `install`, `status`, and `clean` cover its lifecycle, and `quarantine` moves a corrupt collection aside. For the full flag list, see the [CLI reference](cli.md).
 
-- `server qdrant install` downloads and verifies the managed Qdrant server, then records it. Use it to provision the binary outside of `install`, or to upgrade it.
+- `server qdrant install` downloads and verifies the managed Qdrant server, then records it. Use it to provision the binary outside of `install`, or to upgrade it by passing `--upgrade`.
 
   ```
   vaultspec-rag server qdrant install
