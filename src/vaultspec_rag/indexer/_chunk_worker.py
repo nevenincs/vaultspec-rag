@@ -553,6 +553,14 @@ def _document_chunks_from_output(
             extractor_version=output.preprocessor_version,
         )
 
+    # Hook-emitted units are the pipeline's responsibility to bound, exactly
+    # like every other content class: "pre-chunked" is an assertion the hook
+    # makes that nothing validates, and an unbounded unit is silently
+    # truncated at the encoder's sequence window. Route each unit's text
+    # through the same splitter the plain-text branch uses; every fragment
+    # inherits its parent unit's provenance, and a fragment ordinal keeps
+    # point ids unique when one unit becomes many chunks.
+    splitter = TextSplitter(language="text", chunk_overlap=0)
     chunks: list[DocumentChunk] = []
     for ordinal, unit in enumerate(output.units):
         locator = (
@@ -560,31 +568,36 @@ def _document_chunks_from_output(
             if unit.locator is not None
             else None
         )
-        payload = DocumentPayload(
-            source_path=rel_path,
-            unit_ordinal=ordinal,
-            content_fingerprint=content_hash,
-            content=unit.text,
-            title=unit.title,
-            section=unit.section,
-            anchor=unit.anchor,
-            locator=locator,
-            document_metadata=document_metadata,
-            unit_metadata=DocumentMetadata.from_mapping(dict(unit.metadata)),
-            extractor_id=output.preprocessor_id,
-            extractor_version=output.preprocessor_version,
-        )
-        chunks.append(
-            DocumentChunk(
-                document_point_id(
-                    source_path=rel_path,
-                    unit_ordinal=ordinal,
-                    content_fingerprint=content_hash,
-                    locator=locator,
-                ),
-                payload,
+        unit_metadata = DocumentMetadata.from_mapping(dict(unit.metadata))
+        for fragment_ordinal, content in enumerate(splitter.split_text(unit.text)):
+            if not content.strip():
+                continue
+            payload = DocumentPayload(
+                source_path=rel_path,
+                unit_ordinal=ordinal,
+                content_fingerprint=content_hash,
+                content=content,
+                title=unit.title,
+                section=unit.section,
+                anchor=unit.anchor,
+                locator=locator,
+                document_metadata=document_metadata,
+                unit_metadata=unit_metadata,
+                extractor_id=output.preprocessor_id,
+                extractor_version=output.preprocessor_version,
             )
-        )
+            chunks.append(
+                DocumentChunk(
+                    document_point_id(
+                        source_path=rel_path,
+                        unit_ordinal=ordinal,
+                        content_fingerprint=content_hash,
+                        locator=locator,
+                        fragment_ordinal=fragment_ordinal,
+                    ),
+                    payload,
+                )
+            )
     return chunks
 
 

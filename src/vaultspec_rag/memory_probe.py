@@ -170,11 +170,16 @@ def reset_cuda_peak_memory_stats() -> bool:
     The reset is process-wide, matching the process-wide CUDA ceiling. It is
     invoked after models are resident and before indexing dispatch so later
     budget samples retain transient forward peaks even after tensors release.
+    The allocator cache is released first: ``reset_peak_memory_stats`` only
+    rebases the peak counters to the *current* readings, so without the
+    release a run's recorded peaks would inherit the process's retention
+    history instead of describing the run itself.
     """
     measured = _measure_cuda_mb()
     if measured is None or _torch_module is None:
         return False
     try:
+        _torch_module.cuda.empty_cache()
         _torch_module.cuda.reset_peak_memory_stats()
     except (RuntimeError, AssertionError):
         return False
@@ -234,9 +239,14 @@ class MemoryBudget:
     deterministic threshold policy so callers and tests can evaluate a known
     production reading without replacing the process samplers.
 
-    CUDA allocated and reserved memory share one ceiling.  The first RSS breach
-    wins when host and device ceilings are crossed in the same observation;
-    otherwise either CUDA measure produces ``cuda_memory_ceiling``.  The
+    The CUDA ceiling is enforced against the allocated high-water reading -
+    the demand of the admitted work.  Reserved (the caching allocator's
+    retained pool) is sampled and reported as a fragmentation diagnostic but
+    never decides job outcome: it ratchets with process retention history,
+    so enforcing it fails well-sized jobs for work they did not do.  The
+    first RSS breach wins when host and device ceilings are crossed in the
+    same observation; otherwise the allocated high-water produces
+    ``cuda_memory_ceiling``.  The
     first violating observation and outcome are latched atomically before the
     typed error is raised; every subsequent observation raises that outcome.
     """
@@ -301,7 +311,7 @@ class MemoryBudget:
 
     @property
     def cuda_ceiling_mb(self) -> float | None:
-        """Return the immutable admitted CUDA allocated/reserved ceiling."""
+        """Return the immutable admitted CUDA allocated-high-water ceiling."""
         return self._cuda_ceiling_mb
 
     @property
@@ -492,16 +502,6 @@ class MemoryBudget:
                         label=snapshot.label,
                         measure="CUDA allocated high-water",
                         current_mb=snapshot.peak_cuda_allocated_mb,
-                        ceiling_mb=self.cuda_ceiling_mb,
-                    ),
-                )
-            if snapshot.peak_cuda_reserved_mb > self.cuda_ceiling_mb:
-                return (
-                    JobErrorKind.CUDA_MEMORY_CEILING,
-                    _ceiling_detail(
-                        label=snapshot.label,
-                        measure="CUDA reserved high-water",
-                        current_mb=snapshot.peak_cuda_reserved_mb,
                         ceiling_mb=self.cuda_ceiling_mb,
                     ),
                 )

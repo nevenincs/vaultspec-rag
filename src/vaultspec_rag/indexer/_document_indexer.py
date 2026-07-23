@@ -155,11 +155,17 @@ class _DocumentResourceBudget:
         self._retain_snapshot(snapshot)
 
     def _retain_snapshot(self, snapshot: MemoryBudgetSnapshot) -> None:
-        """Project a budget snapshot into profile-compatible byte counters."""
+        """Project a budget snapshot into profile-compatible byte counters.
+
+        The CUDA dimension projects the allocated high-water (demand), not
+        reserved: the profile limit can equal the enforcement ceiling, and
+        reserved ratchets with allocator retention history, so projecting it
+        would fail well-sized jobs through the corpus-limit dimension.
+        """
         self.rss_bytes = max(self.rss_bytes, int(snapshot.peak_rss_mb * 1024**2))
         self.cuda_bytes = max(
             self.cuda_bytes,
-            int(snapshot.peak_cuda_reserved_mb * 1024**2),
+            int(snapshot.peak_cuda_allocated_mb * 1024**2),
         )
 
     def record_runtime_resources(
