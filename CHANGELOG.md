@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.3.5](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.4...vaultspec-rag-v0.3.5) (2026-07-23)
+
+
+### Features
+
+* **cli:** add opt-in `server stop --orphans` reap of race-loser daemons ([eb669da](https://github.com/nevenincs/vaultspec-rag/commit/eb669da3ecf0129ed25e4b5b54014380091e229b))
+* **indexer:** bound document units end to end and epoch the bound ([2b44d24](https://github.com/nevenincs/vaultspec-rag/commit/2b44d249d2461916216580e2c02d7162013b3ccd))
+* **server:** carry a determinate model-load count in startup progress ([d2758f9](https://github.com/nevenincs/vaultspec-rag/commit/d2758f9a787b3b4e47e601c7351cc2cb6c897f3b))
+* **server:** show the cold-start stage in the start spinner ([034a0dd](https://github.com/nevenincs/vaultspec-rag/commit/034a0dd40c77fbcb7f837b14a01b4b1b8e7994d1))
+
+
+### Bug Fixes
+
+* **cli:** close the reap's cross-config port-holder gap (P04 HIGH) ([98ad444](https://github.com/nevenincs/vaultspec-rag/commit/98ad44417dacc3450a4f0c0625e49551ba3213b2))
+* **cli:** land the console-safe pair-aware orphan reap (release-critical) ([c07ad19](https://github.com/nevenincs/vaultspec-rag/commit/c07ad191aec6a7a86000fea791840fe62ad025d1))
+* **cli:** make the orphan reap pair-aware and console-safe; prove its safety ([2b40ae7](https://github.com/nevenincs/vaultspec-rag/commit/2b40ae7176c9d6bfb97a2c9b9f2fcfc7d0d443ba))
+* **indexer:** bound hook-emitted units and enforce the CUDA ceiling on demand ([2916870](https://github.com/nevenincs/vaultspec-rag/commit/29168706b189b03f5a7886055df24675c7295669))
+* **indexer:** make chunk identifiers unique by construction ([5ec437c](https://github.com/nevenincs/vaultspec-rag/commit/5ec437c948527b479f1d5406a5edd82db35f1fa5))
+* **server:** advance the startup model-load count to its terminal value ([91e7ebd](https://github.com/nevenincs/vaultspec-rag/commit/91e7ebdf17b1bc9034c11b6bc2fc3e0bb687f175))
+* **server:** guarantee daemon self-exit on a failed singleton claim ([57bdee8](https://github.com/nevenincs/vaultspec-rag/commit/57bdee8fdda0c4e003061ba22c5430be7750a885))
+* **store:** bound retried operations by wall clock and bind the guard to call sites ([e9d9d9d](https://github.com/nevenincs/vaultspec-rag/commit/e9d9d9d06370e2d518ae21ed46c59f998b62a620))
+* **store:** let a store failure outrank a cancel, and cut retry complexity ([202635e](https://github.com/nevenincs/vaultspec-rag/commit/202635eef0ec4c30ab973e0e88b8668860b029b7))
+* **store:** retry every replay-safe store operation, not just the upsert ([e7a7cc7](https://github.com/nevenincs/vaultspec-rag/commit/e7a7cc7ebf2ed916cf412794d72770f45a0e704d))
+* **tests:** accept the console-group kwarg in the shutdown-log stubs ([17c341b](https://github.com/nevenincs/vaultspec-rag/commit/17c341be5c9061f0d4eb0dfa38568001418a4036))
+* **tests:** mark subprocess-script absolute imports as gate-exempt ([70871df](https://github.com/nevenincs/vaultspec-rag/commit/70871df7eec95e5dc1dad4a2de3dc6ebf5d1fd53))
+* **tests:** resolve absolute-imports gate violations for real ([555de15](https://github.com/nevenincs/vaultspec-rag/commit/555de1508d253d7c222a6b71611a7a9855c63465))
+* **tests:** restore the absolute-imports fix I reverted in 11c0eb2b ([2a90561](https://github.com/nevenincs/vaultspec-rag/commit/2a90561f0423e3b6d68452380d8acb97a5aa8ba1))
+* **tests:** satisfy ty's None-narrowing on machine-discovery reads ([e14d49d](https://github.com/nevenincs/vaultspec-rag/commit/e14d49df0a7a3d495a223ee9b3ad87b7076f3d07))
+* **tests:** use the console-group kwarg in the shutdown-log stubs ([b41ec8f](https://github.com/nevenincs/vaultspec-rag/commit/b41ec8fafcefd82bdda2bb8bad4fe6e816c149dc))
+* **tests:** wrap the subprocess-script imports under 88 cols ([0a9e292](https://github.com/nevenincs/vaultspec-rag/commit/0a9e2928940ed7334e958a28b04b0e924204823d))
+* **vault:** drop the code-span-internal space triggering MD038 ([8bdb709](https://github.com/nevenincs/vaultspec-rag/commit/8bdb709dba8d08b4fe2cc9d56b0f82cf43f610d5))
+
 ## [0.3.4](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.3...vaultspec-rag-v0.3.4) (2026-07-23)
 
 
