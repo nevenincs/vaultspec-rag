@@ -386,18 +386,18 @@ def test_document_runtime_budget_enforces_extracted_rss_and_cuda_dimensions() ->
     runtime_budget = _DocumentResourceBudget(
         replace(limits, rss_bytes=1),
     )
-    with pytest.raises(JobError, match="rss_bytes") as runtime:
+    with pytest.raises(JobError, match="RSS") as runtime:
         runtime_budget.checkpoint_runtime_resources()
-    assert runtime.value.error_kind is JobErrorKind.CORPUS_LIMIT_EXCEEDED
+    assert runtime.value.error_kind is JobErrorKind.RSS_MEMORY_CEILING
     assert runtime_budget.rss_bytes > 1
     assert runtime_budget.cuda_bytes >= 0
 
     cuda_budget = _DocumentResourceBudget(
         replace(limits, cuda_bytes=1),
     )
-    with pytest.raises(JobError, match="cuda_bytes") as cuda:
+    with pytest.raises(JobError, match="CUDA allocated") as cuda:
         cuda_budget.record_runtime_resources(rss_bytes=1, cuda_bytes=2)
-    assert cuda.value.error_kind is JobErrorKind.CORPUS_LIMIT_EXCEEDED
+    assert cuda.value.error_kind is JobErrorKind.CUDA_MEMORY_CEILING
 
 
 def test_document_retry_state_and_resource_profile_are_independent(
