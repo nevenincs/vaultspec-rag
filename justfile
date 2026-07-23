@@ -181,6 +181,10 @@ _dev-lint target='all':
       {{uvr}} python tools/check_docs_version.py ; \
       break \
     } \
+    "citations" { \
+      {{uvr}} python tools/citation_gate.py ; \
+      break \
+    } \
     "absolute-imports" { \
       $absHits = Get-ChildItem -Recurse -Path src/vaultspec_rag -Filter *.py | Select-String -Pattern "^\s*from vaultspec_rag\." -CaseSensitive | Where-Object { $_.Line -notmatch "absolute-import-ok" } ; \
       if ($absHits) { \
@@ -211,12 +215,14 @@ _dev-lint target='all':
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
       just _dev-lint docs-version ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
+      just _dev-lint citations ; \
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
       just _dev-lint type-strict ; \
       break \
     } \
     default { \
       Write-Host "unknown dev lint target: {{target}}" -ForegroundColor Red ; \
-      Write-Host "  targets: python type type-strict links toml markdown workflow complexity module-length docs-version absolute-imports all" -ForegroundColor Red ; \
+      Write-Host "  targets: python type type-strict links toml markdown workflow complexity module-length docs-version citations absolute-imports all" -ForegroundColor Red ; \
       exit 1 \
     } \
   }
