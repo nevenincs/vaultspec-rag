@@ -508,6 +508,7 @@ def test_live_service_status_failure_cleans_up_inside_startup_budget(
     assert "Service output:" in message
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_live_service_readiness_expiry_uses_reserved_cleanup_budget(
     tmp_path: Path,
@@ -554,6 +555,7 @@ def test_live_service_readiness_expiry_uses_reserved_cleanup_budget(
     assert _wait_for_listeners_closed(service_port, qdrant_port)
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_running_phase_status_failure_rolls_back_all_started_components(
     request: pytest.FixtureRequest,
@@ -646,6 +648,7 @@ def test_running_phase_status_failure_rolls_back_all_started_components(
         assert heartbeat_after == heartbeat_before
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_startup_expiry_reaps_pre_readiness_qdrant(
     request: pytest.FixtureRequest,
@@ -756,6 +759,7 @@ if sys.platform == "win32":
                 assert not _is_pid_alive(int(identity["qdrant_pid"]))
                 assert not _port_is_listening(int(identity["http_port"]))
 
+    @pytest.mark.integration
     @pytest.mark.subprocess_gpu
     def test_windows_late_spawn_cleanup_finds_detached_daemon_and_qdrant(
         request: pytest.FixtureRequest,
@@ -1195,6 +1199,7 @@ if sys.platform != "win32":
             assert _wait_for_listeners_closed(qdrant_port)
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_start_health_stop(request: pytest.FixtureRequest, tmp_path: Path) -> None:
     """Spawn service, verify health, terminate, verify exit."""
@@ -1222,6 +1227,7 @@ def test_start_health_stop(request: pytest.FixtureRequest, tmp_path: Path) -> No
         assert not _is_pid_alive(pid)
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 @pytest.mark.timeout(600)
 def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
@@ -1329,6 +1335,7 @@ def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
     )
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 @pytest.mark.timeout(600)
 def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
@@ -1431,6 +1438,7 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
         assert search.status_code == 200, search.text
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_start_already_running(request: pytest.FixtureRequest, tmp_path: Path) -> None:
     """Second start on the same port reports 'already in use'."""
@@ -1452,6 +1460,7 @@ def test_start_already_running(request: pytest.FixtureRequest, tmp_path: Path) -
         )
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_stale_pid_recovery(tmp_path: Path) -> None:
     """Service start recovers from a stale PID in the status file."""
@@ -1494,6 +1503,7 @@ def test_stale_pid_recovery(tmp_path: Path) -> None:
                 _wait_for_exit(pid)
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_stop_when_not_running(tmp_path: Path) -> None:
     """Stopping when no service is running reports appropriately."""
@@ -1509,6 +1519,7 @@ def test_stop_when_not_running(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_stop_running_service(request: pytest.FixtureRequest, tmp_path: Path) -> None:
     """Stop a running service via CLI and verify cleanup."""
@@ -1533,6 +1544,7 @@ def test_stop_running_service(request: pytest.FixtureRequest, tmp_path: Path) ->
         assert not _status_file().exists(), "Status file should be removed after stop"
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_stop_running_service_by_port_without_status_file(
     request: pytest.FixtureRequest, tmp_path: Path
@@ -1571,6 +1583,7 @@ def test_stop_running_service_by_port_without_status_file(
         assert not _is_pid_alive(serving_pid)
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_service_status_running(
     request: pytest.FixtureRequest,
@@ -1627,6 +1640,7 @@ def test_service_status_running(
         assert "next_action" in operational
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_multi_project_search_isolation(
     request: pytest.FixtureRequest,
@@ -2005,6 +2019,7 @@ def test_reconcile_rejects_machine_pointer_with_incomplete_identity(
         assert _is_pid_alive(pid)
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_deleted_discovery_views_self_heal_on_the_next_heartbeat(
     request: pytest.FixtureRequest,
@@ -2080,6 +2095,7 @@ def test_deleted_discovery_views_self_heal_on_the_next_heartbeat(
         assert both_status["service_token"] == both_pointer["service_token"]
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_shutdown_cleanup_cannot_be_resurrected_by_a_late_heartbeat(
     request: pytest.FixtureRequest,
@@ -2127,6 +2143,7 @@ def test_shutdown_cleanup_cannot_be_resurrected_by_a_late_heartbeat(
         _assert_discovery_absent((status_path, pointer_path), held_for=20.0)
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_reconcile_recovers_discovery_without_touching_the_daemon(
     request: pytest.FixtureRequest,

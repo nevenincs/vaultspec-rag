@@ -401,6 +401,7 @@ async def _assert_cli_job_attribution(
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 async def test_get_jobs_returns_snapshot_shape(
     live_service: tuple[int, Path],
@@ -425,6 +426,7 @@ async def test_get_jobs_returns_snapshot_shape(
     )
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 async def test_terminal_job_wait_honours_subsecond_deadline(
     live_service: tuple[int, Path],  # noqa: ARG001
@@ -441,6 +443,7 @@ async def test_terminal_job_wait_honours_subsecond_deadline(
     assert "last_response=" in str(caught.value)
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 async def test_get_jobs_is_newest_first(
     live_service: tuple[int, Path],  # noqa: ARG001
@@ -461,6 +464,7 @@ async def test_get_jobs_is_newest_first(
     assert ids.index(job2["job_id"]) < ids.index(job1["job_id"])
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 async def test_get_jobs_honours_limit(
     live_service: tuple[int, Path],  # noqa: ARG001
@@ -477,6 +481,7 @@ async def test_get_jobs_honours_limit(
     assert len(jobs) == 2
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 async def test_get_jobs_filters_by_source(
     live_service: tuple[int, Path],  # noqa: ARG001
@@ -492,6 +497,7 @@ async def test_get_jobs_filters_by_source(
     assert all(entry["source"] == "code" for entry in jobs)
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 async def test_get_jobs_non_positive_limit_is_empty(
     live_service: tuple[int, Path],  # noqa: ARG001

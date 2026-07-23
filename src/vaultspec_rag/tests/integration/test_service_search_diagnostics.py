@@ -1230,6 +1230,7 @@ def _assert_nonempty_search_with_paused_rebuild(
     assert paused_after["revision"] == paused_before["revision"], evidence
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_search_index_unavailable_during_matching_rebuild(tmp_path: Path) -> None:
     manifest = build_synthetic_vault(
@@ -1270,6 +1271,7 @@ def test_search_index_unavailable_during_matching_rebuild(tmp_path: Path) -> Non
         )
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_empty_service_search_reports_missing_index(
     live_service: tuple[int, Path],
@@ -1314,6 +1316,7 @@ def test_empty_service_search_reports_missing_index(
     assert any("index --type vault" in str(item) for item in remediation)
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_direct_http_code_search_reports_code_index_state(
     live_service: tuple[int, Path],
@@ -1359,6 +1362,7 @@ def test_direct_http_code_search_reports_code_index_state(
     assert any("index --type code" in str(item) for item in remediation)
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_direct_http_search_type_contract(
     live_service: tuple[int, Path],
@@ -1412,6 +1416,7 @@ def test_direct_http_search_type_contract(
     assert "search_type=codebase" not in alias_log
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_search_request_id_is_log_correlatable(
     live_service: tuple[int, Path],
@@ -1445,6 +1450,7 @@ def test_search_request_id_is_log_correlatable(
     assert re.search(r"\btotal_seconds=\d+\.\d{3}\b", completed_log)
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_service_search_short_timeout_reports_operational_diagnostics(
     live_service: tuple[int, Path],
@@ -1500,6 +1506,7 @@ def test_timeout_diagnostics_survive_unavailable_probe_port() -> None:
     assert backpressure["active_indexing_conflict"] is None
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_direct_http_search_invalid_root_is_bad_request(
     live_service: tuple[int, Path],

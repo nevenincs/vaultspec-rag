@@ -24,7 +24,7 @@ from ...store import root_collection_prefix
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.subprocess_gpu]
+pytestmark = [pytest.mark.integration, pytest.mark.subprocess_gpu]
 
 # Seconds-scale cadence so the test observes several cycles quickly.
 _INTERVAL_MINUTES = "0.05"

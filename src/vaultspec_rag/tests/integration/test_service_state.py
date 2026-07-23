@@ -97,6 +97,7 @@ def _assert_watcher_state(watcher: object) -> None:
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 async def test_get_service_state_consolidated_shape(
     tmp_path: Path,
