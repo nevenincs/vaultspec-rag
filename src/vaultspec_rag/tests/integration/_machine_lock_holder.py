@@ -32,9 +32,9 @@ import time
 from pathlib import Path
 
 os.environ["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"] = sys.argv[1]
-from vaultspec_rag.config import reset_config
+from vaultspec_rag.config import reset_config  # absolute-import-ok
 reset_config()
-from vaultspec_rag._machine_lock import acquire_machine_lock
+from vaultspec_rag._machine_lock import acquire_machine_lock  # absolute-import-ok
 acquired, _ = acquire_machine_lock()
 print("ACQUIRED:" + str(os.getpid()) if acquired else "FAILED", flush=True)
 stop = Path(sys.argv[2])
