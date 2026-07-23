@@ -138,6 +138,19 @@ vault_index.json
 # Temporary reference files
 tmp-ref/
 
+# Self-hosted GitHub Actions runner. The runner is installed OUTSIDE this
+# tree; these patterns are a defensive guard so a runner directory, its work
+# tree, or a registration credential can never be committed if one is ever
+# created under the repo by mistake.
+actions-runner/
+**/actions-runner/
+_work/
+.runner
+.credentials
+.credentials_rsaparams
+runner-*.zip
+actions-runner-*.zip
+
 # >>> vaultspec-managed (do not edit this block) >>>
 .vault/.obsidian/
 .vault/.trash/
@@ -145,6 +158,7 @@ tmp-ref/
 .vault/logs/
 .vaultspec/*.lock
 .vaultspec/_snapshots/
+.vaultspec/mcp-ownership.json
 .vaultspec/providers.json
 /.gitignore.lock
 /.mcp.json.lock

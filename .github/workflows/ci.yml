@@ -134,6 +134,55 @@ jobs:
       - name: Run tests
         run: just dev test python
 
+  gpu-tests:
+    name: GPU Tests
+    # The complement of the hosted "Tests" job: the integration, quality,
+    # performance, robustness, subprocess_gpu, and cuda markers that a
+    # GPU-less hosted runner cannot execute. This is where the real GPU tier
+    # actually runs instead of being deselected.
+    #
+    # SECURITY (public repo, self-hosted runner on a real workstation): fork
+    # pull requests must never execute here — arbitrary PR code on a
+    # self-hosted runner is remote code execution on the host and can
+    # exfiltrate the secrets this job needs. The guard admits only trusted
+    # events: pushes to a branch and manual dispatch (both require write
+    # access), plus same-repo (non-fork) pull requests. A fork PR carries a
+    # head repository different from the base and is refused here; it still
+    # runs every hosted tier above, with no secrets. Pair this with the repo
+    # setting "Require approval for all outside collaborators" so a fork PR
+    # cannot even start a workflow run.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, windows, gpu, cuda]
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install just
+        uses: taiki-e/install-action@just
+
+      - name: Install dependencies
+        run: just dev deps sync
+
+      - name: Verify CUDA is visible to the runner
+        run: uv run --no-sync python -c "import torch; assert torch.cuda.is_available(), 'CUDA unavailable on GPU runner'; print(torch.cuda.get_device_name(0))"
+
+      - name: Provision Qdrant server binary
+        run: uv run --no-sync vaultspec-rag server qdrant install
+
+      - name: Run GPU test tier
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: just dev test gpu
+
   vault-audit:
     name: Vault Audit
     runs-on: ubuntu-latest
