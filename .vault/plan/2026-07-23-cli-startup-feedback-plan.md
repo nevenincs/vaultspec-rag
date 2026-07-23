@@ -7,6 +7,7 @@ modified: '2026-07-23'
 tier: L1
 related:
   - '[[2026-07-23-cli-startup-feedback-adr]]'
+  - '[[2026-07-23-cli-startup-feedback-research]]'
 ---
 
 # `cli-startup-feedback` plan
