@@ -210,9 +210,9 @@ address; read-only status returns the complete observation.
 A degraded machine cannot be repaired by a consumer: the singleton owner is the only
 process permitted to publish or delete its pointer. The only correct repair is the
 owner's own next heartbeat. `vaultspec-rag server reconcile` waits, boundedly, for that
-convergence and reports what it saw (`service_reconcile` at
-`src/vaultspec_rag/cli/_service_reconcile.py:38-92`; `reconcile_discovery` at
-`src/vaultspec_rag/serviceclient/_status.py:366-434`).
+convergence and reports what it saw (`service_reconcile` in
+`src/vaultspec_rag/cli/_service_reconcile.py`; `reconcile_discovery` in
+`src/vaultspec_rag/serviceclient/_status.py`).
 
 The command is **non-destructive and idempotent**. It never writes discovery, never
 deletes a record, and never stops, restarts, or terminates a process, so it is safe to
@@ -220,7 +220,7 @@ run speculatively against a healthy machine. It re-resolves on an interval until
 timeout (default 35 s, roughly two heartbeat intervals), and succeeds only when the serving
 daemon's identity agrees across every axis the pointer claims — holder PID, pointer PID,
 freshness, port, service token, and the live `/health` response
-(`_identity_confirmed` at `src/vaultspec_rag/serviceclient/_status.py:311-358`).
+(`_identity_confirmed` in `src/vaultspec_rag/serviceclient/_status.py`).
 
 Outcomes (`src/vaultspec_rag/serviceclient/_status.py:274-276`):
 
