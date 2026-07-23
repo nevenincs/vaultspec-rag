@@ -14,6 +14,7 @@ import contextlib
 import logging
 import os
 import sys
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -182,6 +183,64 @@ def _reconcile_storage_manifest() -> None:
         logger.debug("storage manifest reconcile skipped", exc_info=True)
 
 
+# Bounds for the two shutdown waits that could otherwise strand the daemon.
+# ``_DISCOVERY_SHUTDOWN_GUARD_TIMEOUT_SECONDS`` bounds each discovery-publisher
+# guard acquisition at teardown (a heartbeat worker wedged mid-publish holds it
+# before any shutdown line is logged). ``_EXIT_LOG_FLUSH_BUDGET_SECONDS`` bounds
+# the pre-exit log-pipe flush so a wedged drain can never hold the process past
+# the forced exit - the same class of wait the backstop exists to escape.
+_DISCOVERY_SHUTDOWN_GUARD_TIMEOUT_SECONDS = 5.0
+_EXIT_LOG_FLUSH_BUDGET_SECONDS = 2.0
+
+
+def _exit_standalone_daemon(code: int) -> None:
+    """Force a prompt daemon process exit after a bounded shutdown.
+
+    The daemon's periodic ``asyncio.to_thread`` workers (heartbeat, qdrant
+    liveness, storage-survey warmup) run on the default thread-pool executor,
+    whose non-daemon threads are joined at interpreter exit. A worker wedged in
+    a blocking native call makes that join - and therefore the whole process -
+    hang forever, long after every store, the GPU, the qdrant child, the
+    discovery views, and the machine lease are already released. This backstop
+    mirrors the stdio shim's ``os._exit`` for the same class of unstoppable
+    non-daemon-thread wait.
+
+    Gated on ``_daemon_process`` so only the real spawned HTTP daemon exits.
+    The in-process embedded-reuse lifespan - and every in-process test that
+    drives ``service_lifespan`` directly - leaves the gate False, so this
+    returns and the caller's normal control flow is preserved: a clean
+    generator return, or a re-raised startup failure the embedded host retries
+    in-process.
+
+    ``os._exit`` skips atexit, ``finally`` blocks, and the log-pipe drain
+    thread, so the daemon's captured log is flushed to ``service.log`` first;
+    otherwise the final shutdown lines never reach disk and the operator loses
+    the shutdown trail.
+    """
+    if not _m._daemon_process:
+        return
+    # Operator trail and diagnostic witness: this line proves the backstop
+    # fired (a natural interpreter exit never logs it). Emitted before the pipe
+    # flush so it reaches service.log.
+    logger.info("Forcing daemon process exit after bounded shutdown (code=%d)", code)
+    capture = _m._daemon_log_capture
+    if capture is not None:
+        # Best-effort, BOUNDED flush: drain the log pipe so the shutdown trail
+        # reaches service.log, but never let a wedged drain hold the process -
+        # that is the exact wait this backstop exists to escape. Run the close
+        # on a daemon thread joined for a fixed budget, then exit regardless.
+        def _flush() -> None:
+            with contextlib.suppress(Exception):
+                capture.close()
+
+        flusher = threading.Thread(
+            target=_flush, name="daemon-exit-log-flush", daemon=True
+        )
+        flusher.start()
+        flusher.join(timeout=_EXIT_LOG_FLUSH_BUDGET_SECONDS)
+    os._exit(code)
+
+
 @asynccontextmanager
 async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     """Eagerly load GPU models before accepting connections.
@@ -256,6 +315,10 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
         finally:
             cleanup_started = True
             await _shutdown_components(periodic_tasks, manager, discovery)
+            # Clean serving shutdown: every resource is released. Exit the
+            # daemon now so a wedged periodic worker cannot hang the
+            # interpreter-exit executor join. No-op off the standalone daemon.
+            _exit_standalone_daemon(0)
     except BaseException:
         # The post-yield ``finally`` releases the lock on a clean run; this
         # branch covers the pre-yield startup failure (and a cancelled startup)
@@ -266,6 +329,12 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
         if not cleanup_started:
             cleanup_started = True
             await _shutdown_components(periodic_tasks, manager, discovery)
+        # Startup/rollback failure with the teardown above complete: exit the
+        # daemon non-zero rather than let the re-raise reach the interpreter
+        # exit, where a wedged periodic worker would hang the executor join.
+        # Off the standalone daemon this is a no-op and the failure re-raises
+        # for the embedded-reuse host to retry in-process.
+        _exit_standalone_daemon(1)
         raise
 
 
@@ -597,7 +666,9 @@ async def _shutdown_components(
     # Mark publication stopped before cancelling the asyncio task. A cancelled
     # ``to_thread`` await does not stop its worker thread; the publisher's
     # synchronous guard joins an in-flight tick and makes every later one inert.
-    discovery.quiesce()
+    # The join is bounded: a worker wedged mid-publish must not strand teardown
+    # here, before any shutdown line is logged.
+    discovery.quiesce(timeout=_DISCOVERY_SHUTDOWN_GUARD_TIMEOUT_SECONDS)
     requested, initial_reasons, watcher_stop_ok = _begin_managed_shutdown(manager)
     for task in tasks:
         task.cancel()
@@ -606,7 +677,9 @@ async def _shutdown_components(
             await task
     # Both views are removed while the owner lease remains held. This is
     # idempotent and happens before any early unclean-shutdown return.
-    discovery_clean = discovery.cleanup()
+    discovery_clean = discovery.cleanup(
+        timeout=_DISCOVERY_SHUTDOWN_GUARD_TIMEOUT_SECONDS
+    )
     resources_released, clean, survivors, reason = await _drain_managed_work(
         manager,
         requested,
