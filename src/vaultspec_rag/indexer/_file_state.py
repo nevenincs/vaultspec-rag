@@ -95,16 +95,22 @@ class FileState:
         self._validate_state_shape()
 
     def _validate_enum_fields(self) -> None:
-        """Require every supplied discriminator to use its closed enum."""
-        if not isinstance(self.state, FileStateKind):
+        """Require every supplied discriminator to use its closed enum.
+
+        These isinstance checks validate runtime-boundary data (rows rebuilt
+        from the ledger's persisted state), so they are real guards despite the
+        static field types; the reportUnnecessaryIsInstance false positive is
+        suppressed with reason at each.
+        """
+        if not isinstance(self.state, FileStateKind):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
             raise TypeError("state must be a FileStateKind")
-        if self.kind is not None and not isinstance(self.kind, ContentKind):
+        if self.kind is not None and not isinstance(self.kind, ContentKind):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
             raise TypeError("kind must be a ContentKind when provided")
-        if self.admission_reason is not None and not isinstance(
+        if self.admission_reason is not None and not isinstance(  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
             self.admission_reason, AdmissionReason
         ):
             raise TypeError("admission_reason must be an AdmissionReason when provided")
-        if self.error_kind is not None and not isinstance(
+        if self.error_kind is not None and not isinstance(  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
             self.error_kind, JobErrorKind
         ):
             raise TypeError("error_kind must be a JobErrorKind when provided")

@@ -21,7 +21,7 @@ def normalize_document_source_path(source_path: str) -> str:
     The identity is path-layout neutral: it normalizes separators and redundant
     ``.`` segments but assigns no meaning to any directory or filename.
     """
-    if not isinstance(source_path, str) or not source_path.strip():
+    if not isinstance(source_path, str) or not source_path.strip():  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
         raise ValueError("document source path must be a non-empty string")
     normalized_input = source_path.replace("\\", "/")
     path = PurePosixPath(normalized_input)
@@ -35,7 +35,7 @@ def normalize_document_source_path(source_path: str) -> str:
 
 def _locator_identity(locator: DocumentLocator | None, unit_ordinal: int) -> object:
     """Return the native locator identity, falling back to the unit ordinal."""
-    if isinstance(unit_ordinal, bool) or not isinstance(unit_ordinal, int):
+    if isinstance(unit_ordinal, bool) or not isinstance(unit_ordinal, int):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
         raise TypeError("document unit ordinal must be an integer")
     if unit_ordinal < 0:
         raise ValueError("document unit ordinal must be non-negative")
@@ -56,7 +56,7 @@ def document_point_id(
     locator: DocumentLocator | None = None,
 ) -> str:
     """Derive a stable document point ID from collection-local semantics."""
-    if not isinstance(content_fingerprint, str) or not content_fingerprint:
+    if not isinstance(content_fingerprint, str) or not content_fingerprint:  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
         raise ValueError("document content fingerprint must be a non-empty string")
     payload = {
         "version": DOCUMENT_ID_VERSION,

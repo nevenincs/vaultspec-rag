@@ -74,7 +74,7 @@ class CodeRunConfiguration:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
-        if not isinstance(self.sparse_enabled, bool):
+        if not isinstance(self.sparse_enabled, bool):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
             raise TypeError("sparse_enabled must be a bool")
 
 

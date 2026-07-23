@@ -72,7 +72,7 @@ class PerKindPolicyFingerprints:
         """Return fingerprints for a closed content-kind token."""
         from ._content_policy import ContentKind
 
-        if not isinstance(kind, ContentKind):
+        if not isinstance(kind, ContentKind):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
             raise TypeError("kind must be a ContentKind")
         if kind is ContentKind.CODE:
             return self.code
