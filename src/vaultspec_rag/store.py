@@ -375,9 +375,7 @@ class VaultStore(_VaultSearchMixin):
         the bound is opt-in.
         """
         if force_after_seconds is None:
-            with self._lifecycle_lock, acquire_collection_locks(
-                self._collection_locks
-            ):
+            with self._lifecycle_lock, acquire_collection_locks(self._collection_locks):
                 self._release_client_locked()
             return
         self._force_close(force_after_seconds)

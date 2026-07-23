@@ -355,6 +355,7 @@ class TestServiceLifecycleHelpers:
 #: produces the unreachable sentinel and the tests fail as they should.
 _UNSERVED_PORT = 9
 
+
 class TestServiceTokenIdentity:
     """Per-process service_token round-trip.
 

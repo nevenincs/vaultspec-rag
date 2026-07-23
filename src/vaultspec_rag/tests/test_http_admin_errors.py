@@ -496,8 +496,7 @@ class TestRedirectsAreRefused:
         # Guard against a vacuous pass: the call must genuinely have carried the
         # credential, or "the token did not leak" would prove nothing.
         assert any(
-            sent == f"Bearer {token}"
-            for sent in _RedirectingHandler.seen_authorization
+            sent == f"Bearer {token}" for sent in _RedirectingHandler.seen_authorization
         )
 
         # The credential never reached the redirect target.
