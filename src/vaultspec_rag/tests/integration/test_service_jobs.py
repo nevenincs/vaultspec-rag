@@ -43,7 +43,7 @@ import vaultspec_rag.mcp._tools as tools
 import vaultspec_rag.server as _m
 
 from ... import jobs as _managed_jobs
-from ..._job_errors import JobError, JobErrorKind
+from ..._job_errors import JobError, JobErrorKind, remediation
 from ...cli import app
 from ...config import EnvVar, reset_config
 from ...job_control import RunControlToken
@@ -2599,6 +2599,44 @@ def _assert_resilience_job_parity(
     return expected_terminal_outcome
 
 
+# The resilience measures the job response rounds to operator precision; the
+# health rollup projects them at full snapshot precision. Rounding both sides
+# to the same precision before comparing makes the identity a comparison of
+# state, not of serialization cadence, so a future fractional-memory scenario
+# cannot reintroduce a rounds-vs-full-precision divergence.
+_RESILIENCE_MEASURE_KEYS = (
+    "no_progress_timeout_seconds",
+    "no_progress_remaining_seconds",
+    "peak_rss_mb",
+    "rss_ceiling_mb",
+    "peak_cuda_allocated_mb",
+    "peak_cuda_reserved_mb",
+    "cuda_ceiling_mb",
+)
+
+
+def _resilience_state(resilience: dict[str, object]) -> dict[str, object]:
+    """Return the shared resilience state: measures rounded, remediation dropped.
+
+    ``remediation`` is excluded because it is not resilience state - it is a
+    derived presentation hint the broker-facing job response adds and the
+    liveness-facing health rollup deliberately does not carry. It is verified
+    separately as a correct derivation of the shared terminal outcome.
+    """
+    state = {
+        key: (
+            round(float(value), 1)
+            if key in _RESILIENCE_MEASURE_KEYS
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            else value
+        )
+        for key, value in resilience.items()
+        if key != "remediation"
+    }
+    return state
+
+
 def _assert_resilience_health(
     health_jobs: dict[str, object],
     detail_job: dict[str, object],
@@ -2607,11 +2645,29 @@ def _assert_resilience_health(
     outcome_name: str,
     error_kind: JobErrorKind | None,
 ) -> None:
-    """Assert health carries the same bounded resilience and failure evidence."""
+    """Assert health carries the same bounded resilience STATE and failure evidence.
+
+    Health and the job response expose identical resilience STATE - the full
+    canonical field set, including the terminal outcome. They differ only on the
+    derived ``remediation`` hint, which the broker-facing job response carries
+    and the liveness health rollup does not. So the identity is over the state,
+    and the job response's remediation is verified separately as the correct
+    derivation of the terminal outcome both surfaces share.
+    """
     health_resilience = cast("dict[str, object]", health_jobs["resilience"]).copy()
     assert health_resilience.pop("job_id") == job_id
     assert health_resilience.pop("source") == "code"
-    assert health_resilience == detail_job["resilience"]
+    detail_resilience = cast("dict[str, object]", detail_job["resilience"])
+    # Identical resilience state across the two surfaces (remediation excluded,
+    # measures compared at one precision). Any divergence in generation,
+    # checkpoint counts, circuit, ceilings, or terminal outcome still fails.
+    assert _resilience_state(health_resilience) == _resilience_state(detail_resilience)
+    # The broker response's remediation is the correct derivation of the
+    # terminal outcome both surfaces carry - same state, same derivation.
+    shared_terminal = health_resilience["terminal_outcome"]
+    assert detail_resilience["remediation"] == remediation(
+        shared_terminal if isinstance(shared_terminal, str) else None
+    )
     if error_kind is None or outcome_name == "interrupted":
         assert health_jobs["last_failed"] is None
         return
