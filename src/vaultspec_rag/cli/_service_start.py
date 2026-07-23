@@ -749,9 +749,26 @@ def _startup_phase_label(health: dict[str, object] | None) -> str:
     if _service_phase(status) == SERVICE_PHASE_WARMING:
         detail = status.get("phase_detail") if isinstance(status, dict) else None
         if isinstance(detail, str) and detail:
-            return detail
+            return f"{detail}{_startup_count_suffix(status)}"
         return "warming (loading models)"
     return "waiting for the daemon to come up"
+
+
+def _startup_count_suffix(status: dict[str, object] | None) -> str:
+    """Render a determinate " (done/total)" count when the daemon published one.
+
+    The daemon stamps ``phase_done``/``phase_total`` on a warm-up stage that has
+    a discrete count (models loaded of the configured set), turning the stage
+    label into a determinate signal. A stage without a count, or an older daemon
+    that never stamps one, yields no suffix and the plain label stands.
+    """
+    if not isinstance(status, dict):
+        return ""
+    total = status.get("phase_total")
+    done = status.get("phase_done")
+    if isinstance(total, int) and total > 0 and isinstance(done, int):
+        return f" ({done}/{total})"
+    return ""
 
 
 def _await_service_ready(

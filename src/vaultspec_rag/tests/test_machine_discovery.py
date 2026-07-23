@@ -115,6 +115,25 @@ class TestMachineDiscoveryPointer:
         owner_publisher.publish_phase("warming", detail="loading the reranker")
         assert read_machine_discovery()["phase_detail"] == "loading the reranker"  # type: ignore[index]
 
+    def test_publish_phase_count_is_carried_only_when_a_total_is_given(
+        self,
+        owner_publisher: _DiscoveryPublisher,
+    ) -> None:
+        # A stage with a discrete count carries done/total for a determinate
+        # signal; a stage without one must NOT stamp the count keys at all, so
+        # the CLI renders a spinner rather than a bogus "0/0".
+        counted = owner_publisher.publish_phase(
+            "warming", detail="loading models", done=0, total=3
+        )
+        assert counted is not None
+        assert counted["phase_total"] == 3
+        assert counted["phase_done"] == 0
+
+        countless = owner_publisher.publish_phase("warming", detail="warming")
+        assert countless is not None
+        assert "phase_total" not in countless
+        assert "phase_done" not in countless
+
     def test_read_tolerates_garbage_and_non_object_json(self) -> None:
         pointer = machine_discovery_path()
         pointer.parent.mkdir(parents=True, exist_ok=True)

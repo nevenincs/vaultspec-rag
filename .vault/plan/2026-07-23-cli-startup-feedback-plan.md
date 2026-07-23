@@ -30,11 +30,11 @@ scope; index-build progress stays with the jobs-operability surface.
 
 ## Steps
 
-- [ ] `S01` - Carry a structured startup-progress descriptor (stage id, label, optional done/total) on the discovery snapshot and _DiscoveryPublisher, additive and best-effort; `src/vaultspec_rag/server/_lifecycle.py`.
-- [ ] `S02` - Publish the structured descriptor at each cold-start stage boundary, filling done/total for the model-load count; `src/vaultspec_rag/server/_lifespan.py`.
-- [ ] `S03` - Render a determinate Rich bar in the start wait when total is present, falling back to the named spinner for a descriptor-less daemon; `src/vaultspec_rag/cli/_service_start.py`.
-- [ ] `S04` - Investigate whether the Hugging Face and pinned-binary downloaders expose incremental byte callbacks, and record whether download-percentage bars are feasible; `src/vaultspec_rag/tests/quality/ab_report.md`.
-- [ ] `S05` - Add unit tests for the descriptor round-trip and the CLI bar/spinner rendering, including the older-daemon fallback guard; `src/vaultspec_rag/tests/test_machine_discovery.py`.
+- [x] `S01` - Carry a structured startup-progress descriptor (stage id, label, optional done/total) on the discovery snapshot and \_DiscoveryPublisher, additive and best-effort; `src/vaultspec_rag/server/_lifecycle.py`.
+- [x] `S02` - Publish the structured descriptor at each cold-start stage boundary, filling done/total for the model-load count; `src/vaultspec_rag/server/_lifespan.py`.
+- [x] `S03` - Render a determinate Rich bar in the start wait when total is present, falling back to the named spinner for a descriptor-less daemon; `src/vaultspec_rag/cli/_service_start.py`.
+- [x] `S04` - Investigate whether the Hugging Face and pinned-binary downloaders expose incremental byte callbacks, and record whether download-percentage bars are feasible; `src/vaultspec_rag/tests/quality/ab_report.md`.
+- [x] `S05` - Add unit tests for the descriptor round-trip and the CLI bar/spinner rendering, including the older-daemon fallback guard; `src/vaultspec_rag/tests/test_machine_discovery.py`.
 - [ ] `S06` - Verify on a real GPU cold start that provisioning, per-model load count, and reranker stages render live, and record the execution; `src/vaultspec_rag/cli/_service_start.py`.
 
 ## Parallelization
