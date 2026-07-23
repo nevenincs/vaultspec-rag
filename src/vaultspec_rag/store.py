@@ -39,12 +39,12 @@ from ._store_writes import (
     StoreWritePolicy,
     ensure_disk_headroom,
     remaining_write_seconds,
-    run_write_with_retry,
+    run_store_operation_with_retry,
 )
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import Generator, Sequence
+    from collections.abc import Callable, Generator, Sequence
     from contextlib import AbstractContextManager
     from uuid import UUID
 
@@ -280,6 +280,97 @@ class VaultStore(_VaultSearchMixin):
             raise RuntimeError(msg)
         return self._client
 
+    def _retried[T](self, description: str, op: Callable[[int], T]) -> T:
+        """Run one replay-safe store operation under the bounded retry.
+
+        Server mode only. A refused connection is a remote-backend
+        condition - the managed server can be restarting, cycling a
+        quarantined collection, or simply gone while a runner outlives it -
+        and an index job reaches ensure and read operations before its
+        first write, so leaving those single-shot turned a momentary
+        refusal into a failed job. The embedded local engine has no socket
+        to refuse, so local mode runs the operation exactly once and a
+        genuine local fault surfaces immediately instead of being retried.
+
+        Only operations safe to replay are routed here: existence checks,
+        reads, and idempotent deletes. Storage exhaustion still raises on
+        the first attempt.
+        """
+        from .config import get_config
+
+        if not self._server_mode:
+            return op(math.ceil(get_config().store_operation_timeout_seconds))
+        return run_store_operation_with_retry(
+            op,
+            description=description,
+            policy=None,
+        )
+
+    def _collection_exists(self, name: str) -> bool:
+        """Return whether *name* exists, tolerating a transient backend blip.
+
+        This is the first backend contact an index job makes, so it is the
+        operation a refused connection kills first. Purely a query, so it
+        is safe to replay.
+        """
+        return self._retried(
+            f"collection exists {name}",
+            lambda _timeout: self.client.collection_exists(name),
+        )
+
+    def _create_payload_index(
+        self,
+        collection_name: str,
+        field_name: str,
+        field_schema: Any,
+    ) -> None:
+        """Create one payload index idempotently under the bounded retry.
+
+        Creating an index that already exists is a no-op in Qdrant, so the
+        operation is safe to replay.
+        """
+        with _suppress_local_qdrant_warnings():
+            self._retried(
+                f"create payload index {collection_name}.{field_name}",
+                lambda _timeout: self.client.create_payload_index(
+                    collection_name=collection_name,
+                    field_name=field_name,
+                    field_schema=field_schema,
+                ),
+            )
+
+    def _scroll(self, **kwargs: Any) -> tuple[list[Record], Any]:
+        """Page a collection under the bounded retry.
+
+        A scroll is a pure query, so replaying an attempt that never
+        reached the backend is safe.
+        """
+        return self._retried(
+            f"scroll {kwargs.get('collection_name')}",
+            lambda _timeout: self.client.scroll(**kwargs),
+        )
+
+    def _retrieve(self, **kwargs: Any) -> list[Record]:
+        """Fetch points by id under the bounded retry (a query, replay-safe)."""
+        return self._retried(
+            f"retrieve {kwargs.get('collection_name')}",
+            lambda _timeout: self.client.retrieve(**kwargs),
+        )
+
+    def _delete_points(self, **kwargs: Any) -> None:
+        """Remove points under the bounded retry.
+
+        Deletion by id list or by payload filter is idempotent - replaying
+        an attempt that already landed removes nothing further - so a
+        refused connection costs a retry rather than a failed job. Dropping
+        a whole collection is not routed here: it is lifecycle-destructive
+        rather than replay-safe.
+        """
+        self._retried(
+            f"delete points {kwargs.get('collection_name')}",
+            lambda _timeout: self.client.delete(**kwargs),
+        )
+
     def _id_scan_page_limit(self, collection: str) -> int:
         """Return the scroll page size for payload-light full-collection scans.
 
@@ -485,7 +576,7 @@ class VaultStore(_VaultSearchMixin):
                 )
 
         with self._lifecycle_lock:
-            if self.client.collection_exists(name):
+            if self._collection_exists(name):
                 return
 
             kwargs: dict[str, Any] = {}
@@ -552,7 +643,7 @@ class VaultStore(_VaultSearchMixin):
     def drop_table(self) -> None:
         """Drop the vault_docs collection if it exists."""
         with self._lifecycle_lock, self._point_lock(self.TABLE_NAME):
-            if self.client.collection_exists(self.TABLE_NAME):
+            if self._collection_exists(self.TABLE_NAME):
                 self._delete_collection_hard(self.TABLE_NAME)
                 logger.info("Dropped collection '%s'", self.TABLE_NAME)
             self._vault_ensured = False
@@ -560,7 +651,7 @@ class VaultStore(_VaultSearchMixin):
     def drop_code_table(self) -> None:
         """Drop the codebase_docs collection if it exists."""
         with self._lifecycle_lock, self._point_lock(self.CODE_TABLE_NAME):
-            if self.client.collection_exists(self.CODE_TABLE_NAME):
+            if self._collection_exists(self.CODE_TABLE_NAME):
                 self._delete_collection_hard(self.CODE_TABLE_NAME)
                 logger.info("Dropped collection '%s'", self.CODE_TABLE_NAME)
             self._code_ensured = False
@@ -568,7 +659,7 @@ class VaultStore(_VaultSearchMixin):
     def drop_document_table(self) -> None:
         """Drop only the independently owned document collection."""
         with self._lifecycle_lock, self._point_lock(self.DOCUMENT_TABLE_NAME):
-            if self.client.collection_exists(self.DOCUMENT_TABLE_NAME):
+            if self._collection_exists(self.DOCUMENT_TABLE_NAME):
                 self._delete_collection_hard(self.DOCUMENT_TABLE_NAME)
                 logger.info("Dropped collection '%s'", self.DOCUMENT_TABLE_NAME)
             self._document_ensured = False
@@ -634,7 +725,7 @@ class VaultStore(_VaultSearchMixin):
             if self._vault_ensured:
                 return
 
-            if self.client.collection_exists(self.TABLE_NAME):
+            if self._collection_exists(self.TABLE_NAME):
                 self._vault_ensured = True
                 return
 
@@ -644,19 +735,17 @@ class VaultStore(_VaultSearchMixin):
             # ``chunk_ordinal`` backs the doc-level listing filter. The field
             # sets are declared once in ``store_schema``.
             for fname in store_schema.VAULT_KEYWORD_INDEXES:
-                with _suppress_local_qdrant_warnings():
-                    self.client.create_payload_index(
-                        collection_name=self.TABLE_NAME,
-                        field_name=fname,
-                        field_schema=models.PayloadSchemaType.KEYWORD,
-                    )
+                self._create_payload_index(
+                    self.TABLE_NAME,
+                    fname,
+                    models.PayloadSchemaType.KEYWORD,
+                )
             for fname in store_schema.VAULT_INTEGER_INDEXES:
-                with _suppress_local_qdrant_warnings():
-                    self.client.create_payload_index(
-                        collection_name=self.TABLE_NAME,
-                        field_name=fname,
-                        field_schema=models.PayloadSchemaType.INTEGER,
-                    )
+                self._create_payload_index(
+                    self.TABLE_NAME,
+                    fname,
+                    models.PayloadSchemaType.INTEGER,
+                )
             self._vault_ensured = True
 
     def _ensure_code_indexes(self) -> None:
@@ -674,19 +763,17 @@ class VaultStore(_VaultSearchMixin):
         from qdrant_client import models
 
         for fname in store_schema.CODE_KEYWORD_INDEXES:
-            with _suppress_local_qdrant_warnings():
-                self.client.create_payload_index(
-                    collection_name=self.CODE_TABLE_NAME,
-                    field_name=fname,
-                    field_schema=models.PayloadSchemaType.KEYWORD,
-                )
+            self._create_payload_index(
+                self.CODE_TABLE_NAME,
+                fname,
+                models.PayloadSchemaType.KEYWORD,
+            )
         for fname in store_schema.CODE_INTEGER_INDEXES:
-            with _suppress_local_qdrant_warnings():
-                self.client.create_payload_index(
-                    collection_name=self.CODE_TABLE_NAME,
-                    field_name=fname,
-                    field_schema=models.PayloadSchemaType.INTEGER,
-                )
+            self._create_payload_index(
+                self.CODE_TABLE_NAME,
+                fname,
+                models.PayloadSchemaType.INTEGER,
+            )
 
     def ensure_code_table(self) -> None:
         """Create the codebase_docs collection if it doesn't exist.
@@ -700,7 +787,7 @@ class VaultStore(_VaultSearchMixin):
             if self._code_ensured:
                 return
 
-            if not self.client.collection_exists(self.CODE_TABLE_NAME):
+            if not self._collection_exists(self.CODE_TABLE_NAME):
                 self._ensure_collection(self.CODE_TABLE_NAME)
 
             self._ensure_code_indexes()
@@ -711,19 +798,17 @@ class VaultStore(_VaultSearchMixin):
         from qdrant_client import models
 
         for fname in store_schema.DOCUMENT_KEYWORD_INDEXES:
-            with _suppress_local_qdrant_warnings():
-                self.client.create_payload_index(
-                    collection_name=self.DOCUMENT_TABLE_NAME,
-                    field_name=fname,
-                    field_schema=models.PayloadSchemaType.KEYWORD,
-                )
+            self._create_payload_index(
+                self.DOCUMENT_TABLE_NAME,
+                fname,
+                models.PayloadSchemaType.KEYWORD,
+            )
         for fname in store_schema.DOCUMENT_INTEGER_INDEXES:
-            with _suppress_local_qdrant_warnings():
-                self.client.create_payload_index(
-                    collection_name=self.DOCUMENT_TABLE_NAME,
-                    field_name=fname,
-                    field_schema=models.PayloadSchemaType.INTEGER,
-                )
+            self._create_payload_index(
+                self.DOCUMENT_TABLE_NAME,
+                fname,
+                models.PayloadSchemaType.INTEGER,
+            )
 
     def ensure_document_table(self) -> None:
         """Create the document collection and its declared payload indexes."""
@@ -731,7 +816,7 @@ class VaultStore(_VaultSearchMixin):
         with self._lifecycle_lock:
             if self._document_ensured:
                 return
-            if not self.client.collection_exists(self.DOCUMENT_TABLE_NAME):
+            if not self._collection_exists(self.DOCUMENT_TABLE_NAME):
                 self._ensure_collection(self.DOCUMENT_TABLE_NAME)
             self._ensure_document_indexes()
             self._document_ensured = True
@@ -964,7 +1049,7 @@ class VaultStore(_VaultSearchMixin):
         burning GPU on vectors that cannot be persisted.
         """
         ensure_disk_headroom(self._storage_probe_path)
-        run_write_with_retry(
+        run_store_operation_with_retry(
             lambda attempt_timeout: self.client.upsert(
                 collection_name=collection_name,
                 points=points,
@@ -1000,7 +1085,7 @@ class VaultStore(_VaultSearchMixin):
 
         self.ensure_table()
         with self._point_lock(self.TABLE_NAME):
-            self.client.delete(
+            self._delete_points(
                 collection_name=self.TABLE_NAME,
                 points_selector=models.FilterSelector(
                     filter=models.Filter(
@@ -1028,7 +1113,7 @@ class VaultStore(_VaultSearchMixin):
         self.ensure_code_table()
         with self._point_lock(self.CODE_TABLE_NAME):
             point_ids: list[int | str | UUID] = [self._stable_id(i) for i in ids]
-            self.client.delete(
+            self._delete_points(
                 collection_name=self.CODE_TABLE_NAME,
                 points_selector=models.PointIdsList(points=point_ids),
             )
@@ -1043,7 +1128,7 @@ class VaultStore(_VaultSearchMixin):
         self.ensure_document_table()
         point_ids: list[int | str | UUID] = [self._stable_id(value) for value in ids]
         with self._point_lock(self.DOCUMENT_TABLE_NAME):
-            self.client.delete(
+            self._delete_points(
                 collection_name=self.DOCUMENT_TABLE_NAME,
                 points_selector=models.PointIdsList(points=point_ids),
             )
@@ -1057,7 +1142,7 @@ class VaultStore(_VaultSearchMixin):
 
         self.ensure_document_table()
         with self._point_lock(self.DOCUMENT_TABLE_NAME):
-            self.client.delete(
+            self._delete_points(
                 collection_name=self.DOCUMENT_TABLE_NAME,
                 points_selector=models.FilterSelector(
                     filter=models.Filter(
@@ -1119,7 +1204,7 @@ class VaultStore(_VaultSearchMixin):
         page_limit = self._id_scan_page_limit(self.TABLE_NAME)
         while True:
             with self._point_lock(self.TABLE_NAME):
-                records, next_offset = self.client.scroll(
+                records, next_offset = self._scroll(
                     collection_name=self.TABLE_NAME,
                     scroll_filter=scroll_filter,
                     limit=page_limit,
@@ -1157,7 +1242,7 @@ class VaultStore(_VaultSearchMixin):
 
         self.ensure_table()
         with self._point_lock(self.TABLE_NAME):
-            self.client.delete(
+            self._delete_points(
                 collection_name=self.TABLE_NAME,
                 points_selector=models.FilterSelector(
                     filter=models.Filter(
@@ -1221,7 +1306,7 @@ class VaultStore(_VaultSearchMixin):
             )
         self.ensure_code_table()
         with self._point_lock(self.CODE_TABLE_NAME):
-            records, next_offset = self.client.scroll(
+            records, next_offset = self._scroll(
                 collection_name=self.CODE_TABLE_NAME,
                 scroll_filter=scroll_filter,
                 limit=limit,
@@ -1287,7 +1372,7 @@ class VaultStore(_VaultSearchMixin):
             )
         self.ensure_document_table()
         with self._point_lock(self.DOCUMENT_TABLE_NAME):
-            records, next_offset = self.client.scroll(
+            records, next_offset = self._scroll(
                 collection_name=self.DOCUMENT_TABLE_NAME,
                 scroll_filter=scroll_filter,
                 limit=limit,
@@ -1321,7 +1406,7 @@ class VaultStore(_VaultSearchMixin):
         point_ids = [self._stable_id(value) for value in ids]
         expected = {str(point_id) for point_id in point_ids}
         with self._point_lock(collection):
-            records = self.client.retrieve(
+            records = self._retrieve(
                 collection_name=collection,
                 ids=point_ids,
                 with_payload=False,
@@ -1344,7 +1429,7 @@ class VaultStore(_VaultSearchMixin):
         page_limit = self._id_scan_page_limit(collection)
         while True:
             with self._point_lock(collection):
-                records, next_offset = self.client.scroll(
+                records, next_offset = self._scroll(
                     collection_name=collection,
                     limit=page_limit,
                     offset=offset,
@@ -1393,7 +1478,7 @@ class VaultStore(_VaultSearchMixin):
         page_limit = self._id_scan_page_limit(self.CODE_TABLE_NAME)
         while True:
             with self._point_lock(self.CODE_TABLE_NAME):
-                records, next_offset = self.client.scroll(
+                records, next_offset = self._scroll(
                     collection_name=self.CODE_TABLE_NAME,
                     scroll_filter=scroll_filter,
                     limit=page_limit,
@@ -1418,7 +1503,12 @@ class VaultStore(_VaultSearchMixin):
         """
         self.ensure_table()
         with self._point_lock(self.TABLE_NAME):
-            return self.client.count(collection_name=self.TABLE_NAME).count
+            return self._retried(
+                f"count {self.TABLE_NAME}",
+                lambda _timeout: (
+                    self.client.count(collection_name=self.TABLE_NAME).count
+                ),
+            )
 
     def count_code(self) -> int:
         """Return total number of indexed codebase chunks.
@@ -1428,13 +1518,23 @@ class VaultStore(_VaultSearchMixin):
         """
         self.ensure_code_table()
         with self._point_lock(self.CODE_TABLE_NAME):
-            return self.client.count(collection_name=self.CODE_TABLE_NAME).count
+            return self._retried(
+                f"count {self.CODE_TABLE_NAME}",
+                lambda _timeout: (
+                    self.client.count(collection_name=self.CODE_TABLE_NAME).count
+                ),
+            )
 
     def count_document(self) -> int:
         """Return the point count in the document collection."""
         self.ensure_document_table()
         with self._point_lock(self.DOCUMENT_TABLE_NAME):
-            return self.client.count(collection_name=self.DOCUMENT_TABLE_NAME).count
+            return self._retried(
+                f"count {self.DOCUMENT_TABLE_NAME}",
+                lambda _timeout: (
+                    self.client.count(collection_name=self.DOCUMENT_TABLE_NAME).count
+                ),
+            )
 
     def get_by_id(self, doc_id: str) -> dict[str, Any] | None:
         """Retrieve a single document by ID, or ``None`` if not found.
@@ -1455,7 +1555,7 @@ class VaultStore(_VaultSearchMixin):
                 self._stable_id(f"{doc_id}#c0"),
                 self._stable_id(doc_id),
             ]
-            records: list[Record] = self.client.retrieve(
+            records: list[Record] = self._retrieve(
                 collection_name=self.TABLE_NAME,
                 ids=point_ids,
                 with_payload=True,
@@ -1516,7 +1616,7 @@ class VaultStore(_VaultSearchMixin):
         offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
         while True:
             with self._point_lock(self.TABLE_NAME):
-                records, next_offset = self.client.scroll(
+                records, next_offset = self._scroll(
                     collection_name=self.TABLE_NAME,
                     scroll_filter=scroll_filter,
                     limit=1000,

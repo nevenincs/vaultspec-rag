@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import errno
 import os
+import socket
 import time
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
@@ -23,7 +24,7 @@ from .._store_writes import (
     StoreWritePolicy,
     classify_write_error,
     ensure_disk_headroom,
-    run_write_with_retry,
+    run_store_operation_with_retry,
 )
 from ..config import EnvVar, reset_config
 
@@ -68,6 +69,141 @@ def _retry_policy(
         reset_config()
 
 
+class TestUnrecoverableOnReadOperations:
+    """Storage exhaustion must raise on the first attempt for a read too.
+
+    Widening the bounded retry from the write to every store operation must
+    not make a full disk retryable anywhere: a read that surfaces the
+    server's disk-full text is as futile to repeat as an upsert. This binds
+    to the attempt count, which is the only thing that distinguishes
+    "raised immediately" from "raised after exhausting the budget".
+    """
+
+    def test_disk_full_on_a_read_raises_without_retrying(self) -> None:
+        calls: list[int] = []
+
+        def read_op(_attempt_timeout: int) -> list[str]:
+            calls.append(1)
+            raise RuntimeError(_DISK_FULL_TEXT)
+
+        with (
+            _retry_policy(),
+            pytest.raises(RuntimeError, match="No space left on device"),
+        ):
+            run_store_operation_with_retry(
+                read_op,
+                description="scroll codebase_docs",
+                policy=None,
+            )
+        assert len(calls) == 1
+
+    def test_enospc_on_a_read_raises_without_retrying(self) -> None:
+        calls: list[int] = []
+
+        def read_op(_attempt_timeout: int) -> int:
+            calls.append(1)
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+        with (
+            _retry_policy(),
+            pytest.raises(OSError, match="No space left on device"),
+        ):
+            run_store_operation_with_retry(
+                read_op,
+                description="count codebase_docs",
+                policy=None,
+            )
+        assert len(calls) == 1
+
+
+class TestRealConnectionRefusedIsRetried:
+    """A genuinely refused TCP connection is ridden out, not fatal.
+
+    These use a real socket against a real closed port, so the failure is an
+    actual OS-level ECONNREFUSED (``WinError 10061`` on Windows) - the exact
+    production signature - rather than a stubbed client that merely raises.
+    The pair binds to the retry actually re-attempting the connection: with
+    the attempt budget set to one (the pre-change single-shot behaviour) the
+    identical operation fails hard.
+    """
+
+    @staticmethod
+    def _closed_port() -> int:
+        """Return a port that was bound and released, so nothing listens."""
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            return int(probe.getsockname()[1])
+
+    def test_single_attempt_fails_hard_on_refused_connection(self) -> None:
+        port = self._closed_port()
+        calls: list[int] = []
+
+        def connect_op(attempt_timeout: int) -> str:
+            calls.append(1)
+            with socket.create_connection(("127.0.0.1", port), timeout=attempt_timeout):
+                return "connected"
+
+        # attempts=1 reproduces the unretried path: one refusal, hard error.
+        with _retry_policy(attempts=1), pytest.raises(OSError) as caught:
+            run_store_operation_with_retry(
+                connect_op,
+                description="connect",
+                policy=None,
+            )
+        assert isinstance(caught.value, ConnectionRefusedError)
+        assert len(calls) == 1
+
+    def test_refused_then_accepted_connection_succeeds_via_retry(self) -> None:
+        port = self._closed_port()
+        calls: list[int] = []
+        refusals: list[OSError] = []
+        listener = socket.socket()
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        backend_up = False
+
+        def bring_backend_up() -> None:
+            nonlocal backend_up
+            listener.bind(("127.0.0.1", port))
+            listener.listen(8)
+            backend_up = True
+
+        def connect_op(attempt_timeout: int) -> str:
+            calls.append(1)
+            # Attempts 1 and 2 hit a genuinely closed port and raise a real
+            # ECONNREFUSED; the backend is brought up only for attempt 3,
+            # mirroring a restart window. Driving the transition off the
+            # attempt count rather than a timer keeps the refusals real
+            # without making the test depend on wall-clock racing.
+            if len(calls) == 3 and not backend_up:
+                bring_backend_up()
+            try:
+                with socket.create_connection(
+                    ("127.0.0.1", port), timeout=attempt_timeout
+                ):
+                    return "connected"
+            except OSError as exc:
+                refusals.append(exc)
+                raise
+
+        try:
+            with _retry_policy(attempts=60, base_delay=0.01, max_delay=0.02):
+                result = run_store_operation_with_retry(
+                    connect_op,
+                    description="connect",
+                    policy=None,
+                )
+        finally:
+            listener.close()
+
+        assert result == "connected"
+        # Exactly the two pre-transition attempts were refused, and each was
+        # a real ECONNREFUSED - so the success came from riding out genuine
+        # refusals, not from the port happening to be open.
+        assert len(calls) == 3
+        assert len(refusals) == 2
+        assert all(isinstance(exc, ConnectionRefusedError) for exc in refusals)
+
+
 class TestClassifyWriteError:
     def test_enospc_oserror_is_unrecoverable(self) -> None:
         err = OSError(errno.ENOSPC, "No space left on device")
@@ -101,7 +237,7 @@ class TestRunWriteWithRetry:
 
         started = time.monotonic()
         with _retry_policy(operation_timeout=2.25):
-            result = run_write_with_retry(op, description="test", policy=None)
+            result = run_store_operation_with_retry(op, description="test", policy=None)
         elapsed = time.monotonic() - started
 
         assert result == "ok"
@@ -121,7 +257,7 @@ class TestRunWriteWithRetry:
             _retry_policy(),
             pytest.raises(RuntimeError, match="No space left on device"),
         ):
-            run_write_with_retry(op, description="test", policy=None)
+            run_store_operation_with_retry(op, description="test", policy=None)
         assert len(calls) == 1
 
     def test_transient_exhaustion_raises_original_error(self) -> None:
@@ -136,7 +272,7 @@ class TestRunWriteWithRetry:
             _retry_policy(attempts=3, base_delay=0.001, max_delay=0.001),
             pytest.raises(ConnectionError, match="refused") as caught,
         ):
-            run_write_with_retry(op, description="test", policy=None)
+            run_store_operation_with_retry(op, description="test", policy=None)
         assert len(calls) == 3
         assert caught.value is original
 
@@ -153,7 +289,7 @@ class TestRunWriteWithRetry:
             wait=time.sleep,
         )
         with _retry_policy(operation_timeout=120.0):
-            result = run_write_with_retry(
+            result = run_store_operation_with_retry(
                 op,
                 description="bounded upsert",
                 policy=policy,
@@ -177,7 +313,7 @@ class TestRunWriteWithRetry:
             _retry_policy(operation_timeout=120.0),
             pytest.raises(JobError) as caught,
         ):
-            run_write_with_retry(
+            run_store_operation_with_retry(
                 op,
                 description="bounded upsert",
                 policy=policy,
@@ -208,7 +344,7 @@ class TestRunWriteWithRetry:
             ),
             pytest.raises(JobError) as caught,
         ):
-            run_write_with_retry(
+            run_store_operation_with_retry(
                 op,
                 description="bounded upsert",
                 policy=policy,
@@ -231,7 +367,7 @@ class TestRunWriteWithRetry:
             wait=time.sleep,
         )
         with _retry_policy(), pytest.raises(JobError) as caught:
-            run_write_with_retry(
+            run_store_operation_with_retry(
                 op,
                 description="expired upsert",
                 policy=policy,
