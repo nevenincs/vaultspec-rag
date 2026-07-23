@@ -11,11 +11,12 @@ suite; here the focus is the deterministic, side-effect-free resolution paths.
 from __future__ import annotations
 
 import contextlib
+import json
 import socket
 import subprocess
 import sys
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import psutil
 import pytest
@@ -24,7 +25,7 @@ from typer.testing import CliRunner
 from ..cli import app
 from ..cli._service_lifecycle import _service_pid_on_port, _stop_service_on_port
 from ..cli._service_status import _write_service_status
-from ..cli._service_stop import _orphan_daemon_pids, _reap_orphan_daemons
+from ..cli._service_stop import _orphan_daemon_pids
 from ..config import reset_config
 
 if TYPE_CHECKING:
@@ -118,6 +119,41 @@ def _await_all_gone(pids: set[int]) -> None:
         time.sleep(0.1)
 
 
+def _reap_via_subprocess(port: int) -> dict[str, object]:
+    """Run ``server stop --orphans`` as a SEPARATE process and return its envelope.
+
+    The reap must run out-of-process: the witness daemons here are children of
+    the test process, so an in-process reap would let ``os.getpid()`` protect
+    them as its own children - a confound absent in production, where the reap is
+    a separate CLI process that is not the daemons' parent. Out-of-process, the
+    singleton is spared only by the pointer/lineage anchors, exactly as in
+    production, so the safety assertion binds.
+    """
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "vaultspec_rag",
+            "server",
+            "stop",
+            "--orphans",
+            "--port",
+            str(port),
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    for line in reversed(completed.stdout.splitlines()):
+        stripped = line.strip()
+        if stripped.startswith("{"):
+            return cast("dict[str, object]", json.loads(stripped))
+    msg = f"reap subprocess emitted no JSON envelope: {completed.stdout!r}"
+    raise AssertionError(msg)
+
+
 class TestOrphanReapSafety:
     """``server stop --orphans`` must spare the singleton pair and foreign daemons.
 
@@ -154,7 +190,8 @@ class TestOrphanReapSafety:
 
             # The singleton launcher is the recorded discovery-pointer pid.
             _write_service_status(singleton.pid, port)
-            _reap_orphan_daemons(port, json_mode=False)
+            envelope = _reap_via_subprocess(port)
+            assert envelope["ok"] is True, envelope
 
             _await_all_gone(orphan_pair)
             assert not any(psutil.pid_exists(pid) for pid in orphan_pair), (
@@ -177,3 +214,53 @@ class TestOrphanReapSafety:
                 for pid in _orphan_daemon_pids(straggler_port):
                     with contextlib.suppress(Exception):
                         psutil.Process(pid).kill()
+
+    def test_reap_spares_singleton_pair_when_worker_is_the_pointer(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Production publishes the WORKER (the child that runs the lifespan) as
+        # the pointer, not the launcher, exercising the protect-parent branch so
+        # the singleton's shim launcher is spared when its worker is anchored.
+        monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", str(tmp_path / "status"))
+        monkeypatch.setenv(
+            "VAULTSPEC_RAG_QDRANT_STORAGE_DIR", str(tmp_path / "qdrant" / "storage")
+        )
+        reset_config()
+
+        port = _free_port()
+        procs: list[subprocess.Popen[bytes]] = []
+        try:
+            singleton = _spawn_witness_daemon(port)
+            orphan = _spawn_witness_daemon(port)
+            procs = [singleton, orphan]
+            matched = _wait_for_matched(port, count=4)
+            singleton_pair = _pair_of(singleton.pid, matched)
+            orphan_pair = _pair_of(orphan.pid, matched)
+            workers = singleton_pair - {singleton.pid}
+            assert workers, "singleton launcher must have a matched worker child"
+            worker_pid = next(iter(workers))
+
+            # Anchor on the WORKER, as the production daemon does.
+            _write_service_status(worker_pid, port)
+            envelope = _reap_via_subprocess(port)
+            assert envelope["ok"] is True, envelope
+
+            _await_all_gone(orphan_pair)
+            assert not any(psutil.pid_exists(pid) for pid in orphan_pair), (
+                f"the whole orphan pair {orphan_pair} must be reaped"
+            )
+            assert all(psutil.pid_exists(pid) for pid in singleton_pair), (
+                f"the singleton pair {singleton_pair} (worker + shim launcher) "
+                "must be spared"
+            )
+        finally:
+            reset_config()
+            for proc in procs:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait(timeout=5)
+            for pid in _orphan_daemon_pids(port):
+                with contextlib.suppress(Exception):
+                    psutil.Process(pid).kill()
