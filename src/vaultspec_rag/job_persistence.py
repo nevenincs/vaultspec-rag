@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import os
+import random
 import time
 import uuid
 from ctypes import wintypes
@@ -45,14 +46,17 @@ __all__ = [
     "IdempotencyBinding",
     "PersistedManagerState",
     "PersistenceWriteError",
+    "_atomic_replace",
     "load_persisted_state",
     "save_persisted_state",
 ]
 
 MAX_IDEMPOTENCY_KEY_LENGTH = 256
 
-_ATOMIC_REPLACE_ATTEMPTS = 8
-_ATOMIC_REPLACE_RETRY_SECONDS = 0.005
+_ATOMIC_REPLACE_ATTEMPTS = 10
+_ATOMIC_REPLACE_BASE_SECONDS = 0.005
+_ATOMIC_REPLACE_MAX_SLEEP_SECONDS = 0.15
+_ATOMIC_REPLACE_JITTER_FRACTION = 0.25
 _SCHEMA = "vaultspec.rag.jobs"
 _VERSION = 1
 
@@ -182,6 +186,25 @@ def _replace_is_retryable(exc: OSError) -> bool:
     )
 
 
+def _replace_backoff_seconds(attempt: int) -> float:
+    """Exponential backoff with symmetric jitter, capped per attempt.
+
+    The dominant cause of a transient ACCESS_DENIED/SHARING_VIOLATION on
+    replace is an external scanner (Windows Defender / Search indexer)
+    opening the freshly published state file. Exponential growth escapes a
+    busy scan window quickly, and the jitter decorrelates the writer's
+    retries from the scanner's periodic open so repeated collisions do not
+    lock-step. Bounded so the whole ladder stays under ~1s while the manager
+    lock is held.
+    """
+    nominal = min(
+        _ATOMIC_REPLACE_MAX_SLEEP_SECONDS,
+        _ATOMIC_REPLACE_BASE_SECONDS * (2**attempt),
+    )
+    jitter = nominal * _ATOMIC_REPLACE_JITTER_FRACTION * (2.0 * random.random() - 1.0)
+    return max(0.0, nominal + jitter)
+
+
 def _atomic_replace(source: Path, destination: Path) -> None:
     """Durably replace one state file with bounded sharing retries."""
     for attempt in range(_ATOMIC_REPLACE_ATTEMPTS):
@@ -192,7 +215,7 @@ def _atomic_replace(source: Path, destination: Path) -> None:
         except OSError as exc:
             retryable = _replace_is_retryable(exc)
             if retryable and attempt + 1 < _ATOMIC_REPLACE_ATTEMPTS:
-                time.sleep(_ATOMIC_REPLACE_RETRY_SECONDS * (attempt + 1))
+                time.sleep(_replace_backoff_seconds(attempt))
                 continue
             if retryable or os.name != "nt":
                 raise
