@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -846,7 +846,8 @@ class TestUnreachableStaysASentinelNotAnEscape:
         assert envelope["ok"] is True
         data = envelope["data"]
         assert isinstance(data, dict)
-        assert data["status"] == "already_stopped"
+        typed_data = cast("dict[str, object]", data)
+        assert typed_data["status"] == "already_stopped"
 
     def test_status_against_a_dead_port_emits_one_envelope(
         self, tmp_path: Path
