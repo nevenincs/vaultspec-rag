@@ -736,13 +736,20 @@ def _startup_phase_label(health: dict[str, object] | None) -> str:
 
     Once the daemon serves, its own ``/health`` status is authoritative; before
     the port binds, the ``warming`` phase stamped in the discovery file
-    distinguishes model loading from a daemon that never came up.
+    distinguishes model loading from a daemon that never came up. When the
+    daemon has stamped a granular cold-start ``phase_detail`` (provisioning the
+    qdrant server, loading models, loading the reranker), that is shown verbatim
+    so a minutes-long warm-up reports which stage is running.
     """
     if health is not None:
         raw = health.get("status")
         if isinstance(raw, str) and raw:
             return f"serving, health: {raw}"
-    if _service_phase(_read_service_status()) == SERVICE_PHASE_WARMING:
+    status = _read_service_status()
+    if _service_phase(status) == SERVICE_PHASE_WARMING:
+        detail = status.get("phase_detail") if isinstance(status, dict) else None
+        if isinstance(detail, str) and detail:
+            return detail
         return "warming (loading models)"
     return "waiting for the daemon to come up"
 
