@@ -181,6 +181,19 @@ def _daemon_discovery_snapshot(
     return fields
 
 
+class RunningClaimContendedError(RuntimeError):
+    """The authoritative RUNNING status could not be published.
+
+    Raised only from the ``require=True`` publish when the service status write
+    lock is held by ANOTHER process - i.e. the machine is owned elsewhere and
+    this daemon must yield. The rollback that follows treats its own inability
+    to clean the discovery views (it needs that same held lock) as the expected
+    outcome of yielding, not a fault, so it still records a completed shutdown.
+    A different publish failure (disk error, not lock contention) is a genuine
+    fault and does NOT raise this type.
+    """
+
+
 @dataclass(slots=True)
 class _DiscoveryPublisher:
     """Serialize owner-authenticated heartbeat publication and shutdown."""
@@ -196,13 +209,24 @@ class _DiscoveryPublisher:
     _stopping: bool = field(default=False, init=False, repr=False)
     _cleaned: bool = field(default=False, init=False, repr=False)
 
-    def publish_phase(self, phase: str) -> dict[str, object] | None:
-        """Set *phase* and publish it unless shutdown has begun."""
+    def publish_phase(
+        self, phase: str, *, require: bool = False
+    ) -> dict[str, object] | None:
+        """Set *phase* and publish it unless shutdown has begun.
+
+        With ``require`` the service-status publication is authoritative: a
+        failure to record it is raised rather than swallowed. This is for the
+        RUNNING claim of a machine-singleton service - if the daemon cannot
+        record that it owns the machine and is serving (another process holds
+        the status write lock), it must NOT serve, because a second daemon may
+        own the machine's single GPU and Qdrant storage. WARMING and heartbeat
+        publications stay best-effort (``require=False``).
+        """
         with self._guard:
             if self._stopping:
                 return None
             self.phase = phase
-            return self._publish_locked()
+            return self._publish_locked(require=require)
 
     def heartbeat(self) -> dict[str, object] | None:
         """Publish one heartbeat unless quiescence has begun."""
@@ -303,8 +327,15 @@ class _DiscoveryPublisher:
             if acquired:
                 self._guard.release()
 
-    def _publish_locked(self) -> dict[str, object]:
-        """Publish each view independently while holding the lifecycle gate."""
+    def _publish_locked(self, *, require: bool = False) -> dict[str, object]:
+        """Publish each view independently while holding the lifecycle gate.
+
+        With ``require`` a service-status write failure is re-raised (the
+        authoritative RUNNING claim); otherwise it is swallowed as a
+        best-effort publication. The machine-discovery pointer stays
+        best-effort in both modes - the status write is the claim the CLI and
+        health path read back to confirm the running owner.
+        """
         from .._machine_lock import publish_machine_discovery
         from ..serviceclient._discovery import _replace_service_status
 
@@ -316,6 +347,18 @@ class _DiscoveryPublisher:
             status_path = _m._status_file_path()
             _replace_service_status(snapshot, path=status_path)
         except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
+            if require:
+                # A ``TimeoutError`` here means the status write lock is held by
+                # another owner (contention), distinct from a genuine write
+                # fault. Signal the contention case so the rollback knows it is
+                # yielding the machine and records a completed shutdown despite
+                # being unable to clean the views the other owner holds.
+                if isinstance(exc, TimeoutError):
+                    raise RunningClaimContendedError(
+                        "authoritative RUNNING claim yielded: the service "
+                        "status write lock is held by another owner"
+                    ) from exc
+                raise
             logger.debug(
                 "service status snapshot publication skipped: %s",
                 exc,

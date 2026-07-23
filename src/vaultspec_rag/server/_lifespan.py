@@ -31,7 +31,7 @@ from .._machine_lock import (
 )
 from ..capabilities import backend_capabilities_dict
 from ..logging_config import log_event
-from ._lifecycle import _DiscoveryPublisher
+from ._lifecycle import RunningClaimContendedError, _DiscoveryPublisher
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -67,9 +67,17 @@ def _claim_machine_singleton() -> MachineLockLease:
     return lease
 
 
-def _stamp_service_phase(publisher: _DiscoveryPublisher, phase: str) -> None:
-    """Publish one complete daemon-owned lifecycle snapshot."""
-    publisher.publish_phase(phase)
+def _stamp_service_phase(
+    publisher: _DiscoveryPublisher, phase: str, *, require: bool = False
+) -> None:
+    """Publish one complete daemon-owned lifecycle snapshot.
+
+    ``require`` marks the publication authoritative: the RUNNING phase is the
+    machine-singleton "I own the machine and am serving" claim, so a failure to
+    record it must propagate and roll back startup rather than be swallowed.
+    WARMING is best-effort.
+    """
+    publisher.publish_phase(phase, require=require)
 
 
 def _stamp_qdrant_identity(
@@ -309,7 +317,9 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
             "Service startup complete in %.2fs",
             time.perf_counter() - startup_started,
         )
-        _stamp_service_phase(discovery, SERVICE_PHASE_RUNNING)
+        # Authoritative claim: if RUNNING cannot be published (another process
+        # holds the status write lock), the daemon must not serve - roll back.
+        _stamp_service_phase(discovery, SERVICE_PHASE_RUNNING, require=True)
         try:
             yield
         finally:
@@ -319,16 +329,29 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
             # daemon now so a wedged periodic worker cannot hang the
             # interpreter-exit executor join. No-op off the standalone daemon.
             _exit_standalone_daemon(0)
-    except BaseException:
+    except BaseException as exc:
         # The post-yield ``finally`` releases the lock on a clean run; this
         # branch covers the pre-yield startup failure (and a cancelled startup)
         # where that ``finally`` was never entered. Stop any already-ready
         # supervised Qdrant before freeing the singleton: on POSIX the child is
         # in its own session, so process exit alone is not an ownership cleanup
         # guarantee. Release exactly once after the child is gone.
+        #
+        # A contention-yield (the authoritative RUNNING claim could not take the
+        # status write lock because another owner holds the machine) tells the
+        # teardown that its own inability to clean the discovery views - it
+        # needs that same held lock - is the EXPECTED outcome of yielding, not a
+        # fault, so the shutdown is still recorded complete. Any other failure
+        # keeps the strict clean/unclean determination.
+        contention_yield = isinstance(exc, RunningClaimContendedError)
         if not cleanup_started:
             cleanup_started = True
-            await _shutdown_components(periodic_tasks, manager, discovery)
+            await _shutdown_components(
+                periodic_tasks,
+                manager,
+                discovery,
+                contention_yield=contention_yield,
+            )
         # Startup/rollback failure with the teardown above complete: exit the
         # daemon non-zero rather than let the re-raise reach the interpreter
         # exit, where a wedged periodic worker would hang the executor join.
@@ -655,6 +678,8 @@ async def _shutdown_components(
     tasks: list[asyncio.Task[None]],
     manager: JobManager | None,
     discovery: _DiscoveryPublisher,
+    *,
+    contention_yield: bool = False,
 ) -> None:
     """Tear down the daemon's data components and release the machine lock.
 
@@ -662,6 +687,13 @@ async def _shutdown_components(
     cancels periodic tasks (heartbeat and, when scheduled, storage maintenance),
     drains execution owners before stores and stores before the qdrant child,
     then releases the machine singleton last.
+
+    ``contention_yield`` marks a rollback that fired because the authoritative
+    RUNNING claim could not take the status write lock (another owner holds the
+    machine). In that ONE case, a discovery-cleanup non-convergence is expected
+    - this daemon needs the same held lock - so the shutdown is still recorded
+    complete rather than unclean. The normal operator-stop path, which owns the
+    lock, is unaffected: a cleanup non-convergence there stays unclean.
     """
     # Mark publication stopped before cancelling the asyncio task. A cancelled
     # ``to_thread`` await does not stop its worker thread; the publisher's
@@ -734,9 +766,12 @@ async def _shutdown_components(
     # service only after stores, GPU, and Qdrant are fully torn down and both
     # owner-published discovery views are confirmed absent. Any teardown or
     # discovery failure retains the lease for the registered atexit retry.
-    if discovery_clean:
+    # A contention-yield rollback owns the machine lease (it claimed the machine
+    # at startup) but could not publish RUNNING; release the lease as we would
+    # on a clean converge, since we are relinquishing the machine.
+    if discovery_clean or contention_yield:
         release_machine_lock_lease(discovery.lease)
-    if not discovery_clean:
+    if not discovery_clean and not contention_yield:
         discovery_reason = "owner discovery cleanup did not converge"
         combined_reason = "; ".join(part for part in (reason, discovery_reason) if part)
         log_event(
@@ -753,6 +788,17 @@ async def _shutdown_components(
             surviving_job_ids=",".join(survivors),
         )
         return
+    if not discovery_clean and contention_yield:
+        # Expected: the other owner holds the status lock, so our view cleanup
+        # could not converge. Record it, but do not fail the shutdown - the
+        # stale WARMING view is reaped by the heartbeat-staleness check.
+        log_event(
+            logger,
+            "service.lifecycle",
+            "shutdown_discovery_yielded",
+            severity=logging.INFO,
+            reason="owner discovery cleanup yielded to the contending owner",
+        )
     if clean:
         logger.info("Service shutdown complete")
         _m._record_shutdown("clean")
