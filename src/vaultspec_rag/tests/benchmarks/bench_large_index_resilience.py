@@ -5,11 +5,12 @@ source, validates the selected support profile before loading the model, and
 runs the production code-index path against the configured real vector-store
 backend. It never deletes or rewrites an unmarked root.
 
-Default acceptance command::
+Default acceptance command (root and report path must live under the OS temp
+directory, never a bare drive-root or project-adjacent folder)::
 
     uv run python -m vaultspec_rag.tests.benchmarks.bench_large_index_resilience \
-        --root D:/vaultspec-rag-acceptance/large-code --clean --local-files-only \
-        --json D:/vaultspec-rag-acceptance/large-code-report.json
+        --root "%TEMP%/vaultspec-rag-acceptance/large-code" --clean --local-files-only \
+        --json "%TEMP%/vaultspec-rag-acceptance/large-code-report.json"
 
 The default 83,624-file corpus produces exactly three chunks per file through
 the production AST chunker, establishing the 250,872-chunk managed-service
