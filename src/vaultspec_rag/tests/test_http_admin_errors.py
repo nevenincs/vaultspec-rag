@@ -133,7 +133,8 @@ class _RedirectSinkHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    do_POST = do_GET
+    def do_POST(self) -> None:
+        self.do_GET()
 
     def log_message(self, *_args: object, **_kwargs: object) -> None:
         """Silence the default stderr request logging."""
@@ -154,7 +155,8 @@ class _RedirectingHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    do_POST = do_GET
+    def do_POST(self) -> None:
+        self.do_GET()
 
     def log_message(self, *_args: object, **_kwargs: object) -> None:
         """Silence the default stderr request logging."""
@@ -556,3 +558,172 @@ class TestOmittedTimeoutIsBounded:
         # Bounded by the resolved policy rather than by the server's own delay,
         # which is several times longer.
         assert elapsed < 4.0
+
+
+class _NonObjectBodyHandler(BaseHTTPRequestHandler):
+    """Answer with valid JSON that is not an object.
+
+    This is the shape a foreign process on the port produces - the very
+    condition the redirect and identity work is written around - and it is
+    valid JSON, so it survives every parse guard that only catches malformed
+    input.
+    """
+
+    def do_GET(self) -> None:
+        body = b'["not", "a", "dict"]'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args: object, **_kwargs: object) -> None:
+        """Silence the default stderr request logging."""
+
+
+class _HealthyHandler(BaseHTTPRequestHandler):
+    """Answer the health route the way a live daemon does."""
+
+    def do_GET(self) -> None:
+        import json as _json
+
+        body = _json.dumps(
+            {"status": "ready", "pid": 4242, "service_token": "live-token"}
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args: object, **_kwargs: object) -> None:
+        """Silence the default stderr request logging."""
+
+
+class _UnhealthyHandler(BaseHTTPRequestHandler):
+    """Answer with a server error: the service is up, but not well."""
+
+    def do_GET(self) -> None:
+        self.send_response(503)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, *_args: object, **_kwargs: object) -> None:
+        """Silence the default stderr request logging."""
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+class TestHealthProbeContract:
+    """The health owner reports three outcomes and raises for none of them.
+
+    Callers branch on the returned value rather than catching, because several
+    sit inside lifecycle verbs that must emit exactly one structured outcome on
+    every exit path. An exception escaping here would become a second one, so
+    "never raises" is a contract rather than a convenience.
+    """
+
+    def test_live_service_returns_the_parsed_body(self) -> None:
+        from ..serviceclient._transport import _try_http_health
+
+        server, port = _serve(_HealthyHandler)
+        try:
+            result = _try_http_health(port)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        assert result is not None
+        assert result["status"] == "ready"
+        assert result["service_token"] == "live-token"
+
+    def test_unhealthy_service_is_distinguished_from_unreachable(self) -> None:
+        from ..serviceclient._transport import _try_http_health
+
+        server, port = _serve(_UnhealthyHandler)
+        try:
+            result = _try_http_health(port)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        # Answered, so not the unreachable sentinel - a caller must be able to
+        # tell a sick daemon from an absent one.
+        assert result is not None
+        assert result["status"] == "error"
+        assert result["http_code"] == 503
+
+    def test_unreachable_service_returns_the_sentinel(self, refused_port: int) -> None:
+        from ..serviceclient._transport import _try_http_health
+
+        assert _try_http_health(refused_port) is None
+
+    def test_no_outcome_raises(self, refused_port: int) -> None:
+        from ..serviceclient._transport import _try_http_health
+
+        # The three outcomes above, plus a port that answers nothing at all,
+        # all return rather than raise. Any escape here would reach a verb
+        # bound to emit exactly one structured outcome.
+        healthy, healthy_port = _serve(_HealthyHandler)
+        unhealthy, unhealthy_port = _serve(_UnhealthyHandler)
+        try:
+            for port in (healthy_port, unhealthy_port, refused_port):
+                _try_http_health(port)
+        finally:
+            for server in (healthy, unhealthy):
+                server.shutdown()
+                server.server_close()
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+class TestNonObjectHealthBodyCannotEscape:
+    """A live peer answering with non-object JSON must not reach the callers.
+
+    Every caller of the health owner treats its result as a mapping. A value
+    that is valid JSON but not an object would satisfy the parse and then fail
+    at the first attribute access - inside verbs that must emit exactly one
+    structured outcome on every exit path. The owner therefore reports it as
+    unreachable rather than passing the shape through.
+
+    This is the branch the dead-port guard cannot reach: only a LIVE responder
+    can produce it, so a test that never binds a port asserts the property for
+    the easy half of the input space.
+    """
+
+    def test_owner_reports_a_non_object_body_as_unreachable(self) -> None:
+        from ..serviceclient._transport import _try_http_health
+
+        server, port = _serve(_NonObjectBodyHandler)
+        try:
+            result = _try_http_health(port)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        # Not the list, and not an exception: the sentinel.
+        assert result is None
+
+    def test_stop_verb_still_emits_one_envelope_against_such_a_peer(
+        self, tmp_path: Path
+    ) -> None:
+        server, port = _serve(_NonObjectBodyHandler)
+        os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path)
+        try:
+            from ._cli_helpers import app, runner
+
+            result = runner.invoke(
+                app, ["server", "stop", "--port", str(port), "--json"]
+            )
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR.value, None)
+            server.shutdown()
+            server.server_close()
+
+        payloads = [
+            line for line in result.output.splitlines() if line.strip().startswith("{")
+        ]
+        # The regression this guards: previously the verb raised AttributeError
+        # and emitted nothing at all, which is the one outcome a supervising
+        # broker cannot interpret.
+        assert len(payloads) == 1, f"expected one envelope, got {result.output!r}"
+        assert "AttributeError" not in result.output

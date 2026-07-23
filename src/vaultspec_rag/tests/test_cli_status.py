@@ -347,6 +347,14 @@ class TestServiceLifecycleHelpers:
         assert "logs" not in next_action
 
 
+#: Deliberately not the machine default service port. These tests intercept the
+#: health probe, and an interception that silently stopped binding would fall
+#: through to a real call - which on a developer machine running the resident
+#: daemon on the default port would answer with a genuine token and let the
+#: assertion pass for the wrong reason. Nothing listens here, so an inert patch
+#: produces the unreachable sentinel and the tests fail as they should.
+_UNSERVED_PORT = 9
+
 class TestServiceTokenIdentity:
     """Per-process service_token round-trip.
 
@@ -370,7 +378,7 @@ class TestServiceTokenIdentity:
 
         monkeypatch.setattr(_process, "_try_http_health", _probe_abc)
         monkeypatch.setattr(cli, "_is_pid_alive", _alive)
-        assert cli._is_our_service(123, port=8766, expected_token="abc")
+        assert cli._is_our_service(123, port=_UNSERVED_PORT, expected_token="abc")
 
     def test_token_mismatch_returns_false(self, monkeypatch: pytest.MonkeyPatch):
         from .. import cli
@@ -386,7 +394,7 @@ class TestServiceTokenIdentity:
         monkeypatch.setattr(cli, "_is_pid_alive", _alive)
         # Token mismatch is authoritative - return False regardless of
         # whether the executable-name check would have passed.
-        assert not cli._is_our_service(123, port=8766, expected_token="xyz")
+        assert not cli._is_our_service(123, port=_UNSERVED_PORT, expected_token="xyz")
 
     def test_token_absent_in_response_falls_back(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
@@ -409,7 +417,7 @@ class TestServiceTokenIdentity:
         with caplog.at_level("DEBUG", logger="vaultspec_rag.cli"):
             result = cli._is_our_service(
                 os.getpid(),
-                port=8766,
+                port=_UNSERVED_PORT,
                 expected_token="abc",
             )
         # Result True or False is platform-dependent; the contract
@@ -441,7 +449,7 @@ class TestServiceTokenIdentity:
         monkeypatch.setattr(_process, "_try_http_health", _probe)
         monkeypatch.setattr(cli, "_is_pid_alive", _alive_stub)
         # No expected_token → don't probe.
-        cli._is_our_service(os.getpid(), port=8766, expected_token=None)
+        cli._is_our_service(os.getpid(), port=_UNSERVED_PORT, expected_token=None)
         assert probe_called["n"] == 0
 
     def test_health_probe_failure_falls_back(
@@ -462,7 +470,7 @@ class TestServiceTokenIdentity:
         # Should fall back without raising.
         result = cli._is_our_service(
             os.getpid(),
-            port=8766,
+            port=_UNSERVED_PORT,
             expected_token="abc",
         )
         assert isinstance(result, bool)

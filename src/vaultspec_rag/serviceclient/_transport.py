@@ -117,7 +117,17 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_OPENER: Final = urllib.request.build_opener(_NoRedirect)
+#: The one opener every request in this module goes through. It refuses
+#: redirects, and it empties the proxy map so a ``http_proxy`` environment
+#: variable cannot route a loopback request off the host: the standard library
+#: does not bypass loopback automatically, so without this an operator's proxy
+#: setting would carry the bearer credential to an arbitrary peer and let that
+#: peer's body be adopted as the service's answer - the same two consequences
+#: redirect refusal exists to prevent, reached without any redirect. The
+#: qdrant runtime's loopback openers are built the same way.
+_OPENER: Final = urllib.request.build_opener(
+    _NoRedirect, urllib.request.ProxyHandler({})
+)
 
 
 class ServiceUnavailableError(RuntimeError):
@@ -264,10 +274,22 @@ def _try_http_health(
     url = f"http://127.0.0.1:{port}/health"
     try:
         with _OPENER.open(url, timeout=timeout) as resp:
-            return cast(
-                "dict[str, Any]",
-                json.loads(_read_service_response(resp).decode("utf-8")),
+            parsed: object = json.loads(
+                _read_service_response(resp).decode("utf-8")
             )
+        if not isinstance(parsed, dict):
+            # Valid JSON that is not an object is not a health answer. Passing
+            # it through would hand every caller a value they immediately treat
+            # as a mapping, and the callers inside the lifecycle verbs would
+            # raise where they must instead emit one structured outcome. A peer
+            # answering this way is not the service, so it reads as unreachable.
+            logger.debug(
+                "health probe on port=%d returned a non-object body (%s)",
+                port,
+                type(parsed).__name__,
+            )
+            return None
+        return cast("dict[str, Any]", parsed)
     except urllib.error.HTTPError as exc:
         # The service answered, so report the code rather than "unreachable" -
         # a caller must be able to tell a sick daemon from an absent one.

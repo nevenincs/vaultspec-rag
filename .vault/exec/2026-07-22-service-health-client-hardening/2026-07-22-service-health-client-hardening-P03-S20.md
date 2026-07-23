@@ -47,3 +47,24 @@ The envelope-counting helper parses only lines beginning with an object brace
 rather than the whole output, so human-readable lines emitted alongside a JSON
 envelope do not confuse the count. If a verb ever emitted a JSON array at top
 level this helper would miss it; no verb does.
+
+## Revision after independent review
+
+This Step's guard asserted the property only for a dead port, which exercises the
+unreachable sentinel branch. That is the half of the input space where an escape
+is impossible. The case that can actually escape requires a LIVE responder
+answering with something the callers cannot treat as a mapping, and no test bound
+a port to produce it.
+
+The review found the gap by reproducing the escape rather than by reading, and it
+is a fair criticism of this Step specifically: the class is named for the property
+it asserts, and it asserted it where it could not fail.
+
+Coverage now includes a live responder returning valid non-object JSON, asserted
+at both levels - the owner returns the sentinel, and the stop verb still emits
+exactly one envelope with no attribute error in its output. The second assertion
+is the one that would have caught the original defect.
+
+This is also the first application of the guard-test convention this plan's work
+produced: a negative assertion is not verified until it has been driven through
+the case where it can fail.

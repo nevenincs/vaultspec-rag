@@ -20,8 +20,8 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
 )
 
 from ...cli import _is_pid_alive
-from ...serviceclient._transport import _try_http_health
 from ...config import reset_config as reset_rag_config
+from ...serviceclient._transport import _try_http_health
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Mapping
