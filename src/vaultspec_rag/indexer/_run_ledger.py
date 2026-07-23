@@ -17,13 +17,13 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from ._content_policy import AdmissionReason, ContentKind
 from ._file_state import FileState, FileStateKind
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Generator, Iterator, Mapping
 
 __all__ = [
     "INDEX_RUN_LEDGER_FILENAME",
@@ -213,9 +213,9 @@ class RunSignature:
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{name} must be non-empty")
-        if not isinstance(self.source_type, ContentKind):
+        if not isinstance(self.source_type, ContentKind):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
             raise TypeError("source_type must be a ContentKind")
-        if not isinstance(self.operation, RunOperation):
+        if not isinstance(self.operation, RunOperation):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
             raise TypeError("operation must be a RunOperation")
         for name in ("dense_dimensions", "embedding_schema", "payload_schema"):
             value = getattr(self, name)
@@ -264,11 +264,11 @@ class CommitUnit:
 
     def __post_init__(self) -> None:
         _validate_rel_path(self.rel_path)
-        if not isinstance(self.kind, CommitUnitKind):
+        if not isinstance(self.kind, CommitUnitKind):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
             raise TypeError("kind must be a CommitUnitKind")
         if isinstance(self.segment_ordinal, bool) or self.segment_ordinal < 0:
             raise ValueError("segment_ordinal must be a non-negative integer")
-        if not isinstance(self.is_file_end, bool):
+        if not isinstance(self.is_file_end, bool):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
             raise TypeError("is_file_end must be a bool")
         if not self.point_ids or any(not point_id for point_id in self.point_ids):
             raise ValueError("point_ids must contain non-empty identifiers")
@@ -1285,7 +1285,7 @@ class RunLedger:
         phase: FinalizationPhase,
     ) -> RunGeneration:
         """Advance exactly one confirmed external finalization boundary."""
-        if not isinstance(phase, FinalizationPhase):
+        if not isinstance(phase, FinalizationPhase):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
             raise TypeError("phase must be a FinalizationPhase")
         if phase is FinalizationPhase.COMPACTED:
             raise RunLedgerStateError(
@@ -1529,7 +1529,7 @@ class RunLedger:
             return result.rowcount
 
     @contextmanager
-    def _transaction(self) -> Iterator[sqlite3.Connection]:
+    def _transaction(self) -> Generator[sqlite3.Connection]:
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -1794,8 +1794,8 @@ def _commit_unit_from_row(row: Mapping[str, Any]) -> CommitUnit:
             kind=CommitUnitKind(row["unit_kind"]),
             source_digest=row["source_digest"],
             segment_ordinal=row["segment_ordinal"],
-            is_file_end=bool(row["is_file_end"]),
-            point_ids=tuple(point_ids),
+            is_file_end=bool(cast(int, row["is_file_end"])),
+            point_ids=tuple(cast("list[str]", point_ids)),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise RunLedgerCorruptionError("stored commit unit is malformed") from exc
