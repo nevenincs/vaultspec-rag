@@ -1,4 +1,13 @@
-"""Performance and resource-usage tests for the RAG pipeline."""
+"""Performance and resource-usage tests for the RAG pipeline.
+
+Quiet-machine-only benchmark lane. Unlike the rest of the integration family,
+these tests' wall-clock latency and footprint assertions ARE the system under
+test - they are not rewritten to outcome/invariant form, because the number is
+the point. A loaded machine can therefore fail them for reasons unrelated to a
+regression, so they carry ONLY the ``performance`` marker (not ``integration``)
+and must be run as their own explicit lane (``just dev test perf``), never
+bundled into the correctness gate. Do not add ``pytest.mark.integration`` here.
+"""
 
 from __future__ import annotations
 
@@ -19,7 +28,7 @@ if TYPE_CHECKING:
     from ...store import VaultStore
     from ..conftest import RagComponentsWithManifest
 
-pytestmark = [pytest.mark.integration, pytest.mark.performance]
+pytestmark = [pytest.mark.performance]
 
 
 # ---- Performance Tests ----
