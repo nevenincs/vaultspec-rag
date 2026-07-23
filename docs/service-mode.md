@@ -162,7 +162,7 @@ The running service exposes read-only HTTP routes on loopback for monitoring:
 
 Token-gated routes need the service token as a bearer: `Authorization: Bearer <service_token>`. The token is in the status file at `~/.vaultspec-rag/service.json` and is also returned by `/health`.
 
-The token plus loopback binding is a monitoring gate, not an authentication boundary. Keep the service loopback-bound. For the MCP surface mounted on the same service, see the [MCP guide](mcp.md).
+The token plus loopback binding is a monitoring gate, not an authentication boundary. Keep the service loopback-bound. The MCP server is a **separate** stdio process, not mounted on this HTTP service - it delegates to these same REST routes over loopback. See the [MCP guide](mcp.md).
 
 ## Manage the managed Qdrant server
 
@@ -174,13 +174,15 @@ Once running, the service maintains its own storage: an hourly maintenance cycle
 
 ## Stop the service
 
-To stop the service gracefully, run:
+To stop the service, run:
 
 ```
 uv run vaultspec-rag server stop
 ```
 
-Shutdown removes the status file and stops the Qdrant child last, so the vector store stays reachable until the service itself is down. `server stop --json` emits one outcome envelope per exit path for scripting (see the [CLI reference](cli.md#server-stop)), and every termination writes a shutdown audit line naming the initiating process, so "who stopped the service" is always answerable from the log.
+How the stop reaches the daemon depends on the platform. On **Unix**, `server stop` delivers `SIGTERM`, which drives the daemon's own graceful lifespan shutdown: it removes the status file and stops the Qdrant child last, so the vector store stays reachable until the service itself is down (the stop escalates to `SIGKILL` if the drain window expires). On **Windows**, the daemon is spawned detached from any console, so a separate stop process cannot deliver a `CTRL_BREAK` to it; the stop degrades to a bounded `TerminateProcess` force-kill. The daemon runs none of its own teardown, so the CLI itself reaps the daemon's managed Qdrant child and clears its discovery pointer. That force-kill is abrupt but safe - the vector store recovers from an abrupt stop - though it is not a graceful in-daemon shutdown.
+
+`server stop --json` emits one outcome envelope per exit path for scripting (see the [CLI reference](cli.md#server-stop)), and every termination writes a shutdown audit line naming the initiating process, so "who stopped the service" is always answerable from the log. On Windows the CLI writes that mirror line itself, since the force-killed daemon never runs its own shutdown record.
 
 ## Troubleshooting
 
