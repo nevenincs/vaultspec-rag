@@ -90,7 +90,7 @@ class PreprocessCacheIdentity:
             raise ValueError("source_path must be normalized and project-relative")
         if not self.source_hash or not self.execution_fingerprint:
             raise ValueError("cache hashes and fingerprints must be non-empty")
-        if not isinstance(self.path_independent, bool):
+        if not isinstance(self.path_independent, bool):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
             raise TypeError("path_independent must be a bool")
 
     @classmethod
