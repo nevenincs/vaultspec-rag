@@ -787,3 +787,50 @@ class TestServerModeNamespacing:
             else:
                 os.environ[EnvVar.QDRANT_URL.value] = prev
             reset_config()
+
+
+class TestStoreBoundedForceClose:
+    """Shutdown teardown bounds the collection-lock wait and force-closes."""
+
+    def test_force_close_completes_when_a_collection_lock_is_wedged(
+        self, tmp_path: Path
+    ) -> None:
+        """A held collection lock must not block a bounded shutdown close.
+
+        This is the store half of the daemon shutdown/rollback hang: at
+        shutdown ``close_all`` force-closes busy stores, and the ordinary
+        ``close`` blocks forever acquiring a collection lock a wedged consumer
+        still holds. ``force_after_seconds`` bounds that wait and closes the
+        client anyway so the daemon can complete a bounded shutdown.
+        """
+        from ..store import VaultStore
+
+        store = VaultStore(tmp_path)
+        held = threading.Event()
+        release = threading.Event()
+        lock_name = store.CODE_TABLE_NAME
+        lock = store._collection_locks[lock_name]  # pyright: ignore[reportPrivateUsage]
+
+        def wedged_consumer() -> None:
+            # A different thread holds the collection lock and does not release
+            # it within the bound - the wedged-upsert scenario.
+            lock.acquire()
+            held.set()
+            release.wait(timeout=15.0)
+            lock.release()
+
+        worker = threading.Thread(target=wedged_consumer)
+        worker.start()
+        try:
+            assert held.wait(timeout=5.0), "consumer never took the collection lock"
+            started = time.monotonic()
+            store.close(force_after_seconds=1.0)
+            elapsed = time.monotonic() - started
+            # Bounded: it waited ~1s for the wedged lock, then force-closed.
+            assert elapsed < 5.0, f"force close blocked for {elapsed:.1f}s"
+            assert elapsed >= 1.0, "force close should honour its acquire bound"
+            # The client is actually released - no leaked handle.
+            assert store._client is None  # pyright: ignore[reportPrivateUsage]
+        finally:
+            release.set()
+            worker.join(timeout=5.0)
