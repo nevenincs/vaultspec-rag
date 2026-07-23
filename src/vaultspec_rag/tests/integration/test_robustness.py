@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-pytestmark = [pytest.mark.robustness]
+pytestmark = [pytest.mark.integration, pytest.mark.robustness]
 
 if TYPE_CHECKING:
     from pathlib import Path

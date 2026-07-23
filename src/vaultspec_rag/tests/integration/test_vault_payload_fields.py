@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from ... import VaultSearcher
     from ..conftest import RagComponentsWithManifest
 
-pytestmark = [pytest.mark.quality]
+pytestmark = [pytest.mark.integration, pytest.mark.quality]
 
 
 def _searcher(components: RagComponentsWithManifest) -> VaultSearcher:

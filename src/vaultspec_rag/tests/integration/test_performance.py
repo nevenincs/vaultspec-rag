@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from ...store import VaultStore
     from ..conftest import RagComponentsWithManifest
 
-pytestmark = [pytest.mark.performance]
+pytestmark = [pytest.mark.integration, pytest.mark.performance]
 
 
 # ---- Performance Tests ----
