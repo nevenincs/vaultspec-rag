@@ -250,7 +250,12 @@ def test_worker_process_creation_is_inside_whole_operation_deadline() -> None:
         token,
     ]
     started = time.monotonic()
-    with pytest.raises(RuntimeError, match="during process creation"):
+    # Assert the whole-operation-deadline invariant, not the specific branch:
+    # whether the deadline trips during process creation or during the worker
+    # wait depends on how fast Popen returns relative to the sub-deadline, so
+    # both messages are legitimate and share the "whole-operation deadline"
+    # phrasing. Binding to one branch would flake on the Popen-timing race.
+    with pytest.raises(RuntimeError, match="whole-operation deadline"):
         run_bounded_process(
             command,
             timeout_seconds=0.001,
