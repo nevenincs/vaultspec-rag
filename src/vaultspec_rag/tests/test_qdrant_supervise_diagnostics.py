@@ -375,6 +375,59 @@ class TestNonReadyChildDiagnosis:
         assert not sup.is_alive()
 
 
+class TestChildRunsInManagedDirectory:
+    """The spawned child's working directory is the managed qdrant dir.
+
+    The qdrant binary writes runtime markers (``.qdrant-initialized``) into
+    its working directory. Without an explicit spawn cwd the child inherits
+    whatever directory the service was started from, littering per-folder
+    markers that conflict across versions and start locations. The witness
+    child below writes its own cwd to a file, so this test catches removal
+    of the ``cwd=`` pin on either platform's ``Popen`` call.
+    """
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_spawned_child_cwd_is_storage_parent_not_start_dir(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        start_dir = tmp_path / "service-start-dir"
+        start_dir.mkdir()
+        storage_dir = tmp_path / "managed" / "qdrant-server" / "storage"
+
+        if sys.platform == "win32":
+            witness = tmp_path / "witness.bat"
+            witness.write_text("@echo off\r\ncd > cwd-witness.txt\r\n")
+        else:
+            witness = tmp_path / "witness.sh"
+            witness.write_text("#!/bin/sh\npwd > cwd-witness.txt\n")
+            witness.chmod(0o700)
+
+        sup = QdrantSupervisor(
+            witness,
+            http_port=59981,
+            storage_dir=storage_dir,
+            log_path=tmp_path / "qdrant.log",
+        )
+        monkeypatch.chdir(start_dir)
+        try:
+            sup.spawn()
+            deadline = time.monotonic() + 10.0
+            marker = storage_dir.parent / "cwd-witness.txt"
+            while time.monotonic() < deadline and not marker.is_file():
+                time.sleep(0.05)
+        finally:
+            assert sup.stop()
+
+        stray = start_dir / "cwd-witness.txt"
+        assert not stray.exists(), "child ran in the service start dir"
+        assert marker.is_file(), "child did not run in the managed qdrant dir"
+        recorded = Path(marker.read_text().strip())
+        assert recorded == storage_dir.parent
+
+
 class TestOrphanReapIsDeadlineBounded:
     """The pre-spawn orphan reap bounds its witness inspections as one budget.
 

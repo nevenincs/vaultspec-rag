@@ -467,6 +467,10 @@ class QdrantSupervisor:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 env=self._child_env(),
+                # Pin the child's working directory to the managed qdrant dir:
+                # the binary writes runtime markers (.qdrant-initialized) into
+                # its cwd, which must never be the service's start directory.
+                cwd=str(self.storage_dir.parent),
                 text=False,
                 bufsize=0,
                 creationflags=(_WIN_CREATE_NEW_PROCESS_GROUP | _WIN_CREATE_NO_WINDOW),
@@ -482,6 +486,8 @@ class QdrantSupervisor:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 env=self._child_env(),
+                # Same managed-cwd pin as the Windows branch above.
+                cwd=str(self.storage_dir.parent),
                 text=False,
                 bufsize=0,
                 start_new_session=True,
