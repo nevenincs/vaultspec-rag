@@ -32,3 +32,5 @@ Local mode is excluded by design: the embedded engine has no socket to refuse, s
 ## Notes
 
 The first mechanical rewrite of the `collection_exists` call sites also rewrote the body of `_collection_exists` itself, creating unbounded recursion; caught immediately and corrected so the helper calls the client directly.
+
+Code review raised two follow-ups here, both applied. The process-global warning suppression around payload-index creation was wrapping the whole retry, so it spanned backoff sleeps; since it mutates global filter state and is not thread-safe, it was moved inside a single attempt. And review confirmed the lock analysis: the retry acquires nothing and calls back into nothing, so there is no deadlock or lock-ordering violation, and because point locks are a null context in server mode every wrapped read and delete retries with no collection lock held. The lifecycle lock is the one genuine exposure, which the new per-operation wall-clock ceiling bounds.

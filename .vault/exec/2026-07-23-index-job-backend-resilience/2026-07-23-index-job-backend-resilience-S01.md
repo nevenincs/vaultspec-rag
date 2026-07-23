@@ -29,3 +29,5 @@ One bounded-retry entry point now serves every store operation. Behaviour is unc
 ## Notes
 
 The module filename and the `StoreWritePolicy` value object keep their existing names; renaming them would have churned many unrelated importers for no behavioural gain.
+
+Code review found that attempt count alone is not a ceiling. Each attempt was bounded only by the client-level timeout, so an operation against a backend that accepts the connection and then stalls cost the full timeout once per attempt - the retry multiplied the worst case rather than capping it, and the ensure path runs about a dozen such operations while holding the lifecycle lock. The helper gained an optional total wall-clock ceiling: it clamps each attempt's admitted timeout to the remaining budget and, on failure, ends the operation on the original exception once the budget is spent rather than raising a liveness outcome, since an unmanaged read that spent its own allowance has not stalled a managed run. The store passes the single-attempt timeout as that ceiling, keeping the retried worst case at parity with the pre-change one.

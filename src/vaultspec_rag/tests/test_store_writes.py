@@ -9,6 +9,7 @@ loud, classified job failure.
 from __future__ import annotations
 
 import errno
+import logging
 import os
 import socket
 import time
@@ -202,6 +203,92 @@ class TestRealConnectionRefusedIsRetried:
         assert len(calls) == 3
         assert len(refusals) == 2
         assert all(isinstance(exc, ConnectionRefusedError) for exc in refusals)
+
+
+@contextmanager
+def _server_mode_against(port: int, tmp_path: Path) -> Generator[None]:
+    """Point a server-mode store at *port* with isolated managed paths.
+
+    The identity sidecar and the machine-scoped service lock both derive
+    from the qdrant storage dir, so it is relocated under the temp path;
+    without that a test would reach the real machine-global managed dir.
+    """
+    values = {
+        EnvVar.QDRANT_URL.value: f"http://127.0.0.1:{port}",
+        EnvVar.QDRANT_STORAGE_DIR.value: str(tmp_path / "qdrant-server" / "storage"),
+        EnvVar.STATUS_DIR.value: str(tmp_path / "status"),
+    }
+    previous = {key: os.environ.get(key) for key in values}
+    try:
+        os.environ.update(values)
+        reset_config()
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        reset_config()
+
+
+class TestStoreCallSitesRouteThroughTheRetry:
+    """The store's own operations must go through the bounded retry.
+
+    This binds to the CALL SITE, not to the retry helper: it drives a real
+    ``VaultStore`` in server mode against a port with nothing listening, so
+    the failure is a real refused connection from the real client.
+
+    The assertion is on the retry's own per-attempt log records, which only
+    the bounded retry emits. Elapsed time is deliberately NOT the signal:
+    the qdrant client does its own connection and version-check work
+    against a refused endpoint, and that alone exceeds any short backoff,
+    so a timing threshold passes whether or not the call site retries -
+    verified, it did. Reverting ``_collection_exists`` to
+    ``self.client.collection_exists`` emits zero such records and fails.
+    """
+
+    def test_collection_exists_routes_through_the_bounded_retry(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from ..store import VaultStore
+
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = int(probe.getsockname()[1])
+
+        with (
+            _server_mode_against(port, tmp_path),
+            _retry_policy(
+                attempts=3,
+                operation_timeout=5.0,
+                base_delay=0.01,
+                max_delay=0.01,
+            ),
+        ):
+            store = VaultStore(tmp_path)
+            assert store._server_mode
+            raised: BaseException | None = None
+            with caplog.at_level(logging.WARNING, logger="vaultspec_rag._store_writes"):
+                try:
+                    store._collection_exists("any_collection")
+                except BaseException as exc:
+                    raised = exc
+
+        assert raised is not None
+        # Three attempts emit exactly two "retrying" records, each naming
+        # this operation. A call site bypassing the retry emits none.
+        retry_records = [
+            record.getMessage()
+            for record in caplog.records
+            if "transient store operation failure" in record.getMessage()
+        ]
+        assert len(retry_records) == 2, (
+            f"call site did not route through the retry; records={retry_records}"
+        )
+        assert all("collection exists" in message for message in retry_records)
 
 
 class TestClassifyWriteError:

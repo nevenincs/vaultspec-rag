@@ -215,6 +215,11 @@ class _VaultSearchMixin:
         try:
             self.ensure_table()
             with self._point_lock(self.TABLE_NAME):
+                # Interactive search reads deliberately stay single-shot
+                # rather than routing through the store's bounded retry:
+                # a user-facing query should fail fast and fall back, not
+                # spend seconds of backoff waiting for a backend to return.
+                # Background index operations make the opposite trade.
                 records = self.client.retrieve(
                     collection_name=self.TABLE_NAME,
                     ids=[head_id, bare_id],
