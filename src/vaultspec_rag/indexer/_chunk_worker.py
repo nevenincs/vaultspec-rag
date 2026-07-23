@@ -882,7 +882,11 @@ def chunk_file_with_status(
         except _SourceLimitExceededError as exc:
             return ScopedChunkResult([], "skipped", str(exc))
         assert raw is not None
-    content = _decode_source(raw, path, execution_policy)
+    # ``raw`` is bound on every reaching path: ``rule is not None`` implies
+    # ``prep is not None`` (a rule only matches when prep exists), so that path
+    # always enters the block above that binds ``raw``; the ``rule is None`` path
+    # binds it in the else. basedpyright cannot track that rule/prep coupling.
+    content = _decode_source(raw, path, execution_policy)  # pyright: ignore[reportPossiblyUnboundVariable]
     if content is None:
         return ScopedChunkResult([])
     chunks = _chunk_decoded(content, path, root_dir, execution_policy.html_strip)
@@ -986,12 +990,14 @@ def chunk_and_hash_file(
                 preprocess_reason=str(exc),
             )
         assert raw is not None
+    # ``raw`` is bound on every reaching path for the same rule/prep coupling as
+    # in ``chunk_file_with_status`` above; basedpyright cannot track it.
     return _raw_file_result(
         path,
         root_dir,
         rel_path,
         content_hash,
-        raw,
+        raw,  # pyright: ignore[reportPossiblyUnboundVariable]
         execution_policy,
     )
 
