@@ -162,3 +162,58 @@ class TestBoundedShutdownGuard:
         finally:
             release.set()
             worker.join(timeout=5.0)
+
+
+class TestAuthoritativeRunningPublish:
+    """The RUNNING claim publishes fail-loud; WARMING stays best-effort."""
+
+    def test_running_publish_raises_when_status_lock_is_held(
+        self,
+        owner_publisher: _DiscoveryPublisher,
+    ) -> None:
+        """A held status write lock must fail the authoritative RUNNING publish.
+
+        For a machine-singleton daemon, RUNNING is the "I own the machine and
+        am serving" claim. If another process holds ``service.json.lock`` (a
+        real ownership conflict), the daemon must NOT record RUNNING and serve -
+        the publish must raise so startup rolls back. WARMING and heartbeat
+        publications stay best-effort and swallow the same contention.
+
+        Mutation proof: reverting the ``if require: raise`` in
+        ``_publish_locked`` makes the RUNNING publish swallow the timeout and
+        return normally, so ``pytest.raises`` fails - the test binds to the
+        fail-loud behaviour, not merely to the call.
+        """
+        import threading
+
+        from ..serviceclient._discovery import _status_write_lock
+
+        status_path = server_state._status_file_path()
+        # Publish once so the status directory and lock file exist before the
+        # holder takes the lock (mirrors a daemon that reached WARMING first).
+        owner_publisher.publish_phase("warming")
+        held = threading.Event()
+        release = threading.Event()
+
+        def hold_status_lock() -> None:
+            # A different process/owner holds the status write lock throughout.
+            with _status_write_lock(status_path, timeout=30.0):
+                held.set()
+                release.wait(timeout=15.0)
+
+        holder = threading.Thread(target=hold_status_lock)
+        holder.start()
+        try:
+            assert held.wait(timeout=5.0), "holder never took the status lock"
+            # Authoritative RUNNING publish must FAIL LOUD under contention, and
+            # specifically as a contention-yield (another owner holds the lock)
+            # so the rollback records a completed shutdown rather than unclean.
+            from ..server._lifecycle import RunningClaimContendedError
+
+            with pytest.raises(RunningClaimContendedError):
+                owner_publisher.publish_phase("running", require=True)
+            # Best-effort WARMING publish must NOT raise on the same contention.
+            owner_publisher.publish_phase("warming")
+        finally:
+            release.set()
+            holder.join(timeout=5.0)
