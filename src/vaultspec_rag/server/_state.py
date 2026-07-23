@@ -206,6 +206,8 @@ _counters: dict[str, int] = {
     "reindex_total": 0,
     "maintenance_cycles_total": 0,
     "maintenance_reclaims_total": 0,
+    "maintenance_reconciled_total": 0,
+    "maintenance_reconciled_bytes_total": 0,
 }
 
 # Last-observed operation durations (seconds), as point-in-time gauges.
@@ -219,6 +221,7 @@ _gauges: dict[str, float] = {
     "maintenance_pending_grace": 0.0,
     "maintenance_orphaned_namespaces": 0.0,
     "maintenance_last_reclaimed_bytes": 0.0,
+    "store_drifted_collections": 0.0,
 }
 
 
