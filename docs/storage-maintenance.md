@@ -94,7 +94,7 @@ uv run vaultspec-rag server storage reconcile --yes
 ```
 
 ```
-Reconciled 6 collections (23.4GB reclaimed); 0 still drifted.
+Reconciled 6 collections (23.4GB reclaimed); 0 still converging.
   reconciled       r45b56789f389_vault_docs         8->1 segments, 1.0GB freed
 ```
 
@@ -188,6 +188,17 @@ disk incident.
 
 Flags and exit codes are in the [CLI reference](cli.md#server-storage-prune).
 
+## Migrate a root between backends
+
+Move one root's index between the on-disk (`local`) store and the managed (`server`) backend without re-indexing. The positional `root` is the workspace path whose index to migrate, and `--to` (`server` or `local`) is required. Preview first, then apply:
+
+```
+uv run vaultspec-rag server storage migrate C:\code\my-project --to server --dry-run
+uv run vaultspec-rag server storage migrate C:\code\my-project --to server --yes
+```
+
+`--dry-run` previews the migration without copying, `--yes` applies it, and `--json` emits a machine-readable outcome for scripts.
+
 ## Observe maintenance
 
 Every cycle is a job: `uv run vaultspec-rag server jobs` lists it as a `storage maintenance cycle` with a result summary like `removed=2 failed=0 pending=5 reclaimed_bytes=4508876800`. Every cycle also writes one structured `service.maintenance` log line with the same counts plus archive activity and free disk, and logs an explicit `disk_low` warning when the store's volume drops under 10 GB free - only a few namespaces of headroom, so treat the warning as a prompt to prune or add capacity.
@@ -211,7 +222,7 @@ The token-gated `/metrics` route exports the rollup in Prometheus text format. A
 
 `store_drifted_collections` counts both collections still carrying oversized geometry and collections whose setting is already correct but whose merge is still running - so it reaching zero genuinely means the backend has finished converging, not merely that the settings have been written. Note that `maintenance_reconciled_bytes_total` credits only merges a cycle watched to completion; a merge that outlives its convergence budget still finishes, but its bytes go uncounted.
 
-The survey (`--json` and `GET /storage/survey`) carries the same rollup as a `totals` object: whole-backend bytes, namespace count, and a per-status byte breakdown - so a pile of live-but-leaked namespaces is visible even though it never counts as dangling.
+The `GET /storage/survey` route carries a whole-backend rollup as a `totals` object: total bytes, namespace count, and a per-status byte breakdown - so a pile of live-but-leaked namespaces is visible even though it never counts as dangling. The CLI `--json` survey emits the per-namespace list (`namespaces`, `returned`, `total`, `queried_root`) without that `totals` rollup.
 
 Tuning the schedule, grace windows, cap, and archive bounds is covered by the [storage maintenance knobs](configuration.md#storage-maintenance-auto-prune).
 
