@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#test-coverage-128'
-date: '2026-06-08'
-modified: '2026-06-30'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-05-31-test-coverage-128-adr]]'
   - '[[2026-05-31-test-coverage-128-plan]]'

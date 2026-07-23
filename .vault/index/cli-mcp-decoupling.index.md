@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#cli-mcp-decoupling'
-date: '2026-06-08'
-modified: '2026-06-30'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-06-05-cli-mcp-decoupling-P01-S01]]'
   - '[[2026-06-05-cli-mcp-decoupling-P01-S02]]'
@@ -29,7 +29,7 @@ Auto-generated index of all documents tagged with `#cli-mcp-decoupling`.
 
 ### adr
 
-- `2026-06-05-cli-mcp-decoupling-adr` - `cli-mcp-decoupling` adr: `decoupled interface layers and unified backend facade` | (**status:** `accepted`)
+- `2026-06-05-cli-mcp-decoupling-adr` - `cli-mcp-decoupling` adr: `decoupled interface layers and unified backend facade` | (**status:** `superseded`)
 
 ### exec
 

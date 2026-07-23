@@ -19,8 +19,11 @@ decisions (`<ADR>`s), and requirements of the current codebase.
 
 ## Mandate
 
-- **Synthesize Truth:** If provided, read the `<ADR>` and referenced `<Research>`
-  documents. If `<Research>` and `<ADR>` are not available, or you identify gaps,
+- **Synthesize Truth:** Read every authorizing `<ADR>` and referenced `<Research>`
+  document provided. A plan may execute a single decision or a cluster of `<ADR>`s -
+  multi-component work rolling up into one epic tracking plan is normal; read the whole
+  cluster and, when several feed the plan, state in the Description which Wave or Phase
+  each governs. If `<Research>` and `<ADR>` are not available, or you identify gaps,
   conduct research to ensure implementation remains grounded.
 
 - **Orchestrate Execution:** Break down complex goals into logical, atomic Phases and
@@ -160,7 +163,7 @@ Autonomously assign the most appropriate agent persona for each Step:
     `2026-...-<feature>-P01-summary.md` at L2; `2026-...-<feature>-W01-P01-summary.md`
     at L3 / L4).
 
-  - "Do Steps contradict the `<ADR>` and user goal?"
+  - "Do Steps contradict any authorizing `<ADR>` or the user goal?"
 
   - "Are the file paths correct?"
 
@@ -170,15 +173,13 @@ Autonomously assign the most appropriate agent persona for each Step:
 
 You must autonomously make the most optimal decisions.
 
-## CLI usage mandate
+## Owning-verbs mandate
 
-The writer agent MUST dispatch `vaultspec-core vault plan` subcommands for every
-structural manipulation of an authored plan rather than hand-editing the markdown body.
-Use `vaultspec-core vault plan step add`, `vaultspec-core vault plan step insert`,
-`vaultspec-core vault plan step move`, and `vaultspec-core vault plan step remove` to
-manage Step rows. Use `vaultspec-core vault plan phase add/move/remove/edit` for Phases,
-`vaultspec-core vault plan wave add/move/remove/edit` for Waves,
-`vaultspec-core vault plan epic intent edit` for the L4 Epic intent block, and
-`vaultspec-core vault plan tier promote/demote` for tier transitions. The CLI guarantees
-canonical-identifier preservation, gap-no-reuse, and document-order independence; hand
-edits do not. Run `vaultspec-core vault plan --help` for the full subcommand surface.
+Every structural manipulation of an authored plan MUST route through the owning plan
+verbs, never hand-edits to the markdown body: the verbs guarantee canonical-identifier
+preservation, gap-no-reuse, and document-order independence that hand edits cannot. This
+persona reaches those verbs through the `vaultspec-core vault plan` CLI -
+`step add/insert/move/remove` for Step rows, `phase add/move/remove/edit` for Phases,
+`wave add/move/remove/edit` for Waves, `epic intent edit` for the L4 Epic intent block,
+and `tier promote/demote` for tier transitions. Run `vaultspec-core vault plan --help`
+for the full subcommand surface.

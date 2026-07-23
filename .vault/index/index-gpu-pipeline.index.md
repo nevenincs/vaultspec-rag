@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#index-gpu-pipeline'
-date: '2026-06-08'
-modified: '2026-06-30'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-06-02-index-gpu-pipeline-P01-S01]]'
   - '[[2026-06-02-index-gpu-pipeline-P01-S02]]'

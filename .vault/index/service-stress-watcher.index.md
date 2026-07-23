@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#service-stress-watcher'
-date: '2026-06-08'
-modified: '2026-06-30'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-06-05-service-stress-watcher-W01-P01-S01]]'
   - '[[2026-06-05-service-stress-watcher-W01-P01-S02]]'

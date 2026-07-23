@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#sparse-search-latency'
-date: '2026-06-09'
-modified: '2026-06-30'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-06-07-sparse-search-latency-adr]]'
   - '[[2026-06-07-sparse-search-latency-research]]'
@@ -45,7 +45,7 @@ Auto-generated index of all documents tagged with `#sparse-search-latency`.
 
 ### adr
 
-- `2026-06-07-sparse-search-latency-adr` - `sparse-search-latency` adr: `Scaling Bottlenecks` | (**status:** `approved`)
+- `2026-06-07-sparse-search-latency-adr` - `sparse-search-latency` adr: `Scaling Bottlenecks` | (**status:** `accepted`)
 
 ### audit
 

@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#preprocess-sandbox-removal'
-date: '2026-07-14'
-modified: '2026-07-21'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-07-14-preprocess-sandbox-removal-P01-S01]]'
   - '[[2026-07-14-preprocess-sandbox-removal-P01-S02]]'
@@ -28,6 +28,7 @@ related:
   - '[[2026-07-14-preprocess-sandbox-removal-P03-S18]]'
   - '[[2026-07-14-preprocess-sandbox-removal-P03-S19]]'
   - '[[2026-07-14-preprocess-sandbox-removal-P03-S20]]'
+  - '[[2026-07-14-preprocess-sandbox-removal-P03-S21]]'
   - '[[2026-07-14-preprocess-sandbox-removal-P03-summary]]'
   - '[[2026-07-14-preprocess-sandbox-removal-adr]]'
   - '[[2026-07-14-preprocess-sandbox-removal-plan]]'
@@ -67,6 +68,7 @@ Auto-generated index of all documents tagged with `#preprocess-sandbox-removal`.
 - `2026-07-14-preprocess-sandbox-removal-P03-S18` - Update operator docs to the trust-based framing that preprocess config is code execution with operator privileges, removing sandbox/unsandboxed knob references
 - `2026-07-14-preprocess-sandbox-removal-P03-S19` - Sweep remaining sandbox mentions from README, cli, and configuration docs
 - `2026-07-14-preprocess-sandbox-removal-P03-S20` - Run the full unit suite, lints (ruff, ty, basedpyright), and an end-to-end preprocess index benchmark on a rule-matched corpus to confirm the per-file cost returns to the process-spawn baseline
+- `2026-07-14-preprocess-sandbox-removal-P03-S21` - Amend the hook child cwd from a scratch dir to the project root so project-launcher commands (uv run) resolve, per the client validation failure
 - `2026-07-14-preprocess-sandbox-removal-P03-summary` - `preprocess-sandbox-removal` `P03` summary
 
 ### plan

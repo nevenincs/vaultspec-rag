@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#service-graph'
-date: '2026-06-08'
-modified: '2026-06-30'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-02-service-graph-code-review-audit]]'

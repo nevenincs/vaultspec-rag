@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#service-doctor-liveness'
-date: '2026-06-24'
-modified: '2026-06-24'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-06-24-service-doctor-liveness-W01-P01-S01]]'
   - '[[2026-06-24-service-doctor-liveness-W01-P01-S02]]'

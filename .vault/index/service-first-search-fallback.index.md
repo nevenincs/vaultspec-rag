@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#service-first-search-fallback'
-date: '2026-06-21'
-modified: '2026-06-21'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-06-21-service-first-search-fallback-S01]]'
   - '[[2026-06-21-service-first-search-fallback-S02]]'

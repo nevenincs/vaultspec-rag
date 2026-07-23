@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#large-index-resilience'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-23'
 related:
   - "[[2026-07-21-large-index-resilience-reference]]"
   - "[[2026-06-02-index-gpu-pipeline-adr]]"

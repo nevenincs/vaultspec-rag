@@ -23,7 +23,7 @@ jobs:
     name: Build
     # Artifact builds run on the shared self-hosted fleet (hosted
     # multiplatform runners are cost-prohibitive); lint/test CI stays hosted.
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
@@ -50,7 +50,7 @@ jobs:
   smoke-test:
     name: Smoke Test
     needs: build
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
@@ -80,7 +80,7 @@ jobs:
     needs: smoke-test
     # OIDC trusted publishing works from self-hosted runners: the id-token
     # comes from GitHub's OIDC provider, not from the runner host.
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     environment:
       name: pypi
     permissions:
@@ -104,7 +104,7 @@ jobs:
     needs: smoke-test
     # gh and sha256sum are both available on the self-hosted WSL runner;
     # keep artifact jobs on the fleet alongside build/smoke-test/publish-pypi.
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:

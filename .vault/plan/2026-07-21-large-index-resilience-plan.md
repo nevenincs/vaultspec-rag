@@ -14,16 +14,6 @@ related:
   - '[[2026-07-21-index-backpressure-storage-hygiene-plan]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 <!-- RETIRED: S04 -->
 
 # `large-index-resilience` plan
@@ -75,7 +65,8 @@ Remove whole-corpus and device-retention amplifiers across full and both increme
 - [x] `W01.P02.S53` - Decide and enforce whether a repeatedly failing generation retires instead of remaining resumable indefinitely; `src/vaultspec_rag/indexer/_run_ledger.py`.
 - [x] `W01.P02.S54` - Treat a source file that reads as empty mid-save as a re-queued path rather than a job-level failure; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [x] `W01.P02.S55` - Cover the cascade end to end: fail an incremental attempt, edit a file it had already indexed, and assert the next attempt succeeds; `src/vaultspec_rag/tests/integration/test_index_job_control.py`.
-- [ ] `W01.P02.S11` - Verify sparse CPU retention and bounded slice cleanup on real CUDA; `src/vaultspec_rag/tests/integration/test_embeddings.py`.
+- [x] `W01.P02.S59` - Reconcile the rollback-then-retry test with the checkpoint-resume contract so it asserts the retry converges rather than that a failed attempt leaves an empty store; `src/vaultspec_rag/tests/integration/test_codebase_integration.py`.
+- [x] `W01.P02.S11` - Verify sparse CPU retention and bounded slice cleanup on real CUDA; `src/vaultspec_rag/tests/integration/test_embeddings.py`.
 
 ### Phase `W01.P03` - workflow retry and no-progress policy
 
@@ -92,8 +83,8 @@ Add a durable-progress deadline and persistent watcher circuit above existing op
 
 Prove low ceilings, bounded queue shutdown, and circuit behavior through production paths before checkpoint integration.
 
-- [ ] `W01.P04.S18` - Verify low RSS and CUDA ceilings stop production with typed outcomes and bounded cleanup; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
-- [ ] `W01.P04.S19` - Verify a blocked store consumer cannot trap producer queue waits or hold the writer lock beyond the deadline; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
+- [x] `W01.P04.S18` - Verify low RSS and CUDA ceilings stop production with typed outcomes and bounded cleanup; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
+- [x] `W01.P04.S19` - Verify a blocked store consumer cannot trap producer queue waits or hold the writer lock beyond the deadline; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
 
 ## Wave `W02` - durable checkpoint and recovery
 
@@ -139,11 +130,11 @@ Expose checkpoint and safety state through the service domain and coordinate the
 
 Publish generation, checkpoint, retry, circuit, memory, profile, and terminal state once for every adapter.
 
-- [ ] `W03.P09.S32` - Record generation, commit, replay, memory, deadline, circuit, profile, and terminal fields in canonical job snapshots; `src/vaultspec_rag/jobs.py`.
-- [ ] `W03.P09.S33` - Shape bounded job collection and detail responses from canonical resilience fields; `src/vaultspec_rag/server/_routes_jobs.py`.
-- [ ] `W03.P09.S34` - Include bounded resilience rollups in service health without loading torch on the reporting path; `src/vaultspec_rag/server/_lifespan.py`.
-- [ ] `W03.P09.S35` - Render checkpoint, retry, circuit, memory, profile, and remediation fields without recomputing policy; `src/vaultspec_rag/cli/_service_jobs.py`.
-- [ ] `W03.P09.S36` - Verify jobs, health, and CLI surfaces expose identical resilience state and typed outcomes; `src/vaultspec_rag/tests/integration/test_service_jobs.py`.
+- [x] `W03.P09.S32` - Record generation, commit, replay, memory, deadline, circuit, profile, and terminal fields in canonical job snapshots; `src/vaultspec_rag/jobs.py`.
+- [x] `W03.P09.S33` - Shape bounded job collection and detail responses from canonical resilience fields; `src/vaultspec_rag/server/_routes_jobs.py`.
+- [x] `W03.P09.S34` - Include bounded resilience rollups in service health without loading torch on the reporting path; `src/vaultspec_rag/server/_lifespan.py`.
+- [x] `W03.P09.S35` - Render checkpoint, retry, circuit, memory, profile, and remediation fields without recomputing policy; `src/vaultspec_rag/cli/_service_jobs.py`.
+- [x] `W03.P09.S36` - Verify jobs, health, and CLI surfaces expose identical resilience state and typed outcomes; `src/vaultspec_rag/tests/integration/test_service_jobs.py`.
 
 ### Phase `W03.P10` - job-control plan coordination
 
@@ -156,7 +147,7 @@ Bind the accepted job-control execution waves to ledger safe points without dupl
 
 Prove jobs, health, status, and logs expose the same resilience state and remediation.
 
-- [ ] `W03.P11.S39` - Verify controlled, interrupted, memory-limited, timed-out, and circuit-open jobs converge on one operator snapshot; `src/vaultspec_rag/tests/integration/test_service_jobs.py`.
+- [x] `W03.P11.S39` - Verify controlled, interrupted, memory-limited, timed-out, and circuit-open jobs converge on one operator snapshot; `src/vaultspec_rag/tests/integration/test_service_jobs.py`.
 
 ## Wave `W04` - support profiles and corpus acceptance
 
@@ -175,9 +166,9 @@ Define managed and local profiles and distinguish host, corpus, and disk refusal
 
 Measure bounded growth, concurrent search headroom, and completion at the incident corpus floor.
 
-- [ ] `W04.P13.S44` - Create a reproducible large-index resilience harness using the production index path and real backends; `src/vaultspec_rag/tests/benchmarks/bench_large_index_resilience.py`.
-- [ ] `W04.P13.S45` - Compare real-CUDA RSS and allocated and reserved high-water marks at N and two-N corpus sizes; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
-- [ ] `W04.P13.S46` - Prove concurrent search retains reserved GPU headroom while bounded indexing progresses; `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`.
+- [x] `W04.P13.S44` - Create a reproducible large-index resilience harness using the production index path and real backends; `src/vaultspec_rag/tests/benchmarks/bench_large_index_resilience.py`.
+- [x] `W04.P13.S45` - Compare real-CUDA RSS and allocated and reserved high-water marks at N and two-N corpus sizes; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
+- [x] `W04.P13.S46` - Prove concurrent search retains reserved GPU headroom while bounded indexing progresses; `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`.
 - [ ] `W04.P13.S47` - Complete the 250872-chunk incident floor on the declared default managed-service profile; `src/vaultspec_rag/tests/benchmarks/bench_large_index_resilience.py`.
 
 ## Wave `W05` - system verification and review
@@ -188,15 +179,15 @@ Run the complete resilience, concurrency, restart, and operability verification 
 
 Run focused and full suites across indexing, watcher, storage, jobs, restart, and concurrency.
 
-- [ ] `W05.P14.S48` - Run focused indexer, watcher, storage-write, jobs, profile, restart, and GPU integration suites; `src/vaultspec_rag/tests`.
+- [x] `W05.P14.S48` - Run focused indexer, watcher, storage-write, jobs, profile, restart, and GPU integration suites; `src/vaultspec_rag/tests`.
 - [ ] `W05.P14.S49` - Run the complete project test suite without skips or expected failures; `pyproject.toml`.
-- [ ] `W05.P14.S50` - Run pre-commit lint, formatting, type, and policy checks over the completed change; `.pre-commit-config.yaml`.
+- [x] `W05.P14.S50` - Run pre-commit lint, formatting, type, and policy checks over the completed change; `.pre-commit-config.yaml`.
 
 ### Phase `W05.P15` - architecture and safety audit
 
 Review the finished system against both resilience and job-control ADRs and all GPU, storage, and test rules.
 
-- [ ] `W05.P15.S51` - Perform the mandatory code review for checkpoint correctness, bounded resources, retry liveness, GPU discipline, operability, and test integrity; `.vault/audit/2026-07-21-large-index-resilience-audit.md`.
+- [x] `W05.P15.S51` - Perform the mandatory code review for checkpoint correctness, bounded resources, retry liveness, GPU discipline, operability, and test integrity; `.vault/audit/2026-07-21-large-index-resilience-audit.md`.
 
 ## Parallelization
 

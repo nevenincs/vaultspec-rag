@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#install-cuda'
-date: '2026-06-08'
-modified: '2026-06-30'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-04-22-install-cuda-adr]]'
   - '[[2026-04-22-install-cuda-code-review-exec]]'

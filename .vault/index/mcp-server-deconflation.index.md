@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#mcp-server-deconflation'
-date: '2026-06-08'
-modified: '2026-06-30'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-06-07-mcp-server-deconflation-P01-S01]]'
   - '[[2026-06-07-mcp-server-deconflation-P01-S02]]'
@@ -31,7 +31,7 @@ Auto-generated index of all documents tagged with `#mcp-server-deconflation`.
 
 ### adr
 
-- `2026-06-07-mcp-server-deconflation-adr` - `mcp-server-deconflation` adr: `MCP and Server Deconflation` | (**status:** `accepted`)
+- `2026-06-07-mcp-server-deconflation-adr` - `mcp-server-deconflation` adr: `MCP and Server Deconflation` | (**status:** `superseded`)
 
 ### exec
 

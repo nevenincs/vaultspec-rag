@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#operability-hardening'
-date: '2026-06-09'
-modified: '2026-06-30'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-06-09-operability-hardening-W01-P01-S01]]'
   - '[[2026-06-09-operability-hardening-W01-P01-S02]]'

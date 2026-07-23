@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#machine-discovery-recovery'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-23'
 related:
   - "[[2026-07-21-machine-discovery-recovery-reference]]"
   - "[[2026-06-11-service-status-convergence-adr]]"

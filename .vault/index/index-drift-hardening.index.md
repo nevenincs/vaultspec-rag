@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#index-drift-hardening'
-date: '2026-07-13'
-modified: '2026-07-14'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-07-13-index-drift-hardening-P01-S01]]'
   - '[[2026-07-13-index-drift-hardening-P01-S02]]'

@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#mcp-launch-hygiene'
-date: '2026-07-17'
-modified: '2026-07-17'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-07-17-mcp-launch-hygiene-S01]]'
   - '[[2026-07-17-mcp-launch-hygiene-S02]]'

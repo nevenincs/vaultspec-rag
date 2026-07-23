@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#service-health-client-hardening'
 date: '2026-07-22'
-modified: '2026-07-22'
+modified: '2026-07-23'
 step_id: 'S20'
 related:
   - "[[2026-07-22-service-health-client-hardening-plan]]"

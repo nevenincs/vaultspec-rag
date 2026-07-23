@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#storage-autoprune-safety'
 date: '2026-07-13'
-modified: '2026-07-14'
+modified: '2026-07-23'
 related:
   - '[[2026-06-18-storage-lifecycle-adr]]'
   - '[[2026-07-13-control-plane-affordances-adr]]'

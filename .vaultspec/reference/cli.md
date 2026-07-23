@@ -6,6 +6,12 @@ locally-resident lookup for AI agents: command inventory, options, argument
 enumerations, exit codes, and environment variables. The human-facing prose reference is
 `docs/CLI.md` in the source repository.
 
+This reference serves two roles. It is the CLI-fallback command lookup for agents and
+sessions where the vaultspec MCP server is not connected, resolving verbs, options, and
+argument shapes from one local read. It is also the authoritative verb-existence source
+the MCP `discover` and `invoke` gateway parses: the `vaultspec:generated`
+command-inventory block below enumerates every leaf command the gateway will accept.
+
 This file is a reference document, not a rule. It is not assembled into any provider
 configuration.
 
@@ -14,8 +20,8 @@ configuration.
 | Command | Purpose | | ------------------------------------------------ |
 --------------------------------------------------- | | `vaultspec-core` | Workspace
 management, vault operations, sync. | | `vaultspec-mcp` | Console script launching the
-stdio MCP server. | | `uv run python -m vaultspec_core.mcp_server.app` | Module
-invocation of the MCP server (Windows-safe). |
+stdio MCP server. | | `uv run --no-sync python -m vaultspec_core.mcp_server.app` |
+Module invocation of the MCP server (Windows-safe, never syncs). |
 
 ## Global options
 
@@ -39,7 +45,7 @@ hand-edit between the markers.
 
 ### Top-level commands
 
-- `vaultspec-core install` - Deploy the vaultspec framework to the target directory.
+- `vaultspec-core install` - Install Vaultspec resources for the selected providers.
 - `vaultspec-core uninstall` - Remove the vaultspec framework from the target directory.
 - `vaultspec-core sync` - Sync rules, skills, agents, configs, system prompts, and MCPs.
 - `vaultspec-core doctor` - Diagnose overall workspace and vault health.
@@ -80,7 +86,7 @@ hand-edit between the markers.
 - `vaultspec-core vault check annotations` - Find generated template annotations in
   vault documents.
 - `vaultspec-core vault check markdown` - Check and optionally fix markdown hygiene
-  (trailing whitespace, blank
+  (whitespace, blank runs, newline).
 - `vaultspec-core vault check placeholders` - Find unreplaced {...} template
   placeholders in document body prose.
 - `vaultspec-core vault check dangling` - Find wiki-links in related: frontmatter that
@@ -100,6 +106,8 @@ hand-edit between the markers.
   plans must ref ADRs.
 - `vaultspec-core vault check adr-status` - Validate ADR status against the canonical
   taxonomy.
+- `vaultspec-core vault check code-boundary` - Scan source files for references to the
+  project's own vault records.
 - `vaultspec-core vault check structure` - Check vault directory structure and filename
   conventions.
 - `vaultspec-core vault check rename-integrity` - Check name/filename integrity for
@@ -252,12 +260,14 @@ hand-edit between the markers.
 
 #### Mcps
 
-- `vaultspec-core spec mcps list` - List all registered MCP server definitions.
-- `vaultspec-core spec mcps status` - Report focused MCP definition and .mcp.json sync
-  status.
-- `vaultspec-core spec mcps add` - Add a new custom MCP server definition.
-- `vaultspec-core spec mcps remove` - Remove an MCP server definition.
-- `vaultspec-core spec mcps sync` - Sync only MCP definitions to .mcp.json.
+- `vaultspec-core spec mcps list` - List canonical MCP server definitions.
+- `vaultspec-core spec mcps status` - Inspect provider-native MCP enrollment status.
+- `vaultspec-core spec mcps add` - Add or replace a canonical MCP server definition.
+- `vaultspec-core spec mcps remove` - Remove a canonical MCP server definition.
+- `vaultspec-core spec mcps sync` - Reconcile canonical definitions into provider-native
+  enrollment.
+- `vaultspec-core spec mcps uninstall` - Remove Vaultspec-owned provider-native MCP
+  enrollment.
 
 #### Reference
 
@@ -294,7 +304,10 @@ Deploy the framework into the target directory.
 ---------------------------------------- | | `--upgrade` | off | Re-sync builtins
 without re-scaffolding. | | `--dry-run` | off | Preview without writing. | | `--force` |
 off | Overwrite an existing installation. | | `--skip` | `[]` | Skip a component
-(repeatable). | | `--json` | off | Emit machine-readable output. |
+(repeatable). | | `--mode` | auto | Provisioning mode: `tool` (uvx), `dependency`
+(project venv, ships in built distributions), or `dev` (default dev group, renders like
+dependency but does not ship); auto-detected from pyproject.toml. | | `--json` | off |
+Emit machine-readable output. |
 
 ### vaultspec-core uninstall
 
@@ -342,15 +355,17 @@ Create a `.vault/` document from a template.
 | Option | Short | Default | Description | | --------------- | ----- | ------- |
 -------------------------------------------------------------------- | | `--feature TAG`
 | `-f` | None | Feature tag (kebab-case). | | `--date DATE` | - | today | Override date
-(ISO 8601). | | `--title TITLE` | - | None | Document title. | | `--related DOC` | `-r`
-| None | Related document(s). Repeatable. | | `--tags TAG` | - | None | Additional
-freeform tags. Repeatable. | | `--force` | - | off | Overwrite an existing document. | |
-`--dry-run` | - | off | Preview without writing. | | `--json` | - | off | Emit
-machine-readable output. | | `--no-hints` | - | off | Suppress next-step advisory hints.
-| | `--tier TIER` | - | `L1` | Plan tier (`L1`..`L4`). Ignored for non-plan document
-types. | | `--step ID` | - | None | Canonical ID or display path of the Step to scaffold
-(exec records). | | `--all-steps` | - | off | Scaffold execution records for all Steps
-in the parent plan. |
+(ISO 8601). | | `--title TITLE` | - | None | Document title. | | `--topic TOPIC` | - |
+None | Narrative filename infix (kebab-case) producing
+`{date}-{feature}-{topic}-{type}.md`; audit, reference, and research only. | |
+`--related DOC` | `-r` | None | Related document(s). Repeatable. | | `--tags TAG` | - |
+None | Additional freeform tags. Repeatable. | | `--force` | - | off | Overwrite an
+existing document. | | `--dry-run` | - | off | Preview without writing. | | `--json` | -
+| off | Emit machine-readable output. | | `--no-hints` | - | off | Suppress next-step
+advisory hints. | | `--tier TIER` | - | `L1` | Plan tier (`L1`..`L4`). Ignored for
+non-plan document types. | | `--step ID` | - | None | Canonical ID or display path of
+the Step to scaffold (exec records). | | `--all-steps` | - | off | Scaffold execution
+records for all Steps in the parent plan. |
 
 ### vaultspec-core status
 
@@ -542,6 +557,13 @@ Tier commands: `tier show`, `tier promote`, `tier demote`. The `promote` command
 `--phase-title`, `--phase-intent`, `--wave-title`, `--wave-intent`, `--epic-intent` for
 synthesized containers. The `demote` command takes `--force`.
 
+Trailer commands: `trailer emit` (takes exactly one of `--step` or `--feature`; prints a
+well-formed `Vaultspec-Step` or `Vaultspec-Feature` commit-linkage trailer line),
+`trailer validate MESSAGE_FILE` (reports malformed trailers in a commit-message file and
+always exits `0`, so it is safe as an opt-in `commit-msg`-stage pre-commit hook). The
+trailer convention is advisory enrichment only: absence or malformation never blocks a
+commit or fails a core command.
+
 ## Spec commands
 
 Signature: `vaultspec-core spec [OPTIONS] COMMAND [ARGS]...`. Framework resource
@@ -590,15 +612,24 @@ enabled hooks; it takes `--path PATH`. Valid events: `vault.document.created`,
 
 ### vaultspec-core spec mcps
 
-Signature: `vaultspec-core spec mcps [OPTIONS] COMMAND [ARGS]...`. Manage MCP server
-definitions and synced `.mcp.json` entries.
+Signature: `vaultspec-core spec mcps [OPTIONS] COMMAND [ARGS]...`. Manage canonical
+definitions in `.vaultspec/mcps/*.json` and reconcile them into provider-native
+enrollment. Providers are `all`, `claude`, `antigravity`, and `codex`; scopes are
+`project`, `local`, and `user`. Unsupported provider/scope combinations fail.
 
-| Subcommand | Signature | Description | | ---------- |
---------------------------------------- | ----------------------------- | | `list` | - |
-List MCP server definitions. | | `status` | `[--json]` | Validate against `.mcp.json`. |
-| `add` | `--name NAME [--config JSON] [--force]` | Add a custom MCP definition. | |
-`remove` | `NAME [--force]` | Remove an MCP definition. | | `sync` |
-`[--dry-run] [--force]` | Sync definitions to config. |
+| Subcommand  | Signature                                                                             | Description                                                         |
+| ----------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `list`      | -                                                                                     | List canonical MCP server definitions.                              |
+| `status`    | `[PROVIDER] [--scope SCOPE] [--json] [--target PATH]`                                 | Inspect configuration and ownership state; does not probe runtimes. |
+| `add`       | `--name NAME [--config JSON] [--force]`                                               | Add or replace a canonical definition.                              |
+| `remove`    | `NAME [--force]`                                                                      | Remove a canonical definition.                                      |
+| `sync`      | `[PROVIDER] [--scope SCOPE] [--dry-run] [--force] [--prune] [--json] [--target PATH]` | Reconcile canonical definitions into native enrollment.             |
+| `uninstall` | `[PROVIDER] [--scope SCOPE] [--dry-run] [--force] [--json] [--target PATH]`           | Remove only Vaultspec-owned native enrollment.                      |
+
+The default provider is `all` and the default scope is `project`. `sync --force` adopts
+or replaces a same-name external entry; `sync --prune` removes owned enrollment whose
+canonical source was deleted. `uninstall` preserves canonical definitions and external
+host entries.
 
 ## Migration commands
 
@@ -636,4 +667,6 @@ name. | | `VAULTSPEC_CLAUDE_DIR` | str | `.claude` | Claude tool directory name.
 `VAULTSPEC_IO_BUFFER_SIZE` | int | `8192` | I/O read buffer size in bytes. | |
 `VAULTSPEC_TERMINAL_OUTPUT_LIMIT` | int | `1000000` | Subprocess stdout capture limit. |
 | `VAULTSPEC_LOG_LEVEL` | str | `INFO` | Root log level for the CLI. | |
-`VAULTSPEC_EDITOR` | str | `zed -w` | Editor command for resource editing. |
+`VAULTSPEC_EDITOR` | str | `zed -w` | Editor command for resource editing. | |
+`VAULTSPEC_STDIO_WATCHDOG` | str | on | MCP server lifetime watchdog;
+`0`/`false`/`off`/`no` disables it (EOF-only exit). |

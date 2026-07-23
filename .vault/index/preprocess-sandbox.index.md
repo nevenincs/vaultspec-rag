@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#preprocess-sandbox'
-date: '2026-07-13'
-modified: '2026-07-14'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-07-13-preprocess-sandbox-P01-S01]]'
   - '[[2026-07-13-preprocess-sandbox-P01-S02]]'
@@ -39,7 +39,7 @@ Auto-generated index of all documents tagged with `#preprocess-sandbox`.
 
 ### adr
 
-- `2026-07-13-preprocess-sandbox-adr` - `preprocess-sandbox` adr: `OS-sandboxed hooks replace consent as the server boundary` | (**status:** `accepted`)
+- `2026-07-13-preprocess-sandbox-adr` - `preprocess-sandbox` adr: `OS-sandboxed hooks replace consent as the server boundary` | (**status:** `superseded`)
 
 ### audit
 

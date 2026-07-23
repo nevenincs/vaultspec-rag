@@ -66,6 +66,7 @@ related:
   - '[[2026-07-21-large-index-resilience-W04-P13-S44]]'
   - '[[2026-07-21-large-index-resilience-W04-P13-S45]]'
   - '[[2026-07-21-large-index-resilience-W04-P13-S46]]'
+  - '[[2026-07-21-large-index-resilience-W05-P14-S48]]'
   - '[[2026-07-21-large-index-resilience-adr]]'
   - '[[2026-07-21-large-index-resilience-plan]]'
   - '[[2026-07-21-large-index-resilience-reference]]'
@@ -171,6 +172,7 @@ Auto-generated index of all documents tagged with `#large-index-resilience`.
 - `2026-07-21-large-index-resilience-W04-P13-S44` - Create a reproducible large-index resilience harness using the production index path and real backends
 - `2026-07-21-large-index-resilience-W04-P13-S45` - Compare real-CUDA RSS and allocated and reserved high-water marks at N and two-N corpus sizes
 - `2026-07-21-large-index-resilience-W04-P13-S46` - Prove concurrent search retains reserved GPU headroom while bounded indexing progresses
+- `2026-07-21-large-index-resilience-W05-P14-S48` - Run focused indexer, watcher, storage-write, jobs, profile, restart, and GPU integration suites
 
 ### plan
 

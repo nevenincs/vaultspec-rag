@@ -3,15 +3,25 @@ generated: true
 tags:
   - '#index'
   - '#storage-lifecycle'
-date: '2026-06-19'
-modified: '2026-06-30'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
+  - '[[2026-06-18-storage-lifecycle-W01-P01-S01]]'
+  - '[[2026-06-18-storage-lifecycle-W01-P01-S02]]'
+  - '[[2026-06-18-storage-lifecycle-W01-P01-S03]]'
+  - '[[2026-06-18-storage-lifecycle-W01-P01-S04]]'
+  - '[[2026-06-18-storage-lifecycle-W01-P01-S05]]'
   - '[[2026-06-18-storage-lifecycle-W02-P02-S06]]'
   - '[[2026-06-18-storage-lifecycle-W02-P02-S07]]'
   - '[[2026-06-18-storage-lifecycle-W02-P02-S08]]'
+  - '[[2026-06-18-storage-lifecycle-W02-P02-S09]]'
+  - '[[2026-06-18-storage-lifecycle-W02-P02-S10]]'
   - '[[2026-06-18-storage-lifecycle-W02-P03-S11]]'
   - '[[2026-06-18-storage-lifecycle-W02-P03-S12]]'
+  - '[[2026-06-18-storage-lifecycle-W02-P03-S13]]'
   - '[[2026-06-18-storage-lifecycle-W02-P03-S14]]'
+  - '[[2026-06-18-storage-lifecycle-W02-P03-S15]]'
+  - '[[2026-06-18-storage-lifecycle-W02-P03-S18]]'
   - '[[2026-06-18-storage-lifecycle-W02-P03-S19]]'
   - '[[2026-06-18-storage-lifecycle-W03-P04-S20]]'
   - '[[2026-06-18-storage-lifecycle-W03-P04-S21]]'
@@ -24,10 +34,13 @@ related:
   - '[[2026-06-18-storage-lifecycle-W04-P06-S32]]'
   - '[[2026-06-18-storage-lifecycle-W04-P06-S33]]'
   - '[[2026-06-18-storage-lifecycle-W04-P06-S34]]'
+  - '[[2026-06-18-storage-lifecycle-W04-P06-S35]]'
+  - '[[2026-06-18-storage-lifecycle-W04-P06-S36]]'
   - '[[2026-06-18-storage-lifecycle-W04-P06-S37]]'
   - '[[2026-06-18-storage-lifecycle-W05-P07-S38]]'
   - '[[2026-06-18-storage-lifecycle-W05-P08-S39]]'
   - '[[2026-06-18-storage-lifecycle-W05-P08-S42]]'
+  - '[[2026-06-18-storage-lifecycle-W05-P08-S44]]'
   - '[[2026-06-18-storage-lifecycle-W05-P08-S45]]'
   - '[[2026-06-18-storage-lifecycle-adr]]'
   - '[[2026-06-18-storage-lifecycle-plan]]'
@@ -75,6 +88,19 @@ Auto-generated index of all documents tagged with `#storage-lifecycle`.
 - `2026-06-18-storage-lifecycle-W05-P08-S39` - Implement a service-domain migrate that relocates and converts a root index between local and server backends using the selected tooling
 - `2026-06-18-storage-lifecycle-W05-P08-S42` - Add a storage migrate CLI command with dry-run, confirmation, and json
 - `2026-06-18-storage-lifecycle-W05-P08-S45` - Add a real-backend migrate round-trip test between local and server with an integrity check
+- `2026-06-18-storage-lifecycle-W01-P01-S01` - Add a server-mode integration test that indexes two code files, deletes one, runs a scoped incremental index, and asserts the deleted file chunks are gone from the store
+- `2026-06-18-storage-lifecycle-W01-P01-S02` - Extend the server-mode test to assert a real hybrid search no longer returns the deleted file
+- `2026-06-18-storage-lifecycle-W01-P01-S03` - Add a vault-side twin test deleting a vault document, running the scoped incremental index, and asserting document eviction and search absence in server mode
+- `2026-06-18-storage-lifecycle-W01-P01-S04` - Diagnose the reproduced server-mode leak and apply the minimal durability fix to the delete path
+- `2026-06-18-storage-lifecycle-W01-P01-S05` - Add an explicit watcher delete-carry-forward assertion covering the pending-set batching path
+- `2026-06-18-storage-lifecycle-W02-P02-S09` - Reconcile the manifest on service start and on root rename or move
+- `2026-06-18-storage-lifecycle-W02-P02-S10` - Add unit and real-backend tests for manifest write, read, and reverse-map
+- `2026-06-18-storage-lifecycle-W02-P03-S13` - Add a gated GET storage route, bounded and filterable, and register it in the route table
+- `2026-06-18-storage-lifecycle-W02-P03-S15` - Wire the storage group into the CLI app and import registration
+- `2026-06-18-storage-lifecycle-W02-P03-S18` - Add a read-only survey MCP tool delegating to the service
+- `2026-06-18-storage-lifecycle-W04-P06-S35` - Verify refcount and store-lock checks run before any drop and that no deletion touches a live server storage file
+- `2026-06-18-storage-lifecycle-W04-P06-S36` - Confirm destructive routes are loopback and token gated and that control-plane verbs are absent from MCP
+- `2026-06-18-storage-lifecycle-W05-P08-S44` - Re-key the manifest prefix, root, and backend on migrate
 
 ### plan
 

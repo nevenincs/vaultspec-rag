@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#control-plane-affordances'
-date: '2026-07-13'
-modified: '2026-07-13'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-07-13-control-plane-affordances-P01-S01]]'
   - '[[2026-07-13-control-plane-affordances-P01-S02]]'

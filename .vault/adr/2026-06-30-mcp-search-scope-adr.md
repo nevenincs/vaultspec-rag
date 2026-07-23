@@ -10,6 +10,7 @@ related:
   - "[[2026-06-30-mcp-conformance-adr]]"
   - "[[2026-06-18-mcp-service-client-adr]]"
   - "[[2026-06-07-mcp-server-deconflation-adr]]"
+  - '[[2026-07-22-mcp-search-scope-surface-reconciliation-research]]'
 ---
 
 # `mcp-search-scope` adr: `MCP search-surface scope boundary` | (**status:** `accepted`)

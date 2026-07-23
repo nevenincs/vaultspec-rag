@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#managed-log-contract'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-22'
 tier: L3
 related:
   - '[[2026-07-21-managed-log-contract-adr]]'
