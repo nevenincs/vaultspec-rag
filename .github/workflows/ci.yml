@@ -155,19 +155,19 @@ jobs:
     # GPU-less hosted runner cannot execute. This is where the real GPU tier
     # actually runs instead of being deselected.
     #
-    # SECURITY (public repo, self-hosted runner on a real workstation): fork
-    # pull requests must never execute here — arbitrary PR code on a
-    # self-hosted runner is remote code execution on the host and can
-    # exfiltrate the secrets this job needs. The guard admits only trusted
-    # events: pushes to a branch and manual dispatch (both require write
-    # access), plus same-repo (non-fork) pull requests. A fork PR carries a
-    # head repository different from the base and is refused here; it still
-    # runs every hosted tier above, with no secrets. Pair this with the repo
-    # setting "Require approval for all outside collaborators" so a fork PR
-    # cannot even start a workflow run.
-    if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+    # Dispatch-only: this tier does NOT run on push or pull_request. On a
+    # single self-hosted GPU runner shared with the live service, auto-running
+    # it on every push wedged the runner (one hung test blocks all other CI on
+    # the one machine) and the shared-GPU contention made results
+    # non-deterministic. Correctness is instead verified by isolated
+    # single-test runs; trigger a full tier run on demand with
+    # `gh workflow run CI` / the Actions "Run workflow" button.
+    #
+    # SECURITY (public repo, self-hosted runner on a real workstation): running
+    # arbitrary code here is RCE on the host. workflow_dispatch requires write
+    # access, so a fork PR can never start this job; the hosted tiers above run
+    # on every PR with no secrets.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, windows, gpu, cuda]
     permissions:
       contents: read
