@@ -125,6 +125,11 @@ _CHUNK_FUTURE_WINDOW_PER_WORKER = 2
 
 _DEFAULT_SCAN_SAMPLE_LIMIT = 100
 
+# The digest a zero-byte source hashes to. Comparing against it identifies an
+# empty read exactly, from the hash the chunk worker already returned, without
+# re-reading a file that may still be mid-write.
+_EMPTY_SOURCE_DIGEST = hashlib.blake2b(b"").hexdigest()
+
 
 @dataclass(frozen=True, slots=True)
 class AdmissionCount:
@@ -2296,12 +2301,49 @@ class CodebaseIndexer:
             return content_hash
         return None
 
+    def _record_empty_source(
+        self,
+        result: FileChunkResult,
+        checkpoint: CodeRunCheckpoint | None,
+    ) -> bool:
+        """Converge an empty source instead of failing the run over it.
+
+        A file that reads as zero bytes yields no chunks, which is not a
+        chunking defect - there was nothing to chunk. Treating it as one let a
+        single file caught mid-save abort an entire indexing job, which is how
+        one editor save became a failed generation and, through resume, a
+        sustained outage.
+
+        The rejection is stable only against the hash that evidenced it, so a
+        file caught mid-save converges against the empty hash and is classified
+        again under its real content once the save lands, while a genuinely
+        empty file keeps that hash and stays converged. Neither retries
+        forever, and neither needs the run to fail.
+
+        Returns:
+            True when the result was an empty source and has been recorded.
+        """
+        if result.chunks or result.content_hash != _EMPTY_SOURCE_DIGEST:
+            return False
+        if checkpoint is not None:
+            checkpoint.record_empty_source(
+                result.rel_path,
+                content_hash=self._checkpoint_content_hash(result.content_hash),
+            )
+        logger.debug(
+            "Converged empty source %s with no indexable content",
+            result.rel_path,
+        )
+        return True
+
     def _raise_code_result_failure(
         self,
         result: FileChunkResult,
         checkpoint: CodeRunCheckpoint | None,
     ) -> None:
         """Record and raise a typed failure for a non-indexable file result."""
+        if self._record_empty_source(result, checkpoint):
+            return
         failure = self._code_result_failure(result)
         if failure is None:
             return

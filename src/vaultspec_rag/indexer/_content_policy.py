@@ -46,6 +46,7 @@ class AdmissionReason(StrEnum):
     SOURCE_PROFILE_EXCLUDED = "source_profile_excluded"
     SOURCE_TOO_LARGE = "source_too_large"
     SOURCE_BINARY = "source_binary"
+    SOURCE_EMPTY = "source_empty"
     SOURCE_PROBE_FAILED = "source_probe_failed"
 
 

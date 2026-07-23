@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from .. import store_schema
 from ._code_meta import CODE_EMBED_SCHEMA, publish_meta_from_file_states
-from ._content_policy import ContentKind
+from ._content_policy import AdmissionDisposition, AdmissionReason, ContentKind
 from ._file_state import FileState, FileStateKind
 from ._run_ledger import (
     INDEX_RUN_LEDGER_FILENAME,
@@ -330,6 +330,26 @@ class CodeRunCheckpoint:
                 label=f"code re-open {rel_path} superseding {removed} unit(s)",
             )
         return removed
+
+    def record_empty_source(
+        self,
+        rel_path: str,
+        *,
+        content_hash: str | None = None,
+    ) -> None:
+        """Converge a source that carried no content to index."""
+        self.ledger.record_file_state(
+            self.generation_id,
+            FileState.policy_rejected(
+                rel_path,
+                AdmissionDisposition(
+                    kind=ContentKind.CODE,
+                    admitted=False,
+                    reason=AdmissionReason.SOURCE_EMPTY,
+                ),
+                content_hash=content_hash,
+            ),
+        )
 
     def record_processing_failure(
         self,

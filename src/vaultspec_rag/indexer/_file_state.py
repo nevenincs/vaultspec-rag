@@ -47,6 +47,7 @@ _REJECTION_REASONS: Final = frozenset(
         AdmissionReason.SOURCE_PROFILE_EXCLUDED,
         AdmissionReason.SOURCE_TOO_LARGE,
         AdmissionReason.SOURCE_BINARY,
+        AdmissionReason.SOURCE_EMPTY,
         AdmissionReason.SOURCE_PROBE_FAILED,
     }
 )
@@ -63,6 +64,12 @@ _EVIDENCE_STABLE_REJECTION_REASONS: Final = frozenset(
     {
         AdmissionReason.SOURCE_TOO_LARGE,
         AdmissionReason.SOURCE_BINARY,
+        # Emptiness is stable only for the content that evidenced it. A file
+        # caught mid-save reads empty and converges against the empty hash;
+        # when the save lands the hash changes and it is classified again. A
+        # genuinely empty file keeps that hash and stays converged, so neither
+        # case retries forever.
+        AdmissionReason.SOURCE_EMPTY,
     }
 )
 

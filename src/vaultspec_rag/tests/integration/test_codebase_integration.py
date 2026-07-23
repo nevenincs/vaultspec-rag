@@ -885,6 +885,58 @@ class TestCodebaseIncrementalIndex:
             == hashlib.blake2b(good.read_bytes()).hexdigest()
         )
 
+    @pytest.mark.timeout(120)
+    def test_an_empty_source_converges_instead_of_failing_the_run(
+        self,
+        code_project: _CodeProject,
+    ) -> None:
+        """One file with no content must not abort an indexing job.
+
+        A file caught mid-save reads as zero bytes and yields no chunks. That
+        is not a chunking defect - there was nothing to chunk - and treating it
+        as one let a single editor save fail an entire run, which is how a
+        transient race became a failed generation and, through resume, a
+        sustained outage.
+
+        The rejection is stable only against the hash that evidenced it, so a
+        mid-save file is classified again once its real content lands while a
+        genuinely empty file stays converged. Neither retries forever.
+        """
+        from ...indexer._content_policy import AdmissionReason
+        from ...indexer._file_state import FileStateKind
+
+        indexer = code_project["code_indexer"]
+        store = code_project["store"]
+        src_dir = code_project["src_dir"]
+
+        (src_dir / "empty_mid_save.py").write_text("", encoding="utf-8")
+
+        result = indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
+
+        # The run completes and the other files are indexed.
+        assert store.count_code() > 0
+        assert result.added >= 1
+
+        from ...indexer._content_policy import ContentKind
+        from ...indexer._run_ledger import RunLedger, index_run_ledger_path
+
+        data_root = indexer._data_root  # pyright: ignore[reportPrivateUsage]
+        ledger = RunLedger(index_run_ledger_path(data_root))
+        generation = ledger.latest_generation(ContentKind.CODE)
+        assert generation is not None
+        state = ledger.file_states_for_paths(
+            generation.generation_id,
+            ("src/empty_mid_save.py",),
+        ).get("src/empty_mid_save.py")
+        assert state is not None
+        assert state.state is FileStateKind.POLICY_REJECTED
+        assert state.admission_reason is AdmissionReason.SOURCE_EMPTY
+        # Converged, so it neither blocks the run nor demands a retry.
+        assert state.converged
+
 
 class TestCodebaseSearch:
     """Tests for searching indexed codebase chunks."""
