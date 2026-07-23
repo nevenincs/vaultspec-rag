@@ -10,10 +10,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 env:
   # NO_COLOR alone disables colour. A non-empty FORCE_COLOR (even "0") forces
   # the terminal ON under the force-color spec Rich implements, making
@@ -24,6 +20,9 @@ env:
 jobs:
   workflow-lint:
     name: Workflow Lint
+    concurrency:
+      group: ci-${{ github.workflow }}-${{ github.job }}-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
@@ -36,6 +35,9 @@ jobs:
 
   lint-and-type:
     name: Lint, Type, Config, Link, and Markdown Checks
+    concurrency:
+      group: ci-${{ github.workflow }}-${{ github.job }}-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
@@ -110,6 +112,9 @@ jobs:
 
   tests:
     name: Tests
+    concurrency:
+      group: ci-${{ github.workflow }}-${{ github.job }}-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
@@ -136,6 +141,15 @@ jobs:
 
   gpu-tests:
     name: GPU Tests
+    # Never cancel an in-progress GPU run: it is the long pole (~40 min) on a
+    # single self-hosted GPU runner, so a superseding push already queues
+    # behind it naturally (the runner label has exactly one machine). Scoping
+    # this job's own concurrency group means a rapid-fire push still cancels
+    # the fast lint/type/test jobs for dedup, but the GPU verdict always runs
+    # to completion once started.
+    concurrency:
+      group: ci-${{ github.workflow }}-gpu-tests-${{ github.ref }}
+      cancel-in-progress: false
     # The complement of the hosted "Tests" job: the integration, quality,
     # performance, robustness, subprocess_gpu, and cuda markers that a
     # GPU-less hosted runner cannot execute. This is where the real GPU tier
@@ -206,6 +220,9 @@ jobs:
 
   vault-audit:
     name: Vault Audit
+    concurrency:
+      group: ci-${{ github.workflow }}-${{ github.job }}-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
@@ -232,6 +249,9 @@ jobs:
 
   dependency-audit:
     name: Dependency Audit (uv audit)
+    concurrency:
+      group: ci-${{ github.workflow }}-${{ github.job }}-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
