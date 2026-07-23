@@ -1885,11 +1885,11 @@ from starlette.applications import Starlette
 from starlette.routing import Route
 
 import vaultspec_rag.server as server
-from vaultspec_rag._machine_lock import (
+from vaultspec_rag._machine_lock import (  # absolute-import-ok
     acquire_machine_lock_lease,
     release_machine_lock_lease,
 )
-from vaultspec_rag.server._lifespan import health_handler
+from vaultspec_rag.server._lifespan import health_handler  # absolute-import-ok
 
 server._SERVICE_TOKEN = os.environ["VAULTSPEC_TEST_HEALTH_TOKEN"]
 lease = None
