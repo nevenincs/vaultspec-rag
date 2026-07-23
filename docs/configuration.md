@@ -212,7 +212,18 @@ An unset variable falls back to the built-in default.
 
 ## Hugging Face cache
 
-vaultspec-rag downloads its dense, sparse, and reranker model files through the Hugging Face Hub. The Hub client honours its own environment variables, which vaultspec-rag does not wrap: `HF_HOME`, `HF_HUB_DOWNLOAD_TIMEOUT`, and `DISABLE_SAFETENSORS_CONVERSION`. See the [Hugging Face environment variable reference](https://huggingface.co/docs/huggingface_hub/en/package_reference/environment_variables).
+vaultspec-rag downloads its dense, sparse, and reranker model files through the Hugging Face Hub. The Hub client honours its own environment variables, which vaultspec-rag does not wrap. These are third-party variables (no `VAULTSPEC_RAG_` prefix), so they sit outside the reference tables above:
+
+| Variable                         | Type    | Controls                                                                        |
+| -------------------------------- | ------- | ------------------------------------------------------------------------------- |
+| `HF_HOME`                        | path    | Hub cache root (where model files are stored)                                   |
+| `HF_ENDPOINT`                    | string  | Hub mirror base URL                                                             |
+| `HF_HUB_DOWNLOAD_TIMEOUT`        | integer | Per-file download timeout                                                        |
+| `HF_HUB_OFFLINE`                 | boolean | Cache-only mode; no network access to the Hub                                    |
+| `TRANSFORMERS_OFFLINE`           | boolean | Cache-only model loading for Transformers                                        |
+| `DISABLE_SAFETENSORS_CONVERSION` | boolean | Skip on-the-fly safetensors conversion                                          |
+
+`HF_HUB_OFFLINE` is the authoritative offline switch; vaultspec-rag also honours `TRANSFORMERS_OFFLINE`, and when either is set it loads every model cache-only. See the [Hugging Face environment variable reference](https://huggingface.co/docs/huggingface_hub/en/package_reference/environment_variables).
 
 ## Tuning for memory and speed
 
