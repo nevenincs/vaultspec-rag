@@ -194,13 +194,21 @@ def _clean_orphaned_machine_pointer() -> bool:
     return True
 
 
-def _terminate_and_confirm(pid: int) -> None:
-    """Terminate *pid*, confirm its exit, then clear its discovery records."""
+def _terminate_and_confirm(pid: int, *, console_group_signal: bool = True) -> None:
+    """Terminate *pid*, confirm its exit, then clear its discovery records.
+
+    ``console_group_signal`` MUST be False for a DISCOVERED pid the caller did
+    not spawn (the orphan reap): a Windows ``CTRL_BREAK_EVENT`` addressed to an
+    arbitrary pid that is not a known group leader is undefined and can be
+    delivered to the CALLER's own console group, so a discovered target is
+    force-killed by pid via ``TerminateProcess`` instead.
+    """
     _refuse_terminate_from_unisolated_test()
     _cli._terminate_pid(
         pid,
         timeout=_STOP_TERMINATION_BUDGET_SECONDS,
         graceful_drain=_stop_graceful_drain_seconds(),
+        console_group_signal=console_group_signal,
     )
 
     # Wait briefly for process to exit
@@ -379,49 +387,60 @@ def _expected_singleton_port(explicit_port: int | None) -> int | None:
     return _default_service_port()
 
 
-def _orphan_daemon_pids(port: int) -> list[int]:
-    """Return pids of ``vaultspec_rag.server`` daemons launched for *port*.
+def _orphan_daemon_pids(port: int) -> dict[int, int]:
+    """Return ``{pid: ppid}`` of ``vaultspec_rag.server`` daemons for *port*.
 
     Matches the resident-daemon launch witness by port (any launch token), so
     every race-loser that tried to serve this machine singleton's port is found,
-    while a daemon launched for a different port never matches. This is the reap
-    scope that spares isolated-config and foreign-worktree daemons.
+    while a daemon launched for a different port never matches - the reap scope
+    that spares isolated-config and foreign-worktree daemons.
+
+    A venv ``python.exe`` shim spawns the real interpreter, so one logical daemon
+    appears as a launcher+worker PAIR both carrying the witness in a parent-child
+    relation. The ppid map lets the reap protect, or clear, a whole pair rather
+    than half of it.
     """
     import contextlib
 
     import psutil
 
     marker = ["-m", "vaultspec_rag.server", "--port", str(port)]
-    found: list[int] = []
+    found: dict[int, int] = {}
     with contextlib.suppress(Exception):
-        for process in psutil.process_iter(["pid", "cmdline"]):
+        for process in psutil.process_iter(["pid", "ppid", "cmdline"]):
             info = cast("dict[str, object]", process.info)
             raw = info.get("cmdline")
             if not isinstance(raw, list):
                 continue
             argv = [str(item) for item in cast("list[object]", raw)]
-            if any(
+            if not any(
                 argv[index : index + len(marker)] == marker
                 for index in range(len(argv) - len(marker) + 1)
             ):
-                pid = info.get("pid")
-                if isinstance(pid, int) and not isinstance(pid, bool):
-                    found.append(pid)
+                continue
+            pid = info.get("pid")
+            ppid = info.get("ppid")
+            if isinstance(pid, int) and not isinstance(pid, bool):
+                found[pid] = (
+                    ppid if isinstance(ppid, int) and not isinstance(ppid, bool) else 0
+                )
     return found
 
 
 def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
     """Reap race-loser daemons for the machine singleton on *port*.
 
-    Confirm-then-reap, scoped by the launch witness (same port) and by pid: never
-    the current machine-lock holder, never the discovery-pointer pid, never this
-    process. The lock holder and pointer are the two must-never-kill anchors -
-    the real singleton - so a live serving instance is always spared, and the
-    port scope spares isolated-config and foreign-worktree daemons. An orphan
-    that will not die is a non-zero fault, never a silent success.
+    Confirm-then-reap, scoped by the launch witness (same port). The machine-lock
+    holder, the discovery-pointer pid, and this process are the must-never-kill
+    anchors - the real singleton - and because a venv shim makes each live daemon
+    a launcher+worker PAIR, the anchor's matched shim parent and matched children
+    are protected too, so a live singleton's launcher is never reaped as an
+    orphan. The port scope spares isolated-config and foreign-worktree daemons.
+    An orphan that will not die is a non-zero fault, never a silent success.
     """
     from .._machine_lock import machine_lock_live_holder
 
+    matched = _orphan_daemon_pids(port)
     lock_holder = machine_lock_live_holder()
     status = _read_service_status()
     pointer_pid = 0
@@ -429,14 +448,23 @@ def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
         raw = status.get("pid")
         if isinstance(raw, int) and not isinstance(raw, bool):
             pointer_pid = raw
-    protected = {os.getpid(), lock_holder, pointer_pid}
+
+    anchors = {os.getpid(), lock_holder, pointer_pid}
+    protected = set(anchors)
+    for pid, ppid in matched.items():
+        if pid in anchors and ppid in matched:
+            protected.add(ppid)
+        if ppid in anchors:
+            protected.add(pid)
 
     reaped: list[int] = []
     survivors: list[int] = []
-    for pid in _orphan_daemon_pids(port):
+    for pid in matched:
         if pid in protected or not _cli._is_our_service(pid):
             continue
-        _terminate_and_confirm(pid)
+        # Discovered pid, not one we spawned: force-kill by pid, never a
+        # console-group CTRL_BREAK that could reach the operator's own console.
+        _terminate_and_confirm(pid, console_group_signal=False)
         (reaped if not _cli._is_pid_alive(pid) else survivors).append(pid)
 
     if survivors:
