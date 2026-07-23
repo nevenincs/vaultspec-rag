@@ -1,4 +1,4 @@
-"""Write-path hardening for the vector store.
+"""Operation-path hardening for the vector store.
 
 The 2026-07-21 incident: a full disk made the managed Qdrant server refuse
 (or stall) every upsert while the indexer kept encoding batches at 100% GPU
@@ -7,12 +7,20 @@ path had no error classification, no retry ceiling, no disk headroom check,
 and the server-mode client had no request timeout, so a stalled socket
 blocked forever.
 
-This module owns the store-domain pieces: classifying a write failure as
+This module owns the store-domain pieces: classifying a store failure as
 unrecoverable (storage exhaustion - retrying cannot help) versus transient,
-running a write under a bounded retry with backoff, and checking free-disk
-headroom so a bulk index fails fast before burning GPU on vectors that can
-never be persisted. Torch-free and CLI-free by design (the maintenance
-import graph reaches the store).
+running a store operation under a bounded retry with backoff, and checking
+free-disk headroom so a bulk index fails fast before burning GPU on vectors
+that can never be persisted. Torch-free and CLI-free by design (the
+maintenance import graph reaches the store).
+
+The bounded retry covers every store operation, not only the write. A
+managed vector-store backend can refuse connections for a window (a
+restart, a corrupt-collection quarantine cycle, a runner outliving its
+backend), and an index job reaches collection-ensure and read operations
+before its first write. Leaving those single-shot turned a momentary
+refusal into a hard job failure, so any operation safe to replay -
+ensure, read, and idempotent delete - runs under the same bounded retry.
 """
 
 from __future__ import annotations
@@ -38,7 +46,7 @@ __all__ = [
     "classify_write_error",
     "ensure_disk_headroom",
     "remaining_write_seconds",
-    "run_write_with_retry",
+    "run_store_operation_with_retry",
 ]
 
 #: Failure-text markers of storage exhaustion. Matched case-insensitively
@@ -101,31 +109,39 @@ def classify_write_error(err: BaseException) -> Literal["unrecoverable", "transi
     return "transient"
 
 
-def run_write_with_retry[T](
+def run_store_operation_with_retry[T](
     op: Callable[[int], T],
     *,
     description: str,
     policy: StoreWritePolicy | None,
 ) -> T:
-    """Run a store write under configured retry and a caller-owned budget.
+    """Run a store operation under configured retry and a caller-owned budget.
+
+    Any operation safe to replay may run under this: the upsert write, the
+    collection-ensure existence check and index creation, the reads, and the
+    idempotent point deletes. A backend that refuses connections for a
+    window therefore costs a bounded wait rather than a failed job.
 
     An unrecoverable failure (storage exhaustion) raises immediately - a
     full disk does not drain, and every retried batch only burns more GPU
-    time upstream. A transient failure consumes the configured attempt and
-    capped exponential-backoff policy. ``policy`` is supplied by the
-    run-policy layer: this store-domain helper neither starts nor resets the
-    durable no-progress clock. It checks that budget before admitting every
-    attempt and clamps every policy wait to the reported remainder. Direct
-    callers outside a managed index run explicitly pass ``None``.
+    time upstream. This holds for a read exactly as for a write. A transient
+    failure consumes the configured attempt and capped exponential-backoff
+    policy. ``policy`` is supplied by the run-policy layer: this
+    store-domain helper neither starts nor resets the durable no-progress
+    clock. It checks that budget before admitting every attempt and clamps
+    every policy wait to the reported remainder. Direct callers outside a
+    managed index run explicitly pass ``None``.
 
     The original operation exception propagates unchanged when storage is
     unrecoverable or the configured attempt count is exhausted. Exhausting
     the caller's durable no-progress budget instead raises the shared typed
-    ``no_progress_timeout`` outcome.
+    ``no_progress_timeout`` outcome, so a genuinely unreachable backend
+    still terminates on the liveness contract rather than waiting forever.
 
     Args:
-        op: One synchronous storage mutation attempt. The argument is the
-            positive whole-second timeout admitted for that attempt.
+        op: One synchronous store operation attempt. The argument is the
+            positive whole-second timeout admitted for that attempt;
+            operations whose client call takes no timeout ignore it.
         description: Bounded operator context for diagnostics.
         policy: Caller-owned durable no-progress policy, or ``None`` for a
             direct store call outside a managed indexing run.
@@ -150,7 +166,7 @@ def run_write_with_retry[T](
         except Exception as exc:
             if classify_write_error(exc) == "unrecoverable":
                 logger.error(
-                    "unrecoverable store write failure in %s: %s", description, exc
+                    "unrecoverable store operation failure in %s: %s", description, exc
                 )
                 raise
 
@@ -160,7 +176,7 @@ def run_write_with_retry[T](
             )
             if attempt == attempts:
                 logger.error(
-                    "store write %s failed after %d attempts: %s",
+                    "store operation %s failed after %d attempts: %s",
                     description,
                     attempts,
                     exc,
@@ -168,7 +184,7 @@ def run_write_with_retry[T](
                 raise
             wait_seconds = delay if remaining is None else min(delay, remaining)
             logger.warning(
-                "transient store write failure in %s (attempt %d/%d), "
+                "transient store operation failure in %s (attempt %d/%d), "
                 "retrying in %.1fs: %s",
                 description,
                 attempt,

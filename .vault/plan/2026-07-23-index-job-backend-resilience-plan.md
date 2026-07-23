@@ -22,13 +22,13 @@ related:
 
 # `index-job-backend-resilience` plan
 
-- [ ] `S01` - Generalise the write-only bounded transient retry into a store-operation retry that any store call can run under, preserving the transient/unrecoverable classification, capped backoff, and durable no-progress budget clamp; `src/vaultspec_rag/_store_writes.py`.
-- [ ] `S02` - Run the collection-ensure paths (existence check and payload-index creation) under the bounded retry; `src/vaultspec_rag/store.py`.
-- [ ] `S03` - Run the read operations (count, scroll, retrieve) under the bounded retry; `src/vaultspec_rag/store.py`.
-- [ ] `S04` - Run the point-delete operations under the bounded retry; `src/vaultspec_rag/store.py`.
-- [ ] `S05` - Confirm the unrecoverable storage-exhaustion path still raises on the first attempt for a wrapped read as for a write; `src/vaultspec_rag/_store_writes.py`.
-- [ ] `S06` - Add a guard test driving a store operation against a backend that refuses then accepts, asserting bounded-retry survival, and record it failing against the pre-change single-shot path then passing after; `src/vaultspec_rag/tests/`.
-- [ ] `S07` - Run the store and indexer test suites plus lint and type checks for the touched modules and record them green with no new suppressions; `src/vaultspec_rag/tests/`.
+- [x] `S01` - Generalise the write-only bounded transient retry into a store-operation retry that any store call can run under, preserving the transient/unrecoverable classification, capped backoff, and durable no-progress budget clamp; `src/vaultspec_rag/_store_writes.py`.
+- [x] `S02` - Run the collection-ensure paths (existence check and payload-index creation) under the bounded retry; `src/vaultspec_rag/store.py`.
+- [x] `S03` - Run the read operations (count, scroll, retrieve) under the bounded retry; `src/vaultspec_rag/store.py`.
+- [x] `S04` - Run the point-delete operations under the bounded retry; `src/vaultspec_rag/store.py`.
+- [x] `S05` - Confirm the unrecoverable storage-exhaustion path still raises on the first attempt for a wrapped read as for a write; `src/vaultspec_rag/_store_writes.py`.
+- [x] `S06` - Add a guard test driving a store operation against a backend that refuses then accepts, asserting bounded-retry survival, and record it failing against the pre-change single-shot path then passing after; `src/vaultspec_rag/tests/`.
+- [x] `S07` - Run the store and indexer test suites plus lint and type checks for the touched modules and record them green with no new suppressions; `src/vaultspec_rag/tests/`.
 Extend the bounded transient store retry from the upsert write to connection, ensure, read, and delete operations so a brief backend outage no longer aborts background index jobs.
 
 ## Description
