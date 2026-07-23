@@ -35,3 +35,10 @@ This demonstrates the tests are reachable, bind to the uniqueness property they 
 ## Notes
 
 The mutation was applied and reverted in one sequence with no pause or handoff; the working tree was left with the fix in place and the tests green.
+
+Code review raised two test-integrity findings against this guard, both fixed and re-proven:
+
+- The commit-unit test could pass vacuously if the oversized leaf ever stopped being split (a one-element unit satisfies uniqueness trivially), so an explicit plurality assertion was added.
+- Its closing assertion restated the condition the commit-unit constructor had already enforced, so it could never fail; it was replaced with one carrying information the constructor does not enforce - that the unit preserves the chunker's emitted identifiers in emit order.
+
+The `CommitUnit` import was hoisted to module scope to match the module's convention. After these changes the both-directions proof was repeated end to end: pass with the fix, fail on the duplicate-identifier and commit-unit-rejection assertions with the ordinal removed, pass again on restore.

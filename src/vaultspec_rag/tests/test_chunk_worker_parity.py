@@ -41,6 +41,7 @@ from ..indexer._preprocess_config import (
     PreprocessRule,
 )
 from ..indexer._preprocess_runner import PreprocessAbortError
+from ..indexer._run_ledger import CommitUnit, CommitUnitKind
 from ..progress import NullProgressReporter, RichProgressReporter
 
 if TYPE_CHECKING:
@@ -400,9 +401,7 @@ class TestChunkIdentityUniqueness:
     uniqueness/commit-unit assertion, not on any incidental error.
     """
 
-    def test_repeated_content_long_line_yields_unique_ids(
-        self, tmp_path: Path
-    ) -> None:
+    def test_repeated_content_long_line_yields_unique_ids(self, tmp_path: Path) -> None:
         # A single 6000-char line of one repeated character: an oversized
         # childless leaf routed through _split_large_leaf, whose slices are
         # byte-identical and share one (line_start, line_end) span.
@@ -420,8 +419,6 @@ class TestChunkIdentityUniqueness:
     def test_repeated_content_chunks_form_valid_commit_unit(
         self, tmp_path: Path
     ) -> None:
-        from ..indexer._run_ledger import CommitUnit, CommitUnitKind
-
         source = f"DATA = '{'x' * 6000}'\n"
         path = tmp_path / "generated_blob.py"
         path.write_text(source, encoding="utf-8")
@@ -429,9 +426,14 @@ class TestChunkIdentityUniqueness:
         chunks = _chunk_worker.chunk_file(path, tmp_path)
         digest = hashlib.blake2b(source.encode("utf-8")).hexdigest()
 
+        # Plurality matters: if the oversized leaf ever stopped being split,
+        # a single-chunk unit would satisfy the uniqueness invariant
+        # vacuously and this guard would go green without exercising it.
+        assert len(chunks) > 1
+
         # The commit-unit uniqueness invariant is the exact check that failed
-        # in production; building one from a real file's chunk ids must not
-        # raise. This is the assertion the emit-ordinal defends.
+        # in production; constructing the unit IS the assertion - it raises on
+        # a duplicate id. This is what the emit-ordinal defends.
         unit = CommitUnit(
             rel_path="generated_blob.py",
             kind=CommitUnitKind.UPSERT,
@@ -440,7 +442,9 @@ class TestChunkIdentityUniqueness:
             is_file_end=True,
             point_ids=tuple(c.id for c in chunks),
         )
-        assert len(set(unit.point_ids)) == len(unit.point_ids)
+        # Carry information the constructor did not already enforce: the unit
+        # preserves the chunker's emitted ids in emit order.
+        assert unit.point_ids == tuple(c.id for c in chunks)
 
 
 class _MinBytes:
