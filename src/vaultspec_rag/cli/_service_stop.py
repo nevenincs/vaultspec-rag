@@ -4,8 +4,8 @@ Owns the stop path: the ``--port`` identity-resolved stop, the status-file
 stop, and the machine-singleton reclaim that recovers a holder with no
 discoverable ``service.json``. A stop that leaves the service running is a
 failure (``_fail_stop``, exit 1) in both output modes; every satisfied outcome
-(``stopped`` / ``already_stopped`` / ``cleaned`` / ``reclaimed``) is a success
-so a broker treats the idempotent case as done.
+(``stopped`` / ``already_stopped`` / ``cleaned`` / ``reclaimed`` / ``reaped``)
+is a success so a broker treats the idempotent case as done.
 """
 
 from __future__ import annotations
@@ -65,8 +65,8 @@ def _reclaim_machine_singleton() -> int | None:
     a ``service.json`` in this status directory. Such a holder otherwise
     deadlocks the machine: ``server start`` refuses it (lock held), ``server
     stop`` reports "not running" (no discovery), and ``server status`` reports
-    stopped - leaving a manual OS kill as the only escape (the very orphan the
-    ``mcp-conformance`` research recorded). Terminating the confirmed holder
+    stopped - leaving a manual OS kill as the only escape. Terminating the
+    confirmed holder
     makes ``server stop`` the real recovery the start refusal points to.
 
     Returns the reclaimed holder pid, or ``None`` when no reclaimable
@@ -449,7 +449,15 @@ def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
         if isinstance(raw, int) and not isinstance(raw, bool):
             pointer_pid = raw
 
-    anchors = {os.getpid(), lock_holder, pointer_pid}
+    # The pid actually bound to and answering /health on the port is the
+    # authoritative "this daemon owns the port" signal: an isolated-config daemon
+    # shares this machine but not this config's lock path or pointer, so neither
+    # lock_holder nor pointer_pid captures it. Anchor on it too so a live
+    # port-bound daemon is spared regardless of which config's state we can see.
+    serving = _service_pid_on_port(port)
+    serving_pid = serving[0] if serving is not None else 0
+
+    anchors = {os.getpid(), lock_holder, pointer_pid, serving_pid}
     protected = set(anchors)
     for pid, ppid in matched.items():
         if pid in anchors and ppid in matched:
@@ -562,7 +570,8 @@ def service_stop(
     missing or divergent is still stoppable.
 
     Exit codes: 0 for every satisfied outcome (``stopped``, ``already_stopped``,
-    ``cleaned``, ``reclaimed``); 1 when the stop is skipped because a live
+    ``cleaned``, ``reclaimed``, ``reaped``); 1 when the stop is skipped because a
+    live
     recorded process could not be confirmed as ours - the one outcome that
     leaves a service running.
     """
