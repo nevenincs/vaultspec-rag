@@ -11,14 +11,14 @@ Metrics are reported per declared intent and never blended. The headline is the
 orientation **Authoritative@3 rate** (the share of orientation queries that
 surface a grade-3 accepted ADR in the top 3) and role-aware **NDCG@10**.
 
-| Intent | Metric | Baseline (bare reranker) | With intent prior | Delta |
-| --- | --- | --- | --- | --- |
-| orientation | Authoritative@3 rate | 0.500 | **0.833** | +0.333 |
-| orientation | mean NDCG@10 | 0.7266 | 0.7382 | +0.0116 |
-| debugging | mean MRR@grade-3 | 0.500 | 0.500 | 0.000 |
-| debugging | mean NDCG@10 | 0.500 | 0.484 | -0.016 |
-| implementation | mean MRR@grade-3 | 1.000 | 1.000 | 0.000 |
-| implementation | mean NDCG@10 | 0.8906 | 0.8906 | 0.000 |
+| Intent         | Metric               | Baseline (bare reranker) | With intent prior | Delta   |
+| -------------- | -------------------- | ------------------------ | ----------------- | ------- |
+| orientation    | Authoritative@3 rate | 0.500                    | **0.833**         | +0.333  |
+| orientation    | mean NDCG@10         | 0.7266                   | 0.7382            | +0.0116 |
+| debugging      | mean MRR@grade-3     | 0.500                    | 0.500             | 0.000   |
+| debugging      | mean NDCG@10         | 0.500                    | 0.484             | -0.016  |
+| implementation | mean MRR@grade-3     | 1.000                    | 1.000             | 0.000   |
+| implementation | mean NDCG@10         | 0.8906                   | 0.8906            | 0.000   |
 
 ## Reading the result
 

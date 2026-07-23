@@ -2,213 +2,193 @@
 
 ## [0.3.3](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.2...vaultspec-rag-v0.3.3) (2026-07-21)
 
-
 ### Features
 
-* fail-loud index observability, ephemeral namespace TTL, debris reclaim, and test-run isolation ([#242](https://github.com/nevenincs/vaultspec-rag/issues/242)) ([#248](https://github.com/nevenincs/vaultspec-rag/issues/248)) ([cdd61fe](https://github.com/nevenincs/vaultspec-rag/commit/cdd61fe69100896ddf1b31f56e327d8fdfd778b9))
-* integrate provider-mcp-enrollment (Core-managed provider lifecycle, Codex-native TOML) ([#250](https://github.com/nevenincs/vaultspec-rag/issues/250)) ([3d51e4d](https://github.com/nevenincs/vaultspec-rag/commit/3d51e4d9a143989a5306ffc861d39aa849358d04))
-* **preprocess:** opt-in batch manifest hook invocation (~100x first-index hook speedup) ([#247](https://github.com/nevenincs/vaultspec-rag/issues/247)) ([3fa6f24](https://github.com/nevenincs/vaultspec-rag/commit/3fa6f24b97028d17dba43499f67f5b4e0be8a7fb))
-
+- fail-loud index observability, ephemeral namespace TTL, debris reclaim, and test-run isolation ([#242](https://github.com/nevenincs/vaultspec-rag/issues/242)) ([#248](https://github.com/nevenincs/vaultspec-rag/issues/248)) ([cdd61fe](https://github.com/nevenincs/vaultspec-rag/commit/cdd61fe69100896ddf1b31f56e327d8fdfd778b9))
+- integrate provider-mcp-enrollment (Core-managed provider lifecycle, Codex-native TOML) ([#250](https://github.com/nevenincs/vaultspec-rag/issues/250)) ([3d51e4d](https://github.com/nevenincs/vaultspec-rag/commit/3d51e4d9a143989a5306ffc861d39aa849358d04))
+- **preprocess:** opt-in batch manifest hook invocation (~100x first-index hook speedup) ([#247](https://github.com/nevenincs/vaultspec-rag/issues/247)) ([3fa6f24](https://github.com/nevenincs/vaultspec-rag/commit/3fa6f24b97028d17dba43499f67f5b4e0be8a7fb))
 
 ### Bug Fixes
 
-* **cli:** honest start outcomes during warm-up and visible cold-start progress ([#238](https://github.com/nevenincs/vaultspec-rag/issues/238)) ([45cb3f1](https://github.com/nevenincs/vaultspec-rag/commit/45cb3f1e9b3c17bc609a8a5e0bf2471b2eb27db3)), closes [#237](https://github.com/nevenincs/vaultspec-rag/issues/237)
-* **indexer,store:** bounded write retry, disk headroom guards, server request timeout ([#246](https://github.com/nevenincs/vaultspec-rag/issues/246)) ([96b6204](https://github.com/nevenincs/vaultspec-rag/commit/96b62046d810ddbaf2b0c49d5ada27a9b1ff8058))
-* **install:** clean-worktree invariant for runtime artifacts, sentinel cleanup on uninstall ([#243](https://github.com/nevenincs/vaultspec-rag/issues/243)) ([06571ac](https://github.com/nevenincs/vaultspec-rag/commit/06571acf2882a145a9e07e20b856877e89060dd3)), closes [#236](https://github.com/nevenincs/vaultspec-rag/issues/236)
-* **storage:** normalize extended-length root aliases, flag temp-rooted namespaces, harness teardown guidance ([#245](https://github.com/nevenincs/vaultspec-rag/issues/245)) ([276312e](https://github.com/nevenincs/vaultspec-rag/commit/276312e7a01142b07ecb8f3899a43fad4ae00d99))
+- **cli:** honest start outcomes during warm-up and visible cold-start progress ([#238](https://github.com/nevenincs/vaultspec-rag/issues/238)) ([45cb3f1](https://github.com/nevenincs/vaultspec-rag/commit/45cb3f1e9b3c17bc609a8a5e0bf2471b2eb27db3)), closes [#237](https://github.com/nevenincs/vaultspec-rag/issues/237)
+- **indexer,store:** bounded write retry, disk headroom guards, server request timeout ([#246](https://github.com/nevenincs/vaultspec-rag/issues/246)) ([96b6204](https://github.com/nevenincs/vaultspec-rag/commit/96b62046d810ddbaf2b0c49d5ada27a9b1ff8058))
+- **install:** clean-worktree invariant for runtime artifacts, sentinel cleanup on uninstall ([#243](https://github.com/nevenincs/vaultspec-rag/issues/243)) ([06571ac](https://github.com/nevenincs/vaultspec-rag/commit/06571acf2882a145a9e07e20b856877e89060dd3)), closes [#236](https://github.com/nevenincs/vaultspec-rag/issues/236)
+- **storage:** normalize extended-length root aliases, flag temp-rooted namespaces, harness teardown guidance ([#245](https://github.com/nevenincs/vaultspec-rag/issues/245)) ([276312e](https://github.com/nevenincs/vaultspec-rag/commit/276312e7a01142b07ecb8f3899a43fad4ae00d99))
 
 ## [0.3.2](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.1...vaultspec-rag-v0.3.2) (2026-07-17)
 
-
 ### Features
 
-* **server:** stdio watchdog converges on the pipe-creator anchor; e2e suite reaches the functional assertion floor ([#234](https://github.com/nevenincs/vaultspec-rag/issues/234)) ([df9cf6f](https://github.com/nevenincs/vaultspec-rag/commit/df9cf6fad6b855105e1011c33b192cea42b4a211))
+- **server:** stdio watchdog converges on the pipe-creator anchor; e2e suite reaches the functional assertion floor ([#234](https://github.com/nevenincs/vaultspec-rag/issues/234)) ([df9cf6f](https://github.com/nevenincs/vaultspec-rag/commit/df9cf6fad6b855105e1011c33b192cea42b4a211))
 
 ## [0.3.1](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.0...vaultspec-rag-v0.3.1) (2026-07-17)
 
-
 ### Features
 
-* **index:** surface preprocess_ok so a working hook pipeline is observable ([#226](https://github.com/nevenincs/vaultspec-rag/issues/226)) ([874f0fe](https://github.com/nevenincs/vaultspec-rag/commit/874f0fea75126daebfc7b1f9ace874d47966e54f))
-* **server:** stdio shim owns its lifetime - ancestor-chain watchdog reaps orphaned MCP shims on Windows ([#228](https://github.com/nevenincs/vaultspec-rag/issues/228)) ([6ee6f8f](https://github.com/nevenincs/vaultspec-rag/commit/6ee6f8f738c14d4a70f9ff25a863b2611d267ffb))
-
+- **index:** surface preprocess_ok so a working hook pipeline is observable ([#226](https://github.com/nevenincs/vaultspec-rag/issues/226)) ([874f0fe](https://github.com/nevenincs/vaultspec-rag/commit/874f0fea75126daebfc7b1f9ace874d47966e54f))
+- **server:** stdio shim owns its lifetime - ancestor-chain watchdog reaps orphaned MCP shims on Windows ([#228](https://github.com/nevenincs/vaultspec-rag/issues/228)) ([6ee6f8f](https://github.com/nevenincs/vaultspec-rag/commit/6ee6f8f738c14d4a70f9ff25a863b2611d267ffb))
 
 ### Bug Fixes
 
-* **install:** bind rag to core's static-launch MCP contract ([#233](https://github.com/nevenincs/vaultspec-rag/issues/233)) ([a1a93fb](https://github.com/nevenincs/vaultspec-rag/commit/a1a93fb59b54cc8cec8093aa011fd4619e3e8fad))
+- **install:** bind rag to core's static-launch MCP contract ([#233](https://github.com/nevenincs/vaultspec-rag/issues/233)) ([a1a93fb](https://github.com/nevenincs/vaultspec-rag/commit/a1a93fb59b54cc8cec8093aa011fd4619e3e8fad))
 
 ## [0.3.0](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.2.28...vaultspec-rag-v0.3.0) (2026-07-14)
 
-
 ### ⚠ BREAKING CHANGES
 
-* **preprocess:** run hook children with the project root as cwd
-* **preprocess:** collapse the preprocess tri-state to on/off across the control surface
-* **preprocess:** remove the OS hook sandbox; hooks run as direct bounded subprocesses
-* **cli:** the identity-unconfirmed skip now exits 1 (was 0) in both human and --json modes - a stop that leaves the service running is a failure a broker must see (P02.S05).
+- **preprocess:** run hook children with the project root as cwd
+- **preprocess:** collapse the preprocess tri-state to on/off across the control surface
+- **preprocess:** remove the OS hook sandbox; hooks run as direct bounded subprocesses
+- **cli:** the identity-unconfirmed skip now exits 1 (was 0) in both human and --json modes - a stop that leaves the service running is a failure a broker must see (P02.S05).
 
 ### Features
 
-* **cli:** attribute service shutdown to the initiating process ([91d697a](https://github.com/nevenincs/vaultspec-rag/commit/91d697a6fd594b508b4c87fd2a63813317c81ee4))
-* **cli:** classify runtime envs and derive GPU remediation commands from the cu130 constants ([8a857ad](https://github.com/nevenincs/vaultspec-rag/commit/8a857add26edc3196d146d0a0199385b2a3f5c24))
-* **cli:** env-aware start refusal and a loud uvx-ephemeral warning on server start ([e6bfb3e](https://github.com/nevenincs/vaultspec-rag/commit/e6bfb3ed3562bb5f6626fd28dbe20b4c8aee96dd))
-* **cli:** render a distinct warming status state (exit 5) instead of stopped/crashed ([2ed542d](https://github.com/nevenincs/vaultspec-rag/commit/2ed542d1d9bebd6a8f1ff987f655eac3dff58dfe))
-* **cli:** server stop --json outcome envelopes with idempotent statuses ([5001c7d](https://github.com/nevenincs/vaultspec-rag/commit/5001c7d629c380fa362c9b3f55bd238900b99877))
-* **cli:** server storage survey --root reports the queried root's prefix ([a803ec4](https://github.com/nevenincs/vaultspec-rag/commit/a803ec402f935f476708dff7d025e04f18212091))
-* **config:** storage_autoprune knobs for the scheduled maintenance tick ([69a5d76](https://github.com/nevenincs/vaultspec-rag/commit/69a5d7654b2ba69f3f0c7b2c001f43be30fb85cd))
-* **doctor:** mode-and-floor rows for the vaultspec-rag entry (install-parity W02.P07 S35) ([d0f8edc](https://github.com/nevenincs/vaultspec-rag/commit/d0f8edcbba1606058da295e3c3572a49906ae77b))
-* **index:** config-epoch drift sentinels + preprocess TOFU on-by-default ([3a75362](https://github.com/nevenincs/vaultspec-rag/commit/3a75362a895c03d2fd821de3d6377db07ec17390))
-* **install:** adopt the three-placement mode model (install-parity W02) ([4faee6a](https://github.com/nevenincs/vaultspec-rag/commit/4faee6acb6a833f7a788467b3a4cee93ede04c87))
-* **install:** adopt three-placement mode model (install-parity W02.P06) ([5b07873](https://github.com/nevenincs/vaultspec-rag/commit/5b0787311e7d5574dc6ebf305150c5bc363887a7))
-* **preprocess:** collapse the preprocess tri-state to on/off across the control surface ([64a0353](https://github.com/nevenincs/vaultspec-rag/commit/64a0353d701191b700fb40ba4b038781efd11a30))
-* **preprocess:** OS-sandbox hooks so the server runs any repo's hooks non-interactively ([cc3d680](https://github.com/nevenincs/vaultspec-rag/commit/cc3d68074fcd83cb9d2845b20fb452aa558f7e62))
-* **preprocess:** remove the OS hook sandbox; hooks run as direct bounded subprocesses ([4905707](https://github.com/nevenincs/vaultspec-rag/commit/4905707ebb9c9d038f2e174aa72a0e19e20b2a3f))
-* **server:** crash-proof hourly storage-maintenance tick and loop ([282369c](https://github.com/nevenincs/vaultspec-rag/commit/282369c809dd9b7c71edf6bb12f37e9ab538b56c))
-* **server:** maintenance cycles are first-class jobs with /metrics rollup ([62824f6](https://github.com/nevenincs/vaultspec-rag/commit/62824f61d2ef9735ab01e93299035c70a2db067b))
-* **server:** root-scoped storage survey lookup with queried_root prefix ([031b900](https://github.com/nevenincs/vaultspec-rag/commit/031b9006dfed3e989b114426238992a784b17622))
-* **server:** schedule the maintenance loop from the daemon lifespan ([8370a7d](https://github.com/nevenincs/vaultspec-rag/commit/8370a7d39920bd9c3e4e8ab144df7271d4a9caf4))
-* **server:** stamp warming/running phases into service.json across model warmup ([2b7390f](https://github.com/nevenincs/vaultspec-rag/commit/2b7390f865d9268a266046d66cd4764bb36193e0))
-* **serviceclient:** thread root through the survey transport and MCP client ([acd9be5](https://github.com/nevenincs/vaultspec-rag/commit/acd9be53fac8792ab3a78d1680eecea6652a6c6c))
-* **status:** daemon-stamped lifecycle phase vocabulary in the discovery sidecar ([4150505](https://github.com/nevenincs/vaultspec-rag/commit/415050525b06623e6b708e9eb691bbcccbf81073))
-* **storage:** O(1) survey via daemon snapshot + idempotent delete --root ([7ae79ca](https://github.com/nevenincs/vaultspec-rag/commit/7ae79caf57ec68f908fb923873ee261d15d3cc95))
-* **storage:** persisted first-seen-orphaned grace clock in the manifest ([ba8ad7b](https://github.com/nevenincs/vaultspec-rag/commit/ba8ad7b8092f738fcf4afabfcf3c6118149c108e))
-* **storage:** two-tier time-gated reclamation engine with bounded archives ([fe52f33](https://github.com/nevenincs/vaultspec-rag/commit/fe52f33460a35c3f1b730e05c21dd479dae065c5))
-
+- **cli:** attribute service shutdown to the initiating process ([91d697a](https://github.com/nevenincs/vaultspec-rag/commit/91d697a6fd594b508b4c87fd2a63813317c81ee4))
+- **cli:** classify runtime envs and derive GPU remediation commands from the cu130 constants ([8a857ad](https://github.com/nevenincs/vaultspec-rag/commit/8a857add26edc3196d146d0a0199385b2a3f5c24))
+- **cli:** env-aware start refusal and a loud uvx-ephemeral warning on server start ([e6bfb3e](https://github.com/nevenincs/vaultspec-rag/commit/e6bfb3ed3562bb5f6626fd28dbe20b4c8aee96dd))
+- **cli:** render a distinct warming status state (exit 5) instead of stopped/crashed ([2ed542d](https://github.com/nevenincs/vaultspec-rag/commit/2ed542d1d9bebd6a8f1ff987f655eac3dff58dfe))
+- **cli:** server stop --json outcome envelopes with idempotent statuses ([5001c7d](https://github.com/nevenincs/vaultspec-rag/commit/5001c7d629c380fa362c9b3f55bd238900b99877))
+- **cli:** server storage survey --root reports the queried root's prefix ([a803ec4](https://github.com/nevenincs/vaultspec-rag/commit/a803ec402f935f476708dff7d025e04f18212091))
+- **config:** storage_autoprune knobs for the scheduled maintenance tick ([69a5d76](https://github.com/nevenincs/vaultspec-rag/commit/69a5d7654b2ba69f3f0c7b2c001f43be30fb85cd))
+- **doctor:** mode-and-floor rows for the vaultspec-rag entry (install-parity W02.P07 S35) ([d0f8edc](https://github.com/nevenincs/vaultspec-rag/commit/d0f8edcbba1606058da295e3c3572a49906ae77b))
+- **index:** config-epoch drift sentinels + preprocess TOFU on-by-default ([3a75362](https://github.com/nevenincs/vaultspec-rag/commit/3a75362a895c03d2fd821de3d6377db07ec17390))
+- **install:** adopt the three-placement mode model (install-parity W02) ([4faee6a](https://github.com/nevenincs/vaultspec-rag/commit/4faee6acb6a833f7a788467b3a4cee93ede04c87))
+- **install:** adopt three-placement mode model (install-parity W02.P06) ([5b07873](https://github.com/nevenincs/vaultspec-rag/commit/5b0787311e7d5574dc6ebf305150c5bc363887a7))
+- **preprocess:** collapse the preprocess tri-state to on/off across the control surface ([64a0353](https://github.com/nevenincs/vaultspec-rag/commit/64a0353d701191b700fb40ba4b038781efd11a30))
+- **preprocess:** OS-sandbox hooks so the server runs any repo's hooks non-interactively ([cc3d680](https://github.com/nevenincs/vaultspec-rag/commit/cc3d68074fcd83cb9d2845b20fb452aa558f7e62))
+- **preprocess:** remove the OS hook sandbox; hooks run as direct bounded subprocesses ([4905707](https://github.com/nevenincs/vaultspec-rag/commit/4905707ebb9c9d038f2e174aa72a0e19e20b2a3f))
+- **server:** crash-proof hourly storage-maintenance tick and loop ([282369c](https://github.com/nevenincs/vaultspec-rag/commit/282369c809dd9b7c71edf6bb12f37e9ab538b56c))
+- **server:** maintenance cycles are first-class jobs with /metrics rollup ([62824f6](https://github.com/nevenincs/vaultspec-rag/commit/62824f61d2ef9735ab01e93299035c70a2db067b))
+- **server:** root-scoped storage survey lookup with queried_root prefix ([031b900](https://github.com/nevenincs/vaultspec-rag/commit/031b9006dfed3e989b114426238992a784b17622))
+- **server:** schedule the maintenance loop from the daemon lifespan ([8370a7d](https://github.com/nevenincs/vaultspec-rag/commit/8370a7d39920bd9c3e4e8ab144df7271d4a9caf4))
+- **server:** stamp warming/running phases into service.json across model warmup ([2b7390f](https://github.com/nevenincs/vaultspec-rag/commit/2b7390f865d9268a266046d66cd4764bb36193e0))
+- **serviceclient:** thread root through the survey transport and MCP client ([acd9be5](https://github.com/nevenincs/vaultspec-rag/commit/acd9be53fac8792ab3a78d1680eecea6652a6c6c))
+- **status:** daemon-stamped lifecycle phase vocabulary in the discovery sidecar ([4150505](https://github.com/nevenincs/vaultspec-rag/commit/415050525b06623e6b708e9eb691bbcccbf81073))
+- **storage:** O(1) survey via daemon snapshot + idempotent delete --root ([7ae79ca](https://github.com/nevenincs/vaultspec-rag/commit/7ae79caf57ec68f908fb923873ee261d15d3cc95))
+- **storage:** persisted first-seen-orphaned grace clock in the manifest ([ba8ad7b](https://github.com/nevenincs/vaultspec-rag/commit/ba8ad7b8092f738fcf4afabfcf3c6118149c108e))
+- **storage:** two-tier time-gated reclamation engine with bounded archives ([fe52f33](https://github.com/nevenincs/vaultspec-rag/commit/fe52f33460a35c3f1b730e05c21dd479dae065c5))
 
 ### Bug Fixes
 
-* **ci:** repair main gates - win32 typing narrowing, posix shutdown-log test, setuptools triage ([828c810](https://github.com/nevenincs/vaultspec-rag/commit/828c810528610dc8719686c2b75afa985bbd838f))
-* **ci:** repair main gates - win32 typing, posix shutdown-log test, setuptools triage ([2784132](https://github.com/nevenincs/vaultspec-rag/commit/27841322cd8a75fd0f53d2a63c4adeace15e127f))
-* **ci:** restore a green main - ty platform, complexity, vault schema, stale test ([390b3c6](https://github.com/nevenincs/vaultspec-rag/commit/390b3c6c501cd26b739d1b93d984a24ce8d99b0d))
-* **cli:** resolve --root before dispatch and align the survey json envelope ([f43e360](https://github.com/nevenincs/vaultspec-rag/commit/f43e360e1f4f30e65959679288758750a6e15a78))
-* **install:** flip the durable tool pin from --index to a --with wheel URL (on-box gate) ([f3ec4b0](https://github.com/nevenincs/vaultspec-rag/commit/f3ec4b0a7ab76e5b4a1cf030d1573eae4031b507))
-* **preprocess:** run hook children with the project root as cwd ([fe82c8f](https://github.com/nevenincs/vaultspec-rag/commit/fe82c8fc0dcfa5a57578d61047f75d4be5fdf05e))
-* **qdrant:** extended-length child paths end the Windows storage-path limit ([974e6ca](https://github.com/nevenincs/vaultspec-rag/commit/974e6cab514ec732da0063476c5c78fbc46fc729))
-* **qdrant:** extended-length child paths end the Windows storage-path limit ([06b13e3](https://github.com/nevenincs/vaultspec-rag/commit/06b13e36b39a45ee26b2b44ad56c8b84075252ac))
-* **review:** document status exit 5 (warming) and require identity-confirmed pid for explicit-port warming ([7991681](https://github.com/nevenincs/vaultspec-rag/commit/7991681e9e1d285e1e6330f8be83643f1fa833ed))
-* **storage:** review follow-ups - pre-drop re-count and audit-trail docs ([dbbf046](https://github.com/nevenincs/vaultspec-rag/commit/dbbf0469a4d06d2001b9a574a01b75ee88dd1f5d))
-* **tests:** rebind the live_service fixture in watcher-control ([2d391f5](https://github.com/nevenincs/vaultspec-rag/commit/2d391f5fcb8dc6224b46f718016336458bca58e2))
-* **tests:** unbreak daemon-reindex integration tests - qdrant path cliff + temp hygiene ([5663fd0](https://github.com/nevenincs/vaultspec-rag/commit/5663fd06b52b73cfd867ff48dbaaac83b096e342))
-* **types:** satisfy the strict gate - public observed_mcp_mode, stub ignores, typed test helper ([49df8af](https://github.com/nevenincs/vaultspec-rag/commit/49df8af1d35b3fe59b5a0f50b42f6d9ab79025d8))
+- **ci:** repair main gates - win32 typing narrowing, posix shutdown-log test, setuptools triage ([828c810](https://github.com/nevenincs/vaultspec-rag/commit/828c810528610dc8719686c2b75afa985bbd838f))
+- **ci:** repair main gates - win32 typing, posix shutdown-log test, setuptools triage ([2784132](https://github.com/nevenincs/vaultspec-rag/commit/27841322cd8a75fd0f53d2a63c4adeace15e127f))
+- **ci:** restore a green main - ty platform, complexity, vault schema, stale test ([390b3c6](https://github.com/nevenincs/vaultspec-rag/commit/390b3c6c501cd26b739d1b93d984a24ce8d99b0d))
+- **cli:** resolve --root before dispatch and align the survey json envelope ([f43e360](https://github.com/nevenincs/vaultspec-rag/commit/f43e360e1f4f30e65959679288758750a6e15a78))
+- **install:** flip the durable tool pin from --index to a --with wheel URL (on-box gate) ([f3ec4b0](https://github.com/nevenincs/vaultspec-rag/commit/f3ec4b0a7ab76e5b4a1cf030d1573eae4031b507))
+- **preprocess:** run hook children with the project root as cwd ([fe82c8f](https://github.com/nevenincs/vaultspec-rag/commit/fe82c8fc0dcfa5a57578d61047f75d4be5fdf05e))
+- **qdrant:** extended-length child paths end the Windows storage-path limit ([974e6ca](https://github.com/nevenincs/vaultspec-rag/commit/974e6cab514ec732da0063476c5c78fbc46fc729))
+- **qdrant:** extended-length child paths end the Windows storage-path limit ([06b13e3](https://github.com/nevenincs/vaultspec-rag/commit/06b13e36b39a45ee26b2b44ad56c8b84075252ac))
+- **review:** document status exit 5 (warming) and require identity-confirmed pid for explicit-port warming ([7991681](https://github.com/nevenincs/vaultspec-rag/commit/7991681e9e1d285e1e6330f8be83643f1fa833ed))
+- **storage:** review follow-ups - pre-drop re-count and audit-trail docs ([dbbf046](https://github.com/nevenincs/vaultspec-rag/commit/dbbf0469a4d06d2001b9a574a01b75ee88dd1f5d))
+- **tests:** rebind the live_service fixture in watcher-control ([2d391f5](https://github.com/nevenincs/vaultspec-rag/commit/2d391f5fcb8dc6224b46f718016336458bca58e2))
+- **tests:** unbreak daemon-reindex integration tests - qdrant path cliff + temp hygiene ([5663fd0](https://github.com/nevenincs/vaultspec-rag/commit/5663fd06b52b73cfd867ff48dbaaac83b096e342))
+- **types:** satisfy the strict gate - public observed_mcp_mode, stub ignores, typed test helper ([49df8af](https://github.com/nevenincs/vaultspec-rag/commit/49df8af1d35b3fe59b5a0f50b42f6d9ab79025d8))
 
 ## [0.2.28](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.2.27...vaultspec-rag-v0.2.28) (2026-07-01)
 
-
 ### Features
 
-* **builtins:** bundle a semantic-discovery skill and refocus the rag rule ([8c97484](https://github.com/nevenincs/vaultspec-rag/commit/8c974840514a0c32aa025a96634421b1d98d09ea))
-* **install:** report seed actions [ADD]/[UPDATE]/[UNCHANGED] like core ([9056351](https://github.com/nevenincs/vaultspec-rag/commit/905635194c8c37f45cd22cb7ddbea31a6391e43a))
-* **search:** query-time domain noise filtering, ranking, and a noise profile ([66b18bb](https://github.com/nevenincs/vaultspec-rag/commit/66b18bb14af1cdea5f5b1e1f12c9a1b0ba2a46fc))
-* **search:** query-time domain noise filtering, ranking, and a noise profile ([25f6812](https://github.com/nevenincs/vaultspec-rag/commit/25f6812e715003e6725e94d38024f3c809554bc7))
+- **builtins:** bundle a semantic-discovery skill and refocus the rag rule ([8c97484](https://github.com/nevenincs/vaultspec-rag/commit/8c974840514a0c32aa025a96634421b1d98d09ea))
+- **install:** report seed actions [ADD]/[UPDATE]/[UNCHANGED] like core ([9056351](https://github.com/nevenincs/vaultspec-rag/commit/905635194c8c37f45cd22cb7ddbea31a6391e43a))
+- **search:** query-time domain noise filtering, ranking, and a noise profile ([66b18bb](https://github.com/nevenincs/vaultspec-rag/commit/66b18bb14af1cdea5f5b1e1f12c9a1b0ba2a46fc))
+- **search:** query-time domain noise filtering, ranking, and a noise profile ([25f6812](https://github.com/nevenincs/vaultspec-rag/commit/25f6812e715003e6725e94d38024f3c809554bc7))
 
 ## [0.2.27](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.2.26...vaultspec-rag-v0.2.27) (2026-06-30)
 
-
 ### Features
 
-* **deps:** make mcp an optional extra so CLI installs do not drag pywin32 ([048585e](https://github.com/nevenincs/vaultspec-rag/commit/048585e522e006c6b6aa9911cd176c9156263316))
-* **install:** vaultspec-rag install ensures the [mcp] extra by default (--no-mcp opt-out) ([78d1442](https://github.com/nevenincs/vaultspec-rag/commit/78d1442943f12cd3137d978272651a53bfaf61cf))
-* **mcp-conformance:** narrow the MCP surface and harden errors (P02-P06) ([1c859de](https://github.com/nevenincs/vaultspec-rag/commit/1c859deee220963620ed9e818160bb8d0c4ce321))
-* **mcp-conformance:** resolve the machine-singleton service via the global pointer (P01) ([f723ca9](https://github.com/nevenincs/vaultspec-rag/commit/f723ca9f2ba8eb6bc03d797b35b0eb36dac160ce))
-* **qdrant:** detect-quarantine-retry a corrupt collection on supervised start ([466cdfb](https://github.com/nevenincs/vaultspec-rag/commit/466cdfb83b46fd5e89b77be6c42d70788910304e))
-* **service:** make the service&lt;-&gt;python-env coupling legible and fail fast ([7abb85b](https://github.com/nevenincs/vaultspec-rag/commit/7abb85b591eb9936026c784fa83dff8f1daf2b78))
-* **torch:** centralize the GPU torch load + make install tell the truth about the wheel ([b6c4e34](https://github.com/nevenincs/vaultspec-rag/commit/b6c4e34bc60a986de42527485a283009797fff28))
-
+- **deps:** make mcp an optional extra so CLI installs do not drag pywin32 ([048585e](https://github.com/nevenincs/vaultspec-rag/commit/048585e522e006c6b6aa9911cd176c9156263316))
+- **install:** vaultspec-rag install ensures the [mcp] extra by default (--no-mcp opt-out) ([78d1442](https://github.com/nevenincs/vaultspec-rag/commit/78d1442943f12cd3137d978272651a53bfaf61cf))
+- **mcp-conformance:** narrow the MCP surface and harden errors (P02-P06) ([1c859de](https://github.com/nevenincs/vaultspec-rag/commit/1c859deee220963620ed9e818160bb8d0c4ce321))
+- **mcp-conformance:** resolve the machine-singleton service via the global pointer (P01) ([f723ca9](https://github.com/nevenincs/vaultspec-rag/commit/f723ca9f2ba8eb6bc03d797b35b0eb36dac160ce))
+- **qdrant:** detect-quarantine-retry a corrupt collection on supervised start ([466cdfb](https://github.com/nevenincs/vaultspec-rag/commit/466cdfb83b46fd5e89b77be6c42d70788910304e))
+- **service:** make the service\<->python-env coupling legible and fail fast ([7abb85b](https://github.com/nevenincs/vaultspec-rag/commit/7abb85b591eb9936026c784fa83dff8f1daf2b78))
+- **torch:** centralize the GPU torch load + make install tell the truth about the wheel ([b6c4e34](https://github.com/nevenincs/vaultspec-rag/commit/b6c4e34bc60a986de42527485a283009797fff28))
 
 ### Bug Fixes
 
-* **mcp,search:** typed search outputSchema + Windows model-load crash fix ([3c9d9d2](https://github.com/nevenincs/vaultspec-rag/commit/3c9d9d2f6073c0ea7bbcaca05bf165673b443aab))
-* **qdrant:** address code-review findings on store-resilience recovery ([cd2bb2a](https://github.com/nevenincs/vaultspec-rag/commit/cd2bb2a999a5e886a6b259b0e144dbdb202803ad))
-* **service:** make the torch pre-flight green (lint, types, complexity) ([1dc9c08](https://github.com/nevenincs/vaultspec-rag/commit/1dc9c085c7e4c2ea4ef9bc7c98aab8569389f35a))
-* **service:** reclaim a wedged machine-singleton holder via `server stop` ([45f3907](https://github.com/nevenincs/vaultspec-rag/commit/45f3907551b2608163f0ec37673a41e02f401e87))
+- **mcp,search:** typed search outputSchema + Windows model-load crash fix ([3c9d9d2](https://github.com/nevenincs/vaultspec-rag/commit/3c9d9d2f6073c0ea7bbcaca05bf165673b443aab))
+- **qdrant:** address code-review findings on store-resilience recovery ([cd2bb2a](https://github.com/nevenincs/vaultspec-rag/commit/cd2bb2a999a5e886a6b259b0e144dbdb202803ad))
+- **service:** make the torch pre-flight green (lint, types, complexity) ([1dc9c08](https://github.com/nevenincs/vaultspec-rag/commit/1dc9c085c7e4c2ea4ef9bc7c98aab8569389f35a))
+- **service:** reclaim a wedged machine-singleton holder via `server stop` ([45f3907](https://github.com/nevenincs/vaultspec-rag/commit/45f3907551b2608163f0ec37673a41e02f401e87))
 
 ## [0.2.26](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.2.25...vaultspec-rag-v0.2.26) (2026-06-28)
 
-
 ### Features
 
-* **rag-broker-affordances:** idempotent JSON server start + machine-global discovery pointer ([#216](https://github.com/nevenincs/vaultspec-rag/issues/216)) ([143120d](https://github.com/nevenincs/vaultspec-rag/commit/143120d3529bee407f932898a37dca8233ba8075))
-* **storage-schema:** versioned typed runtime-advertised Qdrant schema contract ([#215](https://github.com/nevenincs/vaultspec-rag/issues/215)) ([fe7e0ee](https://github.com/nevenincs/vaultspec-rag/commit/fe7e0ee388685ad50d8429a118798e78d3552b55))
+- **rag-broker-affordances:** idempotent JSON server start + machine-global discovery pointer ([#216](https://github.com/nevenincs/vaultspec-rag/issues/216)) ([143120d](https://github.com/nevenincs/vaultspec-rag/commit/143120d3529bee407f932898a37dca8233ba8075))
+- **storage-schema:** versioned typed runtime-advertised Qdrant schema contract ([#215](https://github.com/nevenincs/vaultspec-rag/issues/215)) ([fe7e0ee](https://github.com/nevenincs/vaultspec-rag/commit/fe7e0ee388685ad50d8429a118798e78d3552b55))
 
 ## [0.2.25](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.2.24...vaultspec-rag-v0.2.25) (2026-06-25)
 
-
 ### Features
 
-* **service-hw-singleton:** complete W04.P09 hardening follow-ups (S28–S33) ([#212](https://github.com/nevenincs/vaultspec-rag/issues/212)) ([355b011](https://github.com/nevenincs/vaultspec-rag/commit/355b011e7198dd54049b4809b268468119d95573))
-* **storage-lifecycle:** reconcile plan to shipped CLI-direct design + build genuine gaps (45/45) ([#213](https://github.com/nevenincs/vaultspec-rag/issues/213)) ([d3be70d](https://github.com/nevenincs/vaultspec-rag/commit/d3be70d01da224ea5643194553756767214326aa))
-
+- **service-hw-singleton:** complete W04.P09 hardening follow-ups (S28–S33) ([#212](https://github.com/nevenincs/vaultspec-rag/issues/212)) ([355b011](https://github.com/nevenincs/vaultspec-rag/commit/355b011e7198dd54049b4809b268468119d95573))
+- **storage-lifecycle:** reconcile plan to shipped CLI-direct design + build genuine gaps (45/45) ([#213](https://github.com/nevenincs/vaultspec-rag/issues/213)) ([d3be70d](https://github.com/nevenincs/vaultspec-rag/commit/d3be70d01da224ea5643194553756767214326aa))
 
 ### Bug Fixes
 
-* **ci:** make local `just ci` green — relative test imports + precise absolute-imports gate ([#210](https://github.com/nevenincs/vaultspec-rag/issues/210)) ([ca3f934](https://github.com/nevenincs/vaultspec-rag/commit/ca3f934f4907949d9c114bcb3a07d93e7c73895c))
+- **ci:** make local `just ci` green — relative test imports + precise absolute-imports gate ([#210](https://github.com/nevenincs/vaultspec-rag/issues/210)) ([ca3f934](https://github.com/nevenincs/vaultspec-rag/commit/ca3f934f4907949d9c114bcb3a07d93e7c73895c))
 
 ## [0.2.24](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.2.23...vaultspec-rag-v0.2.24) (2026-06-24)
 
-
 ### Features
 
-* **install:** optional dependency-group placement for managed torch ([#186](https://github.com/nevenincs/vaultspec-rag/issues/186)) ([5e91195](https://github.com/nevenincs/vaultspec-rag/commit/5e911959596c43bd0b5d4183dac6b8ac95391d67))
-* **qdrant:** auto-reap managed orphan before spawn (W03.P06) ([b992b61](https://github.com/nevenincs/vaultspec-rag/commit/b992b6166df3b48911c4c427667994c4f0d9abbc))
-* **qdrant:** capture supervised child output and diagnose non-ready exits (W01.P01) ([581b558](https://github.com/nevenincs/vaultspec-rag/commit/581b558ddacbf35ba5640dbf2536a3023f362c5f))
-* **qdrant:** verified attach-not-spawn + detection/identity primitives (W01.P02, W02) ([5564677](https://github.com/nevenincs/vaultspec-rag/commit/55646778ec3cd320bb48f0b9a1ae02af4a965b20))
-* **search:** intent-aware pipeline-role ranking for vault search ([c02c12c](https://github.com/nevenincs/vaultspec-rag/commit/c02c12cff9505f5283dc9c37b08696416a791fe8))
-* **serviceclient:** surface admin failures as a structured envelope ([#199](https://github.com/nevenincs/vaultspec-rag/issues/199)) ([d87d190](https://github.com/nevenincs/vaultspec-rag/commit/d87d19004e54e50ec2505c0479e28e0a9788119f))
-* **service:** crash-safe machine-scoped service lock primitive (W03.P05) ([ab12f52](https://github.com/nevenincs/vaultspec-rag/commit/ab12f525900512fd0ed48db4aa34b6e09a414fad))
-* **service:** doctor reports live truth; daemon survives its launching shell ([#204](https://github.com/nevenincs/vaultspec-rag/issues/204)) ([ffee70e](https://github.com/nevenincs/vaultspec-rag/commit/ffee70e65f01a018b6d934efe5e0fad297424ed5))
-* **service:** machine-singleton wiring + adversarial verification gate (W03.P05.S17, W04) ([8747786](https://github.com/nevenincs/vaultspec-rag/commit/8747786796d44c7bcb2f5e01b434da003253a008))
-* **service:** version and document the discovery file as a stable interface ([#190](https://github.com/nevenincs/vaultspec-rag/issues/190)) ([a201f6c](https://github.com/nevenincs/vaultspec-rag/commit/a201f6c4b762398f8da74abde9f337947e6bffef))
-
+- **install:** optional dependency-group placement for managed torch ([#186](https://github.com/nevenincs/vaultspec-rag/issues/186)) ([5e91195](https://github.com/nevenincs/vaultspec-rag/commit/5e911959596c43bd0b5d4183dac6b8ac95391d67))
+- **qdrant:** auto-reap managed orphan before spawn (W03.P06) ([b992b61](https://github.com/nevenincs/vaultspec-rag/commit/b992b6166df3b48911c4c427667994c4f0d9abbc))
+- **qdrant:** capture supervised child output and diagnose non-ready exits (W01.P01) ([581b558](https://github.com/nevenincs/vaultspec-rag/commit/581b558ddacbf35ba5640dbf2536a3023f362c5f))
+- **qdrant:** verified attach-not-spawn + detection/identity primitives (W01.P02, W02) ([5564677](https://github.com/nevenincs/vaultspec-rag/commit/55646778ec3cd320bb48f0b9a1ae02af4a965b20))
+- **search:** intent-aware pipeline-role ranking for vault search ([c02c12c](https://github.com/nevenincs/vaultspec-rag/commit/c02c12cff9505f5283dc9c37b08696416a791fe8))
+- **serviceclient:** surface admin failures as a structured envelope ([#199](https://github.com/nevenincs/vaultspec-rag/issues/199)) ([d87d190](https://github.com/nevenincs/vaultspec-rag/commit/d87d19004e54e50ec2505c0479e28e0a9788119f))
+- **service:** crash-safe machine-scoped service lock primitive (W03.P05) ([ab12f52](https://github.com/nevenincs/vaultspec-rag/commit/ab12f525900512fd0ed48db4aa34b6e09a414fad))
+- **service:** doctor reports live truth; daemon survives its launching shell ([#204](https://github.com/nevenincs/vaultspec-rag/issues/204)) ([ffee70e](https://github.com/nevenincs/vaultspec-rag/commit/ffee70e65f01a018b6d934efe5e0fad297424ed5))
+- **service:** machine-singleton wiring + adversarial verification gate (W03.P05.S17, W04) ([8747786](https://github.com/nevenincs/vaultspec-rag/commit/8747786796d44c7bcb2f5e01b434da003253a008))
+- **service:** version and document the discovery file as a stable interface ([#190](https://github.com/nevenincs/vaultspec-rag/issues/190)) ([a201f6c](https://github.com/nevenincs/vaultspec-rag/commit/a201f6c4b762398f8da74abde9f337947e6bffef))
 
 ### Bug Fixes
 
-* **ci:** format vault docs and clear lint/type/test gates on the bundle ([04c16e0](https://github.com/nevenincs/vaultspec-rag/commit/04c16e0aae0ef891e237a4d1ba0dbcc0f78ec181))
-* **deps,types:** restore typer 0.26.7 and clear strict basedpyright errors ([551cd3b](https://github.com/nevenincs/vaultspec-rag/commit/551cd3b6f3781307a458bb956deda4a76df59f2b))
-* **lint:** move annotation-only pathlib.Path into TYPE_CHECKING (_models) ([9266fe1](https://github.com/nevenincs/vaultspec-rag/commit/9266fe1f391ba093b81795ee5ab97d2649072bcf))
-* **review:** address audit MEDIUM/LOW findings across the four features ([5f6cd63](https://github.com/nevenincs/vaultspec-rag/commit/5f6cd63e6da9ca9643fae08a99f2fc5d4beb82bd))
-* **search:** address code-review findings (HIGH-1, HIGH-2, MEDIUM-2) ([801d959](https://github.com/nevenincs/vaultspec-rag/commit/801d959339d305677a39db983de9bca81fc1c9c6))
-* **service:** drop unlink on machine-lock release (3rd review HIGH) ([dcfa20f](https://github.com/nevenincs/vaultspec-rag/commit/dcfa20f0ad330a16f0aebc242a6fd3c4e5276350))
-* **service:** replace machine lock with OS advisory lock (2nd review HIGH) ([5bdf47a](https://github.com/nevenincs/vaultspec-rag/commit/5bdf47a2312b186beb5eae4ef3589ba632310fe7))
-* **service:** resolve code-review HIGH/MEDIUM in machine-singleton hardening ([689c2fa](https://github.com/nevenincs/vaultspec-rag/commit/689c2fafac5bb1c1a497716171eb6e2e0985e3aa))
-* **ty:** clear strict ty errors in test_cli and test_install ([8a13f29](https://github.com/nevenincs/vaultspec-rag/commit/8a13f29f5e8029d1cfd06aeb82bcfe25f5ca5d25))
+- **ci:** format vault docs and clear lint/type/test gates on the bundle ([04c16e0](https://github.com/nevenincs/vaultspec-rag/commit/04c16e0aae0ef891e237a4d1ba0dbcc0f78ec181))
+- **deps,types:** restore typer 0.26.7 and clear strict basedpyright errors ([551cd3b](https://github.com/nevenincs/vaultspec-rag/commit/551cd3b6f3781307a458bb956deda4a76df59f2b))
+- **lint:** move annotation-only pathlib.Path into TYPE_CHECKING (\_models) ([9266fe1](https://github.com/nevenincs/vaultspec-rag/commit/9266fe1f391ba093b81795ee5ab97d2649072bcf))
+- **review:** address audit MEDIUM/LOW findings across the four features ([5f6cd63](https://github.com/nevenincs/vaultspec-rag/commit/5f6cd63e6da9ca9643fae08a99f2fc5d4beb82bd))
+- **search:** address code-review findings (HIGH-1, HIGH-2, MEDIUM-2) ([801d959](https://github.com/nevenincs/vaultspec-rag/commit/801d959339d305677a39db983de9bca81fc1c9c6))
+- **service:** drop unlink on machine-lock release (3rd review HIGH) ([dcfa20f](https://github.com/nevenincs/vaultspec-rag/commit/dcfa20f0ad330a16f0aebc242a6fd3c4e5276350))
+- **service:** replace machine lock with OS advisory lock (2nd review HIGH) ([5bdf47a](https://github.com/nevenincs/vaultspec-rag/commit/5bdf47a2312b186beb5eae4ef3589ba632310fe7))
+- **service:** resolve code-review HIGH/MEDIUM in machine-singleton hardening ([689c2fa](https://github.com/nevenincs/vaultspec-rag/commit/689c2fafac5bb1c1a497716171eb6e2e0985e3aa))
+- **ty:** clear strict ty errors in test_cli and test_install ([8a13f29](https://github.com/nevenincs/vaultspec-rag/commit/8a13f29f5e8029d1cfd06aeb82bcfe25f5ca5d25))
 
 ## [0.2.23](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.2.22...vaultspec-rag-v0.2.23) (2026-06-21)
 
-
 ### Bug Fixes
 
-* **cli:** make search service-first; never silently fall back to local ([#202](https://github.com/nevenincs/vaultspec-rag/issues/202)) ([#205](https://github.com/nevenincs/vaultspec-rag/issues/205)) ([204651a](https://github.com/nevenincs/vaultspec-rag/commit/204651a246b165aaccaa6483f9e2d3816b403be4))
+- **cli:** make search service-first; never silently fall back to local ([#202](https://github.com/nevenincs/vaultspec-rag/issues/202)) ([#205](https://github.com/nevenincs/vaultspec-rag/issues/205)) ([204651a](https://github.com/nevenincs/vaultspec-rag/commit/204651a246b165aaccaa6483f9e2d3816b403be4))
 
 ## [0.2.22](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.2.21...vaultspec-rag-v0.2.22) (2026-06-20)
 
-
 ### Features
 
-* **mcp:** P01 import-light serviceclient package + lazy package init ([#194](https://github.com/nevenincs/vaultspec-rag/issues/194)) ([6fb2c52](https://github.com/nevenincs/vaultspec-rag/commit/6fb2c52d4563a5fea4a292876521d08cdee713b3))
-* **mcp:** P02 MCP tools delegate to serviceclient, drop duplicate seam ([#194](https://github.com/nevenincs/vaultspec-rag/issues/194)) ([63d9f99](https://github.com/nevenincs/vaultspec-rag/commit/63d9f99536992dce26a48232ad086ddd0dccac64))
-* **mcp:** P03 stdio-only MCP, remove daemon mount and in-process model load ([#194](https://github.com/nevenincs/vaultspec-rag/issues/194)) ([f7b14ed](https://github.com/nevenincs/vaultspec-rag/commit/f7b14ed3cc4c0f3d2566e33b4dfd01fe03b4a41c))
-
+- **mcp:** P01 import-light serviceclient package + lazy package init ([#194](https://github.com/nevenincs/vaultspec-rag/issues/194)) ([6fb2c52](https://github.com/nevenincs/vaultspec-rag/commit/6fb2c52d4563a5fea4a292876521d08cdee713b3))
+- **mcp:** P02 MCP tools delegate to serviceclient, drop duplicate seam ([#194](https://github.com/nevenincs/vaultspec-rag/issues/194)) ([63d9f99](https://github.com/nevenincs/vaultspec-rag/commit/63d9f99536992dce26a48232ad086ddd0dccac64))
+- **mcp:** P03 stdio-only MCP, remove daemon mount and in-process model load ([#194](https://github.com/nevenincs/vaultspec-rag/issues/194)) ([f7b14ed](https://github.com/nevenincs/vaultspec-rag/commit/f7b14ed3cc4c0f3d2566e33b4dfd01fe03b4a41c))
 
 ### Bug Fixes
 
-* **cli:** authenticate --port calls via /health token when status file is absent or stale ([ab28b7e](https://github.com/nevenincs/vaultspec-rag/commit/ab28b7e9ded521d76ea0c791a8d8e8125b08e19b))
-* **mcp:** P04 remove dead and phantom MCP artifacts ([#194](https://github.com/nevenincs/vaultspec-rag/issues/194)) ([033c78f](https://github.com/nevenincs/vaultspec-rag/commit/033c78f461afab8e9648f860fdb22c04b081b668))
-* **mcp:** P06 review fixes (M-1 docstring, M-2 dead route) + audit ([#194](https://github.com/nevenincs/vaultspec-rag/issues/194)) ([3784c17](https://github.com/nevenincs/vaultspec-rag/commit/3784c17594d2a166548bc74a3b9301253fe5b44a))
-* **watcher:** evict deleted files on idle — flush cooldown-suppressed changes ([#192](https://github.com/nevenincs/vaultspec-rag/issues/192)) ([c579e9b](https://github.com/nevenincs/vaultspec-rag/commit/c579e9b89cb4a57bb8464c0acb37d302a4d7b536))
+- **cli:** authenticate --port calls via /health token when status file is absent or stale ([ab28b7e](https://github.com/nevenincs/vaultspec-rag/commit/ab28b7e9ded521d76ea0c791a8d8e8125b08e19b))
+- **mcp:** P04 remove dead and phantom MCP artifacts ([#194](https://github.com/nevenincs/vaultspec-rag/issues/194)) ([033c78f](https://github.com/nevenincs/vaultspec-rag/commit/033c78f461afab8e9648f860fdb22c04b081b668))
+- **mcp:** P06 review fixes (M-1 docstring, M-2 dead route) + audit ([#194](https://github.com/nevenincs/vaultspec-rag/issues/194)) ([3784c17](https://github.com/nevenincs/vaultspec-rag/commit/3784c17594d2a166548bc74a3b9301253fe5b44a))
+- **watcher:** evict deleted files on idle — flush cooldown-suppressed changes ([#192](https://github.com/nevenincs/vaultspec-rag/issues/192)) ([c579e9b](https://github.com/nevenincs/vaultspec-rag/commit/c579e9b89cb4a57bb8464c0acb37d302a4d7b536))
 
 ## [0.2.21](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.2.20...vaultspec-rag-v0.2.21) (2026-06-13)
 
-
 ### Features
 
-* server-first default backend with unified provisioning and readiness ([97b6f64](https://github.com/nevenincs/vaultspec-rag/commit/97b6f64544c3f632d7856f04c9ce81730ada4cc5))
+- server-first default backend with unified provisioning and readiness ([97b6f64](https://github.com/nevenincs/vaultspec-rag/commit/97b6f64544c3f632d7856f04c9ce81730ada4cc5))
 
 ## [0.2.20](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.2.19...vaultspec-rag-v0.2.20) (2026-06-11)
 
-
 ### Features
 
-* generic document-preprocessing hook infrastructure ([#185](https://github.com/nevenincs/vaultspec-rag/issues/185)) ([#187](https://github.com/nevenincs/vaultspec-rag/issues/187)) ([a6d6f12](https://github.com/nevenincs/vaultspec-rag/commit/a6d6f122ea506cbd99d9010562d369ff6aec6193))
+- generic document-preprocessing hook infrastructure ([#185](https://github.com/nevenincs/vaultspec-rag/issues/185)) ([#187](https://github.com/nevenincs/vaultspec-rag/issues/187)) ([a6d6f12](https://github.com/nevenincs/vaultspec-rag/commit/a6d6f122ea506cbd99d9010562d369ff6aec6193))
 
 ## [0.2.19](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.2.18...vaultspec-rag-v0.2.19) (2026-06-10)
 

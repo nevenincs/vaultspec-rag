@@ -16,7 +16,7 @@ which resolves to a stale global install). Sections not explicitly flagged as
 re-verified (3, 5 partial, 6, 7, 13, 15) were left as the 2026-06-13 version
 recorded them and should be spot-checked before being treated as current.
 
----
+______________________________________________________________________
 
 ## 1. Package version and entry points
 
@@ -33,7 +33,7 @@ recorded them and should be spot-checked before being treated as current.
   always-core dependency — reconfirm the pyproject dependency declaration
   before documenting this as a hard requirement.
 
----
+______________________________________________________________________
 
 ## 2. Complete CLI command tree
 
@@ -50,6 +50,7 @@ Root app: `app` in `cli/_app.py`. Help: "VaultSpec RAG: search project
 documentation and source code."
 
 **Group nesting** (`cli/_app.py`, live-verified):
+
 - `app` → `server` (`server_root_app`)
 - `server` → `job` (`server_job_app`) — **NEW**
 - `server` → `projects` (`server_projects_app`)
@@ -69,17 +70,17 @@ Unchanged in shape from the prior version of this file: `--target/-t`,
 
 ### Top-level commands (live-verified)
 
-| Command | Purpose |
-|---|---|
-| `index` | Build/update the vault, code, and extracted-document search indexes |
-| `clean <vault\|code\|document\|combined\|docs\|codebase\|all>` | Delete selected index data without rebuilding |
-| `search <query>` | Search project documents, source code, or extracted documents |
-| `status` | Project index counts, data location, compute device |
-| `install` | Enroll workspace + provision deps |
-| `uninstall` | Remove enrollment |
-| `test [PYTEST_ARGS...]` | Run pytest over the test tree |
-| `server` | Manage the background search service |
-| `preprocess` | Inspect and validate document preprocessing rules |
+| Command                                                        | Purpose                                                             |
+| -------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `index`                                                        | Build/update the vault, code, and extracted-document search indexes |
+| `clean <vault\|code\|document\|combined\|docs\|codebase\|all>` | Delete selected index data without rebuilding                       |
+| `search <query>`                                               | Search project documents, source code, or extracted documents       |
+| `status`                                                       | Project index counts, data location, compute device                 |
+| `install`                                                      | Enroll workspace + provision deps                                   |
+| `uninstall`                                                    | Remove enrollment                                                   |
+| `test [PYTEST_ARGS...]`                                        | Run pytest over the test tree                                       |
+| `server`                                                       | Manage the background search service                                |
+| `preprocess`                                                   | Inspect and validate document preprocessing rules                   |
 
 **REMOVED vs the prior version of this file:** `benchmark`, `quality` are no
 longer top-level commands. (The MCP surface also dropped its `benchmark()`
@@ -87,21 +88,21 @@ and `quality()` tools — see Section 14.)
 
 ### `server` group — 13 subcommands (live-verified, was 7 flat + 3 groups)
 
-| Command | Purpose |
-|---|---|
-| `server start` | Start the background search service |
-| `server stop` | Stop the background search service |
-| `server status` | Human operator summary for readiness/work/next checks |
-| `server warmup` | Download GPU model files before they are needed |
-| `server doctor` | Readiness across two axes: installed deps AND live service health |
-| `server jobs` | Recent index update activity, with filters |
-| `server logs` | Grouped raw service/Qdrant logs, live or offline |
+| Command            | Purpose                                                                        |
+| ------------------ | ------------------------------------------------------------------------------ |
+| `server start`     | Start the background search service                                            |
+| `server stop`      | Stop the background search service                                             |
+| `server status`    | Human operator summary for readiness/work/next checks                          |
+| `server warmup`    | Download GPU model files before they are needed                                |
+| `server doctor`    | Readiness across two axes: installed deps AND live service health              |
+| `server jobs`      | Recent index update activity, with filters                                     |
+| `server logs`      | Grouped raw service/Qdrant logs, live or offline                               |
 | `server reconcile` | **NEW.** Wait for the service to republish discovery records (non-destructive) |
-| `server job` | **NEW group.** Inspect and control one exact service job |
-| `server projects` | Inspect and unload loaded project slots |
-| `server updates` | Inspect and control automatic index updates |
-| `server qdrant` | Install and inspect the managed Qdrant server |
-| `server storage` | **NEW group.** Survey and reclaim per-root RAG index storage |
+| `server job`       | **NEW group.** Inspect and control one exact service job                       |
+| `server projects`  | Inspect and unload loaded project slots                                        |
+| `server updates`   | Inspect and control automatic index updates                                    |
+| `server qdrant`    | Install and inspect the managed Qdrant server                                  |
+| `server storage`   | **NEW group.** Survey and reclaim per-root RAG index storage                   |
 
 ### `server start` flags (live-verified)
 
@@ -139,19 +140,18 @@ and `quality()` tools — see Section 14.)
 
 - `--limit INT` (default 20), `--state`, `--index`, `--started-by`,
   `-q/--query`, `--failed`, `--job-id`, `--since FLOAT`, `--port`, `--json`.
-- **NEW**: `--watch` (continuously refresh the human view), `--interval
-  FLOAT` (default 2.0), `--refresh-count INT`.
+- **NEW**: `--watch` (continuously refresh the human view), `--interval FLOAT` (default 2.0), `--refresh-count INT`.
 
 ### `server job` (singular) — ENTIRELY NEW group, per-job control
 
-| Command | Purpose |
-|---|---|
-| `server job show <job_id>` | Show one exact job resource; human mode accepts a unique id prefix |
-| `server job pause <job_id>` | Request a cooperative pause for one job |
-| `server job resume <job_id>` | Resume one paused job through reconciliation |
-| `server job stop <job_id>` | Request cancellation without disabling automatic updates |
-| `server job retry <job_id>` | Create a linked retry for one retryable terminal job |
-| `server job delete <job_id>` | Delete one terminal job from retained history |
+| Command                      | Purpose                                                            |
+| ---------------------------- | ------------------------------------------------------------------ |
+| `server job show <job_id>`   | Show one exact job resource; human mode accepts a unique id prefix |
+| `server job pause <job_id>`  | Request a cooperative pause for one job                            |
+| `server job resume <job_id>` | Resume one paused job through reconciliation                       |
+| `server job stop <job_id>`   | Request cancellation without disabling automatic updates           |
+| `server job retry <job_id>`  | Create a linked retry for one retryable terminal job               |
+| `server job delete <job_id>` | Delete one terminal job from retained history                      |
 
 All take `--port`/`--json`.
 
@@ -164,8 +164,7 @@ All take `--port`/`--json`.
 ### `server reconcile` — ENTIRELY NEW command
 
 Non-destructive: waits for the running service to republish its discovery
-records. Nothing is written, deleted, stopped, or restarted. `--timeout
-FLOAT` (default 35.0), `--json`. Exit 0 once discovery converges, 1 if it
+records. Nothing is written, deleted, stopped, or restarted. `--timeout FLOAT` (default 35.0), `--json`. Exit 0 once discovery converges, 1 if it
 does not converge in time.
 
 ### `server projects`
@@ -179,22 +178,22 @@ Unchanged: `status`, `start <project>`, `stop <project>`, `timing <project>`
 
 ### `server qdrant` — drift
 
-| Command | Purpose |
-|---|---|
-| `server qdrant install` | Download + verify the managed Qdrant server |
-| `server qdrant status` | Executable/address/connection/process |
-| `server qdrant clean` | Delete managed Qdrant installs |
+| Command                    | Purpose                                                    |
+| -------------------------- | ---------------------------------------------------------- |
+| `server qdrant install`    | Download + verify the managed Qdrant server                |
+| `server qdrant status`     | Executable/address/connection/process                      |
+| `server qdrant clean`      | Delete managed Qdrant installs                             |
 | `server qdrant quarantine` | **NEW.** Move a corrupt collection out of the shared store |
 
 ### `server storage` — ENTIRELY NEW group (per-root namespace lifecycle)
 
-| Command | Purpose |
-|---|---|
-| `server storage survey` | List stored RAG namespaces classified as live, orphaned, or unknown |
-| `server storage delete` | Delete one named RAG namespace, addressed by its `r{hash}_` prefix |
-| `server storage prune` | Reclaim every orphaned RAG namespace (source root gone) |
+| Command                    | Purpose                                                                       |
+| -------------------------- | ----------------------------------------------------------------------------- |
+| `server storage survey`    | List stored RAG namespaces classified as live, orphaned, or unknown           |
+| `server storage delete`    | Delete one named RAG namespace, addressed by its `r{hash}_` prefix            |
+| `server storage prune`     | Reclaim every orphaned RAG namespace (source root gone)                       |
 | `server storage reconcile` | Shrink existing collections to the bounded segment geometry (non-destructive) |
-| `server storage migrate` | Migrate a root's index between local and server backends |
+| `server storage migrate`   | Migrate a root's index between local and server backends                      |
 
 This whole group backs the storage-autoprune/geometry-reconcile feature
 (Section 10 env vars) — entirely undocumented against the prior version of
@@ -204,16 +203,16 @@ this file. Exact per-command flags not yet extracted this pass; pull with
 
 ### `preprocess` — drift
 
-| Command | Purpose |
-|---|---|
-| `preprocess list` | Show resolved preprocess rules |
-| `preprocess check` | Validate `.vaultragpreprocess.toml` |
-| `preprocess run-one <path>` | Trial-run the matching rule on one file |
-| `preprocess status` | **NEW.** Report the preprocess mode, config presence, and rule count |
+| Command                     | Purpose                                                              |
+| --------------------------- | -------------------------------------------------------------------- |
+| `preprocess list`           | Show resolved preprocess rules                                       |
+| `preprocess check`          | Validate `.vaultragpreprocess.toml`                                  |
+| `preprocess run-one <path>` | Trial-run the matching rule on one file                              |
+| `preprocess status`         | **NEW.** Report the preprocess mode, config presence, and rule count |
 
-### Removed/renamed vs the old "server service" CLI — see Section 16.
+### Removed/renamed vs the old "server service" CLI — see Section 16
 
----
+______________________________________________________________________
 
 ## 3. Server-first default model
 
@@ -227,12 +226,13 @@ default False, effective_server_mode = qdrant_server and not local_only,
 local-only always wins) is confirmed still current via Section 10's defaults
 extraction.
 
----
+______________________________________________________________________
 
 ## 4. `install` provisioning front door
 
 **Refresh notes — substantial drift.** Two new flags and one REVERSED
 decision since the prior version of this file:
+
 - **NEW `--mode tool|dependency|dev`** — provisioning mode, auto-detected
   from `pyproject.toml` when omitted (`tool` = launched via uvx; `dependency`
   = a runtime project dependency resolved through the project's own venv,
@@ -278,7 +278,7 @@ re-verified for the new `--mode`/`--torch-group`/`--mcp` flags this pass;
 they are live and callable per `--help`, but internal report field coverage
 (`InstallReport` shape) was not re-checked.
 
----
+______________________________________________________________________
 
 ## 5. `server doctor` readiness verb
 
@@ -292,7 +292,7 @@ check) — the live-service axis is new. Flags: `--json` only (per current
 `_qdrant_readiness` — were not re-read this pass to confirm the exact
 info-field shapes still match the prior version's citations).
 
----
+______________________________________________________________________
 
 ## 6. `server qdrant` group
 
@@ -303,7 +303,7 @@ architectural and was not seen to have changed, but exact line citations
 (`_resolve.py:NNN`, `_provision.py:NNN`) should be re-confirmed before
 quoting them verbatim in docs.
 
----
+______________________________________________________________________
 
 ## 7. Managed Qdrant server vs local mode (store layer)
 
@@ -313,7 +313,7 @@ backend-aware locking) is architectural and consistent with everything else
 extracted this pass (e.g. the `server storage` group operates on namespaced
 `r{hash}_` prefixes, confirming the namespacing scheme is still current).
 
----
+______________________________________________________________________
 
 ## 8. Search output and flags
 
@@ -341,7 +341,7 @@ live `--help` run).
 Routing/auto-detect-service behavior not re-verified this pass; no evidence
 of drift.
 
----
+______________________________________________________________________
 
 ## 9. `index` and `clean` command flags and behavior
 
@@ -378,7 +378,7 @@ documenting).
 - `-y/--yes`, `--json` (requires `--yes`).
 - Does not load models/GPU.
 
----
+______________________________________________________________________
 
 ## 10. Full config / env var inventory
 
@@ -389,94 +389,94 @@ geometry reconcile, index resource ceilings, job/store write-retry timeouts,
 watcher retry/circuit-breaker policy, intent-aware vault ranking, code-search
 noise-domain filtering, and the stdio watchdog kill switch.
 
-| Config key | Env var | Type | Default | Controls / CLI flag |
-|---|---|---|---|---|
-| `qdrant_url` | `VAULTSPEC_RAG_QDRANT_URL` | str\|None | `None` | Remote/managed server URL |
-| `qdrant_api_key` | `VAULTSPEC_RAG_QDRANT_API_KEY` | str\|None | `None` | Remote server API key |
-| `qdrant_quantization` | `VAULTSPEC_RAG_QDRANT_QUANTIZATION` | str\|None | `None` | Vector quantization |
-| `qdrant_server` | `VAULTSPEC_RAG_QDRANT_SERVER` | bool | `True` | Server-first default; `--qdrant/--no-qdrant` |
-| `local_only` | `VAULTSPEC_RAG_LOCAL_ONLY` | bool | `False` | On-disk store opt-out; `--local-only` |
-| `qdrant_port` | `VAULTSPEC_RAG_QDRANT_PORT` | int | `8765` | Managed server HTTP port (gRPC = port-1) |
-| `qdrant_binary` | `VAULTSPEC_RAG_QDRANT_BINARY` | str\|None | `None` | Operator-supplied binary path |
-| `qdrant_storage_dir` | `VAULTSPEC_RAG_QDRANT_STORAGE_DIR` | str | `~/.vaultspec-rag/qdrant-server/storage` | Shared multi-root server storage |
-| **`storage_autoprune`** | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE` | bool | `True` | **NEW.** Hourly in-daemon auto-prune enable |
-| **`storage_autoprune_interval_minutes`** | `..._STORAGE_AUTOPRUNE_INTERVAL_MINUTES` | float | `60.0` | **NEW.** Maintenance tick cadence |
-| **`storage_autoprune_grace_hours`** | `..._STORAGE_AUTOPRUNE_GRACE_HOURS` | float | `24.0` | **NEW.** Empty-namespace grace window |
-| **`storage_autoprune_grace_hours_data`** | `..._STORAGE_AUTOPRUNE_GRACE_HOURS_DATA` | float | `168.0` | **NEW.** Data-bearing namespace grace window |
-| **`storage_autoprune_archive_retention_days`** | `..._STORAGE_AUTOPRUNE_ARCHIVE_RETENTION_DAYS` | float | `30.0` | **NEW.** Archive snapshot retention |
-| **`storage_autoprune_archive_max_gb`** | `..._STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB` | float | `20.0` | **NEW.** Archive tree size bound |
-| **`storage_autoprune_max_per_cycle`** | `..._STORAGE_AUTOPRUNE_MAX_PER_CYCLE` | int | `16` | **NEW.** Per-cycle reclaim cap |
-| **`storage_autoprune_ephemeral_idle_hours`** | `..._STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS` | float | `72.0` | **NEW.** Temp-rooted namespace idle-TTL tier (0 disables) |
-| **`storage_reconcile`** | `VAULTSPEC_RAG_STORAGE_RECONCILE` | bool | `True` | **NEW.** Non-destructive segment-geometry convergence |
-| **`storage_reconcile_max_per_cycle`** | `..._STORAGE_RECONCILE_MAX_PER_CYCLE` | int | `4` | **NEW.** Per-cycle reconcile cap |
-| **`storage_reconcile_budget_seconds`** | `..._STORAGE_RECONCILE_BUDGET_SECONDS` | float | `300.0` | **NEW.** Per-collection convergence budget |
-| `data_dir` | `VAULTSPEC_RAG_DATA_DIR` | str | `.vault/data/search-data` | Index data dir; `--data-dir` |
-| `qdrant_dir` | `VAULTSPEC_RAG_QDRANT_DIR` | str | `qdrant` | Local on-disk subdir; `--storage-dir` |
-| `index_metadata_file` | `VAULTSPEC_RAG_INDEX_META` | str | `index_meta.json` | Vault index sidecar |
-| `code_index_metadata_file` | `VAULTSPEC_RAG_CODE_INDEX_META` | str | `code_index_meta.json` | Code index sidecar |
-| `status_dir` | `VAULTSPEC_RAG_STATUS_DIR` | str | `~/.vaultspec-rag` | Service runtime dir; `--status-dir` |
-| `log_file` | `VAULTSPEC_RAG_LOG_FILE` | str | `service.log` | Service log filename; `--log-file` |
-| `mcp_port` | `VAULTSPEC_RAG_PORT` | int | `8766` | HTTP service port; `--port` |
-| `log_level` | `VAULTSPEC_RAG_LOG_LEVEL` | str | `WARNING` | Logging verbosity |
-| `graph_ttl_seconds` | (none) | float | `300.0` | Vault graph cache TTL |
-| `service_idle_ttl_seconds` | `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS` | int | `1800` | Project slot idle eviction |
-| `service_max_projects` | `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS` | int | `16` | LRU project slot cap |
-| `managed_log_max_bytes` | `VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES` | int | `10485760` | Per-source log rotation size (service AND qdrant each get this full budget) |
-| `managed_log_backup_count` | `VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT` | int | `5` | Log rotation backups |
-| **`job_max_nonterminal`** | `VAULTSPEC_RAG_JOB_MAX_NONTERMINAL` | int | `64` | **NEW.** Active-job registry admission bound |
-| **`job_shutdown_timeout_seconds`** | `..._JOB_SHUTDOWN_TIMEOUT_SECONDS` | float | `300.0` | **NEW.** Max wait for cooperative indexing unwind at shutdown |
-| **`store_operation_timeout_seconds`** | `..._STORE_OPERATION_TIMEOUT_SECONDS` | float | `120.0` | **NEW.** Per-operation store timeout |
-| **`store_write_retry_attempts`** | `..._STORE_WRITE_RETRY_ATTEMPTS` | int | `5` | **NEW.** Bounded write retry count |
-| **`store_write_retry_base_seconds`** | `..._STORE_WRITE_RETRY_BASE_SECONDS` | float | `0.5` | **NEW.** Retry backoff base |
-| **`store_write_retry_max_seconds`** | `..._STORE_WRITE_RETRY_MAX_SECONDS` | float | `8.0` | **NEW.** Retry backoff cap |
-| **`index_segment_max_chunks`** | `VAULTSPEC_RAG_INDEX_SEGMENT_MAX_CHUNKS` | int | `64` | **NEW.** Durable-unit chunk bound |
-| **`index_segment_max_bytes`** | `..._INDEX_SEGMENT_MAX_BYTES` | int | `8388608` (8 MiB) | **NEW.** Durable-unit byte bound |
-| **`index_queue_max_chunks`** | `..._INDEX_QUEUE_MAX_CHUNKS` | int | `512` | **NEW.** Weighted queue chunk bound |
-| **`index_queue_max_bytes`** | `..._INDEX_QUEUE_MAX_BYTES` | int | `134217728` (128 MiB) | **NEW.** Weighted queue byte bound |
-| **`index_no_progress_timeout_seconds`** | `..._INDEX_NO_PROGRESS_TIMEOUT_SECONDS` | float | `900.0` | **NEW.** Liveness = time since storage-confirmed progress (not a total run deadline) |
-| **`watch_retry_base_seconds`** | `..._WATCH_RETRY_BASE_SECONDS` | float | `30.0` | **NEW.** Watcher retry backoff base |
-| **`watch_retry_max_seconds`** | `..._WATCH_RETRY_MAX_SECONDS` | float | `1800.0` | **NEW.** Watcher retry backoff cap |
-| **`watch_retry_jitter_fraction`** | `..._WATCH_RETRY_JITTER_FRACTION` | float | `0.1` | **NEW.** Symmetric jitter on backoff |
-| **`watch_circuit_failure_threshold`** | `..._WATCH_CIRCUIT_FAILURE_THRESHOLD` | int | `3` | **NEW.** Watcher circuit-breaker trip count |
-| **`index_rss_ceiling_mb`** | `VAULTSPEC_RAG_INDEX_RSS_CEILING_MB` | float | `16384.0` | **NEW.** Absolute admitted RSS ceiling |
-| **`index_cuda_ceiling_mb`** | `..._INDEX_CUDA_CEILING_MB` | float | `12288.0` | **NEW.** Absolute admitted CUDA ceiling |
-| **`index_cuda_allocator_fraction`** | `..._INDEX_CUDA_ALLOCATOR_FRACTION` | float | `0.8` | **NEW.** Allocator cap preserving search headroom |
-| **`index_support_profile`** | `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE` | str | `managed-service` | **NEW.** Named ceiling-profile selector |
-| `embedding_batch_size` | `VAULTSPEC_RAG_EMBEDDING_BATCH_SIZE` | int | `64` | Outer embed batch |
-| `embedding_encode_batch_size` | `VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE` | int | `32` | Vault inner encode sub-batch |
-| `embedding_max_seq_length` | `VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH` | int | `2048` | Hard seq-length cap |
-| `max_embed_chars` | `VAULTSPEC_RAG_MAX_EMBED_CHARS` | int | `8000` | Char truncation before encode |
-| `index_chunk_workers` | `VAULTSPEC_RAG_INDEX_CHUNK_WORKERS` | int | `0` (auto) | Code-chunk process-pool size |
-| `embedding_code_encode_batch_size` | `VAULTSPEC_RAG_EMBEDDING_CODE_ENCODE_BATCH_SIZE` | int | `32` | Code inner encode sub-batch |
-| `index_cache_flush_slices` | `VAULTSPEC_RAG_INDEX_CACHE_FLUSH_SLICES` | int | `8` | CUDA allocator flush cadence |
-| `index_parallel_min_bytes` | `VAULTSPEC_RAG_INDEX_PARALLEL_MIN_BYTES` | int | `8388608` (8 MiB) | Auto-parallel threshold |
-| `dense_backend` | `VAULTSPEC_RAG_DENSE_BACKEND` | str | `torch` | Dense encoder backend (`onnx` experimental) |
-| `dense_onnx_file` | `VAULTSPEC_RAG_DENSE_ONNX_FILE` | str | `onnx/model_O4.onnx` | ONNX model rel path |
-| `embedding_model` | (none) | str | `Qwen/Qwen3-Embedding-0.6B` | Dense model |
-| `embedding_dimension` | (none) | int | `1024` | Dense dim |
-| `sparse_enabled` | `VAULTSPEC_RAG_SPARSE_ENABLED` | bool | `True` | SPLADE sparse vectors |
-| `sparse_model` | (none) | str | `naver/splade-v3` | Sparse model |
-| `reranker_enabled` | (none) | bool | `True` | CrossEncoder rerank |
-| `reranker_model` | (none) | str | `BAAI/bge-reranker-v2-m3` | Reranker model |
-| `reranker_batch_size` | (none) | int | `32` | Reranker batch |
-| `reranker_max_length` | `VAULTSPEC_RAG_RERANKER_MAX_LENGTH` | int | `1024` | Reranker token bound |
-| `vault_chunk_chars` | `VAULTSPEC_RAG_VAULT_CHUNK_CHARS` | int | `3000` | Vault chunk budget |
-| **`vault_intent_default`** | `VAULTSPEC_RAG_VAULT_INTENT_DEFAULT` | str | `orientation` | **NEW.** Default ranking-intent profile (`orientation`/`debugging`) |
-| **`vault_intent_ranking_enabled`** | `..._VAULT_INTENT_RANKING_ENABLED` | bool | `True` | **NEW.** Intent-prior post-rerank toggle |
-| **`vault_intent_type_cap`** | `..._VAULT_INTENT_TYPE_CAP` | int | `4` | **NEW.** Per-doc_type page cap (0 disables) |
-| **`code_noise_hide_domains`** | `VAULTSPEC_RAG_CODE_NOISE_HIDE_DOMAINS` | str (csv) | `worktree,generated` | **NEW.** Domains dropped from code results by default |
-| **`code_noise_demote_domains`** | `..._CODE_NOISE_DEMOTE_DOMAINS` | str (csv) | `tests,docs,locale,vendored` | **NEW.** Domains demoted, not hidden |
-| **`code_noise_demote_penalty`** | `..._CODE_NOISE_DEMOTE_PENALTY` | float | (not captured this pass) | **NEW.** Score subtraction for demoted results (0 disables) |
-| **`dedup_locales_default`** | `VAULTSPEC_RAG_DEDUP_LOCALES_DEFAULT` | bool | (not captured this pass) | **NEW.** Default for `--dedup-locales` |
-| `search_concurrency` | `VAULTSPEC_RAG_SEARCH_CONCURRENCY` | int | `16` | Search worker limiter |
-| `index_job_concurrency` | `VAULTSPEC_RAG_INDEX_JOB_CONCURRENCY` | int | `4` | Index job limiter |
-| `watch_enabled` | `VAULTSPEC_RAG_WATCH_ENABLED` | bool | `True` | Auto-reindex on/off; `--updates/--no-updates` |
-| `watch_debounce_ms` | `VAULTSPEC_RAG_WATCH_DEBOUNCE_MS` | int | `2000` | Debounce; `--update-delay-ms` |
-| `watch_cooldown_s` | `VAULTSPEC_RAG_WATCH_COOLDOWN_S` | float | `30.0` | Per-source re-index cooldown; `--repeat-update-delay-s` |
-| `preprocess_mode` | `VAULTSPEC_RAG_PREPROCESS` | str | `default` | `=off` is the kill switch; unset/anything else = `default` (rules run) |
-| `preprocess_max_emitted_bytes` | `VAULTSPEC_RAG_PREPROCESS_MAX_EMITTED_BYTES` | int | `10485760` (10 MiB) | Cap on preprocessor-emitted text |
-| `html_strip` | `VAULTSPEC_RAG_HTML_STRIP` | bool | `True` | Strip HTML before chunking `.html` |
-| **`stdio_watchdog`** (not a config field; env-only kill switch) | `VAULTSPEC_RAG_STDIO_WATCHDOG` | bool | on | **NEW.** `0/false/off/no` disables the stdio shim's ancestor-death backstop |
+| Config key                                                      | Env var                                          | Type      | Default                                  | Controls / CLI flag                                                                  |
+| --------------------------------------------------------------- | ------------------------------------------------ | --------- | ---------------------------------------- | ------------------------------------------------------------------------------------ |
+| `qdrant_url`                                                    | `VAULTSPEC_RAG_QDRANT_URL`                       | str\|None | `None`                                   | Remote/managed server URL                                                            |
+| `qdrant_api_key`                                                | `VAULTSPEC_RAG_QDRANT_API_KEY`                   | str\|None | `None`                                   | Remote server API key                                                                |
+| `qdrant_quantization`                                           | `VAULTSPEC_RAG_QDRANT_QUANTIZATION`              | str\|None | `None`                                   | Vector quantization                                                                  |
+| `qdrant_server`                                                 | `VAULTSPEC_RAG_QDRANT_SERVER`                    | bool      | `True`                                   | Server-first default; `--qdrant/--no-qdrant`                                         |
+| `local_only`                                                    | `VAULTSPEC_RAG_LOCAL_ONLY`                       | bool      | `False`                                  | On-disk store opt-out; `--local-only`                                                |
+| `qdrant_port`                                                   | `VAULTSPEC_RAG_QDRANT_PORT`                      | int       | `8765`                                   | Managed server HTTP port (gRPC = port-1)                                             |
+| `qdrant_binary`                                                 | `VAULTSPEC_RAG_QDRANT_BINARY`                    | str\|None | `None`                                   | Operator-supplied binary path                                                        |
+| `qdrant_storage_dir`                                            | `VAULTSPEC_RAG_QDRANT_STORAGE_DIR`               | str       | `~/.vaultspec-rag/qdrant-server/storage` | Shared multi-root server storage                                                     |
+| **`storage_autoprune`**                                         | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE`                | bool      | `True`                                   | **NEW.** Hourly in-daemon auto-prune enable                                          |
+| **`storage_autoprune_interval_minutes`**                        | `..._STORAGE_AUTOPRUNE_INTERVAL_MINUTES`         | float     | `60.0`                                   | **NEW.** Maintenance tick cadence                                                    |
+| **`storage_autoprune_grace_hours`**                             | `..._STORAGE_AUTOPRUNE_GRACE_HOURS`              | float     | `24.0`                                   | **NEW.** Empty-namespace grace window                                                |
+| **`storage_autoprune_grace_hours_data`**                        | `..._STORAGE_AUTOPRUNE_GRACE_HOURS_DATA`         | float     | `168.0`                                  | **NEW.** Data-bearing namespace grace window                                         |
+| **`storage_autoprune_archive_retention_days`**                  | `..._STORAGE_AUTOPRUNE_ARCHIVE_RETENTION_DAYS`   | float     | `30.0`                                   | **NEW.** Archive snapshot retention                                                  |
+| **`storage_autoprune_archive_max_gb`**                          | `..._STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB`           | float     | `20.0`                                   | **NEW.** Archive tree size bound                                                     |
+| **`storage_autoprune_max_per_cycle`**                           | `..._STORAGE_AUTOPRUNE_MAX_PER_CYCLE`            | int       | `16`                                     | **NEW.** Per-cycle reclaim cap                                                       |
+| **`storage_autoprune_ephemeral_idle_hours`**                    | `..._STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS`     | float     | `72.0`                                   | **NEW.** Temp-rooted namespace idle-TTL tier (0 disables)                            |
+| **`storage_reconcile`**                                         | `VAULTSPEC_RAG_STORAGE_RECONCILE`                | bool      | `True`                                   | **NEW.** Non-destructive segment-geometry convergence                                |
+| **`storage_reconcile_max_per_cycle`**                           | `..._STORAGE_RECONCILE_MAX_PER_CYCLE`            | int       | `4`                                      | **NEW.** Per-cycle reconcile cap                                                     |
+| **`storage_reconcile_budget_seconds`**                          | `..._STORAGE_RECONCILE_BUDGET_SECONDS`           | float     | `300.0`                                  | **NEW.** Per-collection convergence budget                                           |
+| `data_dir`                                                      | `VAULTSPEC_RAG_DATA_DIR`                         | str       | `.vault/data/search-data`                | Index data dir; `--data-dir`                                                         |
+| `qdrant_dir`                                                    | `VAULTSPEC_RAG_QDRANT_DIR`                       | str       | `qdrant`                                 | Local on-disk subdir; `--storage-dir`                                                |
+| `index_metadata_file`                                           | `VAULTSPEC_RAG_INDEX_META`                       | str       | `index_meta.json`                        | Vault index sidecar                                                                  |
+| `code_index_metadata_file`                                      | `VAULTSPEC_RAG_CODE_INDEX_META`                  | str       | `code_index_meta.json`                   | Code index sidecar                                                                   |
+| `status_dir`                                                    | `VAULTSPEC_RAG_STATUS_DIR`                       | str       | `~/.vaultspec-rag`                       | Service runtime dir; `--status-dir`                                                  |
+| `log_file`                                                      | `VAULTSPEC_RAG_LOG_FILE`                         | str       | `service.log`                            | Service log filename; `--log-file`                                                   |
+| `mcp_port`                                                      | `VAULTSPEC_RAG_PORT`                             | int       | `8766`                                   | HTTP service port; `--port`                                                          |
+| `log_level`                                                     | `VAULTSPEC_RAG_LOG_LEVEL`                        | str       | `WARNING`                                | Logging verbosity                                                                    |
+| `graph_ttl_seconds`                                             | (none)                                           | float     | `300.0`                                  | Vault graph cache TTL                                                                |
+| `service_idle_ttl_seconds`                                      | `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS`         | int       | `1800`                                   | Project slot idle eviction                                                           |
+| `service_max_projects`                                          | `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS`             | int       | `16`                                     | LRU project slot cap                                                                 |
+| `managed_log_max_bytes`                                         | `VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES`            | int       | `10485760`                               | Per-source log rotation size (service AND qdrant each get this full budget)          |
+| `managed_log_backup_count`                                      | `VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT`         | int       | `5`                                      | Log rotation backups                                                                 |
+| **`job_max_nonterminal`**                                       | `VAULTSPEC_RAG_JOB_MAX_NONTERMINAL`              | int       | `64`                                     | **NEW.** Active-job registry admission bound                                         |
+| **`job_shutdown_timeout_seconds`**                              | `..._JOB_SHUTDOWN_TIMEOUT_SECONDS`               | float     | `300.0`                                  | **NEW.** Max wait for cooperative indexing unwind at shutdown                        |
+| **`store_operation_timeout_seconds`**                           | `..._STORE_OPERATION_TIMEOUT_SECONDS`            | float     | `120.0`                                  | **NEW.** Per-operation store timeout                                                 |
+| **`store_write_retry_attempts`**                                | `..._STORE_WRITE_RETRY_ATTEMPTS`                 | int       | `5`                                      | **NEW.** Bounded write retry count                                                   |
+| **`store_write_retry_base_seconds`**                            | `..._STORE_WRITE_RETRY_BASE_SECONDS`             | float     | `0.5`                                    | **NEW.** Retry backoff base                                                          |
+| **`store_write_retry_max_seconds`**                             | `..._STORE_WRITE_RETRY_MAX_SECONDS`              | float     | `8.0`                                    | **NEW.** Retry backoff cap                                                           |
+| **`index_segment_max_chunks`**                                  | `VAULTSPEC_RAG_INDEX_SEGMENT_MAX_CHUNKS`         | int       | `64`                                     | **NEW.** Durable-unit chunk bound                                                    |
+| **`index_segment_max_bytes`**                                   | `..._INDEX_SEGMENT_MAX_BYTES`                    | int       | `8388608` (8 MiB)                        | **NEW.** Durable-unit byte bound                                                     |
+| **`index_queue_max_chunks`**                                    | `..._INDEX_QUEUE_MAX_CHUNKS`                     | int       | `512`                                    | **NEW.** Weighted queue chunk bound                                                  |
+| **`index_queue_max_bytes`**                                     | `..._INDEX_QUEUE_MAX_BYTES`                      | int       | `134217728` (128 MiB)                    | **NEW.** Weighted queue byte bound                                                   |
+| **`index_no_progress_timeout_seconds`**                         | `..._INDEX_NO_PROGRESS_TIMEOUT_SECONDS`          | float     | `900.0`                                  | **NEW.** Liveness = time since storage-confirmed progress (not a total run deadline) |
+| **`watch_retry_base_seconds`**                                  | `..._WATCH_RETRY_BASE_SECONDS`                   | float     | `30.0`                                   | **NEW.** Watcher retry backoff base                                                  |
+| **`watch_retry_max_seconds`**                                   | `..._WATCH_RETRY_MAX_SECONDS`                    | float     | `1800.0`                                 | **NEW.** Watcher retry backoff cap                                                   |
+| **`watch_retry_jitter_fraction`**                               | `..._WATCH_RETRY_JITTER_FRACTION`                | float     | `0.1`                                    | **NEW.** Symmetric jitter on backoff                                                 |
+| **`watch_circuit_failure_threshold`**                           | `..._WATCH_CIRCUIT_FAILURE_THRESHOLD`            | int       | `3`                                      | **NEW.** Watcher circuit-breaker trip count                                          |
+| **`index_rss_ceiling_mb`**                                      | `VAULTSPEC_RAG_INDEX_RSS_CEILING_MB`             | float     | `16384.0`                                | **NEW.** Absolute admitted RSS ceiling                                               |
+| **`index_cuda_ceiling_mb`**                                     | `..._INDEX_CUDA_CEILING_MB`                      | float     | `12288.0`                                | **NEW.** Absolute admitted CUDA ceiling                                              |
+| **`index_cuda_allocator_fraction`**                             | `..._INDEX_CUDA_ALLOCATOR_FRACTION`              | float     | `0.8`                                    | **NEW.** Allocator cap preserving search headroom                                    |
+| **`index_support_profile`**                                     | `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE`            | str       | `managed-service`                        | **NEW.** Named ceiling-profile selector                                              |
+| `embedding_batch_size`                                          | `VAULTSPEC_RAG_EMBEDDING_BATCH_SIZE`             | int       | `64`                                     | Outer embed batch                                                                    |
+| `embedding_encode_batch_size`                                   | `VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE`      | int       | `32`                                     | Vault inner encode sub-batch                                                         |
+| `embedding_max_seq_length`                                      | `VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH`         | int       | `2048`                                   | Hard seq-length cap                                                                  |
+| `max_embed_chars`                                               | `VAULTSPEC_RAG_MAX_EMBED_CHARS`                  | int       | `8000`                                   | Char truncation before encode                                                        |
+| `index_chunk_workers`                                           | `VAULTSPEC_RAG_INDEX_CHUNK_WORKERS`              | int       | `0` (auto)                               | Code-chunk process-pool size                                                         |
+| `embedding_code_encode_batch_size`                              | `VAULTSPEC_RAG_EMBEDDING_CODE_ENCODE_BATCH_SIZE` | int       | `32`                                     | Code inner encode sub-batch                                                          |
+| `index_cache_flush_slices`                                      | `VAULTSPEC_RAG_INDEX_CACHE_FLUSH_SLICES`         | int       | `8`                                      | CUDA allocator flush cadence                                                         |
+| `index_parallel_min_bytes`                                      | `VAULTSPEC_RAG_INDEX_PARALLEL_MIN_BYTES`         | int       | `8388608` (8 MiB)                        | Auto-parallel threshold                                                              |
+| `dense_backend`                                                 | `VAULTSPEC_RAG_DENSE_BACKEND`                    | str       | `torch`                                  | Dense encoder backend (`onnx` experimental)                                          |
+| `dense_onnx_file`                                               | `VAULTSPEC_RAG_DENSE_ONNX_FILE`                  | str       | `onnx/model_O4.onnx`                     | ONNX model rel path                                                                  |
+| `embedding_model`                                               | (none)                                           | str       | `Qwen/Qwen3-Embedding-0.6B`              | Dense model                                                                          |
+| `embedding_dimension`                                           | (none)                                           | int       | `1024`                                   | Dense dim                                                                            |
+| `sparse_enabled`                                                | `VAULTSPEC_RAG_SPARSE_ENABLED`                   | bool      | `True`                                   | SPLADE sparse vectors                                                                |
+| `sparse_model`                                                  | (none)                                           | str       | `naver/splade-v3`                        | Sparse model                                                                         |
+| `reranker_enabled`                                              | (none)                                           | bool      | `True`                                   | CrossEncoder rerank                                                                  |
+| `reranker_model`                                                | (none)                                           | str       | `BAAI/bge-reranker-v2-m3`                | Reranker model                                                                       |
+| `reranker_batch_size`                                           | (none)                                           | int       | `32`                                     | Reranker batch                                                                       |
+| `reranker_max_length`                                           | `VAULTSPEC_RAG_RERANKER_MAX_LENGTH`              | int       | `1024`                                   | Reranker token bound                                                                 |
+| `vault_chunk_chars`                                             | `VAULTSPEC_RAG_VAULT_CHUNK_CHARS`                | int       | `3000`                                   | Vault chunk budget                                                                   |
+| **`vault_intent_default`**                                      | `VAULTSPEC_RAG_VAULT_INTENT_DEFAULT`             | str       | `orientation`                            | **NEW.** Default ranking-intent profile (`orientation`/`debugging`)                  |
+| **`vault_intent_ranking_enabled`**                              | `..._VAULT_INTENT_RANKING_ENABLED`               | bool      | `True`                                   | **NEW.** Intent-prior post-rerank toggle                                             |
+| **`vault_intent_type_cap`**                                     | `..._VAULT_INTENT_TYPE_CAP`                      | int       | `4`                                      | **NEW.** Per-doc_type page cap (0 disables)                                          |
+| **`code_noise_hide_domains`**                                   | `VAULTSPEC_RAG_CODE_NOISE_HIDE_DOMAINS`          | str (csv) | `worktree,generated`                     | **NEW.** Domains dropped from code results by default                                |
+| **`code_noise_demote_domains`**                                 | `..._CODE_NOISE_DEMOTE_DOMAINS`                  | str (csv) | `tests,docs,locale,vendored`             | **NEW.** Domains demoted, not hidden                                                 |
+| **`code_noise_demote_penalty`**                                 | `..._CODE_NOISE_DEMOTE_PENALTY`                  | float     | (not captured this pass)                 | **NEW.** Score subtraction for demoted results (0 disables)                          |
+| **`dedup_locales_default`**                                     | `VAULTSPEC_RAG_DEDUP_LOCALES_DEFAULT`            | bool      | (not captured this pass)                 | **NEW.** Default for `--dedup-locales`                                               |
+| `search_concurrency`                                            | `VAULTSPEC_RAG_SEARCH_CONCURRENCY`               | int       | `16`                                     | Search worker limiter                                                                |
+| `index_job_concurrency`                                         | `VAULTSPEC_RAG_INDEX_JOB_CONCURRENCY`            | int       | `4`                                      | Index job limiter                                                                    |
+| `watch_enabled`                                                 | `VAULTSPEC_RAG_WATCH_ENABLED`                    | bool      | `True`                                   | Auto-reindex on/off; `--updates/--no-updates`                                        |
+| `watch_debounce_ms`                                             | `VAULTSPEC_RAG_WATCH_DEBOUNCE_MS`                | int       | `2000`                                   | Debounce; `--update-delay-ms`                                                        |
+| `watch_cooldown_s`                                              | `VAULTSPEC_RAG_WATCH_COOLDOWN_S`                 | float     | `30.0`                                   | Per-source re-index cooldown; `--repeat-update-delay-s`                              |
+| `preprocess_mode`                                               | `VAULTSPEC_RAG_PREPROCESS`                       | str       | `default`                                | `=off` is the kill switch; unset/anything else = `default` (rules run)               |
+| `preprocess_max_emitted_bytes`                                  | `VAULTSPEC_RAG_PREPROCESS_MAX_EMITTED_BYTES`     | int       | `10485760` (10 MiB)                      | Cap on preprocessor-emitted text                                                     |
+| `html_strip`                                                    | `VAULTSPEC_RAG_HTML_STRIP`                       | bool      | `True`                                   | Strip HTML before chunking `.html`                                                   |
+| **`stdio_watchdog`** (not a config field; env-only kill switch) | `VAULTSPEC_RAG_STDIO_WATCHDOG`                   | bool      | on                                       | **NEW.** `0/false/off/no` disables the stdio shim's ancestor-death backstop          |
 
 **Internal-only, not operator-facing (skip in user docs):** `VAULTSPEC_RAG_ROOT`
 (`RAG_ROOT`), `VAULTSPEC_RAG_SERVICE_DAEMON` (`SERVICE_DAEMON`) — set only in
@@ -492,7 +492,7 @@ re-verified this pass, carried from the prior version):
 `HF_HUB_DISABLE_PROGRESS_BARS`, `TRANSFORMERS_NO_ADVISORY_WARNINGS`,
 `TRANSFORMERS_VERBOSITY`.
 
----
+______________________________________________________________________
 
 ## 11. JSON envelope and error codes
 
@@ -500,6 +500,7 @@ re-verified this pass, carried from the prior version):
 
 `_emit_json(ok, command, *, data, error, message, **extra)` writes one
 envelope-wrapped JSON document, bypassing Rich:
+
 ```json
 {"ok": <bool>, "command": "<str>", "data"?: <obj>, "error"?: "<code>",
  "message"?: "<str>", ...extra}
@@ -532,6 +533,7 @@ envelope-wrapped JSON document, bypassing Rich:
   documented 0/3/4.
 
 ### Other exit codes (from the prior version of this file, not re-verified
+
 this pass but no evidence of removal)
 
 - **1** — generic failure (GPU/torch errors, local index busy, unreachable
@@ -539,7 +541,7 @@ this pass but no evidence of removal)
   install/clean failure, project unload busy, install failure).
 - **2** — invalid usage/arguments.
 
----
+______________________________________________________________________
 
 ## 12. `server status` + `server doctor` semantics
 
@@ -549,7 +551,7 @@ pass. `server doctor` now covers the live-service axis too (Section 5) —
 document it as "readiness across dependencies AND live service health", not
 dependency-only as the prior version of this file had it.
 
----
+______________________________________________________________________
 
 ## 13. `server updates` (formerly watcher)
 
@@ -559,7 +561,7 @@ The knobs/defaults table is superseded by Section 10's full env-var table
 `watch_retry_*`/`watch_circuit_failure_threshold` knobs are additional
 watcher-resilience policy, not exposed as `server updates timing` flags).
 
----
+______________________________________________________________________
 
 ## 14. MCP tools
 
@@ -577,20 +579,20 @@ that is a broken doc (tells users to call tools that no longer exist).
 
 ### Current tool list (12, live-verified against `mcp/_tools.py`)
 
-| Tool | Key params | Purpose |
-|---|---|---|
-| `search_vault` | query, top_k=5, doc_type?, feature?, date?, tag?, intent?, like_ids?, unlike_ids?, project_root? | Search vault docs. `intent`: `orientation` (default) / `debugging`. |
-| `search_codebase` | query, top_k=5, language?, path?, node_type?, function_name?, class_name?, include_paths?, exclude_paths?, dedup_locales?, prefer?, exclude_domains?, only_domains?, include_domains?, like_ids?, unlike_ids?, project_root? | Search source code; noise-domain filters as direct params (CLI uses inline tokens instead). |
-| `search_documents` | query, top_k=5, source_path?, extractor_id?, extractor_version?, locator_kind?, project_root? | **NEW.** Search independently indexed extracted-document content. |
-| `search_combined` | union of all filters above | **NEW.** Search vault+code+document, partial outcomes preserved. |
-| `get_code_file` | path, project_root? | Retrieve full content of a source file. |
-| `reindex_vault` | project_root? | Incremental vault reindex. |
-| `reindex_codebase` | project_root? | Incremental codebase reindex. |
-| `reindex_documents` | project_root? | **NEW.** Incremental document reindex. |
-| `reindex_all` | project_root? | **NEW.** Incremental reindex of vault+code+document. |
-| `get_index_status` | project_root? | Count/policy/generation/degraded-state service details. |
-| `clean_documents` | project_root? | **NEW.** Delete only extracted-document content. |
-| `clean_all` | project_root? | **NEW.** Delete vault+code+document, per-domain outcomes. |
+| Tool                | Key params                                                                                                                                                                                                                   | Purpose                                                                                     |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `search_vault`      | query, top_k=5, doc_type?, feature?, date?, tag?, intent?, like_ids?, unlike_ids?, project_root?                                                                                                                             | Search vault docs. `intent`: `orientation` (default) / `debugging`.                         |
+| `search_codebase`   | query, top_k=5, language?, path?, node_type?, function_name?, class_name?, include_paths?, exclude_paths?, dedup_locales?, prefer?, exclude_domains?, only_domains?, include_domains?, like_ids?, unlike_ids?, project_root? | Search source code; noise-domain filters as direct params (CLI uses inline tokens instead). |
+| `search_documents`  | query, top_k=5, source_path?, extractor_id?, extractor_version?, locator_kind?, project_root?                                                                                                                                | **NEW.** Search independently indexed extracted-document content.                           |
+| `search_combined`   | union of all filters above                                                                                                                                                                                                   | **NEW.** Search vault+code+document, partial outcomes preserved.                            |
+| `get_code_file`     | path, project_root?                                                                                                                                                                                                          | Retrieve full content of a source file.                                                     |
+| `reindex_vault`     | project_root?                                                                                                                                                                                                                | Incremental vault reindex.                                                                  |
+| `reindex_codebase`  | project_root?                                                                                                                                                                                                                | Incremental codebase reindex.                                                               |
+| `reindex_documents` | project_root?                                                                                                                                                                                                                | **NEW.** Incremental document reindex.                                                      |
+| `reindex_all`       | project_root?                                                                                                                                                                                                                | **NEW.** Incremental reindex of vault+code+document.                                        |
+| `get_index_status`  | project_root?                                                                                                                                                                                                                | Count/policy/generation/degraded-state service details.                                     |
+| `clean_documents`   | project_root?                                                                                                                                                                                                                | **NEW.** Delete only extracted-document content.                                            |
+| `clean_all`         | project_root?                                                                                                                                                                                                                | **NEW.** Delete vault+code+document, per-domain outcomes.                                   |
 
 MCP still uses `node_type` (not the CLI's `--structure` flag name) on
 `search_codebase`/`search_combined` — unchanged from the prior version.
@@ -600,11 +602,10 @@ MCP still uses `node_type` (not the CLI's `--structure` flag name) on
 - Resource `vault://{doc_id}` → full document content by stem id.
 - Prompt `analyze_feature(feature_name)` → structured analysis prompt.
 
-**There is still NO `get_readiness` MCP tool** — readiness is CLI `server
-doctor` + the `/readiness` HTTP route only (carried from the prior version,
+**There is still NO `get_readiness` MCP tool** — readiness is CLI `server doctor` + the `/readiness` HTTP route only (carried from the prior version,
 not re-verified but no evidence of a new MCP readiness tool).
 
----
+______________________________________________________________________
 
 ## 15. Data / status directory layout
 
@@ -617,7 +618,7 @@ read-only HTTP route list was not re-verified and may be missing routes for
 the new `server job`/`server storage`/`server reconcile` surfaces — check
 `server/_routes.py` before documenting the HTTP route list as complete.
 
----
+______________________________________________________________________
 
 ## 16. Removed / renamed summary
 
@@ -625,24 +626,24 @@ Do NOT reintroduce these stale names in docs. Combines the prior version's
 table (still valid — the "server service" flatten predates both this and
 the prior refresh) with this pass's findings.
 
-| Old | New | Status |
-|---|---|---|
-| `server service *` | `server *` (flattened) | renamed, see prior entries below |
-| `search --node-type` | `search --structure` | CLI flag renamed (API/MCP keep `node_type`) |
-| `search --no-truncate` | (removed) | rendering no longer truncates |
-| `--watch/--no-watch` (start) | `--updates/--no-updates` | renamed |
-| **`benchmark` (top-level command)** | **(removed)** | **NEW THIS PASS.** No `@app.command` registers it; the MCP `benchmark()` tool is also gone |
-| **`quality` (top-level command)** | **(removed)** | **NEW THIS PASS.** Same as above; MCP `quality()` tool also gone |
-| **MCP `list_projects`/`evict_project`/`get_watcher_state`/`start_watcher`/`stop_watcher`/`reconfigure_watcher`/`get_service_state`/`get_logs`/`get_jobs`** | **(removed from MCP; CLI/HTTP-route equivalents still exist)** | **NEW THIS PASS.** `mcp/_admin_tools.py` registers zero MCP tools now |
-| `install`: `[mcp]` extra "deprecated no-op, mcp is core dep" | `install --mcp/--no-mcp` (optional again) | **REVERSED THIS PASS** |
-| `search`/`index`/`clean --type {vault,code}` | `{vault,code,document,combined}` (+ `docs`/`codebase`/`all` aliases) | **EXPANDED THIS PASS** — new `document` domain |
-| (no per-job control) | `server job {show,pause,resume,stop,retry,delete}` | **NEW THIS PASS** |
-| (no storage lifecycle CLI) | `server storage {survey,delete,prune,reconcile,migrate}` | **NEW THIS PASS** |
-| (no discovery-wait verb) | `server reconcile` | **NEW THIS PASS** |
-| `server qdrant {install,status,clean}` | adds `quarantine` | **NEW THIS PASS** |
-| `preprocess {list,check,run-one}` | adds `status` | **NEW THIS PASS** |
-| `server status` exit codes 0/3/4 | adds 5 (`warming`) | **NEW THIS PASS** |
-| `server start`/`stop` (no `--json`) | both gain `--json` with broker-facing outcome envelopes | **NEW THIS PASS** |
+| Old                                                                                                                                                        | New                                                                  | Status                                                                                     |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `server service *`                                                                                                                                         | `server *` (flattened)                                               | renamed, see prior entries below                                                           |
+| `search --node-type`                                                                                                                                       | `search --structure`                                                 | CLI flag renamed (API/MCP keep `node_type`)                                                |
+| `search --no-truncate`                                                                                                                                     | (removed)                                                            | rendering no longer truncates                                                              |
+| `--watch/--no-watch` (start)                                                                                                                               | `--updates/--no-updates`                                             | renamed                                                                                    |
+| **`benchmark` (top-level command)**                                                                                                                        | **(removed)**                                                        | **NEW THIS PASS.** No `@app.command` registers it; the MCP `benchmark()` tool is also gone |
+| **`quality` (top-level command)**                                                                                                                          | **(removed)**                                                        | **NEW THIS PASS.** Same as above; MCP `quality()` tool also gone                           |
+| **MCP `list_projects`/`evict_project`/`get_watcher_state`/`start_watcher`/`stop_watcher`/`reconfigure_watcher`/`get_service_state`/`get_logs`/`get_jobs`** | **(removed from MCP; CLI/HTTP-route equivalents still exist)**       | **NEW THIS PASS.** `mcp/_admin_tools.py` registers zero MCP tools now                      |
+| `install`: `[mcp]` extra "deprecated no-op, mcp is core dep"                                                                                               | `install --mcp/--no-mcp` (optional again)                            | **REVERSED THIS PASS**                                                                     |
+| `search`/`index`/`clean --type {vault,code}`                                                                                                               | `{vault,code,document,combined}` (+ `docs`/`codebase`/`all` aliases) | **EXPANDED THIS PASS** — new `document` domain                                             |
+| (no per-job control)                                                                                                                                       | `server job {show,pause,resume,stop,retry,delete}`                   | **NEW THIS PASS**                                                                          |
+| (no storage lifecycle CLI)                                                                                                                                 | `server storage {survey,delete,prune,reconcile,migrate}`             | **NEW THIS PASS**                                                                          |
+| (no discovery-wait verb)                                                                                                                                   | `server reconcile`                                                   | **NEW THIS PASS**                                                                          |
+| `server qdrant {install,status,clean}`                                                                                                                     | adds `quarantine`                                                    | **NEW THIS PASS**                                                                          |
+| `preprocess {list,check,run-one}`                                                                                                                          | adds `status`                                                        | **NEW THIS PASS**                                                                          |
+| `server status` exit codes 0/3/4                                                                                                                           | adds 5 (`warming`)                                                   | **NEW THIS PASS**                                                                          |
+| `server start`/`stop` (no `--json`)                                                                                                                        | both gain `--json` with broker-facing outcome envelopes              | **NEW THIS PASS**                                                                          |
 
 MCP-surface note: the MCP tool names `evict_project`/`reconfigure_watcher`
 that the prior version flagged as "not renamed even though the CLI verb
@@ -658,8 +659,7 @@ domain (`document`/`combined` everywhere: `search`/`index`/`clean` +
 (whole env-var families), index resource ceilings, job/store write-retry
 timeouts, watcher retry/circuit-breaker policy, intent-aware vault ranking,
 code-search noise-domain filtering, `install --mode`/`--torch-group`/
-`--mcp`/`--no-mcp`, `server start --no-preprocess`/`--json`, `server stop
---json`, `server status` exit-5 warming state, `server jobs --watch`,
+`--mcp`/`--no-mcp`, `server start --no-preprocess`/`--json`, `server stop --json`, `server status` exit-5 warming state, `server jobs --watch`,
 `server logs --source`.
 
 ### Removed since the 2026-06-13 / v0.2.20 version of this file
