@@ -447,7 +447,8 @@ def test_worker_import_does_not_load_torch() -> None:
 
     Spawn workers re-import this module; if any module on its import chain
     eagerly imported torch, every worker would initialise CUDA on startup and
-    reintroduce the fork/spawn CUDA-context crash class the ADR warns about.
+    reintroduce the fork/spawn CUDA-context crash class that keeping worker
+    imports torch-free prevents.
     Checked in a fresh interpreter so the parent process's already-loaded torch
     cannot mask a regression. See rule ``index-workers-stay-cpu-only``.
     """

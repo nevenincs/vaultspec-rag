@@ -1,6 +1,6 @@
 """Graded-relevance rubric for intent-aware vault search evaluation.
 
-Encodes the ADR's D8 decision: a document's relevance grade (0-3) is a pure
+Encodes the relevance rubric: a document's relevance grade (0-3) is a pure
 function of the search *intent*, the document's pipeline role (``doc_type``),
 and its ``status``. Grades are assigned mechanically from this declarative
 table, never from a retriever's output, which is what keeps the gold
@@ -62,7 +62,7 @@ MAX_GRADE = 3
 _ADR_ACTIVE = "adr_active"
 _ADR_INACTIVE = "adr_inactive"
 
-# (intent -> role_key -> grade). Resolved from the ADR D8 rubric table; the
+# (intent -> role_key -> grade). Resolved from the rubric table; the
 # documented ranges there are pinned to concrete integers here.
 _MATRIX: dict[Intent, dict[str, int]] = {
     Intent.ORIENTATION: {

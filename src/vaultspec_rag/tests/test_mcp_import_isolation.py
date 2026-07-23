@@ -155,8 +155,8 @@ def test_mcp_import_loads_no_heavy_ml_libs() -> None:
     interpreter subprocess so a torch-loading test elsewhere in the session
     cannot leave the heavy libraries resident in ``sys.modules`` and mask a
     regression.  The static AST guard above forbids the import edges; this guard
-    proves the runtime import chain stays light end to end.  See the
-    ``mcp-service-client`` ADR (D7).
+    proves the runtime import chain stays light end to end: the MCP server
+    is a thin service client that never loads the GPU model in process.
     """
     forbidden = ", ".join(repr(name) for name in _HEAVY_LIBS)
     code = (

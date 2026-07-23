@@ -1,4 +1,4 @@
-"""Lifespan machine-lock release-on-startup-failure tests (plan W04.P09).
+"""Lifespan machine-lock release-on-startup-failure tests.
 
 No mocks, no GPU: the failure is a real one. A real loopback HTTP server stands
 on the configured qdrant port answering ``/readyz`` with no managed identity

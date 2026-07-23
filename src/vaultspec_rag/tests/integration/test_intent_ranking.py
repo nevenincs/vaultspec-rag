@@ -9,9 +9,9 @@ using the rubric-derived gold grades, per declared intent.
 
 This module builds the evaluator and a structural gate. The strict per-intent
 thresholds and the named orientation regression (the accepted ADR must outrank
-the exec record that implements it) are asserted once the intent prior lands in
-Wave W03; asserting them here, against the bare reranker, would fail by design,
-and the test mandate forbids skips and xfails.
+the exec record that implements it) are asserted once the intent prior ships;
+asserting them here, against the bare reranker, would fail by design, and the
+test mandate forbids skips and xfails.
 """
 
 from __future__ import annotations
@@ -320,7 +320,7 @@ class TestIntentRankingHarness:
         self,
         real_vault_evidence: IntentRankingEvidence,
     ) -> None:
-        """Auto-generated feature-index documents must not appear in results (D6)."""
+        """Auto-generated feature-index documents must not appear in results."""
         query = _query_evidence(
             real_vault_evidence,
             "qdrant server mode with provisioned binary verification",

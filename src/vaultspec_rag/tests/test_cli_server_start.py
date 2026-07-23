@@ -114,7 +114,7 @@ def _isolated_singleton(  # pyright: ignore[reportUnusedFunction]
 
 
 class TestStartOutcomeHelpers:
-    """The --json envelope contract for each start outcome (ADR D2)."""
+    """The --json envelope contract for each start outcome."""
 
     def test_success_envelope_shape(self, capsys: pytest.CaptureFixture[str]) -> None:
         _start_success(

@@ -1,4 +1,4 @@
-"""Tests for the isolated-status-dir qdrant binary mirror (plan W04.P09).
+"""Tests for the isolated-status-dir qdrant binary mirror.
 
 No mocks, no GPU: the mirror copies the host's real provisioned binary into the
 isolated test status dir so service-lifecycle integration tests exercise the

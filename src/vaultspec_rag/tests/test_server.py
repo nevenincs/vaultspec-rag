@@ -759,7 +759,7 @@ class TestMainTransportSetup:
     def test_stdio_does_not_load_a_model(self):
         """Stdio MCP is a thin client: main() must not call load_model().
 
-        Per the ``mcp-service-client`` ADR (D5) the in-process GPU model
+        The MCP server is a thin service client, so the in-process GPU model
         load is removed from the stdio branch - every tool delegates to
         the daemon over HTTP, so a model loaded here would be dead weight
         and would violate the thin-client "load no Torch" contract.
@@ -1025,7 +1025,7 @@ class TestRegistryFullErrorShape:
 class TestDaemonServesNativeRestOnly:
     """The HTTP daemon serves native REST only - no MCP mount, no wrapper.
 
-    Per the ``mcp-service-client`` ADR (D2), stdio is the sole MCP
+    Stdio is the sole MCP
     transport. The daemon's ``Mount("/mcp")`` and the ``_mcp_no_redirect``
     ASGI path-rewrite wrapper were removed outright (no shim, no
     feature-flagged path), so a tool call no longer loops back into the

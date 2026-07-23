@@ -1,4 +1,4 @@
-"""Tests for the consolidated service-state backend surface (#142, plan P02).
+"""Tests for the consolidated service-state backend surface (#142).
 
 Two layers, no mocks/skips/monkeypatch:
 

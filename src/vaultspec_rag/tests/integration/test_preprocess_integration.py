@@ -821,7 +821,7 @@ class TestPreprocessEndToEnd:
     def test_incremental_skip_remains_a_retryable_obligation(
         self, rag_components: RagComponentsWithManifest, tmp_path: Path
     ) -> None:
-        # Regression for review VIS-001: the scoped/incremental path (used by
+        # Regression: the scoped/incremental path (used by
         # the watcher) must retain preprocessing failures as retryable work.
         from ... import CodebaseIndexer, VaultStore
         from ..._job_errors import JobError, JobErrorKind

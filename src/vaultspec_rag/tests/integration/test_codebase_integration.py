@@ -1201,7 +1201,7 @@ def vendor_helper():
 
 
 class TestVaultragignore:
-    """Integration tests for .vaultragignore exclusion (D1 two-spec OR).
+    """Integration tests for .vaultragignore exclusion (two-spec OR).
 
     These verify the full pipeline: .vaultragignore file on disk ->
     _scan_codebase() -> full_index() -> chunks in Qdrant, using real

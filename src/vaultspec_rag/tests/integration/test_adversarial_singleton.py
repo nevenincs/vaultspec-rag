@@ -1,4 +1,4 @@
-"""Adversarial singleton verification (plan W04.P07 / acceptance gate).
+"""Adversarial singleton verification (acceptance gate).
 
 No mocks. S22 is a REAL multi-process race - N separate processes (spawn) race
 to acquire the machine lock and exactly one must win. S23/S24 drive the

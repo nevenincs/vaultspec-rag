@@ -7,8 +7,8 @@ document declared *before* the search runs. Because the expectation is
 pre-committed (not read off the retriever's output), a satisfied verdict is
 evidence, and a failing one carries the full ranked list for diagnosis.
 
-The recorded testimonials are the human-credible qualitative gate the ADR's D8
-calls for; the assertions are the machine gate. They are the same data viewed
+The recorded testimonials are the human-credible qualitative gate; the
+assertions are the machine gate. They are the same data viewed
 two ways.
 """
 

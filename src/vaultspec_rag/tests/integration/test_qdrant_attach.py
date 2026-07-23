@@ -1,4 +1,4 @@
-"""Verified Qdrant attach-or-refuse integration tests (plan W02.P04).
+"""Verified Qdrant attach-or-refuse integration tests.
 
 No mocks, no real Qdrant, no GPU: a real stdlib HTTP server stands in for a
 running managed Qdrant (it answers /readyz and reports a version), the managed

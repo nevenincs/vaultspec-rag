@@ -1,4 +1,4 @@
-"""Managed-Qdrant identity sidecar write/validate tests (plan W02.P03).
+"""Managed-Qdrant identity sidecar write/validate tests.
 
 No mocks, no GPU: the sidecar is written and read back through the real config
 resolution (a temp storage dir set via the genuine ``VAULTSPEC_RAG_QDRANT_STORAGE_DIR``

@@ -1,4 +1,4 @@
-"""Qdrant supervisor failure-legibility tests (plan W01.P01).
+"""Qdrant supervisor failure-legibility tests.
 
 Verifies that the supervisor captures and bounds a real child process's output,
 and reports a non-ready exit with its cause rather than the opaque timeout that

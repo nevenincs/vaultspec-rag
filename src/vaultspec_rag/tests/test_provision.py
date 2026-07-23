@@ -10,9 +10,6 @@ paths plus the real Hugging Face cache probe. The verify-before-execute
 security contract of the qdrant provisioner is never weakened to make a
 test pass - the idempotency path is proven by pre-seeding, the way
 ``test_qdrant_runtime`` does.
-
-See the plan ``2026-06-13-server-first-default-plan`` (W02.P04) and the
-ADR ``2026-06-13-provisioning-setup-adr``.
 """
 
 from __future__ import annotations

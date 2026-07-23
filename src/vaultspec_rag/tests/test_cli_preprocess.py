@@ -159,7 +159,7 @@ def test_preprocess_json_help_uses_script_language(argv: list[str]) -> None:
 
 
 def test_trust_verbs_are_removed() -> None:
-    # The trust/untrust verbs were deleted (ADR D7); no such subcommands exist.
+    # The trust/untrust verbs were deleted; no such subcommands exist.
     for verb in ("trust", "untrust"):
         result = runner.invoke(app, ["preprocess", verb, "--help"])
         assert result.exit_code != 0
@@ -447,7 +447,7 @@ def test_removed_enable_knob_is_gone() -> None:
 
 
 def test_removed_trust_all_knob_is_gone() -> None:
-    # The retired trust-all knob must not resurface (ADR D8).
+    # The retired trust-all knob must not resurface.
     assert not hasattr(EnvVar, "PREPROCESS_TRUST_ALL")
     assert all(
         member.value != "VAULTSPEC_RAG_PREPROCESS_TRUST_ALL" for member in EnvVar

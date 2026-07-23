@@ -1,4 +1,4 @@
-"""Unit tests for install-time provisioning-mode wiring (install-parity W02).
+"""Unit tests for install-time provisioning-mode wiring.
 
 Exercises the real install orchestration (:func:`install_run`) over the real
 filesystem with no mocks and no network: provisioning and torch config are opted
@@ -16,9 +16,6 @@ rag's own mode, sibling-package preservation in a mixed configuration, detection
 for the rag distribution, upgrade-time inference, the moment-of-choice
 dependency-leak advisory, and the orthogonality of the ``--local-only`` backend
 marker.
-
-See the plan ``2026-07-14-install-parity-plan`` (W02.P06) and the
-``2026-07-14-install-parity-adr``.
 """
 
 from __future__ import annotations
@@ -68,11 +65,11 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit]
 
 #: The leak advisory rag emits names rag's own distribution, not core's, so the
-#: text is package-correct on a companion install (install-parity W02.P07).
+#: text is package-correct on a companion install.
 _RAG_LEAK_ADVISORY = dependency_leak_advisory(RAG_DISTRIBUTION_NAME)
 
 # The concrete launch shapes each rendered mode produces for rag, derived from
-# the install-parity ADR's Implementation section: dependency-rendered modes
+# the install-parity implementation: dependency-rendered modes
 # launch the module through the governed project's own venv (``uv run``), tool
 # mode through an ephemeral ``uvx --from`` invocation. ``dev`` renders
 # byte-identically to ``dependency``.

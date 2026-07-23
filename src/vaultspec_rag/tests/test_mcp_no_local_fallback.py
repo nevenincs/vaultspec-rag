@@ -14,7 +14,8 @@ status-file read and real client path reach the missing-service guard.  A
 subprocess variant additionally proves the heavy ML libraries stay out of
 ``sys.modules`` after a failed call (in-process ``sys.modules`` is
 session-polluted, so the no-load assertion is only meaningful in a fresh
-interpreter).  See the ``mcp-service-client`` ADR (D7).
+interpreter): the MCP server is a thin service client and never runs a
+local fallback in its own interpreter.
 """
 
 from __future__ import annotations

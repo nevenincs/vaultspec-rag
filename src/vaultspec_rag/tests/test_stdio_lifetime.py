@@ -1,4 +1,4 @@
-"""Unit tests for the stdio shim lifetime watchdog (mcp-stdio-lifetime ADR).
+"""Unit tests for the stdio shim lifetime watchdog.
 
 Covers the pure ancestor-walk guards, the env kill switch, and (on Windows)
 real handle acquisition against the live test process's own ancestry - no

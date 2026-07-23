@@ -1,4 +1,4 @@
-"""Tests for the in-flight activity registry (#142, plan P01).
+"""Tests for the in-flight activity registry (#142).
 
 Two layers, no mocks/skips/monkeypatch:
 

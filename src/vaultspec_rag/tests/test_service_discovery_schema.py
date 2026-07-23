@@ -249,7 +249,7 @@ class TestDiscoverySchema:
         owner_publisher: _DiscoveryPublisher,
     ) -> None:
         # A file written by an older parent (no schema/version) must gain the
-        # discriminator on the first tick (ADR D2). Seed a bare legacy file
+        # discriminator on the first tick. Seed a bare legacy file
         # directly, then tick.
         legacy = {
             "pid": os.getpid(),

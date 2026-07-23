@@ -1,4 +1,4 @@
-"""Tests for the Tier-3 metrics surface (#142, plan P05).
+"""Tests for the Tier-3 metrics surface (#142).
 
 Three layers, no mocks/skips/monkeypatch:
 

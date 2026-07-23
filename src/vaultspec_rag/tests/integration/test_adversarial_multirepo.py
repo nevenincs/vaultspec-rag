@@ -1,4 +1,4 @@
-"""Multi-repo concurrent search + index load (plan W04.P07.S25).
+"""Multi-repo concurrent search + index load.
 
 No mocks, real GPU: two independent repos (separate roots, separate stores)
 share the one GPU model - the actual multi-repo contention a single service
