@@ -24,6 +24,7 @@ from ...config import reset_config as reset_rag_config
 from ...serviceclient._transport import _try_http_health
 
 if TYPE_CHECKING:
+    import subprocess
     from collections.abc import Generator, Mapping
     from pathlib import Path
 
@@ -31,6 +32,7 @@ __all__ = [
     "_get_ephemeral_port",
     "_mirror_managed_qdrant_binary",
     "_poll_health",
+    "_poll_own_health",
     "_resolve_host_provisioned_qdrant",
     "_service_env",
     "_wait_for_exit",
@@ -130,6 +132,40 @@ def _poll_health(port: int, timeout: float = 90.0) -> dict[str, Any]:
         delay = min(delay * 2, 5.0)
     msg = f"Service on port {port} not ready after {timeout:.3f}s"
     raise TimeoutError(msg)
+
+
+def _poll_own_health(
+    process: subprocess.Popen[bytes],
+    port: int,
+    *,
+    token: str,
+    timeout: float = 20.0,
+) -> dict[str, Any] | None:
+    """Poll /health until the spawned child answers with its own identity token.
+
+    Returns the health body once a response carries ``service_token == token`` -
+    proof it is this exact child, not a squatter, a sibling fixture, or a stray
+    service that grabbed the ephemeral port after ``_get_ephemeral_port`` released
+    it. Returns ``None`` when the child exits first (a bind failure records its
+    error in the child log) or the deadline passes, so the caller can re-roll a
+    fresh port instead of trusting a foreign responder or hanging on a lost race.
+    """
+    delay = 0.5
+    deadline = time.monotonic() + timeout
+    while True:
+        if process.poll() is not None:
+            return None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        health = _try_http_health(port, timeout=min(5.0, remaining))
+        if health is not None and health.get("service_token") == token:
+            return health
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        time.sleep(min(delay, remaining))
+        delay = min(delay * 2, 5.0)
 
 
 def _wait_for_exit(pid: int, timeout: float = 15.0) -> bool:
