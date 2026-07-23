@@ -762,8 +762,8 @@ import sys
 
 sys.path.insert(0, sys.argv[1])
 
-from vaultspec_rag._job_errors import JobError, JobErrorKind  # absolute-import-ok
-from vaultspec_rag.memory_probe import MemoryBudget  # absolute-import-ok
+from vaultspec_rag._job_errors import JobError, JobErrorKind
+from vaultspec_rag.memory_probe import MemoryBudget
 
 rss_budget = MemoryBudget(rss_ceiling_mb=1.0)
 try:

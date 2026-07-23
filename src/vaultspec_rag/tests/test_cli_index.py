@@ -636,12 +636,12 @@ os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(status_dir)
 os.environ["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"] = str(storage_dir)
 os.environ.pop("VAULTSPEC_RAG_LOCAL_ONLY", None)
 
-from vaultspec_rag.config import reset_config  # absolute-import-ok
+from vaultspec_rag.config import reset_config
 
 reset_config()
 
 
-from vaultspec_rag._machine_lock import (  # absolute-import-ok
+from vaultspec_rag._machine_lock import (
     acquire_machine_lock,
     machine_discovery_path,
     release_machine_lock,
@@ -732,18 +732,14 @@ try:
     )
     assert initial_target_tree == [".vaultspec"]
 
-    from vaultspec_rag.cli._index import (  # absolute-import-ok
-        _default_service_port as index_port,
-    )
-    from vaultspec_rag.cli._search import (  # absolute-import-ok
-        _default_service_port as search_port,
-    )
+    from vaultspec_rag.cli._index import _default_service_port as index_port
+    from vaultspec_rag.cli._search import _default_service_port as search_port
 
     assert search_port() == expected
     assert index_port() == expected
 
     from typer.testing import CliRunner
-    from vaultspec_rag.cli import app  # absolute-import-ok
+    from vaultspec_rag.cli import app
 
     runner = CliRunner()
     search_result = runner.invoke(

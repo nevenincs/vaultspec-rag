@@ -69,21 +69,15 @@ _AMBIENT_CHILD_PROGRAM = r"""
 import json
 import os
 
-from vaultspec_rag._machine_lock import (  # absolute-import-ok
+from vaultspec_rag._machine_lock import (
     MachineLockLease,
     acquire_machine_lock,
     machine_lock_path,
     publish_machine_discovery,
 )
-from vaultspec_rag._test_isolation import (  # absolute-import-ok
-    ManagedSingletonIsolationError,
-)
-from vaultspec_rag.qdrant_runtime._resolve import (  # absolute-import-ok
-    write_qdrant_identity,
-)
-from vaultspec_rag.serviceclient._discovery import (  # absolute-import-ok
-    _merge_service_status,
-)
+from vaultspec_rag._test_isolation import ManagedSingletonIsolationError
+from vaultspec_rag.qdrant_runtime._resolve import write_qdrant_identity
+from vaultspec_rag.serviceclient._discovery import _merge_service_status
 
 operations = (
     ("status", lambda: _merge_service_status({"pid": os.getpid(), "port": 1})),

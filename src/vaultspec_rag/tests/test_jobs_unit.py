@@ -85,11 +85,11 @@ import sys
 
 sys.path.insert(0, sys.argv[1])
 
-from vaultspec_rag.job_manager import JobManager as direct_manager  # absolute-import-ok
+from vaultspec_rag.job_manager import JobManager as direct_manager
 
 assert "vaultspec_rag.jobs" not in sys.modules
 
-from vaultspec_rag.jobs import JobManager as compatibility_manager  # absolute-import-ok
+from vaultspec_rag.jobs import JobManager as compatibility_manager
 
 assert compatibility_manager is direct_manager
 """

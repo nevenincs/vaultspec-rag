@@ -388,9 +388,7 @@ def test_off_mode_suppresses_execution_but_strict_retains_routing(
     script = """
 from pathlib import Path
 import sys
-from vaultspec_rag.indexer._preprocess_config import (  # absolute-import-ok
-    load_preprocess_rules,
-)
+from vaultspec_rag.indexer._preprocess_config import load_preprocess_rules
 root = Path(sys.argv[1])
 runtime_count = len(load_preprocess_rules(root).rules)
 strict_count = len(load_preprocess_rules(root, strict=True).rules)
