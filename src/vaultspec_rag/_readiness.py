@@ -30,9 +30,6 @@ duplicating it, per the ``service-domain-owns-operability`` rule.
 The structured :class:`ReadinessReport` is designed to serve both a
 human render and a JSON envelope: every node is a serialisable dataclass
 with a ``to_dict``.
-
-See the ADR ``2026-06-13-provisioning-setup-adr`` for the readiness
-decision and the plan ``2026-06-13-server-first-default-plan`` (W03.P07).
 """
 
 from __future__ import annotations

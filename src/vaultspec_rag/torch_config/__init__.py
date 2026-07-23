@@ -15,8 +15,8 @@ that shape - apply and remove compare against them, and
 ``manual_snippet`` renders them verbatim. Symmetric apply/remove is
 guaranteed by construction.
 
-This module was split into a package (``torch_config/``) per the
-``2026-06-01-module-split-adr``: shared constants / enums / report
+This module was split into a package (``torch_config/``) from a former
+monolith: shared constants / enums / report
 dataclasses in ``_constants``, TOML inspection + classification in
 ``_inspect``, mutation + the canonical-snippet builder in ``_mutate``,
 direct-dep management in ``_direct_dep``, and install diagnosis in
@@ -24,9 +24,6 @@ direct-dep management in ``_direct_dep``, and install diagnosis in
 ``_is_torch_requirement`` helper tests import directly via the module
 alias - is re-exported here unchanged so no caller or test edit is
 required.
-
-See :doc:`.vault/adr/2026-04-22-install-cuda-adr` for the
-torch-config architectural decision.
 """
 
 from __future__ import annotations

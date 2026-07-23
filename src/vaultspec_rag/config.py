@@ -24,7 +24,7 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  
 
 logger = logging.getLogger(__name__)
 
-#: The two-state document-preprocessing mode (preprocess-sandbox-removal ADR).
+#: The two-state document-preprocessing mode.
 #: ``default`` runs a root's rules directly; ``off`` is the kill switch.
 PreprocessMode = Literal["default", "off"]
 IndexSupportProfile = Literal["managed-service", "embedded-local"]
@@ -94,7 +94,7 @@ class EnvVar(StrEnum):
     SERVICE_MAX_PROJECTS = "VAULTSPEC_RAG_SERVICE_MAX_PROJECTS"
     MANAGED_LOG_MAX_BYTES = "VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES"
     MANAGED_LOG_BACKUP_COUNT = "VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT"
-    # Service-domain indexing job lifecycle bounds (service-job-control ADR).
+    # Service-domain indexing job lifecycle bounds.
     JOB_MAX_NONTERMINAL = "VAULTSPEC_RAG_JOB_MAX_NONTERMINAL"
     JOB_SHUTDOWN_TIMEOUT_SECONDS = "VAULTSPEC_RAG_JOB_SHUTDOWN_TIMEOUT_SECONDS"
     # Existing operation-level storage timeout and bounded write retry.
@@ -128,7 +128,7 @@ class EnvVar(StrEnum):
     EMBEDDING_CODE_ENCODE_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_CODE_ENCODE_BATCH_SIZE"
     INDEX_CACHE_FLUSH_SLICES = "VAULTSPEC_RAG_INDEX_CACHE_FLUSH_SLICES"
     INDEX_PARALLEL_MIN_BYTES = "VAULTSPEC_RAG_INDEX_PARALLEL_MIN_BYTES"
-    # Dense-encoder backend selection (#155 onnx-encoder-backend ADR).
+    # Dense-encoder backend selection (#155).
     DENSE_BACKEND = "VAULTSPEC_RAG_DENSE_BACKEND"
     DENSE_ONNX_FILE = "VAULTSPEC_RAG_DENSE_ONNX_FILE"
     # Filesystem-watcher / auto-reindex knobs (#143/#144).
@@ -140,7 +140,7 @@ class EnvVar(StrEnum):
     PREPROCESS = "VAULTSPEC_RAG_PREPROCESS"
     PREPROCESS_MAX_EMITTED_BYTES = "VAULTSPEC_RAG_PREPROCESS_MAX_EMITTED_BYTES"
     HTML_STRIP = "VAULTSPEC_RAG_HTML_STRIP"
-    # Stdio shim lifetime watchdog kill switch (mcp-stdio-lifetime ADR);
+    # Stdio shim lifetime watchdog kill switch;
     # "0"/"false"/"off"/"no" disables the ancestor-death backstop.
     STDIO_WATCHDOG = "VAULTSPEC_RAG_STDIO_WATCHDOG"
     # Vault document chunking knob.
@@ -559,7 +559,7 @@ class VaultSpecConfigWrapper:
         # gate. 8 MiB sits comfortably above the measured serial/parallel
         # crossover while still parallelising any large codebase.
         "index_parallel_min_bytes": 8 * 1024 * 1024,
-        # Dense-encoder backend (#155 onnx-encoder-backend ADR). "torch" is the
+        # Dense-encoder backend (#155). "torch" is the
         # default and only validated path on this CUDA-13 build; "onnx" is
         # experimental and opt-in (requires sentence-transformers[onnx-gpu] in
         # an onnxruntime-compatible CUDA environment) and degrades to torch on
@@ -659,7 +659,7 @@ class VaultSpecConfigWrapper:
         "watch_enabled": True,
         "watch_debounce_ms": 2000,
         "watch_cooldown_s": 30.0,
-        # Document-preprocessing two-state (preprocess-sandbox-removal ADR).
+        # Document-preprocessing two-state.
         # ``default`` runs a root's ``.vaultragpreprocess.toml`` rules directly
         # for any root: a root's preprocess config is repo-authored code and
         # executes with the operator's privileges, so no trust check gates it.
@@ -671,14 +671,14 @@ class VaultSpecConfigWrapper:
         # (``_MAX_FILE_SIZE``) is relaxed for files matched by a preprocess
         # rule; this cap instead bounds the *emitted* text a preprocessor
         # produces, so a 12 MB PDF that distils to 40 KB indexes while a
-        # runaway extractor that emits tens of MB is skipped (D10).
+        # runaway extractor that emits tens of MB is skipped.
         "preprocess_max_emitted_bytes": 10 * 1024 * 1024,
         # Strip HTML tags to plain text before chunking ``.html`` sources
         # (#185 adjacent ask). Default on: raw markup wastes ~1/3 of each
         # chunk's budget and pollutes results with navigation boilerplate.
         # Falls back to raw-markup chunking on any parse error.
         "html_strip": True,
-        # Code-search noise profile (search-noise-filtering ADR). Domains are
+        # Code-search noise profile. Domains are
         # the labels from ``_domain.classify_domain``. ``hide`` domains are
         # dropped from code results by default (reversible per call with
         # ``--include-domain``); ``demote`` domains stay visible but take a
@@ -700,7 +700,7 @@ class VaultSpecConfigWrapper:
         "dedup_locales_default": True,
     }
 
-    # Intent-aware vault ranking weight profiles (ADR D2/D3). Each profile maps
+    # Intent-aware vault ranking weight profiles. Each profile maps
     # a doc_type and (for ADRs) a status to a multiplier applied to the
     # calibrated rerank score. A type or status absent from a profile defaults
     # to 1.0 (the prior leaves it unchanged). Orientation lifts active decisions

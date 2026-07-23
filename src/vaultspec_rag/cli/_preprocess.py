@@ -1,9 +1,8 @@
 """``preprocess`` command group: inspect, validate, and trial rules.
 
-Implements the operator surface decided in the ``preprocess-hooks`` ADR (D13),
-as amended by the ``preprocess-sandbox-removal`` ADR: hooks are gated only by
-the ``off`` kill switch. A root's preprocess config is repo-authored code and
-runs directly with the operator's privileges.
+Hooks are gated only by the ``off`` kill switch: there is no sandbox and no
+trust store. A root's preprocess config is repo-authored code and runs directly
+with the operator's privileges.
 
 - ``preprocess list``    - show the resolved rules for the project root.
 - ``preprocess check``   - validate ``.vaultragpreprocess.toml`` and report

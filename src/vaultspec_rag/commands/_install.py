@@ -1065,8 +1065,8 @@ def _install_run_unchecked(
     # must complete before unrelated provider documents can be mutated.
     _run_non_mcp_sync(target, report, dry_run, force, skip)
 
-    # Surface the moment-of-choice dependency-leak advisory (install-parity ADR
-    # D3): fires only when this run newly elects the full-leak dependency
+    # Surface the moment-of-choice dependency-leak advisory: fires only when
+    # this run newly elects the full-leak dependency
     # placement for rag, so a persisted-declaration workspace is not nagged on
     # every subsequent install.
     if newly_establishes_dependency(resolved):

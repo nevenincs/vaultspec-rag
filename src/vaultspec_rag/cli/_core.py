@@ -1,7 +1,6 @@
 """Shared CLI runtime state: console, logger, and dotenv bootstrap.
 
-Split out of the original ``cli.py`` monolith per the
-``2026-06-01-module-split-adr``. Every CLI submodule imports the
+Split out of the original ``cli.py`` monolith. Every CLI submodule imports the
 shared :data:`console` and :data:`logger` from here so the assembled
 package exposes a single Rich console and a single
 ``vaultspec_rag.cli``-named logger (the latter matters because tests

@@ -1,4 +1,4 @@
-"""Machine-scoped service singleton lock (ADR D1 / P3).
+"""Machine-scoped service singleton lock.
 
 The resident RAG service owns the machine's single GPU and the single managed
 Qdrant (one port, one single-writer storage), so exactly one resident service

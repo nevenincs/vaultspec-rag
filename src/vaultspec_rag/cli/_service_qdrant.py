@@ -419,8 +419,8 @@ def qdrant_quarantine(
 ) -> None:
     """List the shared store's collections, or quarantine a named one.
 
-    The escape hatch for the ``qdrant-store-resilience`` ADR (QR5): when the
-    supervised start cannot identify a corrupt collection automatically, an
+    The operator escape hatch: when the supervised start cannot identify a
+    corrupt collection automatically, an
     operator lists the store and quarantines the culprit by name. The move is
     reversible (the files are preserved under ``quarantine/``).
     """

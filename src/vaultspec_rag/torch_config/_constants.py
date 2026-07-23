@@ -82,9 +82,9 @@ class TorchConfigAction(StrEnum):
     """Closed set of action strings emitted on the install / uninstall
     report's ``torch_config_action`` field.
 
-    The set was historically an open string surface; round-2 audit
-    surfaced a JSON-contract gap (the ADR documented 5 values but the
-    code emitted 13). Pinning the vocabulary to a ``StrEnum`` makes
+    The set was historically an open string surface; the emitted
+    vocabulary had drifted wider than the documented contract. Pinning
+    the vocabulary to a ``StrEnum`` makes
     the contract self-documenting and lets static type-checkers catch
     typos. ``StrEnum`` members compare equal to their string value,
     so existing consumers that filter on ``"applied"`` keep working.

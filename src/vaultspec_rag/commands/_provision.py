@@ -23,8 +23,6 @@ provisioning runs by default; ``local_only`` skips the Qdrant binary
 (the headline escape hatch), and a finer ``skip`` set drops individual
 steps. Every step is idempotent (re-running a satisfied dependency is
 an ``unchanged`` no-op with no network) and honours ``dry_run``.
-
-See the ADR ``2026-06-13-provisioning-setup-adr`` for the decision.
 """
 
 from __future__ import annotations
@@ -257,9 +255,9 @@ def _provision_torch(
     The torch backend is two-phase: it patches the consumer pyproject
     but the follow-up ``uv sync`` completes the install. So a successful
     configuration reports ``configured, sync pending`` (sync_pending
-    True) unless ``sync_after`` actually ran the sync. This is the
-    heterogeneity the ADR requires the front door to surface honestly,
-    distinct from a fetched binary's terminal ``downloaded``.
+    True) unless ``sync_after`` actually ran the sync. The front door must
+    surface this heterogeneity honestly, distinct from a fetched binary's
+    terminal ``downloaded``.
     """
     if not configure_torch or ProvisionStep.TORCH in skip:
         # Distinguish the two skip reasons so the report is not misread as an
