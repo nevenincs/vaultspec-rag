@@ -673,9 +673,8 @@ def _provision_action_phrase(step: dict[str, object]) -> str:
     """Phrase one provisioning step honestly, surfacing torch's two phases.
 
     A ``created``/``updated`` torch step carries ``sync_pending=True`` and
-    must read as "configured, sync pending" - the half-done state the ADR
-    requires the front door to communicate - rather than a binary's
-    terminal "downloaded".
+    must read as "configured, sync pending" - the half-done state the front
+    door must communicate - rather than a binary's terminal "downloaded".
     """
     action = str(step.get("action", ""))
     if step.get("sync_pending") and action in ("created", "updated"):

@@ -5,7 +5,7 @@ Vaultspec-rag adopts the three-placement mode model (``tool`` / ``dependency``
 module with ``package="vaultspec-rag"`` rather than reimplementing precedence,
 detection, or the shared per-package ``.vaultspec/workspace.json`` declaration.
 This module is the thin rag-side seam that threads that shared machinery through
-rag's own install path: it resolves rag's mode through core's Q5 precedence
+rag's own install path: it resolves rag's mode through core's precedence
 chain, persists rag's own entry in the shared declaration without disturbing
 core's sibling entry, and re-renders rag's MCP server entry to its own declared
 mode's launch shape.
@@ -61,7 +61,7 @@ RAG_MCP_MODULE = "vaultspec_rag.server"
 
 
 def resolve_rag_mode(target: Path, explicit: InstallMode | None) -> ResolvedMode:
-    """Resolve rag's provisioning mode through core's Q5 precedence chain.
+    """Resolve rag's provisioning mode through core's precedence chain.
 
     The fresh-``install`` resolver: it defers entirely to core's
     :func:`~vaultspec_core.core.workspace_mode.resolve_install_mode_with_provenance`
@@ -94,7 +94,7 @@ def infer_rag_upgrade_mode(
     *,
     allow_mcp_status: bool = True,
 ) -> ResolvedMode:
-    """Infer rag's provisioning mode for an ``install --upgrade`` (ADR Q6).
+    """Infer rag's provisioning mode for an ``install --upgrade``.
 
     Mirrors core's ``_infer_upgrade_mode`` precedence exactly, substituting
     rag's own deployed artifact for core's: an explicit ``--mode`` flag wins
@@ -110,7 +110,8 @@ def infer_rag_upgrade_mode(
 
     Reading the observed shape through core's shared collector keeps rag's
     migration and any diagnosis in agreement on what a deployed launch shape
-    means, honouring the ADR's single-comparator constraint.
+    means: everything routes through one core comparator, so rag and core
+    cannot drift on what a deployed launch shape means.
 
     Args:
         target: Workspace root directory.

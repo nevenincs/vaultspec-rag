@@ -41,8 +41,8 @@ def _warn_preprocess_flag_ignored_when_delegating(json_mode: bool) -> None:
     The flag only shapes an in-process run: when the CLI delegates to a
     running service, that service preprocesses under the mode it was started
     with and cannot be overridden per request. The run still proceeds, so this
-    warns loudly rather than silently accepting a flag it cannot honour (ADR
-    D7). Emitted through the logger (so it survives ``--json`` on stderr) and,
+    warns loudly rather than silently accepting a flag it cannot honour.
+    Emitted through the logger (so it survives ``--json`` on stderr) and,
     in human mode, printed as a visible ``Warning:`` line.
     """
     message = (

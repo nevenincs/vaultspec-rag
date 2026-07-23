@@ -6,8 +6,8 @@ It uses dense embeddings (Qwen3), sparse embeddings (SPLADE), and learned
 reranking (CrossEncoder) to find the most relevant context for code generation,
 code review, and documentation discovery.
 
-This module was split into a package (``cli/``) per the
-``2026-06-01-module-split-adr``. The verbatim public surface - the Typer
+This module was split into a package (``cli/``) from a former monolith. The
+verbatim public surface - the Typer
 ``app`` plus the ``_``-prefixed helpers that tests import or monkeypatch
 directly (``_spawn_service``, ``_try_http_search``,
 ``console`` …) - is re-exported here unchanged through an explicit

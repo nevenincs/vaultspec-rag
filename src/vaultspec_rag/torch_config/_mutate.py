@@ -139,7 +139,7 @@ def apply_patch(pyproject: Path) -> PatchReport:
         # so the validation reparse above still applies.
         new_text = new_text.replace("\n", "\r\n")
     # Preserve the file's original trailing-newline shape so both
-    # apply and remove are EOF-neutral. Necessary for the ADR's
+    # apply and remove are EOF-neutral. Necessary for the
     # symmetric-mirror byte-equality promise (apply→remove leaves the
     # file byte-identical to the pre-apply content). BEHAV-01.
     new_text = _match_trailing_newline(original_bytes, new_text, uses_crlf=uses_crlf)
@@ -218,7 +218,7 @@ def _match_trailing_newline(
     LFs (POSIX convention with a blank final line), some with no
     trailing newline at all. Without this normalisation, ``apply →
     remove`` would silently shift the file's terminator shape,
-    breaking the ADR's "symmetric mirror - leaves the file byte-
+    breaking the "symmetric mirror - leaves the file byte-
     identical to its pre-apply content" promise.
     """
     eol = "\r\n" if uses_crlf else "\n"
