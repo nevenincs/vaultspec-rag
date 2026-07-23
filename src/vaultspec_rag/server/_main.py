@@ -50,6 +50,44 @@ def _missing_mcp_extra_message(exc: ImportError) -> str:
     )
 
 
+def _resolve_daemon_argv() -> tuple[int | None, int | None]:
+    """Parse ``--port``/``--parent-pid``/``--launch-token`` from ``sys.argv``.
+
+    The console-script path (no explicit ``port`` argument). Sets the
+    per-process launch token on the package namespace exactly as the inline
+    parse did, and returns ``(port, parent_pid)``.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="vaultspec-search-mcp",
+        description="VaultSpec RAG daemon",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="HTTP port (default: stdio transport)",
+    )
+    parser.add_argument(
+        "--parent-pid",
+        type=int,
+        default=None,
+        help=(
+            "Explicit client PID for the stdio lifetime watchdog "
+            "(watched in addition to the discovered ancestor chain)"
+        ),
+    )
+    parser.add_argument(
+        "--launch-token",
+        default="",
+        help=argparse.SUPPRESS,
+    )
+    args = parser.parse_args()
+    _m._launch_token = str(args.launch_token)
+    return args.port, args.parent_pid
+
+
 def main(port: int | None = None) -> None:
     """Start the RAG daemon on stdio or HTTP transport.
 
@@ -75,36 +113,7 @@ def main(port: int | None = None) -> None:
     """
     parent_pid: int | None = None
     if port is None:
-        import argparse
-
-        parser = argparse.ArgumentParser(
-            prog="vaultspec-search-mcp",
-            description="VaultSpec RAG daemon",
-        )
-        parser.add_argument(
-            "--port",
-            type=int,
-            default=None,
-            help="HTTP port (default: stdio transport)",
-        )
-        parser.add_argument(
-            "--parent-pid",
-            type=int,
-            default=None,
-            help=(
-                "Explicit client PID for the stdio lifetime watchdog "
-                "(watched in addition to the discovered ancestor chain)"
-            ),
-        )
-        parser.add_argument(
-            "--launch-token",
-            default="",
-            help=argparse.SUPPRESS,
-        )
-        args = parser.parse_args()
-        port = args.port
-        parent_pid = args.parent_pid
-        _m._launch_token = str(args.launch_token)
+        port, parent_pid = _resolve_daemon_argv()
     else:
         parent_pid = None
         _m._launch_token = ""
