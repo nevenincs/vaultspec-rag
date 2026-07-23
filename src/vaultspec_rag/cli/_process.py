@@ -1,11 +1,12 @@
-"""Process, port, and health-probe helpers for the background service.
+"""Process and port helpers for the background service.
 
 Liveness (``_is_pid_alive``), identity (``_is_our_service`` via a
-``/health`` service-token round-trip through the service client, with
-an executable-name fallback), port probes, heartbeat staleness, the
-detached-daemon spawn, and graceful termination all live here. Helpers that tests monkeypatch on ``vaultspec_rag.cli`` (e.g.
-``_is_pid_alive``) are referenced through the
-package namespace at call time so the substitution is observed.
+``/health`` service-token round-trip through the service client, with an
+executable-name fallback), port probes, heartbeat staleness, the
+detached-daemon spawn, and graceful termination all live here. Helpers that
+tests monkeypatch on ``vaultspec_rag.cli`` (e.g. ``_is_pid_alive``) are
+referenced through the package namespace at call time so the substitution is
+observed.
 """
 
 from __future__ import annotations
@@ -17,8 +18,6 @@ import subprocess
 import sys
 import sysconfig
 import time
-import urllib.error
-import urllib.request
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path

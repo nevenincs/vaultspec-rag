@@ -49,10 +49,29 @@ inert one.
 
 Under mutation - the token comparison replaced so a mismatched token would be
 accepted - the mismatch test FAILED, on the assertion that the identity helper
-returned true for a token that does not match. That is the required result: it
-proves the interception reaches the comparison rather than falling through to the
-executable-name path, which is the specific way this test could have become
-vacuous when the probe symbol moved.
+returned true for a token that does not match.
+
+That result is weaker than this record originally claimed, and the correction
+matters more than the original claim did. It was written as proof that the
+interception reaches the comparison rather than falling through to the
+executable-name path. An independent review established that it does not
+discriminate that on this machine: the tests named the machine's default service
+port, where the operator's resident daemon was listening and answering with a
+real token, so the comparison was reached whether or not the patch was live. The
+mutation would have gone red either way.
+
+The underlying property does hold - the repointed patches do bind, and the suite
+as a whole catches an inert patch in either environment - but it holds for a
+different reason than recorded, and the evidence offered did not establish it.
+The tests have since been moved off the machine's default port onto one with
+nothing listening, which is what makes an inert patch fall to the unreachable
+sentinel and fail the assertion. On that port the mutation discriminates as
+originally described.
+
+The general lesson is the one worth keeping: a mutation proof is only as good as
+the isolation of the test it is run against. A test that can reach a live service
+is not isolated, and a proof run against it can confirm a property that the test
+would not actually have caught.
 
 After restoring the comparison the same test PASSED. The operator additionally
 confirmed the restoration by diff rather than by eye, reporting that the

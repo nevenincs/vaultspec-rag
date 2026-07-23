@@ -53,3 +53,27 @@ The function reuses the module's response-size ceiling and its redirect-refusing
 opener rather than reimplementing either. That is the point of the ownership
 move: there is now one place where a health request is constructed, and anything
 hardened there is hardened for every caller.
+
+## Revision after independent review
+
+The owner as first written did not guarantee the contract this Step claimed for
+it. It cast the parsed body to a mapping without narrowing, so a peer answering
+with valid JSON that is not an object - a list, a string, a number - had that
+value returned unchanged, and every caller then treated it as a mapping. The
+review reproduced the consequence at the verb rather than arguing it: a foreign
+responder on the port made the stop verb emit zero structured envelopes and exit
+on an attribute error, which is precisely the outcome the broker-facing outcome
+rule exists to prevent.
+
+The behaviour was inherited from the probe this Step replaced, so it is not a
+regression - but consolidating eleven callers behind one owner was the moment to
+close it, and the decision this Step implements rests on the claim that the
+contract is guaranteed. It was not.
+
+The owner now narrows the parsed value and reports a non-object body as
+unreachable. A peer that answers this way is not the service, so the sentinel is
+the honest answer, and it is the one shape every caller already handles.
+
+Recorded here rather than only in the audit because this Step's original Outcome
+asserted a guarantee the code did not provide, and a reader comparing the two
+should see the correction attached to the claim.
