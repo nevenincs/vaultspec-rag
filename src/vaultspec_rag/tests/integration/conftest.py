@@ -8,8 +8,10 @@ indexing on top of vault indexing.
 from __future__ import annotations
 
 import os
+import signal
+import sys
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -263,20 +265,48 @@ def _cleanup_service_process(
         else None
     )
     started = time.monotonic()
-    _terminate_pid(daemon_pid, timeout=max(0.0, timeout))
+    # The daemon runs in the process group led by ``pid`` (the process spawned
+    # with CREATE_NEW_PROCESS_GROUP). When the interpreter relaunches through a
+    # stub, the serving daemon is a descendant of ``pid`` and is NOT itself a
+    # group leader, so a graceful Windows CTRL_BREAK must be addressed to the
+    # group leader ``pid`` - it propagates to the whole group, reaching the
+    # descendant - never to the discovered non-leader ``daemon_pid``, which
+    # would misfire. Send the bare graceful signal (as an operator-driven stop
+    # does), give the daemon the full remaining budget to run its own graceful
+    # shutdown, then escalate to a pid-targeted force-kill that never touches a
+    # console group.
+    with suppress(OSError):
+        if sys.platform == "win32":
+            os.kill(pid, signal.CTRL_BREAK_EVENT)
+        else:
+            os.kill(pid, signal.SIGTERM)
     remaining = max(0.0, timeout - (time.monotonic() - started))
     if not _wait_for_exit(daemon_pid, timeout=remaining):
-        raise AssertionError(
-            f"Test-owned service process {daemon_pid} did not exit.\n"
-            f"Service output:\n{_service_diagnostics(log_path)}"
+        _terminate_pid(
+            daemon_pid,
+            timeout=max(0.0, timeout - (time.monotonic() - started)),
+            console_group_signal=False,
         )
+        remaining = max(0.0, timeout - (time.monotonic() - started))
+        if not _wait_for_exit(daemon_pid, timeout=remaining):
+            raise AssertionError(
+                f"Test-owned service process {daemon_pid} did not exit.\n"
+                f"Service output:\n{_service_diagnostics(log_path)}"
+            )
     if daemon_pid != pid:
         remaining = max(0.0, timeout - (time.monotonic() - started))
         if not _wait_for_exit(pid, timeout=remaining):
-            raise AssertionError(
-                f"Test-owned service launcher {pid} did not exit with daemon "
-                f"{daemon_pid}.\nService output:\n{_service_diagnostics(log_path)}"
+            _terminate_pid(
+                pid,
+                timeout=max(0.0, timeout - (time.monotonic() - started)),
+                console_group_signal=False,
             )
+            remaining = max(0.0, timeout - (time.monotonic() - started))
+            if not _wait_for_exit(pid, timeout=remaining):
+                raise AssertionError(
+                    f"Test-owned service launcher {pid} did not exit with daemon "
+                    f"{daemon_pid}.\nService output:\n{_service_diagnostics(log_path)}"
+                )
     if qdrant_pid is not None:
         remaining = max(0.0, timeout - (time.monotonic() - started))
         if not _wait_for_exit(qdrant_pid, timeout=remaining):
