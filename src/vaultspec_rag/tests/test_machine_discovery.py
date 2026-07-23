@@ -217,3 +217,61 @@ class TestAuthoritativeRunningPublish:
         finally:
             release.set()
             holder.join(timeout=5.0)
+
+
+class TestQdrantClientOpTimeout:
+    """Managed-Qdrant client operations construct with a finite timeout.
+
+    The startup manifest reconcile runs on the critical path with the machine
+    lease held; an unbounded ``get_collections`` against a half-dead server that
+    accepts the socket but never answers would strand the singleton forever.
+    """
+
+    def test_startup_reconcile_client_carries_a_finite_timeout(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guard: the reconcile client must be built with a finite timeout.
+
+        Mutation this catches: drop ``timeout=`` from the ``QdrantClient(...)``
+        construction in ``_reconcile_storage_manifest`` and the recorded kwargs
+        carry no ``timeout``, so the assertion below fails.
+        """
+        import math
+        from types import SimpleNamespace
+
+        from ..server import _lifespan
+        from ..server._lifecycle import _QDRANT_CLIENT_OP_TIMEOUT_SECONDS
+
+        # Isolate the storage manifest to tmp: an empty ``known`` set makes the
+        # reconcile a candidate to drop entries, so it must never read or mutate
+        # the operator's real managed manifest.
+        monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(tmp_path / "status"))
+        monkeypatch.setenv(
+            EnvVar.QDRANT_STORAGE_DIR.value,
+            str(tmp_path / "qdrant" / "storage"),
+        )
+        reset_config()
+
+        recorded: dict[str, object] = {}
+
+        class _RecordingClient:
+            def __init__(self, **kwargs: object) -> None:
+                recorded.update(kwargs)
+
+            def get_collections(self) -> object:
+                return SimpleNamespace(collections=[])
+
+            def close(self) -> None:
+                pass
+
+        monkeypatch.setattr("qdrant_client.QdrantClient", _RecordingClient)
+        try:
+            _lifespan._reconcile_storage_manifest()
+        finally:
+            reset_config()
+
+        timeout = recorded.get("timeout")
+        assert isinstance(timeout, int | float) and not isinstance(timeout, bool)
+        assert timeout > 0
+        assert math.isfinite(float(timeout))
+        assert timeout == _QDRANT_CLIENT_OP_TIMEOUT_SECONDS
