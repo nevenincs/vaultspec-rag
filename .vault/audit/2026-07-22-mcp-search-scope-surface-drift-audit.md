@@ -9,25 +9,6 @@ related:
   - "[[2026-07-21-code-document-index-boundary-adr]]"
 ---
 
-<!-- FRONTMATTER RULES:
-     tags: one directory tag (hardcoded #audit) and one feature tag.
-     Replace mcp-search-scope with a kebab-case feature tag, e.g. #foo-bar.
-     Additional tags may be appended below the required pair.
-
-     Related: use wiki-links as '[[yyyy-mm-dd-foo-bar]]'.
-
-     modified: CLI-maintained last-modified stamp; set at scaffold time,
-     refreshed by mutating CLI verbs and vault check fix; never hand-edit.
-
-     DO NOT add fields beyond those scaffolded; metadata lives
-     only in the frontmatter. -->
-
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the related: field above.
-     - NEVER use [[wiki-links]] or markdown links in the document body.
-     - NEVER reference file paths in the body. If you must name a source file,
-       class, or function, use inline backtick code: `src/module.py`. -->
-
 # `mcp-search-scope` audit: `live MCP surface has drifted beyond the accepted scope boundary`
 
 ## Scope
@@ -57,6 +38,28 @@ The drift is therefore not a single event. Some of it is plausible growth that o
 The guard did its job - it failed. But it sat inside a batch of failures attributed to unrelated help-text drift, and the attribution was made from the test's name and neighbours rather than from its assertion. It was only when the batch was reduced to a single remaining failure that anyone read the traceback.
 
 The lesson is about triage rather than about this boundary: a guard enforcing an architectural decision is indistinguishable, in a summary line, from a brittle expectation about formatting. Grouping failures by apparent similarity without reading each one is how a decision violation gets filed as cosmetic drift.
+
+### correction-the-expansion-was-authorised | high | The framing above is wrong: every added tool traces to a checked Step in an accepted plan, and the real failure is that two decision processes never met
+
+Subsequent research overturns this audit's opening hypothesis and the correction is material enough to record rather than quietly amend. Nothing here was accretion or an agent-side shortcut. All seven tools arrive in a single commit, and each maps to an explicit Step scoped by path to the tools module - one Step for the two search tools, one for the two reindex tools, one for the two clean tools, one for the status tool. Those Steps execute an accepted decision record whose sixth decision names the protocol explicitly. There is an unbroken authorising chain from an accepted record to every tool.
+
+What went wrong is a process failure between two accepted records rather than a violation by an implementer. The later record contains no reference to the earlier narrowing, does not list it among its related documents, does not supersede it, and nowhere acknowledges that an accepted decision had removed status and cleaning from this surface by name. The narrowing was not weighed and rejected; the evidence suggests it was never consulted. That distinction changes the remedy: authorised divergence between two records is reconciled by deciding which governs, whereas a shortcut is reverted.
+
+The interpretive crux sits in one word of the later record. Its sixth decision requires the listed surfaces to parse a closed vocabulary exhaustively. Whether that is a requirement about EXHAUSTIVENESS - that whatever a surface exposes must handle all three kinds - or about EXPOSURE - that the surface must offer each kind's tools - is not settled by its text. The implementing Steps read it as exposure. The narrower reading would have extended search and reindex to the document kind and stopped there. Four of the seven tools turn entirely on that question.
+
+### conformance-guard-amended-to-match-the-widening | high | One executable guard was rewritten in the same commit that widened the surface, while still citing the authority of the record it now contradicts
+
+The conformance test was amended alongside the expansion: the status tool moved out of its removed set and into its expected set, and a clean-tool group was added. Its module docstring still states that it asserts the surface decided by the narrowing record. The guard therefore now claims the authority of a decision whose text forbids part of what the guard asserts.
+
+A second, independent guard - the command-line parity test - was left untouched and still asserts the five original names. That is the test that has been failing. So the mechanical enforcement the narrowing record demanded did exist and did fire; it was simply carried inside a larger batch of unrelated failures and read as expectation drift rather than as a boundary breach.
+
+The lesson is narrow and worth keeping: when a guard and the thing it guards are edited in the same change, the guard stops being independent evidence. A reviewer seeing both in one diff has to ask which one moved first.
+
+### three-accepted-records-disagree-on-parity | high | An unresolved contradiction predates this expansion by seven weeks and was in force while it was designed
+
+An accepted observability record mandates full parity between the command-line surface and the protocol surface for server state. An accepted scope record explicitly retires the parity framing and removes those same tools by name. A third accepted record supersedes five earlier protocol decisions but does not supersede the observability one. All three remain accepted.
+
+So the corpus held two incompatible answers to the parity question before any of this session's work began, and it held them while the tools in question were being designed. Whatever is decided about the tools themselves, that contradiction has to be resolved, because leaving three accepted records in mutual disagreement guarantees the next implementer can cite an accepted decision for either outcome.
 
 ## Recommendations
 

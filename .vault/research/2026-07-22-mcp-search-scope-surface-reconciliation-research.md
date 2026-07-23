@@ -9,36 +9,7 @@ related:
   - "[[2026-07-22-mcp-search-scope-surface-drift-audit]]"
 ---
 
-<!-- FRONTMATTER RULES:
-     tags: one directory tag (hardcoded #research) and one feature tag.
-     Replace mcp-search-scope with a kebab-case feature tag, e.g. #foo-bar.
-     Additional tags may be appended below the required pair.
-
-     Related: use wiki-links as '[[yyyy-mm-dd-foo-bar]]'.
-
-     modified: CLI-maintained last-modified stamp; set at scaffold time,
-     refreshed by mutating CLI verbs and vault check fix; never hand-edit.
-
-     DO NOT add fields beyond those scaffolded; metadata lives
-     only in the frontmatter. -->
-
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the related: field above.
-     - NEVER use [[wiki-links]] or markdown [label](path) links in the document body.
-     - Cite external sources as bare URLs. Cite code, commits, packages, and
-       standards as inline backtick locators: `src/module.py:42`, commit
-       `abc1234`, `package@1.2.3`, RFC 9110. -->
-
-<!-- DOCUMENT BOUNDARY:
-     Research grounds; the ADR decides. Frame the option space with evidence
-     and trade-offs; at most name the option the evidence favors and what
-     the ADR must settle. Never record the decision here - a decision
-     outside the ADR forks and goes stale when the ADR chooses otherwise. -->
-
 # `mcp-search-scope` research: `reconciling the accepted surface boundary against the shipped tool set`
-
-<!-- Lead: the question, why it matters to `mcp-search-scope`, and what was
-     concluded - the evidence picture, not a decision. -->
 
 The live Model Context Protocol surface exposes twelve tools where
 `2026-06-30-mcp-search-scope-adr` permits five and says "Nothing else is an MCP
@@ -61,14 +32,6 @@ corpus has contained two incompatible answers to "should these surfaces mirror
 each other" for the whole period in which the newer tools were designed.
 
 ## Findings
-
-<!-- One ### subsection per line of inquiry. Claim first, evidence after.
-     Anchor every non-obvious claim to a re-fetchable locator (URL,
-     `file:line`, commit SHA, `package@version`, RFC number). Link, do not
-     copy. Pin versions, dates, numbers. State each fact once: link what a
-     related vault document already records; do not repeat what an earlier
-     section establishes. Name alternatives and why kept or rejected. State
-     what was not investigated. Cut anything that changes no decision. -->
 
 ### Every additional tool was authorised by an explicit Step, not accreted
 
@@ -289,6 +252,46 @@ parity mandate has any surviving consumer beyond the tools SB2 already removed.
 
 ## Sources
 
-<!-- Each locator cited above, once: `path:line` backtick locators for code,
-     bare URLs for external references. Flag unverified general-knowledge
-     claims. -->
+Decision records:
+
+- `2026-06-30-mcp-search-scope-adr` - SB1 through SB6, Consequences, and the
+  `mcp-is-search-not-admin` codification candidate
+- `2026-07-21-code-document-index-boundary-adr` - D6
+- `2026-06-01-service-observability-adr` - title and parity mandate
+- `2026-06-18-mcp-service-client-adr` - its `supersedes` list of five records
+- `2026-07-22-code-document-index-boundary-plan` - Steps `W05.P10.S73`, `S117`,
+  `S125`, `S126`
+- `2026-07-22-code-document-index-boundary-w05-public-surfaces-audit` - stated
+  scope covering the adapters
+- `2026-07-22-mcp-search-scope-surface-drift-audit` - the starting hypothesis
+  this document revises
+
+Code:
+
+- `src/vaultspec_rag/mcp/_tools.py` - twelve registered tools; `:68-82`
+  annotation constants including `_CLEAN`; `:467` the status tool delegating to
+  the service-state operation; `:509` and `:517` the clean tools
+- `src/vaultspec_rag/tests/test_mcp_conformance_surface.py` - expected, removed,
+  read-only, refresh, and clean tool sets, and the module docstring citing the
+  scope ADR
+- `src/vaultspec_rag/tests/test_cli_watcher.py:567` - the five-name parity
+  assertion, currently failing
+- `src/vaultspec_rag/server/_routes.py:267` - the search index-state attachment
+- `docs/mcp.md:69` - "exactly these five tools"
+
+Repository history:
+
+- commit `f5c04db8`, 2026-07-22, "feat(adapters): expose document and combined
+  domains" - introduces all seven tools and amends the conformance guard
+- commit `1c859dee`, 2026-06-30 - the narrowing that removed the status tool
+- commit `f025186c`, 2026-06-07 - the status tool's original introduction
+
+Provenance was established with `git log -S` over each tool definition in the
+tools module on 2026-07-22; the three commits above are the complete history of
+the status tool's introduction, removal, and reinstatement. Every claim rests on
+reading records, code, and history at the locators cited. Nothing here rests on
+running the surface: no Model Context Protocol client was connected, no tool was
+invoked, and the failing state of the parity assertion is reported from the
+harness operator's suite run rather than from a run of my own. The reading of D6
+as ambiguous between exhaustiveness and exposure is my interpretation of its
+text and is offered as the open question rather than as an established fact.

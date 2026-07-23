@@ -9,25 +9,6 @@ related:
   - "[[2026-07-22-code-document-index-boundary-plan]]"
 ---
 
-<!-- FRONTMATTER RULES:
-     tags: one directory tag (hardcoded #audit) and one feature tag.
-     Replace codebase-dedup-centralization with a kebab-case feature tag, e.g. #foo-bar.
-     Additional tags may be appended below the required pair.
-
-     Related: use wiki-links as '[[yyyy-mm-dd-foo-bar]]'.
-
-     modified: CLI-maintained last-modified stamp; set at scaffold time,
-     refreshed by mutating CLI verbs and vault check fix; never hand-edit.
-
-     DO NOT add fields beyond those scaffolded; metadata lives
-     only in the frontmatter. -->
-
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the related: field above.
-     - NEVER use [[wiki-links]] or markdown links in the document body.
-     - NEVER reference file paths in the body. If you must name a source file,
-       class, or function, use inline backtick code: `src/module.py`. -->
-
 # `codebase-dedup-centralization` audit: `duplication and centralization drift sweep`
 
 ## Scope
@@ -220,6 +201,32 @@ By contrast, `docs/search-and-index.md` documents all four values, all three ali
 
 `docs/cli.md`'s `server status` section documents exit codes `0` (running), `3` (stopped), and `4` (crashed/divergent) - no `5`. The real exit-code set has four values: `cli/_status_render.py`'s own module docstring states "3 stopped, 4 crashed/divergent, 5 warming" and its code returns `("warming", "warming (loading models, not yet serving)", 5)` from two call sites, with an explicit comment block (around line 902) spelling out "5 (warming: models loading, not yet serving)" as one of the state's defined outcomes. `docs/service-mode.md` (verified separately in this sweep) documents all four correctly: "Its exit codes are `0` running, `3` stopped, `4` crashed or divergent, and `5` warming." So `cli.md` - specifically its own per-command exit-code line, the thing a scripter reads to know every code they must handle - is the one place in the doc set missing this state. A script written against `cli.md`'s exit-code table alone would not recognize `5` as a defined outcome and could mishandle a warming service as an unexpected exit code. This is the fourth distinct gap found in `docs/cli.md` this sweep (after the missing MCP tool names and the missing document/combined source type across three commands), reinforcing that this specific reference page has had less maintenance attention than the guide pages that cover the same ground.
 
+### vault-identifiers-embedded-in-shipped-source | high | Two dozen source modules cite plan and decision records by identifier, inverting the one-way reference direction
+
+Found by the independent closing review of the indexing boundary work, which scanned for the boundary rather than assuming it held. Twenty-four references to plan stems, decision-record stems, and wave or phase identifiers appear in module docstrings across production code - the command-line core and package initialiser, the provisioning command, the indexer and search package initialisers, and several server modules including the lifecycle, lifespan, entry point, and models. Most cite a module-split decision record; one sits in a test module that this session's work edited on an unrelated line.
+
+The mandate is explicit and directional: development records cite code by locator, and code never cites the records. The corpus is removable scaffolding layered over the package, not part of it. The failure this produces is concrete rather than stylistic. A curator renames, supersedes, or reorganises a decision record - an ordinary and sanctioned operation - and the shipped wheel then contains modules whose docstrings cite a document that no longer exists. An end user installing the package receives dangling references to a private development corpus they will never possess, and cannot resolve them even in principle.
+
+The references are pre-existing and predate the work under review, which is why the review recorded them without failing that work. But the review was right to refuse to report the dimension clean: an invariant that nobody has ever scanned for is not the same as an invariant that holds. Remediation is mechanical - the constraint each docstring is gesturing at can be stated directly, since what matters to a reader of the code is the constraint itself and never the identifier of the document that decided it.
+
+### boundary-guard-branches-unpinned | medium | Two of the centralised guard's three observable behaviours have no test at all
+
+The admission guard consolidated during this session renders three distinct messages: a code rejection, a code-batch rejection, and a document rejection. Only the first is asserted anywhere. Nothing pins the document-side rejection, and nothing pins the batch branch.
+
+The failure scenario is specific. A developer refactoring the helper drops the batch parameter, which looks vestigial at one of its call sites, and the whole suite stays green. A user then configures a batch preprocessing rule targeting document content; the batch entry point accepts it, and groups of extracted document text are written into the code collection under code-chunk shape. The code and document split is then violated in persisted storage, and code-scoped searches begin returning document extractions.
+
+That is precisely the failure the centralisation exists to prevent, and two thirds of its observable surface is unpinned - the same shape as the missing-guard findings recorded elsewhere in this audit, arriving from a different direction.
+
+### worktree-cli-silently-resolves-to-a-released-build | high | The development venv has no console script for the package, so invoking the command tests a months-old released build instead of the working tree
+
+This worktree's virtual environment contains no console script for the project's own command. A bare invocation therefore resolves through the shell path to a globally installed release, several versions behind the working tree. Running it through the environment manager with synchronisation disabled does not help and is the more dangerous case: because synchronisation is what would regenerate the missing script, that invocation also falls through to the same global binary while appearing to be environment-scoped.
+
+The consequence is that anyone verifying this worktree's command-line behaviour by typing the obvious command is silently exercising a released build, against the current daemon. It produced a convincing false alarm during this session: a search invocation returned an unknown-source-type error and an alias was rejected with a validation message that exists nowhere in the current source, which read as either a live regression or a daemon running stale code. Both readings were wrong. The released client was rejecting the alias locally, before any request left the machine, and sending a stale value that the current server's strict parser correctly refused. Invoking the real entry point directly showed both the canonical value and the alias resolving correctly against the same running daemon.
+
+The severity is about what it costs to trust a test rather than about a defect in shipped code - there is no defect here. A verification that silently exercises the wrong binary is worse than no verification, because it produces confident evidence for a false conclusion, and the failure is invisible: the command exists, runs, and answers. Every command-line observation in a session like this one is suspect until the invocation path is established.
+
+Remediation is to regenerate the environment's console scripts. Recording it because the footgun is structural rather than incidental - the invocation that looks most careful, the environment-scoped one with synchronisation disabled, is exactly the one that fails silently.
+
 ## Recommendations
 
 Collapse the duplicated lifecycle outcome-envelope helpers onto the shared render module as one generalized success and failure pair, so the broker-facing outcome contract has a single implementation that cannot drift per verb. This is a refactor within a settled decision, not a new decision, and belongs to the service and CLI domain rather than to the indexing boundary work currently in flight.
@@ -249,3 +256,31 @@ One further signal raises this above ordinary repetition: in the jobs module the
 The shape of the fix is a domain-parametrized attempt runner spanning the job manager, the jobs module, and the job dispatcher, with the discovery step and domain preflight passed in rather than branched on. This is architecturally significant - it changes the ownership of the orchestration sequence across three modules - and warrants its own decision record and plan rather than being taken as opportunistic cleanup. It should not be started while the index and document boundary work is in flight, since both touch the same orchestration surface.
 
 The three remaining findings - the duplicated readiness probe, the duplicated backoff curve, and the second out-of-memory halving ladder - are genuinely unrelated to that cluster and to each other. They are individually small and should be taken opportunistically when their files are next modified, not batched into a campaign.
+
+## Ranked remediation order (dedup/invariant/doc-drift sweep entries)
+
+This orders the 29 entries filed by the duplication, invariant-coverage, and documentation sweeps against four questions: does it cause wrong behaviour today, does it mislead a user today, does it hide a future regression, or is it purely maintenance cost. It does not re-rank the transport/redirect/identity-gate cluster or the search-integration-test findings above, which already carry their own explicit sequencing in this section.
+
+Ahead of everything below: a live production defect not recorded in this audit - a failed incremental index generation stays resumable and poisons every subsequent watcher job, which has broken code indexing on the running service. It already has its own audit and Steps and is out of this sweep's scope; it is named here only so a reader ranking this page's items does not lose sight of the thing that currently outranks all of them.
+
+**Tier 1: blocked, do not touch.** `doc-drift-mcp-md-wrong-tool-count`, `doc-drift-nonexistent-mcp-tool-names`, and `doc-drift-glossary-nonexistent-mcp-http-transport` are entangled with the MCP surface governance research now under way. Editing any of the three to match current code would ratify a violation of an accepted decision before the reconciliation lands. Hold all three until that research resolves, then fix them together in one pass, since they are one drift with three symptoms.
+
+**Tier 2: in flight, no new work needed.** `doc-drift-cli-md-missing-document-type-across-three-commands` is already an open Step in the code-document-index-boundary plan. `doc-drift-glossary-missing-document-combined-vocabulary` is the same gap - the document and combined source-type vocabulary missing from a reference page - surfacing a fourth time, this time in the glossary rather than the CLI reference. Recommend folding it into the same in-flight Step's scope rather than opening separate tracked work, since the fix is mechanically the same (add the missing vocabulary) and the two pages should land together to avoid re-drifting relative to each other.
+
+**Tier 3: needs its own ADR, and must not start now.** The four job/index orchestration duplication findings - `job-manager-retry-duplicates-create-job-construction`, `jobs-start-reindex-vault-codebase-duplicate-orchestration`, `codebase-indexer-incremental-scoped-duplicate-orchestration`, `job-dispatch-code-document-attempt-duplicate-runner` - are one consolidation opportunity, already described above under Recommendations. They must wait behind the code-document-index-boundary work landing, since both touch the same orchestration surface and starting now would mean rebasing a cross-cutting refactor against a moving target. No action until that boundary work closes; then a dedicated ADR and plan, not four independent fixes.
+
+**Tier 4: independent, safe to run in parallel with everything above.** The seven missing-invariant-guard findings have remedy sketches already filed and touch no code the other tiers are contending over. Internal order, ranked by silent-regression risk times how directly the consequence lands on the product:
+
+1. `missing-guard-reranker-full-content-invariant` - write this one first if only one gets written. Three things separate it from the other six: the invariant has already regressed once in this exact codebase, which is the only reason the rule exists; the current tests do not merely fail to cover it, they actively execute the regressed code path (`rerank_text` always `None`, always falling through to `snippet`) and report green; and the failure mode has zero observable symptom - no crash, no error, no metric moves, search just gets quietly worse in a way nobody would think to attribute to this line. Every other guard in this list either self-diagnoses loudly on violation (spawn-method reversion crashes on first CUDA re-init), is a performance-only consequence discoverable by benchmarking (GPU lock scope, single consumer thread), or requires a rarer trigger condition to manifest at all (archive failure, a lock-ordering race). The reranker path runs on every search, on every project, with no gate between the regression and the user.
+2. `missing-guard-archive-before-delete-failure-branch` - second because the consequence if it silently regresses is irreversible data loss, which outranks everything else on this list except the reranker's near-certainty of eventually mattering. Rarer trigger (an actual archive failure) than the reranker, which is why it is not first.
+3. `missing-guard-storage-lock-ordering-invariant` - cheap to write (a source-scan AST check, no GPU, no fixture setup) and guards a deadlock, which is catastrophic but self-announcing (a hung process gets noticed fast). Good opportunistic pairing with item 2 since both touch `storage_ops.py`/`store.py`.
+4. `missing-guard-gpu-lock-scope-invariant` - a silent throughput regression under concurrent load, not a correctness bug; real but slower to notice than the above three.
+5. `missing-guard-index-workers-spawn-method-invariant` - self-diagnosing (a fork-mode violation crashes loudly the first time CUDA is touched in a worker), so the guard's value is catching it in CI before a user does, not preventing an otherwise-silent failure.
+6. `missing-guard-single-gpu-consumer-thread-invariant` - lowest priority of the GPU-scoped guards: performance-only consequence, and the sketch itself requires a production change (naming the consumer thread) that needs sign-off before the test can be written, so it should not block the other five.
+7. `missing-guard-document-reindex-completion-coverage` - cheapest to write (a direct copy of an existing passing test's shape) and lowest urgency, since the duplicated-but-tested sibling path means a bug here is only invisible if it is specific to the untested branch, not shared with the tested one.
+
+**Tier 5: cheap, independent, opportunistic - bundle into one small PR.** `doc-drift-cli-md-missing-server-status-warming-exit-code` (medium: a scripting user could mishandle an undocumented exit code) plus the three broken-anchor findings (`doc-drift-cli-md-stale-readme-anchor`, `doc-drift-getting-started-broken-requirements-anchor`, and the same anchor's other confirmed occurrences in `mcp.md`, `installation.md`, `automation.md`, and `glossary.md`) cost minutes each and have no dependency on anything above. Fix all of them together rather than opening five separate tickets.
+
+**Tier 6: pure maintenance cost, no urgency, no batching.** `cli-service-qdrant-second-readyz-probe`, `watcher-duplicate-exponential-backoff-formula`, and `embeddings-duplicate-oom-halving-ladder` are already covered by this section's existing guidance: take them opportunistically when their files are next touched for another reason, not as a dedicated campaign.
+
+**On which doc finding a real user hits soonest.** Ranked by wrongness alone, the glossary's nonexistent MCP HTTP transport is the worst - it asserts a capability that does not exist, not merely omits one. But wrongness and encounter rate are different axes, and the two are blocked together regardless. If asked which of the three MCP-blocked findings a user reaches first once the block lifts: `doc-drift-mcp-md-wrong-tool-count`, not the glossary entry. The mcp.md page's tool-count claim sits under a section literally titled to be read seconds after first connecting a client - "Confirm the assistant sees the tools" is the first verification step in the documented MCP setup flow, immediately after `Configure a stdio client`. The glossary is a reference a reader consults when confused about a term, which is a real but much lower-frequency event, and mostly reached only after something else already went wrong. Wrongness argues for the glossary entry mattering more once found; encounter-rate argues mcp.md is found first.
