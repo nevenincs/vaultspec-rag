@@ -2,9 +2,10 @@
 
 No mocks. The lock race is a REAL multi-process race - N separate processes
 (spawn) race to acquire the machine lock and exactly one must win. The
-attach/spawn cases drive the decision under injected adversarial holders (foreign port holder,
-dead-owner orphan, unhealthy/corrupt qdrant) and assert the policy never spawns
-a competitor and always names the cause. None of these need the GPU.
+attach/spawn cases drive the decision under injected adversarial holders
+(foreign port holder, dead-owner orphan, unhealthy/corrupt qdrant) and assert
+the policy never spawns a competitor and always names the cause. None of
+these need the GPU.
 """
 
 from __future__ import annotations
