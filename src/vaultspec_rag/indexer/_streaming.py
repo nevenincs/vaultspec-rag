@@ -305,6 +305,8 @@ def _encode_slice_vector_fields(
     sparse_enabled: bool,
     encode_batch_size: int | None,
     after_encode: Callable[[], None] | None = None,
+    after_forward: Callable[[str], None] | None = None,
+    on_cuda_oom: Callable[[BaseException], None] | None = None,
 ) -> None:
     """Populate one bounded slice, dropping all array/tensor owners on return."""
     dense_device: object | None = None
@@ -316,6 +318,8 @@ def _encode_slice_vector_fields(
                 slice_texts,
                 batch_size=encode_batch_size,
             )
+        if after_forward is not None:
+            after_forward("dense")
         dense_cpu = _transfer_to_cpu(dense_device)
         dense_device = None
         if sparse_enabled:
@@ -324,11 +328,19 @@ def _encode_slice_vector_fields(
                 batch_size=encode_batch_size,
                 gpu_lock=gpu_lock,
             )
+            if after_forward is not None:
+                after_forward("sparse")
         else:
             sparse = [None] * len(slice_texts)
         if after_encode is not None:
             after_encode()
         _populate_vector_fields(chunks, dense_cpu, sparse)
+    except Exception as exc:
+        from .._gpu import is_cuda_out_of_memory
+
+        if on_cuda_oom is not None and is_cuda_out_of_memory(exc):
+            on_cuda_oom(exc)
+        raise
     finally:
         # Chunk fields own the store-ready lists. Drop accelerator/CPU arrays
         # and the embedding-text copies before Qdrant builds point models.
@@ -494,6 +506,8 @@ def encode_and_upsert_document_slice(
     encode_batch_size: int | None = None,
     write_policy: StoreWritePolicy | None = None,
     on_storage_confirmed: Callable[[], None] | None = None,
+    after_forward: Callable[[str], None] | None = None,
+    on_cuda_oom: Callable[[BaseException], None] | None = None,
     run_control: RunControl = NO_RUN_CONTROL,
 ) -> None:
     """Encode and synchronously publish one bounded document-only slice."""
@@ -510,6 +524,8 @@ def encode_and_upsert_document_slice(
             gpu_lock=gpu_lock,
             sparse_enabled=bool(get_config().sparse_enabled),
             encode_batch_size=encode_batch_size,
+            after_forward=after_forward,
+            on_cuda_oom=on_cuda_oom,
         )
         run_control.checkpoint()
         store.upsert_document_content_chunks(
@@ -1001,6 +1017,8 @@ def encode_and_upsert_code_slice(
     encode_batch_size: int | None = None,
     write_policy: StoreWritePolicy | None = None,
     on_storage_confirmed: Callable[[], None] | None = None,
+    after_forward: Callable[[str], None] | None = None,
+    on_cuda_oom: Callable[[BaseException], None] | None = None,
     run_control: RunControl = NO_RUN_CONTROL,
 ) -> None:
     """Encode dense + sparse vectors for one slice of code chunks and upsert it.
@@ -1042,6 +1060,8 @@ def encode_and_upsert_code_slice(
             gpu_lock=gpu_lock,
             sparse_enabled=bool(cfg.sparse_enabled),
             encode_batch_size=encode_batch_size,
+            after_forward=after_forward,
+            on_cuda_oom=on_cuda_oom,
         )
         run_control.checkpoint()
         store.upsert_code_chunks(slice_chunks, write_policy=write_policy)
