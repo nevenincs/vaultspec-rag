@@ -19,6 +19,7 @@ related:
 - [x] `S06` - Remove development-record citations from the mcp package docstrings and comments, keeping any protocol-tool names that are runtime contract rather than record references; `src/vaultspec_rag/mcp`.
 - [x] `S07` - Sweep the citations skipped during the main pass because their files carried concurrent in-flight index and lifecycle work, once that work has settled; `src/vaultspec_rag/indexer/_codebase_indexer.py, src/vaultspec_rag/indexer/_streaming.py, src/vaultspec_rag/indexer/_document_indexer.py, src/vaultspec_rag/server/_lifespan.py`.
 - [x] `S05` - Guard the boundary with a check that fails when a tracked source file names a development record, so the invariant is enforced rather than asserted; `src/vaultspec_rag/tests/test_adr_regression.py`.
+
 ## Description
 
 ## Steps
