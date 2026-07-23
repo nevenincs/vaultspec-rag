@@ -21,6 +21,7 @@ from ..indexer._code_meta import (
 from ..indexer._content_policy import AdmissionDisposition, AdmissionReason, ContentKind
 from ..indexer._file_state import FileState, FileStateKind
 from ..indexer._run_ledger import (
+    _RESUMABLE_STATES,  # pyright: ignore[reportPrivateUsage]  # the bound under test
     INDEX_RUN_LEDGER_FILENAME,
     CommitUnit,
     CommitUnitKind,
@@ -796,3 +797,69 @@ def test_carried_forward_points_are_retained_by_the_inheriting_generation(
         "carried-forward points were not recognised as retained; an "
         "incremental run would delete the inherited index"
     )
+
+
+def test_a_repeatedly_failing_generation_retires_instead_of_resuming(
+    tmp_path: Path,
+) -> None:
+    """Resumption is bounded, so a deterministic fault cannot wedge forever.
+
+    A generation that keeps failing for a stable reason is inherited by every
+    later attempt, which fails the same way. Without a bound the only escape
+    is an unrelated signature change, so one transient cause can hold an
+    index down indefinitely.
+    """
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    signature = replace(_signature(tmp_path), operation=RunOperation.INCREMENTAL)
+    original = ledger.start_generation(signature).generation_id
+
+    # Below the bound the generation is still the right thing to resume.
+    for _attempt in range(2):
+        resumed = ledger.start_generation(signature)
+        assert resumed.generation_id == original
+        ledger.finish_generation(
+            resumed.generation_id,
+            RunTerminalState.FAILED,
+            detail="a stable fault",
+        )
+    still_resumable = ledger.start_generation(signature)
+    assert still_resumable.generation_id == original
+    ledger.finish_generation(
+        still_resumable.generation_id,
+        RunTerminalState.FAILED,
+        detail="a stable fault",
+    )
+
+    # At the bound it retires and the next attempt starts clean.
+    replacement = ledger.start_generation(signature)
+    assert replacement.generation_id != original
+
+    retired = ledger.generation(original)
+    # Invalidated rather than deleted: the evidence stays readable until a
+    # later success compacts it, and invalidated is not resumable.
+    assert retired.terminal_state is RunTerminalState.INVALIDATED
+    assert retired.terminal_detail is not None
+    assert "consecutive failed attempts" in retired.terminal_detail
+    assert RunTerminalState.INVALIDATED not in _RESUMABLE_STATES
+
+
+def test_a_succeeding_generation_never_accrues_resume_failures(
+    tmp_path: Path,
+) -> None:
+    """Only unsuccessful outcomes advance the bound."""
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    generation = ledger.start_generation(_signature(tmp_path))
+    for phase in (
+        FinalizationPhase.STALE_RECONCILED,
+        FinalizationPhase.METADATA_PUBLISHED,
+        FinalizationPhase.GENERATION_PUBLISHED,
+    ):
+        ledger.advance_finalization(generation.generation_id, phase)
+    ledger.finish_generation(generation.generation_id, RunTerminalState.SUCCEEDED)
+
+    with sqlite3.connect(tmp_path / "runs.sqlite3") as connection:
+        failures = connection.execute(
+            "SELECT consecutive_failures FROM generations WHERE generation_id = ?",
+            (generation.generation_id,),
+        ).fetchone()[0]
+    assert int(failures) == 0

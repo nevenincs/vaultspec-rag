@@ -62,6 +62,7 @@ _REQUIRED_SCHEMA: Final = {
             "updated_at",
             "terminal_detail",
             "parent_generation_id",
+            "consecutive_failures",
         }
     ),
     "commit_units": frozenset(
@@ -161,6 +162,15 @@ class RunTerminalState(StrEnum):
     INVALIDATED = "invalidated"
     REBUILD_INCOMPLETE = "rebuild_incomplete"
 
+
+# Consecutive failed attempts against one signature before a generation stops
+# being resumable. Three rides out the transient causes worth retrying - a
+# momentary allocator failure, a disk blip, a file caught mid-write - while
+# bounding a deterministic fault to minutes. Unbounded resumption is what
+# turned a single transient failure into a sustained outage: every later
+# attempt inherited the same poisoned state and failed identically, with
+# nothing in the system able to stop trying.
+_MAX_RESUME_FAILURES: Final = 3
 
 _RESUMABLE_STATES: Final = (
     RunTerminalState.RUNNING,
@@ -345,6 +355,34 @@ class RunLedger:
                     *(state.value for state in _RESUMABLE_STATES),
                 ),
             ).fetchone()
+            if (
+                active is not None
+                and active["signature_fingerprint"] == signature.fingerprint
+                and int(active["consecutive_failures"]) >= _MAX_RESUME_FAILURES
+            ):
+                # Retirement, not repair. A generation that has failed this
+                # many times in a row is failing for a reason resuming will
+                # not change, and every further attempt inherits its state and
+                # fails the same way. Invalidating rather than deleting keeps
+                # its evidence readable until the next success compacts it,
+                # and moves it out of the resumable set so the next attempt
+                # starts clean instead of inheriting the fault.
+                connection.execute(
+                    """
+                    UPDATE generations
+                    SET terminal_state = ?, terminal_detail = ?, updated_at = ?
+                    WHERE generation_id = ?
+                    """,
+                    (
+                        RunTerminalState.INVALIDATED.value,
+                        "generation retired after "
+                        f"{int(active['consecutive_failures'])} consecutive "
+                        "failed attempts",
+                        now,
+                        active["generation_id"],
+                    ),
+                )
+                active = None
             if (
                 active is not None
                 and active["signature_fingerprint"] == signature.fingerprint
@@ -1418,13 +1456,24 @@ class RunLedger:
                 raise RunLedgerStateError(
                     "a generation succeeds only after durable publication"
                 )
+            # Only an unsuccessful outcome advances the counter that bounds
+            # resumption. A success retires the generation anyway, so the
+            # count never needs clearing.
+            failure_increment = 0 if terminal_state is RunTerminalState.SUCCEEDED else 1
             connection.execute(
                 """
                 UPDATE generations
-                SET terminal_state = ?, terminal_detail = ?, updated_at = ?
+                SET terminal_state = ?, terminal_detail = ?, updated_at = ?,
+                    consecutive_failures = consecutive_failures + ?
                 WHERE generation_id = ?
                 """,
-                (terminal_state.value, detail, now, generation_id),
+                (
+                    terminal_state.value,
+                    detail,
+                    now,
+                    failure_increment,
+                    generation_id,
+                ),
             )
             updated = connection.execute(
                 "SELECT * FROM generations WHERE generation_id = ?",
@@ -1522,7 +1571,8 @@ class RunLedger:
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL,
                     terminal_detail TEXT,
-                    parent_generation_id TEXT
+                    parent_generation_id TEXT,
+                    consecutive_failures INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS generations_active
                     ON generations(source_type, terminal_state, created_at DESC);
@@ -1578,17 +1628,31 @@ class RunLedger:
             connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
             connection.commit()
             return
-        # Additive index for ledgers created before it existed. Without it the
-        # bounded retained-point lookup degrades to a full scan of every point
-        # in the ledger, so it must reach existing files too - and an index is
-        # a pure read-path addition, so it needs no schema-version bump and
-        # cannot invalidate a ledger that is otherwise current.
+        # Additive migrations for ledgers created before these existed. Both
+        # must reach existing files - including the ones these changes repair -
+        # and neither alters stored data or query results, so they need no
+        # schema-version bump. A bump would reach those ledgers only by
+        # rejecting them, since the compatibility check admits one exact
+        # version, forcing every current ledger to rebuild from zero.
+        #
+        # Without the index the bounded retained-point lookup degrades to a
+        # full scan of every point in the ledger.
         connection.execute(
             """
             CREATE INDEX IF NOT EXISTS commit_point_ids_point
                 ON commit_point_ids(point_id)
             """
         )
+        columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(generations)")
+        }
+        if "consecutive_failures" not in columns:
+            connection.execute(
+                """
+                ALTER TABLE generations
+                ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0
+                """
+            )
         connection.commit()
 
     def _verify_integrity(self, connection: sqlite3.Connection) -> None:
