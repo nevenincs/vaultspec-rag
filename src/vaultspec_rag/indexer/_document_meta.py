@@ -125,7 +125,9 @@ def document_metadata_path(root_dir: Path) -> Path:
 
 def _object_dict(value: object, message: str) -> dict[str, object]:
     """Narrow one decoded JSON object to string-keyed storage."""
-    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+    if not isinstance(value, dict) or not all(
+        isinstance(key, str) for key in cast("dict[object, object]", value)
+    ):
         raise DocumentMetadataError(message)
     return cast("dict[str, object]", value)
 
@@ -151,7 +153,7 @@ def _file_from_payload(value: object) -> DocumentFileMetadata:
     payload = _object_dict(value, "document metadata file entry is invalid")
     raw_ids = payload.get("point_ids")
     if not isinstance(raw_ids, list) or not all(
-        isinstance(point_id, str) for point_id in raw_ids
+        isinstance(point_id, str) for point_id in cast("list[object]", raw_ids)
     ):
         raise DocumentMetadataError("document metadata point IDs are invalid")
     return DocumentFileMetadata(
@@ -170,7 +172,9 @@ def _from_payload(value: object) -> DocumentIndexMetadata:
     if not isinstance(raw_files, list):
         raise DocumentMetadataError("document metadata files must be a list")
     try:
-        files = tuple(_file_from_payload(raw_file) for raw_file in raw_files)
+        files = tuple(
+            _file_from_payload(raw_file) for raw_file in cast("list[object]", raw_files)
+        )
         complete = payload.get("complete")
         if not isinstance(complete, bool):
             raise DocumentMetadataError("document metadata completeness is invalid")

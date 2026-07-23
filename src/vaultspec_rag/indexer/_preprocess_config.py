@@ -404,7 +404,9 @@ def _build_rule(
     if not isinstance(options_raw, dict):
         raise reject("'options' must be a table")
     try:
-        options_value = _normalize_json_option(options_raw)
+        options_value = _normalize_json_option(
+            cast("dict[object, object]", options_raw)
+        )
     except (TypeError, ValueError) as exc:
         raise reject(f"'options' must contain canonical JSON values: {exc}") from exc
     if not isinstance(options_value, dict):

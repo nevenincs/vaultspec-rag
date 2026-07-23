@@ -239,7 +239,11 @@ def load_manifest() -> dict[str, ManifestEntry]:
         backend = str(record.get("backend", ""))
         raw_collections = record.get("collections")
         collections = (
-            tuple(value for value in raw_collections if isinstance(value, str))
+            tuple(
+                value
+                for value in cast("list[object]", raw_collections)
+                if isinstance(value, str)
+            )
             if isinstance(raw_collections, list)
             else _legacy_collections(prefix, backend)
         )
