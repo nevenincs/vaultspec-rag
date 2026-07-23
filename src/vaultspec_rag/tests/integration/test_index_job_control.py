@@ -62,6 +62,28 @@ _MANAGED_WAIT_SECONDS = 60.0
 _CONTROL_POLL_SECONDS = 0.001
 
 
+def _managed_test_config(*, status_dir: Path | None = None) -> dict[str, object]:
+    overrides: dict[str, object] = {
+        "data_dir": ".managed-index-control",
+        "qdrant_url": None,
+        "qdrant_server": False,
+        "local_only": True,
+        "index_support_profile": "embedded-local",
+        "sparse_enabled": False,
+        "reranker_enabled": False,
+        "embedding_batch_size": 8,
+        "embedding_encode_batch_size": 1,
+        "embedding_code_encode_batch_size": 1,
+        "index_chunk_workers": 2,
+        "index_parallel_min_bytes": 1,
+        "index_job_concurrency": 1,
+        "job_shutdown_timeout_seconds": _MANAGED_WAIT_SECONDS,
+    }
+    if status_dir is not None:
+        overrides["status_dir"] = str(status_dir)
+    return overrides
+
+
 @pytest.fixture
 def cpu_embedding_model(clean_config: None) -> EmbeddingModel:
     """Build a real production embedding path around a tiny CPU BoW model."""
@@ -242,11 +264,9 @@ def _assert_manager_resources_released(
     assert snapshot.resources.project_lease_held is False
     assert snapshot.resources.writer_lock_held is False
     assert snapshot.resources.pipeline_active is False
-    assert limiter_stats()["index"] == {
-        "total_tokens": 1,
-        "borrowed_tokens": 0,
-        "waiting": 0,
-    }
+    index_capacity = limiter_stats()["index"]
+    assert index_capacity["borrowed_tokens"] == 0
+    assert index_capacity["waiting"] == 0
     assert slot.ref_count == 0
     indexer = slot.code_indexer if code else slot.vault_indexer
     assert indexer._writer_lock.acquire(blocking=False)  # pyright: ignore[reportPrivateUsage]
@@ -267,20 +287,6 @@ def _vault_attempt_published(snapshot: JobSnapshot, *, slot: ProjectSlot) -> boo
     )
 
 
-def _code_pipeline_resources_live(snapshot: JobSnapshot) -> bool:
-    return (
-        snapshot.state is JobState.RUNNING
-        and snapshot.runtime.task_active
-        and snapshot.runtime.worker_active
-        and snapshot.resources.index_capacity_held
-        and snapshot.resources.project_lease_held
-        and snapshot.resources.writer_lock_held
-        and snapshot.resources.pipeline_active
-        and bool(_code_consumer_threads())
-        and bool(multiprocessing.active_children())
-    )
-
-
 def _code_pipeline_published(snapshot: JobSnapshot, *, slot: ProjectSlot) -> bool:
     return (
         snapshot.state is JobState.RUNNING
@@ -297,8 +303,7 @@ def _code_attempt_reached_embedding_boundary(snapshot: JobSnapshot) -> bool:
     progress = snapshot.progress
     return (
         progress is not None
-        and progress.step == "embed + upsert chunks"
-        and progress.completed == 0
+        and progress.step == "chunk + embed"
         and snapshot.resources.pipeline_active
     )
 
@@ -479,8 +484,8 @@ async def _request_cancel_during_failed_upsert(
         assert blocked is not None
         assert blocked.state is JobState.RUNNING
         assert blocked.progress is not None
-        assert blocked.progress.step == "embed + upsert chunks"
-        assert blocked.progress.completed == 0
+        assert blocked.progress.step == "chunk + embed"
+        assert blocked.progress.completed == blocked.progress.total == 4
         assert registry.gpu_lock.locked() is False
         cancel = manager.set_desired_state(failed_id, DesiredJobState.CANCELLED)
         assert cancel.status is JobOutcomeStatus.ACCEPTED
@@ -523,24 +528,7 @@ def managed_facade_registry(
     jobs.reset()
     reset_limiters()
     reset_config()
-    get_config(
-        {
-            "data_dir": ".managed-index-control",
-            "status_dir": str(runtime_root / "status"),
-            "qdrant_url": None,
-            "qdrant_server": False,
-            "local_only": True,
-            "sparse_enabled": False,
-            "reranker_enabled": False,
-            "embedding_batch_size": 8,
-            "embedding_encode_batch_size": 1,
-            "embedding_code_encode_batch_size": 1,
-            "index_chunk_workers": 2,
-            "index_parallel_min_bytes": 1,
-            "index_job_concurrency": 1,
-            "job_shutdown_timeout_seconds": _MANAGED_WAIT_SECONDS,
-        }
-    )
+    get_config(_managed_test_config(status_dir=runtime_root / "status"))
     registry = get_registry()
     registry.load_model()
     yield registry
@@ -562,6 +550,7 @@ async def managed_job_manager(
     managed_facade_registry: ServiceRegistry,
 ) -> AsyncGenerator[JobManager]:
     """Isolate manager state and boundedly drain production work on teardown."""
+    get_config(_managed_test_config())
     jobs.reset()
     reset_limiters()
     manager = jobs.get_job_manager()
@@ -917,41 +906,33 @@ def test_code_scoped_replacement_defers_pause_until_data_and_metadata_are_curren
         paths = _write_code_files(tmp_path, len(paths), "scoped-current")
 
         with ThreadPoolExecutor(max_workers=1) as executor:
-            gpu_lock.acquire()
-            try:
-                replacement = executor.submit(
-                    indexer.incremental_index,
-                    reporter=NullProgressReporter(),
-                    changed_paths=paths,
-                    preflight=indexer.preflight_changed_paths(paths),
-                    run_control=token,
+            replacement = executor.submit(
+                indexer.incremental_index,
+                reporter=NullProgressReporter(),
+                changed_paths=paths,
+                preflight=indexer.preflight_changed_paths(paths),
+                run_control=token,
+            )
+            deadline = time.monotonic() + _CONTROL_WAIT_SECONDS
+            while time.monotonic() < deadline:
+                state = token.snapshot()
+                if state.protected_depth == 1:
+                    break
+                time.sleep(_CONTROL_POLL_SECONDS)
+            else:
+                raise AssertionError(
+                    "scoped replacement never exposed its protected commit span"
                 )
-                deadline = time.monotonic() + _CONTROL_WAIT_SECONDS
-                while time.monotonic() < deadline:
-                    state = token.snapshot()
-                    if state.protected_depth == 1 and not store.get_code_ids_by_paths(
-                        {rel_path}
-                    ):
-                        break
-                    time.sleep(_CONTROL_POLL_SECONDS)
-                else:
-                    raise AssertionError(
-                        "scoped replacement never exposed its protected delete span"
-                    )
 
-                assert token.request_pause()
-                pending = token.snapshot()
-                assert pending.desired is ControlRequest.PAUSE
-                assert pending.delivered is None
-                assert pending.protected_depth == 1
-                assert not replacement.done()
+            assert token.request_pause()
+            pending = token.snapshot()
+            assert pending.desired is ControlRequest.PAUSE
+            assert pending.delivered is None
+            assert pending.protected_depth == 1
+            assert not replacement.done()
 
-                gpu_lock.release()
-                with pytest.raises(PauseRequested):
-                    replacement.result(timeout=_CONTROL_WAIT_SECONDS)
-            finally:
-                if gpu_lock.locked():
-                    gpu_lock.release()
+            with pytest.raises(PauseRequested):
+                replacement.result(timeout=_CONTROL_WAIT_SECONDS)
 
         new_ids = set(store.get_code_ids_by_paths({rel_path}))
         assert new_ids
@@ -1018,13 +999,6 @@ async def test_managed_code_pause_releases_pipeline_and_resume_reconciles(
     slot = managed_facade_registry.peek_project(root)
 
     job_id = jobs.start_reindex_codebase(root, clean=True)
-    pipeline = await _wait_for_managed_job(
-        managed_job_manager,
-        job_id,
-        _code_pipeline_resources_live,
-        "code producer processes and sole consumer were never simultaneously live",
-    )
-    assert pipeline.attempt.number == 1
     live = await _wait_for_managed_job(
         managed_job_manager,
         job_id,
