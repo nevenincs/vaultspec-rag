@@ -166,8 +166,22 @@ jobs:
         with:
           enable-cache: true
 
+      # Install `just` without the bash-based marketplace action: this runner's
+      # service account has no `bash` on PATH, so a pinned, SHA256-verified
+      # download driven by PowerShell is the portable path.
       - name: Install just
-        uses: taiki-e/install-action@just
+        shell: pwsh
+        run: |
+          $ver = "1.57.0"
+          $sha = "4c7391d17cb1d17b758b52004ee6411372b8a13ff37c3c9b9031625cb6026e09"
+          $zip = "$env:RUNNER_TEMP\just-$ver.zip"
+          $dest = "$env:RUNNER_TEMP\just-$ver"
+          $url = "https://github.com/casey/just/releases/download/$ver/just-$ver-x86_64-pc-windows-msvc.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $sha) { throw "just checksum mismatch: got $actual" }
+          Expand-Archive -Path $zip -DestinationPath $dest -Force
+          Add-Content -Path $env:GITHUB_PATH -Value $dest
 
       - name: Install dependencies
         run: just dev deps sync
