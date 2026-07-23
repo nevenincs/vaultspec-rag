@@ -120,8 +120,8 @@ counts and does not close the race between retrieval and response emission.
 
 The service classifies each copied canonical snapshot with this predicate:
 
-| Required identity                                                                                                                               | Convergence predicate                                                | Mode evidence                            |
-| ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ---------------------------------------- |
+| Required identity                                                                                                                               | Convergence predicate                                                | Mode evidence                             |
+| ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------- |
 | Nonempty `id`; `spec.operation` is `index`; `spec.source` equals the normalized source; normalized `spec.project_root` equals the resolved root | `state` is `queued`, `running`, `pausing`, `paused`, or `cancelling` | `spec.mode` is `incremental` or `rebuild` |
 
 Records with a missing, non-mapping, or malformed `spec` are ignored. Terminal states,
@@ -207,8 +207,7 @@ body with `ok: false` raises an actionable `RuntimeError` containing the daemon 
 message, and remediation. FastMCP maps that recoverable exception to `isError: true`. A valid
 success is a nonempty dictionary envelope containing a `results` list. A bare list, empty
 dictionary, or malformed success raises `invalid_service_response`. The regression invokes
-the real MCP stdio shim through the official client and asserts `CallToolResult.isError is
-True`. Its text contains `index_unavailable` and the jobs command, and its structured content
+the real MCP stdio shim through the official client and asserts `CallToolResult.isError is True`. Its text contains `index_unavailable` and the jobs command, and its structured content
 is absent or has no `results` member.
 
 ### Deterministic regression handshake

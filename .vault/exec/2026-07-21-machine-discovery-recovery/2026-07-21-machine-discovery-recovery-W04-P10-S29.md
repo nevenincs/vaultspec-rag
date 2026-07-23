@@ -9,7 +9,7 @@ related:
   - "[[2026-07-21-machine-discovery-recovery-plan]]"
 ---
 
-# Backstop the daemon shutdown with a gated os._exit so a wedged periodic to_thread worker cannot hang the interpreter-exit executor join
+# Backstop the daemon shutdown with a gated os.\_exit so a wedged periodic to_thread worker cannot hang the interpreter-exit executor join
 
 ## Scope
 

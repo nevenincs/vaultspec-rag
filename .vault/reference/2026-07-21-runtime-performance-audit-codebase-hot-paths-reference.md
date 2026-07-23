@@ -169,11 +169,11 @@ circuits, and real-Qdrant/CUDA failure verification. Code incrementals also
 delete old modified-file chunks before replacement embedding and upsert, leaving
 an avoidable search gap on failure.
 
-The current production path never calls the newer ``JobManager``. Watcher,
-routes, restoration, and ``/jobs`` all use the legacy deque, whose direct test
+The current production path never calls the newer `JobManager`. Watcher,
+routes, restoration, and `/jobs` all use the legacy deque, whose direct test
 explicitly proves that running records are evicted after 256 later starts and
 whose finish operation silently ignores an evicted ID. Every legacy start,
-step transition, and finish also serializes, flushes, ``fsync``s, and replaces
+step transition, and finish also serializes, flushes, `fsync`s, and replaces
 the complete shared persistence envelope while holding the operator lock. A
 real CPU exercise measured roughly 2.25 seconds for 306 starts and 7.2 seconds
 for 800 concurrent start/finish pairs, with about 1,969 log lines. Combined with
@@ -211,7 +211,7 @@ focused search/render/deadline tests, 24 CPU-only preprocess/batch tests, and 22
 search-noise/candidate/phase-accounting tests, plus 24 managed-log tests and
 seven legacy jobs-registry tests. A broad non-GPU unit run passed 1,604 tests
 and exposed one stale sparse OOM model double: the real installed SparseEncoder
-accepts the production arguments, but the double accepts only ``batch_size``.
+accepts the production arguments, but the double accepts only `batch_size`.
 Project rules prohibit extending that fake as a compatibility shortcut; real
 allocator-pressure recovery remains part of isolated GPU acceptance.
 Current-worktree service measurements remain blocked by the incompatible

@@ -22,7 +22,7 @@ related:
 - Add a deadline-bounded collection-lock acquisition that acquires in the same
   fixed name order but abandons a lock it cannot take in time
   (`src/vaultspec_rag/_store_locks.py:31`).
-- Give the store's ``close`` an opt-in shutdown force mode that bounds the
+- Give the store's `close` an opt-in shutdown force mode that bounds the
   collection-lock wait and closes the client anyway past a still-held lock,
   leaving normal close unbounded (`src/vaultspec_rag/store.py:349`).
 - Have only the registry shutdown's force-close path pass the bound

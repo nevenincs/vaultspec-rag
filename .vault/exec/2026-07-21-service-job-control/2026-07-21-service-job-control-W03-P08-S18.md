@@ -8,6 +8,7 @@ step_id: 'S18'
 related:
   - "[[2026-07-21-service-job-control-plan]]"
 ---
+
 # Submit watcher indexing through JobManager, retain paused convergence slots, coalesce later dirtiness, and schedule cancelled replacements with bounded backoff using vaultspec-high-executor
 
 ## Scope

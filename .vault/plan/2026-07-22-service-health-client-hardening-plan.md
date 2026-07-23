@@ -10,16 +10,6 @@ related:
   - '[[2026-07-22-service-health-client-hardening-research]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 # `service-health-client-hardening` plan
 
 ### Phase `P01` - correct the redirect defect on the shared transport
@@ -64,7 +54,7 @@ Give the health call one owner that keeps the probe's non-raising contract, repo
 
 Judge the whole plan against the authorizing decision, by a reviewer with no authorship in it, and record the verdict as an audit document.
 
-- [x] `P04.S22` - Review the delivered plan against its authorizing decision and record the verdict, confirming that redirect refusal is transport-wide rather than health-only, that the credential-bearing request path is asserted and not only the health path, that every repointed call site preserves its sentinel semantics with no exception escaping the two envelope-bound verbs, that the caller enumeration behind the bounded default was performed rather than assumed, and that no delivered code, test, record, or commit message describes the deferred stop-path identity check as fixed; `the reviewer must have no authorship in this plan, and the author of all twenty-one preceding Steps is ineligible; `.vault/audit/2026-07-22-service-health-client-hardening-audit.md`.
+- [x] `P04.S22` - Review the delivered plan against its authorizing decision and record the verdict, confirming that redirect refusal is transport-wide rather than health-only, that the credential-bearing request path is asserted and not only the health path, that every repointed call site preserves its sentinel semantics with no exception escaping the two envelope-bound verbs, that the caller enumeration behind the bounded default was performed rather than assumed, and that no delivered code, test, record, or commit message describes the deferred stop-path identity check as fixed; `the reviewer must have no authorship in this plan, and the author of all twenty-one preceding Steps is ineligible; `.vault/audit/2026-07-22-service-health-client-hardening-audit.md\`.
 
 ## Description
 
