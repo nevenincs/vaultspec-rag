@@ -810,7 +810,7 @@ def _await_service_ready(
                 if health is not None and health.get("status") == "ready":
                     # Persist the token from /health into service.json so
                     # auto-delegation auth works before the first heartbeat
-                    # tick overwrites the file (S10 / #181 A5).
+                    # tick overwrites the file.
                     token_from_health = health.get("service_token")
                     if isinstance(token_from_health, str) and token_from_health:
                         _update_service_token(token_from_health)

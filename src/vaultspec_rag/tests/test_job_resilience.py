@@ -180,7 +180,7 @@ def test_resilience_rejects_invalid_operability_values() -> None:
 def test_route_shaping_bounds_rounds_and_derives_remediation() -> None:
     """The REST job response shapes resilience explicitly, not by pass-through.
 
-    S33: the broker-facing job collection and detail responses must not leak
+    The broker-facing job collection and detail responses must not leak
     the raw snapshot. The shaper names each field (so a field added to the
     snapshot later cannot leak without a deliberate change), rounds the
     megabyte and second measures to operator precision, and derives a

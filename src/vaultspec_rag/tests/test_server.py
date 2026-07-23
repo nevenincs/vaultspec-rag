@@ -1206,7 +1206,7 @@ class TestDaemonLifecycleHelpers:
 
 
 class TestProjectRootRequiredError:
-    """S07: ProjectRootRequiredError raised by _default_root in HTTP mode.
+    """ProjectRootRequiredError raised by _default_root in HTTP mode.
 
     These tests verify the exception type contract without exercising
     the full route stack (no GPU/Qdrant required).  Route-level 400
@@ -1259,7 +1259,7 @@ class TestProjectRootRequiredError:
 
 
 class TestRouteMissingProjectRoot:
-    """S07: Routes return HTTP 400 (not 500) when project_root is absent in HTTP mode.
+    """Routes return HTTP 400 (not 500) when project_root is absent in HTTP mode.
 
     The Starlette TestClient drives the route handlers synchronously.
     Module state (``_http_mode`` and ``_SERVICE_TOKEN``) is set for the
@@ -1459,7 +1459,7 @@ class TestRouteMissingProjectRoot:
 
 
 class TestReindexPreprocessPreflight:
-    """S13: POST /reindex reports whether a root's preprocess hooks will run.
+    """POST /reindex reports whether a root's preprocess hooks will run.
 
     The route returns ``queued`` before the background job runs, so a
     non-interactive client cannot otherwise tell whether the root's

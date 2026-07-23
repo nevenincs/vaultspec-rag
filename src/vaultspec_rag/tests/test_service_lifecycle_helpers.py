@@ -43,7 +43,7 @@ def isolated_status_dir(tmp_path: Path) -> Iterator[Path]:
 
 
 # ---------------------------------------------------------------------------
-# S10: _update_service_token — atomic token persistence into service.json
+# _update_service_token — atomic token persistence into service.json
 # ---------------------------------------------------------------------------
 
 

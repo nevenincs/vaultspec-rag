@@ -15,8 +15,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # NO_COLOR alone disables colour. A non-empty FORCE_COLOR (even "0") forces
+  # the terminal ON under the force-color spec Rich implements, making
+  # console.clear() emit escape codes into the piped CI log; without it
+  # is_terminal falls through to isatty()->False as intended.
   NO_COLOR: "1"
-  FORCE_COLOR: "0"
 
 jobs:
   workflow-lint:
@@ -81,6 +84,13 @@ jobs:
 
       - name: Docs version guard
         run: just dev lint docs-version
+
+      # Gating: fails CI if tracked source cites a development record (plan/Step
+      # coordinate, dated vault stem) in a comment or docstring, or hardcodes a
+      # workstation-identity path (worktree root, user home). Generic absolute
+      # paths are reported as smells but do not fail.
+      - name: Citations
+        run: just dev lint citations
 
       # Baseline-calibrated gate: thresholds sit at today's worst offender
       # (cognitive<=20, xenon absolute/modules<=C, average<=A) so this stays

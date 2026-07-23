@@ -65,16 +65,10 @@ ALLOWLIST: frozenset[tuple[str, int]] = frozenset(
 #: citations it still holds so the deferral is visible, never silent. When the
 #: follow-up sweep cleans a file, DELETE its entry here - an emptied deferral
 #: that lingers is a hole the gate can no longer see through.
-DEFERRED_PENDING_FOLLOWUP: frozenset[str] = frozenset(
-    {
-        # in-flight index work - carries preprocess D-tokens
-        "src/vaultspec_rag/indexer/_codebase_indexer.py",
-        # dormant-effort tree - module-split stem + machine-singleton token
-        "src/vaultspec_rag/server/_lifespan.py",
-        # dormant-effort tree - plan coordinate in the module docstring
-        "src/vaultspec_rag/tests/integration/test_service_jobs.py",
-    }
-)
+# The scrub cleared every previously-deferred file, so the follow-up set is
+# empty: every tracked file now gates on citations with no exceptions. A new
+# entry here would re-open a tolerated hole, so it stays empty.
+DEFERRED_PENDING_FOLLOWUP: frozenset[str] = frozenset()
 
 _VAULT_TYPES = "adr|plan|audit|research|reference|exec"
 
@@ -110,7 +104,46 @@ PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(r":doc:`[^`]*\.vault/"),
     ),
     ("codification-candidate", re.compile(r"codification candidate")),
+    # Bare plan coordinates the dotted ``plan-container-id`` pattern misses: a
+    # lone ``P03``/``S07``/``W04`` in a comment (e.g. ``# ... (#155 P03)`` or
+    # ``S10: token persistence``) is a plan reference, not domain vocabulary -
+    # the product has no bare ``P``/``S``/``W`` + two-digit concept. Two digits
+    # keeps it off single-digit noise (a ``P0`` priority, an ``S3`` bucket).
+    ("bare-plan-coordinate", re.compile(r"\b[PSW]\d{2}\b")),
+    # Numbered wave/phase references in prose. ``wave N`` and ``phase N`` name a
+    # plan container (service phases are named - warming/running - never
+    # numbered, so ``phase 2`` is a plan Phase). ``step N`` is included; an
+    # instructional "step 2" in prose is the one tuning point, allowlisted if it
+    # is genuinely an ordinal rather than a plan Step.
+    ("numbered-plan-container", re.compile(r"\b(?:[Ww]ave|[Pp]hase)\s+\d+\b")),
 )
+
+#: Workstation / absolute-path leaks. Unlike a citation, a machine path leaks in
+#: a string VALUE just as much as in a comment, so these are matched on the
+#: unescaped string value and on comments - NOT restricted to prose. Matching
+#: the value is also what kills the ``"errors:\n"`` -> ``s:\n`` false positive a
+#: raw-text drive-letter scan drowns in: the value is a newline, not a path.
+# HARD path leaks - identity-revealing, they FAIL the gate. A user home names
+# the developer; the worktree-root marker is this exact checkout's path.
+PATH_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("worktree-root", re.compile(r"vaultspec-rag-worktrees")),
+    ("user-home-path", re.compile(r"[\\/](?:Users|home)[\\/][A-Za-z0-9_.-]+")),
+)
+
+# SOFT path smells - a hardcoded absolute drive path that reveals no identity
+# (a generic ``C:\projects\proj-a`` synthetic value). Reported, not failed:
+# like the synthetic fixture filenames the Code Stands Alone rule permits, a
+# generic synthetic path is test data, not a machine leak. Surfaced so a
+# tmp_path conversion can be scoped, without blocking on non-leaking values.
+# The two-char tail rejects a lone regex escape (``r"x:\n"`` -> ``:\n``).
+PATH_SMELL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("absolute-drive-path", re.compile(r"\b[A-Za-z]:[\\/][A-Za-z0-9_]{2,}")),
+)
+
+#: Confirmed-legitimate absolute paths kept by exact (file, line, text) anchor,
+#: so a genuine need (a documented example, a platform-specific system path) is
+#: allowed without widening the pattern. Empty until a real case is confirmed.
+PATH_ALLOWLIST: frozenset[tuple[str, int, str]] = frozenset()
 
 
 class Finding(tuple[str, int, str, str]):
@@ -159,29 +192,106 @@ def scan_file(path: Path) -> list[Finding]:
     return findings
 
 
+def _iter_values_and_comments(path: Path) -> list[tuple[int, str]]:
+    """Return (line, text) for every string-literal VALUE and comment in *path*.
+
+    A workstation path is illegitimate whether it sits in a comment or a data
+    value, so - unlike the prose-only citation scan - this inspects string
+    values too. The value is the DECODED string (``"a:\\n"`` yields ``a:`` then
+    a newline), which is what distinguishes a real ``Y:\\code`` path from a
+    ``word:\\n`` escape sequence a raw-text scan cannot tell apart.
+    """
+    source = path.read_text(encoding="utf-8")
+    out: list[tuple[int, str]] = []
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            lines = node.value.splitlines() or [node.value]
+            for offset, text in enumerate(lines):
+                out.append((node.lineno + offset, text))
+    for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+        if tok.type == tokenize.COMMENT:
+            out.append((tok.start[0], tok.string))
+    return out
+
+
+def _match_patterns(
+    items: list[tuple[int, str]],
+    rel: str,
+    patterns: tuple[tuple[str, re.Pattern[str]], ...],
+) -> list[Finding]:
+    findings: list[Finding] = []
+    for line, text in items:
+        for slug, pattern in patterns:
+            match = pattern.search(text)
+            if match and (rel, line, match.group(0)) not in PATH_ALLOWLIST:
+                findings.append(Finding((rel, line, slug, match.group(0))))
+    return findings
+
+
+def scan_file_paths(path: Path) -> tuple[list[Finding], list[Finding]]:
+    """Return (hard identity leaks, soft absolute-path smells) for a Python file."""
+    rel = path.relative_to(REPO_ROOT).as_posix()
+    items = _iter_values_and_comments(path)
+    return _match_patterns(items, rel, PATH_PATTERNS), _match_patterns(
+        items, rel, PATH_SMELL_PATTERNS
+    )
+
+
+def scan_text_paths(path: Path) -> tuple[list[Finding], list[Finding]]:
+    """Return (hard leaks, soft smells) for a non-Python tracked file (TOML)."""
+    rel = path.relative_to(REPO_ROOT).as_posix()
+    items = list(enumerate(path.read_text(encoding="utf-8").splitlines(), start=1))
+    return _match_patterns(items, rel, PATH_PATTERNS), _match_patterns(
+        items, rel, PATH_SMELL_PATTERNS
+    )
+
+
 def _is_excluded(path: Path) -> bool:
     rel = path.relative_to(PACKAGE_DIR).as_posix()
     return any(rel.startswith(f"{d}/") for d in EXCLUDED_DIRS)
 
 
-def collect_findings(root: Path) -> tuple[list[Finding], list[Finding]]:
-    """Return (active, deferred) findings.
+def collect_findings(
+    root: Path,
+) -> tuple[list[Finding], list[Finding], list[Finding], list[Finding]]:
+    """Return (active citations, deferred citations, path leaks, path smells).
 
-    Active findings fail the gate; deferred ones belong to files awaiting the
-    follow-up sweep and are reported but do not fail, so the gate is green on
-    the cleaned corpus while still surfacing the outstanding work.
+    Active citations and hard path leaks (identity-revealing) FAIL the gate.
+    Deferred citations and soft path smells (generic absolute paths) are
+    reported but do not fail - the smell surfaces a tmp_path-conversion backlog
+    without blocking on non-leaking synthetic values.
     """
     active: list[Finding] = []
     deferred: list[Finding] = []
+    leaks: list[Finding] = []
+    smells: list[Finding] = []
     for path in sorted(root.rglob("*.py")):
         if "__pycache__" in path.parts or _is_excluded(path):
             continue
         rel = path.relative_to(REPO_ROOT).as_posix()
         target = deferred if rel in DEFERRED_PENDING_FOLLOWUP else active
         target.extend(scan_file(path))
-    active.sort(key=lambda f: (f[0], f[1]))
-    deferred.sort(key=lambda f: (f[0], f[1]))
-    return active, deferred
+        f_leaks, f_smells = scan_file_paths(path)
+        leaks.extend(f_leaks)
+        smells.extend(f_smells)
+    # Also scan the build/tooling surface and config for path leaks. This gate's
+    # own file is skipped - it defines the patterns as literals and in docstrings.
+    for extra in sorted((REPO_ROOT / "tools").rglob("*.py")):
+        if "__pycache__" in extra.parts or extra.resolve() == Path(__file__).resolve():
+            continue
+        e_leaks, e_smells = scan_file_paths(extra)
+        leaks.extend(e_leaks)
+        smells.extend(e_smells)
+    for cfg in ("pyproject.toml",):
+        cfg_path = REPO_ROOT / cfg
+        if cfg_path.is_file():
+            c_leaks, c_smells = scan_text_paths(cfg_path)
+            leaks.extend(c_leaks)
+            smells.extend(c_smells)
+    for bucket in (active, deferred, leaks, smells):
+        bucket.sort(key=lambda f: (f[0], f[1]))
+    return active, deferred, leaks, smells
 
 
 def main() -> int:
@@ -193,9 +303,12 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    active, deferred = collect_findings(PACKAGE_DIR)
+    active, deferred, leaks, smells = collect_findings(PACKAGE_DIR)
     mode = "REPORT-ONLY" if args.report_only else "GATE"
-    print(f"[citation-gate] {mode} - scanning docstrings and comments")
+    print(
+        f"[citation-gate] {mode} - scanning docstrings, comments, "
+        "string values (paths), and config"
+    )
 
     if deferred:
         print(
@@ -205,21 +318,38 @@ def main() -> int:
         for rel, line, slug, text in deferred:
             print(f"  (deferred) {rel}:{line}: {slug}: {text}")
 
-    if not active:
-        print("[citation-gate] clean - no active development-record citations")
-        return 0
+    if smells:
+        print(
+            f"[citation-gate] {len(smells)} generic absolute-path smell(s) "
+            "(not failing; tmp_path-conversion backlog):"
+        )
+        for rel, line, slug, text in smells:
+            print(f"  (smell) {rel}:{line}: {slug}: {text}")
 
-    for rel, line, slug, text in active:
-        print(f"  {rel}:{line}: {slug}: {text}")
-    print(f"[citation-gate] {len(active)} active citation(s) found")
+    if leaks:
+        print(f"[citation-gate] {len(leaks)} workstation-identity path leak(s):")
+        for rel, line, slug, text in leaks:
+            print(f"  {rel}:{line}: {slug}: {text}")
+
+    if active:
+        print(f"[citation-gate] {len(active)} active development-record citation(s):")
+        for rel, line, slug, text in active:
+            print(f"  {rel}:{line}: {slug}: {text}")
+
+    if not active and not leaks:
+        print(
+            "[citation-gate] clean - no active development-record citations "
+            "or workstation-identity path leaks"
+        )
+        return 0
 
     if args.report_only:
         print("[citation-gate] report-only mode never fails")
         return 0
     print(
-        "[citation-gate] FAIL - code cites a development record. State the "
-        "constraint directly and remove the citation; see the Code Stands "
-        "Alone rule."
+        "[citation-gate] FAIL - state the constraint directly and remove the "
+        "citation; remove the workstation-identity path (worktree root or user "
+        "home). See the Code Stands Alone rule."
     )
     return 1
 

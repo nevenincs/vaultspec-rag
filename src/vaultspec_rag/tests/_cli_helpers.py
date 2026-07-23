@@ -317,7 +317,7 @@ def _status_contract_jobs_payload(
         running_job["initiator"] = {
             "command": "reindex_codebase",
             "project_root": (
-                r"C:\projects\vaultspec-rag-worktrees"
+                r"C:\projects\code-worktrees"
                 r"\feature-server-supervision"
             ),
         }
