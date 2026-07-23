@@ -697,15 +697,7 @@ def test_low_configured_memory_budget_accepts_exact_limit_and_latches_rss() -> N
         reset_config()
 
 
-@pytest.mark.parametrize(
-    ("allocated_mb", "reserved_mb", "measure"),
-    [(3.1, 0.0, "CUDA allocated"), (0.0, 3.1, "CUDA reserved")],
-)
-def test_low_configured_cuda_budget_returns_typed_failure(
-    allocated_mb: float,
-    reserved_mb: float,
-    measure: str,
-) -> None:
+def test_low_configured_cuda_budget_returns_typed_failure() -> None:
     saved = _clear_resilience_env()
     os.environ[EnvVar.INDEX_CUDA_CEILING_MB.value] = "3"
     try:
@@ -715,11 +707,49 @@ def test_low_configured_cuda_budget_returns_typed_failure(
             budget.observe(
                 label="cuda-failure",
                 rss_mb=0.0,
-                cuda_allocated_mb=allocated_mb,
-                cuda_reserved_mb=reserved_mb,
+                cuda_allocated_mb=3.1,
+                cuda_reserved_mb=0.0,
             )
         assert failure.value.error_kind is JobErrorKind.CUDA_MEMORY_CEILING
-        assert measure in failure.value.detail
+        # The detail must name the allocated high-water measure: the ceiling
+        # enforces demand, and this match catches a reintroduced reserved
+        # comparison relabelling the failure.
+        assert "CUDA allocated" in failure.value.detail
+    finally:
+        _restore_resilience_env(saved)
+        reset_config()
+
+
+def test_cuda_reserved_above_ceiling_is_diagnostic_not_enforced() -> None:
+    """Reserved (allocator retention) above the ceiling must be admitted.
+
+    Reserved ratchets with process retention history; only the allocated
+    high-water (demand) may fail a job. This test guards the demotion: it
+    fails if a reserved-vs-ceiling comparison is reintroduced into
+    ``MemoryBudget`` enforcement.
+    """
+    saved = _clear_resilience_env()
+    os.environ[EnvVar.INDEX_CUDA_CEILING_MB.value] = "3"
+    try:
+        reset_config()
+        budget = MemoryBudget(cuda_ceiling_mb=get_config().index_cuda_ceiling_mb)
+        snapshot = budget.observe(
+            label="reserved-retention-only",
+            rss_mb=0.0,
+            cuda_allocated_mb=1.0,
+            cuda_reserved_mb=11.0,
+        )
+        assert snapshot.peak_cuda_reserved_mb == 11.0
+        assert snapshot.cuda_ceiling_mb == 3.0
+        # Reserved stays reported on the snapshot for operators; it just no
+        # longer decides outcome.
+        later = budget.observe(
+            label="still-admitted",
+            rss_mb=0.0,
+            cuda_allocated_mb=1.5,
+            cuda_reserved_mb=12.0,
+        )
+        assert later.peak_cuda_reserved_mb == 12.0
     finally:
         _restore_resilience_env(saved)
         reset_config()

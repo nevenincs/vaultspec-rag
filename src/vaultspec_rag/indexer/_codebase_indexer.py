@@ -462,9 +462,12 @@ class CodebaseIndexer:
         if budget is None:
             raise RuntimeError("code memory budget was not admitted")
         snapshot = budget.sample(label)
+        # Project the allocated high-water (demand) into the profile's CUDA
+        # dimension; reserved ratchets with allocator retention history and
+        # must never decide job outcome.
         self._record_resource_measurement(
             rss_bytes=int(snapshot.peak_rss_mb * 1024**2),
-            cuda_bytes=int(snapshot.peak_cuda_reserved_mb * 1024**2),
+            cuda_bytes=int(snapshot.peak_cuda_allocated_mb * 1024**2),
         )
         return snapshot
 

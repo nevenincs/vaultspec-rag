@@ -33,19 +33,39 @@ def normalize_document_source_path(source_path: str) -> str:
     return normalized
 
 
-def _locator_identity(locator: DocumentLocator | None, unit_ordinal: int) -> object:
-    """Return the native locator identity, falling back to the unit ordinal."""
+def _locator_identity(
+    locator: DocumentLocator | None,
+    unit_ordinal: int,
+    fragment_ordinal: int,
+) -> object:
+    """Return the native locator identity, falling back to the unit ordinal.
+
+    ``fragment_ordinal`` disambiguates the bounded sub-chunks one oversized
+    unit splits into. Both identity branches carry it, because a
+    locator-bearing unit's identity ignores the unit ordinal entirely - two
+    fragments of one page would otherwise collide. It is included only when
+    non-zero so unsplit units keep their pre-split identities and unchanged
+    files replay idempotently.
+    """
     if isinstance(unit_ordinal, bool) or not isinstance(unit_ordinal, int):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
         raise TypeError("document unit ordinal must be an integer")
     if unit_ordinal < 0:
         raise ValueError("document unit ordinal must be non-negative")
+    if isinstance(fragment_ordinal, bool) or not isinstance(fragment_ordinal, int):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
+        raise TypeError("document fragment ordinal must be an integer")
+    if fragment_ordinal < 0:
+        raise ValueError("document fragment ordinal must be non-negative")
     if locator is None or locator.kind == "none":
-        return {"unit_ordinal": unit_ordinal}
-    return {
-        "kind": locator.kind,
-        "value": locator.value,
-        "end": locator.end,
-    }
+        identity: dict[str, object] = {"unit_ordinal": unit_ordinal}
+    else:
+        identity = {
+            "kind": locator.kind,
+            "value": locator.value,
+            "end": locator.end,
+        }
+    if fragment_ordinal:
+        identity["fragment_ordinal"] = fragment_ordinal
+    return identity
 
 
 def document_point_id(
@@ -54,6 +74,7 @@ def document_point_id(
     unit_ordinal: int,
     content_fingerprint: str,
     locator: DocumentLocator | None = None,
+    fragment_ordinal: int = 0,
 ) -> str:
     """Derive a stable document point ID from collection-local semantics."""
     if not isinstance(content_fingerprint, str) or not content_fingerprint:  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
@@ -61,7 +82,7 @@ def document_point_id(
     payload = {
         "version": DOCUMENT_ID_VERSION,
         "source_path": normalize_document_source_path(source_path),
-        "location": _locator_identity(locator, unit_ordinal),
+        "location": _locator_identity(locator, unit_ordinal, fragment_ordinal),
         "content_fingerprint": content_fingerprint,
     }
     canonical = json.dumps(
