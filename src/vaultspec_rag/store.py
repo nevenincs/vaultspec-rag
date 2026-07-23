@@ -10,6 +10,7 @@ import hashlib
 import logging
 import math
 import threading
+import time
 import warnings
 from contextlib import contextmanager, nullcontext
 from typing import TYPE_CHECKING, Any, cast
@@ -363,22 +364,48 @@ class VaultStore(_VaultSearchMixin):
         rather than abandoned.
 
         A shutdown or rollback caller may pass ``force_after_seconds`` to bound
-        the collection-lock acquisition: the lifecycle lock and then the
-        collection locks are still taken in the same fixed order, but each
-        collection-lock wait is bounded, and if a lock is still held past the
-        deadline the client is closed anyway - aborting a wedged consumer's
-        in-flight write so a bounded daemon shutdown can complete instead of
-        blocking forever on the writer lock. That abort is safe only because
-        the caller is discarding state, which is why the bound is opt-in.
+        the WHOLE acquisition end-to-end: the lifecycle lock and then the
+        collection locks are still taken in the same fixed order, but the
+        lifecycle-lock wait and each collection-lock wait are bounded against
+        one shared deadline, and any lock still held past it is abandoned so the
+        client is closed anyway - aborting a wedged consumer's in-flight write,
+        or an in-flight open/create/drop holding the lifecycle lock, so a
+        bounded daemon shutdown can complete instead of blocking forever. That
+        abort is safe only because the caller is discarding state, which is why
+        the bound is opt-in.
         """
-        with self._lifecycle_lock:
-            if force_after_seconds is None:
-                with acquire_collection_locks(self._collection_locks):
-                    self._release_client_locked()
-                return
+        if force_after_seconds is None:
+            with self._lifecycle_lock, acquire_collection_locks(
+                self._collection_locks
+            ):
+                self._release_client_locked()
+            return
+        self._force_close(force_after_seconds)
+
+    def _force_close(self, deadline_seconds: float) -> None:
+        """Close under a single shared deadline, abandoning any wedged lock.
+
+        The lifecycle lock is acquired first (preserving the fixed order), but
+        bounded: if an open/create/drop still holds it past the deadline it is
+        abandoned rather than awaited, and the collection locks then get only
+        the time that remains. A store-wide mutex is never introduced; each
+        collection lock is still its own guard taken in name order.
+        """
+        deadline = time.monotonic() + max(0.0, deadline_seconds)
+        lifecycle_held = self._lifecycle_lock.acquire(
+            timeout=max(0.0, deadline - time.monotonic())
+        )
+        if not lifecycle_held:
+            logger.warning(
+                "Force-closing store %s without the lifecycle lock (held past "
+                "the deadline); an in-flight open/create/drop is abandoned so "
+                "shutdown can complete",
+                self.db_path,
+            )
+        try:
             with acquire_collection_locks_bounded(
                 self._collection_locks,
-                deadline_seconds=force_after_seconds,
+                deadline_seconds=max(0.0, deadline - time.monotonic()),
             ) as all_held:
                 if not all_held:
                     logger.warning(
@@ -388,6 +415,9 @@ class VaultStore(_VaultSearchMixin):
                         self.db_path,
                     )
                 self._release_client_locked()
+        finally:
+            if lifecycle_held:
+                self._lifecycle_lock.release()
 
     def _release_client_locked(self) -> None:
         """Close the Qdrant client and lock helper (caller holds the locks)."""
