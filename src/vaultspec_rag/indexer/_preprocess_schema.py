@@ -101,12 +101,25 @@ class Locator(BaseModel):
     end: int | str | None = None
 
 
+# Upper bound on one unit's embedded text. Deliberately generous: it exists
+# to make the contract honest and reject the pathological payload at the
+# validation boundary, not to substitute for splitting - the indexer splits
+# any unit above the model window regardless. Sized well under the emitted-
+# output transport cap so a single unit can never monopolize it.
+UNIT_TEXT_MAX_CHARS = 1_000_000
+
+
 class PreprocUnit(BaseModel):
-    """One pre-chunked unit emitted by a preprocessor."""
+    """One pre-chunked unit emitted by a preprocessor.
+
+    "Pre-chunked" describes the hook's semantic intent, not a size guarantee
+    the pipeline trusts: unit text is bounded here and additionally split by
+    the indexer whenever it exceeds the document split budget.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    text: str = Field(min_length=1)
+    text: str = Field(min_length=1, max_length=UNIT_TEXT_MAX_CHARS)
     title: str | None = Field(default=None, max_length=4096)
     section: str | None = Field(default=None, max_length=4096)
     anchor: str | None = Field(default=None, max_length=8192)
@@ -122,9 +135,10 @@ class PreprocUnit(BaseModel):
 class PreprocOutput(BaseModel):
     """The document-level wrapper a preprocessor emits for one source file.
 
-    Exactly one of ``units`` (pre-chunked) or ``text`` (extracted plain text,
-    which the indexer then runs through the normal text splitter) is set; the
-    XOR is enforced by a model validator.
+    Exactly one of ``units`` (pre-chunked; still size-bounded and split by
+    the indexer when a unit exceeds the document split budget) or ``text``
+    (extracted plain text, which the indexer runs through the same splitter)
+    is set; the XOR is enforced by a model validator.
     """
 
     model_config = ConfigDict(extra="forbid")

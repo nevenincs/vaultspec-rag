@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from ..indexer._preprocess_schema import (
     SUPPORTED_SCHEMA_VERSION,
+    UNIT_TEXT_MAX_CHARS,
     Locator,
     PreprocOutput,
     PreprocUnit,
@@ -83,6 +84,23 @@ def test_unknown_unit_field_is_rejected() -> None:
 def test_empty_unit_text_is_rejected() -> None:
     with pytest.raises(ValidationError):
         validate_preproc_output(_base(units=[{"text": ""}]))
+
+
+def test_unit_text_at_maximum_is_accepted() -> None:
+    out = validate_preproc_output(_base(units=[{"text": "x" * UNIT_TEXT_MAX_CHARS}]))
+    assert out.units is not None
+    assert len(out.units[0].text) == UNIT_TEXT_MAX_CHARS
+
+
+def test_unit_text_above_maximum_is_rejected() -> None:
+    # The rejection must bind to the text field's declared ceiling, not to
+    # any other validator: the match on the field location catches a removed
+    # or relocated bound that leaves some unrelated rejection standing.
+    with pytest.raises(ValidationError, match="text") as failure:
+        validate_preproc_output(
+            _base(units=[{"text": "x" * (UNIT_TEXT_MAX_CHARS + 1)}])
+        )
+    assert any(error["type"] == "string_too_long" for error in failure.value.errors())
 
 
 def test_missing_required_field_is_rejected() -> None:

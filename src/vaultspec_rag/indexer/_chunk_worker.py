@@ -351,12 +351,31 @@ def _get_chunker() -> ASTChunker:
 
 @dataclass(frozen=True, slots=True)
 class ChunkExecutionPolicy:
-    """Picklable byte-decoding and raw-chunk semantics for one operation."""
+    """Picklable byte-decoding and raw-chunk semantics for one operation.
+
+    ``document_chunk_chars`` and ``document_chunk_overlap`` carry the shared
+    document split budget: on the production path they derive from the dense
+    model's token window via the resolved index policy, and both document
+    branches (raw text and hook-emitted units) split through this one
+    configuration. The static defaults mirror the shipped configuration so a
+    default-constructed policy stays valid.
+    """
 
     encoding: str = "utf-8"
     errors: str = "strict"
     normalize_newlines: bool = True
     html_strip: bool = True
+    document_chunk_chars: int = 2048 * 3
+    document_chunk_overlap: int = 256
+
+
+def _document_text_splitter(execution_policy: ChunkExecutionPolicy) -> TextSplitter:
+    """Return the one bounded splitter both document branches share."""
+    return TextSplitter(
+        chunk_size=execution_policy.document_chunk_chars,
+        chunk_overlap=execution_policy.document_chunk_overlap,
+        language="text",
+    )
 
 
 _DEFAULT_EXECUTION_POLICY = ChunkExecutionPolicy()
@@ -393,9 +412,10 @@ def _document_chunks_from_text(
     extractor_id: str | None = None,
     extractor_version: str | None = None,
     start_ordinal: int = 0,
+    execution_policy: ChunkExecutionPolicy = _DEFAULT_EXECUTION_POLICY,
 ) -> list[DocumentChunk]:
     """Split decoded text into document-native chunks with stable identities."""
-    splitter = TextSplitter(language="text", chunk_overlap=0)
+    splitter = _document_text_splitter(execution_policy)
     chunks: list[DocumentChunk] = []
     for ordinal, content in enumerate(
         splitter.split_text(text),
@@ -513,6 +533,7 @@ def _iter_raw_document_chunks(
                 rel_path=rel_path,
                 content_hash=content_hash,
                 start_ordinal=ordinal,
+                execution_policy=execution_policy,
             )
             ordinal += len(chunks)
             yield from chunks
@@ -529,6 +550,7 @@ def _iter_raw_document_chunks(
             rel_path=rel_path,
             content_hash=content_hash,
             start_ordinal=ordinal,
+            execution_policy=execution_policy,
         )
         run_control.checkpoint()
     if digest.hexdigest() != content_hash:
@@ -540,6 +562,7 @@ def _document_chunks_from_output(
     *,
     rel_path: str,
     content_hash: str,
+    execution_policy: ChunkExecutionPolicy = _DEFAULT_EXECUTION_POLICY,
 ) -> list[DocumentChunk]:
     """Preserve every validated document and unit field on native chunks."""
     document_metadata = DocumentMetadata.from_mapping(dict(output.metadata))
@@ -551,16 +574,17 @@ def _document_chunks_from_output(
             document_metadata=document_metadata,
             extractor_id=output.preprocessor_id,
             extractor_version=output.preprocessor_version,
+            execution_policy=execution_policy,
         )
 
     # Hook-emitted units are the pipeline's responsibility to bound, exactly
     # like every other content class: "pre-chunked" is an assertion the hook
-    # makes that nothing validates, and an unbounded unit is silently
-    # truncated at the encoder's sequence window. Route each unit's text
-    # through the same splitter the plain-text branch uses; every fragment
+    # makes that schema validation only loosely constrains, and an unbounded
+    # unit is silently truncated at the encoder's sequence window. Route each
+    # unit's text through the shared bounded splitter; every fragment
     # inherits its parent unit's provenance, and a fragment ordinal keeps
     # point ids unique when one unit becomes many chunks.
-    splitter = TextSplitter(language="text", chunk_overlap=0)
+    splitter = _document_text_splitter(execution_policy)
     chunks: list[DocumentChunk] = []
     for ordinal, unit in enumerate(output.units):
         locator = (
@@ -743,6 +767,7 @@ def stream_document_and_hash_file(
                 output,
                 rel_path=rel_path,
                 content_hash=content_hash,
+                execution_policy=execution_policy,
             ),
             preprocess_status="ok",
         )

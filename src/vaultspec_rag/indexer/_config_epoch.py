@@ -134,12 +134,16 @@ def resolved_policy_fingerprints(
     execution_mode: PreprocessMode,
     html_strip: bool,
     max_emitted_bytes: int,
+    document_chunking: Mapping[str, int],
 ) -> NormalizedPolicyFingerprints:
     """Hash a resolved policy without depending on object identity.
 
     Ordered rules and ignores retain semantic order. Ephemeral excludes shape
     the operation identity without changing the persistent-membership digest
-    used by durable compatibility adapters.
+    used by durable compatibility adapters. The document split budget and the
+    unit text bound enter the document kind's content identity, so changing
+    either triggers a rebuild rather than leaving previously unsplit points
+    in place with no signal that they are stale.
     """
     persistent_membership_payload = {
         "version": policy_schema_version,
@@ -208,6 +212,7 @@ def resolved_policy_fingerprints(
         operation_membership_payload=operation_membership_payload,
         content_payload=content_payload,
         preprocess_rules=preprocess_rules,
+        document_chunking=document_chunking,
     )
     snapshot = _digest(
         {
@@ -244,6 +249,7 @@ def _per_kind_fingerprints(
     operation_membership_payload: Mapping[str, object],
     content_payload: Mapping[str, object],
     preprocess_rules: Sequence[ResolvedPreprocessRule],
+    document_chunking: Mapping[str, int],
 ) -> PerKindPolicyFingerprints:
     """Derive independent kind identities from canonical aggregate payloads."""
     from ._content_policy import ContentKind
@@ -262,6 +268,11 @@ def _per_kind_fingerprints(
         kind_content_payload = {
             **content_payload,
             "kind": kind.value,
+            # The split budget shapes document chunk boundaries for unchanged
+            # bytes, so it is content-shaping for the document kind only.
+            "document_chunking": (
+                dict(document_chunking) if kind is ContentKind.DOCUMENT else None
+            ),
             "max_emitted_bytes": (
                 content_payload["max_emitted_bytes"] if rules else None
             ),

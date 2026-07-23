@@ -438,6 +438,8 @@ class DocumentIndexer:
             errors=policy.decoder.errors,
             normalize_newlines=policy.decoder.normalize_newlines,
             html_strip=policy.html_strip,
+            document_chunk_chars=policy.document_chunking.chunk_chars,
+            document_chunk_overlap=policy.document_chunking.chunk_overlap_chars,
         )
 
     def _publish_file(

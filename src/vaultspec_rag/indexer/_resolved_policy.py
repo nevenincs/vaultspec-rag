@@ -26,6 +26,7 @@ from ._content_policy import (
     classify_content,
 )
 from ._preprocess_config import OnError, PreprocessRule, load_preprocess_rules
+from ._preprocess_schema import UNIT_TEXT_MAX_CHARS
 
 if TYPE_CHECKING:
     import pathlib
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DecoderPolicy",
+    "DocumentChunkingPolicy",
     "ResolvedIndexPolicy",
     "ResolvedPreprocessRule",
     "compile_content_policy",
@@ -108,7 +110,8 @@ def _sequence_payload(payload: object) -> tuple[CanonicalOption, ...]:
     if not isinstance(payload, tuple):
         raise TypeError("canonical sequence payload must be a tuple")
     return tuple(
-        _canonical_option(nested) for nested in cast("tuple[object, ...]", payload)  # ty: ignore[redundant-cast]
+        _canonical_option(nested)
+        for nested in cast("tuple[object, ...]", payload)  # ty: ignore[redundant-cast]
     )
 
 
@@ -232,6 +235,33 @@ class DecoderPolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class DocumentChunkingPolicy:
+    """Document split budget captured in a resolved policy snapshot.
+
+    ``chunk_chars`` derives on the production path from the dense model's
+    token window multiplied by the configured chars-per-token ratio, and
+    ``unit_text_max_chars`` mirrors the unit schema's declared text ceiling.
+    The static defaults mirror the shipped configuration so a directly
+    constructed snapshot stays valid.
+    """
+
+    chunk_chars: int = 2048 * 3
+    chunk_overlap_chars: int = 256
+    unit_text_max_chars: int = UNIT_TEXT_MAX_CHARS
+
+    def __post_init__(self) -> None:
+        for name in ("chunk_chars", "chunk_overlap_chars", "unit_text_max_chars"):
+            value = cast("object", getattr(self, name))
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+        if self.chunk_overlap_chars >= self.chunk_chars:
+            raise ValueError(
+                "chunk_overlap_chars must be smaller than chunk_chars, got "
+                f"overlap={self.chunk_overlap_chars}, budget={self.chunk_chars}"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class ResolvedPreprocessRule:
     """Deeply immutable, precedence-resolved preprocessing semantics."""
 
@@ -317,6 +347,9 @@ class ResolvedIndexPolicy:
     gitignore_patterns: tuple[str, ...]
     vaultragignore_patterns: tuple[str, ...]
     extra_excludes: tuple[str, ...]
+    document_chunking: DocumentChunkingPolicy = field(
+        default_factory=DocumentChunkingPolicy
+    )
     fingerprints: _config_epoch.NormalizedPolicyFingerprints = field(init=False)
     _git_spec: pathspec.GitIgnoreSpec = field(init=False, repr=False, compare=False)
     _rag_spec: pathspec.GitIgnoreSpec | None = field(
@@ -399,6 +432,11 @@ class ResolvedIndexPolicy:
             execution_mode=self.execution_mode,
             html_strip=self.html_strip,
             max_emitted_bytes=self.max_emitted_bytes,
+            document_chunking={
+                "chunk_chars": self.document_chunking.chunk_chars,
+                "chunk_overlap_chars": self.document_chunking.chunk_overlap_chars,
+                "unit_text_max_chars": self.document_chunking.unit_text_max_chars,
+            },
         )
         object.__setattr__(self, "_git_spec", git_spec)
         object.__setattr__(self, "_rag_spec", rag_spec)
@@ -422,6 +460,7 @@ class ResolvedIndexPolicy:
                 self.gitignore_patterns,
                 self.vaultragignore_patterns,
                 self.extra_excludes,
+                self.document_chunking,
             ),
         )
 
@@ -524,4 +563,9 @@ def resolve_index_policy(
             _ignore_specs.collect_vaultragignore_patterns(root_dir)
         ),
         extra_excludes=tuple(extra_excludes),
+        document_chunking=DocumentChunkingPolicy(
+            chunk_chars=int(cfg.document_chunk_chars),
+            chunk_overlap_chars=int(cfg.document_chunk_overlap_chars),
+            unit_text_max_chars=UNIT_TEXT_MAX_CHARS,
+        ),
     )

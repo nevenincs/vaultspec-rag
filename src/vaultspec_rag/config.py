@@ -672,6 +672,18 @@ class VaultSpecConfigWrapper:
         # produces, so a 12 MB PDF that distils to 40 KB indexes while a
         # runaway extractor that emits tens of MB is skipped.
         "preprocess_max_emitted_bytes": 10 * 1024 * 1024,
+        # Document split budget. The effective character bound for one
+        # document chunk derives from the dense model's token window
+        # (``embedding_max_seq_length``) multiplied by this declared
+        # chars-per-token ratio, so the limit tracks a model change instead
+        # of silently drifting as a hardcoded character count would. The
+        # ratio is deliberately conservative (typical English BPE runs ~4
+        # chars per token; token-dense content such as tables and numbers
+        # runs lower), so a full chunk stays inside the window rather than
+        # being truncated by the encoder. The overlap keeps a fragment
+        # boundary from severing context mid-sentence.
+        "document_chunk_chars_per_token": 3,
+        "document_chunk_overlap_chars": 256,
         # Strip HTML tags to plain text before chunking ``.html`` sources
         # (#185 adjacent ask). Default on: raw markup wastes ~1/3 of each
         # chunk's budget and pollutes results with navigation boilerplate.
@@ -983,6 +995,53 @@ class VaultSpecConfigWrapper:
     def index_queue_max_bytes(self) -> int:
         """Return the queue byte budget, never smaller than one segment."""
         return self._index_byte_bounds()[1]
+
+    @property
+    def document_chunk_chars_per_token(self) -> int:
+        """Return the declared conservative chars-per-token conversion ratio."""
+        return self._positive_int(
+            "document_chunk_chars_per_token",
+            self._resolve_rag_default("document_chunk_chars_per_token"),
+        )
+
+    @property
+    def document_chunk_overlap_chars(self) -> int:
+        """Return the positive overlap carried across document chunk bounds."""
+        overlap = self._positive_int(
+            "document_chunk_overlap_chars",
+            self._resolve_rag_default("document_chunk_overlap_chars"),
+        )
+        chunk_chars = self._positive_int(
+            "embedding_max_seq_length",
+            self._resolve_rag_default("embedding_max_seq_length"),
+        ) * self._positive_int(
+            "document_chunk_chars_per_token",
+            self._resolve_rag_default("document_chunk_chars_per_token"),
+        )
+        if overlap >= chunk_chars:
+            msg = (
+                "document_chunk_overlap_chars must be smaller than the derived "
+                f"document chunk budget, got overlap={overlap}, "
+                f"budget={chunk_chars}"
+            )
+            raise ValueError(msg)
+        return overlap
+
+    @property
+    def document_chunk_chars(self) -> int:
+        """Return the document split budget derived from the model window.
+
+        The budget is the dense model's token window multiplied by the
+        declared chars-per-token ratio, never a hardcoded character count,
+        so it tracks a model change instead of silently drifting.
+        """
+        return (
+            self._positive_int(
+                "embedding_max_seq_length",
+                self._resolve_rag_default("embedding_max_seq_length"),
+            )
+            * self.document_chunk_chars_per_token
+        )
 
     @property
     def index_no_progress_timeout_seconds(self) -> float:

@@ -12,7 +12,11 @@ if TYPE_CHECKING:
 
 __all__ = ["document_point_id", "normalize_document_source_path"]
 
-DOCUMENT_ID_VERSION = 1
+# Version 2: the location component gained a fragment discriminator so one
+# oversized unit split into bounded fragments yields unique ids. The bump is
+# deliberate - the derivation changes for units that split - and forces a
+# clean re-key of previously indexed document corpora.
+DOCUMENT_ID_VERSION = 2
 
 
 def normalize_document_source_path(source_path: str) -> str:
@@ -41,11 +45,10 @@ def _locator_identity(
     """Return the native locator identity, falling back to the unit ordinal.
 
     ``fragment_ordinal`` disambiguates the bounded sub-chunks one oversized
-    unit splits into. Both identity branches carry it, because a
-    locator-bearing unit's identity ignores the unit ordinal entirely - two
-    fragments of one page would otherwise collide. It is included only when
-    non-zero so unsplit units keep their pre-split identities and unchanged
-    files replay idempotently.
+    unit splits into. Both identity branches carry it unconditionally,
+    because a locator-bearing unit's identity ignores the unit ordinal
+    entirely - two fragments of one page would otherwise collide. Emit order
+    is deterministic, so ids stay stable across replay of an unchanged file.
     """
     if isinstance(unit_ordinal, bool) or not isinstance(unit_ordinal, int):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
         raise TypeError("document unit ordinal must be an integer")
@@ -63,8 +66,7 @@ def _locator_identity(
             "value": locator.value,
             "end": locator.end,
         }
-    if fragment_ordinal:
-        identity["fragment_ordinal"] = fragment_ordinal
+    identity["fragment_ordinal"] = fragment_ordinal
     return identity
 
 
