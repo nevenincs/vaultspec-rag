@@ -17,6 +17,7 @@ import ast
 import asyncio
 import inspect
 import logging
+import os
 import subprocess
 import sys
 import textwrap
@@ -54,6 +55,14 @@ if TYPE_CHECKING:
     from ..embeddings import EmbeddingModel
 
 pytestmark = [pytest.mark.unit]
+
+# A dedup-identity placeholder, never touched on disk. Built with os.sep so it
+# resolves absolute on both platforms: POSIX joins to "/project" outright,
+# Windows' abspath resolves the drive-relative "\project" against the current
+# drive - unlike a hardcoded drive-letter literal (e.g. "Y:/project"), which is
+# absolute only on a host whose current drive happens to match and is a plain
+# relative path (and therefore rejected by job_models.job_spec_error) on POSIX.
+_TEST_PROJECT_ROOT = os.path.abspath(os.path.join(os.sep, "project"))
 
 
 def test_canonical_job_models_are_reexported_by_identity() -> None:
@@ -369,10 +378,10 @@ class TestJobStallShaping:
             JobSpec(
                 JobOperation.INDEX,
                 JobSource.VAULT,
-                "Y:/project",
+                _TEST_PROJECT_ROOT,
                 JobMode.INCREMENTAL,
             ),
-            JobInitiator("cli", "server job create", "Y:/project"),
+            JobInitiator("cli", "server job create", _TEST_PROJECT_ROOT),
             start_paused=True,
         )
         assert created.job is not None
@@ -482,7 +491,7 @@ class TestJobStallShaping:
             phase="paused",
             source="vault",
             trigger="tool",
-            query="y:/project",
+            query="project",
             failed=False,
             job_id=str(record["id"])[:8],
             since_seconds=0.0,
@@ -758,10 +767,10 @@ class TestManagedJobAdmission:
         spec = JobSpec(
             JobOperation.INDEX,
             JobSource.VAULT,
-            "Y:/project",
+            _TEST_PROJECT_ROOT,
             JobMode.INCREMENTAL,
         )
-        initiator = JobInitiator("cli", "server job create", "Y:/project")
+        initiator = JobInitiator("cli", "server job create", _TEST_PROJECT_ROOT)
 
         def submit(_index: int) -> JobOutcome:
             return manager.create(spec, initiator)
@@ -795,10 +804,10 @@ class TestManagedJobAdmission:
         spec = JobSpec(
             JobOperation.INDEX,
             JobSource.CODE,
-            "Y:/project",
+            _TEST_PROJECT_ROOT,
             JobMode.REBUILD,
         )
-        initiator = JobInitiator("http", "POST /jobs", "Y:/project")
+        initiator = JobInitiator("http", "POST /jobs", _TEST_PROJECT_ROOT)
 
         original = manager.create(spec, initiator, idempotency_key="request-7")
         replay = manager.create(spec, initiator, idempotency_key="request-7")
@@ -870,10 +879,10 @@ class TestManagedJobAdmission:
         spec = JobSpec(
             JobOperation.INDEX,
             JobSource.VAULT,
-            "Y:/project",
+            _TEST_PROJECT_ROOT,
             JobMode.INCREMENTAL,
         )
-        initiator = JobInitiator("http", "POST /jobs", "Y:/project")
+        initiator = JobInitiator("http", "POST /jobs", _TEST_PROJECT_ROOT)
 
         assert manager.create(spec, initiator, idempotency_key="key-0").code == (
             "job_created"
@@ -964,10 +973,10 @@ def _create_paused_vault_job(manager: JobManager) -> str:
     spec = JobSpec(
         JobOperation.INDEX,
         JobSource.VAULT,
-        "Y:/project",
+        _TEST_PROJECT_ROOT,
         JobMode.INCREMENTAL,
     )
-    initiator = JobInitiator("cli", "server job create", "Y:/project")
+    initiator = JobInitiator("cli", "server job create", _TEST_PROJECT_ROOT)
     created = manager.create(spec, initiator)
     assert created.job is not None
     job_id = created.job.id
@@ -1055,10 +1064,10 @@ class TestManagedJobTransitions:
             JobSpec(
                 JobOperation.INDEX,
                 JobSource.CODE,
-                "Y:/project",
+                _TEST_PROJECT_ROOT,
                 JobMode.INCREMENTAL,
             ),
-            JobInitiator("service", "shutdown-race", "Y:/project"),
+            JobInitiator("service", "shutdown-race", _TEST_PROJECT_ROOT),
         )
         assert created.job is not None
         task = asyncio.create_task(asyncio.Event().wait())
@@ -1100,12 +1109,12 @@ class TestManagedJobTransitions:
         spec = JobSpec(
             JobOperation.INDEX,
             JobSource.CODE,
-            "Y:/project",
+            _TEST_PROJECT_ROOT,
             JobMode.INCREMENTAL,
         )
         created = manager.create(
             spec,
-            JobInitiator("watcher", "watcher_code_index", "Y:/project"),
+            JobInitiator("watcher", "watcher_code_index", _TEST_PROJECT_ROOT),
         )
         assert created.job is not None
         owner_task = asyncio.create_task(asyncio.Event().wait())
@@ -1190,10 +1199,10 @@ class TestManagedJobTransitions:
         spec = JobSpec(
             JobOperation.INDEX,
             JobSource.VAULT,
-            "Y:/project",
+            _TEST_PROJECT_ROOT,
             JobMode.INCREMENTAL,
         )
-        initiator = JobInitiator("cli", "server job stop", "Y:/project")
+        initiator = JobInitiator("cli", "server job stop", _TEST_PROJECT_ROOT)
 
         queued_manager = JobManager(max_nonterminal=1, state_path=None)
         queued = queued_manager.create(spec, initiator)
@@ -1295,10 +1304,10 @@ class TestManagedJobTransitions:
         spec = JobSpec(
             JobOperation.INDEX,
             JobSource.CODE,
-            "Y:/project",
+            _TEST_PROJECT_ROOT,
             JobMode.REBUILD,
         )
-        initiator = JobInitiator("http", "POST /jobs", "Y:/project")
+        initiator = JobInitiator("http", "POST /jobs", _TEST_PROJECT_ROOT)
         created = manager.create(spec, initiator)
         assert created.job is not None
         job_id = created.job.id
