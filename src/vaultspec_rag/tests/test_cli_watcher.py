@@ -32,6 +32,19 @@ runner = CliRunner()
 # and returns None -> the command reports service-not-running (exit 3).
 _DEAD_PORT = "59231"
 
+# The watcher CLI resolves every project argument through
+# Path(project).expanduser().resolve() before round-tripping it into the
+# admin request body and the rendered "Path:" line. A hardcoded drive-letter
+# literal is absolute (and therefore resolve()-idempotent) only on a host
+# whose current drive happens to match; on POSIX it is a plain relative path
+# component, so resolve() rewrites it against the runner's cwd and breaks
+# every exact round-trip assertion below. os.path.abspath(os.path.join(...))
+# is genuinely absolute - and therefore resolve()-idempotent - on whichever
+# platform runs the test.
+_TEST_PROJECT_ROOT = os.path.abspath(
+    os.path.join(os.sep, "projects", "code-worktrees", "feature-server-supervision")
+)
+
 
 class _UpdatesHTTPHandler(http.server.BaseHTTPRequestHandler):
     payloads: ClassVar[list[dict[str, object]]] = []
@@ -280,13 +293,12 @@ def test_updates_status_lists_projects_as_blocks() -> None:
     assert "- Project: main" in result.output
     assert r"  Path: C:\projects\sample-project\main" in (result.output)
     assert (
-        r"- C:\projects\code-worktrees\feature-server-supervision"
-        not in result.output
+        r"- C:\projects\code-worktrees\feature-server-supervision" not in result.output
     )
 
 
 def test_updates_start_output_uses_project_block() -> None:
-    project = r"C:\projects\code-worktrees\feature-server-supervision"
+    project = _TEST_PROJECT_ROOT
     payload: dict[str, object] = {
         "started": True,
         "watch_enabled": True,
@@ -470,7 +482,7 @@ def test_updates_timing_flags_parse(argv: list[str]) -> None:
 
 
 def test_updates_timing_output_uses_project_block() -> None:
-    project = r"C:\projects\code-worktrees\feature-server-supervision"
+    project = _TEST_PROJECT_ROOT
     payload: dict[str, object] = {
         "restarted": True,
         "debounce_ms": 500,
