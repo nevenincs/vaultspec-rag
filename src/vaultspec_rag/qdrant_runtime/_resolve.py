@@ -490,6 +490,21 @@ def _reap_on_windows(
     return None
 
 
+def _reap_if_child(pid: int) -> None:
+    """Collapse a zombie child we parent so liveness stops reading it as alive.
+
+    When the reap target happens to be a direct child of this process - the
+    only case in which a signalled process lingers as an un-reaped zombie -
+    ``waitpid`` clears its process-table entry, so a subsequent ``os.kill(pid,
+    0)`` liveness probe correctly reports it gone. When the target is not our
+    child (the normal case: an orphan from a dead prior owner, reparented to
+    init), ``waitpid`` raises ``ChildProcessError`` (ECHILD), which is expected
+    and ignored. ``WNOHANG`` never blocks.
+    """
+    with contextlib.suppress(ChildProcessError, OSError):
+        os.waitpid(pid, os.WNOHANG)
+
+
 def _reap_on_posix(
     pid: int,
     *,
@@ -504,10 +519,12 @@ def _reap_on_posix(
     with contextlib.suppress(OSError):
         os.kill(pid, signal.SIGTERM)
     while time.monotonic() < deadline and not target_gone():
+        _reap_if_child(pid)
         time.sleep(0.1)
     if not target_gone():
         with contextlib.suppress(OSError):
             os.kill(pid, signal.SIGKILL)
+        _reap_if_child(pid)
     return None
 
 
