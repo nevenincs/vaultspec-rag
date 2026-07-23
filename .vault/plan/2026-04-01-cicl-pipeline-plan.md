@@ -26,7 +26,7 @@ Implement all 8 decisions from the accepted ADR. The work breaks into
 
   1. Fix vaultspec-core dependency in `pyproject.toml` — change from
      `file:///` path to `"vaultspec-core>=0.1.0"` in `[project.dependencies]`.
-     Add `vaultspec-core = { path = "../vaultspec-core-worktrees/main", editable = true }` to `[tool.uv.sources]` (alongside existing torch
+     Add `vaultspec-core = { path = "../worktrees/main", editable = true }` to `[tool.uv.sources]` (alongside existing torch
      entry). The static `version = "0.1.0"` stays — release-please bumps
      it in `pyproject.toml` directly. Verify `uv lock` succeeds.
   1. Add `__version__` to `src/vaultspec_rag/__init__.py` via
