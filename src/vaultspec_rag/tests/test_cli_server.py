@@ -796,7 +796,7 @@ class TestWinShutdownLog:
             def _stub_is_our_service(*_a: object, **_kw: object) -> bool:
                 return True
 
-            budgets: list[tuple[float, float]] = []
+            budgets: list[tuple[float, float, bool]] = []
 
             def _stub_terminate_pid(
                 _pid: int,
@@ -805,7 +805,7 @@ class TestWinShutdownLog:
                 graceful_drain: float = 2.0,
                 console_group_signal: bool = True,
             ) -> None:
-                budgets.append((timeout, graceful_drain))
+                budgets.append((timeout, graceful_drain, console_group_signal))
 
             def _stub_is_pid_alive(_pid: int) -> bool:
                 return False
@@ -825,8 +825,15 @@ class TestWinShutdownLog:
             # event, so Windows must not spend the long drain waiting for a
             # graceful shutdown that cannot be signalled; it goes straight to
             # the forced kill and reclaims the pointer afterwards.
+            # Normal stop keeps the console-group path (True); only the orphan
+            # reap, which force-kills discovered pids it did not spawn, passes
+            # console_group_signal=False.
             assert budgets == [
-                (_STOP_TERMINATION_BUDGET_SECONDS, _DEFAULT_GRACEFUL_DRAIN_SECONDS)
+                (
+                    _STOP_TERMINATION_BUDGET_SECONDS,
+                    _DEFAULT_GRACEFUL_DRAIN_SECONDS,
+                    True,
+                )
             ]
             assert _DEFAULT_GRACEFUL_DRAIN_SECONDS < _STOP_GRACEFUL_DRAIN_SECONDS
             assert log_path.exists(), (
@@ -868,6 +875,8 @@ class TestWinShutdownLog:
                 console_group_signal: bool = True,
             ) -> None:
                 assert timeout > graceful_drain
+                # Normal stop keeps the console-group path; the reap uses False.
+                assert console_group_signal is True
 
             def _stub_is_pid_alive(_pid: int) -> bool:
                 return False
