@@ -18,7 +18,7 @@ Plain-English definitions for terms used across the vaultspec-rag docs. Consult 
 
 **fnmatch glob**. A shell-style filename pattern, for example `*.md` or `notes/**/draft-*`, used in include and exclude lists. It follows Python's `fnmatch` rules, not full regex. See [the configuration guide](configuration.md).
 
-**HTTP transport**. The MCP transport where the server listens on a TCP port and clients connect over HTTP. The long-running service uses it on loopback port 8766. See [the MCP guide](mcp.md).
+**HTTP service daemon**. The long-running service that does the compute and serves many projects at once, listening on loopback port 8766. It speaks vaultspec-rag's own REST API - health, jobs, logs, projects, and the search and index endpoints - not MCP; the stdio MCP shim delegates to it over that REST API. See [the service-mode guide](service-mode.md).
 
 **Hybrid search**. Search that combines two signals for each query: the dense vector for overall meaning and the sparse vector for exact terms. The two result lists are merged by reciprocal rank fusion into one ranking. See [the search guide](search-and-index.md).
 
