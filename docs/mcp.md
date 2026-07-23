@@ -66,15 +66,22 @@ The daemon is multi-tenant, so the shim tags each delegated call with the projec
 
 In Claude Desktop, open the MCP debug panel and look for the `vaultspec-rag` server. In Claude Code, run `/mcp` and check that `vaultspec-rag` appears in the connected-servers list.
 
-A connected server publishes exactly these five tools:
+A connected server publishes a search and an index-refresh tool for each indexed content kind - the vault, the code, and extracted documents - plus union conveniences, a file reader, an index-readiness probe, and the index-cleaning counterparts:
 
 - `search_vault` - search the documentation vault for relevant ADRs, plans, and research, with the same filters as the `search` command (doc type, feature, date, tag) plus an `intent` ranking profile.
 - `search_codebase` - search the source codebase for relevant functions, classes, or logic, with the code filters (language, path, symbol, include and exclude globs) plus noise-domain control via the typed `exclude_domains` / `only_domains` / `include_domains` arguments (see [Filter noise by domain](search-and-index.md#filter-noise-by-domain)).
+- `search_documents` - search extracted documents (preprocessed non-source content) as an independent domain.
+- `search_combined` - search the vault, code, and document domains together, with candidates allocated across all three.
 - `get_code_file` - return the full content of a source file by path.
 - `reindex_vault` - re-index the vault documentation incrementally.
 - `reindex_codebase` - re-index the source codebase incrementally.
+- `reindex_documents` - re-index extracted documents incrementally.
+- `reindex_all` - re-index the vault, code, and document domains together.
+- `get_index_status` - report whether a content kind is indexed, so an assistant can decide whether searching it is worthwhile before it does.
+- `clean_documents` - delete the extracted-document index for a project.
+- `clean_all` - delete the vault, code, and document indexes for a project.
 
-The search filters mirror the CLI, so the [CLI reference](cli.md) documents the filter values in full. Service operations - jobs, logs, project slots, the file watcher, and service state - are not MCP tools; they are HTTP REST routes on the daemon and are driven through the `vaultspec-rag server` CLI or queried directly. See the [service-mode guide](service-mode.md) for that surface.
+The search filters mirror the CLI, so the [CLI reference](cli.md) documents the filter values in full. Lifecycle and operational administration - jobs, logs, project slots, the file watcher, service state, and starting or stopping the daemon - are deliberately not MCP tools; they are driven through the `vaultspec-rag server` CLI. See the [service-mode guide](service-mode.md) for that surface.
 
 For a smoke test, ask the assistant a retrieval question about your project, such as "find the ADR about caching" or "where is authentication handled?". A successful answer cites file locations from your project, a document path or a source file and line, rather than answering from general knowledge.
 

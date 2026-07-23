@@ -1,4 +1,4 @@
-"""CLI tests for automatic index update subcommands (plan P04).
+"""CLI tests for automatic index update subcommands.
 
 Verifies the CLI plumbing for the automatic-index-update parity surface: the
 service-unreachable path (exit code 3 + JSON envelope) for every
@@ -565,21 +565,36 @@ def test_watcher_alias_removed_from_user_facing_cli() -> None:
 
 
 def test_cli_mcp_control_parity() -> None:
-    # The MCP surface is deliberately narrowed to the five search/read/reindex
-    # tools (mcp-search-scope ADR); watcher control lives on the CLI, exposed
-    # with human-facing "updates" language.
+    # The MCP surface is kind-parametric: for each indexed content kind it
+    # carries one search verb and one index-refresh verb, plus the union
+    # conveniences, the search-adjacent file reader, index-readiness, and the
+    # destructive index-cleaning counterparts. Lifecycle and operational
+    # administration (watcher control, service state, jobs, logs, storage
+    # survey, project eviction, start/stop/warmup) stay CLI-only.
+    #
+    # This is the authorised surface, not a floor: the guard is an exact set
+    # so unratified growth turns it red. When a new content kind is indexed,
+    # extend `kinds` below - do not append names loosely - and confirm the
+    # decision that admits it. `analyze_feature` is a prompt, not a tool, so
+    # it is deliberately absent from the tool listing.
     import asyncio
 
     from ..mcp import mcp
 
-    tools = sorted(t.name for t in asyncio.run(mcp.list_tools()))
-    assert tools == [
+    kinds = ("vault", "codebase", "documents")
+    expected = {
+        *(f"search_{kind}" for kind in kinds),
+        *(f"reindex_{kind}" for kind in kinds),
+        "search_combined",
+        "reindex_all",
         "get_code_file",
-        "reindex_codebase",
-        "reindex_vault",
-        "search_codebase",
-        "search_vault",
-    ]
+        "get_index_status",
+        "clean_documents",
+        "clean_all",
+    }
+
+    tools = {t.name for t in asyncio.run(mcp.list_tools())}
+    assert tools == expected
     help_result = runner.invoke(app, ["server", "updates", "--help"])
     assert help_result.exit_code == 0
     assert _help_command_names(help_result.stdout) == [
