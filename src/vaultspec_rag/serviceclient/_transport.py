@@ -274,9 +274,7 @@ def _try_http_health(
     url = f"http://127.0.0.1:{port}/health"
     try:
         with _OPENER.open(url, timeout=timeout) as resp:
-            parsed: object = json.loads(
-                _read_service_response(resp).decode("utf-8")
-            )
+            parsed: object = json.loads(_read_service_response(resp).decode("utf-8"))
         if not isinstance(parsed, dict):
             # Valid JSON that is not an object is not a health answer. Passing
             # it through would hand every caller a value they immediately treat
@@ -299,9 +297,7 @@ def _try_http_health(
         # JSON all mean "no usable answer". The breadth is deliberate because
         # urllib raises many distinct classes here; the debug log keeps the
         # swallow observable rather than silent.
-        logger.debug(
-            "health probe failed for port=%d: %s", port, exc, exc_info=True
-        )
+        logger.debug("health probe failed for port=%d: %s", port, exc, exc_info=True)
         return None
 
 
