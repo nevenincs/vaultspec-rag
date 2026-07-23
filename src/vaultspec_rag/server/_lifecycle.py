@@ -151,6 +151,8 @@ def _daemon_discovery_snapshot(
     phase: str,
     started_at: str,
     phase_detail: str = "",
+    phase_done: int | None = None,
+    phase_total: int | None = None,
 ) -> dict[str, object]:
     """Build one complete discovery view from daemon-owned live state.
 
@@ -196,6 +198,12 @@ def _daemon_discovery_snapshot(
     }
     if _m._launch_token:
         fields["launch_token"] = _m._launch_token
+    # Optional count for a determinate startup signal (e.g. models loaded of the
+    # configured set). Carried only when a total is known so a countless stage
+    # publishes just the label; consumers absent the fields render a spinner.
+    if phase_total is not None:
+        fields["phase_total"] = phase_total
+        fields["phase_done"] = phase_done or 0
     fields.update(_qdrant_discovery_fields())
     return fields
 
@@ -221,6 +229,8 @@ class _DiscoveryPublisher:
     started_at: str = field(default_factory=_discovery_timestamp)
     phase: str = SERVICE_PHASE_WARMING
     phase_detail: str = ""
+    phase_done: int | None = None
+    phase_total: int | None = None
     _guard: threading.RLock = field(
         default_factory=threading.RLock,
         init=False,
@@ -230,7 +240,13 @@ class _DiscoveryPublisher:
     _cleaned: bool = field(default=False, init=False, repr=False)
 
     def publish_phase(
-        self, phase: str, *, detail: str = "", require: bool = False
+        self,
+        phase: str,
+        *,
+        detail: str = "",
+        done: int | None = None,
+        total: int | None = None,
+        require: bool = False,
     ) -> dict[str, object] | None:
         """Set *phase* (and optional cold-start *detail*) and publish it.
 
@@ -253,6 +269,8 @@ class _DiscoveryPublisher:
                 return None
             self.phase = phase
             self.phase_detail = detail
+            self.phase_done = done
+            self.phase_total = total
             return self._publish_locked(require=require)
 
     def heartbeat(self) -> dict[str, object] | None:
@@ -370,6 +388,8 @@ class _DiscoveryPublisher:
             phase=self.phase,
             started_at=self.started_at,
             phase_detail=self.phase_detail,
+            phase_done=self.phase_done,
+            phase_total=self.phase_total,
         )
         try:
             status_path = _m._status_file_path()

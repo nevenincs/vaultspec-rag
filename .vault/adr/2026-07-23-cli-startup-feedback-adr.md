@@ -72,8 +72,10 @@ already carries `phase_detail`. Where a stage exposes a discrete count (models
 loaded of the configured set) the daemon fills `done`/`total`; where it does not
 (reconcile), it publishes the label alone. The CLI start wait reads that
 descriptor each poll and renders a spinner that names the current stage,
-upgrading to a determinate Rich bar whenever `total` is present, and falls back
-to the current label when the field is absent so an older daemon still works.
+appending a determinate `(done/total)` count to the stage label whenever
+`total` is present (the pragmatic determinate signal for a small-N startup
+count, in place of a graphical bar), and falls back to the plain label when the
+field is absent so an older daemon still works.
 The coarse `phase` remains the authoritative machine-readable state and the
 `--json` path is unchanged. Service startup is the surface this feature owns;
 index-build progress remains the jobs-operability surface and is not duplicated

@@ -149,6 +149,47 @@ class TestStartupPhaseLabel:
         )
         assert _startup_phase_label(None) == "provisioning the qdrant server"
 
+    def test_renders_determinate_count_when_total_present(
+        self, isolated_status_dir: Path
+    ) -> None:
+        from ..cli._service_start import _startup_phase_label
+
+        self._write_status(
+            isolated_status_dir,
+            {
+                "pid": 1,
+                "port": 8766,
+                "phase": "warming",
+                "phase_detail": "loading models",
+                "phase_done": 2,
+                "phase_total": 3,
+            },
+        )
+        assert _startup_phase_label(None) == "loading models (2/3)"
+
+    def test_older_daemon_without_a_count_falls_back_to_plain_label(
+        self, isolated_status_dir: Path
+    ) -> None:
+        # Guard for the descriptor-less fallback: a daemon that stamps a label
+        # but no count (an older build, or a countless stage) must render the
+        # plain label with NO "(x/y)" suffix. Both directions: adding the count
+        # keys makes the suffix appear (asserted above); their absence must not.
+        # Break-and-watch: temporarily writing phase_total here would flip the
+        # assertion to the counted form, proving the suffix is bound to the
+        # count fields and not always emitted.
+        from ..cli._service_start import _startup_phase_label
+
+        self._write_status(
+            isolated_status_dir,
+            {
+                "pid": 1,
+                "port": 8766,
+                "phase": "warming",
+                "phase_detail": "loading models",
+            },
+        )
+        assert _startup_phase_label(None) == "loading models"
+
     def test_falls_back_to_generic_warming_without_detail(
         self, isolated_status_dir: Path
     ) -> None:

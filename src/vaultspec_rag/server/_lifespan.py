@@ -468,10 +468,19 @@ async def _start_components(
     # the longest cold-start stage - a first run downloads the weights - so the
     # spinner names it, then names the reranker separately.
     t0 = time.perf_counter()
-    discovery.publish_phase("warming", detail="loading models")
+    reranker_enabled = bool(get_config().reranker_enabled)
+    # load_model brings up the dense and sparse encoders (two models); the
+    # reranker, when enabled, is the third. Publishing done/total against that
+    # count gives the start spinner a determinate "N of M" signal.
+    model_total = 3 if reranker_enabled else 2
+    discovery.publish_phase(
+        "warming", detail="loading models", done=0, total=model_total
+    )
     await _run_in_thread(_m._registry.load_model)
-    if bool(get_config().reranker_enabled):
-        discovery.publish_phase("warming", detail="loading the reranker")
+    if reranker_enabled:
+        discovery.publish_phase(
+            "warming", detail="loading the reranker", done=2, total=model_total
+        )
         await _run_in_thread(_m._registry.get_reranker)
     logger.info("All models loaded in %.2fs", time.perf_counter() - t0)
 
