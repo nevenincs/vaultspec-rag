@@ -31,7 +31,11 @@ from .._machine_lock import (
 )
 from ..capabilities import backend_capabilities_dict
 from ..logging_config import log_event
-from ._lifecycle import RunningClaimContendedError, _DiscoveryPublisher
+from ._lifecycle import (
+    _QDRANT_CLIENT_OP_TIMEOUT_SECONDS,
+    RunningClaimContendedError,
+    _DiscoveryPublisher,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -170,7 +174,7 @@ def _reconcile_storage_manifest() -> None:
 
         cfg = get_config()
         url = str(cfg.qdrant_url or "") or f"http://127.0.0.1:{cfg.qdrant_port}"
-        client = QdrantClient(url=url)
+        client = QdrantClient(url=url, timeout=_QDRANT_CLIENT_OP_TIMEOUT_SECONDS)
         try:
             names = [c.name for c in client.get_collections().collections]
         finally:

@@ -57,6 +57,14 @@ from ..serviceclient._discovery import (
 from ._state import _HEARTBEAT_INTERVAL_SECONDS, _HEARTBEAT_STALENESS_SECONDS
 
 logger = logging.getLogger("vaultspec_rag.server")
+
+# Bound every managed-Qdrant client operation (get_collections, survey,
+# maintenance) so a half-dead child that accepts the socket but never answers
+# cannot block the caller forever. The startup manifest reconcile runs on the
+# critical path with the machine lease held, so an unbounded call there would
+# strand the singleton; the qdrant-client floor does not guarantee a default.
+_QDRANT_CLIENT_OP_TIMEOUT_SECONDS = 30
+
 _atexit_publisher: _DiscoveryPublisher | None = None
 
 
@@ -656,7 +664,7 @@ def _storage_maintenance_tick_sync() -> None:
         "maintenance", "schedule", command="storage_maintenance"
     )
     url = str(cfg.qdrant_url or "") or f"http://127.0.0.1:{cfg.qdrant_port}"
-    client = QdrantClient(url=url)
+    client = QdrantClient(url=url, timeout=_QDRANT_CLIENT_OP_TIMEOUT_SECONDS)
     now = datetime.now(UTC)
     try:
         result = run_maintenance_cycle(
@@ -734,7 +742,7 @@ def _storage_survey_warm_sync() -> None:
     if not cfg.effective_server_mode():
         return
     url = str(cfg.qdrant_url or "") or f"http://127.0.0.1:{cfg.qdrant_port}"
-    client = QdrantClient(url=url)
+    client = QdrantClient(url=url, timeout=_QDRANT_CLIENT_OP_TIMEOUT_SECONDS)
     try:
         surveys = gather_survey(client, server_storage_collections_dir())
     finally:
