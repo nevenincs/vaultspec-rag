@@ -1,0 +1,28 @@
+---
+tags:
+  - '#exec'
+  - '#document-chunk-bounding'
+date: '2026-07-23'
+modified: '2026-07-23'
+step_id: 'S13'
+related:
+  - "[[2026-07-23-document-chunk-bounding-plan]]"
+---
+
+# release the allocator cache immediately before rebasing peak counters so a job's peaks describe that job
+
+## Scope
+
+- `src/vaultspec_rag/memory_probe.py`
+
+## Description
+
+- Call `empty_cache()` immediately before `reset_peak_memory_stats()` in `reset_cuda_peak_memory_stats` so the rebased peak counters describe the admitted job, not process retention history.
+
+## Outcome
+
+A job's recorded peaks start from genuinely retained memory; the reset means what its name implies.
+
+## Notes
+
+Landed in commit `29168706` (same authorization as the enforcement removal).
