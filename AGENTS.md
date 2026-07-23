@@ -5,6 +5,7 @@ You MUST respect these rules at all times:
 
 @.codex/rules/automated-destruction-requires-time-confirmed-danglingness.md
 @.codex/rules/broker-facing-cli-outcomes-are-structured-and-idempotent.md
+@.codex/rules/code-cites-nothing-in-the-vault.md
 @.codex/rules/gpu-consumer-single-thread.md
 @.codex/rules/gpu-lock-wraps-forward-passes-only.md
 @.codex/rules/guard-tests-prove-they-can-fail.md
