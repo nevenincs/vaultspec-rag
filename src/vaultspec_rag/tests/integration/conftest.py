@@ -404,6 +404,7 @@ def _live_service_context(
     *,
     startup_budget: float | None = None,
     model_ids: tuple[str, ...] | None = None,
+    watch: bool = False,
 ) -> Generator[tuple[int, Path]]:
     """Start the real service under one model-to-readiness deadline envelope."""
     from ...cli import _spawn_service, _write_service_status
@@ -478,7 +479,7 @@ def _live_service_context(
             pid = _spawn_service(
                 port,
                 log_path,
-                watch=False,
+                watch=watch,
                 timeout=remaining_budget(current_stage),
                 cleanup_timeout=cleanup_reserve,
             )
@@ -563,4 +564,20 @@ def live_service(
 ) -> Generator[tuple[int, Path]]:
     """Provide a cache-prepared, offline real service with bounded startup."""
     with _live_service_context(tmp_path) as service:
+        yield service
+
+
+@pytest.fixture
+def live_service_with_watch(
+    tmp_path: Path,
+) -> Generator[tuple[int, Path]]:
+    """Provide a real service spawned with the file watcher enabled.
+
+    ``live_service`` spawns with ``watch=False``; tests that exercise
+    watcher-dependent behavior (``watch_enabled`` in ``server updates
+    status``, start/stop/reconfigure) need a daemon where
+    ``_ensure_watcher`` actually admits a watcher, which requires the
+    watcher enabled at spawn.
+    """
+    with _live_service_context(tmp_path, watch=True) as service:
         yield service
