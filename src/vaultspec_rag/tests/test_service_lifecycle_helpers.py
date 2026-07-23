@@ -1,5 +1,4 @@
-"""Unit tests for service-lifecycle helper logic introduced in W02.P03.S05,
-W02.P04.S09, and W02.P04.S10.
+"""Unit tests for service-lifecycle helper logic.
 
 These tests exercise pure-logic helpers that do not require a live daemon,
 a real port, or GPU models.  They redirect the status directory via

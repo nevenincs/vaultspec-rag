@@ -1,4 +1,4 @@
-"""Integration tests for watcher config wiring (#143/#144, plan P02).
+"""Integration tests for watcher config wiring (#143/#144).
 
 Exercises the real ``_ensure_watcher`` path against the global service
 registry and a real GPU-backed slot. No mocks: env vars are set on the

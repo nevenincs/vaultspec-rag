@@ -114,7 +114,7 @@ class TestHelpCleanup:
     - No developer docstring tokens (Args:, Raises:, CLIState, ctx).
     - The operator summary is present.
 
-    W03.P06.S13 (#170).
+    (#170).
     """
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]

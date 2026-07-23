@@ -1,4 +1,4 @@
-"""Integration tests for the watcher-control MCP tools (#143/#144, plan P04).
+"""Integration tests for the watcher-control MCP tools (#143/#144).
 
 Drives the real ``start_watcher`` / ``stop_watcher`` / ``reconfigure_watcher``
 / ``get_watcher_state`` tools against the global registry with a real

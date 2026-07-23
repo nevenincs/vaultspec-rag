@@ -9,9 +9,6 @@ temp-isolated resolution state. The report's read-only contract is
 proven by asserting the managed dir and the configured pyproject are
 untouched across a computation, and the serialisable shape is proven by
 round-tripping through ``json.dumps``.
-
-See the plan ``2026-06-13-server-first-default-plan`` (W03.P07) and the
-ADR ``2026-06-13-provisioning-setup-adr``.
 """
 
 from __future__ import annotations

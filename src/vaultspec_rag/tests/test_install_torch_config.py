@@ -562,7 +562,7 @@ class TestInstallTorchConfigFollowups:
     def test_install_confirm_click_abort_caused_by_eof_reports_skipped_eof(
         self, consumer_workspace: Path
     ) -> None:
-        """BEHAV-02 regression: Rich's ``Confirm.ask`` on Windows
+        """Regression: Rich's ``Confirm.ask`` on Windows
         re-raises a stdin EOF as ``click.Abort`` rather than the bare
         ``EOFError`` other platforms see. The install handler must walk
         the exception chain and route those to ``SKIPPED_EOF`` so the
@@ -1131,7 +1131,7 @@ class TestInstallTorchGroupPlacement:
     def test_group_target_writes_under_group_not_project_deps(
         self, consumer_workspace: Path
     ) -> None:
-        """P04.S08: a ``--torch-group`` target writes torch under
+        """A ``--torch-group`` target writes torch under
         ``[dependency-groups].<NAME>`` and NOT ``[project].dependencies``,
         with the cu130 index and sources block still written.
         """
@@ -1186,7 +1186,7 @@ class TestInstallTorchGroupPlacement:
     def test_marker_records_group_location_and_uninstall_removes_group(
         self, consumer_workspace: Path
     ) -> None:
-        """P04.S09 (group half): the marker records the group location and
+        """With a group target, the marker records the group location and
         uninstall removes the group entry, clearing the marker.
         """
         install_run(path=consumer_workspace, assume_yes=True, torch_group="rag")
@@ -1208,7 +1208,7 @@ class TestInstallTorchGroupPlacement:
     def test_legacy_boolean_marker_still_removes_from_project_deps(
         self, tmp_path: Path
     ) -> None:
-        """P04.S09 (legacy half): an existing install carrying the bare
+        """An existing install carrying the bare
         boolean ``managed-torch-direct-dependency = true`` marker must
         still uninstall correctly from ``[project].dependencies``.
         """
@@ -1249,7 +1249,7 @@ class TestInstallTorchGroupPlacement:
     def test_default_no_flag_path_writes_project_deps_unchanged(
         self, consumer_workspace: Path, tmp_path: Path
     ) -> None:
-        """P04.S10 (default half): with no group flag the managed dep lands
+        """With no group flag the managed dep lands
         in ``[project].dependencies`` exactly as before. Compare the
         produced pyproject byte-for-byte against the historic write so a
         future refactor cannot drift the default surface.
@@ -1279,8 +1279,8 @@ class TestInstallTorchGroupPlacement:
     def test_user_declared_torch_in_group_is_left_untouched(
         self, tmp_path: Path
     ) -> None:
-        """P04.S10 (preserve half): a user-declared torch already in a
-        dependency group is never marked or touched. A no-group install
+        """A user-declared torch already in a dependency group is never marked
+        or touched. A no-group install
         leaves it; uninstall does not remove it (no marker).
         """
         ws = tmp_path / "user-group-torch"
@@ -1316,7 +1316,7 @@ class TestInstallTorchGroupPlacement:
     def test_rerun_with_different_target_warns_and_does_not_migrate(
         self, consumer_workspace: Path
     ) -> None:
-        """P02.S06: a re-run whose ``--torch-group`` differs from the
+        """A re-run whose ``--torch-group`` differs from the
         existing managed placement warns and no-ops rather than migrating.
         """
         # First install: project-deps default.

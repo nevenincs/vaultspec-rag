@@ -1,4 +1,4 @@
-"""``server stop --port`` targeting tests (plan W04.P09).
+"""``server stop --port`` targeting tests.
 
 No mocks, no GPU: the port-resolution path is exercised against real loopback
 sockets. ``server stop --port`` resolves the running instance from its /health

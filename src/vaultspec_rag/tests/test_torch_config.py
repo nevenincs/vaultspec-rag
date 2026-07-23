@@ -1075,7 +1075,7 @@ def test_apply_lf_file_stays_lf(tmp_path: Path) -> None:
 
 
 def test_apply_remove_round_trip_byte_equal(tmp_path: Path) -> None:
-    """BEHAV-01 regression: the ADR's symmetric-mirror promise
+    """Symmetric-mirror regression: the promise
     requires apply → remove to leave the file *byte-identical* to its
     pre-apply content. Prior to the trailing-newline preservation in
     ``_match_trailing_newline`` the round-trip appended a stray LF.

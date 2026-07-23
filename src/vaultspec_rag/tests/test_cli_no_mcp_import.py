@@ -1,6 +1,6 @@
 """The CLI/daemon import path must not load the optional ``mcp`` extra.
 
-``mcp`` is an opt-in extra (the ``mcp-optional-dependency`` ADR), because the CLI
+``mcp`` is an opt-in extra, because the CLI
 and the HTTP search daemon never import it - so a base install must not drag it
 or, on Windows, its ``pywin32`` transitive. This guard runs in a fresh
 interpreter subprocess: the in-process ``sys.modules`` is polluted by other

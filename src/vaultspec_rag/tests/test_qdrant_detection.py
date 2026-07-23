@@ -1,4 +1,4 @@
-"""Qdrant holder/orphan detection primitive tests (plan W01.P02).
+"""Qdrant holder/orphan detection primitive tests.
 
 No mocks, no GPU: the endpoint probe runs against a real stdlib HTTP server on
 an ephemeral loopback port, pid-liveness is checked against this process and a

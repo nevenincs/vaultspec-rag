@@ -624,8 +624,8 @@ class TestEncodeRecoveryStaysBounded:
 class TestStdioLifetimeWatchdogStaysThin:
     """The stdio lifetime watchdog honors the thin-client decisions.
 
-    The mcp-stdio-lifetime ADR binds the watchdog to the service-client
-    and optional-mcp ADRs: its import graph must load neither ``torch``
+    The watchdog binds the shim's lifetime to the service client: its
+    import graph must load neither ``torch``
     nor ``mcp`` (fresh interpreter - the in-process ``sys.modules`` is
     polluted by other tests), and only the stdio branch of the entry
     point may install it - the HTTP daemon outlives its spawner by
@@ -672,8 +672,7 @@ assert not loaded, loaded
             "a daemon that dies with its spawner breaks the resident service"
         )
         assert "install_stdio_lifetime_watchdog" in stdio_branch, (
-            "the stdio branch must install the lifetime watchdog "
-            "(mcp-stdio-lifetime ADR)"
+            "the stdio branch must install the lifetime watchdog"
         )
         assert "install_stdio_lifetime_watchdog" not in inspect.getsource(_lifespan), (
             "service lifespan must not reference the stdio watchdog installer"

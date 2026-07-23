@@ -8,10 +8,6 @@ local-only persistence is a real round-trip through the managed service
 directory (isolated to ``tmp_path`` via ``VAULTSPEC_RAG_STATUS_DIR``), and
 the config resolver's precedence is asserted against the real env / marker
 / default chain.
-
-See the plan ``2026-06-13-server-first-default-plan`` (W02.P05) and the
-ADRs ``2026-06-13-provisioning-setup-adr`` /
-``2026-06-13-server-first-default-adr``.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Reap-to-spawn port-release poll tests (plan W04.P09).
+"""Reap-to-spawn port-release poll tests.
 
 No mocks, no GPU: the helper is exercised against real loopback sockets. After a
 successful orphan reap the supervisor must wait for the prior child's listening

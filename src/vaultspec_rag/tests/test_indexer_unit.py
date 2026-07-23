@@ -1242,7 +1242,7 @@ class TestR11M1NonAsciiChunkText:
 
 
 class TestVaultragignore:
-    """Tests for .vaultragignore support and extra_excludes (D1-D7)."""
+    """Tests for .vaultragignore support and extra_excludes."""
 
     @pytest.mark.unit
     def test_vaultragignore_excludes_matching_files(self, tmp_path: Path):
@@ -1264,7 +1264,7 @@ class TestVaultragignore:
 
     @pytest.mark.unit
     def test_missing_vaultragignore_no_error(self, tmp_path: Path):
-        """Missing .vaultragignore is silently ignored (D3)."""
+        """Missing .vaultragignore is silently ignored."""
         from ..indexer import CodebaseIndexer
 
         (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
@@ -1279,7 +1279,7 @@ class TestVaultragignore:
 
     @pytest.mark.unit
     def test_extra_excludes_applied(self, tmp_path: Path):
-        """CLI --exclude patterns are applied via extra_excludes (D4)."""
+        """CLI --exclude patterns are applied via extra_excludes."""
         from ..indexer import CodebaseIndexer
 
         (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
@@ -1296,7 +1296,7 @@ class TestVaultragignore:
 
     @pytest.mark.unit
     def test_vaultragignore_negation_cannot_override_gitignore(self, tmp_path: Path):
-        """Negation in .vaultragignore cannot un-ignore .gitignore entries (D1)."""
+        """Negation in .vaultragignore cannot un-ignore .gitignore entries."""
         from ..indexer import CodebaseIndexer
 
         (tmp_path / "secret.py").write_text("x = 1\n", encoding="utf-8")
@@ -1318,7 +1318,7 @@ class TestVaultragignore:
 
     @pytest.mark.unit
     def test_vaultragignore_internal_negation_works(self, tmp_path: Path):
-        """Negation within .vaultragignore works for its own patterns (D1).
+        """Negation within .vaultragignore works for its own patterns.
 
         *.test.py is excluded, but !important.test.py brings it back.
         """
@@ -1343,7 +1343,7 @@ class TestVaultragignore:
 
     @pytest.mark.unit
     def test_gitignore_still_respected_alongside_vaultragignore(self, tmp_path: Path):
-        """Both .gitignore and .vaultragignore exclusions are applied (D1)."""
+        """Both .gitignore and .vaultragignore exclusions are applied."""
         from ..indexer import CodebaseIndexer
 
         (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
@@ -1364,7 +1364,7 @@ class TestVaultragignore:
 
     @pytest.mark.unit
     def test_scan_files_matches_scan_codebase(self, tmp_path: Path):
-        """scan_files() returns the same result as _scan_codebase() (D5)."""
+        """scan_files() returns the same result as _scan_codebase()."""
         from ..indexer import CodebaseIndexer
 
         (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")

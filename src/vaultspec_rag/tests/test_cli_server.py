@@ -128,7 +128,7 @@ class TestServerCommands:
 
 
 class TestServerRoutingFlattened:
-    """Verify the flattened `server` command surface (W03.P05.S12 #169).
+    """Verify the flattened `server` command surface (#169).
 
     The `service` nesting level is removed; lifecycle commands and
     operator sub-groups now live directly under `server`.

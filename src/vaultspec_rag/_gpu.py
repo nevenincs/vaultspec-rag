@@ -23,7 +23,12 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["CUDA_REQUIRED_MESSAGE", "TORCH_MISSING_MESSAGE", "load_torch"]
+__all__ = [
+    "CUDA_REQUIRED_MESSAGE",
+    "TORCH_MISSING_MESSAGE",
+    "is_cuda_out_of_memory",
+    "load_torch",
+]
 
 TORCH_MISSING_MESSAGE = (
     "GPU RAG dependencies not installed: torch is missing. Run `uv sync`, "
@@ -36,6 +41,15 @@ CUDA_REQUIRED_MESSAGE = (
     "a CPU-only build, or no NVIDIA GPU is present - install the cu130 torch "
     "wheel with `vaultspec-rag install` on a CUDA-capable machine."
 )
+
+
+def is_cuda_out_of_memory(exc: BaseException) -> bool:
+    """Classify a Torch allocator failure without importing Torch elsewhere."""
+    try:
+        import torch
+    except ImportError:
+        return False
+    return isinstance(exc, torch.cuda.OutOfMemoryError)
 
 
 def load_torch() -> Any:
@@ -53,4 +67,9 @@ def load_torch() -> Any:
         raise ImportError(TORCH_MISSING_MESSAGE) from exc
     if not torch.cuda.is_available():
         raise RuntimeError(CUDA_REQUIRED_MESSAGE)
+    from .config import get_config
+
+    torch.cuda.set_per_process_memory_fraction(
+        get_config().index_cuda_allocator_fraction,
+    )
     return torch

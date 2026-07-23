@@ -1,4 +1,4 @@
-"""Operator-persona testimonial integration tests for the CLI (W03.P08.S15).
+"""Operator-persona testimonial integration tests for the CLI.
 
 Three operator personas each run a scripted real CLI sequence using
 ``typer.testing.CliRunner`` (for workspace-free commands) and the

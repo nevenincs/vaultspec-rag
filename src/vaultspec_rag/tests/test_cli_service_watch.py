@@ -1,4 +1,4 @@
-"""Unit tests for service-start watcher flag -> env translation (plan P03).
+"""Unit tests for service-start watcher flag -> env translation.
 
 The daemon inherits config only via the environment, so ``service start``
 flags are translated into ``VAULTSPEC_RAG_WATCH*`` by ``_service_child_env``.

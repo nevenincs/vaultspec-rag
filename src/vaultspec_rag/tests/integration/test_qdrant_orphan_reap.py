@@ -1,4 +1,4 @@
-"""Managed-Qdrant orphan reaping tests (plan W03.P06).
+"""Managed-Qdrant orphan reaping tests.
 
 No mocks, no GPU: reaping is exercised against a real spawned child process, and
 the "a live holder is never reaped" guarantee is checked at the decision layer

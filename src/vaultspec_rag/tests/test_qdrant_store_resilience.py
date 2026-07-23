@@ -1,7 +1,7 @@
 """Corrupt-collection resilience for the shared Qdrant store (real FS, real subprocess).
 
 Exercises the detect-quarantine-retry recovery from the
-``qdrant-store-resilience`` ADR with no mocks: quarantine is a real directory
+Store-resilience tests with no mocks: quarantine is a real directory
 move, detection runs against a real on-disk collection set, and the bounded
 retry drives a real ``QdrantSupervisor`` against a fake binary that always aborts
 after naming a collection - so the loop quarantines under its bound and then
@@ -45,7 +45,7 @@ def _make_collection(storage: Path, name: str) -> Path:
 
 
 class TestQuarantine:
-    """The quarantine primitive moves a collection aside reversibly (QR2)."""
+    """The quarantine primitive moves a collection aside reversibly."""
 
     def test_quarantine_moves_collection_out_of_the_load_set(
         self, tmp_path: Path
@@ -70,7 +70,7 @@ class TestQuarantine:
 
 
 class TestDetection:
-    """Detection keys on the on-disk set, and abstains when unsure (QR1/QR4)."""
+    """Detection keys on the on-disk set, and abstains when unsure."""
 
     def test_names_the_on_disk_collection_on_a_load_panic(self, tmp_path: Path) -> None:
         _make_collection(tmp_path, "r0abc_vault_docs")
@@ -134,7 +134,7 @@ sys.exit(1)
 """
 
 # Fake binary that dies on a global fault naming no collection - detection must
-# abstain (QR4), so the start fails with zero quarantines.
+# abstain, so the start fails with zero quarantines.
 _FAKE_CORRUPT_UNNAMED = """
 import sys
 sys.stdout.write("thread 'main' panicked: corrupt raft_state.json; aborting\\n")
@@ -170,7 +170,7 @@ def _fake_binary(tmp_path: Path, source: str, name: str = "fake_qdrant") -> Path
 
 
 class TestBoundedRetry:
-    """The supervised start quarantines under its bound, then fails loudly (QR3)."""
+    """The supervised start quarantines under its bound, then fails loudly."""
 
     def test_perpetually_corrupt_store_quarantines_up_to_the_bound_then_raises(
         self, tmp_path: Path
@@ -202,7 +202,7 @@ class TestBoundedRetry:
     def test_dead_child_naming_no_collection_abstains_with_zero_quarantines(
         self, tmp_path: Path
     ) -> None:
-        """A global panic naming no on-disk collection quarantines nothing (QR4)."""
+        """A global panic naming no on-disk collection quarantines nothing."""
         storage = tmp_path / "qdrant-server" / "storage"
         _make_collection(storage, "r0000_vault_docs")
         binary = _fake_binary(tmp_path, _FAKE_CORRUPT_UNNAMED, name="unnamed")
@@ -225,7 +225,7 @@ class TestBoundedRetry:
         tmp_path: Path,
         required_host_provisioned_qdrant_source: tuple[Path, Path],
     ) -> None:
-        """A healthy-but-slow child that times out must not be read as corrupt (QR4)."""
+        """A healthy-but-slow child that times out must not be read as corrupt."""
         storage = tmp_path / "qdrant-server" / "storage"
         _make_collection(storage, "r0000_vault_docs")
         binary, _manifest = required_host_provisioned_qdrant_source
@@ -290,7 +290,7 @@ def isolated_storage(tmp_path: Path) -> Iterator[Path]:
 
 
 class TestQuarantineCli:
-    """The `server qdrant quarantine` escape-hatch verb lists and moves (QR5)."""
+    """The `server qdrant quarantine` escape-hatch verb lists and moves."""
 
     def test_list_dry_run_refuse_then_quarantine(self, isolated_storage: Path) -> None:
         _make_collection(isolated_storage, "r0abc_vault_docs")

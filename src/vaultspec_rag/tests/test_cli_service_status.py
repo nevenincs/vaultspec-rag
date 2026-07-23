@@ -218,7 +218,7 @@ class TestServiceDaemonHelpers:
             t.join(timeout=5)
 
     def test_service_status_default_human_output_is_plain_summary(self, tmp_path: Path):
-        """service status renders the W06.P01 plain operator summary by default."""
+        """service status renders the plain operator summary by default."""
         import json
 
         server, thread = _status_contract_server()

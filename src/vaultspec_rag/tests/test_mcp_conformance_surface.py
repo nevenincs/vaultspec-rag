@@ -1,7 +1,7 @@
 """MCP conformance: closed-domain adapters, annotations, and legible errors.
 
 Introspects the real FastMCP instance (no mocks) to assert the surface decided
-by the ``mcp-search-scope`` ADR - exactly the search, index-refresh, and
+for the narrowed surface - exactly the search, index-refresh, and
 read-only retrieval tools, carrying spec-correct 2025-11-25 annotations and
 titles - and exercises the transport's legible-error contract against a real
 local HTTP server returning an empty-body 404 (the opaque failure the grounding

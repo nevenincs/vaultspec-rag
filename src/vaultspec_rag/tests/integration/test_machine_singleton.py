@@ -1,4 +1,4 @@
-"""Machine-scoped service-lock tests (plan W03.P05).
+"""Machine-scoped service-lock tests.
 
 No mocks, no GPU: the lock is an OS advisory lock, so a "foreign holder" is a
 real subprocess that actually holds the lock (not merely a pid written to the
