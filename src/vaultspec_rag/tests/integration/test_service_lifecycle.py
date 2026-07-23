@@ -50,7 +50,7 @@ from ._helpers import (
     _service_env,
     _wait_for_exit,
 )
-from .conftest import _live_service_context
+from .conftest import _live_service_context, _startup_cleanup_reserve
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
@@ -538,7 +538,11 @@ def test_live_service_readiness_expiry_uses_reserved_cleanup_budget(
     elapsed = time.monotonic() - started
 
     message = str(caught.value)
-    assert elapsed < budget + 0.5
+    # Cleanup is now guaranteed at least its full reserved window even if
+    # earlier stages overran their own nominal deadlines under machine load,
+    # so the ceiling here allows for that guaranteed floor plus a margin -
+    # not just the bare startup budget - while still catching a genuine hang.
+    assert elapsed < budget + _startup_cleanup_reserve(budget) + 1.0
     assert "stage=health readiness" in message
     assert "startup failure teardown" in message
     assert "cleanup_error=" not in message, message
