@@ -244,6 +244,14 @@ _HEARTBEAT_STALENESS_SECONDS = 60
 # process is authorized to perform.
 _DEFAULT_GRACEFUL_DRAIN_SECONDS = 2.0
 
+# Per-probe budget for a single OS-inspection call inside the late-spawn
+# cleanup. A psutil read (a process's create-time, or a full process-table
+# scan reading each cmdline) can stall on Windows for a protected or wedged
+# process, and the enclosing deadline loop cannot interrupt a call already
+# blocked mid-iteration - only a bound on the call itself can. Kept well under
+# the whole-cleanup timeout so a healthy probe always completes within it.
+_PROBE_BUDGET_SECONDS = 1.0
+
 
 def _port_is_listening(port: int) -> bool:
     """Return True when ``127.0.0.1:port`` accepts a TCP connection.
@@ -567,6 +575,7 @@ def _cleanup_late_service_spawn(
         discovered, last_error = _discover_late_service_pids(
             port=port,
             launch_token=launch_token,
+            budget=discovery_deadline - time.monotonic(),
         )
         candidates.update(discovered)
         if any(pid != launcher_pid for pid in candidates):
@@ -584,6 +593,7 @@ def _cleanup_late_service_spawn(
         discovered, last_error = _discover_late_service_pids(
             port=port,
             launch_token=launch_token,
+            budget=deadline - time.monotonic(),
         )
         candidates.update(discovered)
         live = [
@@ -614,8 +624,16 @@ def _discover_late_service_pids(
     *,
     port: int,
     launch_token: str,
+    budget: float = _PROBE_BUDGET_SECONDS,
 ) -> tuple[dict[int, float], str]:
-    """Discover exact late-launch members by their unguessable argv witness."""
+    """Discover exact late-launch members by their unguessable argv witness.
+
+    ``budget`` is the caller's remaining deadline, and bounds the process-table
+    scan so it can never outrun that deadline. A scan that exceeds it yields no
+    candidates and a legible reason - the launcher itself is always handled
+    through the known-candidate path, so a slow or stalled scan degrades extra
+    discovery rather than blocking the cleanup.
+    """
     candidates: dict[int, float] = {}
     status = _cli._read_service_status()
     status_pid = 0
@@ -627,9 +645,44 @@ def _discover_late_service_pids(
         raw_pid = status.get("pid")
         if isinstance(raw_pid, int) and not isinstance(raw_pid, bool) and raw_pid > 0:
             status_pid = raw_pid
-    try:
-        import psutil
+    # The process-table scan reads every process's cmdline, which can stall on
+    # Windows for a protected or wedged process. Run it under the caller's
+    # remaining budget on a daemon thread so a single stuck read cannot block
+    # the cleanup past its deadline; a timed-out scan yields no candidates and a
+    # legible reason, exactly as an errored scan does.
+    from ..qdrant_runtime._resolve import _bounded_call
 
+    scanned = _bounded_call(
+        lambda: _scan_witness_pids(port=port, launch_token=launch_token),
+        timeout=max(0.0, budget),
+        fallback=_SCAN_TIMED_OUT,
+        label="late-spawn-scan",
+    )
+    if scanned == _SCAN_TIMED_OUT:
+        return candidates, "late-service process scan exceeded its probe budget"
+    if isinstance(scanned, str):
+        return candidates, scanned
+    candidates.update(scanned)
+    if status_pid and status_pid not in candidates:
+        return (
+            candidates,
+            "matching launch-token status pid did not carry the same "
+            "launch-token command witness",
+        )
+    return candidates, ""
+
+
+#: Sentinel distinguishing a scan that ran out of budget from one that
+#: legitimately found no witnesses; never a real error string.
+_SCAN_TIMED_OUT = "__late_spawn_scan_timed_out__"
+
+
+def _scan_witness_pids(*, port: int, launch_token: str) -> dict[int, float] | str:
+    """Return witness pids by argv, or an error string. Runs under a budget."""
+    import psutil
+
+    found: dict[int, float] = {}
+    try:
         for process in psutil.process_iter(["pid", "cmdline", "create_time"]):
             info = cast("dict[str, object]", process.info)
             created = info.get("create_time")
@@ -645,16 +698,10 @@ def _discover_late_service_pids(
                 continue
             raw_pid = info.get("pid")
             if isinstance(raw_pid, int) and not isinstance(raw_pid, bool):
-                candidates[raw_pid] = float(created)
-        if status_pid and status_pid not in candidates:
-            return (
-                candidates,
-                "matching launch-token status pid did not carry the same "
-                "launch-token command witness",
-            )
+                found[raw_pid] = float(created)
     except Exception as exc:
-        return candidates, f"{exc.__class__.__name__}: {exc}"
-    return candidates, ""
+        return f"{exc.__class__.__name__}: {exc}"
+    return found
 
 
 def _is_service_command(
@@ -682,16 +729,19 @@ def _is_service_command(
 
 
 def _process_start_time(pid: int) -> float:
-    """Return a process-incarnation witness, or zero when it is unreadable."""
+    """Return a process-incarnation witness, or zero when it is unreadable.
+
+    Delegates to the shared, time-bounded ``pid_start_time`` rather than reading
+    ``psutil`` directly: the direct read is unbounded and a stalled probe would
+    block the whole late-spawn cleanup past its deadline. A read that exceeds
+    the per-probe budget returns zero, which callers already treat as "cannot
+    confirm this incarnation".
+    """
     if pid <= 0:
         return 0.0
-    try:
-        import psutil
+    from ..qdrant_runtime._resolve import pid_start_time
 
-        return float(psutil.Process(pid).create_time())
-    except Exception as exc:
-        logger.debug("late-spawn pid %d start-time read failed: %s", pid, exc)
-        return 0.0
+    return pid_start_time(pid, timeout=_PROBE_BUDGET_SECONDS)
 
 
 def _pid_matches_start_time(pid: int, expected: float) -> bool:
