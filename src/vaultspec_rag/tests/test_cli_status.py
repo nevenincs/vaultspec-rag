@@ -565,12 +565,13 @@ class TestWarmingStatusState:
         import json
 
         import vaultspec_rag.server as server_state
-        from vaultspec_rag._machine_lock import (
+
+        from .._machine_lock import (
             acquire_machine_lock_lease,
             release_machine_lock_lease,
         )
-        from vaultspec_rag.server._lifecycle import _DiscoveryPublisher
-        from vaultspec_rag.server._lifespan import _stamp_service_phase
+        from ..server._lifecycle import _DiscoveryPublisher
+        from ..server._lifespan import _stamp_service_phase
 
         os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
         os.environ[EnvVar.QDRANT_STORAGE_DIR] = str(tmp_path / "qdrant" / "storage")
