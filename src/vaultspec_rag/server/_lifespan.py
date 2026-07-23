@@ -76,6 +76,8 @@ def _stamp_qdrant_identity(
     publisher: _DiscoveryPublisher,
 ) -> None:
     """Authoritatively publish the ready child before model warming begins."""
+    from pathlib import Path
+
     from ..config import get_config
     from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
     from ..qdrant_runtime._resolve import (
@@ -102,7 +104,7 @@ def _stamp_qdrant_identity(
         identity,
         expected_port=supervisor.http_port,
         expected_version=QDRANT_SERVER_VERSION,
-        expected_storage=str(cfg.qdrant_storage_dir),
+        expected_storage=str(Path(str(cfg.qdrant_storage_dir)).expanduser()),
     )
     if not attachable:
         raise RuntimeError(
