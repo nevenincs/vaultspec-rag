@@ -4,8 +4,8 @@ Scans vault documents, extracts metadata, generates embeddings, and
 stores them in the Qdrant vector store. Supports full and incremental
 indexing.
 
-This module was split into a package (``indexer/``) per the
-``2026-06-01-module-split-adr``. The verbatim public surface - the
+This module was split into a package (``indexer/``) from a former
+monolith. The verbatim public surface - the
 ``VaultIndexer`` / ``CodebaseIndexer`` orchestration classes, the
 ``IndexResult`` dataclass, the ``prepare_document`` helper, the
 ``ASTChunker`` / ``TextSplitter`` chunkers, the shared

@@ -1,4 +1,4 @@
-"""In-flight activity registry for index/reindex jobs (#142, plan P01).
+"""In-flight activity registry for index/reindex jobs (#142).
 
 Delegates to the backend jobs module to avoid duplicate state and layering issues.
 """

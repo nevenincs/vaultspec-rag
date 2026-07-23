@@ -1,4 +1,4 @@
-"""On-disk cache for preprocessor output (D7).
+"""On-disk cache for preprocessor output.
 
 Re-running a project extractor (OCR, large PDF, workbook parse) on every full
 or restart reindex is wasteful when the source has not changed. This module
@@ -12,7 +12,7 @@ each pass, so a transient extractor failure (e.g. a timeout under load) is never
 made sticky. The cache is consulted inside the CPU-only spawn worker, so this
 module stays torch-free and dependency-light.
 
-Key composition (D7): ``blake2b(source_hash | command | schema_version)``. The
+Key composition: ``blake2b(source_hash | command | schema_version)``. The
 source hash is the dominant invalidation signal - a changed file produces a new
 hash and therefore a new key. The command is the project's explicit lever: a
 project that upgrades its extractor without touching the source bumps the
@@ -227,7 +227,7 @@ def write_cached_output(
 
 
 def clear_preprocess_cache(cache_root: pathlib.Path) -> None:
-    """Remove the entire preprocess cache subtree (for a clean rebuild, D7).
+    """Remove the entire preprocess cache subtree (for a clean rebuild).
 
     Args:
         cache_root: The preprocess cache root.

@@ -1,7 +1,6 @@
 """Console-script entry point for the RAG daemon.
 
-Split out of the original ``server.py`` monolith per the
-``2026-06-01-module-split-adr``. ``main`` remains importable from the
+Split out of the original ``server.py`` monolith. ``main`` remains importable from the
 package root (``vaultspec_rag.server:main``); the
 ``vaultspec-search-mcp`` console script depends on that import path.
 ``_http_mode`` is reassigned on the package namespace so

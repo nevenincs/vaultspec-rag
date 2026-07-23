@@ -148,7 +148,7 @@ class FileChunkResult:
 
     Carrying the blake2b hash back from the same read that produced the chunks
     lets the shared code producer skip a separate hash pass - the tree is read
-    once, not twice (#155 P03 / finding C4). ``slots=True`` keeps the pickled
+    once, not twice (#155). ``slots=True`` keeps the pickled
     payload that crosses the process boundary lean (research O3).
 
     ``preprocess_status`` records the disposition of a document-preprocessing
@@ -156,7 +156,7 @@ class FileChunkResult:
     preprocessor), ``skipped`` (the preprocessor failed under ``on_error=skip``;
     no chunks), ``passthrough`` (the raw file was chunked normally), or ``None``
     (no rule matched). The orchestrator accumulates skip counts and reasons from
-    these for failure-visibility surfacing (D11).
+    these for failure-visibility surfacing.
     """
 
     rel_path: str
@@ -222,7 +222,7 @@ def _cached_output_within_cap(output: PreprocOutput, cap: int) -> bool:
 
 
 def _chunks_from_output(output: PreprocOutput, rel_path: str) -> list[CodeChunk]:
-    """Build ``CodeChunk``s from validated preprocessor output (D6, D12).
+    """Build ``CodeChunk``s from validated preprocessor output.
 
     In ``units`` mode each unit becomes one chunk carrying its anchor and split
     locator. In ``text`` mode the emitted text is run through the ordinary text
@@ -279,7 +279,7 @@ def preprocess_file(
     root_dir: pathlib.Path,
     prep: PreprocessContext,
 ) -> _PreprocessOutcome:
-    """Run the matched preprocess rule for a file, consulting the cache (D6, D7).
+    """Run the matched preprocess rule for a file, consulting the cache.
 
     Returns an outcome whose ``status`` is ``none`` (no rule matched - chunk
     normally), ``ok`` (use the produced chunks), ``skipped`` (drop the file),
@@ -811,7 +811,7 @@ class ScopedChunkResult:
     The scoped path hashes separately, so (unlike the shared weighted
     ``FileChunkResult``) this carries no content hash - only the chunks and the
     preprocess status/reason, so the orchestrator can surface skip counts on the
-    incremental and watcher paths too (#185 D11, review VIS-001).
+    incremental and watcher paths too (#185).
     """
 
     chunks: list[CodeChunk]
@@ -834,7 +834,7 @@ def chunk_file_with_status(
     embed.
 
     When ``prep`` is supplied and a preprocess rule matches, the matched
-    preprocessor runs first (D6): on success its chunks are returned; on a skip
+    preprocessor runs first: on success its chunks are returned; on a skip
     the file yields no chunks but the status/reason are reported; on
     passthrough/no-match the raw file is chunked normally.
 
@@ -912,7 +912,7 @@ def chunk_and_hash_file(
     """Read a file once, returning both its content hash and its chunks.
 
     Code indexing uses this so a production pass reads each selected file once
-    rather than once for hashing and again for chunking (#155 P03). The blake2b
+    rather than once for hashing and again for chunking (#155). The blake2b
     hash is computed over the raw bytes, matching ``hashlib.file_digest`` exactly.
     A file that is readable but not valid UTF-8 still yields its hash (with no
     chunks) so it remains tracked in metadata.
@@ -1112,7 +1112,7 @@ def chunk_batch_files(
 ) -> list[FileChunkResult]:
     """Preprocess a group of files with one batch spawn, then chunk each (#241).
 
-    Reads and hashes every file, consults the D7 cache per file (cache token =
+    Reads and hashes every file, consults the cache per file (cache token =
     the batch rule's command), runs the batch hook once over the cache misses,
     writes a cache entry for each success, then turns every file's output into
     a :class:`FileChunkResult` exactly as the per-file path does: ``ok`` yields

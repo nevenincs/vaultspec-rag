@@ -2,7 +2,7 @@
 
 A root's ``.vaultragpreprocess.toml`` is repo-authored code: running it is the
 same act of trust as building that repo, so hooks run directly with the
-operator's privileges (preprocess-sandbox-removal ADR). What remains here is
+operator's privileges: there is no sandbox. What remains here is
 the cheap, load-bearing hygiene: the child gets a curated, secret-free
 environment (no daemon tokens, no ``VAULTSPEC_RAG_*`` knobs). The caller runs
 the hook with the project root as its cwd - project-launcher commands

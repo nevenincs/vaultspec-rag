@@ -70,7 +70,7 @@ _MANAGED_LOG_BACKUP_COUNT_DEFAULT = 5
 # start before the start fails loudly instead of quarantining further. A
 # pathological store (many corrupt collections, or a non-load panic the parser
 # misreads) must degrade to a clear failure, not loop the whole store into
-# quarantine. See the ``qdrant-store-resilience`` ADR (QR3).
+# quarantine, bounded by a per-start retry count, then fail loudly.
 _MAX_QUARANTINES_PER_START = 3
 
 # Lowercased substrings that mark a collection *load* failure in the captured
@@ -78,7 +78,7 @@ _MAX_QUARANTINES_PER_START = 3
 # appear in healthy load/recovery logging (``segment``, ``wal``, ``snapshot``,
 # ``recover``) are deliberately excluded so normal output never reads as a
 # failure. Detection only quarantines when one of these co-occurs with a real
-# on-disk collection name *on the same line* (QR1/QR4).
+# on-disk collection name *on the same line*.
 _LOAD_FAILURE_MARKERS = (
     "panic",
     "corrupt",
@@ -143,7 +143,7 @@ def _corrupt_collection_from_output(tail: str, storage_dir: Path) -> str | None:
     a collection merely logged (healthily) earlier in the buffer while an
     unrelated, collection-less fault (corrupt ``raft_state.json``, disk-full,
     OOM) panics later. Abstaining on no match is deliberate - guessing would risk
-    quarantining a healthy index (QR1, QR4).
+    quarantining a healthy index.
     """
     on_disk = _list_on_disk_collections(storage_dir)
     if not on_disk:
@@ -167,8 +167,8 @@ def _quarantine_collection(storage_dir: Path, name: str) -> Path:
     The quarantine directory is a sibling of ``collections/`` (never under it,
     or Qdrant would try to load it), so the move removes the collection from the
     set Qdrant loads. The move is reversible and preserves the corrupt files for
-    forensics; the root re-creates its collection on demand on its next touch
-    (QR2). Returns the quarantine destination.
+    forensics; the root re-creates its collection on demand on its next touch.
+    Returns the quarantine destination.
     """
     src = storage_dir / "collections" / name
     quarantine_dir = storage_dir / "quarantine"
@@ -632,8 +632,7 @@ class QdrantSupervisor:
         to one stale root instead of bricking the whole shared store. Recovery is
         bounded by :data:`_MAX_QUARANTINES_PER_START`; when no culprit can be
         identified (or the bound is reached) the start fails loudly with the
-        captured panic rather than guessing (see the ``qdrant-store-resilience``
-        ADR).
+        captured panic rather than guessing.
 
         Args:
             timeout: Seconds to wait for readiness; ``None`` resolves the
@@ -656,8 +655,9 @@ class QdrantSupervisor:
             # Distinguish a dead child (a real load abort) from a still-alive one
             # (a readiness timeout on a healthy-but-slow store). Only a dead child
             # is evidence of a corrupt collection; quarantining on a timeout would
-            # kill a healthily-loading child and drop a healthy index - the
-            # false positive QR4 forbids. Capture liveness before stop().
+            # kill a healthily-loading child and drop a healthy index; a
+            # timeout is never evidence of corruption. Capture liveness before
+            # stop().
             child_died = not self.is_alive()
             # Stop joins the output-drain thread, so the panic tail is fully
             # captured here; reading it before stop() can race the final line.

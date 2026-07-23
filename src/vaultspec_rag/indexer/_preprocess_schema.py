@@ -1,6 +1,6 @@
 """Versioned preprocess output schema (the preprocessor/indexer contract).
 
-This is the contract decided in the ``preprocess-hooks`` ADR (D4, D5). A
+This is the schema contract. A
 project-supplied preprocessor receives a source file path and emits one JSON
 document conforming to :class:`PreprocOutput`: either pre-chunked ``units`` or a
 single extracted ``text`` blob, carrying the schema version and the producing
@@ -37,7 +37,7 @@ __all__ = [
 ]
 
 #: The schema major version this indexer understands. A document declaring a
-#: higher ``schema_version`` is rejected (D5); a lower one is accepted when it
+#: higher ``schema_version`` is rejected; a lower one is accepted when it
 #: still constructs, which for v1 is every valid document.
 SUPPORTED_SCHEMA_VERSION = 1
 PREPROCESS_INVOCATION_SCHEMA_VERSION = 1
@@ -82,7 +82,7 @@ class UnsupportedSchemaVersionError(ValueError):
     """Raised when preprocessor output declares a newer schema than supported.
 
     Caught per-file at ingest and turned into a preprocess skip with a clear
-    "upgrade vaultspec-rag" message, never a crash (D5).
+    "upgrade vaultspec-rag" message, never a crash.
     """
 
 
@@ -91,7 +91,7 @@ class Locator(BaseModel):
 
     ``value`` is polymorphic: a page/line/byte/char number, or a sheet name.
     Stored split into typed payload fields downstream so each kind keeps a
-    usable index (D12).
+    usable index.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -124,7 +124,7 @@ class PreprocOutput(BaseModel):
 
     Exactly one of ``units`` (pre-chunked) or ``text`` (extracted plain text,
     which the indexer then runs through the normal text splitter) is set; the
-    XOR is enforced by a model validator (D4).
+    XOR is enforced by a model validator.
     """
 
     model_config = ConfigDict(extra="forbid")

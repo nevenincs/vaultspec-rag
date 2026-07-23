@@ -10,8 +10,8 @@ returned object as one JSON document on stdout - the exact same contract a
 dedicated subprocess (rather than in-process inside the chunk worker) keeps the
 CPU-only isolation and the ``timeout_s`` bound by construction, so an
 ``entry_point`` cannot initialise CUDA in the spawn worker or hang it - the
-hazard that deferred ``entry_point`` in v1 (ADR D9). See the codification
-candidate ``preprocessors-run-out-of-process``.
+hazard that deferred ``entry_point`` in an earlier iteration; running
+out of process is what keeps that guarantee.
 
 The callable contract: ``def my_callable(source_path: str) -> Mapping | BaseModel``
 returning a mapping (or a pydantic model) shaped like ``PreprocOutput``. A

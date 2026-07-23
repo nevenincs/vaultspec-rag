@@ -2,9 +2,9 @@
 
 Loads ``.vaultragpreprocess.toml`` from the project root and resolves it
 into an ordered, compiled set of preprocessing rules. This is the registration
-surface decided in the ``preprocess-hooks`` ADR (D1, D2, D3): a sibling of
-``.vaultragignore`` that maps file patterns to project-supplied extraction
-commands so binary or unsupported formats can be indexed first-class.
+surface: a sibling of ``.vaultragignore`` that maps file patterns to
+project-supplied extraction commands so binary or unsupported formats can be
+indexed first-class.
 
 The module is deliberately CPU-only and dependency-light (stdlib ``tomllib``
 plus the already-present ``pathspec``) so it is safe to import from the spawn
@@ -14,7 +14,7 @@ lives in :class:`PreprocessConfig`, held parent-side; the matched
 threaded into a worker task without dragging the compiled specs across the
 process boundary.
 
-Error policy (D3): a missing or malformed config degrades to zero rules (warn,
+Error policy: a missing or malformed config degrades to zero rules (warn,
 never raise - a broken file must not wedge the resident watcher service); an
 individual malformed rule is dropped with a warning while valid rules survive.
 Hard-fail is reserved for the explicit ``preprocess check`` CLI verb, which
@@ -78,9 +78,9 @@ _VALID_ON_ERROR: frozenset[str] = frozenset({"skip", "fail", "passthrough"})
 class PreprocessConfigError(ValueError):
     """Raised by :func:`load_preprocess_rules` in strict mode on any defect.
 
-    Strict mode backs the ``preprocess check`` CLI verb (D13), the only path
+    Strict mode backs the ``preprocess check`` CLI verb, the only path
     where a config defect is a hard error. The non-strict default degrades
-    instead, per the D3 error policy.
+    instead, per the error policy.
     """
 
 
@@ -109,7 +109,7 @@ class PreprocessRule:
             ``batch`` is set). Exactly one of ``command``/``entry_point`` is
             set.
         entry_point: A ``"module:callable"`` reference, executed out-of-process
-            by the runner (the safe form of D9). Exactly one of
+            by the runner (the safe out-of-process form). Exactly one of
             ``command``/``entry_point`` is set.
         priority: Lower sorts first (higher precedence).
         target: Content domain that owns the extracted output.
@@ -156,7 +156,7 @@ class PreprocessConfig:
 
     Holds each rule alongside a compiled single-pattern ``pathspec`` matcher.
     Rules are pre-sorted by ``(priority, order)`` at construction so
-    :meth:`match` is a deterministic first-match scan (D2).
+    :meth:`match` is a deterministic first-match scan.
     """
 
     __slots__ = ("_compiled", "_schema_version")
@@ -225,7 +225,8 @@ class PreprocessConfig:
 
         The compiled ``pathspec`` matchers are rebuilt on unpickle rather than
         serialised, so this config can be threaded into a spawn chunk worker
-        (D6) without depending on ``pathspec`` internals being picklable.
+        so it can cross the spawn boundary without depending on ``pathspec``
+        internals being picklable.
         """
         return (PreprocessConfig, (self.rules, self.schema_version))
 
@@ -234,14 +235,14 @@ class PreprocessConfig:
 class PreprocessContext:
     """Everything a chunk worker needs to preprocess a matched file.
 
-    Threaded into the spawn worker alongside each file (D6). All fields are
+    Threaded into the spawn worker alongside each file. All fields are
     picklable: :class:`PreprocessConfig` rebuilds its matchers on unpickle,
     ``cache_root`` is a path, and the cap is an int.
 
     Attributes:
         config: The resolved per-root preprocess rules.
         cache_root: The preprocess output cache root.
-        max_emitted_bytes: The emitted-text length cap (D10).
+        max_emitted_bytes: The emitted-text length cap.
         project_root: The project root; placed on the hook child's
             ``PYTHONPATH`` so a ``command``/``entry_point`` that imports its own
             module tree can do so.
@@ -264,7 +265,7 @@ def load_preprocess_rules(
     """Load and resolve ``.vaultragpreprocess.toml`` from a project root.
 
     Mirrors ``.vaultragignore`` resolution: root-only, no subtree walk. The
-    non-strict default implements the D3 degrade policy; ``strict=True`` raises
+    non-strict default implements the degrade policy; ``strict=True`` raises
     :class:`PreprocessConfigError` on the first defect and backs the
     ``preprocess check`` CLI verb.
 
@@ -357,7 +358,7 @@ def _resolve_rule(
 
     Returns ``None`` (after a warning) for an invalid rule in non-strict mode;
     raises :class:`PreprocessConfigError` in strict mode. The validation rules
-    are D1/D3: ``pattern`` is required; exactly one of ``command``/
+    are: ``pattern`` is required; exactly one of ``command``/
     ``entry_point``; ``on_error`` is one of the known values; and an
     ``entry_point`` must be a ``"module:callable"`` reference.
     """
