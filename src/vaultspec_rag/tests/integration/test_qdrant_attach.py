@@ -86,7 +86,27 @@ def _running_managed_qdrant(
 
 
 class TestVerifiedAttach:
+    @pytest.mark.integration
     def test_attaches_to_healthy_owned_capable_server(self, tmp_path: Path) -> None:
+        """Integration-gated: the fake in-thread HTTP server this module uses
+        cannot satisfy the attach path's hardened witness check.
+
+        `_verify_attach_identity_witnesses` (added alongside the two-witness
+        owner/child identity scheme) requires `qdrant_pid`/`qdrant_start_time`
+        to resolve to a live process whose OS image is actually named
+        `qdrant` (`pid_image_is_qdrant`) and which owns the expected loopback
+        listener (`pid_listens_on_loopback_port`). This module's fake server
+        runs on a background thread inside the test process itself, so there
+        is no separate qdrant-named process to witness - the module's stated
+        "no real Qdrant, no GPU" design and the attach path's real-process
+        requirement are mutually exclusive. Exercising the success branch of
+        this decision again needs either a real managed Qdrant binary (a
+        `required_host_provisioned_qdrant_source`-gated rewrite, matching the
+        pattern in `test_managed_singleton_isolation.py` /
+        `test_qdrant_store_resilience.py`) or a spawned process whose
+        executable is renamed to `qdrant`/`qdrant.exe` and made to serve the
+        fake HTTP responses itself, so the witnessed PID is real.
+        """
         with _running_managed_qdrant(tmp_path, version=QDRANT_SERVER_VERSION) as (
             port,
             storage,
