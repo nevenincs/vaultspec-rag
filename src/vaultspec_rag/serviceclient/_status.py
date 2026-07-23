@@ -10,6 +10,7 @@ whole contract.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -317,23 +318,49 @@ def _identity_confirmed(
     is only the *right* service when its own identity token and process match
     what the owner published.
     """
-    if health is None:
-        return False
-    served_token = health.get("service_token")
-    expected = verdict.resolution.service_token
-    token_claimed = isinstance(expected, str) and bool(expected)
-    if token_claimed and (
-        not isinstance(served_token, str) or served_token != expected
+    resolution = verdict.resolution
+    holder_pid = resolution.holder_pid
+    pointer_pid = resolution.pointer_pid
+    pointer_token = resolution.service_token
+    heartbeat_age = resolution.heartbeat_age_s
+    stale_after = resolution.stale_after_s
+    if (
+        health is None
+        or resolution.source != DISCOVERY_SOURCE_MACHINE_POINTER
+        or not _is_positive_pid(holder_pid)
+        or not _is_positive_pid(pointer_pid)
+        or pointer_pid != holder_pid
+        or not isinstance(pointer_token, str)
+        or not pointer_token
+        or not isinstance(heartbeat_age, int | float)
+        or isinstance(heartbeat_age, bool)
+        or not math.isfinite(float(heartbeat_age))
+        or not isinstance(stale_after, int | float)
+        or isinstance(stale_after, bool)
+        or not math.isfinite(float(stale_after))
+        or stale_after <= 0
+        or heartbeat_age > stale_after
+        or verdict.signals.pid != pointer_pid
+        or not verdict.signals.pid_alive
+        or not verdict.signals.pid_matches_service
+        or not verdict.signals.port_listening
+        or verdict.signals.service_token_match is not True
     ):
         return False
+    served_token = health.get("service_token")
     served_pid = health.get("pid")
-    pointer_pid = verdict.resolution.pointer_pid
-    pid_comparable = (
-        isinstance(served_pid, int)
-        and not isinstance(served_pid, bool)
-        and pointer_pid is not None
+    return (
+        _is_positive_pid(served_pid)
+        and served_pid == pointer_pid
+        and isinstance(served_token, str)
+        and bool(served_token)
+        and served_token == pointer_token
     )
-    return not (pid_comparable and served_pid != pointer_pid)
+
+
+def _is_positive_pid(value: object) -> bool:
+    """Return whether *value* is a concrete, non-boolean process identity."""
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 def reconcile_discovery(
