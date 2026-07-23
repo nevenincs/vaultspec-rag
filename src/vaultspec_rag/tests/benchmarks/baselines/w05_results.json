@@ -1,8 +1,8 @@
 {
   "port": 8766,
   "roots": [
-    "sample-project\\main",
-    "vaultspec-rag\\main"
+    "/projects/sample",
+    "/projects/main"
   ],
   "requests": 8,
   "concurrency": 4,
