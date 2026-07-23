@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import sys
 import time
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
 
@@ -359,6 +359,116 @@ def _stop_service_on_port(port: int, json_mode: bool = False) -> None:
     )
 
 
+def _expected_singleton_port(explicit_port: int | None) -> int | None:
+    """Resolve the machine singleton's service port for an orphan reap.
+
+    An explicit ``--port`` wins; otherwise the discovery pointer's port (the
+    running singleton), else the configured default. The port is the reap's
+    safety scope - a daemon launched for a DIFFERENT port (an isolated-config or
+    foreign-worktree instance) is never a reap target.
+    """
+    if explicit_port is not None:
+        return explicit_port
+    status = _read_service_status()
+    if status is not None:
+        raw = status.get("port")
+        if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
+            return raw
+    from ..serviceclient._discovery import _default_service_port
+
+    return _default_service_port()
+
+
+def _orphan_daemon_pids(port: int) -> list[int]:
+    """Return pids of ``vaultspec_rag.server`` daemons launched for *port*.
+
+    Matches the resident-daemon launch witness by port (any launch token), so
+    every race-loser that tried to serve this machine singleton's port is found,
+    while a daemon launched for a different port never matches. This is the reap
+    scope that spares isolated-config and foreign-worktree daemons.
+    """
+    import contextlib
+
+    import psutil
+
+    marker = ["-m", "vaultspec_rag.server", "--port", str(port)]
+    found: list[int] = []
+    with contextlib.suppress(Exception):
+        for process in psutil.process_iter(["pid", "cmdline"]):
+            info = cast("dict[str, object]", process.info)
+            raw = info.get("cmdline")
+            if not isinstance(raw, list):
+                continue
+            argv = [str(item) for item in cast("list[object]", raw)]
+            if any(
+                argv[index : index + len(marker)] == marker
+                for index in range(len(argv) - len(marker) + 1)
+            ):
+                pid = info.get("pid")
+                if isinstance(pid, int) and not isinstance(pid, bool):
+                    found.append(pid)
+    return found
+
+
+def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
+    """Reap race-loser daemons for the machine singleton on *port*.
+
+    Confirm-then-reap, scoped by the launch witness (same port) and by pid: never
+    the current machine-lock holder, never the discovery-pointer pid, never this
+    process. The lock holder and pointer are the two must-never-kill anchors -
+    the real singleton - so a live serving instance is always spared, and the
+    port scope spares isolated-config and foreign-worktree daemons. An orphan
+    that will not die is a non-zero fault, never a silent success.
+    """
+    from .._machine_lock import machine_lock_live_holder
+
+    lock_holder = machine_lock_live_holder()
+    status = _read_service_status()
+    pointer_pid = 0
+    if status is not None:
+        raw = status.get("pid")
+        if isinstance(raw, int) and not isinstance(raw, bool):
+            pointer_pid = raw
+    protected = {os.getpid(), lock_holder, pointer_pid}
+
+    reaped: list[int] = []
+    survivors: list[int] = []
+    for pid in _orphan_daemon_pids(port):
+        if pid in protected or not _cli._is_our_service(pid):
+            continue
+        _terminate_and_confirm(pid)
+        (reaped if not _cli._is_pid_alive(pid) else survivors).append(pid)
+
+    if survivors:
+        raise _fail_stop(
+            json_mode,
+            error="orphan_reap_incomplete",
+            message="Orphan reap left daemons running",
+            human_lines=(
+                f"Reaped {len(reaped)} orphan daemon(s) on port {port}; "
+                f"{len(survivors)} would not terminate: {survivors}.",
+            ),
+            next_actions=(f"vaultspec-rag server status --port {port} --verbose",),
+            reaped=len(reaped),
+            survivors=survivors,
+            port=port,
+        )
+    _stop_success(
+        json_mode,
+        status="reaped",
+        human_title="Orphan daemons reaped",
+        human_lines=(
+            f"Reaped {len(reaped)} orphan daemon(s) on port {port}."
+            if reaped
+            else f"No orphan daemons found on port {port}.",
+        ),
+        reaped=len(reaped),
+        reaped_pids=reaped,
+        port=port,
+        **_initiator_fields(),
+    )
+
+
 @server_app.command("stop", help="Stop the background search service.")
 def service_stop(
     port: Annotated[
@@ -383,6 +493,19 @@ def service_stop(
                 "`already_stopped` (exit 0); a stop that leaves the service "
                 "running (unconfirmed identity) is `identity_unconfirmed` "
                 "(exit 1) in both output modes."
+            ),
+        ),
+    ] = False,
+    orphans: Annotated[
+        bool,
+        typer.Option(
+            "--orphans",
+            help=(
+                "Reap surplus vaultspec-rag daemons that lost the machine-"
+                "singleton race and linger holding no port, lock, or discovery "
+                "pointer, invisible to a normal stop. Confirm-then-reap, scoped "
+                "to this singleton's port; the live singleton, isolated-config, "
+                "and foreign-worktree daemons are always spared."
             ),
         ),
     ] = False,
@@ -415,6 +538,20 @@ def service_stop(
     recorded process could not be confirmed as ours - the one outcome that
     leaves a service running.
     """
+    if orphans:
+        target_port = _expected_singleton_port(port)
+        if target_port is None:
+            raise _fail_stop(
+                json_mode,
+                error="port_unresolved",
+                message="Orphan reap needs a resolvable service port",
+                human_lines=(
+                    "Could not resolve the machine singleton's port; pass --port.",
+                ),
+            )
+        _reap_orphan_daemons(target_port, json_mode)
+        return
+
     if port is not None:
         _stop_service_on_port(port, json_mode)
         return
