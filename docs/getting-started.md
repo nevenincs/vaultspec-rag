@@ -45,8 +45,8 @@ uv run vaultspec-rag server jobs
 ```
 Legend: * active, ~ waiting, ! failed, - finished
 
-- 14:03:21 finished vault index update for my-project - added 24, updated 0, removed 0
-- 14:03:27 finished code index update for my-project - added 120, updated 0, removed 0
+- 14:03:21 finished vault index operation for my-project (job a1b2c3) - added 24, updated 0, removed 0, finished in 2.1s
+- 14:03:27 finished code index operation for my-project (job d4e5f6) - added 120, updated 0, removed 0, finished in 4.2s
 ```
 
 A `-` prefix marks a finished run. Wait until both the vault run and the code run show `finished` before you search, or an early search returns incomplete results. A small project usually finishes within a minute.

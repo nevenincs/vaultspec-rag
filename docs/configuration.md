@@ -60,6 +60,24 @@ The tables in this section, together with the backend selection table, list ever
 
 The policy applies independently to `service.log` and `qdrant.log`. With the defaults, each source keeps one active file and five backups. The aggregate budget is approximately 120 MiB.
 
+### Job lifecycle
+
+| Variable                                  | Type    | Default | Controls                                                       | CLI flag |
+| ----------------------------------------- | ------- | ------- | -------------------------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_JOB_MAX_NONTERMINAL`       | integer | `64`    | Maximum simultaneously tracked non-terminal (queued/running) jobs | -    |
+| `VAULTSPEC_RAG_JOB_SHUTDOWN_TIMEOUT_SECONDS` | float | `300`   | Seconds to drain running jobs during a graceful daemon stop    | -        |
+
+### Store write resilience
+
+A transient store-write failure (disk pressure, a write-ahead-log stall) is retried with bounded exponential backoff before the operation is abandoned.
+
+| Variable                                       | Type    | Default | Controls                                                    | CLI flag |
+| ---------------------------------------------- | ------- | ------- | ----------------------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_STORE_OPERATION_TIMEOUT_SECONDS` | float  | `120`   | Per-operation deadline before a store write is abandoned    | -        |
+| `VAULTSPEC_RAG_STORE_WRITE_RETRY_ATTEMPTS`     | integer | `5`     | Retry attempts for a transient store-write failure          | -        |
+| `VAULTSPEC_RAG_STORE_WRITE_RETRY_BASE_SECONDS` | float   | `0.5`   | Initial backoff before the first store-write retry          | -        |
+| `VAULTSPEC_RAG_STORE_WRITE_RETRY_MAX_SECONDS`  | float   | `8`     | Maximum backoff between store-write retries                 | -        |
+
 ### Embedding and reranking
 
 | Variable                                         | Type    | Default | Controls                                            | CLI flag |
@@ -82,6 +100,22 @@ The policy applies independently to `service.log` and `qdrant.log`. With the def
 | `VAULTSPEC_RAG_DENSE_BACKEND`            | string  | `torch`              | Dense encoder backend (`onnx` experimental)       | -        |
 | `VAULTSPEC_RAG_DENSE_ONNX_FILE`          | string  | `onnx/model_O4.onnx` | ONNX model file relative path                     | -        |
 
+### Index resource bounds and memory ceilings
+
+These bound one index run's segment/queue geometry, its memory use, and its liveness. The defaults suit a managed multi-root service; lower them on a smaller host.
+
+| Variable                                        | Type    | Default     | Controls                                                              | CLI flag |
+| ----------------------------------------------- | ------- | ----------- | -------------------------------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_INDEX_SEGMENT_MAX_CHUNKS`        | integer | `64`        | Chunks per index upsert segment                                      | -        |
+| `VAULTSPEC_RAG_INDEX_SEGMENT_MAX_BYTES`         | integer | `8388608`   | Byte cap per index upsert segment (8 MiB)                            | -        |
+| `VAULTSPEC_RAG_INDEX_QUEUE_MAX_CHUNKS`          | integer | `512`       | Chunks buffered in the producer-to-consumer index queue             | -        |
+| `VAULTSPEC_RAG_INDEX_QUEUE_MAX_BYTES`           | integer | `134217728` | Byte cap on the buffered index queue, applying backpressure (128 MiB) | -        |
+| `VAULTSPEC_RAG_INDEX_NO_PROGRESS_TIMEOUT_SECONDS` | float | `900`       | Seconds without index progress before the run is failed             | -        |
+| `VAULTSPEC_RAG_INDEX_RSS_CEILING_MB`            | float   | `16384`     | Resident-memory ceiling enforced at index checkpoints (MiB)         | -        |
+| `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB`           | float   | `12288`     | CUDA-memory ceiling enforced at index checkpoints (MiB)             | -        |
+| `VAULTSPEC_RAG_INDEX_CUDA_ALLOCATOR_FRACTION`   | float   | `0.8`       | Fraction of CUDA memory the index allocator may reserve             | -        |
+| `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE`           | string  | `managed-service` | Index resource profile advertised to the service              | -        |
+
 ### Concurrency limits
 
 | Variable                              | Type    | Default | Controls              | CLI flag |
@@ -98,7 +132,7 @@ The policy applies independently to `service.log` and `qdrant.log`. With the def
 | `VAULTSPEC_RAG_VAULT_INTENT_RANKING_ENABLED` | boolean | `1` (true)                   | Intent-aware vault re-ranking on/off (`0` restores the bare-reranker ordering)                                                                              | -                                        |
 | `VAULTSPEC_RAG_VAULT_INTENT_TYPE_CAP`        | integer | `4`                          | Maximum results of one doc type on a vault page (`0` disables the cap)                                                                                      | -                                        |
 | `VAULTSPEC_RAG_RERANKER_ENABLED`             | boolean | `1` (true)                   | CrossEncoder rerank on/off                                                                                                                                  | -                                        |
-| `VAULTSPEC_RAG_SEARCH_TIMEOUT`               | integer | `300`                        | Connection and read budget for service-handled searches (seconds)                                                                                           | `--timeout`                              |
+| `VAULTSPEC_RAG_SEARCH_TIMEOUT`               | float   | `300`                        | Connection and read budget for service-handled searches (seconds)                                                                                           | `--timeout`                              |
 | `VAULTSPEC_RAG_CODE_NOISE_HIDE_DOMAINS`      | string  | `worktree,generated`         | Code domains hidden from results by default                                                                                                                 | -                                        |
 | `VAULTSPEC_RAG_CODE_NOISE_DEMOTE_DOMAINS`    | string  | `tests,docs,locale,vendored` | Code domains demoted (not hidden) by default                                                                                                                | -                                        |
 | `VAULTSPEC_RAG_CODE_NOISE_DEMOTE_PENALTY`    | float   | `0.3`                        | Score subtracted from a demoted code result                                                                                                                 | -                                        |
@@ -111,6 +145,15 @@ The policy applies independently to `service.log` and `qdrant.log`. With the def
 | `VAULTSPEC_RAG_WATCH_ENABLED`     | boolean | `1` (true) | Filesystem auto-reindex on/off (`0` = pull-only)             | `--updates` / `--no-updates` |
 | `VAULTSPEC_RAG_WATCH_DEBOUNCE_MS` | integer | `2000`     | Debounce window coalescing change events before reindex (ms) | `--update-delay-ms`          |
 | `VAULTSPEC_RAG_WATCH_COOLDOWN_S`  | float   | `30`       | Per-source re-index cooldown after a completed run (s)       | `--repeat-update-delay-s`    |
+
+A failed auto-reindex retries with exponential backoff and a circuit breaker that stops retrying a persistently failing source.
+
+| Variable                                    | Type    | Default | Controls                                                     | CLI flag |
+| ------------------------------------------- | ------- | ------- | ------------------------------------------------------------ | -------- |
+| `VAULTSPEC_RAG_WATCH_RETRY_BASE_SECONDS`    | float   | `30`    | Initial backoff before retrying a failed auto-reindex        | -        |
+| `VAULTSPEC_RAG_WATCH_RETRY_MAX_SECONDS`     | float   | `1800`  | Maximum backoff between auto-reindex retries                 | -        |
+| `VAULTSPEC_RAG_WATCH_RETRY_JITTER_FRACTION` | float   | `0.1`   | Random jitter fraction added to each retry backoff           | -        |
+| `VAULTSPEC_RAG_WATCH_CIRCUIT_FAILURE_THRESHOLD` | integer | `3`  | Consecutive failures before the watch circuit opens          | -        |
 
 ### Stdio MCP lifetime
 

@@ -43,7 +43,7 @@ uv tool install "vaultspec-rag[mcp]" --with "torch @ https://download.pytorch.or
 
 The `--with` pin matters: uv records it in the tool receipt and re-applies it on every `uv tool upgrade`, so torch keeps resolving to the GPU (cu130) wheel. Without it, every upgrade or forced reinstall re-resolves torch from PyPI and silently replaces the GPU build with a CPU-only wheel that the service refuses to start with. Do not rely on `--index` instead: current uv (verified on 0.11.x) does not record `--index` in the tool receipt, so an upgrade silently drops it. The project-scoped pin that `vaultspec-rag install` writes into `pyproject.toml` never reaches tool environments, and uv's `--torch-backend` selector is `uv pip`-only.
 
-If a tool environment has already lost its GPU torch, repair it in place (this is undone by the next upgrade; the `--index` reinstall above is the durable fix):
+If a tool environment has already lost its GPU torch, repair it in place (this is undone by the next upgrade; the `--with` pin above is the durable fix):
 
 ```bash
 uv pip install --python "<tool-env python>" --reinstall --torch-backend=cu130 torch
