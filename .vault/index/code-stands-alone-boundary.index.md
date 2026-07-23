@@ -3,10 +3,11 @@ generated: true
 tags:
   - '#index'
   - '#code-stands-alone-boundary'
-date: '2026-07-22'
-modified: '2026-07-22'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-07-22-code-stands-alone-boundary-plan]]'
+  - '[[2026-07-23-code-stands-alone-boundary-adr]]'
 ---
 
 # `code-stands-alone-boundary` feature index
@@ -14,6 +15,10 @@ related:
 Auto-generated index of all documents tagged with `#code-stands-alone-boundary`.
 
 ## Documents
+
+### adr
+
+- `2026-07-23-code-stands-alone-boundary-adr` - `code-stands-alone-boundary` adr: `the one-way code-and-vault citation boundary` | (**status:** `accepted`)
 
 ### plan
 
