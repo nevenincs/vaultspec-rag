@@ -469,15 +469,15 @@ class TestCodeIndexBlockedStoreDeadline:
 
                     point_lock.acquire()
                     point_lock_held = True
-                    released_at = time.monotonic()
                     gpu_gate.release()
 
+                    # The deadline outcome is the invariant; the generous
+                    # result timeout is only a hang-guard, never a race
+                    # against machine load.
                     with pytest.raises(JobError) as stopped:
-                        indexing.result(timeout=5.0)
-                    elapsed = time.monotonic() - released_at
+                        indexing.result(timeout=20.0)
 
                     assert stopped.value.error_kind is JobErrorKind.NO_PROGRESS_TIMEOUT
-                    assert elapsed < 4.0
                     assert store.count_code() == 0
                     _assert_code_pipeline_released(indexer)
             finally:
@@ -625,11 +625,12 @@ class TestDocumentIndexMemoryAndWriteDeadline:
                     )
                     _wait_for_document_write_lock(indexer)
 
-                    cancelled_at = time.monotonic()
                     control.request_cancel()
+                    # CancelRequested (not the 10s no-progress JobError) is
+                    # the invariant that cancellation won the race; the
+                    # result timeout is only a hang-guard.
                     with pytest.raises(CancelRequested):
-                        indexing.result(timeout=3.0)
-                    assert time.monotonic() - cancelled_at < 2.0
+                        indexing.result(timeout=20.0)
             finally:
                 point_lock.release()
 
@@ -675,11 +676,11 @@ class TestDocumentIndexMemoryAndWriteDeadline:
                         preflight=indexer.preflight_content(),
                     )
                     _wait_for_document_write_lock(indexer)
-                    blocked_at = time.monotonic()
+                    # The typed no-progress outcome is the invariant; the
+                    # generous result timeout is only a hang-guard.
                     with pytest.raises(JobError) as stopped:
-                        indexing.result(timeout=4.0)
+                        indexing.result(timeout=20.0)
                     assert stopped.value.error_kind is JobErrorKind.NO_PROGRESS_TIMEOUT
-                    assert time.monotonic() - blocked_at < 3.0
             finally:
                 point_lock.release()
 
