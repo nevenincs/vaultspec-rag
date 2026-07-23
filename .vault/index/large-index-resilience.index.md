@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#large-index-resilience'
-date: '2026-07-22'
-modified: '2026-07-22'
+date: '2026-07-23'
+modified: '2026-07-23'
 related:
   - '[[2026-07-21-large-index-resilience-W01-P01-S01]]'
   - '[[2026-07-21-large-index-resilience-W01-P01-S02]]'
@@ -16,12 +16,23 @@ related:
   - '[[2026-07-21-large-index-resilience-W01-P02-S08]]'
   - '[[2026-07-21-large-index-resilience-W01-P02-S09]]'
   - '[[2026-07-21-large-index-resilience-W01-P02-S10]]'
+  - '[[2026-07-21-large-index-resilience-W01-P02-S11]]'
+  - '[[2026-07-21-large-index-resilience-W01-P02-S52]]'
+  - '[[2026-07-21-large-index-resilience-W01-P02-S53]]'
+  - '[[2026-07-21-large-index-resilience-W01-P02-S54]]'
+  - '[[2026-07-21-large-index-resilience-W01-P02-S55]]'
+  - '[[2026-07-21-large-index-resilience-W01-P02-S56]]'
+  - '[[2026-07-21-large-index-resilience-W01-P02-S57]]'
+  - '[[2026-07-21-large-index-resilience-W01-P02-S58]]'
+  - '[[2026-07-21-large-index-resilience-W01-P02-S59]]'
   - '[[2026-07-21-large-index-resilience-W01-P03-S12]]'
   - '[[2026-07-21-large-index-resilience-W01-P03-S13]]'
   - '[[2026-07-21-large-index-resilience-W01-P03-S14]]'
   - '[[2026-07-21-large-index-resilience-W01-P03-S15]]'
   - '[[2026-07-21-large-index-resilience-W01-P03-S16]]'
   - '[[2026-07-21-large-index-resilience-W01-P03-S17]]'
+  - '[[2026-07-21-large-index-resilience-W01-P04-S18]]'
+  - '[[2026-07-21-large-index-resilience-W01-P04-S19]]'
   - '[[2026-07-21-large-index-resilience-W02-P05-S20]]'
   - '[[2026-07-21-large-index-resilience-W02-P05-S21]]'
   - '[[2026-07-21-large-index-resilience-W02-P05-summary]]'
@@ -38,14 +49,23 @@ related:
   - '[[2026-07-21-large-index-resilience-W02-P08-S30]]'
   - '[[2026-07-21-large-index-resilience-W02-P08-S31]]'
   - '[[2026-07-21-large-index-resilience-W02-P08-summary]]'
+  - '[[2026-07-21-large-index-resilience-W03-P09-S32]]'
+  - '[[2026-07-21-large-index-resilience-W03-P09-S33]]'
+  - '[[2026-07-21-large-index-resilience-W03-P09-S34]]'
+  - '[[2026-07-21-large-index-resilience-W03-P09-S35]]'
+  - '[[2026-07-21-large-index-resilience-W03-P09-S36]]'
   - '[[2026-07-21-large-index-resilience-W03-P10-S37]]'
   - '[[2026-07-21-large-index-resilience-W03-P10-S38]]'
   - '[[2026-07-21-large-index-resilience-W03-P10-summary]]'
+  - '[[2026-07-21-large-index-resilience-W03-P11-S39]]'
   - '[[2026-07-21-large-index-resilience-W04-P12-S40]]'
   - '[[2026-07-21-large-index-resilience-W04-P12-S41]]'
   - '[[2026-07-21-large-index-resilience-W04-P12-S42]]'
   - '[[2026-07-21-large-index-resilience-W04-P12-S43]]'
   - '[[2026-07-21-large-index-resilience-W04-P12-summary]]'
+  - '[[2026-07-21-large-index-resilience-W04-P13-S44]]'
+  - '[[2026-07-21-large-index-resilience-W04-P13-S45]]'
+  - '[[2026-07-21-large-index-resilience-W04-P13-S46]]'
   - '[[2026-07-21-large-index-resilience-adr]]'
   - '[[2026-07-21-large-index-resilience-plan]]'
   - '[[2026-07-21-large-index-resilience-reference]]'
@@ -61,6 +81,7 @@ related:
   - '[[2026-07-22-large-index-resilience-resume-after-failure-cascade-audit]]'
   - '[[2026-07-22-large-index-resilience-run-checkpoint-audit]]'
   - '[[2026-07-22-large-index-resilience-run-ledger-audit]]'
+  - '[[2026-07-23-large-index-resilience-closing-review-audit]]'
 ---
 
 # `large-index-resilience` feature index
@@ -86,6 +107,7 @@ Auto-generated index of all documents tagged with `#large-index-resilience`.
 - `2026-07-22-large-index-resilience-resume-after-failure-cascade-audit` - `large-index-resilience` audit: `self-perpetuating incremental index failure on resumed generations`
 - `2026-07-22-large-index-resilience-run-checkpoint-audit` - `large-index-resilience` audit: `run checkpoint bridge`
 - `2026-07-22-large-index-resilience-run-ledger-audit` - `large-index-resilience` audit: `run ledger`
+- `2026-07-23-large-index-resilience-closing-review-audit` - `large-index-resilience` audit: `independent closing review — passed with two follow-ups`
 
 ### exec
 
@@ -105,6 +127,13 @@ Auto-generated index of all documents tagged with `#large-index-resilience`.
 - `2026-07-21-large-index-resilience-W01-P02-S08` - Convert full indexing to weighted production
 - `2026-07-21-large-index-resilience-W01-P02-S09` - Convert unscoped incremental indexing to bounded production
 - `2026-07-21-large-index-resilience-W01-P02-S10` - Convert scoped incremental indexing to bounded production
+- `2026-07-21-large-index-resilience-W01-P02-S52` - Re-open a resumed generation's path whose source digest no longer matches the digest recorded when it was marked indexed, superseding its prior units instead of refusing the write
+- `2026-07-21-large-index-resilience-W01-P02-S53` - Decide and enforce whether a repeatedly failing generation retires instead of remaining resumable indefinitely
+- `2026-07-21-large-index-resilience-W01-P02-S54` - Treat a source file that reads as empty mid-save as a re-queued path rather than a job-level failure
+- `2026-07-21-large-index-resilience-W01-P02-S55` - Cover the cascade end to end: fail an incremental attempt, edit a file it had already indexed, and assert the next attempt succeeds
+- `2026-07-21-large-index-resilience-W01-P02-S56` - Stop the retained-point lookup excluding carried-forward evidence, so points inherited from a parent generation are no longer classified obsolete and deleted
+- `2026-07-21-large-index-resilience-W01-P02-S57` - Confirm the scan-bounding intent of the retained-point lookup survives the correction, measuring rather than assuming
+- `2026-07-21-large-index-resilience-W01-P02-S58` - Cover carried-forward retention end to end: index, carry a generation forward, and assert inherited points survive an incremental run
 - `2026-07-21-large-index-resilience-W02-P05-S20` - Implement the per-root SQLite run generation, signature, commit-unit, finalization, and compaction schema
 - `2026-07-21-large-index-resilience-W02-P05-S21` - Verify atomic transactions, row-wise iteration, compatibility rejection, corruption handling, and immutable completion
 - `2026-07-21-large-index-resilience-W02-P05-summary` - `large-index-resilience` `W02.P05` summary
@@ -129,6 +158,19 @@ Auto-generated index of all documents tagged with `#large-index-resilience`.
 - `2026-07-21-large-index-resilience-W04-P12-S42` - Enforce hardware and backend profile admission at service job submission before GPU work
 - `2026-07-21-large-index-resilience-W04-P12-S43` - Verify profile requirements, corpus limits, disk preflight, checkpoint preservation, and structured refusal
 - `2026-07-21-large-index-resilience-W04-P12-summary` - `large-index-resilience` `W04.P12` summary
+- `2026-07-21-large-index-resilience-W01-P02-S11` - Verify sparse CPU retention and bounded slice cleanup on real CUDA
+- `2026-07-21-large-index-resilience-W01-P02-S59` - Reconcile the rollback-then-retry test with the checkpoint-resume contract so it asserts the retry converges rather than that a failed attempt leaves an empty store
+- `2026-07-21-large-index-resilience-W01-P04-S18` - Verify low RSS and CUDA ceilings stop production with typed outcomes and bounded cleanup
+- `2026-07-21-large-index-resilience-W01-P04-S19` - Verify a blocked store consumer cannot trap producer queue waits or hold the writer lock beyond the deadline
+- `2026-07-21-large-index-resilience-W03-P09-S32` - Record generation, commit, replay, memory, deadline, circuit, profile, and terminal fields in canonical job snapshots
+- `2026-07-21-large-index-resilience-W03-P09-S33` - Shape bounded job collection and detail responses from canonical resilience fields
+- `2026-07-21-large-index-resilience-W03-P09-S34` - Include bounded resilience rollups in service health without loading torch on the reporting path
+- `2026-07-21-large-index-resilience-W03-P09-S35` - Render checkpoint, retry, circuit, memory, profile, and remediation fields without recomputing policy
+- `2026-07-21-large-index-resilience-W03-P09-S36` - Verify jobs, health, and CLI surfaces expose identical resilience state and typed outcomes
+- `2026-07-21-large-index-resilience-W03-P11-S39` - Verify controlled, interrupted, memory-limited, timed-out, and circuit-open jobs converge on one operator snapshot
+- `2026-07-21-large-index-resilience-W04-P13-S44` - Create a reproducible large-index resilience harness using the production index path and real backends
+- `2026-07-21-large-index-resilience-W04-P13-S45` - Compare real-CUDA RSS and allocated and reserved high-water marks at N and two-N corpus sizes
+- `2026-07-21-large-index-resilience-W04-P13-S46` - Prove concurrent search retains reserved GPU headroom while bounded indexing progresses
 
 ### plan
 
