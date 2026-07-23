@@ -75,16 +75,18 @@ def _support_profile_lines(status: dict[str, object]) -> list[str]:
     lines = [f"Support profile: {profile.get('name', 'not reported')}"]
     backends = profile.get("accepted_backends")
     if isinstance(backends, list):
-        lines.append(f"Accepted backends: {', '.join(map(str, backends))}")
+        typed_backends = cast("list[object]", backends)
+        lines.append(f"Accepted backends: {', '.join(map(str, typed_backends))}")
     lines.extend(
         (
             f"Minimum RAM bytes: {profile.get('minimum_ram_bytes', 0)}",
             f"Minimum free disk bytes: {profile.get('minimum_free_disk_bytes', 0)}",
         )
     )
-    domains = profile.get("domains")
-    if not isinstance(domains, dict):
+    raw_domains = profile.get("domains")
+    if not isinstance(raw_domains, dict):
         return lines
+    domains = cast("dict[str, object]", raw_domains)
     for source in ("code", "document"):
         raw_domain = domains.get(source)
         if not isinstance(raw_domain, dict):
