@@ -278,32 +278,36 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     # /health for CLI-side identity verification (gh #124/#125).
     _m._SERVICE_TOKEN = uuid.uuid4().hex
 
-    # Machine singleton: claim the machine before committing GPU
-    # memory or spawning Qdrant. This is the authoritative, race-safe gate (the
-    # CLI pre-check is advisory; this acquire wins or loses atomically).
-    machine_lease = _claim_machine_singleton()
-    discovery = _DiscoveryPublisher(machine_lease)
-    # Register the owner cleanup retry before the first discovery write or
-    # subordinate startup action. A pre-yield failure can therefore retain the
-    # lease after a transient cleanup failure and retry while still owner.
-    _m._install_daemon_shutdown_hooks(discovery)
-
-    # Lock held but not yet serving: stamp the sidecar so ``server status``
-    # reports "warming" instead of a contradictory "stopped" while models load.
     from ..serviceclient._discovery import SERVICE_PHASE_RUNNING, SERVICE_PHASE_WARMING
 
-    # Once the lock is held, every startup step up to ``yield`` runs under a
-    # release-on-failure guard. The shipping daemon's crash-safe lock self-heals
-    # via OS release on process exit, but a pre-yield startup failure (qdrant
-    # spawn, model load) would otherwise leak the held lock for an in-process
-    # lifespan REUSE path that never reaches the post-yield ``finally``. A
-    # supported embedded-reuse contract requires the lock be freed the moment
-    # startup fails, so a subsequent in-process acquire succeeds.
+    # Every startup step - INCLUDING the machine-singleton claim - runs under one
+    # release-on-failure guard whose failure path forces the standalone daemon's
+    # ``os._exit``. The claim used to sit BEFORE this guard, so a lost race
+    # (``RuntimeError``) escaped to uvicorn's lifespan handler; ``uvicorn.run``
+    # then returned and the interpreter-exit executor join wedged the daemon
+    # alive owning nothing - the orphan-accumulation bug. Raising it inside the
+    # guard routes a lost race through the same ``_exit_standalone_daemon(1)`` the
+    # serving path already relies on. The shipping daemon's crash-safe lock
+    # self-heals via OS release on process exit; the guard additionally frees it
+    # the moment a pre-yield startup fails so the supported in-process
+    # embedded-reuse path can re-acquire. ``discovery`` stays ``None`` until the
+    # claim succeeds, so the failure path skips a teardown that has nothing to do.
     periodic_tasks: list[asyncio.Task[None]] = []
     manager: JobManager | None = None
+    discovery: _DiscoveryPublisher | None = None
     cleanup_started = False
     startup_started = time.perf_counter()
     try:
+        # Machine singleton: claim the machine before committing GPU memory or
+        # spawning Qdrant. The authoritative, race-safe gate (the CLI pre-check
+        # is advisory; this acquire wins or loses atomically).
+        machine_lease = _claim_machine_singleton()
+        discovery = _DiscoveryPublisher(machine_lease)
+        # Register the owner cleanup retry before the first discovery write or
+        # subordinate startup action, so a pre-yield failure can retain the lease
+        # after a transient cleanup failure and retry while still owner.
+        _m._install_daemon_shutdown_hooks(discovery)
+
         _stamp_service_phase(discovery, SERVICE_PHASE_WARMING)
         periodic_tasks = await _start_components(discovery)
         from .. import jobs as _jobs_module
@@ -347,8 +351,11 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
         # needs that same held lock - is the EXPECTED outcome of yielding, not a
         # fault, so the shutdown is still recorded complete. Any other failure
         # keeps the strict clean/unclean determination.
+        # ``discovery is None`` means the machine-singleton claim itself lost the
+        # race: no lease was retained, no component started, no view published, so
+        # there is nothing to tear down - fall straight through to the daemon exit.
         contention_yield = isinstance(exc, RunningClaimContendedError)
-        if not cleanup_started:
+        if not cleanup_started and discovery is not None:
             cleanup_started = True
             await _shutdown_components(
                 periodic_tasks,
