@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from ... import VaultSearcher
     from ...embeddings import EmbeddingModel
 
-pytestmark = [pytest.mark.quality]
+pytestmark = [pytest.mark.integration, pytest.mark.quality]
 
 _TOP_K = 5
 _SATISFIED_RANK = 3

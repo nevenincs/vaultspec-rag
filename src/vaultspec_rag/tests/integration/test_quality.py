@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from ...store import VaultStore
     from ..conftest import RagComponentsWithManifest
 
-pytestmark = [pytest.mark.quality]
+pytestmark = [pytest.mark.integration, pytest.mark.quality]
 
 
 # ---- Helpfulness / Search Quality Tests ----

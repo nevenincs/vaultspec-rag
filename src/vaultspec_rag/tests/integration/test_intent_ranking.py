@@ -43,7 +43,7 @@ from ..quality.rubric import Intent
 if TYPE_CHECKING:
     from ...search import SearchResult
 
-pytestmark = [pytest.mark.quality]
+pytestmark = [pytest.mark.integration, pytest.mark.quality]
 
 _QUERYSET = Path(__file__).resolve().parents[1] / "quality" / "intent_queries.toml"
 _NDCG_K = 10
