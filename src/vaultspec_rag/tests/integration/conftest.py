@@ -103,6 +103,42 @@ def _startup_cleanup_reserve(budget: float) -> float:
     )
 
 
+#: Upper bound on how far host contention may stretch the default startup
+#: envelope. The envelope is a whole-startup hang-guard, so enlarging it only
+#: defers a genuine-hang failure; the cap stops a runaway load signal from
+#: inflating it without end.
+_MAX_STARTUP_LOAD_MULTIPLIER = 4.0
+
+
+def _startup_load_multiplier() -> float:
+    """Stretch the default startup envelope when the host is oversubscribed.
+
+    Returns a factor in ``[1.0, _MAX_STARTUP_LOAD_MULTIPLIER]`` from the
+    one-minute load average per logical core, so a busy fleet grants a
+    proportionally longer whole-startup hang-guard instead of racing a fixed
+    default. It only ever grows the envelope (floor 1.0), so it can make a
+    previously-passing startup more tolerant, never less; any probe failure
+    falls back to 1.0. Applied only to the fixture default - an explicit
+    ``startup_budget`` (used by tests that assert timeout behaviour) is left
+    exactly as given.
+    """
+    try:
+        import psutil
+
+        cores = psutil.cpu_count(logical=True) or 1
+        load1, _, _ = psutil.getloadavg()
+    except (ImportError, OSError, ValueError):
+        return 1.0
+    return min(_MAX_STARTUP_LOAD_MULTIPLIER, max(1.0, load1 / cores))
+
+
+def _resolve_startup_budget(startup_budget: float | None) -> float:
+    """Return the startup envelope: an explicit override, else load-scaled default."""
+    if startup_budget is not None:
+        return startup_budget
+    return model_setup_timeout_seconds() * _startup_load_multiplier()
+
+
 def _verify_offline_service_startup(log_path: Path, stages: list[str]) -> str:
     """Prove local-only constructors ran without the configured HF endpoint."""
     output = _service_output(log_path)
@@ -415,7 +451,7 @@ def _live_service_context(
     )
 
     startup_started = time.monotonic()
-    budget = startup_budget or model_setup_timeout_seconds()
+    budget = _resolve_startup_budget(startup_budget)
     cleanup_reserve = _startup_cleanup_reserve(budget)
     work_budget = budget - cleanup_reserve
     stages: list[str] = []

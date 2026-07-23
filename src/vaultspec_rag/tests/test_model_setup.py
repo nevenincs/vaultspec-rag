@@ -18,12 +18,16 @@ from ..config import EnvVar
 from ._model_setup import (
     configured_service_model_ids,
     ensure_model_snapshots,
+    model_setup_timeout_seconds,
     models_are_cached,
     run_bounded_process,
 )
 from .integration._helpers import _service_env
 from .integration.conftest import (
+    _MAX_STARTUP_LOAD_MULTIPLIER,
     _live_service_context,
+    _resolve_startup_budget,
+    _startup_load_multiplier,
     _verify_offline_service_startup,
 )
 
@@ -309,6 +313,22 @@ def test_live_service_repair_failure_uses_shared_startup_envelope(
     assert endpoint in message
     assert "worker output tail" in message
     assert "Service output:" in message
+
+
+def test_startup_load_multiplier_only_widens_the_default_envelope() -> None:
+    """Load scaling grows the default envelope, never shrinks it or an override."""
+    multiplier = _startup_load_multiplier()
+    assert 1.0 <= multiplier <= _MAX_STARTUP_LOAD_MULTIPLIER
+
+    # An explicit startup_budget is the exact envelope - the timeout-behaviour
+    # tests depend on it - so it is never load-scaled.
+    assert _resolve_startup_budget(0.700) == 0.700
+
+    # The default is load-scaled and can only grow (floor 1.0), bounded by the
+    # cap so a runaway load signal cannot inflate the hang-guard without end.
+    default = _resolve_startup_budget(None)
+    base = model_setup_timeout_seconds()
+    assert base <= default <= base * _MAX_STARTUP_LOAD_MULTIPLIER
 
 
 def _write_incomplete_hf_cache(cache_dir: Path, *, model_id: str) -> None:
