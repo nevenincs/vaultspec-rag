@@ -50,6 +50,13 @@ _MAX_STARTUP_CLEANUP_RESERVE_SECONDS = 15.0
 #: and its confirmation always have time to run.
 _TEARDOWN_GRACEFUL_COURTESY_SECONDS = 5.0
 
+#: Wall-clock always held back from the graceful courtesy so the pid-targeted
+#: force-kill AND its exit confirmation can run no matter how small the total
+#: teardown budget is. The failed-startup cleanup path hands in only the
+#: startup reserve (a few seconds), so a fixed courtesy that consumed the whole
+#: budget would re-create the very starvation the courtesy cap exists to avoid.
+_TEARDOWN_FORCE_KILL_RESERVE_SECONDS = 4.0
+
 
 def _service_output(log_path: Path) -> str:
     """Return the complete retained service log, or an empty string."""
@@ -295,11 +302,20 @@ def _cleanup_service_process(
         # begins shutting down. Waiting the whole budget for a graceful exit
         # that cannot happen would starve the pid-targeted force-kill and its
         # confirmation, spuriously failing teardown. So the graceful wait is a
-        # short courtesy only; the reserve escalates to a hard kill that always
-        # has budget left to confirm. Force-killing is safe here: state is a
-        # per-test tmp dir, the machine lock is OS-advisory (freed on exit), and
-        # the Qdrant child dies with the daemon via its kill-on-close job.
-        return min(_budget_left(), _TEARDOWN_GRACEFUL_COURTESY_SECONDS)
+        # short courtesy only, and never longer than what leaves the force-kill
+        # reserve intact - otherwise a small budget (the failed-startup cleanup
+        # hands in only the startup reserve) is entirely consumed by the
+        # courtesy and the force-kill is starved again. Force-killing is safe
+        # here: state is a per-test tmp dir, the machine lock is OS-advisory
+        # (freed on exit), and the Qdrant child dies with the daemon via its
+        # kill-on-close job.
+        return max(
+            0.0,
+            min(
+                _TEARDOWN_GRACEFUL_COURTESY_SECONDS,
+                _budget_left() - _TEARDOWN_FORCE_KILL_RESERVE_SECONDS,
+            ),
+        )
 
     # Send the bare graceful signal (as an operator-driven stop does), then
     # escalate to a pid-targeted force-kill that never touches a console group.
