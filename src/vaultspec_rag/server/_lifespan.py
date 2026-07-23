@@ -473,6 +473,9 @@ async def _start_components(
     # reranker, when enabled, is the third. Publishing done/total against that
     # count gives the start spinner a determinate "N of M" signal.
     model_total = 3 if reranker_enabled else 2
+    # Advance the count at each real boundary so the signal is genuinely
+    # determinate: 0 before load, 2 once the dense+sparse encoders are up, and
+    # the terminal total when every model is loaded.
     discovery.publish_phase(
         "warming", detail="loading models", done=0, total=model_total
     )
@@ -482,6 +485,9 @@ async def _start_components(
             "warming", detail="loading the reranker", done=2, total=model_total
         )
         await _run_in_thread(_m._registry.get_reranker)
+    discovery.publish_phase(
+        "warming", detail="models ready", done=model_total, total=model_total
+    )
     logger.info("All models loaded in %.2fs", time.perf_counter() - t0)
 
     _m._lifecycle_log("startup", pid=os.getpid())
