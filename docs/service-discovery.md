@@ -33,10 +33,10 @@ not under the per-instance status directory, so it is machine-wide even when
 The daemon publishes the **same versioned payload** to two files with the same name,
 `service.json`, in two different directories. They serve different consumers.
 
-| View | Location | Owned/authoritative | Purpose |
-| --- | --- | --- | --- |
+| View                | Location                                                                                                                           | Owned/authoritative                  | Purpose                                                                                                                                    |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Machine pointer** | beside the lock: `{qdrant_storage_dir}/../service.json` (`machine_discovery_path` at `src/vaultspec_rag/_machine_lock.py:106-114`) | Yes — mutated only by the lock owner | The canonical address record. A consumer that does not share the service's `VAULTSPEC_RAG_STATUS_DIR` still finds the one running service. |
-| **Status file** | `{status_dir}/service.json` (`_status_file` at `src/vaultspec_rag/serviceclient/_discovery.py:140-146`) | No — operator/compatibility view | Operator detail, and a legacy fallback for pre-pointer daemons. |
+| **Status file**     | `{status_dir}/service.json` (`_status_file` at `src/vaultspec_rag/serviceclient/_discovery.py:140-146`)                            | No — operator/compatibility view     | Operator detail, and a legacy fallback for pre-pointer daemons.                                                                            |
 
 `status_dir` is the CLI `--status-dir` override, else the `VAULTSPEC_RAG_STATUS_DIR`
 environment variable, else `~/.vaultspec-rag/`.
@@ -86,34 +86,34 @@ Every file carries a schema discriminator
 (`src/vaultspec_rag/serviceclient/_discovery.py:31-32`). Pin on the pair and refuse a file
 you do not understand:
 
-| Field | Type | Value |
-| --- | --- | --- |
-| `schema` | string | `vaultspec.rag.service` |
-| `version` | integer | `1` |
+| Field     | Type    | Value                   |
+| --------- | ------- | ----------------------- |
+| `schema`  | string  | `vaultspec.rag.service` |
+| `version` | integer | `1`                     |
 
 `version` is bumped only on a breaking shape change, and this document is updated in the
 same change. Additive fields do not bump the version.
 
 ## Interface fields
 
-| Field | Type | Format / meaning |
-| --- | --- | --- |
-| `schema` | string | Schema discriminator (see Version discriminator). |
-| `version` | integer | Schema version (see Version discriminator). |
-| `pid` | integer | OS process id of the serving daemon. See the PID-reuse caveat below. |
-| `port` | integer | TCP port the service listens on (loopback). |
-| `started_at` | string | Service start time, **ISO-8601 with UTC offset, second precision** (e.g. `2026-06-24T10:23:52+00:00`). |
-| `last_heartbeat` | string | Time of the last heartbeat write, **same format as `started_at`**. Drives the staleness check. |
-| `heartbeat_interval_s` | integer | Seconds between heartbeat writes. |
-| `stale_after_s` | integer | Age in seconds past which `last_heartbeat` is considered stale. |
-| `service_token` | string | Per-process identity token; also echoed by the ungated `/health` route for identity verification. |
-| `phase` | string | Daemon lifecycle phase: `warming` before readiness or `running` after startup completes (`src/vaultspec_rag/serviceclient/_discovery.py:42-44`). |
-| `qdrant_pid` | integer or null | PID of the witnessed managed Qdrant child. Null means no witnessed managed child is available. |
-| `qdrant_alive` | boolean or null | Whether the supervised Qdrant child is alive. |
-| `qdrant_port` | integer or null | Port of the supervised Qdrant child. |
-| `qdrant_version` | string | Pinned managed-Qdrant version witnessed by the daemon. |
-| `qdrant_start_time` | number | OS creation time of the witnessed Qdrant child, epoch seconds. Binds `qdrant_pid` to one process incarnation. |
-| `qdrant_identity` | object | Complete managed-child witness: `pid`, `start_time`, `port`, `version`, `storage_path`. |
+| Field                  | Type            | Format / meaning                                                                                                                                 |
+| ---------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `schema`               | string          | Schema discriminator (see Version discriminator).                                                                                                |
+| `version`              | integer         | Schema version (see Version discriminator).                                                                                                      |
+| `pid`                  | integer         | OS process id of the serving daemon. See the PID-reuse caveat below.                                                                             |
+| `port`                 | integer         | TCP port the service listens on (loopback).                                                                                                      |
+| `started_at`           | string          | Service start time, **ISO-8601 with UTC offset, second precision** (e.g. `2026-06-24T10:23:52+00:00`).                                           |
+| `last_heartbeat`       | string          | Time of the last heartbeat write, **same format as `started_at`**. Drives the staleness check.                                                   |
+| `heartbeat_interval_s` | integer         | Seconds between heartbeat writes.                                                                                                                |
+| `stale_after_s`        | integer         | Age in seconds past which `last_heartbeat` is considered stale.                                                                                  |
+| `service_token`        | string          | Per-process identity token; also echoed by the ungated `/health` route for identity verification.                                                |
+| `phase`                | string          | Daemon lifecycle phase: `warming` before readiness or `running` after startup completes (`src/vaultspec_rag/serviceclient/_discovery.py:42-44`). |
+| `qdrant_pid`           | integer or null | PID of the witnessed managed Qdrant child. Null means no witnessed managed child is available.                                                   |
+| `qdrant_alive`         | boolean or null | Whether the supervised Qdrant child is alive.                                                                                                    |
+| `qdrant_port`          | integer or null | Port of the supervised Qdrant child.                                                                                                             |
+| `qdrant_version`       | string          | Pinned managed-Qdrant version witnessed by the daemon.                                                                                           |
+| `qdrant_start_time`    | number          | OS creation time of the witnessed Qdrant child, epoch seconds. Binds `qdrant_pid` to one process incarnation.                                    |
+| `qdrant_identity`      | object          | Complete managed-child witness: `pid`, `start_time`, `port`, `version`, `storage_path`.                                                          |
 
 The `qdrant_*` fields are present only in managed-server mode. In local-only mode, and
 when the service targets a remote Qdrant URL, the daemon supervises no child, so the
@@ -163,13 +163,13 @@ three values (`src/vaultspec_rag/serviceclient/_discovery.py:57-59`):
 A `degraded` verdict carries a `reason` naming the specific disagreement
 (`src/vaultspec_rag/serviceclient/_discovery.py:63-67`):
 
-| `reason` | Meaning |
-| --- | --- |
-| `pointer_missing` | Live holder, but no pointer file. |
-| `pointer_invalid` | Pointer present but its port is unreadable/malformed. |
-| `pointer_stale` | Pointer's `last_heartbeat` is older than its staleness window. |
+| `reason`          | Meaning                                                                                  |
+| ----------------- | ---------------------------------------------------------------------------------------- |
+| `pointer_missing` | Live holder, but no pointer file.                                                        |
+| `pointer_invalid` | Pointer present but its port is unreadable/malformed.                                    |
+| `pointer_stale`   | Pointer's `last_heartbeat` is older than its staleness window.                           |
 | `pointer_foreign` | Pointer names a PID other than the live holder — a leftover from a previous incarnation. |
-| `probe_failed` | The machine lock or pointer could not be inspected at all. |
+| `probe_failed`    | The machine lock or pointer could not be inspected at all.                               |
 
 The verdict also preserves `holder_pid`, `pointer_pid`, `port`, `service_token`,
 `heartbeat_age_s`, and `stale_after_s` as evidence, and `source` records which view
@@ -187,13 +187,13 @@ the verdict is derived once and rendered per surface, never recomputed
 operator states and their exit codes
 (`src/vaultspec_rag/serviceclient/_status.py:35-48`):
 
-| Operator state | Meaning | Exit code |
-| --- | --- | --- |
-| `running` | Serving normally. | 0 |
-| `warming` | Holds the singleton, loading models, not yet serving. | 5 |
-| `stopped` | Nothing is running (resolution `absent`). | 3 |
-| `crashed` | A recorded service is not serving (dead PID, reused PID, silent port, or stale heartbeat). | 4 |
-| `degraded_discovery` | Live holder, untrustworthy pointer (resolution `degraded`). | 4 |
+| Operator state       | Meaning                                                                                    | Exit code |
+| -------------------- | ------------------------------------------------------------------------------------------ | --------- |
+| `running`            | Serving normally.                                                                          | 0         |
+| `warming`            | Holds the singleton, loading models, not yet serving.                                      | 5         |
+| `stopped`            | Nothing is running (resolution `absent`).                                                  | 3         |
+| `crashed`            | A recorded service is not serving (dead PID, reused PID, silent port, or stale heartbeat). | 4         |
+| `degraded_discovery` | Live holder, untrustworthy pointer (resolution `degraded`).                                | 4         |
 
 `degraded_discovery` rides the existing exit code 4 rather than introducing a new code a
 supervising broker would have to learn. The structured status body (shared by every
