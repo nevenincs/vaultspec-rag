@@ -3,17 +3,13 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: 2026-03-07
-modified: '2026-06-30'
+modified: '2026-07-23'
 related:
   - '[[2026-03-07-threading-lock-for-singleton-adr]]'
   - '[[2026-03-07-continuous-research]]'
 ---
 
-# ADR: VaultGraph cache with `threading.Lock` and explicit invalidation
-
-## Status
-
-Accepted
+# `gpu-rag-stack` adr: `VaultGraph cache with threading.Lock and explicit invalidation` | (**status:** `accepted`)
 
 ## Context
 

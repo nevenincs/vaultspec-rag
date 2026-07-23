@@ -3,16 +3,12 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: 2026-03-07
-modified: '2026-06-30'
+modified: '2026-07-23'
 related:
   - '[[2026-03-07-continuous-research]]'
 ---
 
-# ADR: Use blake2b via `file_digest()` for file change detection
-
-## Status
-
-Accepted
+# `gpu-rag-stack` adr: `Use blake2b via file_digest() for file change detection` | (**status:** `accepted`)
 
 ## Context
 

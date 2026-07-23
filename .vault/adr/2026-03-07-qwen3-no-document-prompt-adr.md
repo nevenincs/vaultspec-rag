@@ -3,17 +3,13 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: 2026-03-07
-modified: '2026-06-30'
+modified: '2026-07-23'
 related:
   - '[[2026-03-06-gpu-only-rag-stack-adr]]'
   - '[[2026-03-09-qwen3-task-prefix-verification-research]]'
 ---
 
-# ADR: Qwen3-Embedding encodes documents without prompt, queries with `prompt_name="query"`
-
-## Status
-
-Accepted
+# `gpu-rag-stack` adr: `Qwen3-Embedding encodes documents without prompt, queries with prompt_name="query"` | (**status:** `accepted`)
 
 ## Context
 
