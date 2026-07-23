@@ -23,6 +23,7 @@ surface:
 from __future__ import annotations
 
 import logging
+import os
 
 import vaultspec_rag.server as _m
 
@@ -149,6 +150,7 @@ def main(port: int | None = None) -> None:
             backup_count=int(cfg.managed_log_backup_count),
         )
 
+        daemon_exit_code = 0
         try:
             from ..jobs import register_on_job_complete
             from ._routes import ROUTES as READ_ONLY_ROUTES
@@ -190,14 +192,29 @@ def main(port: int | None = None) -> None:
                 log_level="info",
                 lifespan="on",
             )
+        except BaseException:
+            daemon_exit_code = 1
+            raise
         finally:
             try:
                 _m._registry.close_all()
             finally:
-                if not log_capture.close():
-                    raise RuntimeError(
-                        "service log drain did not finish within its shutdown bound"
-                    )
+                capture_closed = log_capture.close()
+            # Standalone-daemon exit backstop. ``service_lifespan`` forces its own
+            # ``os._exit`` on the clean-serving and guarded-startup-failure paths,
+            # so reaching here on the daemon means ``uvicorn.run`` returned or
+            # raised WITHOUT that exit firing - a failed port bind, or a startup
+            # error uvicorn surfaced before the lifespan ran. Force the exit so the
+            # interpreter-exit executor join cannot wedge this daemon alive owning
+            # nothing (the orphan-accumulation class). The in-process
+            # embedded-reuse host (no ``_daemon_process``) skips it and enforces
+            # the log-drain contract instead.
+            if _m._daemon_process:
+                os._exit(daemon_exit_code if capture_closed else 1)
+            if not capture_closed:
+                raise RuntimeError(
+                    "service log drain did not finish within its shutdown bound"
+                )
     else:
         # stdio is the sole MCP transport. ``mcp`` is imported only here:
         # the HTTP daemon no longer mounts any MCP app, so it never needs
