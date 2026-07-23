@@ -76,7 +76,7 @@ from ._utils import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable
 
     from starlette.requests import Request
 
@@ -112,7 +112,7 @@ _BAD_REQUEST_EMPTY_QUERY = JSONResponse(
 
 # The admissible desired-state control modes, mapped to themselves so a raw
 # request string resolves to the typed mode without an unchecked cast.
-_CONTROL_MODES: Mapping[str, Literal["graceful", "force"]] = {
+_CONTROL_MODES: dict[str, Literal["graceful", "force"]] = {
     "graceful": "graceful",
     "force": "force",
 }

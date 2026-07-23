@@ -22,8 +22,6 @@ from ._postprocess import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from .._store_models import DocumentLocatorKind
     from ._models import DocumentSearchResult, ParsedQuery, SearchResult
 
@@ -34,7 +32,7 @@ if TYPE_CHECKING:
 # string resolves to the typed kind without an unchecked cast. This is the
 # single source of truth for the set; the type alias and this table are
 # checked against each other by the type checker.
-_LOCATOR_KINDS: Mapping[str, DocumentLocatorKind] = {
+_LOCATOR_KINDS: dict[str, DocumentLocatorKind] = {
     "byte": "byte",
     "page": "page",
     "sheet": "sheet",
