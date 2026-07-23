@@ -446,10 +446,12 @@ async def test_get_jobs_is_newest_first(
     live_service: tuple[int, Path],  # noqa: ARG001
     tmp_path: Path,
 ) -> None:
-    (tmp_path / ".vault").mkdir(parents=True, exist_ok=True)
-    # Trigger two jobs
-    job1 = await tools.reindex_vault(project_root=str(tmp_path))
-    job2 = await tools.reindex_codebase(project_root=str(tmp_path))
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    (first_root / ".vault").mkdir(parents=True, exist_ok=True)
+    (second_root / ".vault").mkdir(parents=True, exist_ok=True)
+    job1 = await tools.reindex_vault(project_root=str(first_root))
+    job2 = await tools.reindex_vault(project_root=str(second_root))
     await _wait_for_terminal_jobs(cast("str", job1["job_id"]))
     await _wait_for_terminal_jobs(cast("str", job2["job_id"]))
 
