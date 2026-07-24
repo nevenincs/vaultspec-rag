@@ -453,7 +453,7 @@ def _prepare_dimension_failure(
     return registry.peek_project(root)
 
 
-async def _request_cancel_during_failed_upsert(
+async def _request_cancel_at_the_write_gate(
     manager: JobManager,
     registry: ServiceRegistry,
     root: Path,
@@ -463,10 +463,10 @@ async def _request_cancel_during_failed_upsert(
     gpu_lock = registry.gpu_lock
     gpu_lock.acquire()
     try:
-        failed_id = jobs.start_reindex_codebase(root, clean=False)
+        cancelled_id = jobs.start_reindex_codebase(root, clean=False)
         embedding = await _wait_for_managed_job(
             manager,
-            failed_id,
+            cancelled_id,
             _code_attempt_reached_embedding_boundary,
             "incremental job did not enter the real embedding pipeline",
         )
@@ -476,46 +476,51 @@ async def _request_cancel_during_failed_upsert(
         gpu_lock.release()
 
     try:
-        # The real point lock remains held while the production model completes
-        # its small four-file slice. At this boundary the worker is blocked in
-        # the protected Qdrant upsert, after the post-GPU control checkpoint.
+        # Holding the collection lock parks the sole consumer at the managed
+        # write-lock acquisition gate, after the post-GPU checkpoint but before
+        # any store mutation. That gate polls cooperative control, so a cancel
+        # requested here is delivered before the (doomed) upsert can run: no
+        # encoded chunk is ever persisted.
         await asyncio.sleep(2.0)
-        blocked = manager.get(failed_id)
+        blocked = manager.get(cancelled_id)
         assert blocked is not None
         assert blocked.state is JobState.RUNNING
         assert blocked.progress is not None
         assert blocked.progress.step == "chunk + embed"
         assert blocked.progress.completed == blocked.progress.total == 4
         assert registry.gpu_lock.locked() is False
-        cancel = manager.set_desired_state(failed_id, DesiredJobState.CANCELLED)
+        cancel = manager.set_desired_state(cancelled_id, DesiredJobState.CANCELLED)
         assert cancel.status is JobOutcomeStatus.ACCEPTED
         assert cancel.job is not None
         assert cancel.job.state is JobState.CANCELLING
     finally:
         point_lock.release()
-    return failed_id
+    return cancelled_id
 
 
-async def _assert_failure_wins_over_cancel(
+async def _assert_cancel_wins_at_the_write_gate(
     manager: JobManager,
-    failed_id: str,
+    cancelled_id: str,
     slot: ProjectSlot,
 ) -> None:
     joined = await manager.wait_for_attempt(
-        failed_id,
+        cancelled_id,
         timeout_seconds=_MANAGED_WAIT_SECONDS,
     )
     assert joined.code == "attempt_released"
-    failed = manager.get(failed_id)
-    assert failed is not None
-    assert failed.state is JobState.FAILED
-    assert failed.desired_state is DesiredJobState.CANCELLED
-    assert failed.timestamps.control_requested_at is not None
-    assert failed.timestamps.control_acknowledged_at is None
-    assert failed.error_kind is not None
-    assert failed.result is not None
-    assert "cancel" not in failed.result.lower()
-    _assert_manager_resources_released(failed, slot, code=True)
+    cancelled = manager.get(cancelled_id)
+    assert cancelled is not None
+    assert cancelled.state is JobState.CANCELLED
+    assert cancelled.desired_state is DesiredJobState.CANCELLED
+    assert cancelled.timestamps.control_requested_at is not None
+    assert cancelled.timestamps.control_acknowledged_at is not None
+    # The pending write never executed: a cancel delivered at the pre-mutation
+    # write gate wins cleanly and cannot surface the doomed dimension-mismatch
+    # write as a spurious failure. Nothing was persisted.
+    assert cancelled.error_kind is None
+    assert cancelled.result is None
+    assert slot.store.count_code() == 0
+    _assert_manager_resources_released(cancelled, slot, code=True)
 
 
 @pytest.fixture(scope="module")
@@ -1056,13 +1061,21 @@ async def test_managed_vault_cancel_is_absorbing_and_stops_all_writes(
 
 
 @pytest.mark.timeout(300)
-async def test_managed_application_failure_wins_over_pending_cancel(
+async def test_managed_cancel_at_write_gate_wins_without_spurious_failure(
     tmp_path: Path,
     managed_facade_registry: ServiceRegistry,
     managed_job_manager: JobManager,
 ) -> None:
-    """A real storage failure stays failed after manager-owned cleanup."""
-    root = tmp_path / "managed-code-failure"
+    """A cancel at the pre-mutation write gate wins cleanly for a doomed write.
+
+    The store-retry contract that a genuine store failure outranks a cancel
+    delivered during backoff is enforced and guard-tested at its own layer.
+    Here the operator cancels while the sole consumer is still parked at the
+    managed write-lock acquisition gate - before any mutation - so the pending
+    dimension-mismatch write never executes. The attempt must acknowledge the
+    cancel, persist nothing, and never record a spurious failure.
+    """
+    root = tmp_path / "managed-code-cancel-gate"
     paths = _write_code_files(root, 4, "seed")
     initial_id = jobs.start_reindex_codebase(root, clean=True)
     initial_join = await managed_job_manager.wait_for_attempt(
@@ -1079,13 +1092,15 @@ async def test_managed_application_failure_wins_over_pending_cancel(
         root,
         file_count=len(paths),
     )
-    failed_id = await _request_cancel_during_failed_upsert(
+    cancelled_id = await _request_cancel_at_the_write_gate(
         managed_job_manager,
         managed_facade_registry,
         root,
         slot,
     )
-    await _assert_failure_wins_over_cancel(managed_job_manager, failed_id, slot)
+    await _assert_cancel_wins_at_the_write_gate(
+        managed_job_manager, cancelled_id, slot
+    )
 
 
 class _AbortAfterFirstCommitReporter(NullProgressReporter):

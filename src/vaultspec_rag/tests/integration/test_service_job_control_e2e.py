@@ -155,6 +155,7 @@ async def _e2e_runtime(  # pyright: ignore[reportUnusedFunction]
             "qdrant_url": None,
             "qdrant_server": False,
             "local_only": True,
+            "index_support_profile": "embedded-local",
             "sparse_enabled": False,
             "reranker_enabled": False,
             "embedding_dimension": embedding_model.dimension,
