@@ -25,7 +25,7 @@ Route a failed machine-singleton claim and a failed port bind through the daemon
 - [x] `P02.S01` - Move the machine-singleton claim inside the lifespan startup try-guard so its failure routes through \_exit_standalone_daemon; `src/vaultspec_rag/server/_lifespan.py`.
 - [x] `P02.S03` - Make the release-on-failure teardown tolerate a claim that produced no lease; `src/vaultspec_rag/server/_lifespan.py`.
 - [x] `P02.S04` - Add a top-level entrypoint os.\_exit backstop on any startup exception escaping uvicorn.run; `src/vaultspec_rag/server/_main.py`.
-- [ ] `P02.S05` - Add a bidirectional guard test that a race-losing spawned daemon terminates instead of lingering; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
+- [x] `P02.S05` - Add a bidirectional guard test that a race-losing spawned daemon terminates instead of lingering; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
 
 ### Phase `P03` - add the bounded signature-scoped orphan reap
 
@@ -41,7 +41,7 @@ Add an opt-in server stop reap that clears accumulated orphans by daemon signatu
 Prove self-exit and reap against regression and the broker structured-stop contract, then run the gate suite and code review.
 
 - [x] `P04.S10` - Reconcile the reap envelope with the broker and control-plane structured-stop regression suite; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
-- [ ] `P04.S11` - Run the code review and the full gate suite for the changed lifecycle and stop surface; `.vault/audit/service-orphan-reaping`.
+- [x] `P04.S11` - Run the code review and the full gate suite for the changed lifecycle and stop surface; `.vault/audit/service-orphan-reaping`.
 
 ## Description
 
