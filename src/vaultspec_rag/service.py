@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from .store import VaultStore
 
 from .graph_cache import GraphCache
+from .job_control import QuiesceGate
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +145,10 @@ class ServiceRegistry:
         self._lock = threading.RLock()
         self._root_locks: dict[Path, threading.Lock] = {}
         self._gpu_lock = threading.Lock()
+        # One process-global quiesce gate beside the one GPU lock: every
+        # job token and every search admission observes the same gate so a
+        # single pause stands the whole daemon down.
+        self._quiesce_gate = QuiesceGate()
         self._reranker: CrossEncoder | None = None
         self._reranker_lock = threading.Lock()
         self._on_close_project: Callable[[Path], object] | None = None
@@ -242,6 +247,11 @@ class ServiceRegistry:
     def gpu_lock(self) -> threading.Lock:
         """Return the shared GPU serialization lock."""
         return self._gpu_lock
+
+    @property
+    def quiesce_gate(self) -> QuiesceGate:
+        """Return the process-global cooperative quiesce gate."""
+        return self._quiesce_gate
 
     def get_reranker(self) -> CrossEncoder:
         """Return the shared CrossEncoder, loading it lazily.
@@ -750,6 +760,7 @@ class ServiceRegistry:
                 graph_provider=lambda gc=graph_cache, r=root: gc.get(r),
                 gpu_lock=self._gpu_lock,
                 reranker=reranker,
+                quiesce_gate=self._quiesce_gate,
             )
             vault_indexer = VaultIndexer(
                 root,

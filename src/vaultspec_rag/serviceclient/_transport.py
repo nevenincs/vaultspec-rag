@@ -767,6 +767,8 @@ _POST_BODY_ROUTES: dict[str, str] = {
     "get_code_file": "/code-file",
     "get_vault_document": "/vault-document",
     "evict_project": "/projects/evict",
+    "pause_service": "/pause",
+    "resume_service": "/resume",
 }
 
 _JOBS_PARAMS = {
