@@ -21,4 +21,6 @@ Ingest-barrier guard tests (`tests/integration/test_ingest_barrier.py`, commit `
 
 ## Outcome
 
+Post-merge addendum: both post-rebase obligations are discharged on the merged main tree. (1) The barrier proof was re-run as one uninterrupted sequence - `apply_ingest_barrier` weakened to return before fence and count turned both guards red on `DID NOT RAISE IngestVerificationError`; restored, 5/5 green, working tree byte-identical. (2) The binding composition proof landed as `TestBarrierComposesWithSliceWriter` (commit `60f0e11b`): the acknowledged-never-applies injection goes THROUGH the slice writer during a production rebuild, the run fails at the barrier before stale-purge and metadata publish, and neutralizing the barrier's count comparison was observed red on the missing rejection before restore to 6/6 green.
+
 ## Notes
