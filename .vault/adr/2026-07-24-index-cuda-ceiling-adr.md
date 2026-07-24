@@ -10,7 +10,7 @@ related:
   - "[[2026-06-12-service-concurrency-adr]]"
 ---
 
-# `index-cuda-ceiling` adr: `size the indexing CUDA ceiling to real device headroom and scope it per job` | (**status:** `proposed`)
+# `index-cuda-ceiling` adr: `size the indexing CUDA ceiling to real device headroom and scope it per job` | (**status:** `accepted`)
 
 ## Problem Statement
 
