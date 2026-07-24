@@ -10,16 +10,6 @@ related:
   - '[[2026-07-23-service-orphan-reaping-research]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 # `service-orphan-reaping` plan
 
 ### Phase `P01` - confirm the launcher-daemon pair origin

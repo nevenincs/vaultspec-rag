@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#document-chunk-bounding'
 date: '2026-07-23'
-modified: '2026-07-23'
+modified: '2026-07-24'
 step_id: 'S20'
 related:
   - "[[2026-07-23-document-chunk-bounding-plan]]"
