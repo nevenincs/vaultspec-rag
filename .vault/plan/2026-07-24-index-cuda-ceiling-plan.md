@@ -10,16 +10,6 @@ related:
   - '[[2026-07-24-index-cuda-ceiling-research]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 # `index-cuda-ceiling` plan
 
 Size the indexing CUDA budget to real device headroom and charge each job only
@@ -81,7 +71,7 @@ Demonstrate the cross-job-contamination and double-count guards failing for thei
 - [x] `P04.S16` - prove the cross-job contamination guard fails when enforcement reads the process-global counter and passes when it reads the captured peak, recording both directions; `src/vaultspec_rag/tests/test_job_resilience.py`.
 - [x] `P04.S17` - prove the double-count guard fails when the baseline is subtracted from only one side of the ceiling comparison, recording both directions; `src/vaultspec_rag/tests/test_config.py`.
 - [x] `P04.S18` - run the full unit suite and the citation-gate lint over every changed file; `src/vaultspec_rag/tests`.
-- [ ] `P04.S19` - restart the service on the built code and confirm a live feature-profile corpus rebuild completes with no spurious cuda_memory_ceiling failures under concurrency; `src/vaultspec_rag`.
+- [x] `P04.S19` - restart the service on the built code and confirm a live feature-profile corpus rebuild completes with no spurious cuda_memory_ceiling failures under concurrency; `src/vaultspec_rag`.
 
 ## Parallelization
 
