@@ -33,6 +33,7 @@ from ...job_models import (
     JobSpec,
     JobState,
 )
+from ...registry import get_registry
 from ...server import _lifespan as server_lifespan
 from ...server._routes import ROUTES
 from ...serviceclient import (
@@ -171,7 +172,17 @@ async def _e2e_runtime(  # pyright: ignore[reportUnusedFunction]
             "watch_retry_jitter_fraction": 0.0,
         }
     )
-    registry = server._registry
+    # An earlier module may have called ``reset_registry()``, which rebuilds
+    # the ``registry.get_registry()`` singleton but leaves the server package's
+    # cached ``_registry`` alias bound to the prior, now-closed instance. The
+    # job machinery dispatches through ``get_registry()`` while the watcher and
+    # this fixture read ``server._registry``; if the two diverge, a dispatched
+    # index job and this test open the same local-file Qdrant store from two
+    # different registries and collide on its non-parallel-safe file lock.
+    # Re-align the server alias with the authoritative singleton so the test,
+    # the watcher, and the dispatcher all drive one registry.
+    registry = get_registry()
+    server._registry = registry
     registry.prepare_startup()
     assert registry.health()["project_count"] == 0
     registry._model = embedding_model  # pyright: ignore[reportPrivateUsage]
