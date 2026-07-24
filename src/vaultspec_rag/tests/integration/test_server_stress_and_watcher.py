@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from ... import VaultStore, jobs, server
-from ...concurrency import get_index_limiter, reset_limiters
+from ...concurrency import get_encode_limiter, reset_limiters
 from ...config import get_config
 from ...indexer._vault_prep import prepare_document
 from ...job_models import (
@@ -1085,7 +1085,10 @@ async def test_watcher_cancellation_releases_real_admitted_claim(
     registry, manager = managed_watcher_runtime
     root = tmp_path.resolve()
     _slot, _trigger, target = _build_watched_code_project(root, registry)
-    limiter = get_index_limiter()
+    # Encode-bearing watcher jobs wait on the machine-wide encode
+    # admission slot, so that is the limiter to saturate to hold the
+    # admitted attempt short of its worker thread.
+    limiter = get_encode_limiter()
     borrowers = [object() for _ in range(int(limiter.total_tokens))]
     for borrower in borrowers:
         await limiter.acquire_on_behalf_of(borrower)

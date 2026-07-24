@@ -339,11 +339,16 @@ def _assert_released(snapshot: JobSnapshot, slot: ProjectSlot) -> None:
     assert snapshot.resources.writer_lock_held is False
     assert snapshot.resources.pipeline_active is False
     assert slot.ref_count == 0
-    assert limiter_stats()["index"] == {
+    # Encode-bearing jobs borrow the machine-wide encode admission slot;
+    # the index partition must stay unborrowed either way.
+    assert limiter_stats()["encode"] == {
         "total_tokens": 1,
         "borrowed_tokens": 0,
         "waiting": 0,
     }
+    index_stats = limiter_stats()["index"]
+    assert index_stats["borrowed_tokens"] == 0
+    assert index_stats["waiting"] == 0
 
 
 def _assert_restored_restart_state(
