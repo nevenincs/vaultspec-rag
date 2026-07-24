@@ -208,6 +208,18 @@ class TestOrphanReapSafety:
     and a daemon on a different port is never enumerated.
     """
 
+    # Windows-only: on this platform a race-loser daemon is a venv-shim
+    # launcher+worker PAIR, which is the process model the witness-count and
+    # pair-protection invariants below assume. A POSIX daemon is a single
+    # process, so these pair fixtures do not apply; POSIX single-process reap
+    # safety is a tracked follow-up (the orphan-accumulation this guards, #256,
+    # is itself a Windows uv-tool-shim behaviour).
+    pytestmark = pytest.mark.skipif(
+        sys.platform != "win32",
+        reason="reap pair-protection fixtures assume the Windows venv-shim "
+        "launcher+worker pair; POSIX single-process reap is a tracked follow-up",
+    )
+
     def test_reap_spares_singleton_pair_and_reaps_the_orphan_pair(
         self,
         tmp_path: Path,
