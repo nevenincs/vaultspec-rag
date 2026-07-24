@@ -83,14 +83,25 @@ def _run_storage_op[T](
     json_mode: bool,
     fn: Callable[[QdrantClient], T],
 ) -> T:
-    """Open a client to the managed server, run ``fn``, exit 3 if unreachable."""
+    """Open a client to the managed server, run ``fn``, exit 3 if unreachable.
+
+    The client does not signal an unreachable server with ``OSError``: it wraps
+    the transport failure in its own ``ResponseHandlingException``, which is a
+    plain ``Exception``. Catching only the builtin types let that escape, and a
+    ``--json`` invocation then printed a traceback to stderr and NOTHING to
+    stdout - zero envelopes on an exit path, which is the one thing the
+    structured-outcome contract forbids, and unparseable for the broker the flag
+    exists to serve. Every API-level failure is caught for the same reason: no
+    exit path from a ``--json`` verb may leave stdout empty.
+    """
     from qdrant_client import QdrantClient
+    from qdrant_client.http.exceptions import ApiException, ResponseHandlingException
 
     url = _resolve_server_url(command, json_mode)
     client = QdrantClient(url=url)
     try:
         return fn(client)
-    except (OSError, RuntimeError) as exc:
+    except (OSError, RuntimeError, ResponseHandlingException) as exc:
         message = (
             f"Could not reach the managed Qdrant server at {url}. Start the "
             "service with `vaultspec-rag server start`."
@@ -99,6 +110,14 @@ def _run_storage_op[T](
             _emit_json_error_and_exit(command, "service_not_running", message, 3)
         _echo_fault(message)
         raise typer.Exit(3) from exc
+    except ApiException as exc:
+        # Reached the server but it refused the call. Distinct from unreachable
+        # so the operator is not sent to start a service that is already up.
+        message = f"The managed Qdrant server at {url} rejected the request: {exc}"
+        if json_mode:
+            _emit_json_error_and_exit(command, "storage_request_failed", message, 1)
+        _echo_fault(message)
+        raise typer.Exit(1) from exc
     finally:
         client.close()
 

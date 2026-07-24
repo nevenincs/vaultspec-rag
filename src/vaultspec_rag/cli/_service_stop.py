@@ -396,31 +396,50 @@ def _orphan_daemon_pids(port: int) -> dict[int, int]:
     appears as a launcher+worker PAIR both carrying the witness in a parent-child
     relation. The ppid map lets the reap protect, or clear, a whole pair rather
     than half of it.
-    """
-    import contextlib
 
+    Raises:
+        OSError: The process table could not be enumerated. Deliberately
+            propagated rather than swallowed: a scan that fails silently returns
+            no matches, which is indistinguishable from a machine with no
+            orphans, and the reap would then report a satisfied no-op. A broker
+            reading that success concludes the machine is clear and starts a
+            daemon that loses the singleton race to the orphan the scan never
+            saw. An unachieved reap must be a fault, never a quiet zero.
+    """
     import psutil
 
     marker = ["-m", "vaultspec_rag.server", "--port", str(port)]
     found: dict[int, int] = {}
-    with contextlib.suppress(Exception):
-        for process in psutil.process_iter(["pid", "ppid", "cmdline"]):
+    try:
+        processes = list(psutil.process_iter(["pid", "ppid", "cmdline"]))
+    except Exception as exc:
+        logger.warning("orphan scan could not enumerate processes: %s", exc)
+        raise OSError(f"could not enumerate processes: {exc}") from exc
+    for process in processes:
+        try:
             info = cast("dict[str, object]", process.info)
             raw = info.get("cmdline")
-            if not isinstance(raw, list):
-                continue
-            argv = [str(item) for item in cast("list[object]", raw)]
-            if not any(
-                argv[index : index + len(marker)] == marker
-                for index in range(len(argv) - len(marker) + 1)
-            ):
-                continue
-            pid = info.get("pid")
-            ppid = info.get("ppid")
-            if isinstance(pid, int) and not isinstance(pid, bool):
-                found[pid] = (
-                    ppid if isinstance(ppid, int) and not isinstance(ppid, bool) else 0
-                )
+        except (psutil.NoSuchProcess, psutil.AccessDenied) as exc:
+            # Normal while walking a live process table: a process can exit
+            # mid-scan, and another user's process is not inspectable. Skipping
+            # one such process is correct; skipping the whole scan is not, which
+            # is why only these two are caught and only around this read.
+            logger.debug("orphan scan skipped a process: %s", exc)
+            continue
+        if not isinstance(raw, list):
+            continue
+        argv = [str(item) for item in cast("list[object]", raw)]
+        if not any(
+            argv[index : index + len(marker)] == marker
+            for index in range(len(argv) - len(marker) + 1)
+        ):
+            continue
+        pid = info.get("pid")
+        ppid = info.get("ppid")
+        if isinstance(pid, int) and not isinstance(pid, bool):
+            found[pid] = (
+                ppid if isinstance(ppid, int) and not isinstance(ppid, bool) else 0
+            )
     return found
 
 
@@ -463,7 +482,27 @@ def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
     """
     from .._machine_lock import machine_lock_live_holder
 
-    matched = _orphan_daemon_pids(port)
+    try:
+        matched = _orphan_daemon_pids(port)
+    except OSError as exc:
+        # The scan is the whole basis for "there is nothing to reap". If it
+        # could not run, the honest outcome is that the request was not
+        # satisfied - reporting a reap of zero would tell a broker the machine
+        # is clear on the strength of a scan that never happened.
+        raise _fail_stop(
+            json_mode,
+            error="orphan_scan_failed",
+            message="Orphan reap could not inspect the process table",
+            human_lines=(
+                f"Could not enumerate processes to find orphan daemons on "
+                f"port {port}: {exc}",
+                "No daemon was reaped, and no claim is made about whether any "
+                "orphan exists.",
+            ),
+            next_actions=(f"vaultspec-rag server status --port {port} --verbose",),
+            port=port,
+            detail=str(exc),
+        ) from exc
     lock_holder = machine_lock_live_holder()
     status = _read_service_status()
     pointer_pid = 0

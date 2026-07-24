@@ -365,3 +365,58 @@ class TestReconcileRendering:
         )
 
         assert "already at the bounded geometry" in capsys.readouterr().out
+
+
+class TestUnreachableStorageStillAnswers:
+    """A --json storage verb owes one envelope even when storage is gone.
+
+    The client does not report an unreachable server with OSError; it wraps the
+    transport failure in its own ResponseHandlingException, which is a plain
+    Exception. While the guard caught only the builtin types that escaped, and a
+    --json invocation printed a traceback to stderr and nothing at all to
+    stdout - zero envelopes on an exit path, which is precisely what the
+    structured-outcome contract forbids and what a broker cannot parse.
+
+    This surfaced as a test that passed on every workstation and failed on CI,
+    because a developer machine has a live Qdrant answering on the default port
+    and a clean runner does not.
+    """
+
+    @pytest.mark.parametrize(
+        ("argv", "command"),
+        [
+            (["server", "storage", "survey", "--json"], "server.storage.survey"),
+            (
+                ["server", "storage", "prune", "--json", "--yes", "--dry-run"],
+                "server.storage.prune",
+            ),
+        ],
+        ids=["survey", "prune"],
+    )
+    def test_unreachable_storage_emits_exactly_one_fault_envelope(
+        self,
+        isolated_singleton_dirs: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        argv: list[str],
+        command: str,
+    ) -> None:
+        del isolated_singleton_dirs
+        # A port nothing listens on: the real client performs a real connection
+        # attempt and raises its real transport exception. Nothing is stubbed.
+        monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_PORT", "59997")
+        monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_URL", "http://127.0.0.1:59997")
+        from ..config import reset_config
+
+        reset_config()
+
+        result = CliRunner().invoke(app, argv)
+
+        # Count every stdout line, not only the ones that parse: a traceback or
+        # a stray human line on the result channel is the defect being pinned.
+        lines = [line for line in result.stdout.splitlines() if line.strip()]
+        assert len(lines) == 1, result.stdout
+        envelope = json.loads(lines[0])
+        assert envelope["ok"] is False
+        assert envelope["command"] == command
+        assert envelope["error"] == "service_not_running"
+        assert result.exit_code == 3
