@@ -541,11 +541,13 @@ class TestReconcileProgress:
         assert "Waiting for discovery:" in plain
         assert "(poll 1)" in plain
 
-    def test_json_reconcile_emits_exactly_one_envelope(self, isolated_status_dir: Path):
+    def test_json_reconcile_emits_exactly_one_envelope(
+        self, isolated_singleton_dirs: Path
+    ):
         """No progress text may reach the machine-readable channel."""
         from ..cli import app
 
-        del isolated_status_dir
+        del isolated_singleton_dirs
         result = runner.invoke(app, ["server", "reconcile", "--json", "--timeout", "0"])
 
         payload = json.loads(result.output)
@@ -632,12 +634,12 @@ class TestStorageProgress:
 
         assert "Migrating 1/1: r0123456789ab_docs -> docs" in _plain(buffer.getvalue())
 
-    def test_prune_names_each_orphaned_namespace(self, isolated_status_dir: Path):
+    def test_prune_names_each_orphaned_namespace(self, isolated_singleton_dirs: Path):
         """Reclamation reports the namespace it is working through."""
         from ..storage_manifest import record_root
         from ..storage_ops import prune_orphaned
 
-        del isolated_status_dir
+        del isolated_singleton_dirs
         vanished = "C:/definitely/not/a/real/root/for/this/test"
         entry = record_root(vanished, backend="server")
         client = self._client_with((f"{entry.prefix}docs",))
@@ -657,12 +659,12 @@ class TestStorageProgress:
         )
 
     def test_json_survey_emits_one_envelope_and_no_progress(
-        self, isolated_status_dir: Path
+        self, isolated_singleton_dirs: Path
     ):
         """The survey's machine channel stays a single document."""
         from ..cli import app
 
-        del isolated_status_dir
+        del isolated_singleton_dirs
         result = runner.invoke(app, ["server", "storage", "survey", "--json"])
 
         payload = json.loads(result.output)
@@ -687,7 +689,7 @@ class TestStorageProgress:
         self,
         argv: list[str],
         command: str,
-        isolated_status_dir: Path,
+        isolated_singleton_dirs: Path,
     ):
         """Each verb owes stdout one document, on the failure path too.
 
@@ -700,7 +702,7 @@ class TestStorageProgress:
         from ..config import EnvVar
         from .conftest import managed_env
 
-        del isolated_status_dir
+        del isolated_singleton_dirs
         with managed_env(**{EnvVar.QDRANT_SERVER.value: "false"}):
             result = runner.invoke(app, argv)
 
