@@ -74,10 +74,10 @@ Guard tests for every eligibility gate proven able to fail by targeted mutation 
 
 Real-fork end-to-end telemetry capture with the flag on and off, user-facing documentation of the flag and telemetry, and the commit-and-push landing of the whole feature.
 
-- [ ] `W03.P05.S17` - run the end-to-end fork index with the flag on and off against a real sibling donor; `capture and record the telemetry and headline wall-clock in the Step Record; `live service run; Step Record`.
+- [x] `W03.P05.S17` - run the end-to-end fork index with the flag on and off against a real sibling donor; `capture and record the telemetry and headline wall-clock in the Step Record; `live service run; Step Record`.
 - [x] `W03.P05.S18` - document the reuse behavior, the off-switch, and the telemetry fields in the user-facing docs; `docs/`.
 - [ ] `W03.P05.S19` - commit the feature with a why-focused message and push to origin main; `git`.
-- [ ] `W03.P05.S20` - fix or explicitly file the rebuild-replays-deleted-collections defect: storage delete leaves the resume ledger, so a rebuild replays committed vectors instead of rebuilding; repro plus fix plus guard test, escalating if the ledger delete contract must change; ``src/vaultspec_rag/indexer/_run_checkpoint.py`; storage delete surface; tests`.
+- [x] `W03.P05.S20` - fix or explicitly file the rebuild-replays-deleted-collections defect: storage delete leaves the resume ledger, so a rebuild replays committed vectors instead of rebuilding; `repro plus fix plus guard test, escalating if the ledger delete contract must change; ``src/vaultspec_rag/indexer/_run_checkpoint.py`; storage delete surface; tests`.
 
 ## Description
 

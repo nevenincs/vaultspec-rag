@@ -10,32 +10,22 @@ related:
   - '[[2026-07-24-index-throughput-adr]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 # `index-throughput` plan
 
 ### Phase `P01` - GPU-job admission gate
 
 One machine-wide admission slot for encode-bearing index jobs in the service job-dispatch layer, honest queued state on the job records, and a mutation-proven guard test.
 
-- [ ] `P01.S01` - implement the machine-wide encode-job admission gate in the job dispatch layer with honest queued state stamped on job records; `src/vaultspec_rag/server/job_dispatch.py`; job records`.
-- [ ] `P01.S02` - add admission-gate tests including the mutation proof: bypass the gate, the concurrency assertion goes red on the intended assertion, restore green, both directions recorded; `src/vaultspec_rag/tests/` job-control suite`.
+- [x] `P01.S01` - implement the machine-wide encode-job admission gate in the job dispatch layer with honest queued state stamped on job records; `src/vaultspec_rag/server/job_dispatch.py`; job records`.
+- [x] `P01.S02` - add admission-gate tests including the mutation proof: bypass the gate, the concurrency assertion goes red on the intended assertion, restore green, both directions recorded; `src/vaultspec_rag/tests/` job-control suite`.
 - [ ] `P01.S14` - stamp admission-acquired time on job records and accumulate per-job GPU-lock wait via a timed-acquire helper, publishing both through the existing jobs envelope so queued-shown-as-running is fixed; `src/vaultspec_rag/server/job_manager.py`; `src/vaultspec_rag/server/job_models.py`; `src/vaultspec_rag/indexer/_streaming.py`; `src/vaultspec_rag/embeddings.py`.
 
 ### Phase `P02` - explicit ingest wait policy
 
 Non-blocking upsert semantics on the rebuild path with a completion barrier before stale-purge and metadata publish, measured before/after, guard test proving the barrier binds.
 
-- [ ] `P02.S03` - pass explicit non-blocking wait semantics on rebuild-path upserts and add the completion barrier before stale-purge and metadata publish; `src/vaultspec_rag/store.py`; indexer terminal paths`.
-- [ ] `P02.S04` - add ingest-barrier tests including the mutation proof: remove the barrier, the terminal-state-precedes-applied-points assertion goes red, restore green, both directions recorded; `src/vaultspec_rag/tests/` store/indexer suites`.
+- [x] `P02.S03` - pass explicit non-blocking wait semantics on rebuild-path upserts and add the completion barrier before stale-purge and metadata publish; `src/vaultspec_rag/store.py`; indexer terminal paths`.
+- [x] `P02.S04` - add ingest-barrier tests including the mutation proof: remove the barrier, the terminal-state-precedes-applied-points assertion goes red, restore green, both directions recorded; `src/vaultspec_rag/tests/` store/indexer suites`.
 - [ ] `P02.S05` - measure ingest wall-clock before and after the wait-policy change on a rebuild-class corpus and record the numbers; `measured run; Step Record`.
 - [ ] `P02.S15` - switch the server-mode store client to gRPC transport and record the measured per-batch upsert delta; `src/vaultspec_rag/store.py`.
 
@@ -58,7 +48,7 @@ Before/after wall-clock measurement of a contended window and a rebuild-class jo
 - [ ] `P04.S11` - run the before/after measurement: a contended multi-job window and a solo rebuild-class job, comparing wall-clock and queue-wait telemetry against the research baselines; `measured runs; Step Record`.
 - [ ] `P04.S12` - run the full quality gates on the changed surface and fold measured numbers into the ADR consequences; `repository quality gates; `.vault/adr/2026-07-24-index-throughput-adr.md`.
 - [ ] `P04.S13` - commit the throughput work with a why-focused message and push to origin main; `git`.
-- [ ] `P04.S18` - cap requires-python below 3.14 so the published metadata matches the runtime interpreter guard that already rejects 3.14, and add a .python-version pin so fresh worktree venvs resolve a supported interpreter; ``pyproject.toml`; `.python-version``.
+- [ ] `P04.S18` - cap requires-python below 3.14 so the published metadata matches the runtime interpreter guard that already rejects 3.14, and add a .python-version pin so fresh worktree venvs resolve a supported interpreter; `pyproject.toml`; `.python-version`.
 
 ## Description
 
