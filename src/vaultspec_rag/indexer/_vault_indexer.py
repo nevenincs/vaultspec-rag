@@ -350,6 +350,7 @@ class VaultIndexer:
                 store=self.store,
                 gpu_lock=self._gpu_lock,
                 reporter=reporter,
+                ingest_wait=False,
                 run_control=run_control,
             )
             self._purge_shrunk_chunk_tails(
@@ -363,6 +364,20 @@ class VaultIndexer:
             # from the freshly-indexed corpus.
             new_ids = {doc.id for doc in docs}
             stale_ids = sorted(existing_ids_before - new_ids)
+
+            # The stream ran without the per-slice apply handshake, so
+            # prove every acknowledged chunk applied before anything
+            # terminal happens. After the tail purge the collection must
+            # hold exactly the new corpus's chunks plus the untouched
+            # chunks of documents that will be purged as stale below.
+            expected_points = sum(new_counts.values()) + sum(
+                existing_counts[doc_id] for doc_id in stale_ids
+            )
+            run_control.checkpoint()
+            self.store.apply_ingest_barrier(
+                self.store.TABLE_NAME,
+                expected_points=expected_points,
+            )
             with _controlled_phase(
                 reporter,
                 run_control,

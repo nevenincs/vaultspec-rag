@@ -1961,6 +1961,7 @@ class CodebaseIndexer:
         metadata: dict[str, str],
         checkpoint: CodeRunCheckpoint | None,
         probe: MemoryProbe,
+        ingest_wait: bool,
         run_control: RunControl,
     ) -> None:
         """Encode, store, and account for one bounded weighted slice."""
@@ -2006,15 +2007,14 @@ class CodebaseIndexer:
                     model=self.model,
                     store=self.store,
                     gpu_lock=self._gpu_lock,
-                    release_cache=(
-                        completed_slice_index % limits.flush_slices == 0
-                    ),
+                    release_cache=(completed_slice_index % limits.flush_slices == 0),
                     encode_batch_size=limits.encode_batch_size,
                     write_policy=(
                         checkpoint.run_policy.store_write_policy
                         if checkpoint is not None
                         else None
                     ),
+                    ingest_wait=ingest_wait,
                     on_storage_confirmed=on_storage_confirmed,
                     after_forward=_after_forward,
                     on_cuda_oom=_on_cuda_oom,
@@ -2054,6 +2054,7 @@ class CodebaseIndexer:
         total: list[int],
         metadata: dict[str, str],
         checkpoint: CodeRunCheckpoint | None,
+        ingest_wait: bool,
         run_control: RunControl,
     ) -> None:
         """Run the sole weighted consumer and retain failures for the producer."""
@@ -2085,6 +2086,7 @@ class CodebaseIndexer:
                         metadata=metadata,
                         checkpoint=checkpoint,
                         probe=probe,
+                        ingest_wait=ingest_wait,
                         run_control=run_control,
                     )
         except BaseException as exc:
@@ -2102,6 +2104,7 @@ class CodebaseIndexer:
         metadata: dict[str, str],
         checkpoint: CodeRunCheckpoint | None,
         *,
+        ingest_wait: bool = True,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> threading.Thread:
         """Start the sole GPU consumer for weighted file segments."""
@@ -2117,6 +2120,7 @@ class CodebaseIndexer:
                 total,
                 metadata,
                 checkpoint,
+                ingest_wait,
                 run_control,
             ),
             name="codebase-indexer-consumer",
@@ -2564,6 +2568,7 @@ class CodebaseIndexer:
         reporter: ProgressReporter,
         checkpoint: CodeRunCheckpoint,
         limits: _CodePipelineLimits,
+        ingest_wait: bool = True,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> tuple[set[str], int, dict[str, str]]:
         """Overlap bounded CPU production with one weighted GPU consumer."""
@@ -2596,6 +2601,7 @@ class CodebaseIndexer:
                 total,
                 metadata,
                 checkpoint,
+                ingest_wait=ingest_wait,
                 run_control=run_control,
             )
 
@@ -3239,6 +3245,7 @@ class CodebaseIndexer:
                 reporter=reporter,
                 checkpoint=checkpoint,
                 limits=limits,
+                ingest_wait=False,
                 run_control=run_control,
             )
             new_ids.update(
@@ -3246,6 +3253,17 @@ class CodebaseIndexer:
             )
             meta.update(preserved_metadata)
 
+            run_control.checkpoint()
+            # The rebuild streamed its upserts without the per-slice apply
+            # handshake; nothing terminal may proceed until the store has
+            # proven every acknowledged point actually applied. Before the
+            # purge the collection must hold exactly the union of the
+            # pre-existing snapshot and everything this run published.
+            self.store.apply_ingest_barrier(
+                self.store.CODE_TABLE_NAME,
+                expected_points=len(new_ids | existing_ids_before),
+                write_policy=checkpoint.run_policy.store_write_policy,
+            )
             run_control.checkpoint()
             stale_ids = self._reconcile_full_stale_ids(
                 checkpoint=checkpoint,
