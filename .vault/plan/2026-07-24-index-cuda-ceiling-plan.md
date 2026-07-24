@@ -10,6 +10,16 @@ related:
   - '[[2026-07-24-index-cuda-ceiling-research]]'
 ---
 
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
+
 # `index-cuda-ceiling` plan
 
 Size the indexing CUDA budget to real device headroom and charge each job only
@@ -46,12 +56,12 @@ Add embedding_document_encode_batch_size mirroring the code path, retiring the s
 
 Replace the hardcoded 12 GiB min-clamp with a device-capacity-minus-headroom derivation at every enforcing site, and let the config knob raise as well as lower.
 
-- [ ] `P02.S04` - add a GPU-gated device-capacity query that returns total CUDA memory and is unreachable from torch-free service-client and worker paths; `src/vaultspec_rag/_gpu.py`.
-- [ ] `P02.S05` - derive the effective ceiling as device-capacity minus a reserved headroom margin with the config value overriding in either direction; `src/vaultspec_rag/memory_probe.py`.
-- [ ] `P02.S06` - replace the one-way min-clamp at the dispatch admission site with the bidirectional derived ceiling; `src/vaultspec_rag/job_dispatch.py`.
-- [ ] `P02.S07` - replace the one-way min-clamp in the codebase indexer budget builder with the derived ceiling; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
-- [ ] `P02.S08` - replace the one-way min-clamp in the document indexer budget builder with the derived ceiling; `src/vaultspec_rag/indexer/_document_indexer.py`.
-- [ ] `P02.S09` - add a test asserting the config override raises the ceiling above the profile floor and still lowers it below; `src/vaultspec_rag/tests/test_config.py`.
+- [x] `P02.S04` - add a GPU-gated device-capacity query that returns total CUDA memory and is unreachable from torch-free service-client and worker paths; `src/vaultspec_rag/_gpu.py`.
+- [x] `P02.S05` - derive the effective ceiling as device-capacity minus a reserved headroom margin with the config value overriding in either direction; `src/vaultspec_rag/memory_probe.py`.
+- [x] `P02.S06` - replace the one-way min-clamp at the dispatch admission site with the bidirectional derived ceiling; `src/vaultspec_rag/job_dispatch.py`.
+- [x] `P02.S07` - replace the one-way min-clamp in the codebase indexer budget builder with the derived ceiling; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `P02.S08` - replace the one-way min-clamp in the document indexer budget builder with the derived ceiling; `src/vaultspec_rag/indexer/_document_indexer.py`.
+- [x] `P02.S09` - add a test asserting the config override raises the ceiling above the profile floor and still lowers it below; `src/vaultspec_rag/tests/test_config.py`.
 
 ### Phase `P03` - capture each job's own forward peak, net of the resident baseline
 

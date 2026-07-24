@@ -409,7 +409,10 @@ class DocumentIndexer:
     ) -> _DocumentResourceBudget:
         """Freeze effective document ceilings and sample before dispatch."""
         from ..config import get_config
-        from ..memory_probe import reset_cuda_peak_memory_stats
+        from ..memory_probe import (
+            reset_cuda_peak_memory_stats,
+            resolve_index_cuda_ceiling_mb,
+        )
 
         config = get_config()
         mib = 1024**2
@@ -419,9 +422,10 @@ class DocumentIndexer:
         budget = _DocumentResourceBudget(
             limits,
             rss_ceiling_mb=min(config.index_rss_ceiling_mb, limits.rss_bytes / mib),
-            cuda_ceiling_mb=min(
-                config.index_cuda_ceiling_mb,
-                limits.cuda_bytes / mib,
+            cuda_ceiling_mb=resolve_index_cuda_ceiling_mb(
+                configured_mb=config.index_cuda_ceiling_mb,
+                headroom_mb=config.index_cuda_headroom_mb,
+                profile_cuda_mb=limits.cuda_bytes / mib,
             ),
             enforce_cuda=uses_cuda,
         )
