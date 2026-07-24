@@ -94,11 +94,12 @@ def _spawn_witness_daemon(port: int) -> subprocess.Popen[bytes]:
     return subprocess.Popen(argv, start_new_session=True)
 
 
-#: Processes one witness spawn produces. On Windows the venv console shim
-#: execs a worker child, so a spawn enumerates as a launcher+worker pair; on
-#: POSIX the interpreter is exec'd directly and a spawn is a single process.
-#: Verified by probe: one spawn enumerates 2 matches on win32, 1 on Linux.
-_PROCESSES_PER_WITNESS = 2 if sys.platform == "win32" else 1
+# A Windows venv launcher shim re-execs the real interpreter, so each spawned
+# `-m vaultspec_rag.server` witness enumerates as a launcher+worker PAIR; on
+# POSIX the `-c` process is a single enumerable process with no such child. The
+# reap must spare the singleton and reap the orphan under BOTH process models,
+# so the expected witness count per daemon is platform-conditional.
+_PROCS_PER_DAEMON = 2 if sys.platform == "win32" else 1
 
 
 def _wait_for_matched(port: int, count: int) -> dict[int, int]:
@@ -120,9 +121,39 @@ def _pair_of(launcher_pid: int, matched: dict[int, int]) -> set[int]:
     }
 
 
-def _await_all_gone(pids: set[int]) -> None:
+def _pid_terminated(pid: int) -> bool:
+    """True if *pid* is gone or a POSIX zombie (dead, awaiting its parent's reap).
+
+    The reap runs out-of-process and is not the witnesses' parent, so on POSIX a
+    force-killed orphan lingers as a zombie until this test (its parent) waits on
+    it. A zombie is terminated - it holds no port, lock, or GPU - so 'reaped'
+    means gone-or-zombie, matching the production reap's own liveness check.
+    Windows has no zombie state, so this reduces to ``not pid_exists`` there.
+    """
+    if not psutil.pid_exists(pid):
+        return True
+    try:
+        return psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return True
+
+
+def _pid_live(pid: int) -> bool:
+    """True only if *pid* is a live process - NOT gone and NOT a zombie.
+
+    A spared singleton must be genuinely alive; a zombie would pass a bare
+    ``pid_exists``, so a predicate mutation that wrongly kills the singleton would
+    read as spared. Checking non-zombie liveness keeps the spare assertion honest.
+    """
+    try:
+        return psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return False
+
+
+def _await_all_terminated(pids: set[int]) -> None:
     for _ in range(100):
-        if not any(psutil.pid_exists(pid) for pid in pids):
+        if all(_pid_terminated(pid) for pid in pids):
             return
         time.sleep(0.1)
 
@@ -235,9 +266,8 @@ class TestOrphanReapSafety:
             foreign = _spawn_witness_daemon(foreign_port)
             procs = [singleton, orphan, foreign]
 
-            # Two witnesses share this port; wait for every process each
-            # spawn enumerates as on this platform.
-            matched = _wait_for_matched(port, count=2 * _PROCESSES_PER_WITNESS)
+            # Each witness spawn is a shim launcher + worker pair; wait for both.
+            matched = _wait_for_matched(port, count=2 * _PROCS_PER_DAEMON)
             singleton_pair = _pair_of(singleton.pid, matched)
             orphan_pair = _pair_of(orphan.pid, matched)
 
@@ -246,7 +276,7 @@ class TestOrphanReapSafety:
             envelope = _reap_via_subprocess(port)
             assert envelope["ok"] is True, envelope
 
-            _await_all_gone(orphan_pair)
+            _await_all_terminated(orphan_pair)
             assert not any(psutil.pid_exists(pid) for pid in orphan_pair), (
                 f"the whole orphan pair {orphan_pair} must be reaped"
             )
@@ -288,19 +318,23 @@ class TestOrphanReapSafety:
             singleton = _spawn_witness_daemon(port)
             orphan = _spawn_witness_daemon(port)
             procs = [singleton, orphan]
-            matched = _wait_for_matched(port, count=2 * _PROCESSES_PER_WITNESS)
+            matched = _wait_for_matched(port, count=2 * _PROCS_PER_DAEMON)
             singleton_pair = _pair_of(singleton.pid, matched)
             orphan_pair = _pair_of(orphan.pid, matched)
             workers = singleton_pair - {singleton.pid}
-            assert workers, "singleton launcher must have a matched worker child"
-            worker_pid = next(iter(workers))
+            if sys.platform == "win32":
+                # The shim spawns a distinct worker child; anchoring on it
+                # exercises the protect-parent branch that spares the launcher.
+                assert workers, "singleton launcher must have a matched worker child"
+            # On POSIX the single process IS the lifespan-running worker.
+            worker_pid = next(iter(workers)) if workers else singleton.pid
 
             # Anchor on the WORKER, as the production daemon does.
             _write_service_status(worker_pid, port)
             envelope = _reap_via_subprocess(port)
             assert envelope["ok"] is True, envelope
 
-            _await_all_gone(orphan_pair)
+            _await_all_terminated(orphan_pair)
             assert not any(psutil.pid_exists(pid) for pid in orphan_pair), (
                 f"the whole orphan pair {orphan_pair} must be reaped"
             )
@@ -339,7 +373,7 @@ class TestOrphanReapSafety:
             singleton = _spawn_lock_holding_daemon(port)
             orphan = _spawn_witness_daemon(port)
             procs = [singleton, orphan]
-            matched = _wait_for_matched(port, count=2 * _PROCESSES_PER_WITNESS)
+            matched = _wait_for_matched(port, count=2 * _PROCS_PER_DAEMON)
             singleton_pair = _pair_of(singleton.pid, matched)
             orphan_pair = _pair_of(orphan.pid, matched)
 
@@ -351,7 +385,7 @@ class TestOrphanReapSafety:
             envelope = _reap_via_subprocess(port)
             assert envelope["ok"] is True, envelope
 
-            _await_all_gone(orphan_pair)
+            _await_all_terminated(orphan_pair)
             assert not any(psutil.pid_exists(pid) for pid in orphan_pair), (
                 f"the whole orphan pair {orphan_pair} must be reaped"
             )
