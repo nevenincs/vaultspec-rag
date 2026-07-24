@@ -24,9 +24,9 @@ Deliver the torch-free QuiesceGate (Event set=running/clear=paused, absorbing-op
 
 Give ServiceRegistry one process-global QuiesceGate beside its GPU lock, inject it into every RunControlToken the JobManager builds so all in-flight jobs share one gate, and gate search at admission before the GPU section without parking under the GPU lock.
 
-- [ ] `P02.S04` - Give ServiceRegistry one process-global QuiesceGate constructed beside its GPU lock and expose it through an accessor mirroring the existing gpu_lock property so a single gate governs the whole daemon process; `src/vaultspec_rag/service.py`.
-- [ ] `P02.S05` - Thread the registry gate into JobManager and inject it into each RunControlToken built at both dispatch construction sites so every in-flight job shares the one process-global gate, with a unit test asserting a dispatched token observes the shared gate; `src/vaultspec_rag/job_manager.py`.
-- [ ] `P02.S06` - Inject the gate into VaultSearcher like gpu_lock at each construction site in the registry and wait on the gate at search admission before acquiring gpu_lock in the GPU section, never parking while holding gpu_lock and preserving the torch-free path, with a unit test of admission gating for gpu_lock None and an injected gate; `src/vaultspec_rag/search/_searcher.py`.
+- [x] `P02.S04` - Give ServiceRegistry one process-global QuiesceGate constructed beside its GPU lock and expose it through an accessor mirroring the existing gpu_lock property so a single gate governs the whole daemon process; `src/vaultspec_rag/service.py`.
+- [x] `P02.S05` - Thread the registry gate into JobManager and inject it into each RunControlToken built at both dispatch construction sites so every in-flight job shares the one process-global gate, with a unit test asserting a dispatched token observes the shared gate; `src/vaultspec_rag/job_manager.py`.
+- [x] `P02.S06` - Inject the gate into VaultSearcher like gpu_lock at each construction site in the registry and wait on the gate at search admission before acquiring gpu_lock in the GPU section, never parking while holding gpu_lock and preserving the torch-free path, with a unit test of admission gating for gpu_lock None and an injected gate; `src/vaultspec_rag/search/_searcher.py`.
 
 ### Phase `P03` - server pause / server resume operability surface
 

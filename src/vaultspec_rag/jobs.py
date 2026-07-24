@@ -201,7 +201,7 @@ def get_job_manager() -> JobManager:
         with _manager_lock:
             manager = _job_manager
             if manager is None:
-                manager = JobManager()
+                manager = JobManager(quiesce_gate=get_registry().quiesce_gate)
                 _job_manager = manager
     return manager
 
