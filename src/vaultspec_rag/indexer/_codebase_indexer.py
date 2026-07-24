@@ -2315,6 +2315,20 @@ class CodebaseIndexer:
         )
         return has_evidence and not self.store.code_collection_exists()
 
+    def _published_evidence_lost(self) -> bool:
+        """Return whether carried incremental evidence points at nothing.
+
+        External destruction (a storage delete) drops the code collection
+        but leaves the per-root metadata sidecar and run ledger behind. An
+        incremental diff against that carried metadata classifies every
+        surviving file as unchanged, skips all encoding, and publishes a
+        "successful" result over a collection whose points no longer exist
+        anywhere, so published evidence for an absent collection must
+        escalate to a full failure-safe reconciliation instead of being
+        trusted.
+        """
+        return bool(self._load_meta()) and not self.store.code_collection_exists()
+
     def _resume_pending_finalization(
         self,
         checkpoint: CodeRunCheckpoint,
@@ -3490,6 +3504,20 @@ class CodebaseIndexer:
     ) -> IndexResult:
         """Locked implementation of cooperative incremental indexing."""
         run_control.checkpoint()
+        if self._published_evidence_lost():
+            logger.warning(
+                "code collection is missing from storage but published index "
+                "metadata still describes committed files; running a full "
+                "failure-safe reconciliation instead of trusting the carried "
+                "evidence"
+            )
+            return self._full_index_locked(
+                clean=False,
+                policy=policy,
+                discovered_paths=discovered_paths,
+                reporter=reporter,
+                run_control=run_control,
+            )
         needs_embed_rebuild = self._needs_embed_rebuild()
         run_control.checkpoint()
         if needs_embed_rebuild:
