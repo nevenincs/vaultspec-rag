@@ -21,7 +21,10 @@ jobs:
   workflow-lint:
     name: Workflow Lint
     concurrency:
-      group: ci-${{ github.workflow }}-${{ github.job }}-${{ github.ref }}
+      # github.job is empty in the concurrency context, so interpolating it
+      # collapses every job onto one shared group and they cancel each other.
+      # Each job carries its own literal group instead.
+      group: ci-workflow-lint-${{ github.ref }}
       cancel-in-progress: false
     runs-on: [self-hosted, Linux, X64]
     steps:
@@ -36,7 +39,7 @@ jobs:
   lint-and-type:
     name: Lint, Type, Config, Link, and Markdown Checks
     concurrency:
-      group: ci-${{ github.workflow }}-${{ github.job }}-${{ github.ref }}
+      group: ci-lint-and-type-${{ github.ref }}
       cancel-in-progress: false
     runs-on: [self-hosted, Linux, X64]
     steps:
@@ -113,7 +116,7 @@ jobs:
   tests:
     name: Tests
     concurrency:
-      group: ci-${{ github.workflow }}-${{ github.job }}-${{ github.ref }}
+      group: ci-tests-${{ github.ref }}
       cancel-in-progress: false
     runs-on: [self-hosted, Linux, X64]
     steps:
@@ -221,7 +224,7 @@ jobs:
   vault-audit:
     name: Vault Audit
     concurrency:
-      group: ci-${{ github.workflow }}-${{ github.job }}-${{ github.ref }}
+      group: ci-vault-audit-${{ github.ref }}
       cancel-in-progress: false
     runs-on: [self-hosted, Linux, X64]
     steps:
@@ -250,7 +253,7 @@ jobs:
   dependency-audit:
     name: Dependency Audit (uv audit)
     concurrency:
-      group: ci-${{ github.workflow }}-${{ github.job }}-${{ github.ref }}
+      group: ci-dependency-audit-${{ github.ref }}
       cancel-in-progress: false
     runs-on: [self-hosted, Linux, X64]
     steps:
