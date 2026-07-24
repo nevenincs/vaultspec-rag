@@ -18,9 +18,12 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from ._job_errors import JobError, JobErrorKind
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +32,14 @@ __all__ = [
     "MemoryBudgetSnapshot",
     "MemoryProbe",
     "MemorySample",
+    "cuda_forward_peak_capture",
     "current_cuda_mb",
     "current_rss_mb",
     "is_enabled",
+    "record_forward_peaks",
     "reset_cuda_peak_memory_stats",
+    "resident_cuda_baseline_mb",
+    "sample_resident_cuda_baseline",
 ]
 
 
@@ -191,35 +198,15 @@ def current_cuda_mb() -> tuple[float, float]:
     return measured if measured is not None else (0.0, 0.0)
 
 
-def _measure_cuda_budget_mb() -> tuple[float, float, float, float] | None:
-    """Return live and allocator high-water CUDA readings in MiB."""
-    measured = _measure_cuda_mb()
-    if measured is None or _torch_module is None:
-        return None
-    try:
-        peak_allocated = _torch_module.cuda.max_memory_allocated() / (1024.0 * 1024.0)
-        peak_reserved = _torch_module.cuda.max_memory_reserved() / (1024.0 * 1024.0)
-    except (RuntimeError, AssertionError):
-        return None
-    allocated, reserved = measured
-    return (
-        allocated,
-        reserved,
-        max(allocated, peak_allocated),
-        max(reserved, peak_reserved),
-    )
-
-
 def reset_cuda_peak_memory_stats() -> bool:
-    """Reset allocator high-water tracking for one admitted indexing run.
+    """Release the allocator cache and rebase peak counters at job admission.
 
-    The reset is process-wide, matching the process-wide CUDA ceiling. It is
-    invoked after models are resident and before indexing dispatch so later
-    budget samples retain transient forward peaks even after tensors release.
-    The allocator cache is released first: ``reset_peak_memory_stats`` only
-    rebases the peak counters to the *current* readings, so without the
-    release a run's recorded peaks would inherit the process's retention
-    history instead of describing the run itself.
+    Invoked once per admitted indexing run, after models are resident and
+    before dispatch. Enforcement no longer reads the process-global peak
+    counters - each job enforces its own lock-bracketed forward captures -
+    so this reset is allocator hygiene: the cache release defragments the
+    retention history a long-lived process accumulates before a new run
+    starts allocating.
     """
     measured = _measure_cuda_mb()
     if measured is None or _torch_module is None:
@@ -230,6 +217,132 @@ def reset_cuda_peak_memory_stats() -> bool:
     except (RuntimeError, AssertionError):
         return False
     return True
+
+
+def _reset_cuda_peak_stats_bare() -> bool:
+    """Rebase the allocator peak counters without flushing the cache.
+
+    The per-forward capture bracket runs inside the GPU-lock hold; flushing
+    the allocator cache there would add a device synchronisation to every
+    encode sub-batch, so this reset deliberately omits ``empty_cache`` (the
+    per-run admission reset keeps that job).
+    """
+    measured = _measure_cuda_mb()
+    if measured is None or _torch_module is None:
+        return False
+    try:
+        _torch_module.cuda.reset_peak_memory_stats()
+    except (RuntimeError, AssertionError):
+        return False
+    return True
+
+
+def _read_cuda_peak_allocated_mb() -> float | None:
+    """Return the allocated high-water in MiB since the last rebase.
+
+    This is the single sanctioned reader of the process-global peak counter,
+    and it is only meaningful inside the GPU-lock-held capture bracket that
+    just rebased it; enforcement paths consume the captured value, never
+    this counter directly.
+    """
+    measured = _measure_cuda_mb()
+    if measured is None or _torch_module is None:
+        return None
+    try:
+        return _torch_module.cuda.max_memory_allocated() / (1024.0 * 1024.0)
+    except (RuntimeError, AssertionError):
+        return None
+
+
+_resident_baseline_lock = threading.Lock()
+_resident_baseline_mb: float = 0.0
+
+
+def sample_resident_cuda_baseline() -> float:
+    """Record the resident-model CUDA allocation as a monotonic baseline.
+
+    Called after each shared model finishes loading - the embedding stack
+    eagerly, the reranker lazily on first use - so a late lazy load raises
+    the recorded baseline instead of leaving it understated. The baseline
+    only ever grows: a transient dip (eviction mid-run) must not shrink the
+    figure an in-flight job's budget was constructed against.
+
+    Returns:
+        The updated baseline in MiB (``0.0`` off the GPU path).
+    """
+    global _resident_baseline_mb
+    measured = _measure_cuda_mb()
+    if measured is None:
+        return resident_cuda_baseline_mb()
+    allocated = measured[0]
+    with _resident_baseline_lock:
+        if allocated > _resident_baseline_mb:
+            _resident_baseline_mb = allocated
+        return _resident_baseline_mb
+
+
+def resident_cuda_baseline_mb() -> float:
+    """Return the recorded resident-model CUDA baseline in MiB."""
+    with _resident_baseline_lock:
+        return _resident_baseline_mb
+
+
+def _reset_resident_cuda_baseline() -> None:
+    """Clear the recorded baseline (test isolation only)."""
+    global _resident_baseline_mb
+    with _resident_baseline_lock:
+        _resident_baseline_mb = 0.0
+
+
+_forward_peak_recorder = threading.local()
+
+
+@contextlib.contextmanager
+def record_forward_peaks(
+    recorder: Callable[[float], None],
+) -> Iterator[None]:
+    """Route this thread's captured forward peaks to *recorder*.
+
+    Attribution is by thread: every GPU forward a job issues runs on the
+    thread that entered this context (the job's own consumer thread), so a
+    capture bracket completing on this thread belongs to this job and no
+    other. Nested contexts restore the previous recorder on exit.
+    """
+    previous = getattr(_forward_peak_recorder, "value", None)
+    _forward_peak_recorder.value = recorder
+    try:
+        yield
+    finally:
+        _forward_peak_recorder.value = previous
+
+
+@contextlib.contextmanager
+def cuda_forward_peak_capture() -> Iterator[None]:
+    """Bracket one model forward with a job-local peak capture.
+
+    Must run inside the GPU-lock hold that serialises the forward: the
+    critical section is what makes the reading job-local. The peak counter
+    is rebased on entry and read on exit while no sibling forward can run,
+    so the captured value is this forward's own demand (resident baseline
+    included) and never a concurrent job's. The read also happens on an
+    exceptional exit so an allocator OOM still records the demand that
+    triggered it.
+    """
+    armed = _reset_cuda_peak_stats_bare()
+    try:
+        yield
+    finally:
+        if armed:
+            peak = _read_cuda_peak_allocated_mb()
+            recorder = getattr(_forward_peak_recorder, "value", None)
+            if peak is not None and recorder is not None:
+                try:
+                    recorder(peak)
+                except Exception:
+                    logger.warning(
+                        "forward peak recorder failed; capture dropped",
+                        exc_info=True,
+                    )
 
 
 @dataclass
@@ -298,6 +411,8 @@ class MemoryBudget:
     """
 
     __slots__ = (
+        "_captured_cuda_peak_mb",
+        "_cuda_baseline_mb",
         "_cuda_ceiling_mb",
         "_failure",
         "_lock",
@@ -305,6 +420,8 @@ class MemoryBudget:
         "_snapshot",
     )
 
+    _captured_cuda_peak_mb: float
+    _cuda_baseline_mb: float | None
     _cuda_ceiling_mb: float | None
     _failure: tuple[JobErrorKind, str] | None
     _lock: threading.Lock
@@ -316,6 +433,7 @@ class MemoryBudget:
         *,
         rss_ceiling_mb: float | None = None,
         cuda_ceiling_mb: float | None = None,
+        cuda_baseline_mb: float | None = None,
     ) -> None:
         object.__setattr__(
             self,
@@ -335,6 +453,16 @@ class MemoryBudget:
                 optional=True,
             ),
         )
+        object.__setattr__(
+            self,
+            "_cuda_baseline_mb",
+            _valid_memory_mb(
+                "cuda_baseline_mb",
+                cuda_baseline_mb,
+                optional=True,
+            ),
+        )
+        object.__setattr__(self, "_captured_cuda_peak_mb", 0.0)
         object.__setattr__(self, "_snapshot", None)
         object.__setattr__(self, "_failure", None)
         object.__setattr__(self, "_lock", threading.Lock())
@@ -361,6 +489,30 @@ class MemoryBudget:
         return self._cuda_ceiling_mb
 
     @property
+    def cuda_baseline_mb(self) -> float | None:
+        """Return the admitted resident-model baseline, if one was frozen."""
+        return self._cuda_baseline_mb
+
+    @property
+    def captured_cuda_peak_mb(self) -> float:
+        """Return the maximum lock-bracketed forward peak recorded so far."""
+        with self._lock:
+            return self._captured_cuda_peak_mb
+
+    def record_forward_peak_mb(self, peak_mb: float) -> None:
+        """Accumulate one lock-bracketed forward peak as this job's maximum.
+
+        Fed by the GPU-lock-held capture bracket; the retained value is the
+        job's own demand across all of its forwards, so checkpoints enforce
+        against work this job genuinely did rather than a process-wide
+        high-water shared with concurrent jobs.
+        """
+        value = cast("float", _valid_memory_mb("peak_mb", peak_mb))
+        with self._lock:
+            if value > self._captured_cuda_peak_mb:
+                object.__setattr__(self, "_captured_cuda_peak_mb", value)
+
+    @property
     def snapshot(self) -> MemoryBudgetSnapshot | None:
         """Return the most recent immutable current/peak/ceiling view."""
         with self._lock:
@@ -371,12 +523,17 @@ class MemoryBudget:
 
         This method never acquires or accepts the GPU lock.  Callers own the
         architectural invariant that it runs before or after, never inside, a
-        model forward critical section.
+        model forward critical section. The CUDA peak it enforces is the
+        job's own captured forward maximum - fed from inside the lock via
+        :meth:`record_forward_peak_mb` - never the process-global allocator
+        high-water, whose since-reset span covers every concurrent job. The
+        live allocated/reserved readings taken here remain process-global
+        diagnostics and do not decide outcome.
         """
         self._raise_if_latched()
         measured_rss = _measure_rss_mb()
         measured_cuda = (
-            _measure_cuda_budget_mb() if self.cuda_ceiling_mb is not None else None
+            _measure_cuda_mb() if self.cuda_ceiling_mb is not None else None
         )
         return self._record(
             label=label,
@@ -385,10 +542,10 @@ class MemoryBudget:
             cuda_allocated_mb=measured_cuda[0] if measured_cuda is not None else 0.0,
             cuda_reserved_mb=measured_cuda[1] if measured_cuda is not None else 0.0,
             cuda_peak_allocated_mb=(
-                measured_cuda[2] if measured_cuda is not None else 0.0
+                self.captured_cuda_peak_mb if measured_cuda is not None else 0.0
             ),
             cuda_peak_reserved_mb=(
-                measured_cuda[3] if measured_cuda is not None else 0.0
+                measured_cuda[1] if measured_cuda is not None else 0.0
             ),
             cuda_available=measured_cuda is not None,
         )
@@ -541,14 +698,31 @@ class MemoryBudget:
                         ceiling_mb=self.cuda_ceiling_mb,
                     ),
                 )
-            if snapshot.peak_cuda_allocated_mb > self.cuda_ceiling_mb:
+            # Baseline-consistent comparison: a captured peak is absolute
+            # (a post-rebase counter starts at the resident models), so the
+            # baseline must come off the peak and the ceiling on the SAME
+            # side. Subtracting it from only one side double-counts the
+            # resident models and turns the ceiling into a covert tightening.
+            baseline = self._cuda_baseline_mb or 0.0
+            peak_above_baseline = max(
+                0.0,
+                snapshot.peak_cuda_allocated_mb - baseline,
+            )
+            ceiling_above_baseline = max(0.0, self.cuda_ceiling_mb - baseline)
+            if peak_above_baseline > ceiling_above_baseline:
+                measure = "CUDA allocated high-water"
+                if baseline > 0.0:
+                    measure = (
+                        "CUDA allocated high-water above the "
+                        f"{baseline:.1f} MiB resident baseline"
+                    )
                 return (
                     JobErrorKind.CUDA_MEMORY_CEILING,
                     _ceiling_detail(
                         label=snapshot.label,
-                        measure="CUDA allocated high-water",
-                        current_mb=snapshot.peak_cuda_allocated_mb,
-                        ceiling_mb=self.cuda_ceiling_mb,
+                        measure=measure,
+                        current_mb=peak_above_baseline,
+                        ceiling_mb=ceiling_above_baseline,
                     ),
                 )
         return None

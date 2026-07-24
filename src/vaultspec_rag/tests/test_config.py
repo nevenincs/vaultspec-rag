@@ -325,7 +325,9 @@ def test_cuda_ceiling_override_raises_and_lowers_past_the_profile() -> None:
     assert lowered < profile_mb
 
 
-def test_cuda_ceiling_auto_derives_or_falls_back_to_profile() -> None:
+def test_cuda_ceiling_auto_derives_or_falls_back_to_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # With no override (0), the ceiling derives from the device off a positive
     # capacity, or falls back to the profile figure when the device total is
     # unavailable (the torch-free / CPU-only path). Patch the device probe to
@@ -335,24 +337,17 @@ def test_cuda_ceiling_auto_derives_or_falls_back_to_profile() -> None:
     def _fake_total() -> float | None:
         return 16376.0
 
-    original = memory_probe.cuda_device_total_mb
-    memory_probe.cuda_device_total_mb = _fake_total  # type: ignore[assignment]
-    try:
-        derived = memory_probe.resolve_index_cuda_ceiling_mb(
-            configured_mb=0.0, headroom_mb=2048.0, profile_cuda_mb=12288.0
-        )
-        assert derived == 16376.0 - 2048.0
-    finally:
-        memory_probe.cuda_device_total_mb = original  # type: ignore[assignment]
+    monkeypatch.setattr(memory_probe, "cuda_device_total_mb", _fake_total)
+    derived = memory_probe.resolve_index_cuda_ceiling_mb(
+        configured_mb=0.0, headroom_mb=2048.0, profile_cuda_mb=12288.0
+    )
+    assert derived == 16376.0 - 2048.0
 
-    memory_probe.cuda_device_total_mb = lambda: None  # type: ignore[assignment,return-value]
-    try:
-        fallback = memory_probe.resolve_index_cuda_ceiling_mb(
-            configured_mb=0.0, headroom_mb=2048.0, profile_cuda_mb=12288.0
-        )
-        assert fallback == 12288.0
-    finally:
-        memory_probe.cuda_device_total_mb = original  # type: ignore[assignment]
+    monkeypatch.setattr(memory_probe, "cuda_device_total_mb", lambda: None)
+    fallback = memory_probe.resolve_index_cuda_ceiling_mb(
+        configured_mb=0.0, headroom_mb=2048.0, profile_cuda_mb=12288.0
+    )
+    assert fallback == 12288.0
 
 
 def test_document_encode_batch_is_independent_of_vault_and_code() -> None:
@@ -864,6 +859,44 @@ def test_cuda_reserved_above_ceiling_is_diagnostic_not_enforced() -> None:
     finally:
         _restore_resilience_env(saved)
         reset_config()
+
+
+def test_cuda_ceiling_comparison_is_baseline_consistent() -> None:
+    """Double-count guard: the baseline comes off both sides or neither.
+
+    A captured peak is absolute (a post-rebase counter starts at the
+    resident models), so the resident baseline must be subtracted from the
+    peak AND the ceiling on the same side of the comparison. Each assertion
+    is deliberately narrow and pins one single-side mutation:
+
+    - a peak between (ceiling - baseline) and the ceiling must be ADMITTED;
+      it is rejected iff the baseline is subtracted from the ceiling only -
+      the double-count that covertly tightens the ceiling by the resident
+      models' size and reproduces the spurious-failure defect;
+    - a peak just above the ceiling must be REJECTED; it is admitted iff
+      the baseline is subtracted from the peak only.
+    """
+    admitted_budget = MemoryBudget(cuda_ceiling_mb=1000.0, cuda_baseline_mb=400.0)
+    admitted = admitted_budget.observe(
+        label="peak-between-net-ceiling-and-ceiling",
+        rss_mb=0.0,
+        cuda_allocated_mb=900.0,
+        cuda_reserved_mb=0.0,
+    )
+    assert admitted.peak_cuda_allocated_mb == 900.0
+
+    rejecting_budget = MemoryBudget(cuda_ceiling_mb=1000.0, cuda_baseline_mb=400.0)
+    with pytest.raises(JobError) as failure:
+        rejecting_budget.observe(
+            label="peak-above-ceiling",
+            rss_mb=0.0,
+            cuda_allocated_mb=1050.0,
+            cuda_reserved_mb=0.0,
+        )
+    assert failure.value.error_kind is JobErrorKind.CUDA_MEMORY_CEILING
+    # The failure names the baseline-relative measure so an operator reads
+    # indexing demand against indexing headroom, not raw absolutes.
+    assert "resident baseline" in failure.value.detail
 
 
 def test_memory_budget_fails_closed_when_real_measurements_are_unavailable() -> None:

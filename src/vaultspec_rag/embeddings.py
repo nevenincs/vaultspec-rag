@@ -574,6 +574,8 @@ class EmbeddingModel:
         """Run the finite dense OOM ladder with an explicit output lifetime."""
         import torch
 
+        from .memory_probe import cuda_forward_peak_capture
+
         if batch_size is None:
             batch_size = self._default_encode_batch_size()
 
@@ -583,14 +585,19 @@ class EmbeddingModel:
         while True:
             try:
                 if retain_on_device:
-                    return self._dense_model.encode(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers encode overloads are partially stubbed
-                        truncated,
-                        batch_size=batch_size,
-                        show_progress_bar=len(truncated) > 100,
-                        normalize_embeddings=True,
-                        convert_to_numpy=False,
-                        convert_to_tensor=True,
-                    )
+                    # The on-device path runs under the caller's gpu_lock
+                    # hold; that serialisation is what makes the peak
+                    # capture attribute this forward's demand to the
+                    # calling job alone.
+                    with cuda_forward_peak_capture():
+                        return self._dense_model.encode(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers encode overloads are partially stubbed
+                            truncated,
+                            batch_size=batch_size,
+                            show_progress_bar=len(truncated) > 100,
+                            normalize_embeddings=True,
+                            convert_to_numpy=False,
+                            convert_to_tensor=True,
+                        )
                 return self._dense_model.encode(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers encode overloads are partially stubbed
                     truncated,
                     batch_size=batch_size,
@@ -695,6 +702,8 @@ class EmbeddingModel:
         """
         import torch
 
+        from .memory_probe import cuda_forward_peak_capture
+
         if batch_size is None:
             batch_size = self._default_encode_batch_size()
         if batch_size <= 0:
@@ -725,7 +734,7 @@ class EmbeddingModel:
                                 ),
                             )
                         else:
-                            with gpu_lock:
+                            with gpu_lock, cuda_forward_peak_capture():
                                 accelerator_tensor = cast(
                                     "torch.Tensor",
                                     self._sparse_model.encode_document(

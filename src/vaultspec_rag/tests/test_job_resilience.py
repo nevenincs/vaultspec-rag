@@ -253,3 +253,95 @@ def test_route_shaping_is_absent_when_no_resilience_recorded() -> None:
 
     assert _job_resilience({}) is None
     assert _job_resilience({"resilience": None}) is None
+
+
+def test_budget_enforces_captured_job_peak_not_process_global_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cross-job contamination guard for CUDA ceiling enforcement.
+
+    A checkpoint must enforce the job's own lock-bracketed forward peak,
+    never a process-global reading that spans concurrent jobs. The patched
+    live measurement plays a sibling's mid-flight forward (far above this
+    job's ceiling); the assertion is narrow on purpose - it catches the
+    mutation that re-points ``sample``'s enforced peak at any process-wide
+    counter, which raises ``cuda_memory_ceiling`` here despite this job's
+    own demand sitting well under its ceiling.
+    """
+    from .. import memory_probe
+    from ..memory_probe import MemoryBudget
+
+    monkeypatch.setattr(memory_probe, "_measure_rss_mb", lambda: 100.0)
+    # A sibling job's forward is in flight at checkpoint time: the
+    # process-global allocated reading dwarfs this job's ceiling.
+    monkeypatch.setattr(
+        memory_probe,
+        "_measure_cuda_mb",
+        lambda: (9000.0, 9500.0),
+    )
+    sibling = MemoryBudget(cuda_ceiling_mb=20000.0)
+    sibling.record_forward_peak_mb(9000.0)
+    budget = MemoryBudget(cuda_ceiling_mb=1000.0)
+    budget.record_forward_peak_mb(500.0)
+    # The field failure mode: a non-forward checkpoint taken while a
+    # sibling holds the GPU. It must be admitted.
+    snapshot = budget.sample("code producer queue wait")
+
+    # Enforced peak is the job's own captured maximum...
+    assert snapshot.peak_cuda_allocated_mb == 500.0
+    # ...while the process-global reading stays visible as a diagnostic.
+    assert snapshot.cuda_allocated_mb == 9000.0
+    assert snapshot.cuda_reserved_mb == 9500.0
+
+
+def test_forward_peak_capture_routes_to_thread_recorder_and_keeps_maximum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The capture bracket feeds the registered recorder, max across brackets.
+
+    Guards two narrow properties: a bracket outside ``record_forward_peaks``
+    must drop its capture (no recorder registered on the thread), and a
+    later smaller bracket must not shrink the job's accumulated maximum.
+    """
+    from .. import memory_probe
+    from ..memory_probe import (
+        MemoryBudget,
+        cuda_forward_peak_capture,
+        record_forward_peaks,
+    )
+
+    monkeypatch.setattr(memory_probe, "_reset_cuda_peak_stats_bare", lambda: True)
+    monkeypatch.setattr(
+        memory_probe,
+        "_read_cuda_peak_allocated_mb",
+        lambda: 321.5,
+    )
+    budget = MemoryBudget(cuda_ceiling_mb=1000.0)
+    with record_forward_peaks(budget.record_forward_peak_mb), (
+        cuda_forward_peak_capture()
+    ):
+        pass
+    assert budget.captured_cuda_peak_mb == 321.5
+
+    # A later, smaller forward must not shrink the job maximum.
+    monkeypatch.setattr(
+        memory_probe,
+        "_read_cuda_peak_allocated_mb",
+        lambda: 100.0,
+    )
+    with record_forward_peaks(budget.record_forward_peak_mb), (
+        cuda_forward_peak_capture()
+    ):
+        pass
+    assert budget.captured_cuda_peak_mb == 321.5
+
+    # Outside the recorder context a capture has nowhere to go and
+    # must be dropped rather than credited to a stale recorder.
+    monkeypatch.setattr(
+        memory_probe,
+        "_read_cuda_peak_allocated_mb",
+        lambda: 9999.0,
+    )
+    with cuda_forward_peak_capture():
+        pass
+    assert budget.captured_cuda_peak_mb == 321.5

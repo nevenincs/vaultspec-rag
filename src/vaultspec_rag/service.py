@@ -206,6 +206,7 @@ class ServiceRegistry:
         """
         from .config import hf_cache_only
         from .embeddings import EmbeddingModel
+        from .memory_probe import sample_resident_cuda_baseline
 
         if self._model is not None:
             return
@@ -219,6 +220,10 @@ class ServiceRegistry:
             )
             logger.info("EmbeddingModel cache-only mode: %s", local_files_only)
             logger.info("EmbeddingModel loaded")
+            # The indexing budget subtracts the resident-model baseline;
+            # record it while the freshly-loaded stack is idle so ceilings
+            # describe indexing headroom rather than pre-consumed capacity.
+            sample_resident_cuda_baseline()
 
     @property
     def model(self) -> EmbeddingModel:
@@ -277,6 +282,13 @@ class ServiceRegistry:
                 cfg.reranker_model,
                 local_files_only,
             )
+            # The reranker loads lazily and outside the GPU lock; re-sample
+            # the resident baseline so a late load raises it rather than
+            # leaving indexing budgets constructed against an understated
+            # figure.
+            from .memory_probe import sample_resident_cuda_baseline
+
+            sample_resident_cuda_baseline()
             return self._reranker
 
     # -- per-project slots -------------------------------------------------
