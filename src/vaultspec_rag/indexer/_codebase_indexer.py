@@ -437,16 +437,28 @@ class CodebaseIndexer:
     def _begin_memory_budget(self) -> None:
         """Freeze and sample one production memory budget before dispatch."""
         from ..config import get_config
-        from ..memory_probe import MemoryBudget, reset_cuda_peak_memory_stats
+        from ..memory_probe import (
+            MemoryBudget,
+            reset_cuda_peak_memory_stats,
+            resolve_index_cuda_ceiling_mb,
+        )
 
         config = get_config()
         limits = self._support_limits
         mib = 1024**2
         rss_ceiling_mb = config.index_rss_ceiling_mb
-        cuda_ceiling_mb = config.index_cuda_ceiling_mb
+        profile_cuda_mb = (
+            limits.cuda_bytes / mib
+            if limits is not None
+            else config.index_cuda_ceiling_mb
+        )
+        cuda_ceiling_mb = resolve_index_cuda_ceiling_mb(
+            configured_mb=config.index_cuda_ceiling_mb,
+            headroom_mb=config.index_cuda_headroom_mb,
+            profile_cuda_mb=profile_cuda_mb,
+        )
         if limits is not None:
             rss_ceiling_mb = min(rss_ceiling_mb, limits.rss_bytes / mib)
-            cuda_ceiling_mb = min(cuda_ceiling_mb, limits.cuda_bytes / mib)
         uses_cuda = getattr(self.model, "device", None) == "cuda"
         if uses_cuda:
             reset_cuda_peak_memory_stats()

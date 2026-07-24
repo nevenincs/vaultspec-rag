@@ -133,6 +133,52 @@ def _measure_cuda_mb() -> tuple[float, float] | None:
     return (allocated, reserved)
 
 
+def cuda_device_total_mb() -> float | None:
+    """Return the active CUDA device's total memory in MiB, or ``None``.
+
+    A guarded probe, not a hard gate: it returns ``None`` on a torch-absent or
+    CPU-only host rather than raising, so the ceiling derivation degrades to its
+    profile fallback off the GPU compute path and never forces torch onto a
+    service-client or worker path. Shares the cached module probe with
+    :func:`_measure_cuda_mb`.
+    """
+    _measure_cuda_mb()
+    if _torch_module is None or not _torch_has_cuda:
+        return None
+    try:
+        props = _torch_module.cuda.get_device_properties(
+            _torch_module.cuda.current_device()
+        )
+        return float(props.total_memory) / (1024.0 * 1024.0)
+    except (RuntimeError, AssertionError):
+        return None
+
+
+def resolve_index_cuda_ceiling_mb(
+    *,
+    configured_mb: float,
+    headroom_mb: float,
+    profile_cuda_mb: float,
+) -> float:
+    """Resolve the effective indexing CUDA ceiling in MiB.
+
+    A positive ``configured_mb`` is an authoritative operator override that wins
+    in either direction - it may raise the ceiling above the profile figure as
+    well as lower it below, replacing the former one-way ``min`` clamp. When it
+    is unset (zero or negative), the ceiling is derived from the real device:
+    total memory minus a reserved ``headroom_mb`` margin. Off the GPU compute
+    path the device total is unavailable, so the derivation falls back to
+    ``profile_cuda_mb`` - the profile figure becomes a default rather than a
+    hard cap.
+    """
+    if configured_mb and configured_mb > 0:
+        return float(configured_mb)
+    total = cuda_device_total_mb()
+    if total is None:
+        return float(profile_cuda_mb)
+    return max(0.0, total - headroom_mb)
+
+
 def current_cuda_mb() -> tuple[float, float]:
     """Return ``(allocated_mb, reserved_mb)`` for the active CUDA device.
 

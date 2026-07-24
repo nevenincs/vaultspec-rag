@@ -116,6 +116,7 @@ class EnvVar(StrEnum):
     WATCH_CIRCUIT_FAILURE_THRESHOLD = "VAULTSPEC_RAG_WATCH_CIRCUIT_FAILURE_THRESHOLD"
     INDEX_RSS_CEILING_MB = "VAULTSPEC_RAG_INDEX_RSS_CEILING_MB"
     INDEX_CUDA_CEILING_MB = "VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB"
+    INDEX_CUDA_HEADROOM_MB = "VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MB"
     INDEX_CUDA_ALLOCATOR_FRACTION = "VAULTSPEC_RAG_INDEX_CUDA_ALLOCATOR_FRACTION"
     INDEX_SUPPORT_PROFILE = "VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE"
     # Wall-clock + memory tuning knobs introduced in #68 Track B.
@@ -162,6 +163,8 @@ class EnvVar(StrEnum):
     # Worker-thread pool partitioning.
     SEARCH_CONCURRENCY = "VAULTSPEC_RAG_SEARCH_CONCURRENCY"
     INDEX_JOB_CONCURRENCY = "VAULTSPEC_RAG_INDEX_JOB_CONCURRENCY"
+    # Encode-seam vector reuse off-switch.
+    INDEX_REUSE = "VAULTSPEC_RAG_INDEX_REUSE"
 
     QDRANT_URL = "VAULTSPEC_RAG_QDRANT_URL"
     QDRANT_API_KEY = "VAULTSPEC_RAG_QDRANT_API_KEY"
@@ -255,6 +258,7 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "watch_circuit_failure_threshold": EnvVar.WATCH_CIRCUIT_FAILURE_THRESHOLD,
     "index_rss_ceiling_mb": EnvVar.INDEX_RSS_CEILING_MB,
     "index_cuda_ceiling_mb": EnvVar.INDEX_CUDA_CEILING_MB,
+    "index_cuda_headroom_mb": EnvVar.INDEX_CUDA_HEADROOM_MB,
     "index_cuda_allocator_fraction": EnvVar.INDEX_CUDA_ALLOCATOR_FRACTION,
     "index_support_profile": EnvVar.INDEX_SUPPORT_PROFILE,
     # Performance tuning knobs - surface them via env vars too so
@@ -296,6 +300,8 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     # Worker-thread pool partitioning.
     "search_concurrency": EnvVar.SEARCH_CONCURRENCY,
     "index_job_concurrency": EnvVar.INDEX_JOB_CONCURRENCY,
+    # Encode-seam vector reuse off-switch.
+    "index_reuse_enabled": EnvVar.INDEX_REUSE,
     "qdrant_url": EnvVar.QDRANT_URL,
     "qdrant_api_key": EnvVar.QDRANT_API_KEY,
     "qdrant_quantization": EnvVar.QDRANT_QUANTIZATION,
@@ -614,6 +620,16 @@ class VaultSpecConfigWrapper:
         # searches. Saturation beyond a limiter queues callers.
         "search_concurrency": 16,
         "index_job_concurrency": 4,
+        # Encode-seam vector reuse. When indexing a root, the single
+        # consumer thread may retrieve already-computed dense and sparse
+        # vectors by deterministic point id from sibling donor namespaces
+        # and adopt them for chunks whose stored payload content matches
+        # byte-for-byte, GPU-encoding only the misses - a fork of an
+        # already-indexed tree then skips the encode that dominates the
+        # rebuild. Default on; set false to disable every donor lookup and
+        # encode every chunk exactly as before - the paranoia escape hatch
+        # and the A/B lever that restores baseline behaviour in one flip.
+        "index_reuse_enabled": True,
         "mcp_port": 8766,
         "log_level": "WARNING",
         "service_idle_ttl_seconds": 1800,
@@ -660,7 +676,17 @@ class VaultSpecConfigWrapper:
         # lower ceiling relative to its starting baseline. The allocator cap
         # preserves device headroom for concurrent search before model load.
         "index_rss_ceiling_mb": 16384.0,
-        "index_cuda_ceiling_mb": 12288.0,
+        # CUDA ceiling override. ``0`` means auto-derive from the real device:
+        # total device memory minus ``index_cuda_headroom_mb``. A positive value
+        # is an authoritative operator override that raises OR lowers the
+        # effective ceiling, replacing the former one-way clamp against a fixed
+        # 12 GiB profile constant that a 16 GiB card could never raise.
+        "index_cuda_ceiling_mb": 0.0,
+        # Memory reserved below the device total when the CUDA ceiling is
+        # auto-derived: leaves room for the driver, concurrent search, and
+        # allocator fragmentation. On a 16 GiB card this yields a ~14 GiB
+        # indexing ceiling instead of the flat 12 GiB.
+        "index_cuda_headroom_mb": 2048.0,
         "index_cuda_allocator_fraction": 0.8,
         # Named profile definitions and corpus dimensions live in
         # ``index_profiles``; this selects the service default.
@@ -914,6 +940,23 @@ class VaultSpecConfigWrapper:
             raise ValueError(msg)
         return float(value)
 
+    @staticmethod
+    def _finite_non_negative(name: str, value: object) -> float:
+        """Return a finite non-negative numeric config value.
+
+        Zero is admitted so a knob can carry an in-band sentinel (e.g. the CUDA
+        ceiling's ``0`` meaning "auto-derive from the device").
+        """
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+        ):
+            msg = f"{name} must be a finite non-negative number, got {value!r}"
+            raise ValueError(msg)
+        return float(value)
+
     @property
     def store_operation_timeout_seconds(self) -> float:
         """Return the finite positive timeout for one store operation."""
@@ -1128,10 +1171,18 @@ class VaultSpecConfigWrapper:
 
     @property
     def index_cuda_ceiling_mb(self) -> float:
-        """Return the finite positive CUDA allocated/reserved ceiling in MiB."""
-        return self._finite_positive(
+        """Return the CUDA ceiling override in MiB (``0`` = auto-derive)."""
+        return self._finite_non_negative(
             "index_cuda_ceiling_mb",
             self._resolve_rag_default("index_cuda_ceiling_mb"),
+        )
+
+    @property
+    def index_cuda_headroom_mb(self) -> float:
+        """Return the memory reserved below device total for the auto ceiling."""
+        return self._finite_positive(
+            "index_cuda_headroom_mb",
+            self._resolve_rag_default("index_cuda_headroom_mb"),
         )
 
     @property

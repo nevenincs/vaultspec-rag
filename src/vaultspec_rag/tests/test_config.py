@@ -143,9 +143,17 @@ _RESILIENCE_CONFIG_CASES: tuple[
         "index_cuda_ceiling_mb",
         EnvVar.INDEX_CUDA_CEILING_MB,
         "VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB",
-        12288.0,
+        0.0,
         "3072.25",
         3072.25,
+    ),
+    (
+        "index_cuda_headroom_mb",
+        EnvVar.INDEX_CUDA_HEADROOM_MB,
+        "VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MB",
+        2048.0,
+        "1024.0",
+        1024.0,
     ),
     (
         "index_cuda_allocator_fraction",
@@ -296,6 +304,57 @@ def test_managed_log_environment_names_are_generic_only() -> None:
     )
 
 
+def test_cuda_ceiling_override_raises_and_lowers_past_the_profile() -> None:
+    # The former min(profile, config) clamp could only ever lower the ceiling
+    # below the 12 GiB profile constant. The override is now authoritative in
+    # both directions: this test binds that a value ABOVE the profile raises the
+    # effective ceiling (the bug that pinned a 16 GiB card at 12 GiB) and a value
+    # BELOW it still lowers it.
+    from ..memory_probe import resolve_index_cuda_ceiling_mb
+
+    profile_mb = 12288.0
+    raised = resolve_index_cuda_ceiling_mb(
+        configured_mb=15000.0, headroom_mb=2048.0, profile_cuda_mb=profile_mb
+    )
+    lowered = resolve_index_cuda_ceiling_mb(
+        configured_mb=6000.0, headroom_mb=2048.0, profile_cuda_mb=profile_mb
+    )
+    assert raised == 15000.0
+    assert raised > profile_mb
+    assert lowered == 6000.0
+    assert lowered < profile_mb
+
+
+def test_cuda_ceiling_auto_derives_or_falls_back_to_profile() -> None:
+    # With no override (0), the ceiling derives from the device off a positive
+    # capacity, or falls back to the profile figure when the device total is
+    # unavailable (the torch-free / CPU-only path). Patch the device probe to
+    # exercise both branches without a GPU dependency.
+    from .. import memory_probe
+
+    def _fake_total() -> float | None:
+        return 16376.0
+
+    original = memory_probe.cuda_device_total_mb
+    memory_probe.cuda_device_total_mb = _fake_total  # type: ignore[assignment]
+    try:
+        derived = memory_probe.resolve_index_cuda_ceiling_mb(
+            configured_mb=0.0, headroom_mb=2048.0, profile_cuda_mb=12288.0
+        )
+        assert derived == 16376.0 - 2048.0
+    finally:
+        memory_probe.cuda_device_total_mb = original  # type: ignore[assignment]
+
+    memory_probe.cuda_device_total_mb = lambda: None  # type: ignore[assignment,return-value]
+    try:
+        fallback = memory_probe.resolve_index_cuda_ceiling_mb(
+            configured_mb=0.0, headroom_mb=2048.0, profile_cuda_mb=12288.0
+        )
+        assert fallback == 12288.0
+    finally:
+        memory_probe.cuda_device_total_mb = original  # type: ignore[assignment]
+
+
 def test_document_encode_batch_is_independent_of_vault_and_code() -> None:
     # Document fragments are window-sized after chunk-bounding, so the document
     # encode sub-batch is decoupled from the vault and code sub-batches and
@@ -306,10 +365,7 @@ def test_document_encode_batch_is_independent_of_vault_and_code() -> None:
     assert cfg.embedding_document_encode_batch_size == 12
     assert cfg.embedding_encode_batch_size == 32
     assert cfg.embedding_code_encode_batch_size == 32
-    assert (
-        cfg.embedding_document_encode_batch_size
-        != cfg.embedding_encode_batch_size
-    )
+    assert cfg.embedding_document_encode_batch_size != cfg.embedding_encode_batch_size
 
 
 def test_document_encode_batch_env_override_is_independent() -> None:
@@ -502,7 +558,7 @@ def test_resilience_positive_integer_settings_reject_zero(
         (EnvVar.WATCH_RETRY_BASE_SECONDS, "watch_retry_base_seconds"),
         (EnvVar.WATCH_RETRY_MAX_SECONDS, "watch_retry_max_seconds"),
         (EnvVar.INDEX_RSS_CEILING_MB, "index_rss_ceiling_mb"),
-        (EnvVar.INDEX_CUDA_CEILING_MB, "index_cuda_ceiling_mb"),
+        (EnvVar.INDEX_CUDA_HEADROOM_MB, "index_cuda_headroom_mb"),
     ],
 )
 def test_resilience_positive_float_settings_reject_zero(
@@ -515,6 +571,28 @@ def test_resilience_positive_float_settings_reject_zero(
         reset_config()
         with pytest.raises(ValueError, match=attribute):
             getattr(get_config(), attribute)
+    finally:
+        _restore_resilience_env(saved)
+        reset_config()
+
+
+def test_cuda_ceiling_accepts_zero_sentinel_but_rejects_negative() -> None:
+    # index_cuda_ceiling_mb carries an in-band 0 sentinel meaning "auto-derive
+    # from the device", so unlike the other float ceilings it must ACCEPT zero.
+    # A negative override is still nonsense and must be rejected. This guard
+    # binds the sentinel contract: reverting the knob to a positive-only
+    # validator would break auto-derivation, and dropping the lower bound would
+    # admit a negative ceiling.
+    saved = _clear_resilience_env()
+    try:
+        os.environ[EnvVar.INDEX_CUDA_CEILING_MB.value] = "0"
+        reset_config()
+        assert get_config().index_cuda_ceiling_mb == 0.0
+
+        os.environ[EnvVar.INDEX_CUDA_CEILING_MB.value] = "-1"
+        reset_config()
+        with pytest.raises(ValueError, match="index_cuda_ceiling_mb"):
+            _ = get_config().index_cuda_ceiling_mb
     finally:
         _restore_resilience_env(saved)
         reset_config()
@@ -1116,4 +1194,70 @@ def test_reranker_enabled_env_override() -> None:
         assert get_config().reranker_enabled is False
     finally:
         _restore_env(EnvVar.RERANKER_ENABLED, prev)
+        reset_config()
+
+
+def test_index_reuse_enabled_default() -> None:
+    # Encode-seam vector reuse ships on: the fork-index GPU win is the default,
+    # and the off-switch is the opt-out, not the opt-in.
+    cfg = get_config()
+    value = cfg.index_reuse_enabled
+    assert value is True
+    assert isinstance(value, bool)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["0", "false", "False", "no", "off", ""],
+    ids=["zero", "false-lower", "false-title", "no", "off", "empty"],
+)
+def test_index_reuse_enabled_env_falsey(raw: str) -> None:
+    # The off-switch parses off: any non-truthy value disables every donor
+    # lookup and restores the encode-everything baseline in one flip.
+    prev = _set_env(EnvVar.INDEX_REUSE, raw)
+    try:
+        reset_config()
+        cfg = get_config()
+        value = cfg.index_reuse_enabled
+        assert value is False
+        assert isinstance(value, bool)
+    finally:
+        _restore_env(EnvVar.INDEX_REUSE, prev)
+        reset_config()
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["1", "true", "TRUE", "yes", "Yes"],
+    ids=["one", "true-lower", "true-upper", "yes-lower", "yes-title"],
+)
+def test_index_reuse_enabled_env_truthy(raw: str) -> None:
+    prev = _set_env(EnvVar.INDEX_REUSE, raw)
+    try:
+        reset_config()
+        cfg = get_config()
+        value = cfg.index_reuse_enabled
+        assert value is True
+        assert isinstance(value, bool)
+    finally:
+        _restore_env(EnvVar.INDEX_REUSE, prev)
+        reset_config()
+
+
+def test_index_reuse_enabled_reset_config_picks_up_change() -> None:
+    # reset_config clears the cached singleton so a fresh env value is served on
+    # the next get_config(); this binds that the off-switch takes effect through
+    # the same reset seam the other env-override knobs rely on.
+    prev = _set_env(EnvVar.INDEX_REUSE, "1")
+    try:
+        reset_config()
+        first = get_config()
+        assert first.index_reuse_enabled is True
+        os.environ[EnvVar.INDEX_REUSE.value] = "0"
+        reset_config()
+        second = get_config()
+        assert second is not first
+        assert second.index_reuse_enabled is False
+    finally:
+        _restore_env(EnvVar.INDEX_REUSE, prev)
         reset_config()
