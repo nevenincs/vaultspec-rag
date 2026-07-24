@@ -791,6 +791,12 @@ class JobManager:
         other managed job keeps the wider index partition. The mapping is
         spec-driven, so read-only and maintenance work can never be pulled
         behind the encode slot by a dispatch-site mistake.
+
+        Acquisition order with the quiesce gate is one-way and fixed: this
+        limiter (the admission slot) is acquired first, and the quiesce
+        gate is consulted only inside the admitted attempt at unprotected
+        checkpoints. Never wait on this limiter from code that is already
+        parked at - or responsible for releasing - the quiesce gate.
         """
         with self._lock:
             managed = self._active.get(job_id)
