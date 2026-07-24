@@ -125,9 +125,43 @@ def _command_label(raw: object) -> str:
     return value.replace("_", " ")
 
 
-def _job_is_waiting(job: dict[str, object]) -> bool:
+def _job_awaiting_admission(job: dict[str, object]) -> bool:
+    """Report whether a running job has not yet won its admission slot.
+
+    Only one encode-bearing index job may execute at a time, because a single
+    GPU gains nothing from job-level concurrency. Jobs beyond that one are
+    dispatched and hold the ``running`` phase while parked on the admission
+    limiter, having done no work at all.
+
+    ``admission_acquired_at`` is stamped the moment the attempt's worker
+    actually begins, so a null value is the service's own statement that the
+    job is still waiting. Reporting such a job as active - with a runtime that
+    is really its queue wait - tells an operator that four jobs are competing
+    when three of them have not started.
+
+    The field must be PRESENT and null. A payload that omits it entirely is an
+    older daemon, or a projection that does not carry it, and says nothing
+    either way; inferring a wait from silence would relabel every running job
+    on that daemon as queued. Absent means unknown, and unknown keeps today's
+    reading rather than inventing a more specific one.
+    """
     if str(job.get("phase", "")) != "running":
         return False
+    if "admission_acquired_at" not in job:
+        return False
+    return job["admission_acquired_at"] is None
+
+
+def _job_is_waiting(job: dict[str, object]) -> bool:
+    """Report whether a running job is waiting rather than working.
+
+    Covers both waits, which are distinct and both invisible in the phase:
+    queued behind the store writer, and queued for the admission slot.
+    """
+    if str(job.get("phase", "")) != "running":
+        return False
+    if _job_awaiting_admission(job):
+        return True
     progress = job.get("progress")
     return (
         isinstance(progress, dict)
@@ -335,9 +369,27 @@ def _waiting_job_detail(detail: str, raw_runtime: object) -> str:
     )
 
 
+def _admission_wait_detail(raw_runtime: object) -> str:
+    """Name the wait, not just its duration.
+
+    An operator reading "waiting for 6 minutes" cannot tell whether the job is
+    stuck or correctly queued. Naming the GPU slot says both what it waits on
+    and that exactly one job holds it, which turns an alarming line into an
+    expected one - and points at the real remedy when it is not expected.
+    """
+    if isinstance(raw_runtime, int | float):
+        return (
+            f"waiting {_format_seconds(raw_runtime)} for the GPU slot "
+            "(one indexing job encodes at a time)"
+        )
+    return "waiting for the GPU slot (one indexing job encodes at a time)"
+
+
 def _running_job_detail(job: dict[str, object]) -> str:
     detail = _human_progress(job)
     raw_runtime = job.get("runtime_seconds")
+    if _job_awaiting_admission(job):
+        return _admission_wait_detail(raw_runtime)
     if _job_is_waiting(job):
         return _waiting_job_detail(detail, raw_runtime)
     runtime_detail = (
