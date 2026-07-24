@@ -22,7 +22,7 @@ jobs:
     name: Workflow Lint
     concurrency:
       group: ci-${{ github.workflow }}-${{ github.job }}-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
@@ -37,7 +37,7 @@ jobs:
     name: Lint, Type, Config, Link, and Markdown Checks
     concurrency:
       group: ci-${{ github.workflow }}-${{ github.job }}-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
@@ -114,7 +114,7 @@ jobs:
     name: Tests
     concurrency:
       group: ci-${{ github.workflow }}-${{ github.job }}-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
@@ -222,7 +222,7 @@ jobs:
     name: Vault Audit
     concurrency:
       group: ci-${{ github.workflow }}-${{ github.job }}-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
@@ -251,7 +251,7 @@ jobs:
     name: Dependency Audit (uv audit)
     concurrency:
       group: ci-${{ github.workflow }}-${{ github.job }}-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
