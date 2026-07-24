@@ -42,12 +42,9 @@ _RECONCILE_CMD = "server.storage.reconcile"
 
 
 def _human_size(num_bytes: int) -> str:
-    size = float(num_bytes)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if size < 1024.0 or unit == "TB":
-            return f"{size:.1f}{unit}"
-        size /= 1024.0
-    return f"{size:.1f}TB"
+    from .._units import human_bytes
+
+    return human_bytes(num_bytes)
 
 
 def _resolve_server_url(command: str, json_mode: bool) -> str:
@@ -577,7 +574,7 @@ def _render_reconcile(result: ReconcileBatch, json_mode: bool) -> None:
         typer.echo("Every collection is already at the bounded geometry.")
         return
     # The verb has to follow what actually happened: an unwaited run has
-    # converged nothing, and calling it "Reconciled ... 0.0B reclaimed" reads
+    # converged nothing, and calling it "Reconciled ... 0 B reclaimed" reads
     # as a failed reconcile rather than an unobserved one.
     converged = sum(1 for r in result.results if r.status == "reconciled")
     if result.dry_run:

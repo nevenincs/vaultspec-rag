@@ -25,7 +25,9 @@ from .._store_writes import (
     StoreWritePolicy,
     classify_write_error,
     ensure_disk_headroom,
+    probe_store_volume,
     run_store_operation_with_retry,
+    store_volume_path,
 )
 from ..config import EnvVar, reset_config
 
@@ -566,3 +568,129 @@ class TestEnsureDiskHeadroom:
     def test_floor_breach_raises(self, tmp_path: Path) -> None:
         with pytest.raises(InsufficientDiskSpaceError):
             ensure_disk_headroom(tmp_path, floor_bytes=2**60)
+
+    def test_refusal_reports_units_not_raw_bytes(self, tmp_path: Path) -> None:
+        with pytest.raises(InsufficientDiskSpaceError) as raised:
+            ensure_disk_headroom(tmp_path, floor_bytes=2**40)
+        assert str(2**40) not in str(raised.value)
+        assert "1.0 TiB" in str(raised.value)
+
+
+@contextmanager
+def _store_paths(tmp_path: Path, *, server_mode: bool) -> Generator[Path]:
+    """Select a store backend with every managed path under *tmp_path*.
+
+    The qdrant storage dir is relocated because the identity sidecar and the
+    machine-scoped service lock both derive from it; leaving it at the
+    default would reach the operator's real managed dir.
+    """
+    storage = tmp_path / "managed" / "qdrant-server" / "storage"
+    values = {
+        EnvVar.QDRANT_STORAGE_DIR.value: str(storage),
+        EnvVar.STATUS_DIR.value: str(tmp_path / "status"),
+        EnvVar.QDRANT_SERVER.value: "1",
+        EnvVar.LOCAL_ONLY.value: "0" if server_mode else "1",
+    }
+    previous = {key: os.environ.get(key) for key in values}
+    try:
+        os.environ.update(values)
+        os.environ.pop(EnvVar.QDRANT_URL.value, None)
+        reset_config()
+        yield storage
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        reset_config()
+
+
+class TestProbeStoreVolume:
+    """The headroom probe must measure where the store WRITES.
+
+    The indexed tree and the vector store routinely live on different
+    volumes - indexing a project on one drive while the managed store sits
+    under the home directory on another is the ordinary case, not an exotic
+    one. A probe anchored on the project root reports a free-space figure
+    that has nothing to do with the requirement being enforced.
+    """
+
+    def test_server_mode_resolves_the_managed_storage_dir(self, tmp_path: Path) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        with _store_paths(tmp_path, server_mode=True) as storage:
+            assert store_volume_path(project) == storage
+            # The negative half: the project root is NOT what gets measured.
+            assert store_volume_path(project) != project
+
+    def test_local_mode_resolves_the_per_project_store(self, tmp_path: Path) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        with _store_paths(tmp_path, server_mode=False):
+            resolved = store_volume_path(project)
+            assert resolved.is_relative_to(project)
+            # Local mode's store is under the project, but still the store
+            # directory rather than the project root itself.
+            assert resolved != project
+
+    def test_absent_storage_dir_measures_its_nearest_existing_ancestor(
+        self, tmp_path: Path
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        with _store_paths(tmp_path, server_mode=True) as storage:
+            assert not storage.exists()
+            probed = probe_store_volume(project)
+
+        # A first index on a fresh install has no storage dir yet; an
+        # ancestor on the same volume answers the same question, and
+        # reporting "unknown" there would disable the check needlessly.
+        assert probed.path == storage
+        assert probed.measured_path is not None
+        assert probed.measured_path in storage.parents
+        assert probed.free_bytes is not None
+        assert probed.free_bytes > 0
+
+    def test_remote_store_reports_unknown_rather_than_a_local_volume(
+        self, tmp_path: Path
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        with _store_paths(tmp_path, server_mode=True):
+            os.environ[EnvVar.QDRANT_URL.value] = "http://qdrant.internal:6333"
+            reset_config()
+            probed = probe_store_volume(project)
+
+        # This host cannot see a remote server's disk. Measuring the local
+        # managed dir instead would decide admission on a volume the store
+        # never writes to.
+        assert probed.free_bytes is None
+        assert probed.measured_path is None
+
+    def test_loopback_url_is_the_managed_server_and_stays_measurable(
+        self, tmp_path: Path
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        with _store_paths(tmp_path, server_mode=True) as storage:
+            storage.mkdir(parents=True)
+            # The daemon publishes its own supervised child's URL; that is
+            # the managed local server, not a remote one.
+            os.environ[EnvVar.QDRANT_URL.value] = "http://127.0.0.1:6333"
+            reset_config()
+            probed = probe_store_volume(project)
+
+        assert probed.measured_path == storage
+        assert probed.free_bytes is not None
+
+    def test_describe_names_the_measured_location(self, tmp_path: Path) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        with _store_paths(tmp_path, server_mode=True) as storage:
+            probed = probe_store_volume(project)
+
+        described = probed.describe()
+        assert str(storage) in described
+        if probed.volume:
+            assert f"(volume {probed.volume})" in described

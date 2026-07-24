@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 import threading
 import time
@@ -342,6 +341,7 @@ def _validate_measurement(
     """Apply the configured document profile before loading embedding models."""
     import psutil
 
+    from ..._store_writes import probe_store_volume
     from ...config import get_config
     from ...index_profiles import (
         IndexDomain,
@@ -356,7 +356,7 @@ def _validate_measurement(
         SupportMeasurement(**asdict(measurement)),
         backend="server" if cfg.qdrant_url else "local",
         available_ram_bytes=int(psutil.virtual_memory().total),
-        free_disk_bytes=int(shutil.disk_usage(root).free),
+        store_volume=probe_store_volume(root),
     )
 
 

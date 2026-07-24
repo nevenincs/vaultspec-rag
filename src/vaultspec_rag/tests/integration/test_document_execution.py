@@ -18,6 +18,7 @@ import pytest
 
 from ..._job_errors import JobError, JobErrorKind
 from ..._store_models import DocumentChunk, DocumentPayload
+from ..._store_writes import StoreVolume
 from ...index_profiles import (
     IndexDomain,
     SupportMeasurement,
@@ -460,7 +461,11 @@ def test_document_retry_state_and_resource_profile_are_independent(
             ),
             backend="local",
             available_ram_bytes=profile.minimum_ram_bytes,
-            free_disk_bytes=profile.minimum_free_disk_bytes,
+            store_volume=StoreVolume(
+                path=tmp_path,
+                measured_path=tmp_path,
+                free_bytes=profile.minimum_free_disk_bytes,
+            ),
         )
     assert caught.value.error_kind is JobErrorKind.CORPUS_LIMIT_EXCEEDED
 

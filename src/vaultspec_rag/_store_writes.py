@@ -28,12 +28,12 @@ from __future__ import annotations
 import errno
 import logging
 import math
+import pathlib
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    import pathlib
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
@@ -42,11 +42,14 @@ __all__ = [
     "BYTES_PER_POINT_ESTIMATE",
     "DISK_FLOOR_BYTES",
     "InsufficientDiskSpaceError",
+    "StoreVolume",
     "StoreWritePolicy",
     "classify_write_error",
     "ensure_disk_headroom",
+    "probe_store_volume",
     "remaining_write_seconds",
     "run_store_operation_with_retry",
+    "store_volume_path",
 ]
 
 #: Failure-text markers of storage exhaustion. Matched case-insensitively
@@ -402,6 +405,85 @@ def _free_bytes(storage_path: pathlib.Path) -> int | None:
         return None
 
 
+@dataclass(frozen=True, slots=True)
+class StoreVolume:
+    """One measured free-space observation of the volume the store writes to.
+
+    ``free_bytes`` is ``None`` when this process cannot see the volume - a
+    remote Qdrant server, or a managed storage dir whose whole ancestry is
+    absent. Callers must treat that as "unknown" and skip their check
+    rather than substitute another volume's number.
+    """
+
+    path: pathlib.Path
+    measured_path: pathlib.Path | None
+    free_bytes: int | None
+
+    @property
+    def volume(self) -> str:
+        """The drive or mount root of the measured path, empty if unnamed."""
+        target = self.measured_path or self.path
+        drive = pathlib.Path(target).drive
+        return drive or pathlib.Path(target).anchor
+
+    def describe(self) -> str:
+        """Render the exact location measured, for an operator-facing refusal."""
+        volume = self.volume
+        suffix = f" (volume {volume})" if volume else ""
+        return f"{self.path}{suffix}"
+
+
+def store_volume_path(root: pathlib.Path) -> pathlib.Path:
+    """Return the directory the vector store writes its data into.
+
+    Mirrors the backend selection the store itself makes: the managed
+    server's storage dir when the supervised backend is in effect, the
+    per-project on-disk store otherwise. Resolving it without opening a
+    store is what lets an admission preflight name the right volume before
+    any mutable resource exists.
+    """
+    from .config import get_config
+
+    cfg = get_config()
+    if cfg.effective_server_mode():
+        return pathlib.Path(str(cfg.qdrant_storage_dir)).expanduser()
+    return pathlib.Path(root) / cfg.data_dir / cfg.qdrant_dir
+
+
+def _is_remote_store() -> bool:
+    """Whether an operator pointed the store at a Qdrant this host cannot see."""
+    from urllib.parse import urlsplit
+
+    from .config import get_config
+
+    url = str(get_config().qdrant_url or "")
+    if not url:
+        return False
+    host = (urlsplit(url).hostname or "").lower()
+    return host not in {"", "localhost", "127.0.0.1", "::1"}
+
+
+def probe_store_volume(root: pathlib.Path) -> StoreVolume:
+    """Measure free space on the volume the vector store actually writes to.
+
+    The storage dir need not exist yet (a first index on a fresh install),
+    so the probe walks up to the nearest existing ancestor - which is on the
+    same volume and therefore reports the same free space. A remote store is
+    reported as unknown rather than measured against an unrelated local dir.
+    """
+    path = store_volume_path(root)
+    if _is_remote_store():
+        return StoreVolume(path=path, measured_path=None, free_bytes=None)
+    for candidate in (path, *path.parents):
+        if not candidate.exists():
+            continue
+        free = _free_bytes(candidate)
+        if free is None:
+            continue
+        return StoreVolume(path=path, measured_path=candidate, free_bytes=free)
+    return StoreVolume(path=path, measured_path=None, free_bytes=None)
+
+
 def ensure_disk_headroom(
     storage_path: pathlib.Path,
     *,
@@ -427,11 +509,12 @@ def ensure_disk_headroom(
     needed = floor_bytes + new_points * BYTES_PER_POINT_ESTIMATE
     if free >= needed:
         return
-    gib = 1024.0**3
+    from ._units import human_bytes
+
     msg = (
         f"not enough free disk space for the vector store (No space left on "
-        f"device imminent): need ~{needed / gib:.1f} GiB "
-        f"({new_points} points), have {free / gib:.1f} GiB free at "
+        f"device imminent): need ~{human_bytes(needed)} "
+        f"({new_points} points), have {human_bytes(free)} free at "
         f"{storage_path}. Free disk space (see: vaultspec-rag server storage "
         f"survey) and retry."
     )
