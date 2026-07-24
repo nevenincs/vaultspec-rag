@@ -16,9 +16,11 @@ related:
   - '[[2026-07-23-service-orphan-reaping-P03-S08]]'
   - '[[2026-07-23-service-orphan-reaping-P03-S09]]'
   - '[[2026-07-23-service-orphan-reaping-P04-S10]]'
+  - '[[2026-07-23-service-orphan-reaping-P04-S11]]'
   - '[[2026-07-23-service-orphan-reaping-adr]]'
   - '[[2026-07-23-service-orphan-reaping-plan]]'
   - '[[2026-07-23-service-orphan-reaping-research]]'
+  - '[[2026-07-24-service-orphan-reaping-closing-review-audit]]'
   - '[[2026-07-24-service-orphan-reaping-launcher-daemon-pair-reference]]'
 ---
 
@@ -32,6 +34,10 @@ Auto-generated index of all documents tagged with `#service-orphan-reaping`.
 
 - `2026-07-23-service-orphan-reaping-adr` - `service-orphan-reaping` adr: `guaranteed daemon self-exit on a failed claim, plus a bounded signature-scoped reap` | (**status:** `accepted`)
 
+### audit
+
+- `2026-07-24-service-orphan-reaping-closing-review-audit` - `service-orphan-reaping` audit: `closing review of the lifecycle and stop surface`
+
 ### exec
 
 - `2026-07-23-service-orphan-reaping-P02-S01` - Move the machine-singleton claim inside the lifespan startup try-guard so its failure routes through \_exit_standalone_daemon
@@ -44,6 +50,7 @@ Auto-generated index of all documents tagged with `#service-orphan-reaping`.
 - `2026-07-23-service-orphan-reaping-P02-S05` - Add a bidirectional guard test that a race-losing spawned daemon terminates instead of lingering
 - `2026-07-23-service-orphan-reaping-P03-S09` - Add a test that the reap clears a real lingering launcher-daemon orphan pair
 - `2026-07-23-service-orphan-reaping-P04-S10` - Reconcile the reap envelope with the broker and control-plane structured-stop regression suite
+- `2026-07-23-service-orphan-reaping-P04-S11` - Run the code review and the full gate suite for the changed lifecycle and stop surface
 
 ### plan
 
