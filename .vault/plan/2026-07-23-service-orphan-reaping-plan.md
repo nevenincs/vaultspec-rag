@@ -44,7 +44,7 @@ Add an opt-in server stop reap that clears accumulated orphans by daemon signatu
 - [x] `P03.S06` - Add the daemon-signature enumeration and the lock-and-pointer-anchored reap predicate; `src/vaultspec_rag/cli/_service_stop.py`.
 - [x] `P03.S07` - Wire the opt-in server stop --orphans flag with its structured reaped-count success and refusal-fault envelope; `src/vaultspec_rag/cli/_service_stop.py`.
 - [x] `P03.S08` - Add guard tests that the reap never targets the singleton, a foreign process, or an isolated-config instance; `src/vaultspec_rag/tests/test_service_stop_port.py`.
-- [ ] `P03.S09` - Add a test that the reap clears a real lingering launcher-daemon orphan pair; `src/vaultspec_rag/tests/integration/test_qdrant_orphan_reap.py`.
+- [x] `P03.S09` - Add a test that the reap clears a real lingering launcher-daemon orphan pair; `src/vaultspec_rag/tests/integration/test_qdrant_orphan_reap.py`.
 
 ### Phase `P04` - verify and review
 
