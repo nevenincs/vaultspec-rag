@@ -42,14 +42,16 @@ __all__ = [
     "BYTES_PER_POINT_ESTIMATE",
     "DISK_FLOOR_BYTES",
     "InsufficientDiskSpaceError",
-    "StoreVolume",
     "StoreWritePolicy",
+    "VolumeReading",
     "classify_write_error",
     "ensure_disk_headroom",
     "probe_store_volume",
+    "probe_workspace_volume",
     "remaining_write_seconds",
     "run_store_operation_with_retry",
     "store_volume_path",
+    "workspace_volume_path",
 ]
 
 #: Failure-text markers of storage exhaustion. Matched case-insensitively
@@ -66,10 +68,13 @@ _UNRECOVERABLE_MARKERS = (
 #: HNSW index, and WAL overhead.
 BYTES_PER_POINT_ESTIMATE = 16 * 1024
 
-#: Minimum free bytes the store volume must retain for a write to proceed.
-#: Qdrant needs WAL and optimizer headroom (the incident showed optimizer
-#: failures needing ~360 MiB with 0 B available); below this floor a write
-#: is refused before Qdrant can wedge on it.
+#: Minimum free bytes any index-time write target must retain. Qdrant needs
+#: WAL and optimizer headroom (the incident showed optimizer failures
+#: needing ~360 MiB with 0 B available); below this floor a write is refused
+#: before Qdrant can wedge on it. The project data dir shares the number
+#: rather than forking a second one: its run ledger and metadata are bounded
+#: metadata, so this floor is generous there and the store's own
+#: profile-scoped headroom would be absurd.
 DISK_FLOOR_BYTES = 1 * 1024 * 1024 * 1024
 
 
@@ -406,18 +411,32 @@ def _free_bytes(storage_path: pathlib.Path) -> int | None:
 
 
 @dataclass(frozen=True, slots=True)
-class StoreVolume:
-    """One measured free-space observation of the volume the store writes to.
+class VolumeReading:
+    """One measured free-space observation of one write target's volume.
+
+    An index writes to two independent locations that are routinely on
+    different volumes: the vector store, and the project's own data dir
+    (the run ledger and the index metadata). Each is measured separately so
+    a refusal can name which one is short instead of collapsing both into a
+    single figure.
 
     ``free_bytes`` is ``None`` when this process cannot see the volume - a
-    remote Qdrant server, or a managed storage dir whose whole ancestry is
-    absent. Callers must treat that as "unknown" and skip their check
-    rather than substitute another volume's number.
+    remote Qdrant server, or a path whose whole ancestry is absent. Callers
+    must treat that as "unknown" and skip their check rather than
+    substitute another volume's number.
     """
 
+    role: str
     path: pathlib.Path
     measured_path: pathlib.Path | None
     free_bytes: int | None
+    #: Filesystem device id of ``measured_path`` - the volume serial on
+    #: Windows, ``st_dev`` elsewhere. Captured at probe time so the record
+    #: needs no further filesystem access, and so identity is decided by the
+    #: device rather than by a rendered path: every POSIX absolute path
+    #: shares the anchor ``/``, which would make unrelated volumes compare
+    #: equal.
+    device_id: int | None = None
 
     @property
     def volume(self) -> str:
@@ -427,10 +446,29 @@ class StoreVolume:
         return drive or pathlib.Path(target).anchor
 
     def describe(self) -> str:
-        """Render the exact location measured, for an operator-facing refusal."""
+        """Render what was measured and where, for an operator-facing refusal.
+
+        The role is named alongside the path because the operator's
+        complaint is almost always about a DIFFERENT volume than the one
+        that was short; without the role, a correct figure still reads as
+        the tool contradicting what their file manager shows.
+        """
         volume = self.volume
-        suffix = f" (volume {volume})" if volume else ""
-        return f"{self.path}{suffix}"
+        suffix = f", volume {volume}" if volume else ""
+        return f"{self.path} ({self.role}{suffix})"
+
+    def same_volume_as(self, other: VolumeReading) -> bool:
+        """Whether both readings landed on the same volume.
+
+        Two unmeasured readings are never treated as the same volume:
+        "unknown" is not an identity, and answering yes would silently
+        collapse two independent checks into one.
+        """
+        return (
+            self.device_id is not None
+            and other.device_id is not None
+            and self.device_id == other.device_id
+        )
 
 
 def store_volume_path(root: pathlib.Path) -> pathlib.Path:
@@ -450,6 +488,19 @@ def store_volume_path(root: pathlib.Path) -> pathlib.Path:
     return pathlib.Path(root) / cfg.data_dir / cfg.qdrant_dir
 
 
+def workspace_volume_path(root: pathlib.Path) -> pathlib.Path:
+    """Return the project data dir an index writes its own bookkeeping into.
+
+    The run ledger and the per-domain index metadata land here, on the
+    volume holding the indexed tree. They are bounded metadata rather than
+    vectors, so this target's requirement is the small shared write floor,
+    never the store's profile-scoped headroom.
+    """
+    from .config import get_config
+
+    return pathlib.Path(root) / get_config().data_dir
+
+
 def _is_remote_store() -> bool:
     """Whether an operator pointed the store at a Qdrant this host cannot see."""
     from urllib.parse import urlsplit
@@ -463,25 +514,51 @@ def _is_remote_store() -> bool:
     return host not in {"", "localhost", "127.0.0.1", "::1"}
 
 
-def probe_store_volume(root: pathlib.Path) -> StoreVolume:
-    """Measure free space on the volume the vector store actually writes to.
+def _read_volume(role: str, path: pathlib.Path) -> VolumeReading:
+    """Measure *path*'s volume, walking up to its nearest existing ancestor.
 
-    The storage dir need not exist yet (a first index on a fresh install),
-    so the probe walks up to the nearest existing ancestor - which is on the
-    same volume and therefore reports the same free space. A remote store is
-    reported as unknown rather than measured against an unrelated local dir.
+    The target need not exist yet (a first index on a fresh install); an
+    existing ancestor is on the same volume and answers the same question,
+    where reporting "unknown" would disable the check needlessly.
     """
-    path = store_volume_path(root)
-    if _is_remote_store():
-        return StoreVolume(path=path, measured_path=None, free_bytes=None)
     for candidate in (path, *path.parents):
         if not candidate.exists():
             continue
         free = _free_bytes(candidate)
         if free is None:
             continue
-        return StoreVolume(path=path, measured_path=candidate, free_bytes=free)
-    return StoreVolume(path=path, measured_path=None, free_bytes=None)
+        try:
+            device_id = candidate.stat().st_dev
+        except OSError:
+            logger.debug("device probe failed for %s", candidate, exc_info=True)
+            device_id = None
+        return VolumeReading(
+            role=role,
+            path=path,
+            measured_path=candidate,
+            free_bytes=free,
+            device_id=device_id,
+        )
+    return VolumeReading(role=role, path=path, measured_path=None, free_bytes=None)
+
+
+def probe_store_volume(root: pathlib.Path) -> VolumeReading:
+    """Measure free space on the volume the vector store actually writes to.
+
+    A remote store is reported as unknown rather than measured against an
+    unrelated local dir this host happens to be able to see.
+    """
+    path = store_volume_path(root)
+    if _is_remote_store():
+        return VolumeReading(
+            role="vector store", path=path, measured_path=None, free_bytes=None
+        )
+    return _read_volume("vector store", path)
+
+
+def probe_workspace_volume(root: pathlib.Path) -> VolumeReading:
+    """Measure free space on the volume holding the project's own data dir."""
+    return _read_volume("project data dir", workspace_volume_path(root))
 
 
 def ensure_disk_headroom(

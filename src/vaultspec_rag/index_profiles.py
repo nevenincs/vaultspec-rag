@@ -11,7 +11,7 @@ from ._job_errors import JobError, JobErrorKind
 from ._units import human_bytes
 
 if TYPE_CHECKING:
-    from ._store_writes import StoreVolume
+    from ._store_writes import VolumeReading
 
 __all__ = [
     "IndexDomain",
@@ -247,24 +247,29 @@ def index_support_profile_status(name: str) -> dict[str, object]:
     }
 
 
-def _disk_refusal(profile: IndexSupportProfile, store_volume: StoreVolume) -> str:
-    """Explain a headroom refusal in units, at a location, with a way out.
+def _shortfall(reading: VolumeReading, required: int) -> str:
+    """Render one volume's requirement, observation, and gap in units."""
+    free = reading.free_bytes or 0
+    return (
+        f"{reading.describe()} has {human_bytes(free)} free; "
+        f"{human_bytes(required)} required ({human_bytes(required - free)} short)"
+    )
+
+
+def _store_disk_refusal(profile: IndexSupportProfile, reading: VolumeReading) -> str:
+    """Explain a store headroom refusal in units, at a location, with a way out.
 
     The requirement is a property of the vector store's volume, which is
     frequently not the volume holding the indexed tree. Naming the exact
-    directory and drive is what stops the refusal reading as a flat
+    directory, drive, and role is what stops the refusal reading as a flat
     contradiction of what the operator's file manager shows.
     """
     from .config import EnvVar
 
-    free = store_volume.free_bytes or 0
-    required = human_bytes(profile.minimum_free_disk_bytes)
-    observed = human_bytes(free)
-    short = human_bytes(profile.minimum_free_disk_bytes - free)
     smaller = _smaller_disk_profile(profile)
     lines = [
-        f"profile {profile.name!r} requires {required} free for the vector "
-        f"store; {store_volume.describe()} has {observed} free ({short} short).",
+        f"profile {profile.name!r}: "
+        f"{_shortfall(reading, profile.minimum_free_disk_bytes)}.",
         f"Free space on that volume, or point {EnvVar.QDRANT_STORAGE_DIR.value} "
         f"at a volume with room.",
     ]
@@ -275,6 +280,46 @@ def _disk_refusal(profile: IndexSupportProfile, store_volume: StoreVolume) -> st
             f"(needs {human_bytes(smaller.minimum_free_disk_bytes)})."
         )
     return " ".join(lines)
+
+
+def _workspace_disk_refusal(reading: VolumeReading, required: int) -> str:
+    """Explain a refusal on the volume holding the project's own data dir.
+
+    Reported as its own condition rather than folded into the store's: the
+    two targets are routinely on different volumes with wildly different
+    requirements, and an operator told only "disk" would free space on
+    whichever one they happened to think of.
+    """
+    return (
+        f"the indexed project's own data dir cannot be written: "
+        f"{_shortfall(reading, required)}. "
+        f"Free space on that volume and retry."
+    )
+
+
+def _check_workspace_volume(
+    store_volume: VolumeReading,
+    workspace_volume: VolumeReading | None,
+) -> None:
+    """Refuse when the project's own data dir has no room for its bookkeeping.
+
+    Skipped when both targets landed on the same volume: the store's
+    requirement is strictly larger there, so it has already answered this
+    question and a second report would only invite an operator to free
+    space twice on one drive.
+    """
+    from ._store_writes import DISK_FLOOR_BYTES
+
+    if workspace_volume is None or workspace_volume.free_bytes is None:
+        return
+    if workspace_volume.same_volume_as(store_volume):
+        return
+    if workspace_volume.free_bytes >= DISK_FLOOR_BYTES:
+        return
+    raise JobError(
+        JobErrorKind.DISK_PREFLIGHT_FAILED,
+        _workspace_disk_refusal(workspace_volume, DISK_FLOOR_BYTES),
+    )
 
 
 def _smaller_disk_profile(active: IndexSupportProfile) -> IndexSupportProfile | None:
@@ -301,15 +346,22 @@ def validate_profile_admission(
     *,
     backend: StorageBackend,
     available_ram_bytes: int,
-    store_volume: StoreVolume,
+    store_volume: VolumeReading,
+    workspace_volume: VolumeReading | None = None,
 ) -> IndexSupportProfile:
     """Validate known host and corpus dimensions before mutable/GPU work.
 
-    ``store_volume`` measures the volume the vector store writes to, which
-    is frequently not the volume holding the indexed tree. A ``None`` free
-    figure means this process cannot see that volume (a remote store), and
-    the headroom check is skipped rather than decided against an unrelated
-    number; the per-write floor still guards the run.
+    An index writes to two independent targets. ``store_volume`` is the
+    vector store's, which carries the profile's headroom requirement and is
+    frequently not the volume holding the indexed tree. ``workspace_volume``
+    is the project's own data dir - the run ledger and index metadata -
+    which needs only the small shared write floor. Each is checked and
+    reported separately so a refusal names the target that is actually
+    short.
+
+    A ``None`` free figure means this process cannot see that volume (a
+    remote store), and its check is skipped rather than decided against an
+    unrelated number; the per-write floor still guards the run.
     """
     profile = get_index_support_profile(profile_name)
     if backend not in profile.accepted_backends:
@@ -324,15 +376,13 @@ def validate_profile_admission(
             f"{human_bytes(profile.minimum_ram_bytes)} RAM; host reports "
             f"{human_bytes(available_ram_bytes)}",
         )
-    free_disk_bytes = store_volume.free_bytes
-    if (
-        free_disk_bytes is not None
-        and free_disk_bytes < profile.minimum_free_disk_bytes
-    ):
+    store_free = store_volume.free_bytes
+    if store_free is not None and store_free < profile.minimum_free_disk_bytes:
         raise JobError(
             JobErrorKind.DISK_PREFLIGHT_FAILED,
-            _disk_refusal(profile, store_volume),
+            _store_disk_refusal(profile, store_volume),
         )
+    _check_workspace_volume(store_volume, workspace_volume)
     exceeded = profile.limits_for(domain).exceeded_by(measured)
     if exceeded is not None:
         dimension, actual, limit = exceeded

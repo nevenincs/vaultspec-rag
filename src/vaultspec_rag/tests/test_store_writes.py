@@ -26,6 +26,7 @@ from .._store_writes import (
     classify_write_error,
     ensure_disk_headroom,
     probe_store_volume,
+    probe_workspace_volume,
     run_store_operation_with_retry,
     store_volume_path,
 )
@@ -692,5 +693,53 @@ class TestProbeStoreVolume:
 
         described = probed.describe()
         assert str(storage) in described
+        # The role is what tells an operator WHICH of the two write targets
+        # the figure belongs to; without it a correct number still reads as
+        # a contradiction of the drive they were looking at.
+        assert "vector store" in described
         if probed.volume:
-            assert f"(volume {probed.volume})" in described
+            assert f"volume {probed.volume}" in described
+
+    def test_storage_selection_ignores_the_working_directory(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The invocation's CWD must not influence which volume is measured.
+
+        This is the reported defect in miniature: the command was run from a
+        project on one drive while the managed store sat on another, and the
+        preflight reported the drive it was standing in. Both the CWD and the
+        project root are pointed away from the storage dir here, so the
+        assertion fails if either one leaks back into the selection.
+        """
+        project = tmp_path / "elsewhere" / "project"
+        project.mkdir(parents=True)
+        with _store_paths(tmp_path, server_mode=True) as storage:
+            storage.mkdir(parents=True)
+            monkeypatch.chdir(project)
+            probed = probe_store_volume(project)
+
+        assert probed.measured_path == storage
+        assert probed.path == storage
+        assert probed.path != project
+        assert not probed.path.is_relative_to(project)
+
+    def test_workspace_probe_measures_the_project_data_dir(
+        self, tmp_path: Path
+    ) -> None:
+        """The second write target is the project's own data dir.
+
+        An index writes its run ledger and metadata there, so it is a real
+        target with a real requirement - but a distinct one, reported under
+        its own role rather than folded into the store's figure.
+        """
+        project = tmp_path / "project"
+        project.mkdir()
+        with _store_paths(tmp_path, server_mode=True) as storage:
+            probed = probe_workspace_volume(project)
+
+        assert probed.path.is_relative_to(project)
+        assert probed.path != storage
+        assert probed.role == "project data dir"
+        assert probed.free_bytes is not None

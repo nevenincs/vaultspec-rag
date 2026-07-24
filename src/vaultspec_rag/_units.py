@@ -64,7 +64,11 @@ def human_bytes(num_bytes: float) -> str:
     sign = "-" if size < 0 else ""
     size = abs(size)
     for unit in _UNITS:
-        if size < 1024.0 or unit == _UNITS[-1]:
+        # Compare the ROUNDED value, not the raw one: a count a hair under
+        # the next magnitude (1 GiB minus a kilobyte) rounds up to 1024.0 at
+        # one decimal, and "1024.0 MiB" reads as a unit that failed to
+        # promote rather than as a measurement.
+        if round(size, 1) < 1024.0 or unit == _UNITS[-1]:
             if unit == "B":
                 return f"{sign}{size:.0f} B"
             return f"{sign}{size:.1f} {unit}"
