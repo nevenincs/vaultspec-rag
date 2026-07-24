@@ -134,9 +134,29 @@ def test_profile_rejects_backend_host_and_disk_before_corpus() -> None:
         assert raised.value.error_kind is kind
 
 
+def test_managed_disk_floor_is_a_host_provisioning_number() -> None:
+    """The flat floor sizes the HOST, not the run.
+
+    Pinned to the exact value because it is derived - a fresh namespace's
+    preallocation, the shared write floor, one ordinary project's measured
+    footprint, and an optimizer pass's transient inflation - not chosen for
+    roundness. A future edit that drifts it back toward a per-run-sized
+    number should have to justify itself here. Whether a particular run
+    fits is the per-run point estimate's question, exercised by
+    ``TestPerRunEstimateSizesTheRun``.
+    """
+    profile = get_index_support_profile("managed-service")
+
+    assert profile.minimum_free_disk_bytes == 8 * 1024**3
+    # An ordinary indexed project measured 3.4 GiB. A floor more than a few
+    # multiples above that is answering the per-run question badly rather
+    # than the host question at all.
+    assert profile.minimum_free_disk_bytes < 10 * 1024**3
+
+
 def test_disk_refusal_names_units_location_and_a_way_out() -> None:
     profile = get_index_support_profile("managed-service")
-    free = 36_157_648_896
+    free = 3_221_225_472
     volume = _volume(free, "managed/vaultspec-rag/qdrant-server/storage")
 
     with pytest.raises(JobError) as raised:
@@ -155,8 +175,8 @@ def test_disk_refusal_names_units_location_and_a_way_out() -> None:
     # refusal must carry neither the requirement nor the observation as one.
     assert str(free) not in detail
     assert str(profile.minimum_free_disk_bytes) not in detail
-    assert "64.0 GiB" in detail
-    assert "33.7 GiB" in detail
+    assert "8.0 GiB" in detail
+    assert "3.0 GiB" in detail
     # Which location was measured is the whole point: the store volume is
     # routinely not the volume holding the indexed tree. ``describe`` carries
     # the drive where the platform names one, so match it rather than a
@@ -164,25 +184,33 @@ def test_disk_refusal_names_units_location_and_a_way_out() -> None:
     assert volume.describe() in detail
     assert str(volume.path) in detail
     assert "VAULTSPEC_RAG_QDRANT_STORAGE_DIR" in detail
-    assert "VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE=embedded-local" in detail
 
 
-def test_disk_refusal_omits_a_smaller_profile_when_already_smallest() -> None:
-    profile = get_index_support_profile("embedded-local")
+def test_disk_refusal_never_suggests_a_profile_that_would_not_help() -> None:
+    """A suggestion must survive being taken.
 
-    with pytest.raises(JobError) as raised:
-        validate_profile_admission(
-            profile.name,
-            IndexDomain.CODE,
-            SupportMeasurement(1, 1),
-            backend="local",
-            available_ram_bytes=profile.minimum_ram_bytes,
-            store_volume=_volume(profile.minimum_free_disk_bytes - 1),
+    Two things disqualify a candidate independently, and both are live now
+    that the floors are close together: a floor that is not lower, and a
+    profile that rejects the backend in use. Asserting the env-var token is
+    absent rather than matching refusal prose is deliberate - the sentence
+    is the ONLY place that token appears, so its absence cannot be produced
+    by a wording change.
+    """
+    for name, backend in (("managed-service", "server"), ("embedded-local", "local")):
+        profile = get_index_support_profile(name)
+        with pytest.raises(JobError) as raised:
+            validate_profile_admission(
+                profile.name,
+                IndexDomain.CODE,
+                SupportMeasurement(1, 1),
+                backend=cast("StorageBackend", backend),  # ty: ignore[redundant-cast]
+                available_ram_bytes=profile.minimum_ram_bytes,
+                store_volume=_volume(profile.minimum_free_disk_bytes - 1),
+            )
+        detail = raised.value.detail
+        assert "VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE" not in detail, (
+            f"{name} was offered a profile switch that cannot help: {detail}"
         )
-
-    # Offering the profile that just refused as its own remediation is a
-    # dead end; no lower floor exists, so no suggestion is made.
-    assert "VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE" not in raised.value.detail
 
 
 def test_unmeasurable_store_volume_skips_the_disk_check() -> None:

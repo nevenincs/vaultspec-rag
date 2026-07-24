@@ -149,13 +149,32 @@ class IndexSupportProfile:
 
 _GIB: Final = 1024**3
 
+# The flat disk floor answers one question only: is this host plausibly
+# provisioned to run a vector store at all. Whether a PARTICULAR run fits is
+# answered by the per-run point estimate at the bulk-index pre-flight, which
+# sizes the actual work instead of guessing at it.
+#
+# Derived from measurements rather than picked as a safe-feeling round number:
+# a fresh namespace's three collections preallocate ~336 MiB each under the
+# pinned segment geometry (~1.0 GiB); the shared write floor reserves 1.0 GiB
+# of WAL and optimizer headroom; an ordinary indexed project measured 3.4 GiB
+# for a 12,408-point namespace; and an optimizer pass on that data transiently
+# inflates ~30% before it shrinks (~1.0 GiB). That totals ~6.4 GiB, rounded up
+# for margin.
+#
+# The previous value was 64 GiB - roughly twenty times an ordinary project -
+# which refused small incremental runs on hosts that had ample room for them,
+# because it was answering the per-run question with a host-provisioning
+# number.
+_MANAGED_DISK_FLOOR: Final = 8 * _GIB
+
 _PROFILES: Final = MappingProxyType(
     {
         "managed-service": IndexSupportProfile(
             name="managed-service",
             accepted_backends=frozenset({"server"}),
             minimum_ram_bytes=16 * _GIB,
-            minimum_free_disk_bytes=64 * _GIB,
+            minimum_free_disk_bytes=_MANAGED_DISK_FLOOR,
             code=SupportProfileLimits(
                 source_files=500_000,
                 source_bytes=128 * _GIB,
@@ -256,7 +275,11 @@ def _shortfall(reading: VolumeReading, required: int) -> str:
     )
 
 
-def _store_disk_refusal(profile: IndexSupportProfile, reading: VolumeReading) -> str:
+def _store_disk_refusal(
+    profile: IndexSupportProfile,
+    reading: VolumeReading,
+    backend: StorageBackend,
+) -> str:
     """Explain a store headroom refusal in units, at a location, with a way out.
 
     The requirement is a property of the vector store's volume, which is
@@ -266,7 +289,7 @@ def _store_disk_refusal(profile: IndexSupportProfile, reading: VolumeReading) ->
     """
     from .config import EnvVar
 
-    smaller = _smaller_disk_profile(profile)
+    smaller = _smaller_disk_profile(profile, backend)
     lines = [
         f"profile {profile.name!r}: "
         f"{_shortfall(reading, profile.minimum_free_disk_bytes)}.",
@@ -322,21 +345,28 @@ def _check_workspace_volume(
     )
 
 
-def _smaller_disk_profile(active: IndexSupportProfile) -> IndexSupportProfile | None:
-    """Return the lowest-floor profile below *active*, or ``None`` if it is lowest.
+def _smaller_disk_profile(
+    active: IndexSupportProfile,
+    backend: StorageBackend,
+) -> IndexSupportProfile | None:
+    """Return the lowest-floor profile that would actually admit this caller.
 
-    Offering the active profile back as the remediation is worse than
-    offering nothing, so the suggestion is omitted when no profile has a
-    lower disk floor.
+    A suggestion must survive being taken. Two independent things disqualify
+    a candidate: a floor that is not lower (offering the profile that just
+    refused, or one that would refuse harder), and a profile that does not
+    accept the backend in use - switching to it trades a disk refusal for a
+    backend refusal, which is worse than saying nothing. ``None`` means no
+    candidate clears both, and the caller omits the sentence entirely.
     """
-    lower = [
+    usable = [
         candidate
         for candidate in _PROFILES.values()
         if candidate.minimum_free_disk_bytes < active.minimum_free_disk_bytes
+        and backend in candidate.accepted_backends
     ]
-    if not lower:
+    if not usable:
         return None
-    return min(lower, key=lambda candidate: candidate.minimum_free_disk_bytes)
+    return min(usable, key=lambda candidate: candidate.minimum_free_disk_bytes)
 
 
 def validate_profile_admission(
@@ -380,7 +410,7 @@ def validate_profile_admission(
     if store_free is not None and store_free < profile.minimum_free_disk_bytes:
         raise JobError(
             JobErrorKind.DISK_PREFLIGHT_FAILED,
-            _store_disk_refusal(profile, store_volume),
+            _store_disk_refusal(profile, store_volume, backend),
         )
     _check_workspace_volume(store_volume, workspace_volume)
     exceeded = profile.limits_for(domain).exceeded_by(measured)
