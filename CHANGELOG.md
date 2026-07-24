@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.3.8](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.7...vaultspec-rag-v0.3.8) (2026-07-24)
+
+
+### Features
+
+* **cli:** make a degraded server status explain itself ([a86a84e](https://github.com/nevenincs/vaultspec-rag/commit/a86a84e4e5b83c0600b417425d48eee83f54ffd4))
+
+
+### Bug Fixes
+
+* **cli:** distinguish a queued admission wait from work in progress ([e0dde70](https://github.com/nevenincs/vaultspec-rag/commit/e0dde70bce4934966f21a4c72dabbe6ae37c0411))
+* **cli:** never report a satisfied outcome the command could not establish ([c5887c5](https://github.com/nevenincs/vaultspec-rag/commit/c5887c57e0e23ea9695789199444d20264d1000c))
+* **cli:** refuse to reap a live port holder, and let the safety guards run ([9ca53d5](https://github.com/nevenincs/vaultspec-rag/commit/9ca53d5e4121ce32d2e8f8ad6fa211c5c2491661))
+* **cli:** report what long-running commands are doing, and stop misreporting outcomes ([5644582](https://github.com/nevenincs/vaultspec-rag/commit/56445827220e5251d180da667300f727d331da7a))
+* **index:** admit jobs under one derived ceiling, and back vault's payload indexes ([b11abac](https://github.com/nevenincs/vaultspec-rag/commit/b11abac799edbcad8ab6f460c631139dcdae5ef0))
+* **index:** check each write target's volume as its own condition ([5cc40f1](https://github.com/nevenincs/vaultspec-rag/commit/5cc40f1e2faf6b1ebfebb21d3ba1fefcadad5773))
+* **index:** measure the store's volume, in units, once ([80ab740](https://github.com/nevenincs/vaultspec-rag/commit/80ab740d50da57c89d749e6910e9c2613669a065))
+* **index:** restore the disk-floor ladder and pin its ordering ([f2d409a](https://github.com/nevenincs/vaultspec-rag/commit/f2d409a2b353811924d02e7bed5a588c9f0657ed))
+* **index:** size the disk floor to the host, not to the run ([1b79350](https://github.com/nevenincs/vaultspec-rag/commit/1b7935058a2b8bad1db9da07a5ebe3512afda64c))
+* **server:** promote the two search timing phases that a reshape left behind ([1ef5d03](https://github.com/nevenincs/vaultspec-rag/commit/1ef5d03052ebc9da3fc191ab1d6cf35cc912ae03))
+* **service:** bind the CLI serving verdict to the service's own, and stop a bool suppressing a degradation ([c17b2ca](https://github.com/nevenincs/vaultspec-rag/commit/c17b2cafbdfaf6a19a8f69a44281a276e198b431))
+
 ## [0.3.7](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.6...vaultspec-rag-v0.3.7) (2026-07-24)
 
 
