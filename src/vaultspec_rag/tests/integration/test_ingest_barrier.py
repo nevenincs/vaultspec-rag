@@ -363,8 +363,7 @@ class TestBarrierComposesWithSliceWriter:
             with pytest.raises(IngestVerificationError):
                 indexer.full_index(reporter=NullProgressReporter())
             assert not indexer._meta_path.exists(), (
-                "terminal metadata was published over a writer-carried "
-                "silent drop"
+                "terminal metadata was published over a writer-carried silent drop"
             )
             assert store.upsert_threads, "the rebuild never reached storage"
             assert all(ident != caller for ident in store.upsert_threads), (

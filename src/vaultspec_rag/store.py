@@ -92,6 +92,7 @@ class DonorPoint:
     sparse_values: list[float] | None
     payload: dict[str, Any] = field(default_factory=dict)
 
+
 #: Reserved fence point identity for the ingest barrier. ``_stable_id``
 #: only ever produces integers, so a UUID point id can never collide with
 #: a real chunk; deleting it is always an idempotent no-op the server

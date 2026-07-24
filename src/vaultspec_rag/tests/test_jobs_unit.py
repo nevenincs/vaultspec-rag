@@ -1649,6 +1649,95 @@ class TestEncodeAdmissionGate:
             )
 
 
+class TestGpuLockWaitTelemetry:
+    """Timed GPU-lock acquisition accumulates per attempt and publishes."""
+
+    def test_timed_acquire_credits_the_active_scope(self) -> None:
+        import threading
+
+        from ..job_control import gpu_lock_wait_scope, timed_gpu_lock
+
+        lock = threading.Lock()
+        lock.acquire()
+        releaser = threading.Timer(0.2, lock.release)
+        releaser.start()
+        try:
+            with gpu_lock_wait_scope() as accumulator:
+                with timed_gpu_lock(lock):
+                    pass
+                assert accumulator.seconds >= 0.1, (
+                    "the contended acquisition wait was not credited"
+                )
+        finally:
+            releaser.cancel()
+            if lock.locked():
+                lock.release()
+
+    def test_timed_acquire_without_a_scope_is_inert(self) -> None:
+        import threading
+
+        from ..job_control import timed_gpu_lock
+
+        lock = threading.Lock()
+        with timed_gpu_lock(lock):
+            assert lock.locked()
+        assert not lock.locked()
+        with timed_gpu_lock(None):
+            pass
+
+    @pytest.mark.asyncio
+    async def test_lock_wait_publishes_on_the_job_record(self) -> None:
+        """The attempt's lock wait lands beside the admission stamp."""
+        import threading
+        import time as time_module
+
+        from ..job_control import timed_gpu_lock
+        from ..job_manager import JobAttemptContext, JobExecutionResult
+
+        manager = JobManager(max_nonterminal=2, state_path=None)
+        initiator = JobInitiator("test", "gpu-wait-telemetry", None)
+        created = manager.create(
+            JobSpec(
+                JobOperation.INDEX, JobSource.VAULT, _TEST_PROJECT_ROOT, JobMode.REBUILD
+            ),
+            initiator,
+        )
+        assert created.job is not None
+        gpu_lock = threading.Lock()
+
+        def runner(context: JobAttemptContext) -> JobExecutionResult:
+            del context
+            gpu_lock.acquire()
+            releaser = threading.Timer(0.2, gpu_lock.release)
+            releaser.start()
+            try:
+                with timed_gpu_lock(gpu_lock):
+                    time_module.sleep(0.05)
+            finally:
+                releaser.cancel()
+            return JobExecutionResult(summary="encoded")
+
+        manager.bind_dispatch(created.job.id, runner)
+        await manager.dispatch_async(created.job.id)
+        deadline = asyncio.get_running_loop().time() + 30.0
+        while True:
+            job = manager.get(created.job.id)
+            assert job is not None
+            if job.state.is_terminal:
+                break
+            if asyncio.get_running_loop().time() >= deadline:
+                raise TimeoutError("telemetry job did not finish")
+            await asyncio.sleep(0.01)
+        assert job.state is JobState.SUCCEEDED
+        waited = job.gpu_lock_wait_seconds
+        assert waited is not None
+        # The wait credited is the contended acquisition, not the held span.
+        assert waited >= 0.1
+        published = job.to_dict()
+        assert published["gpu_lock_wait_seconds"] == waited
+        assert "admission_acquired_at" in published
+
+
 class TestQuiesceAdmissionComposition:
     """The quiesce hold gate and the encode admission slot compose safely.
 
@@ -1671,6 +1760,35 @@ class TestQuiesceAdmissionComposition:
     @staticmethod
     def _encode_spec(root: str) -> JobSpec:
         return JobSpec(JobOperation.INDEX, JobSource.VAULT, root, JobMode.REBUILD)
+
+    @staticmethod
+    async def _await_terminal(
+        manager: JobManager,
+        job_id: str,
+    ) -> job_models.JobSnapshot:
+        """Return the job's terminal snapshot within the convergence bound."""
+        deadline = asyncio.get_running_loop().time() + 30.0
+        while True:
+            job = manager.get(job_id)
+            assert job is not None
+            if job.state.is_terminal:
+                return job
+            if asyncio.get_running_loop().time() >= deadline:
+                raise TimeoutError(f"job {job_id} did not converge after resume")
+            await asyncio.sleep(0.01)
+
+    @staticmethod
+    async def _assert_queued_job_stays_unadmitted(
+        manager: JobManager,
+        job_id: str,
+    ) -> None:
+        """Bounded observation, not a deadlock: dispatched yet unadmitted."""
+        assert (await manager.dispatch_async(job_id)).code == "attempt_started"
+        await asyncio.sleep(0.5)
+        waiting = manager.get(job_id)
+        assert waiting is not None
+        assert waiting.state is JobState.RUNNING
+        assert waiting.timestamps.admission_acquired_at is None
 
     @pytest.mark.asyncio
     async def test_pause_during_held_slot_parks_holder_and_resume_admits_queued(
@@ -1742,31 +1860,15 @@ class TestQuiesceAdmissionComposition:
                 "holder passed its checkpoint while the gate was paused"
             )
 
-            assert (await manager.dispatch_async(queued.job.id)).code == (
-                "attempt_started"
-            )
-            # Bounded observation, not a deadlock: the queued encode job
-            # stays honestly unadmitted behind the parked holder's slot.
-            await asyncio.sleep(0.5)
-            waiting = manager.get(queued.job.id)
-            assert waiting is not None
-            assert waiting.state is JobState.RUNNING
-            assert waiting.timestamps.admission_acquired_at is None
+            # The queued encode job stays honestly unadmitted behind the
+            # parked holder's slot.
+            await self._assert_queued_job_stays_unadmitted(manager, queued.job.id)
         finally:
             gate.resume()
             proceed.set()
 
-        deadline = asyncio.get_running_loop().time() + 30.0
-        while True:
-            done_holder = manager.get(holder.job.id)
-            done_queued = manager.get(queued.job.id)
-            assert done_holder is not None
-            assert done_queued is not None
-            if done_holder.state.is_terminal and done_queued.state.is_terminal:
-                break
-            if asyncio.get_running_loop().time() >= deadline:
-                raise TimeoutError("composition did not converge after resume")
-            await asyncio.sleep(0.01)
+        done_holder = await self._await_terminal(manager, holder.job.id)
+        done_queued = await self._await_terminal(manager, queued.job.id)
         assert done_holder.state is JobState.SUCCEEDED
         assert done_queued.state is JobState.SUCCEEDED
         # Resume reclaimed the slot: the queued job was really admitted.
@@ -1797,6 +1899,7 @@ class TestQuiesceAdmissionComposition:
         limiter = get_encode_limiter()
         try:
             async with limiter:  # the single encode slot is fully borrowed
+
                 def _donor_read() -> dict[str, object]:
                     store = VaultStore(tmp_path)
                     try:

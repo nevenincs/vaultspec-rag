@@ -9,7 +9,9 @@ indexers consume the smaller :class:`RunControl` protocol.
 from __future__ import annotations
 
 import threading
+import time
 from contextlib import AbstractContextManager, contextmanager, nullcontext
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, ClassVar, Protocol, runtime_checkable
@@ -21,6 +23,7 @@ __all__ = [
     "NO_RUN_CONTROL",
     "CancelRequested",
     "ControlRequest",
+    "GpuLockWaitAccumulator",
     "NullRunControl",
     "PauseRequested",
     "QuiesceGate",
@@ -29,7 +32,78 @@ __all__ = [
     "RunControlSnapshot",
     "RunControlToken",
     "ShutdownRequested",
+    "gpu_lock_wait_scope",
+    "timed_gpu_lock",
 ]
+
+
+class GpuLockWaitAccumulator:
+    """Thread-safe sum of seconds one attempt spent waiting for the GPU lock.
+
+    Torch-free by design so it stays importable from every indexing path.
+    The accumulator is shared across the attempt's threads (the encoding
+    caller and the single GPU consumer) through :data:`_GPU_LOCK_WAIT`;
+    contextvars do not flow into manually spawned threads, so a consumer
+    thread must be started under a copied context to contribute.
+    """
+
+    __slots__ = ("_lock", "_seconds")
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._seconds = 0.0
+
+    def add(self, seconds: float) -> None:
+        """Fold one lock-acquisition wait into the attempt total."""
+        with self._lock:
+            self._seconds += seconds
+
+    @property
+    def seconds(self) -> float:
+        """Return the accumulated GPU-lock wait for the attempt so far."""
+        with self._lock:
+            return self._seconds
+
+
+_GPU_LOCK_WAIT: ContextVar[GpuLockWaitAccumulator | None] = ContextVar(
+    "gpu_lock_wait",
+    default=None,
+)
+
+
+@contextmanager
+def gpu_lock_wait_scope() -> Generator[GpuLockWaitAccumulator]:
+    """Attribute every timed GPU-lock acquisition in this context to one attempt."""
+    accumulator = GpuLockWaitAccumulator()
+    token = _GPU_LOCK_WAIT.set(accumulator)
+    try:
+        yield accumulator
+    finally:
+        _GPU_LOCK_WAIT.reset(token)
+
+
+@contextmanager
+def timed_gpu_lock(lock: threading.Lock | None) -> Generator[None]:
+    """Acquire the GPU lock, crediting the wait to the active attempt scope.
+
+    A ``None`` lock (local single-tenant paths) is a no-op passthrough.
+    Only the acquisition wait is measured - the forward pass inside the
+    lock is work, not contention - and the wait is recorded even when no
+    scope is active (it is simply dropped), so call sites need no branching.
+    """
+    if lock is None:
+        yield
+        return
+    started = time.perf_counter()
+    lock.acquire()
+    try:
+        waited = time.perf_counter() - started
+        accumulator = _GPU_LOCK_WAIT.get()
+        if accumulator is not None:
+            accumulator.add(waited)
+        yield
+    finally:
+        lock.release()
 
 
 class ControlRequest(StrEnum):

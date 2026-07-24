@@ -131,6 +131,8 @@ class EnvVar(StrEnum):
         "VAULTSPEC_RAG_EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE"
     )
     INDEX_CACHE_FLUSH_SLICES = "VAULTSPEC_RAG_INDEX_CACHE_FLUSH_SLICES"
+    VAULT_CACHE_FLUSH_SLICES = "VAULTSPEC_RAG_VAULT_CACHE_FLUSH_SLICES"
+    DOCUMENT_CACHE_FLUSH_SLICES = "VAULTSPEC_RAG_DOCUMENT_CACHE_FLUSH_SLICES"
     INDEX_PARALLEL_MIN_BYTES = "VAULTSPEC_RAG_INDEX_PARALLEL_MIN_BYTES"
     # Dense-encoder backend selection (#155).
     DENSE_BACKEND = "VAULTSPEC_RAG_DENSE_BACKEND"
@@ -273,6 +275,8 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
         EnvVar.EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE
     ),
     "index_cache_flush_slices": EnvVar.INDEX_CACHE_FLUSH_SLICES,
+    "vault_cache_flush_slices": EnvVar.VAULT_CACHE_FLUSH_SLICES,
+    "document_cache_flush_slices": EnvVar.DOCUMENT_CACHE_FLUSH_SLICES,
     "index_parallel_min_bytes": EnvVar.INDEX_PARALLEL_MIN_BYTES,
     "dense_backend": EnvVar.DENSE_BACKEND,
     "dense_onnx_file": EnvVar.DENSE_ONNX_FILE,
@@ -571,6 +575,16 @@ class VaultSpecConfigWrapper:
         # N slices' worth of transient activations. ``1`` restores per-slice
         # flushing.
         "index_cache_flush_slices": 8,
+        # Flush cadences for the vault and document embed paths, mirroring
+        # the codebase throttle above. Both DEFAULT TO 1 (flush every
+        # slice), which is byte-for-byte the historical behavior of these
+        # paths. Raising either is measurement-gated: per-slice flushing
+        # may be load-bearing against allocator fragmentation on a CUDA
+        # ceiling that counts reserved memory, so flip only after peak
+        # reserved-memory and OOM validation on real full rebuilds in a
+        # coordinated GPU window.
+        "vault_cache_flush_slices": 1,
+        "document_cache_flush_slices": 1,
         # Minimum total source bytes before AUTO worker selection
         # (``index_chunk_workers=0``) engages the process pool (#155). Spawn
         # workers cost ~0.3s each to start, so on small/medium trees the pool
