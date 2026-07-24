@@ -21,6 +21,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -29,7 +30,7 @@ import pytest
 
 from .. import job_manager, job_models
 from .. import jobs as jobs_module
-from ..job_control import PauseRequested, RunControlToken
+from ..job_control import PauseRequested, QuiesceGate, RunControlToken
 from ..jobs import (
     DesiredJobState,
     JobInitiator,
@@ -1363,3 +1364,70 @@ class TestManagedJobTransitions:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
+
+
+@pytest.mark.asyncio
+async def test_dispatched_attempt_token_observes_shared_quiesce_gate() -> None:
+    """Pausing the manager-injected gate parks a dispatched attempt's token.
+
+    Guard: the negative half (the attempt does not pass its checkpoint while
+    the gate is paused) is bounded so a token built without the shared gate
+    fails the not-passed assertion instead of hanging. The mutation that
+    proves red is constructing the dispatch token without the manager's gate.
+    """
+    gate = QuiesceGate()
+    manager = JobManager(max_nonterminal=1, state_path=None, quiesce_gate=gate)
+    created = manager.create(
+        JobSpec(
+            JobOperation.INDEX,
+            JobSource.CODE,
+            _TEST_PROJECT_ROOT,
+            JobMode.REBUILD,
+        ),
+        JobInitiator("cli", "server job create", _TEST_PROJECT_ROOT),
+    )
+    assert created.job is not None
+    job_id = created.job.id
+    reached = threading.Event()
+    passed = threading.Event()
+    finished = threading.Event()
+
+    def runner(
+        context: job_manager.JobAttemptContext,
+    ) -> job_manager.JobExecutionResult:
+        reached.set()
+        context.control.checkpoint()
+        passed.set()
+        return job_manager.JobExecutionResult(summary="done")
+
+    def on_finished(
+        snapshot: job_models.JobSnapshot,
+        duration_seconds: float,
+        result: job_manager.JobExecutionResult | None,
+        error: BaseException | None,
+    ) -> None:
+        del snapshot, duration_seconds, result, error
+        finished.set()
+
+    assert (
+        manager.bind_dispatch(job_id, runner, on_finished=on_finished).code
+        == "dispatch_bound"
+    )
+    gate.pause()
+    # The gate must reopen even on a red assertion, or the parked attempt
+    # worker outlives the test and hangs the suite at interpreter exit.
+    try:
+        assert manager.dispatch(job_id).code == "attempt_started"
+        assert await asyncio.to_thread(reached.wait, 5.0)
+        assert not await asyncio.to_thread(passed.wait, 0.5), (
+            "dispatched attempt did not park at the shared paused gate"
+        )
+    finally:
+        gate.resume()
+    assert await asyncio.to_thread(passed.wait, 5.0), (
+        "dispatched attempt did not resume with the shared gate"
+    )
+    assert await asyncio.to_thread(finished.wait, 5.0)
+    final = manager.get(job_id)
+    assert final is not None
+    assert final.state is JobState.SUCCEEDED
