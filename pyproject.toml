@@ -57,7 +57,7 @@ keywords = [
 license = { file = "LICENSE" }
 name = "vaultspec-rag"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.14"
 version = "0.3.6"
 
   [project.scripts]
