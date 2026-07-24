@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.3.7](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.6...vaultspec-rag-v0.3.7) (2026-07-24)
+
+
+### Features
+
+* **indexer:** charge each index job its own forward peak, net of the resident baseline (P03) ([c212a8e](https://github.com/nevenincs/vaultspec-rag/commit/c212a8e890f423c7d0f5874c6c35e52921163efe))
+* **indexer:** derive the CUDA ceiling from device capacity (P02) ([4a52c6c](https://github.com/nevenincs/vaultspec-rag/commit/4a52c6c3319ee50680a1b3efc361b2e4f7648254))
+* **indexer:** encode-seam donor vector reuse by point id ([820c4b7](https://github.com/nevenincs/vaultspec-rag/commit/820c4b782f70193590327dbf2a8648bdf5d39995))
+* **indexer:** give documents a dedicated encode sub-batch (P01) ([2889f78](https://github.com/nevenincs/vaultspec-rag/commit/2889f78feffc8cba1f92a9a067d1325beafb1e31))
+* **indexer:** overlap document upserts with encode through the slice writer ([8789003](https://github.com/nevenincs/vaultspec-rag/commit/8789003093a745b5ba9ce6a7d3a0e24886df7bf5))
+* **indexer:** overlap vault encode with storage via a single writer thread ([25f73a6](https://github.com/nevenincs/vaultspec-rag/commit/25f73a6e180a39fa49cb78a145890963bf12f0dd))
+* **index:** per-job GPU-lock-wait telemetry and conservative flush cadences ([c89b7b5](https://github.com/nevenincs/vaultspec-rag/commit/c89b7b50220e008086af784758af4e0397d06244))
+* **jobs:** single machine-wide admission slot for encode-bearing index jobs ([91a843e](https://github.com/nevenincs/vaultspec-rag/commit/91a843ed13069956ec4e042f4a6340c7e7fcaa6c))
+* **service-quiesce:** pause/resume localhost routes (P03.S07) ([bf439cd](https://github.com/nevenincs/vaultspec-rag/commit/bf439cd7393d8abca1a794d931e4c87cc4a84532))
+* **service-quiesce:** server pause/resume CLI verbs and guard tests (P03.S08-S09) ([74d3e03](https://github.com/nevenincs/vaultspec-rag/commit/74d3e0317d82369e73b2c52c70616a25b97aee14))
+* **service-quiesce:** torch-free QuiesceGate + protected-aware token hold (P01) ([9addcf5](https://github.com/nevenincs/vaultspec-rag/commit/9addcf5e7a34d7b00f0ff031c2f545e6e1fc89fe))
+* **service-quiesce:** wire process-global gate into service, jobs, search (P02) ([b2209c5](https://github.com/nevenincs/vaultspec-rag/commit/b2209c51e2b4e4c83498ce9a2ef00205e9963870))
+* **store:** explicit rebuild-path ingest wait policy with an applied-points barrier ([11a6ee5](https://github.com/nevenincs/vaultspec-rag/commit/11a6ee57dd4df2f39060bdeaa95ba63957e654d1))
+
+
+### Bug Fixes
+
+* **gates:** clear type and format drift inherited from origin ([3313acc](https://github.com/nevenincs/vaultspec-rag/commit/3313acce511d7cf9d736a50cc5ce7f37f6e64d09))
+* **index:** derive CUDA ceiling from free memory; drop corpus cuda rejection ([58d6eb6](https://github.com/nevenincs/vaultspec-rag/commit/58d6eb6527001b03b92a32cbb22c8cb999d28007))
+* **indexer:** incremental runs stop trusting carried evidence for a vanished collection ([63e93d5](https://github.com/nevenincs/vaultspec-rag/commit/63e93d5b2917c7991765ff5170d9bc7b93ee2f2b))
+
 ## [0.3.6](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.5...vaultspec-rag-v0.3.6) (2026-07-24)
 
 
