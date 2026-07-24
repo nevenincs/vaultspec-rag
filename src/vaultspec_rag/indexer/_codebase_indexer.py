@@ -62,6 +62,7 @@ from ._run_ledger import (
     FinalizationPhase,
     RunLedgerCompatibilityError,
     RunOperation,
+    RunTerminalState,
 )
 from ._run_policy import RunPolicy
 from ._streaming import (
@@ -94,6 +95,7 @@ if TYPE_CHECKING:
         PreprocessRule,
     )
     from ._resolved_policy import ResolvedIndexPolicy
+    from ._reuse import DonorReuseContext, ReuseStats
 
 logger = logging.getLogger(__name__)
 
@@ -411,6 +413,11 @@ class CodebaseIndexer:
         # writer recomputes them as a fallback.
         self._membership_epoch: str | None = None
         self._content_epoch: str | None = None
+        # Per-run donor reuse state: resolved once when the encode pipeline
+        # starts and cleared at the start of every public run so an earlier
+        # run's counters can never leak into a later result.
+        self._reuse_stats: ReuseStats | None = None
+        self._donor_reuse: DonorReuseContext | None = None
         self._resolved_policy: ResolvedIndexPolicy | None = None
         self._support_measurement = SupportMeasurement(0, 0)
         self._support_limits: SupportProfileLimits | None = None
@@ -751,6 +758,16 @@ class CodebaseIndexer:
         """Project code membership and content epochs from one snapshot."""
         fingerprints = policy.fingerprints_for(ContentKind.CODE)
         return fingerprints.membership, fingerprints.content
+
+    def _reset_reuse_state(self) -> None:
+        """Clear per-run donor reuse state at the start of a public run."""
+        self._reuse_stats = None
+        self._donor_reuse = None
+
+    def _reuse_snapshot(self) -> dict[str, object] | None:
+        """Return this run's reuse telemetry block, or ``None`` when off."""
+        stats = self._reuse_stats
+        return stats.snapshot() if stats is not None else None
 
     def _classify_config_drift(self, membership: str, content: str) -> str:
         """Classify config drift against the stored epochs.
@@ -2006,9 +2023,7 @@ class CodebaseIndexer:
                     model=self.model,
                     store=self.store,
                     gpu_lock=self._gpu_lock,
-                    release_cache=(
-                        completed_slice_index % limits.flush_slices == 0
-                    ),
+                    release_cache=(completed_slice_index % limits.flush_slices == 0),
                     encode_batch_size=limits.encode_batch_size,
                     write_policy=(
                         checkpoint.run_policy.store_write_policy
@@ -2019,6 +2034,7 @@ class CodebaseIndexer:
                     after_forward=_after_forward,
                     on_cuda_oom=_on_cuda_oom,
                     run_control=run_control,
+                    reuse=self._donor_reuse,
                 )
             run_control.checkpoint()
             new_ids.update(chunk.id for chunk in slice_chunks)
@@ -2234,19 +2250,55 @@ class CodebaseIndexer:
             encode_batch_size=limits.encode_batch_size,
             flush_slices=limits.flush_slices,
         )
-        checkpoint = CodeRunCheckpoint.open(
-            data_root=self._data_root,
-            root_dir=self.root_dir,
-            policy=policy,
-            run_policy=RunPolicy.from_config(run_control=run_control),
-            operation=operation,
-            clean=clean,
-            model_identity=model_identity,
-            dense_dimensions=limits.dense_dimension,
-            configuration=checkpoint_configuration,
-        )
+
+        def _open() -> CodeRunCheckpoint:
+            return CodeRunCheckpoint.open(
+                data_root=self._data_root,
+                root_dir=self.root_dir,
+                policy=policy,
+                run_policy=RunPolicy.from_config(run_control=run_control),
+                operation=operation,
+                clean=clean,
+                model_identity=model_identity,
+                dense_dimensions=limits.dense_dimension,
+                configuration=checkpoint_configuration,
+            )
+
+        checkpoint = _open()
+        if self._checkpoint_evidence_lost(checkpoint):
+            logger.warning(
+                "code collection is missing from storage but the run ledger "
+                "claims storage-confirmed progress; retiring generation %s "
+                "and re-encoding from scratch",
+                checkpoint.generation_id,
+            )
+            checkpoint.ledger.finish_generation(
+                checkpoint.generation_id,
+                RunTerminalState.INVALIDATED,
+                detail=(
+                    "code collection is missing from storage; the "
+                    "storage-confirmed evidence no longer describes anything"
+                ),
+            )
+            checkpoint = _open()
         self._last_checkpoint = checkpoint
         return checkpoint
+
+    def _checkpoint_evidence_lost(self, checkpoint: CodeRunCheckpoint) -> bool:
+        """Return whether resumed storage-confirmed evidence points at nothing.
+
+        External destruction (a storage delete) drops the code collection but
+        leaves the per-root run ledger behind. Resuming such a generation
+        would skip its committed units with zero encoding and publish an
+        index whose committed portion no longer exists anywhere, so a
+        generation carrying commit evidence for an absent collection must be
+        retired rather than resumed.
+        """
+        has_evidence = (
+            checkpoint.ingestion_complete
+            or checkpoint.ledger.committed_unit_count(checkpoint.generation_id) > 0
+        )
+        return has_evidence and not self.store.code_collection_exists()
 
     def _resume_pending_finalization(
         self,
@@ -2282,6 +2334,7 @@ class CodebaseIndexer:
             preprocess_ok=self._prep_ok,
             preprocess_skipped=len(self._prep_skips),
             preprocess_failures=list(self._prep_skips),
+            reuse=self._reuse_snapshot(),
         )
 
     def _unchanged_incremental_result(self, *, started_at: float) -> IndexResult:
@@ -2297,6 +2350,7 @@ class CodebaseIndexer:
             preprocess_ok=self._prep_ok,
             preprocess_skipped=len(self._prep_skips),
             preprocess_failures=list(self._prep_skips),
+            reuse=self._reuse_snapshot(),
         )
 
     @staticmethod
@@ -2567,6 +2621,17 @@ class CodebaseIndexer:
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> tuple[set[str], int, dict[str, str]]:
         """Overlap bounded CPU production with one weighted GPU consumer."""
+        from ._donor_candidates import CollectionKind
+        from ._reuse import resolve_donor_reuse
+
+        # One donor resolution per run: the consumer thread reads the
+        # resolved context per slice, outside the GPU lock.
+        self._reuse_stats, self._donor_reuse = resolve_donor_reuse(
+            self.root_dir,
+            CollectionKind.CODE,
+            self.store,
+            expected_content_epoch=self._content_epoch or "",
+        )
         new_ids: set[str] = set()
         new_ids.update(checkpoint.ledger.iter_point_ids(checkpoint.generation_id))
         if checkpoint.generation.signature.operation is not RunOperation.FULL:
@@ -3050,6 +3115,7 @@ class CodebaseIndexer:
         run_control.checkpoint()
         with self._writer_lock:
             self._resolved_policy = resolved_policy
+            self._reset_reuse_state()
             run_control.checkpoint()
             log_event(
                 logger,
@@ -3286,6 +3352,7 @@ class CodebaseIndexer:
             preprocess_ok=self._prep_ok,
             preprocess_skipped=len(self._prep_skips),
             preprocess_failures=list(self._prep_skips),
+            reuse=self._reuse_snapshot(),
         )
 
     def incremental_index(
@@ -3317,6 +3384,7 @@ class CodebaseIndexer:
         run_control.checkpoint()
         with self._writer_lock:
             self._resolved_policy = resolved_policy
+            self._reset_reuse_state()
             run_control.checkpoint()
             mode = "scoped_incremental" if changed_paths is not None else "incremental"
             log_event(
@@ -3549,6 +3617,7 @@ class CodebaseIndexer:
             preprocess_ok=self._prep_ok,
             preprocess_skipped=len(self._prep_skips),
             preprocess_failures=list(self._prep_skips),
+            reuse=self._reuse_snapshot(),
         )
 
     def _scan_changed_paths(
@@ -3756,6 +3825,7 @@ class CodebaseIndexer:
             preprocess_ok=self._prep_ok,
             preprocess_skipped=len(self._prep_skips),
             preprocess_failures=list(self._prep_skips),
+            reuse=self._reuse_snapshot(),
         )
 
     def _get_chunk_ids_for_files(

@@ -297,6 +297,7 @@ def restore_interrupted() -> int:
             "preprocess_ok": 0,
             "preprocess_skipped": 0,
             "preprocess_failures": [],
+            "reuse": None,
             "initiator": data.get("initiator"),
             "runtime": _runtime_context(),
             "resources": {"started": None, "finished": None},
@@ -399,6 +400,10 @@ def record_start(
         "preprocess_ok": 0,
         "preprocess_skipped": 0,
         "preprocess_failures": [],
+        # Donor vector-reuse telemetry for the run (hit/miss counts, hit
+        # rate, estimated GPU seconds saved, donor availability). ``None``
+        # until finish, and stays ``None`` when reuse is disabled.
+        "reuse": None,
         "initiator": {
             "kind": initiator_kind or trigger,
             "command": command or f"{trigger}_{source}_index",
@@ -485,6 +490,7 @@ def _finish_record(
     preprocess_ok: int,
     preprocess_skipped: int,
     preprocess_failures: list[str] | None,
+    reuse: dict[str, object] | None,
 ) -> dict[str, object] | None:
     """Apply the terminal state to *record* in place (caller holds the lock).
 
@@ -506,6 +512,7 @@ def _finish_record(
     record["preprocess_ok"] = preprocess_ok
     record["preprocess_skipped"] = preprocess_skipped
     record["preprocess_failures"] = list(preprocess_failures or [])
+    record["reuse"] = dict(reuse) if reuse is not None else None
     resources = record.get("resources")
     if isinstance(resources, dict):
         cast("dict[str, object]", resources)["finished"] = resource_snapshot()
@@ -528,6 +535,7 @@ def record_finish(
     preprocess_ok: int = 0,
     preprocess_skipped: int = 0,
     preprocess_failures: list[str] | None = None,
+    reuse: dict[str, object] | None = None,
 ) -> None:
     """Mark the record with *record_id* finished, in place.
 
@@ -550,6 +558,9 @@ def record_finish(
         preprocess_failures: ``"rel_path: reason"`` per skipped file, threaded
             onto the record so a client sees which files failed extraction and
             why - not just a count.
+        reuse: Donor vector-reuse telemetry block for the run, or ``None``
+            when reuse was disabled or the run never reached the encode
+            pipeline.
     """
     if phase is not None:
         target_phase = phase
@@ -568,6 +579,7 @@ def record_finish(
                     preprocess_ok=preprocess_ok,
                     preprocess_skipped=preprocess_skipped,
                     preprocess_failures=preprocess_failures,
+                    reuse=reuse,
                 )
                 if log_fields is None:
                     return
@@ -1027,6 +1039,7 @@ def _sync_legacy_finished(
             preprocess_failures=(
                 list(result.preprocess_failures) if result is not None else None
             ),
+            reuse=result.reuse if result is not None else None,
         )
     elif snapshot.state is JobState.FAILED:
         record_finish(snapshot.id, error=snapshot.result or str(error or "job failed"))

@@ -1277,6 +1277,17 @@ def test_index_reuse_enabled_env_truthy(raw: str) -> None:
         reset_config()
 
 
+def test_index_reuse_enabled_not_gated_by_support_profile() -> None:
+    # The indexing support profile shapes memory and support ceilings only;
+    # selecting the lightweight profile must never flip the reuse knob off.
+    try:
+        cfg = get_config({"index_support_profile": "embedded-local"})
+        assert cfg.index_support_profile == "embedded-local"
+        assert cfg.index_reuse_enabled is True
+    finally:
+        reset_config()
+
+
 def test_index_reuse_enabled_reset_config_picks_up_change() -> None:
     # reset_config clears the cached singleton so a fresh env value is served on
     # the next get_config(); this binds that the off-switch takes effect through

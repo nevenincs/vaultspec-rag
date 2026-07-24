@@ -280,6 +280,12 @@ class JobSnapshot:
     runtime: JobRuntimeSnapshot
     resources: JobResourceSnapshot
     resilience: IndexResilienceSnapshot | None = None
+    #: Donor vector-reuse telemetry from the finished attempt's execution
+    #: result, or ``None`` when reuse was disabled or the attempt never
+    #: reached the encode pipeline. Carried on the canonical resource so
+    #: the served job view reports it; the legacy activity record is
+    #: shadowed by this snapshot for every manager-owned job.
+    reuse: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
         if self.revision < 1:
@@ -331,6 +337,7 @@ class JobSnapshot:
             "runtime": _runtime_to_dict(self.runtime),
             "resources": _resources_to_dict(self.resources),
             "resilience": _resilience_to_dict(self.resilience),
+            "reuse": dict(self.reuse) if self.reuse is not None else None,
         }
 
 

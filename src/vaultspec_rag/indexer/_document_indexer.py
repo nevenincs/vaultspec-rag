@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from ..store import VaultStore
     from ._preprocess_config import PreprocessContext
     from ._resolved_policy import ResolvedIndexPolicy
+    from ._reuse import DonorReuseContext, ReuseStats
 
 __all__ = ["DocumentIndexPreflight", "DocumentIndexer", "DocumentScopedPreflight"]
 
@@ -239,6 +240,30 @@ class DocumentIndexer:
         self._meta_path = document_metadata_path(self.root_dir)
         self._last_checkpoint: DocumentRunCheckpoint | None = None
         self._memory_budget: MemoryBudget | None = None
+        # Per-run donor reuse state: resolved once per public run entry and
+        # reset there, so a prior run's counters never leak into a later
+        # result on this long-lived per-root indexer instance.
+        self._reuse_stats: ReuseStats | None = None
+        self._donor_reuse: DonorReuseContext | None = None
+
+    def _resolve_reuse(self, policy: ResolvedIndexPolicy) -> None:
+        """Resolve this run's donor reuse context, once per index run."""
+        from ._donor_candidates import CollectionKind
+        from ._reuse import resolve_donor_reuse
+
+        self._reuse_stats, self._donor_reuse = resolve_donor_reuse(
+            self.root_dir,
+            CollectionKind.DOCUMENT,
+            self.store,
+            expected_content_epoch=policy.fingerprints_for(
+                ContentKind.DOCUMENT
+            ).content,
+        )
+
+    def _reuse_snapshot(self) -> dict[str, object] | None:
+        """Return this run's reuse telemetry block, or ``None`` when off."""
+        stats = self._reuse_stats
+        return stats.snapshot() if stats is not None else None
 
     @property
     def last_checkpoint(self) -> DocumentRunCheckpoint | None:
@@ -562,6 +587,7 @@ class DocumentIndexer:
                             after_forward=_after_forward,
                             on_cuda_oom=_on_cuda_oom,
                             run_control=run_control,
+                            reuse=self._donor_reuse,
                         )
                     checkpoint.record_confirmed_slice(unit)
                     budget.checkpoint_runtime_resources(
@@ -707,6 +733,7 @@ class DocumentIndexer:
             preprocess_ok=preprocess_ok,
             preprocess_skipped=len(failures),
             preprocess_failures=failures,
+            reuse=self._reuse_snapshot(),
         )
 
     def _publish_full_paths(
@@ -907,6 +934,7 @@ class DocumentIndexer:
             changed_paths=None,
             run_control=run_control,
         )
+        self._resolve_reuse(policy)
         limits = self._support_limits()
         prep = self._preprocess_context(policy, limits)
         preprocessing_disabled = policy.execution_mode == "off" and any(
@@ -1004,6 +1032,7 @@ class DocumentIndexer:
             changed_paths=changed_paths,
             run_control=run_control,
         )
+        self._resolve_reuse(policy)
         limits = self._support_limits()
         prep = self._preprocess_context(policy, limits)
         fingerprints = policy.fingerprints_for(ContentKind.DOCUMENT)

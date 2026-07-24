@@ -814,6 +814,8 @@ def _collect_index_rows(
                 preprocess_skipped=result.preprocess_skipped,
                 preprocess_failures=result.preprocess_failures,
             )
+        if result.reuse is not None:
+            row["reuse"] = result.reuse
         rows.append(row)
     if all_outcomes is None:
         return rows

@@ -1086,3 +1086,87 @@ async def test_managed_application_failure_wins_over_pending_cancel(
         slot,
     )
     await _assert_failure_wins_over_cancel(managed_job_manager, failed_id, slot)
+
+
+class _AbortAfterFirstCommitReporter(NullProgressReporter):
+    """Real reporter that crashes the run after durable indexing progress.
+
+    Raising at the production progress boundary once the run ledger has
+    storage-confirmed at least one unit leaves exactly the state an
+    interrupted clean rebuild leaves behind: a resumable generation whose
+    committed units a later attempt would skip instead of re-encoding.
+    """
+
+    def __init__(self, indexer: CodebaseIndexer) -> None:
+        self._indexer = indexer
+        self._phase = ""
+
+    def phase_start(self, name: str, total: int | None) -> None:
+        del total
+        self._phase = name
+
+    def advance(self, n: int = 1) -> None:
+        del n
+        if self._phase != "chunk + embed":
+            return
+        checkpoint = self._indexer.last_checkpoint
+        if (
+            checkpoint is not None
+            and checkpoint.ledger.committed_unit_count(checkpoint.generation_id) > 0
+        ):
+            raise RuntimeError("injected mid-rebuild crash after first commit")
+
+
+def test_clean_rebuild_reencodes_when_collection_vanished_under_the_ledger(
+    tmp_path: Path,
+    cpu_embedding_model: EmbeddingModel,
+) -> None:
+    """A rebuild must not trust ledger evidence for a destroyed collection.
+
+    External storage destruction (the storage delete verb) drops the code
+    collection but leaves the per-root run ledger behind. Resuming the
+    interrupted generation would skip its storage-confirmed units with zero
+    encoding, publishing a "successful" index whose committed portion no
+    longer exists anywhere. The rebuild must retire that generation and
+    re-encode from scratch.
+    """
+    paths = _write_code_files(tmp_path, 128, "ledger-stale")
+
+    with VaultStore(tmp_path, embedding_dim=cpu_embedding_model.dimension) as store:
+        indexer = CodebaseIndexer(
+            tmp_path,
+            cpu_embedding_model,
+            store,
+            gpu_lock=threading.Lock(),
+        )
+        with pytest.raises(RuntimeError, match="injected mid-rebuild crash"):
+            indexer.full_index(
+                clean=True,
+                reporter=_AbortAfterFirstCommitReporter(indexer),
+                preflight=indexer.preflight_content(),
+            )
+        interrupted = indexer.last_checkpoint
+        assert interrupted is not None
+        committed = interrupted.ledger.committed_unit_count(interrupted.generation_id)
+        assert committed > 0, "the crash must land after storage-confirmed progress"
+
+        # The storage-delete equivalent: the collection vanishes out-of-band
+        # while the per-root run ledger (index_runs.sqlite3) stays behind.
+        store.drop_code_table()
+
+        result = indexer.full_index(
+            clean=True,
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
+
+        # Binds the staleness guard: without it the resumed generation skips
+        # its committed units (resumed_units > 0, zero re-encode) and the
+        # store is missing exactly those files' chunks while the run still
+        # reports success.
+        _assert_current_code_state(indexer, store, paths, "ledger-stale")
+        fresh = indexer.last_checkpoint
+        assert fresh is not None
+        assert fresh.resumed_units == 0
+        assert store.count_code() == result.added
+    _assert_code_resources_released()

@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from ..job_control import RunControl
     from ..progress import ProgressReporter
     from ..store import VaultDocument, VaultStore
+    from ._reuse import DonorReuseContext, ReuseStats
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,20 @@ class VaultIndexer:
 
         self._writer_lock: _threading.Lock = _threading.Lock()
         self._meta_path = root_dir / cfg.data_dir / cfg.index_metadata_file
+
+    def _resolve_reuse(
+        self,
+    ) -> tuple[ReuseStats | None, DonorReuseContext | None]:
+        """Resolve this run's donor reuse context, once per index run."""
+        from ._donor_candidates import CollectionKind
+        from ._reuse import resolve_donor_reuse
+
+        return resolve_donor_reuse(
+            self.root_dir,
+            CollectionKind.VAULT,
+            self.store,
+            expected_content_epoch=self._current_vault_content_epoch(),
+        )
 
     def full_index(
         self,
@@ -343,6 +358,7 @@ class VaultIndexer:
             )
             existing_ids_before: set[str] = set(existing_counts)
 
+            reuse_stats, donor_reuse = self._resolve_reuse()
             new_counts = _stream_encode_and_upsert_vault(
                 docs=docs,
                 slice_size=slice_size,
@@ -351,6 +367,7 @@ class VaultIndexer:
                 gpu_lock=self._gpu_lock,
                 reporter=reporter,
                 run_control=run_control,
+                reuse=donor_reuse,
             )
             self._purge_shrunk_chunk_tails(
                 existing_counts,
@@ -406,6 +423,7 @@ class VaultIndexer:
             removed=len(stale_ids),
             duration_ms=duration_ms,
             device=self.model.device,
+            reuse=reuse_stats.snapshot() if reuse_stats is not None else None,
         )
 
     def incremental_index(
@@ -603,7 +621,9 @@ class VaultIndexer:
             run_control=run_control,
         )
 
+        reuse_stats: ReuseStats | None = None
         if docs_to_index:
+            reuse_stats, donor_reuse = self._resolve_reuse()
             new_counts = _stream_encode_and_upsert_vault(
                 docs=docs_to_index,
                 slice_size=slice_size,
@@ -612,6 +632,7 @@ class VaultIndexer:
                 gpu_lock=self._gpu_lock,
                 reporter=reporter,
                 run_control=run_control,
+                reuse=donor_reuse,
             )
             self._purge_shrunk_chunk_tails(
                 stored_counts,
@@ -655,6 +676,7 @@ class VaultIndexer:
             duration_ms=duration_ms,
             device=self.model.device,
             files=len(current_docs),
+            reuse=reuse_stats.snapshot() if reuse_stats is not None else None,
         )
 
     def _scan_vault_for_docs(
@@ -895,6 +917,7 @@ class VaultIndexer:
             run_control=run_control,
         )
 
+        reuse_stats: ReuseStats | None = None
         if docs_to_index:
             run_control.checkpoint()
             try:
@@ -909,6 +932,7 @@ class VaultIndexer:
                 )
                 existing_counts = {}
             run_control.checkpoint()
+            reuse_stats, donor_reuse = self._resolve_reuse()
             new_counts = _stream_encode_and_upsert_vault(
                 docs=docs_to_index,
                 slice_size=slice_size,
@@ -917,6 +941,7 @@ class VaultIndexer:
                 gpu_lock=self._gpu_lock,
                 reporter=reporter,
                 run_control=run_control,
+                reuse=donor_reuse,
             )
             self._purge_shrunk_chunk_tails(
                 existing_counts,
@@ -970,6 +995,7 @@ class VaultIndexer:
             files=len(changed_paths)
             if isinstance(changed_paths, list)
             else 0,  # Approximate
+            reuse=reuse_stats.snapshot() if reuse_stats is not None else None,
         )
 
     def _process_changed_vault_path(

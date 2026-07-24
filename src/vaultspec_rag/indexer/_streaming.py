@@ -8,6 +8,7 @@ keep peak memory bounded (the #68 RSS-leak fix).
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import nullcontext
 from dataclasses import dataclass
 from itertools import chain, pairwise
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     from ..memory_probe import MemoryProbe
     from ..progress import ProgressReporter
     from ..store import CodeChunk, VaultChunk, VaultDocument, VaultStore
+    from ._reuse import DonorReuseContext
 
 logger = logging.getLogger(__name__)
 
@@ -296,6 +298,33 @@ def _populate_vector_fields(
         chunk.sparse_values = list(sparse_row.values)
 
 
+def _adopt_donor_vectors(
+    reuse: DonorReuseContext,
+    chunks: Sequence[CodeChunk | DocumentChunk | VaultChunk],
+    slice_texts: list[str],
+    *,
+    sparse_enabled: bool,
+) -> tuple[Sequence[CodeChunk | DocumentChunk | VaultChunk], list[str]]:
+    """Adopt verified donor vectors and return only the miss sub-slice.
+
+    Runs on the calling consumer thread, strictly before (and outside) any
+    ``gpu_lock`` acquisition. Hits leave this function already carrying
+    their store-ready vector fields; the returned chunk/text pair stays
+    position-aligned because both sides are filtered by the same hit mask
+    under one strict zip - the alignment invariant the later
+    ``_populate_vector_fields`` strict zip then preserves for the misses.
+    """
+    hit_mask = reuse.adopt_verified_vectors(chunks, sparse_required=sparse_enabled)
+    if not any(hit_mask):
+        return chunks, slice_texts
+    misses = [
+        (chunk, text)
+        for chunk, text, hit in zip(chunks, slice_texts, hit_mask, strict=True)
+        if not hit
+    ]
+    return [chunk for chunk, _text in misses], [text for _chunk, text in misses]
+
+
 def _encode_slice_vector_fields(
     *,
     chunks: Sequence[CodeChunk | DocumentChunk | VaultChunk],
@@ -307,8 +336,26 @@ def _encode_slice_vector_fields(
     after_encode: Callable[[], None] | None = None,
     after_forward: Callable[[str], None] | None = None,
     on_cuda_oom: Callable[[BaseException], None] | None = None,
+    reuse: DonorReuseContext | None = None,
 ) -> None:
     """Populate one bounded slice, dropping all array/tensor owners on return."""
+    if reuse is not None:
+        chunks, slice_texts = _adopt_donor_vectors(
+            reuse,
+            chunks,
+            slice_texts,
+            sparse_enabled=sparse_enabled,
+        )
+        if not chunks:
+            # Every point was adopted from a donor: no forward pass runs and
+            # the GPU is never touched for this slice. ``after_encode`` still
+            # fires so caller-side accounting (memory-probe checkpoints)
+            # stays balanced; ``after_forward`` does not, because no forward
+            # happened.
+            if after_encode is not None:
+                after_encode()
+            return
+    encode_started = time.perf_counter()
     dense_device: object | None = None
     dense_cpu: object | None = None
     sparse: Iterable[_SparseVectorLike | None] | None = None
@@ -335,6 +382,11 @@ def _encode_slice_vector_fields(
         if after_encode is not None:
             after_encode()
         _populate_vector_fields(chunks, dense_cpu, sparse)
+        if reuse is not None:
+            reuse.stats.record_encode(
+                time.perf_counter() - encode_started,
+                len(chunks),
+            )
     except Exception as exc:
         from .._gpu import is_cuda_out_of_memory
 
@@ -360,6 +412,7 @@ def _encode_and_upsert_vault_slice(
     sparse_enabled: bool,
     probe: MemoryProbe,
     run_control: RunControl = NO_RUN_CONTROL,
+    reuse: DonorReuseContext | None = None,
 ) -> None:
     """Encode, synchronously store, and release one vault chunk slice."""
 
@@ -377,6 +430,7 @@ def _encode_and_upsert_vault_slice(
             sparse_enabled=sparse_enabled,
             encode_batch_size=None,
             after_encode=_after_encode,
+            reuse=reuse,
         )
         run_control.checkpoint()
         store.upsert_document_chunks(slice_chunks, write_policy=None)
@@ -394,6 +448,7 @@ def _stream_encode_and_upsert_vault(
     gpu_lock: threading.Lock | None,
     reporter: ProgressReporter,
     run_control: RunControl = NO_RUN_CONTROL,
+    reuse: DonorReuseContext | None = None,
 ) -> dict[str, int]:
     """Encode dense + sparse vectors and upsert per-slice.
 
@@ -454,6 +509,7 @@ def _stream_encode_and_upsert_vault(
                     sparse_enabled=sparse_enabled,
                     probe=probe,
                     run_control=run_control,
+                    reuse=reuse,
                 )
                 probe.checkpoint(f"slice-{i}-after-empty-cache")
                 reporter.advance(len(slice_chunks))
@@ -509,6 +565,7 @@ def encode_and_upsert_document_slice(
     after_forward: Callable[[str], None] | None = None,
     on_cuda_oom: Callable[[BaseException], None] | None = None,
     run_control: RunControl = NO_RUN_CONTROL,
+    reuse: DonorReuseContext | None = None,
 ) -> None:
     """Encode and synchronously publish one bounded document-only slice."""
     from ..config import get_config
@@ -526,6 +583,7 @@ def encode_and_upsert_document_slice(
             encode_batch_size=encode_batch_size,
             after_forward=after_forward,
             on_cuda_oom=on_cuda_oom,
+            reuse=reuse,
         )
         run_control.checkpoint()
         store.upsert_document_content_chunks(
@@ -1020,6 +1078,7 @@ def encode_and_upsert_code_slice(
     after_forward: Callable[[str], None] | None = None,
     on_cuda_oom: Callable[[BaseException], None] | None = None,
     run_control: RunControl = NO_RUN_CONTROL,
+    reuse: DonorReuseContext | None = None,
 ) -> None:
     """Encode dense + sparse vectors for one slice of code chunks and upsert it.
 
@@ -1062,6 +1121,7 @@ def encode_and_upsert_code_slice(
             encode_batch_size=encode_batch_size,
             after_forward=after_forward,
             on_cuda_oom=on_cuda_oom,
+            reuse=reuse,
         )
         run_control.checkpoint()
         store.upsert_code_chunks(slice_chunks, write_policy=write_policy)
@@ -1085,6 +1145,7 @@ def _stream_encode_and_upsert_codebase(
     gpu_lock: threading.Lock | None,
     reporter: ProgressReporter,
     run_control: RunControl = NO_RUN_CONTROL,
+    reuse: DonorReuseContext | None = None,
 ) -> None:
     """Encode and publish an in-memory code chunk set in bounded slices."""
     from ..config import get_config
@@ -1115,6 +1176,7 @@ def _stream_encode_and_upsert_codebase(
                     release_cache=release,
                     encode_batch_size=encode_batch_size,
                     run_control=run_control,
+                    reuse=reuse,
                 )
                 probe.checkpoint(f"slice-{offset}-after-empty-cache")
                 reporter.advance(len(slice_chunks))

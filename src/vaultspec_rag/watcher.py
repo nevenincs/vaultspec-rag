@@ -1809,6 +1809,7 @@ def _run_managed_index_attempt(
         preprocess_ok=result.preprocess_ok,
         preprocess_skipped=result.preprocess_skipped,
         preprocess_failures=tuple(result.preprocess_failures),
+        reuse=result.reuse,
     )
 
 
@@ -1888,6 +1889,7 @@ def _sync_legacy_snapshot(
             preprocess_failures=(
                 list(result.preprocess_failures) if result is not None else None
             ),
+            reuse=result.reuse if result is not None else None,
         )
     elif snapshot.state is JobState.FAILED:
         _jobs.record_finish(
