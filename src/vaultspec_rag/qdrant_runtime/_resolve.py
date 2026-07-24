@@ -610,14 +610,23 @@ def pid_image_is_qdrant(pid: int, *, timeout: float | None = None) -> bool:
             )
             return False
         return "qdrant" in result.stdout.lower()
-    for proc_file in ("comm", "cmdline"):
-        try:
-            text = Path(f"/proc/{pid}/{proc_file}").read_text(encoding="utf-8")
-        except OSError:
-            continue
-        if "qdrant" in text.lower():
+    # Match the executable image only, mirroring the Windows tasklist image
+    # check. Scanning the full cmdline would flag any process whose argv merely
+    # mentions qdrant - a pytest run of a qdrant test, a `server qdrant install`
+    # invocation - and a false positive here would target an unrelated process
+    # for a hard kill. The exe symlink is the authoritative image; comm (the
+    # image name, world-readable) is the fallback when exe is unreadable.
+    try:
+        exe_name = Path(os.readlink(f"/proc/{pid}/exe")).name
+        if "qdrant" in exe_name.lower():
             return True
-    return False
+    except OSError:
+        pass
+    try:
+        comm = Path(f"/proc/{pid}/comm").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return "qdrant" in comm.strip().lower()
 
 
 def pid_listens_on_loopback_port(
