@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from typing import TYPE_CHECKING
 
 import pytest
@@ -25,20 +24,10 @@ if TYPE_CHECKING:
 
     from ...embeddings import EmbeddingModel
 
+from .._scaffold import restore_env, set_env
+from ._helpers import _make_root
+
 pytestmark = [pytest.mark.integration]
-
-
-def _set_env(var: EnvVar, value: str) -> str | None:
-    prev = os.environ.get(var.value)
-    os.environ[var.value] = value
-    return prev
-
-
-def _restore_env(var: EnvVar, prev: str | None) -> None:
-    if prev is None:
-        os.environ.pop(var.value, None)
-    else:
-        os.environ[var.value] = prev
 
 
 @pytest.fixture
@@ -50,28 +39,18 @@ def _clean_watchers(  # pyright: ignore[reportUnusedFunction]
     reset_config()
 
 
-def _make_root(tmp_path: Path) -> Path:
-    adr_dir = tmp_path / ".vault" / "adr"
-    adr_dir.mkdir(parents=True)
-    (adr_dir / "x.md").write_text(
-        "---\ntags: ['#adr', '#t']\n---\n# x\n\nbody\n",
-        encoding="utf-8",
-    )
-    return tmp_path
-
-
 async def test_watch_disabled_starts_no_watcher(
     tmp_path: Path,
     _clean_watchers: None,
 ) -> None:
     root = _make_root(tmp_path)
-    prev = _set_env(EnvVar.WATCH_ENABLED, "0")
+    prev = set_env(EnvVar.WATCH_ENABLED, "0")
     try:
         reset_config()
         server._ensure_watcher(root)
         assert root.resolve() not in server._watcher_tasks
     finally:
-        _restore_env(EnvVar.WATCH_ENABLED, prev)
+        restore_env(EnvVar.WATCH_ENABLED, prev)
 
 
 async def test_watch_enabled_propagates_debounce_and_cooldown(
@@ -85,9 +64,9 @@ async def test_watch_enabled_propagates_debounce_and_cooldown(
     # can build a slot without reloading GPU weights.
     server._registry._model = embedding_model
     saved = [
-        (EnvVar.WATCH_ENABLED, _set_env(EnvVar.WATCH_ENABLED, "1")),
-        (EnvVar.WATCH_DEBOUNCE_MS, _set_env(EnvVar.WATCH_DEBOUNCE_MS, "123")),
-        (EnvVar.WATCH_COOLDOWN_S, _set_env(EnvVar.WATCH_COOLDOWN_S, "4")),
+        (EnvVar.WATCH_ENABLED, set_env(EnvVar.WATCH_ENABLED, "1")),
+        (EnvVar.WATCH_DEBOUNCE_MS, set_env(EnvVar.WATCH_DEBOUNCE_MS, "123")),
+        (EnvVar.WATCH_COOLDOWN_S, set_env(EnvVar.WATCH_COOLDOWN_S, "4")),
     ]
     try:
         reset_config()
@@ -101,7 +80,7 @@ async def test_watch_enabled_propagates_debounce_and_cooldown(
         assert "cooldown_seconds=4" in caplog.text
     finally:
         for var, prev in saved:
-            _restore_env(var, prev)
+            restore_env(var, prev)
 
 
 async def test_failed_watcher_task_is_removed_from_running_registry(
@@ -112,7 +91,7 @@ async def test_failed_watcher_task_is_removed_from_running_registry(
 ) -> None:
     root = _make_root(tmp_path)
     server._registry._model = embedding_model
-    previous = _set_env(EnvVar.WATCH_ENABLED, "1")
+    previous = set_env(EnvVar.WATCH_ENABLED, "1")
     try:
         reset_config()
         corrupt = root / get_config().data_dir / "watcher-retry" / "vault.json"
@@ -130,4 +109,4 @@ async def test_failed_watcher_task_is_removed_from_running_registry(
         assert root.resolve() not in server._watcher_stops
         assert "service.watcher event=task_exited" in caplog.text
     finally:
-        _restore_env(EnvVar.WATCH_ENABLED, previous)
+        restore_env(EnvVar.WATCH_ENABLED, previous)

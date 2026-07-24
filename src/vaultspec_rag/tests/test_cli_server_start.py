@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import os
 import socket
-from typing import TYPE_CHECKING
 
 import pytest
 from typer.testing import CliRunner
@@ -24,11 +23,8 @@ from ..cli._service_lifecycle import (
     _fail_start,
     _start_success,
 )
-from ..config import EnvVar, reset_config
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-    from pathlib import Path
+from ..config import EnvVar
+from ._http_stubs import QuietHandler
 
 pytestmark = [pytest.mark.unit]
 
@@ -81,36 +77,6 @@ def test_server_start_help_renders_json_flag() -> None:
 
 
 # --- rag-broker-affordances: idempotent JSON start ------------------------
-
-
-@pytest.fixture
-def _isolated_singleton(  # pyright: ignore[reportUnusedFunction]
-    tmp_path: Path,
-) -> Iterator[None]:
-    """Isolate the managed-singleton paths so start/lock touch only tmp.
-
-    Sets both the status dir AND the qdrant storage dir (the machine lock lives
-    beside the latter), per the managed-singleton-paths isolation rule, so the
-    test never touches the operator's real service or lock.
-    """
-    status_key = EnvVar.STATUS_DIR.value
-    storage_key = EnvVar.QDRANT_STORAGE_DIR.value
-    prior = {
-        status_key: os.environ.get(status_key),
-        storage_key: os.environ.get(storage_key),
-    }
-    os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path / "status")
-    os.environ[EnvVar.QDRANT_STORAGE_DIR.value] = str(tmp_path / "qdrant" / "storage")
-    reset_config()
-    try:
-        yield
-    finally:
-        for key, value in prior.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-        reset_config()
 
 
 class TestStartOutcomeHelpers:
@@ -169,13 +135,13 @@ class TestStartOutcomeHelpers:
 class TestStartReorderAndGuards:
     """The reorder (idempotent first) and the genuine guard outcomes, live."""
 
-    @pytest.mark.usefixtures("_isolated_singleton")
+    @pytest.mark.usefixtures("isolated_singleton_dirs")
     def test_no_recorded_service_is_not_running(self) -> None:
         # The isolated status dir has no service.json, so detection is None
         # (the idempotent check falls through to the guards).
         assert _existing_service_running() is None
 
-    @pytest.mark.usefixtures("_isolated_singleton")
+    @pytest.mark.usefixtures("isolated_singleton_dirs")
     def test_a_serving_but_degraded_daemon_is_not_plain_already_running(
         self,
     ) -> None:
@@ -191,16 +157,13 @@ class TestStartReorderAndGuards:
             {"status": "degraded", "service_token": "tok-live"}
         ).encode("utf-8")
 
-        class _HealthHandler(http.server.BaseHTTPRequestHandler):
+        class _HealthHandler(QuietHandler):
             def do_GET(self) -> None:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)
-
-            def log_message(self, format: str, *args: object) -> None:
-                del format, args
 
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _HealthHandler)
         port = server.server_address[1]
@@ -229,7 +192,7 @@ class TestStartReorderAndGuards:
             server.server_close()
             thread.join(timeout=5)
 
-    @pytest.mark.usefixtures("_isolated_singleton")
+    @pytest.mark.usefixtures("isolated_singleton_dirs")
     def test_a_warming_daemon_is_already_starting_not_a_fault(self) -> None:
         # A live owned daemon that stamped ``warming`` (machine lock held,
         # port not yet serving) is a start already in progress: exit 0 with
@@ -252,7 +215,7 @@ class TestStartReorderAndGuards:
         assert env["data"]["phase"] == "warming"
         assert env["data"]["pid"] == os.getpid()
 
-    @pytest.mark.usefixtures("_isolated_singleton")
+    @pytest.mark.usefixtures("isolated_singleton_dirs")
     def test_a_foreign_port_holder_is_port_in_use_json(self) -> None:
         # Bind a real socket so the port-bindable guard trips: no recorded
         # service (idempotent None), the port is taken by something that is NOT
@@ -273,7 +236,7 @@ class TestStartReorderAndGuards:
         finally:
             sock.close()
 
-    @pytest.mark.usefixtures("_isolated_singleton")
+    @pytest.mark.usefixtures("isolated_singleton_dirs")
     def test_a_machine_lock_holder_is_machine_owned_json(self) -> None:
         # Hold the real machine lock in THIS process, then a start on a free
         # port falls through the idempotent check and the port guard to the

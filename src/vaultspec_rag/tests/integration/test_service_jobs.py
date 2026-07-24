@@ -22,7 +22,6 @@ import http.server
 import json
 import os
 import re
-import socket
 import threading
 import time
 import urllib.parse
@@ -60,6 +59,8 @@ from ...job_models import (
 from ...server import _jobs
 from ...server._lifespan import health_handler
 from ...server._routes import ROUTES
+from .._http_stubs import QuietHandler
+from .._ports import free_loopback_port
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine, Generator, Iterator
@@ -102,7 +103,7 @@ def _label_values(output: str) -> dict[str, str]:
     return values
 
 
-class _JobsHTTPHandler(http.server.BaseHTTPRequestHandler):
+class _JobsHTTPHandler(QuietHandler):
     payloads: ClassVar[list[dict[str, object]]] = []
     paths: ClassVar[list[str]] = []
     request_count = 0
@@ -116,9 +117,6 @@ class _JobsHTTPHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(json.dumps(payload).encode("utf-8"))
-
-    def log_message(self, format: str, *args: object) -> None:
-        _ = format, args
 
 
 @contextlib.contextmanager
@@ -140,19 +138,13 @@ def _jobs_http_server(
         thread.join(timeout=5)
 
 
-def _free_loopback_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
 @contextlib.contextmanager
 def _canonical_resilience_server(
     tmp_path: Path,
 ) -> Generator[tuple[int, str]]:
     status_dir = tmp_path / "resilience-status"
     status_dir.mkdir()
-    port = _free_loopback_port()
+    port = free_loopback_port()
     token = "canonical-resilience-token"
     prior_status_dir = os.environ.get(EnvVar.STATUS_DIR)
     prior_watch_enabled = os.environ.get(EnvVar.WATCH_ENABLED)
@@ -1487,7 +1479,9 @@ def test_job_detail_uses_plain_runtime_and_resource_language(
     assert values["User"] == "operator"
     assert values["Python"] == ".venv/Scripts/python.exe"
     assert values["Python environment"] == ".venv"
-    assert values["Memory"] == "process 10.0 MB, GPU used 20.0 MB, GPU reserved 30.0 MB"
+    assert values["Memory"] == (
+        "process 10.0 MiB, GPU used 20.0 MiB, GPU reserved 30.0 MiB"
+    )
     assert r"C:\projects\.venv\Scripts\python.exe" not in output
     for forbidden in (
         "Initiator:",
@@ -2735,9 +2729,9 @@ def _assert_resilience_cli_human(
         "No-progress budget remaining: 17 seconds",
         "Retry circuit: " + ("open" if outcome_name == "circuit-open" else "closed"),
         "Next retry: 2024-07-26 13:21:00 UTC",
-        "RSS high-water / ceiling: 512.0 MB / 2048.0 MB",
-        "CUDA allocated high-water: 768.0 MB",
-        "CUDA reserved high-water / ceiling: 896.0 MB / 4096.0 MB",
+        "RSS high-water / ceiling: 512.0 MiB / 2.0 GiB",
+        "CUDA allocated high-water: 768.0 MiB",
+        "CUDA reserved high-water / ceiling: 896.0 MiB / 4.0 GiB",
         f"Index outcome: {expected_terminal_outcome}",
     )
     for line in expected_lines:

@@ -9,11 +9,21 @@ Restating it is the failure mode this module exists to prevent - the copies
 drift silently, because a pluralisation bug reads as a typo rather than as a
 defect, and no test compares two renderers' wording against each other.
 
-Duration formatting is deliberately NOT centralised here. The vocabularies
-differ by subject and are not interchangeable: an elapsed duration reports
-``less than 1 second`` and carries hours, while a configured delay reports
-``immediately`` and keeps a fractional ``1.5 seconds``. Collapsing them would
-silently restate one surface's contract in the other's words.
+``_duration_phrase`` is the same arrangement for the whole-second cascade an
+ELAPSED duration renders: seconds, then minutes, then hours, each tier naming
+its largest one or two units. Both elapsed surfaces route through it, and the
+two places they legitimately differ - whether the cascade continues past hours
+into days, and what a sub-second or missing value reads as - stay with the
+callers as explicit arguments and guard clauses rather than as a second copy
+of the cascade.
+
+Delay formatting is deliberately NOT centralised here, and must not be folded
+into ``_duration_phrase``. The vocabularies differ by subject and are not
+interchangeable: an elapsed duration reports ``less than 1 second`` and counts
+whole seconds, while a configured delay (the watcher renderers) reports
+``immediately``, carries a millisecond tier, and keeps a fractional
+``1.5 seconds``. Collapsing those would silently restate one surface's
+contract in the other's words.
 """
 
 from __future__ import annotations
@@ -21,6 +31,7 @@ from __future__ import annotations
 __all__ = [
     "NOT_REPORTED",
     "_counted_unit",
+    "_duration_phrase",
     "_format_mb",
     "_format_milliseconds",
     "_format_seconds",
@@ -40,24 +51,45 @@ def _counted_unit(value: int, singular: str, plural: str | None = None) -> str:
     return f"{value} {unit}"
 
 
+def _unit_pair(major: int, major_unit: str, minor: int, minor_unit: str) -> str:
+    """Render the larger unit, appending the smaller only when it is non-zero."""
+    if minor:
+        return f"{_counted_unit(major, major_unit)} {_counted_unit(minor, minor_unit)}"
+    return _counted_unit(major, major_unit)
+
+
+def _duration_phrase(total_seconds: int, *, days: bool) -> str:
+    """Render a whole-second duration as its largest one or two units.
+
+    ``days`` selects whether the cascade continues past hours, and the two
+    operator surfaces genuinely differ there: the service-status rows roll 48
+    hours into "2 days", while the generic duration rows report "48 hours".
+    That is visible in operator text and asserted by tests, so it is a required
+    argument rather than a default either caller could drift onto silently.
+
+    Sub-second and miss-value handling stay with the callers, which also
+    disagree: one reports "less than 1 second" where the other floors to
+    "0 seconds", and their miss sentinels differ.
+    """
+    if total_seconds < 60:
+        return _counted_unit(total_seconds, "second")
+    minutes, seconds = divmod(total_seconds, 60)
+    if minutes < 60:
+        return _unit_pair(minutes, "minute", seconds, "second")
+    hours, minutes = divmod(minutes, 60)
+    if not days or hours < 24:
+        return _unit_pair(hours, "hour", minutes, "minute")
+    day_count, hours = divmod(hours, 24)
+    return _unit_pair(day_count, "day", hours, "hour")
+
+
 def _format_seconds(raw: object) -> str:
     if not isinstance(raw, int | float):
         return "not reported"
     raw_seconds = max(0.0, float(raw))
     if raw_seconds < 1:
         return "less than 1 second"
-    seconds = int(raw_seconds)
-    if seconds < 60:
-        return _counted_unit(seconds, "second")
-    minutes, rem = divmod(seconds, 60)
-    if minutes < 60:
-        if rem:
-            return f"{_counted_unit(minutes, 'minute')} {_counted_unit(rem, 'second')}"
-        return _counted_unit(minutes, "minute")
-    hours, minutes = divmod(minutes, 60)
-    if minutes:
-        return f"{_counted_unit(hours, 'hour')} {_counted_unit(minutes, 'minute')}"
-    return _counted_unit(hours, "hour")
+    return _duration_phrase(int(raw_seconds), days=False)
 
 
 def _format_milliseconds(raw: object) -> str:

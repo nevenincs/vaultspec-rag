@@ -213,6 +213,15 @@ target-version = "py313"
     [tool.ruff.lint.mccabe]
     max-complexity = 15
 
+    # ``http.server.BaseHTTPRequestHandler`` dispatches an incoming request to
+    # ``do_<VERB>``, so a handler MUST spell these names exactly - they are the
+    # stdlib's protocol, not a style choice. Ruff waives N802 for them only when
+    # that stdlib class is the DIRECT base; the test suite's handlers derive from
+    # one shared quiet base instead, which hides the ancestry from the check, so
+    # the waiver is stated here. Scoped to the verbs the suite actually serves.
+    [tool.ruff.lint.pep8-naming]
+    extend-ignore-names = ["do_GET", "do_HEAD", "do_POST"]
+
     # BASELINE-CALIBRATED gates (captured 2026-06-10): each threshold sits at
     # the current worst offender so the gate is green today and can only be
     # ratcheted DOWN by the remediation campaign. Never raise these.

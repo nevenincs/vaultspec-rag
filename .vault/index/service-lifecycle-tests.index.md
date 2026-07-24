@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#service-lifecycle-tests'
-date: '2026-07-23'
-modified: '2026-07-23'
+date: '2026-07-24'
+modified: '2026-07-24'
 related:
   - '[[2026-04-05-service-lifecycle-tests-adr]]'
   - '[[2026-04-05-service-lifecycle-tests-audit]]'

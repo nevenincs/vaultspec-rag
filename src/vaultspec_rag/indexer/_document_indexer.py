@@ -91,16 +91,16 @@ class _DocumentResourceBudget:
     memory_budget: MemoryBudget = field(init=False)
 
     def __post_init__(self) -> None:
+        from .._units import bytes_to_mib
         from ..memory_probe import MemoryBudget
 
-        mib = 1024**2
         rss_ceiling_mb = (
-            self.limits.rss_bytes / mib
+            bytes_to_mib(self.limits.rss_bytes)
             if self.rss_ceiling_mb is None
             else self.rss_ceiling_mb
         )
         cuda_ceiling_mb = (
-            self.limits.cuda_bytes / mib
+            bytes_to_mib(self.limits.cuda_bytes)
             if self.cuda_ceiling_mb is None
             else self.cuda_ceiling_mb
         )
@@ -161,18 +161,12 @@ class _DocumentResourceBudget:
         self._retain_snapshot(snapshot)
 
     def _retain_snapshot(self, snapshot: MemoryBudgetSnapshot) -> None:
-        """Project a budget snapshot into profile-compatible byte counters.
+        """Ratchet this run's profile-compatible byte counters upward."""
+        from ..memory_probe import snapshot_resource_bytes
 
-        The CUDA dimension projects the allocated high-water (demand), not
-        reserved: the profile limit can equal the enforcement ceiling, and
-        reserved ratchets with allocator retention history, so projecting it
-        would fail well-sized jobs through the corpus-limit dimension.
-        """
-        self.rss_bytes = max(self.rss_bytes, int(snapshot.peak_rss_mb * 1024**2))
-        self.cuda_bytes = max(
-            self.cuda_bytes,
-            int(snapshot.peak_cuda_allocated_mb * 1024**2),
-        )
+        rss_bytes, cuda_bytes = snapshot_resource_bytes(snapshot)
+        self.rss_bytes = max(self.rss_bytes, rss_bytes)
+        self.cuda_bytes = max(self.cuda_bytes, cuda_bytes)
 
     def record_runtime_resources(
         self,
@@ -183,15 +177,17 @@ class _DocumentResourceBudget:
         label: str = "document supplied resource observation",
     ) -> None:
         """Record measured peaks and enforce both independent ceilings."""
+        from .._units import bytes_to_mib
+
         allocated_bytes = (
             cuda_bytes if cuda_allocated_bytes is None else cuda_allocated_bytes
         )
         try:
             snapshot = self.memory_budget.observe(
                 label=label,
-                rss_mb=rss_bytes / 1024**2,
-                cuda_allocated_mb=allocated_bytes / 1024**2,
-                cuda_reserved_mb=cuda_bytes / 1024**2,
+                rss_mb=bytes_to_mib(rss_bytes),
+                cuda_allocated_mb=bytes_to_mib(allocated_bytes),
+                cuda_reserved_mb=bytes_to_mib(cuda_bytes),
             )
         except JobError:
             snapshot = self.memory_budget.snapshot
@@ -438,6 +434,7 @@ class DocumentIndexer:
         limits: SupportProfileLimits,
     ) -> _DocumentResourceBudget:
         """Freeze effective document ceilings and sample before dispatch."""
+        from .._units import bytes_to_mib
         from ..config import get_config
         from ..memory_probe import (
             reset_cuda_peak_memory_stats,
@@ -446,7 +443,6 @@ class DocumentIndexer:
         )
 
         config = get_config()
-        mib = 1024**2
         uses_cuda = getattr(self.model, "device", None) == "cuda"
         if uses_cuda:
             # Flush the allocator cache before deriving the ceiling so this
@@ -455,11 +451,14 @@ class DocumentIndexer:
         cuda_baseline_mb = resident_cuda_baseline_mb() if uses_cuda else None
         budget = _DocumentResourceBudget(
             limits,
-            rss_ceiling_mb=min(config.index_rss_ceiling_mb, limits.rss_bytes / mib),
+            rss_ceiling_mb=min(
+                config.index_rss_ceiling_mb,
+                bytes_to_mib(limits.rss_bytes),
+            ),
             cuda_ceiling_mb=resolve_index_cuda_ceiling_mb(
                 configured_mb=config.index_cuda_ceiling_mb,
                 headroom_mb=config.index_cuda_headroom_mb,
-                profile_cuda_mb=limits.cuda_bytes / mib,
+                profile_cuda_mb=bytes_to_mib(limits.cuda_bytes),
                 baseline_mb=cuda_baseline_mb or 0.0,
             ),
             cuda_baseline_mb=cuda_baseline_mb,

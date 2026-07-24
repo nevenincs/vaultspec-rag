@@ -13,6 +13,8 @@ from ._cli_helpers import (
     app,
     runner,
 )
+from ._http_stubs import QuietHandler
+from ._scaffold import make_workspace
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -48,19 +50,13 @@ class TestWorkspaceRequired:
 class TestCleanCommand:
     """Tests for the wipe-only ``clean`` command."""
 
-    @staticmethod
-    def _workspace(tmp_path: Path) -> Path:
-        (tmp_path / ".vault").mkdir()
-        (tmp_path / ".vaultspec").mkdir()
-        return tmp_path
-
     def test_clean_help_renders(self):
         result = runner.invoke(app, ["clean", "--help"])
         assert result.exit_code == 0
         assert "wipe" in result.output.lower()
 
     def test_clean_confirm_prompt_uses_search_index_language(self, tmp_path: Path):
-        root = self._workspace(tmp_path)
+        root = make_workspace(tmp_path)
         result = runner.invoke(
             app,
             ["--target", str(root), "clean", "all"],
@@ -73,7 +69,7 @@ class TestCleanCommand:
         assert "RAG index data" not in result.output
 
     def test_clean_noninteractive_abort_uses_operator_language(self, tmp_path: Path):
-        root = self._workspace(tmp_path)
+        root = make_workspace(tmp_path)
         result = runner.invoke(
             app,
             ["--target", str(root), "clean", "vault"],
@@ -87,7 +83,7 @@ class TestCleanCommand:
         from ..config import get_config
         from ..store import VaultStore
 
-        root = self._workspace(tmp_path)
+        root = make_workspace(tmp_path)
         cfg = get_config()
         data_dir = root / cfg.data_dir
         data_dir.mkdir(parents=True)
@@ -124,7 +120,7 @@ class TestCleanCommand:
         assert not (data_dir / cfg.code_index_metadata_file).exists()
 
     def test_clean_lock_error_uses_operator_language(self, tmp_path: Path) -> None:
-        root = self._workspace(tmp_path)
+        root = make_workspace(tmp_path)
         lock = _hold_local_index_lock(root)
         try:
             result = runner.invoke(
@@ -397,7 +393,7 @@ class TestIndexSummaryCLI:
         (tmp_path / ".vaultspec").mkdir()
         requests: list[dict[str, object]] = []
 
-        class _IndexServiceHandler(http.server.BaseHTTPRequestHandler):
+        class _IndexServiceHandler(QuietHandler):
             def do_POST(self) -> None:
                 length = int(self.headers.get("Content-Length", "0"))
                 body = json.loads(self.rfile.read(length).decode("utf-8"))
@@ -422,9 +418,6 @@ class TestIndexSummaryCLI:
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps(response).encode("utf-8"))
-
-            def log_message(self, format: str, *args: object) -> None:
-                _ = format, args
 
         server = http.server.HTTPServer(("127.0.0.1", 0), _IndexServiceHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -470,7 +463,7 @@ class TestIndexSummaryCLI:
         (tmp_path / ".vaultspec").mkdir()
         requests: list[dict[str, object]] = []
 
-        class SparseIndexServiceHandler(http.server.BaseHTTPRequestHandler):
+        class SparseIndexServiceHandler(QuietHandler):
             def do_POST(self) -> None:
                 length = int(self.headers.get("Content-Length", "0"))
                 body = json.loads(self.rfile.read(length).decode("utf-8"))
@@ -508,9 +501,6 @@ class TestIndexSummaryCLI:
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps(response).encode("utf-8"))
-
-            def log_message(self, format: str, *args: object) -> None:
-                _ = format, args
 
         server = http.server.HTTPServer(("127.0.0.1", 0), SparseIndexServiceHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)

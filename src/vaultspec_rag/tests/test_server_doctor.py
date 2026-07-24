@@ -15,7 +15,6 @@ developer host cannot perturb the live-service axis under test.
 from __future__ import annotations
 
 import json
-import os
 from typing import TYPE_CHECKING
 
 import pytest
@@ -34,10 +33,8 @@ from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissin
 from ..api import get_readiness
 from ..cli import app
 from ..commands import install_run
-from ..config import EnvVar, reset_config
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
@@ -66,24 +63,6 @@ def _install_rag_workspace(tmp_path: Path, mode: InstallMode) -> Path:
         install_mcp=True,
     )
     return ws
-
-
-@pytest.fixture()
-def isolated_status_dir(tmp_path: Path) -> Iterator[Path]:
-    """Redirect the service status dir to *tmp_path* (no ambient daemon)."""
-    prev = os.environ.get(EnvVar.STATUS_DIR.value)
-    status_dir = tmp_path / "vaultspec-rag"
-    status_dir.mkdir()
-    os.environ[EnvVar.STATUS_DIR.value] = str(status_dir)
-    reset_config()
-    try:
-        yield status_dir
-    finally:
-        if prev is None:
-            os.environ.pop(EnvVar.STATUS_DIR.value, None)
-        else:
-            os.environ[EnvVar.STATUS_DIR.value] = prev
-        reset_config()
 
 
 def test_doctor_json_envelope_carries_both_axes(

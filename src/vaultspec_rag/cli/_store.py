@@ -6,10 +6,8 @@ from typing import TYPE_CHECKING
 
 import typer
 
-import vaultspec_rag.cli as _cli
-
 from ..store import VaultStore, VaultStoreLockedError
-from ._render import _emit_json_error_and_exit
+from ._render import _emit_json_error_and_exit, _plain
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -74,7 +72,7 @@ def _open_vault_store(
                     ),
                 ],
             )
-        _cli.console.print(
+        _plain(
             f"Error: The local search index at {exc.db_path} is busy.\n\n"
             "  Another vaultspec-rag command, the background service, or an "
             "automatic index update is using this workspace.\n\n"
@@ -88,8 +86,6 @@ def _open_vault_store(
             "    3. Stop the running service:\n"
             "         vaultspec-rag server stop\n"
             "    4. If no vaultspec-rag process is alive, look for an "
-            "orphaned Python process using the index and stop it manually.",
-            markup=False,
-            highlight=False,
+            "orphaned Python process using the index and stop it manually."
         )
         raise typer.Exit(code=1) from exc

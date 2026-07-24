@@ -23,14 +23,18 @@ import sys
 import threading
 import time
 import urllib.error
-import urllib.request
 from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from .._managed_log_sink import RawRotatingLogSink
-from ._constants import QDRANT_SERVER_VERSION, QdrantRuntimeState
+from .._win32 import WIN_CREATE_NEW_PROCESS_GROUP, WIN_CREATE_NO_WINDOW
+from ._constants import (
+    LOOPBACK_OPENER,
+    QDRANT_SERVER_VERSION,
+    QdrantRuntimeState,
+)
 
 if TYPE_CHECKING:
     from typing import Any, BinaryIO
@@ -233,15 +237,11 @@ _CHILD_ENV_PASSTHROUGH = frozenset(
     }
 )
 
-# Loopback probes must never traverse an HTTP(S) proxy from the environment:
-# a proxy could spoof a "ready"/version response the supervisor would trust.
-_LOOPBACK_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-
-# Windows process-creation flags for the qdrant child. Unlike the
-# daemon spawn, the child must NOT break away from the daemon's Job
-# Object - membership is exactly the no-orphan guarantee.
-_WIN_CREATE_NEW_PROCESS_GROUP = 0x00000200
-_WIN_CREATE_NO_WINDOW = 0x08000000
+# Unlike the daemon spawn, the qdrant child must NOT break away from the
+# daemon's Job Object - that membership is exactly the no-orphan guarantee,
+# so no breakaway flag appears here.
+_WIN_CREATE_NEW_PROCESS_GROUP = WIN_CREATE_NEW_PROCESS_GROUP
+_WIN_CREATE_NO_WINDOW = WIN_CREATE_NO_WINDOW
 
 # Job Object constants (WinBase.h / winnt.h).
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
@@ -595,7 +595,7 @@ class QdrantSupervisor:
     def _ready_probe(self) -> bool:
         url = f"{self.url}/readyz"
         try:
-            with _LOOPBACK_OPENER.open(url, timeout=2.0) as resp:
+            with LOOPBACK_OPENER.open(url, timeout=2.0) as resp:
                 return int(resp.status) == 200
         except (urllib.error.URLError, OSError, ValueError) as exc:
             logger.debug("qdrant readyz probe failed: %s", exc)
@@ -848,7 +848,7 @@ class QdrantSupervisor:
             The version string, or ``""`` when unreachable.
         """
         try:
-            with _LOOPBACK_OPENER.open(self.url, timeout=2.0) as resp:
+            with LOOPBACK_OPENER.open(self.url, timeout=2.0) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
             return str(payload.get("version", ""))
         except (urllib.error.URLError, OSError, ValueError) as exc:

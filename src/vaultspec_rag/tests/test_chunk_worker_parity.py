@@ -19,7 +19,6 @@ import hashlib
 import io
 import os
 import shlex
-import subprocess
 import sys
 import textwrap
 import threading
@@ -43,6 +42,7 @@ from ..indexer._preprocess_config import (
 from ..indexer._preprocess_runner import PreprocessAbortError
 from ..indexer._run_ledger import CommitUnit, CommitUnitKind
 from ..progress import NullProgressReporter, RichProgressReporter
+from ._import_probe import assert_fresh_import_excludes, import_probe_source
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -511,20 +511,9 @@ def test_worker_import_does_not_load_torch() -> None:
     Checked in a fresh interpreter so the parent process's already-loaded torch
     cannot mask a regression. See rule ``index-workers-stay-cpu-only``.
     """
-    code = (
-        "import sys\n"
-        "import vaultspec_rag.indexer._chunk_worker\n"
-        "torch_mods = sorted(m for m in sys.modules if m == 'torch' "
-        "or m.startswith('torch.'))\n"
-        "assert not torch_mods, torch_mods\n"
+    assert_fresh_import_excludes(
+        import_probe_source("vaultspec_rag.indexer._chunk_worker")
     )
-    proc = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert proc.returncode == 0, proc.stderr
 
 
 class TestHashParity:

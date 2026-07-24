@@ -37,29 +37,6 @@ pytestmark = [pytest.mark.unit]
 _DIMENSIONS = ("torch", "models", "qdrant")
 
 
-@pytest.fixture(autouse=True)
-def _reset_config_around_each_test() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
-    reset_config()
-    yield
-    reset_config()
-
-
-@pytest.fixture
-def isolated_status_dir(tmp_path: Path) -> Iterator[Path]:
-    """Point the managed service dir (and thus the qdrant bin dir) at tmp."""
-    prev = os.environ.get(EnvVar.STATUS_DIR.value)
-    os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path)
-    reset_config()
-    try:
-        yield tmp_path
-    finally:
-        if prev is None:
-            os.environ.pop(EnvVar.STATUS_DIR.value, None)
-        else:
-            os.environ[EnvVar.STATUS_DIR.value] = prev
-        reset_config()
-
-
 @pytest.fixture
 def local_only_env() -> Iterator[None]:
     """Force the effective backend to local for the qdrant dimension test."""

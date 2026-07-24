@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
-import socket
 from typing import TYPE_CHECKING
 
 import pytest
@@ -22,12 +21,12 @@ import pytest
 from ...config import EnvVar, reset_config
 from ...progress import NullProgressReporter
 from ...qdrant_runtime import (
-    QdrantProvisionAction,
     QdrantSupervisor,
-    provision,
     resolve_binary,
 )
+from .._ports import free_loopback_port
 from ..corpus import build_synthetic_vault
+from ._helpers import provisioned_qdrant_binary, serve_qdrant
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -61,25 +60,10 @@ class CooldownTracker:
 '''
 
 
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
 @pytest.fixture(scope="module")
 def real_qdrant_binary() -> Path:
-    """Provision (or reuse) the real pinned binary in the managed dir."""
-    reset_config()
-    report = provision()
-    assert report.action in (
-        QdrantProvisionAction.CREATED,
-        QdrantProvisionAction.UNCHANGED,
-        QdrantProvisionAction.UPDATED,
-    ), report.message
-    resolved = resolve_binary()
-    assert resolved is not None, "provisioned binary must resolve"
-    return resolved.path
+    """Provision (or reuse) the pinned real Qdrant binary."""
+    return provisioned_qdrant_binary()
 
 
 @pytest.fixture(scope="module")
@@ -87,18 +71,10 @@ def qdrant_server(
     real_qdrant_binary: Path,
     tmp_path_factory: TempPathFactory,
 ) -> Iterator[QdrantSupervisor]:
-    """One real qdrant server on an ephemeral port with temp storage."""
-    tmp = tmp_path_factory.mktemp("qdrant-server")
-    supervisor = QdrantSupervisor(
-        real_qdrant_binary,
-        http_port=_free_port(),
-        grpc_port=_free_port(),
-        storage_dir=tmp / "storage",
-        log_path=tmp / "qdrant.log",
+    """One real qdrant server on ephemeral ports with temp storage."""
+    yield from serve_qdrant(
+        real_qdrant_binary, tmp_path_factory.mktemp("qdrant-server")
     )
-    supervisor.start(timeout=60.0)
-    yield supervisor
-    supervisor.stop()
 
 
 @pytest.fixture
@@ -558,8 +534,8 @@ class TestSupervision:
 
         supervisor = QdrantSupervisor(
             real_qdrant_binary,
-            http_port=_free_port(),
-            grpc_port=_free_port(),
+            http_port=free_loopback_port(),
+            grpc_port=free_loopback_port(),
             storage_dir=tmp_path / "storage",
             log_path=tmp_path / "qdrant.log",
         )
@@ -582,8 +558,8 @@ class TestSupervision:
         """The heartbeat's single bounded restart brings the server back."""
         supervisor = QdrantSupervisor(
             real_qdrant_binary,
-            http_port=_free_port(),
-            grpc_port=_free_port(),
+            http_port=free_loopback_port(),
+            grpc_port=free_loopback_port(),
             storage_dir=tmp_path / "storage",
             log_path=tmp_path / "qdrant.log",
         )
@@ -695,7 +671,7 @@ class TestServerFirstStartupSelection:
         names ``--local-only``; here we prove the underlying loud failure
         the contract depends on.
         """
-        from ...qdrant_runtime import resolve_binary, start_supervised_from_config
+        from ...qdrant_runtime import start_supervised_from_config
 
         prev_status = os.environ.get(EnvVar.STATUS_DIR.value)
         prev_binary = os.environ.get(EnvVar.QDRANT_BINARY.value)

@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Literal
 
-from .._domain import classify_domain
+from .._domain import _LOCALE_FILE_EXTS, classify_domain
 
 if TYPE_CHECKING:
     from ._models import SearchResult
@@ -50,18 +50,10 @@ _LOCALE_DEDUP_SCORE_WINDOW = 0.10
 # off-category results jump rank.
 PREFER_SCORE_NUDGE = 0.05
 
-# Path-extension/regex constants for locale detection.
-_LOCALE_FILE_EXTS: frozenset[str] = frozenset(
-    {
-        "yml",
-        "yaml",
-        "json",
-        "po",
-        "properties",
-        "ini",
-        "toml",
-    }
-)
+# Locale detection. The extension set is the domain classifier's, imported
+# rather than restated: this module decides which results are locale variants
+# and the classifier decides which paths are the locale domain, so a set that
+# drifted between them would demote a file one surface still calls locale.
 _LOCALE_CODE_RE = re.compile(r"^[a-z]{2}$")
 
 PREFER_CATEGORIES: tuple[str, ...] = ("prod", "tests", "docs")

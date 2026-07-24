@@ -24,6 +24,7 @@ from ._public_search import (
     search_documents_timed,
 )
 from ._source_types import PublicSourceType, parse_source_type
+from ._units import bytes_to_mib
 from .graph_cache import GraphCache
 from .progress import NullProgressReporter
 from .registry import get_registry
@@ -785,7 +786,7 @@ def get_status(root_dir: pathlib.Path) -> dict[str, object]:
     if cuda_available and torch is not None:
         gpu_name = torch.cuda.get_device_name(0)
         props = torch.cuda.get_device_properties(0)
-        vram_mb = props.total_memory // (1024 * 1024)
+        vram_mb = int(bytes_to_mib(props.total_memory))
         vram_gb = round(props.total_memory / 1e9, 2)
     else:
         gpu_name = None
@@ -939,7 +940,7 @@ def run_benchmark(
                 torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A"
             )
             vram_mb = (
-                torch.cuda.memory_allocated(0) / (1024 * 1024)
+                bytes_to_mib(torch.cuda.memory_allocated(0))
                 if torch.cuda.is_available()
                 else 0.0
             )

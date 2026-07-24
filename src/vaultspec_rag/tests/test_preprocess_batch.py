@@ -124,75 +124,45 @@ def test_non_batch_rule_defaults_batch_false(tmp_path: Path) -> None:
     assert rule.batch is False
 
 
-def test_batch_command_lacking_paths_placeholder_is_dropped(tmp_path: Path) -> None:
+# Every way a batch declaration can be internally inconsistent. The rule is
+# dropped rather than half-applied in each case, because a batch command that
+# cannot be handed a file list would silently extract nothing.
+@pytest.mark.parametrize(
+    "rule_lines",
+    [
+        # batch=true but the command takes one {path}, so there is nowhere to
+        # put the batch.
+        ('command = "extract {path}"', "batch = true"),
+        # Both placeholders: the command cannot be both shapes at once.
+        ('command = "extract {paths} {path}"', "batch = true"),
+        # An entry point takes its arguments in-process, so batch has no meaning.
+        ('entry_point = "mod:call"', "batch = true"),
+        # {paths} without batch=true: the list form was never requested.
+        ('command = "extract {paths}"',),
+        # batch is a bool; a string that merely looks true is not one.
+        ('command = "extract {paths}"', 'batch = "yes"'),
+    ],
+    ids=[
+        "batch-with-single-path-placeholder",
+        "batch-with-both-placeholders",
+        "batch-with-entry-point",
+        "paths-placeholder-without-batch",
+        "non-boolean-batch",
+    ],
+)
+def test_an_inconsistent_batch_declaration_drops_the_rule(
+    tmp_path: Path,
+    rule_lines: tuple[str, ...],
+) -> None:
+    body = "\n        ".join(rule_lines)
     _write_config(
         tmp_path,
-        """
+        f"""
         [[rule]]
         target = "document"
         extractor_version = "1.0.0"
         pattern = "*.pdf"
-        command = "extract {path}"
-        batch = true
-        """,
-    )
-    assert load_preprocess_rules(tmp_path).rules == []
-
-
-def test_batch_command_with_single_placeholder_is_dropped(tmp_path: Path) -> None:
-    _write_config(
-        tmp_path,
-        """
-        [[rule]]
-        target = "document"
-        extractor_version = "1.0.0"
-        pattern = "*.pdf"
-        command = "extract {paths} {path}"
-        batch = true
-        """,
-    )
-    assert load_preprocess_rules(tmp_path).rules == []
-
-
-def test_batch_with_entry_point_is_dropped(tmp_path: Path) -> None:
-    _write_config(
-        tmp_path,
-        """
-        [[rule]]
-        target = "document"
-        extractor_version = "1.0.0"
-        pattern = "*.pdf"
-        entry_point = "mod:call"
-        batch = true
-        """,
-    )
-    assert load_preprocess_rules(tmp_path).rules == []
-
-
-def test_non_batch_command_with_paths_placeholder_is_dropped(tmp_path: Path) -> None:
-    _write_config(
-        tmp_path,
-        """
-        [[rule]]
-        target = "document"
-        extractor_version = "1.0.0"
-        pattern = "*.pdf"
-        command = "extract {paths}"
-        """,
-    )
-    assert load_preprocess_rules(tmp_path).rules == []
-
-
-def test_non_boolean_batch_is_dropped(tmp_path: Path) -> None:
-    _write_config(
-        tmp_path,
-        """
-        [[rule]]
-        target = "document"
-        extractor_version = "1.0.0"
-        pattern = "*.pdf"
-        command = "extract {paths}"
-        batch = "yes"
+        {body}
         """,
     )
     assert load_preprocess_rules(tmp_path).rules == []

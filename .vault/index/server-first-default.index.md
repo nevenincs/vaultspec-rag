@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#server-first-default'
-date: '2026-07-23'
-modified: '2026-07-23'
+date: '2026-07-24'
+modified: '2026-07-24'
 related:
   - '[[2026-06-13-server-first-default-W01-P01-S01]]'
   - '[[2026-06-13-server-first-default-W01-P01-S02]]'

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .. import store_schema
+from ._checkpoint_common import (
+    classify_interrupted_generation,
+    configuration_fingerprint,
+)
 from ._content_policy import ContentKind
 from ._document_meta import (
     DOCUMENT_EMBED_SCHEMA,
@@ -106,7 +108,7 @@ class DocumentRunCheckpoint:
             content_epoch=fingerprints.content,
             membership_epoch=fingerprints.membership,
             preprocessing_identity=policy.fingerprints.execution,
-            configuration_fingerprint=_configuration_fingerprint(configuration),
+            configuration_fingerprint=configuration_fingerprint(configuration),
             policy_fingerprint=policy.fingerprints.snapshot,
         )
         ledger = RunLedger(index_run_ledger_path(data_root))
@@ -137,18 +139,11 @@ class DocumentRunCheckpoint:
         try:
             yield
         except BaseException as exc:
-            if self.generation.terminal_state is RunTerminalState.RUNNING:
-                terminal_state = (
-                    RunTerminalState.REBUILD_INCOMPLETE
-                    if self.generation.destructive_intent
-                    else RunTerminalState.FAILED
-                )
-                detail = f"{type(exc).__name__}: {exc}".rstrip()
-                self.generation = self.ledger.finish_generation(
-                    self.generation_id,
-                    terminal_state,
-                    detail=detail,
-                )
+            self.generation = classify_interrupted_generation(
+                self.ledger,
+                self.generation,
+                exc,
+            )
             raise
 
     def unit_for(
@@ -359,8 +354,3 @@ class DocumentRunCheckpoint:
             self.generation_id,
             FileState.indexed(rel_path, ContentKind.DOCUMENT, source_digest),
         )
-
-
-def _configuration_fingerprint(configuration: DocumentRunConfiguration) -> str:
-    payload = json.dumps(asdict(configuration), sort_keys=True, separators=(",", ":"))
-    return hashlib.blake2b(payload.encode("utf-8")).hexdigest()

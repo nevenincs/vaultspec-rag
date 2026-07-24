@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#gpu-rag-stack'
-date: '2026-07-23'
-modified: '2026-07-23'
+date: '2026-07-24'
+modified: '2026-07-24'
 related:
   - '[[2026-03-06-cli-api-audit]]'
   - '[[2026-03-06-cli-mcp-audit]]'
@@ -92,17 +92,17 @@ Auto-generated index of all documents tagged with `#gpu-rag-stack`.
 
 ### adr
 
-- `2026-03-06-gpu-only-rag-stack-adr` - ADR: GPU-Only RAG Stack — sentence-transformers + Qwen3 + SPLADE v3
-- `2026-03-07-blake2b-file-hashing-adr` - ADR: Use blake2b via `file_digest()` for file change detection
-- `2026-03-07-manual-node-walking-adr` - ADR: Manual tree-sitter node walking over Query API for metadata extraction
-- `2026-03-07-mcp-sync-tools-adr` - ADR: MCP tools use `async def` + `anyio.to_thread.run_sync`
-- `2026-03-07-path-resolve-engine-cache-adr` - ADR: Use `Path.resolve()` for engine cache key
-- `2026-03-07-qdrant-filter-on-prefetch-adr` - ADR: Filters must go on each Prefetch, not top-level `query_filter`
-- `2026-03-07-qdrant-payload-indexes-local-adr` - ADR: Payload indexes are no-ops in local mode; add for forward compatibility
-- `2026-03-07-qwen3-no-document-prompt-adr` - ADR: Qwen3-Embedding encodes documents without prompt, queries with `prompt_name="query"`
-- `2026-03-07-score-normalization-adr` - ADR: Sigmoid + min-max per-source normalization in `search_all()`
-- `2026-03-07-threading-lock-for-singleton-adr` - ADR: Use `threading.Lock` for `get_comp()` singleton
-- `2026-03-07-vaultgraph-cache-adr` - ADR: VaultGraph cache with `threading.Lock` and explicit invalidation
+- `2026-03-06-gpu-only-rag-stack-adr` - `gpu-rag-stack` adr: `GPU-Only RAG Stack — sentence-transformers + Qwen3 + SPLADE v3` | (**status:** `accepted`)
+- `2026-03-07-blake2b-file-hashing-adr` - `gpu-rag-stack` adr: `Use blake2b via file_digest() for file change detection` | (**status:** `accepted`)
+- `2026-03-07-manual-node-walking-adr` - `gpu-rag-stack` adr: `Manual tree-sitter node walking over Query API for metadata extraction` | (**status:** `accepted`)
+- `2026-03-07-mcp-sync-tools-adr` - `gpu-rag-stack` adr: `MCP tools use async def + anyio.to_thread.run_sync` | (**status:** `superseded`)
+- `2026-03-07-path-resolve-engine-cache-adr` - `gpu-rag-stack` adr: `Use Path.resolve() for engine cache key` | (**status:** `accepted`)
+- `2026-03-07-qdrant-filter-on-prefetch-adr` - `gpu-rag-stack` adr: `Filters must go on each Prefetch, not top-level query_filter` | (**status:** `accepted`)
+- `2026-03-07-qdrant-payload-indexes-local-adr` - `gpu-rag-stack` adr: `Payload indexes are no-ops in local mode; add for forward compatibility` | (**status:** `accepted`)
+- `2026-03-07-qwen3-no-document-prompt-adr` - `gpu-rag-stack` adr: `Qwen3-Embedding encodes documents without prompt, queries with prompt_name="query"` | (**status:** `accepted`)
+- `2026-03-07-score-normalization-adr` - `gpu-rag-stack` adr: `Sigmoid + min-max per-source normalization in search_all()` | (**status:** `accepted`)
+- `2026-03-07-threading-lock-for-singleton-adr` - `gpu-rag-stack` adr: `Use threading.Lock for get_comp() singleton` | (**status:** `accepted`)
+- `2026-03-07-vaultgraph-cache-adr` - `gpu-rag-stack` adr: `VaultGraph cache with threading.Lock and explicit invalidation` | (**status:** `accepted`)
 
 ### audit
 

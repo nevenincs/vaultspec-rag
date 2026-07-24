@@ -20,6 +20,7 @@ import vaultspec_rag.cli as _cli
 from ..config import EnvVar
 from ..logging_config import configure_logging
 from ..workspace import WorkspaceError, WorkspaceLayout, resolve_workspace
+from ._render import _plain
 
 __all__ = [
     "CLIState",
@@ -37,7 +38,25 @@ __all__ = [
 ]
 
 app = typer.Typer(
-    help="VaultSpec RAG: search project documentation and source code.",
+    help=(
+        "VaultSpec RAG: search project documentation and source code by "
+        "meaning.\n"
+        "\n"
+        "\b\n"
+        "Query markers - write them anywhere in the query text:\n"
+        "  documents  type:adr feature:rag date:2026-07 tag:research\n"
+        "  code       lang:python path:src/ func:encode class:Searcher\n"
+        "  noise      only:prod exclude:tests,docs include:locale\n"
+        "  ranking    status:active intent:debugging\n"
+        "\n"
+        "\b\n"
+        "Examples:\n"
+        '  vaultspec-rag search "auth token validation only:prod" --type code\n'
+        '  vaultspec-rag search "fixture helpers exclude:tests" --type code\n'
+        '  vaultspec-rag search "gpu lock decision type:adr status:active"\n'
+        "\n"
+        "Run 'vaultspec-rag search --help' for the full marker reference.\n"
+    ),
     rich_markup_mode=None,
     pretty_exceptions_enable=False,
 )
@@ -284,7 +303,7 @@ def main(
         layout = resolve_workspace(target_override=target)
         ctx.obj = CLIState(layout)
     except WorkspaceError as e:
-        _cli.console.print(f"Error: {e}", markup=False, highlight=False)
+        _plain(f"Error: {e}")
         raise typer.Exit(code=1) from None
 
 

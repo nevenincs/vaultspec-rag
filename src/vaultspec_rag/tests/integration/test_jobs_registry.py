@@ -38,6 +38,7 @@ from ...jobs import (
 )
 from ...server import _jobs
 from ...serviceclient import _default_service_port, _try_http_admin
+from ._helpers import _make_root
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -64,17 +65,6 @@ def _clean_jobs(  # pyright: ignore[reportUnusedFunction]
     yield
     server._stop_all_watchers()
     _jobs.reset()
-
-
-def _make_root(tmp_path: Path) -> Path:
-    """Create a minimal vaultspec project root with one indexable doc."""
-    adr_dir = tmp_path / ".vault" / "adr"
-    adr_dir.mkdir(parents=True)
-    (adr_dir / "x.md").write_text(
-        "---\ntags: ['#adr', '#t']\n---\n# x\n\nbody\n",
-        encoding="utf-8",
-    )
-    return tmp_path
 
 
 async def _wait_for_terminal_job(

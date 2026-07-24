@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 from ._job_errors import JobError, JobErrorKind
+from ._units import bytes_to_mib, mib_to_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
@@ -40,6 +41,7 @@ __all__ = [
     "reset_cuda_peak_memory_stats",
     "resident_cuda_baseline_mb",
     "sample_resident_cuda_baseline",
+    "snapshot_resource_bytes",
 ]
 
 
@@ -77,7 +79,7 @@ def _measure_rss_mb() -> float | None:
     try:
         if _psutil_process is None:
             _psutil_process = psutil.Process(os.getpid())
-        return _psutil_process.memory_info().rss / (1024.0 * 1024.0)
+        return bytes_to_mib(_psutil_process.memory_info().rss)
     except (
         psutil.NoSuchProcess,
         psutil.AccessDenied,
@@ -133,8 +135,8 @@ def _measure_cuda_mb() -> tuple[float, float] | None:
     if _torch_module is None or not _torch_has_cuda:
         return None
     try:
-        allocated = _torch_module.cuda.memory_allocated() / (1024.0 * 1024.0)
-        reserved = _torch_module.cuda.memory_reserved() / (1024.0 * 1024.0)
+        allocated = bytes_to_mib(_torch_module.cuda.memory_allocated())
+        reserved = bytes_to_mib(_torch_module.cuda.memory_reserved())
     except (RuntimeError, AssertionError):
         return None
     return (allocated, reserved)
@@ -156,7 +158,7 @@ def cuda_device_total_mb() -> float | None:
         props = _torch_module.cuda.get_device_properties(
             _torch_module.cuda.current_device()
         )
-        return float(props.total_memory) / (1024.0 * 1024.0)
+        return bytes_to_mib(props.total_memory)
     except (RuntimeError, AssertionError):
         return None
 
@@ -174,7 +176,7 @@ def cuda_free_memory_mb() -> float | None:
     if _torch_module is None or not _torch_has_cuda:
         return None
     try:
-        return float(_torch_module.cuda.mem_get_info()[0]) / (1024.0 * 1024.0)
+        return bytes_to_mib(_torch_module.cuda.mem_get_info()[0])
     except (RuntimeError, AssertionError):
         return None
 
@@ -279,7 +281,7 @@ def _read_cuda_peak_allocated_mb() -> float | None:
     if measured is None or _torch_module is None:
         return None
     try:
-        return _torch_module.cuda.max_memory_allocated() / (1024.0 * 1024.0)
+        return bytes_to_mib(_torch_module.cuda.max_memory_allocated())
     except (RuntimeError, AssertionError):
         return None
 
@@ -409,6 +411,25 @@ class MemoryBudgetSnapshot:
     cuda_reserved_mb: float
     peak_cuda_reserved_mb: float
     cuda_ceiling_mb: float | None
+
+
+def snapshot_resource_bytes(snapshot: MemoryBudgetSnapshot) -> tuple[int, int]:
+    """Project a snapshot's high-water readings into corpus-limit bytes.
+
+    Returns ``(rss_bytes, cuda_bytes)`` for the resource-measurement dimensions
+    the support limits are denominated in.
+
+    The CUDA dimension carries the allocated high-water - real demand - and
+    never the reserved one. Reserved ratchets with the allocator's retention
+    history rather than with the work, so a profile limit that equals the
+    enforcement ceiling would fail well-sized jobs on nothing but fragmentation
+    inherited from earlier runs. Every indexer projects through here so that
+    choice is made once and cannot drift between them.
+    """
+    return (
+        mib_to_bytes(snapshot.peak_rss_mb),
+        mib_to_bytes(snapshot.peak_cuda_allocated_mb),
+    )
 
 
 class MemoryBudget:

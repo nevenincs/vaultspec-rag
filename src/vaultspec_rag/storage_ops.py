@@ -70,6 +70,15 @@ _OPTIMIZER_START_BUDGET_SECONDS = 30.0
 _RECONCILE_HEADROOM_FACTOR = 0.5
 
 
+def _no_progress(_line: str) -> None:
+    """Drop a progress line, for callers that want no reporting.
+
+    A no-op sink rather than a ``None`` check at each call site. These
+    functions run under the in-daemon maintenance schedule as well as under an
+    operator command, and only the latter has anywhere to report to.
+    """
+
+
 def _free_bytes(path: Path) -> int | None:
     """Free bytes on *path*'s volume, or ``None`` if it cannot be read."""
     import shutil
@@ -782,6 +791,7 @@ def reconcile_collections(
     dry_run: bool = False,
     wait: bool = True,
     stop: threading.Event | None = None,
+    on_progress: Callable[[str], None] = _no_progress,
 ) -> ReconcileBatch:
     """Reconcile drifted collections toward the bounded geometry.
 
@@ -798,10 +808,14 @@ def reconcile_collections(
         budget_s: Per-collection convergence budget in seconds.
         dry_run: Preview the selection without mutating anything.
         wait: When False, issue updates without awaiting convergence.
+        on_progress: Sink for progress lines. With ``wait`` set, each
+            collection is held on until its optimizer settles, so naming the
+            one in flight is the difference between a slow pass and a hang.
 
     Returns:
         The :class:`ReconcileBatch` for this pass.
     """
+    on_progress("Reading collection geometry...")
     entries = read_geometry(client, storage_dir)
     selected, remaining = plan_reconcile(entries, target=target, cap=cap)
     # A collection whose setting is already right but which is still merging
@@ -828,18 +842,23 @@ def reconcile_collections(
             dry_run=True,
         )
 
-    results = [
-        reconcile_collection(
-            client,
-            entry,
-            storage_dir=storage_dir,
-            target=target,
-            budget_s=budget_s,
-            wait=wait,
-            stop=stop,
+    results: list[ReconcileResult] = []
+    for position, entry in enumerate(selected, start=1):
+        on_progress(
+            f"Reconciling {position}/{len(selected)}: {entry.collection}"
+            f" ({entry.segments} segments)"
         )
-        for entry in selected
-    ]
+        results.append(
+            reconcile_collection(
+                client,
+                entry,
+                storage_dir=storage_dir,
+                target=target,
+                budget_s=budget_s,
+                wait=wait,
+                stop=stop,
+            )
+        )
     unconverged = sum(1 for r in results if r.status != "reconciled")
     return ReconcileBatch(
         results=results,
@@ -863,6 +882,8 @@ _SURVEY_STATUS_RANK = {
 def gather_survey(
     client: QdrantClient,
     storage_dir: Path | None = None,
+    *,
+    on_progress: Callable[[str], None] = _no_progress,
 ) -> list[NamespaceSurvey]:
     """Survey every stored namespace: enumerate, count, size, classify.
 
@@ -874,17 +895,24 @@ def gather_survey(
         client: Qdrant client for the managed server.
         storage_dir: The server ``collections`` directory for footprints;
             ``None`` (or unresolved) omits byte sizes and debris.
+        on_progress: Sink for progress lines. The point count is one server
+            round trip per collection and the footprint pass walks the whole
+            storage tree, so both are reported against a known total rather
+            than as an undifferentiated wait.
 
     Returns:
         Classified namespace records, actionable states first.
     """
+    on_progress("Listing collections...")
     names = [c.name for c in client.get_collections().collections]
     counts: dict[str, int] = {}
-    for name in names:
+    for position, name in enumerate(names, start=1):
+        on_progress(f"Counting points ({position}/{len(names)} collections)")
         try:
             counts[name] = int(client.count(collection_name=name).count)
         except (OSError, RuntimeError):
             counts[name] = 0
+    on_progress(f"Measuring on-disk footprints for {len(names)} collections...")
     footprints = collection_footprints(names, storage_dir)
     surveys = classify_namespaces(
         names, load_manifest(), point_counts=counts, footprints=footprints
@@ -949,6 +977,7 @@ def prune_orphaned(
     *,
     dry_run: bool,
     storage_dir: Path | None = None,
+    on_progress: Callable[[str], None] = _no_progress,
 ) -> PruneResult:
     """Reclaim every orphaned namespace (manifest root vanished).
 
@@ -961,16 +990,22 @@ def prune_orphaned(
         dry_run: When True, return the plan and mutate nothing.
         storage_dir: The server ``collections`` directory for footprint
             reporting.
+        on_progress: Sink for progress lines, covering both the survey this
+            plans from and the per-namespace reclamation.
 
     Returns:
         A :class:`PruneResult` aggregating the per-namespace outcomes.
     """
-    surveys = gather_survey(client, storage_dir)
+    surveys = gather_survey(client, storage_dir, on_progress=on_progress)
     orphaned = [s for s in surveys if s.status == "orphaned"]
     unknown = [s.prefix for s in surveys if s.status == "unknown"]
     results: list[DeleteResult] = []
     reclaimed = 0
-    for survey in orphaned:
+    verb = "Planning" if dry_run else "Reclaiming"
+    for position, survey in enumerate(orphaned, start=1):
+        on_progress(
+            f"{verb} orphaned namespace {position}/{len(orphaned)}: {survey.prefix}"
+        )
         result = delete_prefix(client, survey.prefix, dry_run=dry_run)
         results.append(result)
         if result.status in ("removed", "would_remove"):
@@ -1038,6 +1073,7 @@ def migrate_collections(
     *,
     dry_run: bool,
     batch_size: int = 256,
+    on_progress: Callable[[str], None] = _no_progress,
 ) -> list[MigrateResult]:
     """Migrate collections from one backend to another, remapping names.
 
@@ -1053,12 +1089,16 @@ def migrate_collections(
         name_map: Source-name to target-name mapping.
         dry_run: When True, return the plan and mutate nothing.
         batch_size: Scroll/upload page size.
+        on_progress: Sink for progress lines, one per mapped collection; a
+            real copy moves every point across two backends and is the
+            longest-running of the storage verbs.
 
     Returns:
         One :class:`MigrateResult` per mapped collection.
     """
     results: list[MigrateResult] = []
-    for source, target in name_map.items():
+    for position, (source, target) in enumerate(name_map.items(), start=1):
+        on_progress(f"Migrating {position}/{len(name_map)}: {source} -> {target}")
         if not src_client.collection_exists(source):
             results.append(
                 MigrateResult(source, target, "skipped", reason="no_such_source")

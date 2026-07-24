@@ -19,6 +19,8 @@ from ._cli_helpers import (
     reset_rag_config,
     runner,
 )
+from ._http_stubs import QuietHandler
+from ._scaffold import make_workspace
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -28,12 +30,6 @@ pytestmark = [pytest.mark.unit]
 
 class TestStatusCommand:
     """Tests for the project index status command."""
-
-    @staticmethod
-    def _workspace(tmp_path: Path) -> Path:
-        (tmp_path / ".vault").mkdir()
-        (tmp_path / ".vaultspec").mkdir()
-        return tmp_path
 
     def test_status_human_output_uses_operator_labels(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -118,12 +114,12 @@ class TestStatusCommand:
         import threading
         import urllib.parse
 
-        root = self._workspace(tmp_path)
+        root = make_workspace(tmp_path)
         status_dir = tmp_path / "status"
         status_dir.mkdir()
         requests: list[str] = []
 
-        class ServiceStateHandler(http.server.BaseHTTPRequestHandler):
+        class ServiceStateHandler(QuietHandler):
             def do_GET(self) -> None:
                 requests.append(self.path)
                 parsed = urllib.parse.urlparse(self.path)
@@ -146,9 +142,6 @@ class TestStatusCommand:
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps(response).encode("utf-8"))
-
-            def log_message(self, format: str, *args: object) -> None:
-                _ = format, args
 
         server = http.server.HTTPServer(("127.0.0.1", 0), ServiceStateHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -187,7 +180,7 @@ class TestStatusCommand:
         )
 
     def test_status_lock_error_uses_operator_language(self, tmp_path: Path) -> None:
-        root = self._workspace(tmp_path)
+        root = make_workspace(tmp_path)
         status_dir = tmp_path / "status"
         status_dir.mkdir()
         os.environ[EnvVar.STATUS_DIR] = str(status_dir)

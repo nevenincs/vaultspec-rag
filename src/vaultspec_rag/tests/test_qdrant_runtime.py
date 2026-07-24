@@ -36,43 +36,29 @@ from ..qdrant_runtime import (
     qdrant_bin_dir,
     resolve_binary,
 )
+from .conftest import managed_env
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
 
-@pytest.fixture(autouse=True)
-def _reset_config_around_each_test() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
-    reset_config()
-    yield
-    reset_config()
-
-
 @pytest.fixture
-def isolated_status_dir(tmp_path: Path) -> Iterator[Path]:
-    """Point managed service, storage, lock, and port state at test resources."""
-    keys = (
-        EnvVar.STATUS_DIR.value,
-        EnvVar.QDRANT_STORAGE_DIR.value,
-        EnvVar.QDRANT_PORT.value,
-    )
-    previous = {key: os.environ.get(key) for key in keys}
+def isolated_status_dir(
+    tmp_path: Path,
+    isolated_singleton_dirs: Path,
+) -> Iterator[Path]:
+    """Add port isolation on top of the shared singleton-dir relocation.
+
+    A supervisor test binds a real Qdrant port, so the configured port must
+    move off the machine default as well as the two managed directories -
+    otherwise a test collides with a live server on the shared port.
+    """
+    del isolated_singleton_dirs
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
         isolated_port = int(probe.getsockname()[1])
-    os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path / "status")
-    os.environ[EnvVar.QDRANT_STORAGE_DIR.value] = str(tmp_path / "qdrant" / "storage")
-    os.environ[EnvVar.QDRANT_PORT.value] = str(isolated_port)
-    reset_config()
-    try:
+    with managed_env(**{EnvVar.QDRANT_PORT.value: str(isolated_port)}):
         yield tmp_path
-    finally:
-        for key, value in previous.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-        reset_config()
 
 
 class TestAssetResolution:

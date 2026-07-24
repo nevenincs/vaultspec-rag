@@ -7,9 +7,11 @@ structured JSON envelope. Service-not-running yields exit code 3.
 
 from __future__ import annotations
 
+import functools
 import re
 import time
-from typing import Annotated, Literal, NoReturn, cast
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Annotated, Literal, NoReturn, cast
 
 import typer
 
@@ -34,12 +36,17 @@ from ._cli_format import (
     _path_label,
 )
 from ._http_search import _try_http_admin
+from ._process import _call_interruptibly
 from ._render import (
     _display_service_not_running,
     _emit_json,
     _emit_json_error_and_exit,
+    _plain,
 )
 from ._service_status import _default_service_port
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 __all__ = [
     "_human_progress",
@@ -461,6 +468,53 @@ def _job_count_text(
     return f"{value} {word}"
 
 
+def _shown_count_text(returned: object, *, filtered: bool) -> str:
+    if filtered:
+        return _job_count_text(returned, "matching job", "matching jobs")
+    return _job_count_text(returned)
+
+
+def _job_counts_line(active: int, waiting: int, finished: int, failed: int) -> str:
+    return (
+        f"Displayed jobs: {active} active, {waiting} waiting, "
+        f"{finished} finished, {failed} failed"
+    )
+
+
+def _render_jobs_header(
+    *,
+    port: int,
+    shown_count: str,
+    total: object,
+    counts_line: str,
+) -> None:
+    """Print the opening lines both the populated and empty views share."""
+    _plain("Jobs")
+    _plain(f"Address: http://127.0.0.1:{port}")
+    _plain(f"Displayed: {shown_count}")
+    _plain(f"Total: {_job_count_text(total)}")
+    _plain(counts_line)
+
+
+def _render_filter_and_watch(
+    filter_text: str,
+    *,
+    monitoring: bool,
+    watch_text: str | None,
+) -> None:
+    """Print the filter line and, while watching, the refresh banner.
+
+    Shared so the two views cannot drift into telling an operator different
+    things about the same refresh.
+    """
+    if filter_text:
+        _plain(f"Filter: {filter_text}")
+    if not monitoring:
+        return
+    _plain(f"Refreshed: {time.strftime('%H:%M:%S', time.localtime())}")
+    _cli.console.print(watch_text or "Watch: press Ctrl+C to stop.")
+
+
 def _render_jobs_feed(
     result: dict[str, object],
     jobs: list[object],
@@ -469,67 +523,25 @@ def _render_jobs_feed(
     monitoring: bool = False,
     watch_text: str | None = None,
 ) -> None:
-    total = result.get("total", len(jobs))
-    returned = result.get("returned", len(jobs))
     sorted_jobs = _human_sorted_jobs(jobs)
-    active, waiting, finished, failed = _shown_job_counts(sorted_jobs)
-    _cli.console.print("Jobs", markup=False, highlight=False)
-    _cli.console.print(
-        f"Address: http://127.0.0.1:{port}",
-        markup=False,
-        highlight=False,
-    )
     filter_text = _filter_line(result)
-    shown_count = (
-        _job_count_text(returned, "matching job", "matching jobs")
-        if filter_text
-        else _job_count_text(returned)
-    )
-    _cli.console.print(
-        f"Displayed: {shown_count}",
-        markup=False,
-        highlight=False,
-    )
-    _cli.console.print(
-        f"Total: {_job_count_text(total)}",
-        markup=False,
-        highlight=False,
-    )
-    _cli.console.print(
-        f"Displayed jobs: {active} active, {waiting} waiting, "
-        f"{finished} finished, {failed} failed",
-        markup=False,
-        highlight=False,
+    _render_jobs_header(
+        port=port,
+        shown_count=_shown_count_text(
+            result.get("returned", len(jobs)), filtered=bool(filter_text)
+        ),
+        total=result.get("total", len(jobs)),
+        counts_line=_job_counts_line(*_shown_job_counts(sorted_jobs)),
     )
     if not filter_text:
-        _cli.console.print(
-            "Showing: active, waiting, failed, then latest finished",
-            markup=False,
-            highlight=False,
-        )
-    _cli.console.print("Order: latest job appears last", markup=False, highlight=False)
-    _cli.console.print(
-        "Legend: * active, ~ waiting, ! failed, - finished",
-        markup=False,
-        highlight=False,
-    )
+        _plain("Showing: active, waiting, failed, then latest finished")
+    _plain("Order: latest job appears last")
+    _plain("Legend: * active, ~ waiting, ! failed, - finished")
     # Scripted consumers must use the structured envelope: this human summary
     # always contains the literal words "active"/"waiting", so grepping it for
     # job states self-deadlocks (a waiter that greps "active" always matches).
-    _cli.console.print(
-        "Scripting: use --json (this summary always contains the word 'active')",
-        markup=False,
-        highlight=False,
-    )
-    if filter_text:
-        _cli.console.print(f"Filter: {filter_text}", markup=False, highlight=False)
-    if monitoring:
-        _cli.console.print(
-            f"Refreshed: {time.strftime('%H:%M:%S', time.localtime())}",
-            markup=False,
-            highlight=False,
-        )
-        _cli.console.print(watch_text or "Watch: press Ctrl+C to stop.")
+    _plain("Scripting: use --json (this summary always contains the word 'active')")
+    _render_filter_and_watch(filter_text, monitoring=monitoring, watch_text=watch_text)
     job_id_labels = _job_id_labels(sorted_jobs)
     for index, job in enumerate(sorted_jobs):
         job_id = job_id_labels[index]
@@ -549,53 +561,21 @@ def _render_empty_jobs_result(
     monitoring: bool,
     watch_text: str | None = None,
 ) -> None:
-    total = result.get("total", 0)
-    returned = result.get("returned", 0)
     filter_text = _filter_line(result)
-    shown_count = (
-        _job_count_text(returned, "matching job", "matching jobs")
-        if filter_text or job_id
-        else _job_count_text(returned)
+    _render_jobs_header(
+        port=port,
+        shown_count=_shown_count_text(
+            result.get("returned", 0), filtered=bool(filter_text or job_id)
+        ),
+        total=result.get("total", 0),
+        counts_line=_job_counts_line(0, 0, 0, 0),
     )
-    _cli.console.print("Jobs", markup=False, highlight=False)
-    _cli.console.print(
-        f"Address: http://127.0.0.1:{port}",
-        markup=False,
-        highlight=False,
-    )
-    _cli.console.print(f"Displayed: {shown_count}", markup=False, highlight=False)
-    _cli.console.print(
-        f"Total: {_job_count_text(total)}",
-        markup=False,
-        highlight=False,
-    )
-    _cli.console.print(
-        "Displayed jobs: 0 active, 0 waiting, 0 finished, 0 failed",
-        markup=False,
-        highlight=False,
-    )
-    _cli.console.print("Order: latest job appears last", markup=False, highlight=False)
-    if filter_text:
-        _cli.console.print(f"Filter: {filter_text}", markup=False, highlight=False)
-    if monitoring:
-        _cli.console.print(
-            f"Refreshed: {time.strftime('%H:%M:%S', time.localtime())}",
-            markup=False,
-            highlight=False,
-        )
-        _cli.console.print(watch_text or "Watch: press Ctrl+C to stop.")
+    _plain("Order: latest job appears last")
+    _render_filter_and_watch(filter_text, monitoring=monitoring, watch_text=watch_text)
     _cli.console.print(_empty_jobs_message(result, job_id))
-    _cli.console.print("Next actions:", markup=False, highlight=False)
-    _cli.console.print(
-        f"  vaultspec-rag server status --port {port}",
-        markup=False,
-        highlight=False,
-    )
-    _cli.console.print(
-        f"  vaultspec-rag server logs --limit 20 --port {port}",
-        markup=False,
-        highlight=False,
-    )
+    _plain("Next actions:")
+    _plain(f"  vaultspec-rag server status --port {port}")
+    _plain(f"  vaultspec-rag server logs --limit 20 --port {port}")
 
 
 def _exit_invalid_jobs_filter(json_mode: bool, message: str) -> NoReturn:
@@ -606,12 +586,7 @@ def _exit_invalid_jobs_filter(json_mode: bool, message: str) -> NoReturn:
             message,
             2,
         )
-    _cli.console.print(
-        f"Error: {message}",
-        markup=False,
-        highlight=False,
-        soft_wrap=True,
-    )
+    _plain(f"Error: {message}", soft_wrap=True)
     raise typer.Exit(2)
 
 
@@ -719,27 +694,36 @@ def _jobs_index_filter(
     )
 
 
-def _jobs_args(
-    *,
-    limit: int,
-    phase: str | None,
-    source: str | None,
-    trigger: str | None,
-    query: str | None,
-    failed: bool,
-    job_id: str | None,
-    since: float | None,
-) -> dict[str, object]:
-    args: dict[str, object] = {"limit": limit}
-    normalized_phase = _jobs_phase_value(phase)
-    normalized_trigger = _jobs_trigger_value(trigger)
+@dataclass(frozen=True, slots=True)
+class _JobsQuery:
+    """One resolved ``server jobs`` filter set bound to a service port.
+
+    Carried as a value so the filter names are written once at the command
+    boundary instead of being re-listed by every layer that forwards them;
+    the watching and one-shot paths are then provably asking the same
+    question of the same service.
+    """
+
+    port: int
+    limit: int
+    phase: str | None = None
+    source: str | None = None
+    trigger: str | None = None
+    query: str | None = None
+    failed: bool = False
+    job_id: str | None = None
+    since: float | None = None
+
+
+def _jobs_args(spec: _JobsQuery) -> dict[str, object]:
+    args: dict[str, object] = {"limit": spec.limit}
     optional_args = {
-        "phase": normalized_phase,
-        "source": source,
-        "trigger": normalized_trigger,
-        "query": query,
-        "job_id": job_id,
-        "since": since,
+        "phase": _jobs_phase_value(spec.phase),
+        "source": spec.source,
+        "trigger": _jobs_trigger_value(spec.trigger),
+        "query": spec.query,
+        "job_id": spec.job_id,
+        "since": spec.since,
     }
     args.update(
         {
@@ -748,7 +732,7 @@ def _jobs_args(
             if value is not None and value != ""
         }
     )
-    if failed:
+    if spec.failed:
         args["failed"] = True
     return args
 
@@ -912,17 +896,13 @@ def _render_job_result_detail(job: dict[str, object]) -> None:
 
 def _render_job_detail(job: dict[str, object], *, port: int | None = None) -> None:
     if port is not None:
-        _cli.console.print(
-            f"Address: http://127.0.0.1:{port}",
-            markup=False,
-            highlight=False,
-        )
+        _plain(f"Address: http://127.0.0.1:{port}")
     _cli.console.print(f"Job {job.get('id', '')!s}")
     _cli.console.print(f"Operation: {_operation_label(job)}")
     _cli.console.print(f"Project: {_project_label(job)}")
     root = _project_root(job)
     if root:
-        _cli.console.print(f"Path: {root}", markup=False, highlight=False)
+        _plain(f"Path: {root}")
     _cli.console.print(f"Status: {_phase_label(job)}")
     _cli.console.print(f"Runtime: {_format_seconds(job.get('runtime_seconds'))}")
     _render_job_progress_detail(job)
@@ -953,11 +933,9 @@ def _render_jobs_result(
         return
     if job_id:
         if len(jobs) > 1:
-            _cli.console.print(
+            _plain(
                 f"Error: job id prefix {job_id} matches {len(jobs)} jobs. "
-                "Use a longer prefix.",
-                markup=False,
-                highlight=False,
+                "Use a longer prefix."
             )
             _render_jobs_feed(result, jobs, port=port)
             raise typer.Exit(2)
@@ -978,36 +956,12 @@ def _exit_invalid_watch_args(json_mode: bool, interval: float) -> NoReturn:
         message = "--watch cannot be combined with --json."
     if json_mode:
         _emit_json_error_and_exit("service.jobs", "invalid_watch", message, 2)
-    _cli.console.print(f"Error: {message}", markup=False, highlight=False)
+    _plain(f"Error: {message}")
     raise typer.Exit(2)
 
 
-def _fetch_jobs_result(
-    *,
-    limit: int,
-    phase: str | None,
-    source: str | None,
-    trigger: str | None,
-    query: str | None,
-    failed: bool,
-    job_id: str | None,
-    since: float | None,
-    port: int,
-) -> dict[str, object] | None:
-    return _try_http_admin(
-        "get_jobs",
-        _jobs_args(
-            limit=limit,
-            phase=phase,
-            source=source,
-            trigger=trigger,
-            query=query,
-            failed=failed,
-            job_id=job_id,
-            since=since,
-        ),
-        port,
-    )
+def _fetch_jobs_result(spec: _JobsQuery) -> dict[str, object] | None:
+    return _try_http_admin("get_jobs", _jobs_args(spec), spec.port)
 
 
 def _client_state_matches(job: dict[str, object], state: str | None) -> bool:
@@ -1048,34 +1002,40 @@ def _watch_status_text(refresh_number: int, refresh_count: int | None) -> str:
     return f"Watch: refresh {refresh_number} of {refresh_count}."
 
 
+def _stop_watching() -> NoReturn:
+    """Leave the refreshing view on an operator interrupt.
+
+    Watch only reads, so there is nothing to unwind. Exit on the conventional
+    interrupted status rather than reporting the success the operator never
+    got, and without a traceback they did not ask for.
+    """
+    _cli.console.print("\n[dim]Stopped watching jobs.[/]")
+    raise typer.Exit(130)
+
+
 def _watch_jobs(
+    fetch: Callable[[], dict[str, object] | None],
     *,
-    limit: int,
-    phase: str | None,
-    source: str | None,
-    trigger: str | None,
-    query: str | None,
-    failed: bool,
     job_id: str | None,
-    since: float | None,
     port: int,
     interval: float,
     refresh_count: int | None,
     client_state: str | None,
 ) -> None:
+    """Re-render *fetch*'s result on an interval until interrupted.
+
+    Takes the bound fetch rather than the filter set so the query is spelled
+    once in the command and both the one-shot and watching paths are provably
+    reading the same thing.
+    """
     refreshes = 0
     while refresh_count is None or refreshes < refresh_count:
-        result = _fetch_jobs_result(
-            limit=limit,
-            phase=phase,
-            source=source,
-            trigger=trigger,
-            query=query,
-            failed=failed,
-            job_id=job_id,
-            since=since,
-            port=port,
-        )
+        # The refresh is one instance of the general problem of keeping the
+        # main thread interruptible across a blocking call, so it shares the
+        # process module's helper rather than carrying a second copy of the
+        # same threading rationale. A divergence between two copies would be a
+        # Ctrl+C that works in one operator view and not the other.
+        result = _call_interruptibly(fetch)
         if result is None:
             _exit_jobs_not_running(False, port)
         result = _apply_client_state_filter(result, client_state)
@@ -1115,13 +1075,8 @@ def _job_control_failure(
             exit_code,
             data=data or {},
         )
-    _cli.console.print(
-        f"Error: {message}",
-        markup=False,
-        highlight=False,
-        soft_wrap=True,
-    )
-    _cli.console.print(f"Code: {error}", markup=False, highlight=False)
+    _plain(f"Error: {message}", soft_wrap=True)
+    _plain(f"Code: {error}")
     raise typer.Exit(exit_code)
 
 
@@ -1288,25 +1243,17 @@ def _job_revision(
 
 def _render_job_control_outcome(result: dict[str, object]) -> None:
     message = str(result.get("message") or "Job request completed.")
-    _cli.console.print(message, markup=False, highlight=False, soft_wrap=True)
+    _plain(message, soft_wrap=True)
     code = result.get("code")
     if code:
-        _cli.console.print(f"Outcome: {code}", markup=False, highlight=False)
+        _plain(f"Outcome: {code}")
     raw_job = result.get("job")
     if not isinstance(raw_job, dict):
         return
     job = cast("dict[str, object]", raw_job)
-    _cli.console.print(f"Job: {job.get('id', '')}", markup=False, highlight=False)
-    _cli.console.print(
-        f"State: {job.get('state', 'not reported')}",
-        markup=False,
-        highlight=False,
-    )
-    _cli.console.print(
-        f"Desired state: {job.get('desired_state', 'not reported')}",
-        markup=False,
-        highlight=False,
-    )
+    _plain(f"Job: {job.get('id', '')}")
+    _plain(f"State: {job.get('state', 'not reported')}")
+    _plain(f"Desired state: {job.get('desired_state', 'not reported')}")
 
 
 def _complete_job_control(
@@ -1598,27 +1545,8 @@ def service_jobs(
         _exit_invalid_watch_args(json_mode, interval)
     if watch and json_mode:
         _exit_invalid_watch_args(json_mode, interval)
-    if watch:
-        try:
-            _watch_jobs(
-                limit=limit,
-                phase=phase,
-                source=source,
-                trigger=trigger,
-                query=query,
-                failed=failed,
-                job_id=job_id,
-                since=since,
-                port=resolved_port,
-                interval=interval,
-                refresh_count=refresh_count,
-                client_state=client_state,
-            )
-        except KeyboardInterrupt:
-            _cli.console.print("\n[dim]Stopped watching jobs.[/]")
-        return
-
-    result = _fetch_jobs_result(
+    spec = _JobsQuery(
+        port=resolved_port,
         limit=limit,
         phase=phase,
         source=source,
@@ -1627,8 +1555,23 @@ def service_jobs(
         failed=failed,
         job_id=job_id,
         since=since,
-        port=resolved_port,
     )
+    fetch = functools.partial(_fetch_jobs_result, spec)
+    if watch:
+        try:
+            _watch_jobs(
+                fetch,
+                job_id=job_id,
+                port=resolved_port,
+                interval=interval,
+                refresh_count=refresh_count,
+                client_state=client_state,
+            )
+        except KeyboardInterrupt:
+            _stop_watching()
+        return
+
+    result = fetch()
     if result is None:
         _exit_jobs_not_running(json_mode, resolved_port)
     result = _apply_client_state_filter(result, client_state)

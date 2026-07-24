@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#project-hardening'
-date: '2026-07-23'
-modified: '2026-07-23'
+date: '2026-07-24'
+modified: '2026-07-24'
 related:
   - '[[2026-05-03-discoverability-research]]'
   - '[[2026-05-03-project-hardening-code-review-audit]]'

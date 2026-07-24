@@ -6,12 +6,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 from .._job_errors import JobError, JobErrorKind
 from ..config import (
@@ -22,6 +18,7 @@ from ..config import (
     reset_config,
 )
 from ..memory_probe import MemoryBudget
+from ._scaffold import restore_env, set_env
 
 _RESILIENCE_CONFIG_CASES: tuple[
     tuple[str, EnvVar, str, object, str, object],
@@ -176,34 +173,13 @@ _RESILIENCE_CONFIG_CASES: tuple[
 _RESILIENCE_ENV_VARS = tuple(case[1] for case in _RESILIENCE_CONFIG_CASES)
 
 
-@pytest.fixture(autouse=True)
-def _reset_config_around_each_test(  # pyright: ignore[reportUnusedFunction]
-) -> Iterator[None]:
-    reset_config()
-    yield
-    reset_config()
-
-
-def _set_env(var: EnvVar, value: str) -> str | None:
-    prev = os.environ.get(var.value)
-    os.environ[var.value] = value
-    return prev
-
-
-def _restore_env(var: EnvVar, prev: str | None) -> None:
-    if prev is None:
-        os.environ.pop(var.value, None)
-    else:
-        os.environ[var.value] = prev
-
-
 def _clear_resilience_env() -> dict[EnvVar, str | None]:
     return {var: os.environ.pop(var.value, None) for var in _RESILIENCE_ENV_VARS}
 
 
 def _restore_resilience_env(saved: dict[EnvVar, str | None]) -> None:
     for var, previous in saved.items():
-        _restore_env(var, previous)
+        restore_env(var, previous)
 
 
 def test_service_idle_ttl_default() -> None:
@@ -224,11 +200,11 @@ def test_hf_cache_only_honours_supported_offline_modes(
     var: EnvVar,
     value: str,
 ) -> None:
-    previous = _set_env(var, value)
+    previous = set_env(var, value)
     try:
         assert hf_cache_only()
     finally:
-        _restore_env(var, previous)
+        restore_env(var, previous)
 
 
 def test_hf_cache_only_defaults_to_online_capable() -> None:
@@ -254,25 +230,25 @@ def test_empty_path_env_falls_back_to_default_not_cwd() -> None:
         "status_dir"
     ]
     reset_config()
-    prev = _set_env(EnvVar.STATUS_DIR, "   ")
+    prev = set_env(EnvVar.STATUS_DIR, "   ")
     reset_config()
     try:
         resolved = get_config().status_dir
         assert resolved == default
         assert str(resolved) not in ("", ".")
     finally:
-        _restore_env(EnvVar.STATUS_DIR, prev)
+        restore_env(EnvVar.STATUS_DIR, prev)
         reset_config()
 
 
 def test_nonempty_path_env_is_still_honoured() -> None:
     # Control: a real override must still win (M1 only neutralises blanks).
-    prev = _set_env(EnvVar.STATUS_DIR, "/custom/status/dir")
+    prev = set_env(EnvVar.STATUS_DIR, "/custom/status/dir")
     reset_config()
     try:
         assert str(get_config().status_dir) == "/custom/status/dir"
     finally:
-        _restore_env(EnvVar.STATUS_DIR, prev)
+        restore_env(EnvVar.STATUS_DIR, prev)
         reset_config()
 
 
@@ -428,7 +404,7 @@ def test_document_encode_batch_is_independent_of_vault_and_code() -> None:
 def test_document_encode_batch_env_override_is_independent() -> None:
     # The document knob overrides on its own env var without perturbing the
     # vault or code sub-batches.
-    prev = _set_env(EnvVar.EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE, "5")
+    prev = set_env(EnvVar.EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE, "5")
     try:
         reset_config()
         cfg = get_config()
@@ -438,12 +414,12 @@ def test_document_encode_batch_env_override_is_independent() -> None:
         assert cfg.embedding_encode_batch_size == 32
         assert cfg.embedding_code_encode_batch_size == 32
     finally:
-        _restore_env(EnvVar.EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE, prev)
+        restore_env(EnvVar.EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE, prev)
         reset_config()
 
 
 def test_service_idle_ttl_env_override() -> None:
-    prev = _set_env(EnvVar.SERVICE_IDLE_TTL_SECONDS, "60")
+    prev = set_env(EnvVar.SERVICE_IDLE_TTL_SECONDS, "60")
     try:
         reset_config()
         cfg = get_config()
@@ -451,12 +427,12 @@ def test_service_idle_ttl_env_override() -> None:
         assert value == 60
         assert isinstance(value, int)
     finally:
-        _restore_env(EnvVar.SERVICE_IDLE_TTL_SECONDS, prev)
+        restore_env(EnvVar.SERVICE_IDLE_TTL_SECONDS, prev)
         reset_config()
 
 
 def test_service_max_projects_env_override() -> None:
-    prev = _set_env(EnvVar.SERVICE_MAX_PROJECTS, "4")
+    prev = set_env(EnvVar.SERVICE_MAX_PROJECTS, "4")
     try:
         reset_config()
         cfg = get_config()
@@ -464,12 +440,12 @@ def test_service_max_projects_env_override() -> None:
         assert value == 4
         assert isinstance(value, int)
     finally:
-        _restore_env(EnvVar.SERVICE_MAX_PROJECTS, prev)
+        restore_env(EnvVar.SERVICE_MAX_PROJECTS, prev)
         reset_config()
 
 
 def test_managed_log_max_bytes_env_override() -> None:
-    prev = _set_env(EnvVar.MANAGED_LOG_MAX_BYTES, "4096")
+    prev = set_env(EnvVar.MANAGED_LOG_MAX_BYTES, "4096")
     try:
         reset_config()
         cfg = get_config()
@@ -477,12 +453,12 @@ def test_managed_log_max_bytes_env_override() -> None:
         assert value == 4096
         assert isinstance(value, int)
     finally:
-        _restore_env(EnvVar.MANAGED_LOG_MAX_BYTES, prev)
+        restore_env(EnvVar.MANAGED_LOG_MAX_BYTES, prev)
         reset_config()
 
 
 def test_managed_log_backup_count_env_override() -> None:
-    prev = _set_env(EnvVar.MANAGED_LOG_BACKUP_COUNT, "2")
+    prev = set_env(EnvVar.MANAGED_LOG_BACKUP_COUNT, "2")
     try:
         reset_config()
         cfg = get_config()
@@ -490,30 +466,30 @@ def test_managed_log_backup_count_env_override() -> None:
         assert value == 2
         assert isinstance(value, int)
     finally:
-        _restore_env(EnvVar.MANAGED_LOG_BACKUP_COUNT, prev)
+        restore_env(EnvVar.MANAGED_LOG_BACKUP_COUNT, prev)
         reset_config()
 
 
 @pytest.mark.parametrize("raw", ["0", "-1"])
 def test_managed_log_max_bytes_rejects_unbounded_values(raw: str) -> None:
-    prev = _set_env(EnvVar.MANAGED_LOG_MAX_BYTES, raw)
+    prev = set_env(EnvVar.MANAGED_LOG_MAX_BYTES, raw)
     try:
         reset_config()
         with pytest.raises(ValueError, match="must be a positive integer"):
             _ = get_config().managed_log_max_bytes
     finally:
-        _restore_env(EnvVar.MANAGED_LOG_MAX_BYTES, prev)
+        restore_env(EnvVar.MANAGED_LOG_MAX_BYTES, prev)
         reset_config()
 
 
 def test_managed_log_backup_count_rejects_negative_value() -> None:
-    prev = _set_env(EnvVar.MANAGED_LOG_BACKUP_COUNT, "-1")
+    prev = set_env(EnvVar.MANAGED_LOG_BACKUP_COUNT, "-1")
     try:
         reset_config()
         with pytest.raises(ValueError, match="must be a non-negative integer"):
             _ = get_config().managed_log_backup_count
     finally:
-        _restore_env(EnvVar.MANAGED_LOG_BACKUP_COUNT, prev)
+        restore_env(EnvVar.MANAGED_LOG_BACKUP_COUNT, prev)
         reset_config()
 
 
@@ -1033,7 +1009,7 @@ def test_watch_cooldown_s_default() -> None:
 
 
 def test_watch_debounce_ms_env_override() -> None:
-    prev = _set_env(EnvVar.WATCH_DEBOUNCE_MS, "500")
+    prev = set_env(EnvVar.WATCH_DEBOUNCE_MS, "500")
     try:
         reset_config()
         cfg = get_config()
@@ -1041,13 +1017,13 @@ def test_watch_debounce_ms_env_override() -> None:
         assert value == 500
         assert isinstance(value, int)
     finally:
-        _restore_env(EnvVar.WATCH_DEBOUNCE_MS, prev)
+        restore_env(EnvVar.WATCH_DEBOUNCE_MS, prev)
         reset_config()
 
 
 def test_watch_debounce_ms_env_zero_means_no_delay() -> None:
     # 0 is a valid tuning value (no debounce), NOT a disable sentinel.
-    prev = _set_env(EnvVar.WATCH_DEBOUNCE_MS, "0")
+    prev = set_env(EnvVar.WATCH_DEBOUNCE_MS, "0")
     try:
         reset_config()
         cfg = get_config()
@@ -1055,12 +1031,12 @@ def test_watch_debounce_ms_env_zero_means_no_delay() -> None:
         # The watcher stays enabled; only watch_enabled disables it.
         assert cfg.watch_enabled is True
     finally:
-        _restore_env(EnvVar.WATCH_DEBOUNCE_MS, prev)
+        restore_env(EnvVar.WATCH_DEBOUNCE_MS, prev)
         reset_config()
 
 
 def test_watch_cooldown_s_env_override() -> None:
-    prev = _set_env(EnvVar.WATCH_COOLDOWN_S, "1.5")
+    prev = set_env(EnvVar.WATCH_COOLDOWN_S, "1.5")
     try:
         reset_config()
         cfg = get_config()
@@ -1068,7 +1044,7 @@ def test_watch_cooldown_s_env_override() -> None:
         assert value == 1.5
         assert isinstance(value, float)
     finally:
-        _restore_env(EnvVar.WATCH_COOLDOWN_S, prev)
+        restore_env(EnvVar.WATCH_COOLDOWN_S, prev)
         reset_config()
 
 
@@ -1078,7 +1054,7 @@ def test_watch_cooldown_s_env_override() -> None:
     ids=["zero", "false-lower", "false-title", "no", "off", "empty"],
 )
 def test_watch_enabled_env_falsey(raw: str) -> None:
-    prev = _set_env(EnvVar.WATCH_ENABLED, raw)
+    prev = set_env(EnvVar.WATCH_ENABLED, raw)
     try:
         reset_config()
         cfg = get_config()
@@ -1086,7 +1062,7 @@ def test_watch_enabled_env_falsey(raw: str) -> None:
         assert value is False
         assert isinstance(value, bool)
     finally:
-        _restore_env(EnvVar.WATCH_ENABLED, prev)
+        restore_env(EnvVar.WATCH_ENABLED, prev)
         reset_config()
 
 
@@ -1096,7 +1072,7 @@ def test_watch_enabled_env_falsey(raw: str) -> None:
     ids=["one", "true-lower", "true-upper", "yes-lower", "yes-title"],
 )
 def test_watch_enabled_env_truthy(raw: str) -> None:
-    prev = _set_env(EnvVar.WATCH_ENABLED, raw)
+    prev = set_env(EnvVar.WATCH_ENABLED, raw)
     try:
         reset_config()
         cfg = get_config()
@@ -1104,7 +1080,7 @@ def test_watch_enabled_env_truthy(raw: str) -> None:
         assert value is True
         assert isinstance(value, bool)
     finally:
-        _restore_env(EnvVar.WATCH_ENABLED, prev)
+        restore_env(EnvVar.WATCH_ENABLED, prev)
         reset_config()
 
 
@@ -1124,7 +1100,7 @@ def _clear_server_mode_env() -> dict[EnvVar, str | None]:
 
 def _restore_server_mode_env(saved: dict[EnvVar, str | None]) -> None:
     for var, prev in saved.items():
-        _restore_env(var, prev)
+        restore_env(var, prev)
 
 
 def test_qdrant_server_default_is_true() -> None:
@@ -1253,8 +1229,8 @@ def test_parse_domain_set_drops_unknown_and_prod() -> None:
 
 
 def test_hide_wins_over_demote() -> None:
-    prev_hide = _set_env(EnvVar.CODE_NOISE_HIDE_DOMAINS, "worktree,tests")
-    prev_demote = _set_env(EnvVar.CODE_NOISE_DEMOTE_DOMAINS, "tests,docs")
+    prev_hide = set_env(EnvVar.CODE_NOISE_HIDE_DOMAINS, "worktree,tests")
+    prev_demote = set_env(EnvVar.CODE_NOISE_DEMOTE_DOMAINS, "tests,docs")
     try:
         reset_config()
         cfg = get_config()
@@ -1263,32 +1239,32 @@ def test_hide_wins_over_demote() -> None:
         assert "tests" not in cfg.code_noise_demote_domains
         assert cfg.code_noise_demote_domains == frozenset({"docs"})
     finally:
-        _restore_env(EnvVar.CODE_NOISE_HIDE_DOMAINS, prev_hide)
-        _restore_env(EnvVar.CODE_NOISE_DEMOTE_DOMAINS, prev_demote)
+        restore_env(EnvVar.CODE_NOISE_HIDE_DOMAINS, prev_hide)
+        restore_env(EnvVar.CODE_NOISE_DEMOTE_DOMAINS, prev_demote)
         reset_config()
 
 
 def test_code_noise_env_override_penalty_and_dedup() -> None:
-    prev_pen = _set_env(EnvVar.CODE_NOISE_DEMOTE_PENALTY, "0.5")
-    prev_dedup = _set_env(EnvVar.DEDUP_LOCALES_DEFAULT, "0")
+    prev_pen = set_env(EnvVar.CODE_NOISE_DEMOTE_PENALTY, "0.5")
+    prev_dedup = set_env(EnvVar.DEDUP_LOCALES_DEFAULT, "0")
     try:
         reset_config()
         cfg = get_config()
         assert cfg.code_noise_demote_penalty == pytest.approx(0.5)
         assert cfg.dedup_locales_default is False
     finally:
-        _restore_env(EnvVar.CODE_NOISE_DEMOTE_PENALTY, prev_pen)
-        _restore_env(EnvVar.DEDUP_LOCALES_DEFAULT, prev_dedup)
+        restore_env(EnvVar.CODE_NOISE_DEMOTE_PENALTY, prev_pen)
+        restore_env(EnvVar.DEDUP_LOCALES_DEFAULT, prev_dedup)
         reset_config()
 
 
 def test_reranker_enabled_env_override() -> None:
-    prev = _set_env(EnvVar.RERANKER_ENABLED, "0")
+    prev = set_env(EnvVar.RERANKER_ENABLED, "0")
     try:
         reset_config()
         assert get_config().reranker_enabled is False
     finally:
-        _restore_env(EnvVar.RERANKER_ENABLED, prev)
+        restore_env(EnvVar.RERANKER_ENABLED, prev)
         reset_config()
 
 
@@ -1309,7 +1285,7 @@ def test_index_reuse_enabled_default() -> None:
 def test_index_reuse_enabled_env_falsey(raw: str) -> None:
     # The off-switch parses off: any non-truthy value disables every donor
     # lookup and restores the encode-everything baseline in one flip.
-    prev = _set_env(EnvVar.INDEX_REUSE, raw)
+    prev = set_env(EnvVar.INDEX_REUSE, raw)
     try:
         reset_config()
         cfg = get_config()
@@ -1317,7 +1293,7 @@ def test_index_reuse_enabled_env_falsey(raw: str) -> None:
         assert value is False
         assert isinstance(value, bool)
     finally:
-        _restore_env(EnvVar.INDEX_REUSE, prev)
+        restore_env(EnvVar.INDEX_REUSE, prev)
         reset_config()
 
 
@@ -1327,7 +1303,7 @@ def test_index_reuse_enabled_env_falsey(raw: str) -> None:
     ids=["one", "true-lower", "true-upper", "yes-lower", "yes-title"],
 )
 def test_index_reuse_enabled_env_truthy(raw: str) -> None:
-    prev = _set_env(EnvVar.INDEX_REUSE, raw)
+    prev = set_env(EnvVar.INDEX_REUSE, raw)
     try:
         reset_config()
         cfg = get_config()
@@ -1335,7 +1311,7 @@ def test_index_reuse_enabled_env_truthy(raw: str) -> None:
         assert value is True
         assert isinstance(value, bool)
     finally:
-        _restore_env(EnvVar.INDEX_REUSE, prev)
+        restore_env(EnvVar.INDEX_REUSE, prev)
         reset_config()
 
 
@@ -1354,7 +1330,7 @@ def test_index_reuse_enabled_reset_config_picks_up_change() -> None:
     # reset_config clears the cached singleton so a fresh env value is served on
     # the next get_config(); this binds that the off-switch takes effect through
     # the same reset seam the other env-override knobs rely on.
-    prev = _set_env(EnvVar.INDEX_REUSE, "1")
+    prev = set_env(EnvVar.INDEX_REUSE, "1")
     try:
         reset_config()
         first = get_config()
@@ -1365,5 +1341,5 @@ def test_index_reuse_enabled_reset_config_picks_up_change() -> None:
         assert second is not first
         assert second.index_reuse_enabled is False
     finally:
-        _restore_env(EnvVar.INDEX_REUSE, prev)
+        restore_env(EnvVar.INDEX_REUSE, prev)
         reset_config()

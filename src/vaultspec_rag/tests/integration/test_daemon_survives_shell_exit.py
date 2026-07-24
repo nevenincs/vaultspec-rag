@@ -39,36 +39,17 @@ from ...cli._service_lifecycle import (
     _existing_service_running,
     _should_unlink_discovery_file,
 )
-from ...config import EnvVar, reset_config
 from ...serviceclient._discovery import (
     SERVICE_DISCOVERY_SCHEMA,
     SERVICE_DISCOVERY_VERSION,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
 
 pytestmark = [pytest.mark.integration]
 
 _DEAD_PID = 2_000_000_000
-
-
-@pytest.fixture()
-def isolated_status_dir(tmp_path: Path) -> Iterator[Path]:
-    prev = os.environ.get(EnvVar.STATUS_DIR.value)
-    status_dir = tmp_path / "vaultspec-rag"
-    status_dir.mkdir()
-    os.environ[EnvVar.STATUS_DIR.value] = str(status_dir)
-    reset_config()
-    try:
-        yield status_dir
-    finally:
-        if prev is None:
-            os.environ.pop(EnvVar.STATUS_DIR.value, None)
-        else:
-            os.environ[EnvVar.STATUS_DIR.value] = prev
-        reset_config()
 
 
 # ---------------------------------------------------------------------------

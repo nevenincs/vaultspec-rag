@@ -59,7 +59,6 @@ from ..commands._mode import (
 from ..config import EnvVar, persist_local_only, read_persisted_local_only, reset_config
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
@@ -93,13 +92,6 @@ _PROJECT_RAG_DEV_GROUP = (
     'dev = ["vaultspec-rag"]\n'
 )
 _PROJECT_BARE = '[project]\nname = "demo-consumer"\nversion = "0.1.0"\n'
-
-
-@pytest.fixture(autouse=True)
-def _reset_config_around_each_test() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
-    reset_config()
-    yield
-    reset_config()
 
 
 def _workspace(tmp_path: Path, pyproject: str | None) -> Path:

@@ -5,25 +5,16 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-import pytest
 from typer.testing import CliRunner
 
 from ..cli import app
-from ..config import EnvVar, reset_config
+from ..config import EnvVar
 from ..qdrant_runtime import QDRANT_SERVER_VERSION, binary_filename
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
 
 runner = CliRunner()
-
-
-@pytest.fixture(autouse=True)
-def _reset_config_around_each_test() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
-    reset_config()
-    yield
-    reset_config()
 
 
 def _labels(output: str) -> dict[str, str]:

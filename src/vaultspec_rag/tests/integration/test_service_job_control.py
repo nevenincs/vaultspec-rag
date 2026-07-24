@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import socket
 import threading
 import time
 from contextlib import contextmanager
@@ -32,6 +31,7 @@ from ...serviceclient import (
     _try_http_retry_job,
     _try_http_set_job_desired_state,
 )
+from .._ports import free_loopback_port
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -40,17 +40,11 @@ if TYPE_CHECKING:
 runner = CliRunner()
 
 
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
 @contextmanager
 def _real_job_control_server(tmp_path: Path) -> Generator[int]:
     """Run the production route table over a real loopback HTTP socket."""
     status_dir = tmp_path / "status"
-    port = _free_port()
+    port = free_loopback_port()
     token = "real-job-control-token"
     prior_status_dir = os.environ.get(EnvVar.STATUS_DIR)
     prior_watch_enabled = os.environ.get(EnvVar.WATCH_ENABLED)

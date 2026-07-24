@@ -116,9 +116,17 @@ def test_exactly_one_json_envelope_per_invocation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The broker contract requires exactly one structured document on stdout on
-    # every exit path; more than one line of JSON would break machine parsing.
+    # every exit path; more than one line would break machine parsing.
+    #
+    # Asserted against stdout alone, deliberately. ``result.output`` interleaves
+    # stdout and stderr, and this CLI routes diagnostics and progress to stderr
+    # on purpose so they survive --json without touching the result channel;
+    # asserting on the mix would fail on legitimate stderr output while proving
+    # nothing extra. Counting every stdout line - rather than only the ones that
+    # parse as JSON - is what makes this catch stray prose on the result
+    # channel, so do not relax it to a "lines starting with {" filter.
     _stub_admin(monkeypatch, {"ok": True, "status": "paused", "paused": True})
     result = runner.invoke(app, ["server", "pause", "--json"])
-    lines = [line for line in result.output.splitlines() if line.strip()]
-    assert len(lines) == 1, result.output
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    assert len(lines) == 1, result.stdout
     json.loads(lines[0])

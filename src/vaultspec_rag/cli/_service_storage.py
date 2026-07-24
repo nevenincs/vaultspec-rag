@@ -18,7 +18,8 @@ from typing import TYPE_CHECKING, cast
 import typer
 
 from ._app import server_storage_app
-from ._render import _emit_json, _emit_json_error_and_exit
+from ._progress import StartupStatusReporter
+from ._render import _emit_json, _emit_json_error_and_exit, _plain
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -47,6 +48,19 @@ def _human_size(num_bytes: int) -> str:
     return human_bytes(num_bytes)
 
 
+def _echo_fault(message: str) -> None:
+    """Print a failure line through the console the progress region owns.
+
+    The result tables below are rendered after the reporting block closes and
+    can safely use ``typer.echo``. These faults cannot: they are raised from
+    inside the block, while a live region may be open, and Rich can only erase
+    its frame before a line when the line arrives through its own console. A
+    raw stream write there is invisible to that bookkeeping and gets erased
+    with the frame.
+    """
+    _plain(message, soft_wrap=True)
+
+
 def _resolve_server_url(command: str, json_mode: bool) -> str:
     """Return the managed Qdrant URL, or exit 2 if server mode is off."""
     from ..config import get_config
@@ -59,7 +73,7 @@ def _resolve_server_url(command: str, json_mode: bool) -> str:
         )
         if json_mode:
             _emit_json_error_and_exit(command, "server_mode_required", message, 2)
-        typer.echo(message)
+        _echo_fault(message)
         raise typer.Exit(2)
     return str(getattr(cfg, "qdrant_url", "") or f"http://127.0.0.1:{cfg.qdrant_port}")
 
@@ -83,7 +97,7 @@ def _run_storage_op[T](
         )
         if json_mode:
             _emit_json_error_and_exit(command, "service_not_running", message, 3)
-        typer.echo(message)
+        _echo_fault(message)
         raise typer.Exit(3) from exc
     finally:
         client.close()
@@ -275,30 +289,42 @@ def storage_survey(
         # silently disagreeing with the CLI-direct fallback.
         root = str(pathlib.Path(root).resolve())
     queried_root: dict[str, str] | None = None
-    # The CLI-direct fallback below always computes live, so --fresh only
-    # needs to reach the service path.
-    fetched = _survey_from_service(root, fresh=fresh)
-    if fetched is not None:
-        surveys, queried_root = fetched
-    else:
-        from ..storage_ops import gather_survey, server_storage_collections_dir
+    # A survey counts points and walks the storage tree for every namespace,
+    # which is minutes on a large backend. Reporting stays inside this block;
+    # the table renders once it closes, so no result line can land inside a
+    # live frame.
+    with StartupStatusReporter(json_mode=json_mode) as progress:
+        progress.announce("Surveying stored index namespaces...")
+        progress.stage("Asking the running service for its survey...")
+        # The CLI-direct fallback below always computes live, so --fresh only
+        # needs to reach the service path.
+        fetched = _survey_from_service(root, fresh=fresh)
+        if fetched is not None:
+            surveys, queried_root = fetched
+        else:
+            from ..storage_ops import gather_survey, server_storage_collections_dir
 
-        surveys = _run_storage_op(
-            _SURVEY_CMD,
-            json_mode,
-            lambda c: gather_survey(c, server_storage_collections_dir()),
-        )
-        if root is not None:
-            import pathlib
+            progress.stage("No service answered; reading the store directly...")
+            surveys = _run_storage_op(
+                _SURVEY_CMD,
+                json_mode,
+                lambda c: gather_survey(
+                    c,
+                    server_storage_collections_dir(),
+                    on_progress=progress.stage,
+                ),
+            )
+            if root is not None:
+                import pathlib
 
-            from ..store import root_collection_prefix
+                from ..store import root_collection_prefix
 
-            prefix = root_collection_prefix(root)
-            queried_root = {
-                "root": str(pathlib.Path(root).resolve()),
-                "prefix": prefix,
-            }
-            surveys = [s for s in surveys if s.prefix == prefix]
+                prefix = root_collection_prefix(root)
+                queried_root = {
+                    "root": str(pathlib.Path(root).resolve()),
+                    "prefix": prefix,
+                }
+                surveys = [s for s in surveys if s.prefix == prefix]
     if orphaned_only:
         surveys = [s for s in surveys if s.status == "orphaned"]
     if unknown_only:
@@ -503,20 +529,29 @@ def storage_prune(
     _require_yes_for_json(_PRUNE_CMD, json_mode, yes)
     preview = dry_run or not yes
     storage_dir = server_storage_collections_dir()
-    result = _run_storage_op(
-        _PRUNE_CMD,
-        json_mode,
-        lambda c: prune_orphaned(c, dry_run=preview, storage_dir=storage_dir),
-    )
-    debris_result = (
-        _run_storage_op(
+    # A prune surveys the whole backend before it reclaims anything, so the
+    # silent part is the survey, not the deletes.
+    with StartupStatusReporter(json_mode=json_mode) as progress:
+        progress.announce("Reclaiming orphaned index namespaces...")
+        result = _run_storage_op(
             _PRUNE_CMD,
             json_mode,
-            lambda c: prune_debris(c, storage_dir, dry_run=preview),
+            lambda c: prune_orphaned(
+                c,
+                dry_run=preview,
+                storage_dir=storage_dir,
+                on_progress=progress.stage,
+            ),
         )
-        if debris
-        else None
-    )
+        if debris:
+            progress.stage("Scanning for debris collection dirs...")
+            debris_result = _run_storage_op(
+                _PRUNE_CMD,
+                json_mode,
+                lambda c: prune_debris(c, storage_dir, dry_run=preview),
+            )
+        else:
+            debris_result = None
     _render_prune(result, json_mode, debris_result)
     applied_anything = bool(result.results) or bool(
         debris_result.results if debris_result is not None else []
@@ -636,18 +671,24 @@ def storage_reconcile(
     preview = dry_run or not yes
     cfg = get_config()
     storage_dir = server_storage_collections_dir()
-    result = _run_storage_op(
-        _RECONCILE_CMD,
-        json_mode,
-        lambda c: reconcile_collections(
-            c,
-            storage_dir=storage_dir,
-            cap=limit if limit > 0 else _UNCAPPED_RECONCILE,
-            budget_s=float(cfg.storage_reconcile_budget_seconds),
-            dry_run=preview,
-            wait=wait,
-        ),
-    )
+    # With --wait (the default) each collection is held on until its optimizer
+    # settles, up to the configured per-collection budget, so a full pass over
+    # a drifted backend is the longest-running storage verb there is.
+    with StartupStatusReporter(json_mode=json_mode) as progress:
+        progress.announce("Reconciling collection geometry...")
+        result = _run_storage_op(
+            _RECONCILE_CMD,
+            json_mode,
+            lambda c: reconcile_collections(
+                c,
+                storage_dir=storage_dir,
+                cap=limit if limit > 0 else _UNCAPPED_RECONCILE,
+                budget_s=float(cfg.storage_reconcile_budget_seconds),
+                dry_run=preview,
+                wait=wait,
+                on_progress=progress.stage,
+            ),
+        )
     _render_reconcile(result, json_mode)
     if not dry_run and not yes and result.results:
         raise typer.Exit(1)
@@ -752,8 +793,15 @@ def storage_migrate(
     server = QdrantClient(url=url)
     src, dst = (local, server) if to_server else (server, local)
     preview = dry_run or not yes
+    # A real migrate copies every point of every collection across two
+    # backends; naming the collection in flight is the only signal that
+    # distinguishes a large copy from a stalled one.
     try:
-        results = migrate_collections(src, dst, name_map, dry_run=preview)
+        with StartupStatusReporter(json_mode=json_mode) as progress:
+            progress.announce(f"Migrating {root} to the {to_backend} backend...")
+            results = migrate_collections(
+                src, dst, name_map, dry_run=preview, on_progress=progress.stage
+            )
     except (OSError, RuntimeError) as exc:
         _emit_or_echo_error(
             _MIGRATE_CMD,
@@ -805,5 +853,5 @@ def _emit_or_echo_error(
     """Emit a JSON error or echo it, then exit with ``code``."""
     if json_mode:
         _emit_json_error_and_exit(command, error, message, code)
-    typer.echo(message)
+    _echo_fault(message)
     raise typer.Exit(code)

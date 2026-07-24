@@ -14,7 +14,7 @@ from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStub
 import vaultspec_rag.cli as _cli
 
 from ._app import _global_target, app
-from ._render import _render_install_report, _render_uninstall_report
+from ._render import _plain, _render_install_report, _render_uninstall_report
 
 # Group name used when ``--torch-group`` is passed without an explicit
 # value. Surfaced both in the help text and as the Click ``flag_value``.
@@ -288,20 +288,10 @@ def handle_install(
             mode=mode,
         )
     except ParseError as exc:
-        _cli.console.print(
-            f"Install failed: {exc}",
-            markup=False,
-            highlight=False,
-            soft_wrap=True,
-        )
+        _plain(f"Install failed: {exc}", soft_wrap=True)
         raise typer.Exit(code=2) from exc
     except Exception as exc:
-        _cli.console.print(
-            f"Install failed: {exc}",
-            markup=False,
-            highlight=False,
-            soft_wrap=True,
-        )
+        _plain(f"Install failed: {exc}", soft_wrap=True)
         raise typer.Exit(code=1) from exc
 
     if json_output:
@@ -426,12 +416,7 @@ def handle_uninstall(
             assume_yes=yes,
         )
     except Exception as exc:
-        _cli.console.print(
-            f"Uninstall failed: {exc}",
-            markup=False,
-            highlight=False,
-            soft_wrap=True,
-        )
+        _plain(f"Uninstall failed: {exc}", soft_wrap=True)
         raise typer.Exit(code=1) from exc
 
     if json_output:

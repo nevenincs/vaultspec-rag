@@ -24,7 +24,13 @@ import re
 from itertools import pairwise
 from typing import Literal
 
-__all__ = ["DOMAINS", "NOISE_DOMAINS", "Domain", "classify_domain"]
+__all__ = [
+    "DOMAINS",
+    "NOISE_DOMAINS",
+    "_LOCALE_FILE_EXTS",
+    "Domain",
+    "classify_domain",
+]
 
 Domain = Literal["prod", "tests", "docs", "locale", "generated", "vendored", "worktree"]
 

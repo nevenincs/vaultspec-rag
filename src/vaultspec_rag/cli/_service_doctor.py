@@ -22,11 +22,9 @@ from typing import Annotated, cast
 
 import typer
 
-import vaultspec_rag.cli as _cli
-
 from ..api import get_readiness
 from ._app import server_app
-from ._render import _emit_json
+from ._render import _emit_json, _plain
 
 #: The distribution name rag's own doctor rows read from the shared per-package
 #: ``.vaultspec/workspace.json`` map, so a mixed workspace's ``vaultspec-core``
@@ -277,17 +275,9 @@ def _render_readiness(
 ) -> None:
     """Render both readiness axes as a bounded plain-text summary."""
     server_mode = bool(report.get("server_mode"))
-    _cli.console.print("Service readiness", markup=False, highlight=False)
-    _cli.console.print(
-        f"Backend: {'server' if server_mode else 'local-only'}",
-        markup=False,
-        highlight=False,
-    )
-    _cli.console.print(
-        f"Readiness: {_overall_label(overall_ready, status)}",
-        markup=False,
-        highlight=False,
-    )
+    _plain("Service readiness")
+    _plain(f"Backend: {'server' if server_mode else 'local-only'}")
+    _plain(f"Readiness: {_overall_label(overall_ready, status)}")
     _render_live_service_axis(service)
     _render_dependency_axis(report)
 
@@ -300,29 +290,23 @@ def _render_mode_floor_axis(mode: dict[str, object] | None) -> None:
     """
     if mode is None:
         return
-    _cli.console.print("Provisioning (vaultspec-rag):", markup=False, highlight=False)
-    _cli.console.print(
-        f"  declared mode: {mode.get('declared_mode', '?')}",
-        markup=False,
-        highlight=False,
-    )
+    _plain("Provisioning (vaultspec-rag):")
+    _plain(f"  declared mode: {mode.get('declared_mode', '?')}")
     if mode.get("mode_mismatch") == "mismatch":
         detail = "mismatch - .mcp.json launch shape disagrees with the declared mode"
     elif mode.get("mode_mismatch") == "unknown":
         detail = "unknown - no mode declared"
     else:
         detail = "ok - artifacts match the declared mode"
-    _cli.console.print(f"  install mode: {detail}", markup=False, highlight=False)
+    _plain(f"  install mode: {detail}")
     if mode.get("version_floor") == "below":
-        _cli.console.print(
+        _plain(
             f"  version floor: error - running {mode.get('version_floor_running')} "
             f"is below the declared floor {mode.get('version_floor_minimum')}; "
-            f"upgrade with uv tool upgrade vaultspec-rag",
-            markup=False,
-            highlight=False,
+            f"upgrade with uv tool upgrade vaultspec-rag"
         )
     else:
-        _cli.console.print("  version floor: ok", markup=False, highlight=False)
+        _plain("  version floor: ok")
 
 
 def _overall_label(overall_ready: bool, status: str) -> str:
@@ -335,52 +319,34 @@ def _overall_label(overall_ready: bool, status: str) -> str:
 
 def _render_live_service_axis(service: dict[str, object]) -> None:
     """Render the live-service axis block, clearly labelled and separate."""
-    _cli.console.print("Live service:", markup=False, highlight=False)
+    _plain("Live service:")
     if not service.get("present"):
-        _cli.console.print(
-            f"  {service.get('label', 'no service has been started')}",
-            markup=False,
-            highlight=False,
-        )
+        _plain(f"  {service.get('label', 'no service has been started')}")
         return
     state_word = "running" if service.get("live") else "not running"
-    _cli.console.print(
-        f"  status: {state_word} ({service.get('label', service.get('state', '?'))})",
-        markup=False,
-        highlight=False,
+    _plain(
+        f"  status: {state_word} ({service.get('label', service.get('state', '?'))})"
     )
-    _cli.console.print(
+    _plain(
         f"  process: pid {service.get('pid')} "
-        f"({'alive' if service.get('pid_alive') else 'not alive'})",
-        markup=False,
-        highlight=False,
+        f"({'alive' if service.get('pid_alive') else 'not alive'})"
     )
-    _cli.console.print(
+    _plain(
         f"  network: port {service.get('port')} "
-        f"({'listening' if service.get('port_listening') else 'not listening'})",
-        markup=False,
-        highlight=False,
+        f"({'listening' if service.get('port_listening') else 'not listening'})"
     )
     heartbeat_age = service.get("heartbeat_age_seconds")
     if isinstance(heartbeat_age, int | float) and not isinstance(heartbeat_age, bool):
         suffix = " (stale)" if service.get("heartbeat_stale") else ""
-        _cli.console.print(
-            f"  heartbeat: {heartbeat_age:.0f}s ago{suffix}",
-            markup=False,
-            highlight=False,
-        )
+        _plain(f"  heartbeat: {heartbeat_age:.0f}s ago{suffix}")
     else:
-        _cli.console.print("  heartbeat: absent", markup=False, highlight=False)
+        _plain("  heartbeat: absent")
 
 
 def _render_dependency_axis(report: dict[str, object]) -> None:
     """Render the installed-dependency axis block, clearly labelled and separate."""
     deps_ready = bool(report.get("ready"))
-    _cli.console.print(
-        f"Installed dependencies: {'ready' if deps_ready else 'not ready'}",
-        markup=False,
-        highlight=False,
-    )
+    _plain(f"Installed dependencies: {'ready' if deps_ready else 'not ready'}")
     deps = report.get("dependencies")
     dep_list = cast("list[object]", deps) if isinstance(deps, list) else []
     for dep in dep_list:
@@ -391,4 +357,4 @@ def _render_dependency_axis(report: dict[str, object]) -> None:
         dep_status = str(dep_map.get("status", "unknown"))
         detail = str(dep_map.get("detail", ""))
         line = f"  {name}: {dep_status}" + (f" - {detail}" if detail else "")
-        _cli.console.print(line, markup=False, highlight=False)
+        _plain(line)

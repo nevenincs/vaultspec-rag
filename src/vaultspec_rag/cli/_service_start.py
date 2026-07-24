@@ -9,12 +9,11 @@ terminal outcome. Every terminal branch converges on ``_start_success`` /
 
 from __future__ import annotations
 
-import contextlib
 import os
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import Annotated, Literal, cast
 
 import typer
 
@@ -32,11 +31,13 @@ from ._gpu_errors import (
 from ._http_search import _try_http_health
 from ._process import (
     DaemonBreakawayError,
+    _call_interruptibly,
     _port_is_available,
     _probe_daemon_cuda,
     _resolve_daemon_interpreter,
     _spawn_service,
 )
+from ._progress import StartupStatusReporter
 from ._render import _emit_json
 from ._service_lifecycle import (
     _address_line,
@@ -55,12 +56,11 @@ from ._service_status import (
     _update_service_token,
     _write_service_status,
 )
-
-if TYPE_CHECKING:
-    from rich.status import Status
+from ._status_labels import degradation_findings, render_degradation
 
 __all__ = [
     "_caller_ephemeral_warning",
+    "_daemon_is_serving",
     "_ephemeral_env_warning",
     "_existing_service_running",
     "_fail_start",
@@ -72,7 +72,12 @@ __all__ = [
 _START_COMMAND = "service.start"
 
 
-def _ensure_qdrant_binary(*, auto_provision: bool, json_mode: bool = False) -> None:
+def _ensure_qdrant_binary(
+    *,
+    auto_provision: bool,
+    json_mode: bool = False,
+    progress: StartupStatusReporter | None = None,
+) -> None:
     """Fail fast (or provision with consent) before a server-mode start.
 
     Server mode is the default backend, so this guard runs by default and
@@ -98,7 +103,15 @@ def _ensure_qdrant_binary(*, auto_provision: bool, json_mode: bool = False) -> N
                 "Local-only option: vaultspec-rag server start --local-only",
             ),
         )
-    report = provision()
+    # A first-use provision downloads and verifies a native archive over the
+    # network, which is the longest stall a first start can hit. The stage line
+    # says it started; the callback carries the byte counts underneath it, so a
+    # slow link is distinguishable from a wedged one.
+    if progress is not None:
+        progress.stage("Downloading the Qdrant server (first use)...")
+        report = provision(on_progress=progress.stage)
+    else:
+        report = provision()
     if report.action == QdrantProvisionAction.FAILED or resolve_binary() is None:
         raise _fail_start(
             json_mode,
@@ -611,73 +624,97 @@ def service_start(
 ) -> None:
     """Start the background search service."""
     preprocess_forward: Literal["off"] | None = "off" if no_preprocess else None
-    # Idempotent check FIRST: a healthy owned service already running is a
-    # SUCCESS (`already_running`, exit 0), decided before the port/machine guards
-    # so the friendly path is no longer shadowed by the port-guard exit 1 - a
-    # supervising broker attaches instead of seeing a gateway fault.
-    # The attach paths below never resolve a daemon interpreter, so the
-    # daemon-side ephemeral warning cannot fire for them. The caller's own env
-    # is the condition that matters here: an operator invoking from a uvx cache
-    # env still walks into the forced-reinstall trap, and `already_running` is
-    # the outcome a long-lived daemon returns almost every time.
-    caller_warnings = _caller_ephemeral_warning()
-    if _attach_existing_service(json_mode, caller_warnings):
-        return
+    with StartupStatusReporter(json_mode=json_mode) as progress:
+        # The very first thing the command does, before any probe that can
+        # block. Everything below - the machine-lock probe, a first-use qdrant
+        # download, an interpreter subprocess that imports torch, and finally a
+        # model load that legitimately runs for minutes - is slow enough that an
+        # operator reads silence as a hang. Announcing costs nothing and is the
+        # one line that must survive every code path, including a piped stdout.
+        progress.announce("Starting vaultspec-rag service...")
 
-    # A live owned daemon that stamped ``warming`` holds the machine lock but
-    # is not yet serving (models loading, port silent), so the health-based
-    # check above misses it. That is a start already in progress - an
-    # attachable success, not the machine_owned fault the guard below would
-    # report (issue #237). A reused pid must not resurrect a stale stamp,
-    # hence the liveness + identity checks.
-    if _attach_warming_service(json_mode):
-        return
+        # Idempotent check FIRST: a healthy owned service already running is a
+        # SUCCESS (`already_running`, exit 0), decided before the port/machine
+        # guards so the friendly path is no longer shadowed by the port-guard
+        # exit 1 - a supervising broker attaches instead of seeing a gateway
+        # fault.
+        # The attach paths below never resolve a daemon interpreter, so the
+        # daemon-side ephemeral warning cannot fire for them. The caller's own
+        # env is the condition that matters here: an operator invoking from a
+        # uvx cache env still walks into the forced-reinstall trap, and
+        # `already_running` is the outcome a long-lived daemon returns almost
+        # every time.
+        progress.stage("Checking for a service already running...")
+        caller_warnings = _caller_ephemeral_warning()
+        if _attach_existing_service(json_mode, caller_warnings):
+            return
 
-    _guard_start_preconditions(port, json_mode)
+        # A live owned daemon that stamped ``warming`` holds the machine lock
+        # but is not yet serving (models loading, port silent), so the
+        # health-based check above misses it. That is a start already in
+        # progress - an attachable success, not the machine_owned fault the
+        # guard below would report. A reused pid must not resurrect a stale
+        # stamp, hence the liveness + identity checks.
+        if _attach_warming_service(json_mode):
+            return
 
-    # Server mode is the default backend, so the qdrant-binary guard runs
-    # by default. --local-only (and an explicit --no-qdrant) select the
-    # on-disk store and skip it, so a default start fails fast on a missing
-    # binary while the local opt-out never touches the server.
-    if not local_only and qdrant is not False:
-        _ensure_qdrant_binary(auto_provision=qdrant_auto_provision, json_mode=json_mode)
+        progress.stage("Checking the port and machine singleton...")
+        _guard_start_preconditions(port, json_mode)
 
-    # Operator visibility for the target root's preprocess rules.
-    # Best-effort and human-only so the --json envelope stays a single document.
-    if not json_mode:
-        effective_mode = preprocess_forward or get_config().preprocess_mode
-        _print_preprocess_start_notice(
-            _global_target(ctx) or Path.cwd(),
-            effective_mode,
+        # Server mode is the default backend, so the qdrant-binary guard runs
+        # by default. --local-only (and an explicit --no-qdrant) select the
+        # on-disk store and skip it, so a default start fails fast on a missing
+        # binary while the local opt-out never touches the server.
+        if not local_only and qdrant is not False:
+            progress.stage("Checking the Qdrant server binary...")
+            _ensure_qdrant_binary(
+                auto_provision=qdrant_auto_provision,
+                json_mode=json_mode,
+                progress=progress,
+            )
+
+        # Operator visibility for the target root's preprocess rules.
+        # Best-effort and human-only so the --json envelope stays a single
+        # document.
+        if not json_mode:
+            effective_mode = preprocess_forward or get_config().preprocess_mode
+            _print_preprocess_start_notice(
+                _global_target(ctx) or Path.cwd(),
+                effective_mode,
+            )
+
+        log_path = _log_file()
+        interpreter = _resolve_daemon_interpreter()
+        env_warnings = _ephemeral_env_warning(interpreter)
+        if env_warnings and not json_mode:
+            _print_lifecycle_lines(*env_warnings)
+        # This probe spawns the daemon interpreter and imports torch in it,
+        # which is the single longest pre-spawn stall (its own timeout is 60s).
+        progress.stage("Checking GPU support in the service environment...")
+        _preflight_daemon_cuda(interpreter, json_mode=json_mode)
+        t0 = time.perf_counter()
+        progress.stage("Launching the service process...")
+        pid = _spawn_prepared_service(
+            port,
+            log_path,
+            updates=updates,
+            update_delay_ms=update_delay_ms,
+            repeat_update_delay_s=repeat_update_delay_s,
+            qdrant=qdrant,
+            local_only=local_only,
+            preprocess_forward=preprocess_forward,
+            json_mode=json_mode,
         )
-
-    log_path = _log_file()
-    interpreter = _resolve_daemon_interpreter()
-    env_warnings = _ephemeral_env_warning(interpreter)
-    if env_warnings and not json_mode:
-        _print_lifecycle_lines(*env_warnings)
-    _preflight_daemon_cuda(interpreter, json_mode=json_mode)
-    t0 = time.perf_counter()
-    pid = _spawn_prepared_service(
-        port,
-        log_path,
-        updates=updates,
-        update_delay_ms=update_delay_ms,
-        repeat_update_delay_s=repeat_update_delay_s,
-        qdrant=qdrant,
-        local_only=local_only,
-        preprocess_forward=preprocess_forward,
-        json_mode=json_mode,
-    )
-    _write_service_status(pid, port)
-    _await_service_ready(
-        pid,
-        port,
-        log_path,
-        json_mode=json_mode,
-        t0=t0,
-        env_warnings=env_warnings,
-    )
+        _write_service_status(pid, port)
+        _await_service_ready(
+            pid,
+            port,
+            log_path,
+            json_mode=json_mode,
+            t0=t0,
+            env_warnings=env_warnings,
+            progress=progress,
+        )
 
 
 def _ephemeral_env_warning(interpreter: str) -> tuple[str, ...]:
@@ -731,6 +768,53 @@ def _caller_ephemeral_warning(interpreter: str | None = None) -> tuple[str, ...]
     )
 
 
+def _daemon_is_serving(health: dict[str, object]) -> bool:
+    """Whether the daemon can answer searches now, ignoring job history.
+
+    ``status == "ready"`` is the wrong gate for the start wait. The daemon also
+    reports ``degraded`` for job-history facts - an indexing job that failed or
+    stalled - which say nothing about its ability to answer a query, and a
+    failure recorded by an earlier daemon generation keeps that flag raised
+    indefinitely. Gating the spawn wait on the strict word therefore reports a
+    perfectly healthy service as a five-minute timeout, which is also
+    inconsistent with the attach path, where a degraded service has always been
+    an ``already_running`` success.
+
+    Start instead waits on the two infrastructure conditions that genuinely
+    gate serving: the embedding models are resident, and the configured vector
+    backend is live. Both are read from structured fields, never from the prose
+    reason list, which is display text and may be reworded at any time.
+    """
+    if not health.get("models_loaded"):
+        return False
+    qdrant = health.get("qdrant")
+    if isinstance(qdrant, dict):
+        state = cast("dict[str, object]", qdrant)
+        if state.get("mode") == "server":
+            return bool(state.get("alive"))
+    return True
+
+
+def _serving_warning_lines(health: dict[str, object]) -> tuple[str, ...]:
+    """Render a serving-but-degraded start's warnings, compactly.
+
+    A start that succeeded against a degraded daemon must say why it is
+    degraded, or the operator learns only that something is wrong from some
+    later command. The rendering itself belongs to the status renderer, which
+    is the one place that knows how to phrase a degradation and which command
+    remedies it; start only chooses the compact shape - cause lines, no
+    per-cause remediation, because the operator is mid-command and the full
+    treatment belongs to ``server status``.
+    """
+    return tuple(
+        render_degradation(
+            health,
+            header="Serving, with warnings:",
+            remediation=False,
+        )
+    )
+
+
 def _startup_phase_label(health: dict[str, object] | None) -> str:
     """Describe what the spawned daemon is doing right now, for the wait spinner.
 
@@ -771,6 +855,91 @@ def _startup_count_suffix(status: dict[str, object] | None) -> str:
     return ""
 
 
+def _fail_start_died(
+    pid: int,
+    port: int,
+    log_path: Path,
+    json_mode: bool,
+) -> typer.Exit:
+    """Render the outcome for a daemon that exited during the wait.
+
+    The daemon is detached, so whatever killed it is written only to its log.
+    Tailing that log here is what turns "the process died" into a diagnosis
+    the operator can act on without going looking for the file first.
+    """
+    _delete_service_status()
+    tail = _tail_daemon_log(log_path)
+    human = [_process_line(pid), _address_line(port)]
+    if tail:
+        human.append("Last log lines:")
+        human.extend(f"  {ln}" for ln in tail)
+    human.append(f"Log: {log_path}")
+    return _fail_start(
+        json_mode,
+        error="start_died",
+        message="Service start failed",
+        human_lines=tuple(human),
+        pid=pid,
+        port=port,
+        log=str(log_path),
+    )
+
+
+def _emit_start_succeeded(
+    health: dict[str, object],
+    *,
+    pid: int,
+    port: int,
+    log_path: Path,
+    t0: float,
+    json_mode: bool,
+    env_warnings: tuple[str, ...],
+) -> None:
+    """Record the serving daemon's identity and emit the success outcome.
+
+    A serving-but-degraded daemon is a success, so the degradation travels with
+    the outcome instead of being dropped: human callers get the reasons, brokers
+    get the structured fields.
+    """
+    # Persist the token from /health into service.json so auto-delegation auth
+    # works before the first heartbeat tick overwrites the file.
+    token_from_health = health.get("service_token")
+    if isinstance(token_from_health, str) and token_from_health:
+        _update_service_token(token_from_health)
+    serving_pid = _health_service_pid(health, pid)
+    _update_service_metadata(_status_metadata_from_health(health, pid=serving_pid))
+    startup_s = time.perf_counter() - t0
+    extra: dict[str, object] = {"warnings": list(env_warnings)} if env_warnings else {}
+    raw_status = health.get("status")
+    health_status = raw_status if isinstance(raw_status, str) and raw_status else ""
+    reason_lines: tuple[str, ...] = ()
+    if health_status and health_status != "ready":
+        reason_lines = _serving_warning_lines(health)
+        extra["health"] = health_status
+        # One extraction feeds both surfaces, so the envelope can never claim a
+        # different set of reasons than the human lines printed beside it.
+        reasons = [finding.cause for finding in degradation_findings(health)]
+        if reasons:
+            extra["degraded_reasons"] = reasons
+    _start_success(
+        json_mode,
+        status="started",
+        human_title="Service started",
+        human_lines=(
+            _process_line(serving_pid),
+            _address_line(port),
+            f"Startup: {startup_s:.1f}s",
+            f"Log: {log_path}",
+            *reason_lines,
+        ),
+        pid=serving_pid,
+        port=port,
+        startup_s=round(startup_s, 1),
+        log=str(log_path),
+        **extra,
+    )
+
+
 def _await_service_ready(
     pid: int,
     port: int,
@@ -779,15 +948,18 @@ def _await_service_ready(
     json_mode: bool,
     t0: float,
     env_warnings: tuple[str, ...] = (),
+    progress: StartupStatusReporter | None = None,
+    deadline: float = 300.0,
 ) -> None:
-    """Poll the spawned daemon's health until it is ready, or fail/time out.
+    """Poll the spawned daemon until it is serving, or fail/time out.
 
     Extracted from :func:`service_start` so the guard sequence and the health
     wait each read as one unit. Emits the terminal outcome itself: the success
-    envelope on readiness, a typed failure if the process dies, and a timeout
-    failure if it never reports ready within the deadline. Health is polled with
-    exponential backoff; the live spinner is suppressed in ``--json`` mode so a
-    single clean envelope reaches stdout.
+    envelope once the daemon can serve, a typed failure if the process dies, and
+    a timeout failure if it never comes up within the deadline. Health is polled
+    with exponential backoff, and every poll refreshes the operator-facing
+    progress line so a minutes-long model load stays distinguishable from a
+    wedged daemon.
 
     Args:
         pid: The spawned daemon process id.
@@ -796,85 +968,61 @@ def _await_service_ready(
         json_mode: Whether to emit a machine-readable outcome envelope.
         t0: The ``time.perf_counter`` reading taken just before the spawn, for
             the reported startup duration.
+        env_warnings: Daemon-interpreter warnings to carry into the outcome.
+        progress: The reporter that renders the wait; ``None`` polls silently.
+        deadline: Seconds to wait before reporting a timeout. A parameter so the
+            timeout branch is reachable in a test without waiting out the real
+            budget; callers take the default.
     """
     delay = 0.1
-    deadline = 300.0
     elapsed = 0.0
-    spinner: contextlib.AbstractContextManager[Status | None] = (
-        contextlib.nullcontext()
-        if json_mode
-        else _cli.console.status("Starting service...")
-    )
+    last_health: dict[str, object] | None = None
+    if progress is not None:
+        # Announced once rather than repeated on every tick: the operator wants
+        # it to tail a slow start, and it is far too long to sit in a status
+        # line that refreshes every few seconds.
+        progress.announce(f"Log: {log_path}")
     try:
-        with spinner as spinner_status:
-            while elapsed < deadline:
-                time.sleep(delay)
-                elapsed = time.perf_counter() - t0
+        while elapsed < deadline:
+            time.sleep(delay)
+            elapsed = time.perf_counter() - t0
 
-                # Check if process died (port conflict, etc.)
-                if not _cli._is_pid_alive(pid):
-                    _delete_service_status()
-                    tail = _tail_daemon_log(log_path)
-                    human = [_process_line(pid), _address_line(port)]
-                    if tail:
-                        human.append("Last log lines:")
-                        human.extend(f"  {ln}" for ln in tail)
-                    human.append(f"Log: {log_path}")
-                    raise _fail_start(
-                        json_mode,
-                        error="start_died",
-                        message="Service start failed",
-                        human_lines=tuple(human),
+            # Check if process died (port conflict, etc.)
+            if not _cli._is_pid_alive(pid):
+                raise _fail_start_died(pid, port, log_path, json_mode)
+
+            # Run the probe off the main thread: a health request blocks in a
+            # socket read for its whole timeout, and a thread parked there
+            # reaches no interpreter check, so an operator's Ctrl+C would be
+            # dead for seconds at a time during the very wait they are trying
+            # to abandon.
+            health = _call_interruptibly(lambda: _try_http_health(port))
+            if health is not None:
+                last_health = health
+                if _daemon_is_serving(health):
+                    _emit_start_succeeded(
+                        health,
                         pid=pid,
                         port=port,
-                        log=str(log_path),
-                    )
-
-                health = _try_http_health(port)
-                if health is not None and health.get("status") == "ready":
-                    # Persist the token from /health into service.json so
-                    # auto-delegation auth works before the first heartbeat
-                    # tick overwrites the file.
-                    token_from_health = health.get("service_token")
-                    if isinstance(token_from_health, str) and token_from_health:
-                        _update_service_token(token_from_health)
-                    pid = _health_service_pid(health, pid)
-                    _update_service_metadata(
-                        _status_metadata_from_health(health, pid=pid)
-                    )
-                    startup_s = time.perf_counter() - t0
-                    extra: dict[str, object] = (
-                        {"warnings": list(env_warnings)} if env_warnings else {}
-                    )
-                    _start_success(
-                        json_mode,
-                        status="started",
-                        human_title="Service started",
-                        human_lines=(
-                            _process_line(pid),
-                            _address_line(port),
-                            f"Startup: {startup_s:.1f}s",
-                            f"Log: {log_path}",
-                        ),
-                        pid=pid,
-                        port=port,
-                        startup_s=round(startup_s, 1),
-                        log=str(log_path),
-                        **extra,
+                        log_path=log_path,
+                        t0=t0,
+                        json_mode=json_mode,
+                        env_warnings=env_warnings,
                     )
                     return
 
-                # Surface the cold-start phase instead of a static spinner:
-                # the daemon stamps ``warming`` while models load, and once
-                # serving /health reports its own status - a minutes-long cold
-                # start must be distinguishable from a wedged daemon.
-                if spinner_status is not None:
-                    spinner_status.update(
-                        f"Starting service... {_startup_phase_label(health)} "
-                        f"({elapsed:.0f}s elapsed, log: {log_path})"
-                    )
+            # Surface the cold-start phase rather than a static label: the
+            # daemon stamps ``warming`` while models load, and once serving
+            # /health reports its own status - a minutes-long cold start must
+            # be distinguishable from a wedged daemon. Refreshed every poll so
+            # the elapsed counter advances even when the phase does not.
+            if progress is not None:
+                progress.heartbeat(
+                    f"Starting service... {_startup_phase_label(health)} "
+                    f"({elapsed:.0f}s elapsed)"
+                )
 
-                delay = min(delay * 2, 5.0)
+            delay = min(delay * 2, 5.0)
     except KeyboardInterrupt:
         # The foreground wait ended but the detached daemon keeps starting -
         # say so instead of exiting silently while it warms invisibly
@@ -894,6 +1042,9 @@ def _await_service_ready(
             log=str(log_path),
         ) from None
 
+    # Report the last phase the daemon published rather than a bare "not ready":
+    # a timeout that names the stage it died on (provisioning, model load, never
+    # answered at all) is the difference between a diagnosis and a mystery.
     raise _fail_start(
         json_mode,
         error="start_timeout",
@@ -901,10 +1052,13 @@ def _await_service_ready(
         human_lines=(
             f"Waited: {deadline:.0f}s",
             _process_line(pid),
-            "Server: process is running but not ready",
+            f"Server: process is running but not serving "
+            f"({_startup_phase_label(last_health)})",
+            *_serving_warning_lines(last_health or {}),
             f"Log: {log_path}",
         ),
         pid=pid,
         waited_s=deadline,
+        last_phase=_startup_phase_label(last_health),
         log=str(log_path),
     )

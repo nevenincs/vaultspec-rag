@@ -7,9 +7,8 @@ from typing import TYPE_CHECKING
 
 import typer
 
-import vaultspec_rag.cli as _cli
-
 from ._core import logger
+from ._render import _plain
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -248,7 +247,7 @@ def warn_if_active_torch_not_gpu() -> None:
             "  torch is a CUDA build but no CUDA device is visible (driver or "
             "hardware). Run nvidia-smi to check."
         )
-        _cli.console.print("\n".join(lines), markup=False, highlight=False)
+        _plain("\n".join(lines))
         return
 
     kind = classify_runtime_env()
@@ -282,7 +281,7 @@ def warn_if_active_torch_not_gpu() -> None:
             "    vaultspec-rag install   (patches pyproject.toml with the cu130 index)",
             "    uv sync --reinstall-package torch",
         ]
-    _cli.console.print("\n".join(lines), markup=False, highlight=False)
+    _plain("\n".join(lines))
 
 
 def _handle_gpu_error(exc: Exception) -> NoReturn:
@@ -327,12 +326,12 @@ def _handle_gpu_error(exc: Exception) -> NoReturn:
             diagnosis = TorchDiagnosis.NO_TORCH
 
     if diagnosis == TorchDiagnosis.NO_TORCH:
-        _cli.console.print(_no_torch_message(), markup=False, highlight=False)
+        _plain(_no_torch_message())
     elif diagnosis == TorchDiagnosis.CPU_ONLY:
-        _cli.console.print(_cpu_only_message(), markup=False, highlight=False)
-        _cli.console.print(manual_snippet(), markup=False, highlight=False)
+        _plain(_cpu_only_message())
+        _plain(manual_snippet())
     elif diagnosis == TorchDiagnosis.NO_GPU:
-        _cli.console.print(_no_gpu_message(), markup=False, highlight=False)
+        _plain(_no_gpu_message())
     else:
-        _cli.console.print(f"Error: {exc}", markup=False, highlight=False)
+        _plain(f"Error: {exc}")
     raise typer.Exit(code=1)

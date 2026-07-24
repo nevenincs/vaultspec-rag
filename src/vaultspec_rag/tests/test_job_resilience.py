@@ -119,9 +119,9 @@ async def test_resilience_is_owned_persisted_and_shared_by_status_adapters(
             "No-progress budget remaining: 4 minutes 47 seconds",
             "Retry circuit: closed",
             "Next retry: 2024-07-26 13:21:00 UTC",
-            "RSS high-water / ceiling: 512.0 MB / 2048.0 MB",
-            "CUDA allocated high-water: 768.0 MB",
-            "CUDA reserved high-water / ceiling: 896.0 MB / 4096.0 MB",
+            "RSS high-water / ceiling: 512.0 MiB / 2.0 GiB",
+            "CUDA allocated high-water: 768.0 MiB",
+            "CUDA reserved high-water / ceiling: 896.0 MiB / 4.0 GiB",
             "Index outcome: incomplete",
         )
 

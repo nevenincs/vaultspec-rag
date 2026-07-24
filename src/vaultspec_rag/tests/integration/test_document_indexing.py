@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ...progress import NullProgressReporter
+from ._helpers import _document_policy
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -17,20 +18,6 @@ if TYPE_CHECKING:
     from ...embeddings import EmbeddingModel
 
 pytestmark = [pytest.mark.integration]
-
-
-def _document_policy(pattern: str):
-    from ...indexer._content_policy import (
-        ContentKind,
-        ContentRoute,
-        RootContentPolicy,
-        SourceProfileVersion,
-    )
-
-    return RootContentPolicy(
-        SourceProfileVersion.CONVENTIONAL_V1,
-        (ContentRoute(pattern, ContentKind.DOCUMENT),),
-    )
 
 
 @pytest.mark.timeout(600)

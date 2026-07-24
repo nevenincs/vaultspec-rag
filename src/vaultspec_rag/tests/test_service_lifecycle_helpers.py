@@ -9,37 +9,16 @@ see the ``feedback_service_tests_isolate_STATUS_DIR`` memory note).
 from __future__ import annotations
 
 import json
-import os
 from typing import TYPE_CHECKING
 
 import pytest
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
 
 from ..cli._service_status import _update_service_token
-from ..config import EnvVar, reset_config
 
 pytestmark = [pytest.mark.unit]
-
-
-@pytest.fixture()
-def isolated_status_dir(tmp_path: Path) -> Iterator[Path]:
-    """Redirect the service status dir to *tmp_path* for the test duration."""
-    prev = os.environ.get(EnvVar.STATUS_DIR.value)
-    status_dir = tmp_path / "vaultspec-rag"
-    status_dir.mkdir()
-    os.environ[EnvVar.STATUS_DIR.value] = str(status_dir)
-    reset_config()
-    try:
-        yield status_dir
-    finally:
-        if prev is None:
-            os.environ.pop(EnvVar.STATUS_DIR.value, None)
-        else:
-            os.environ[EnvVar.STATUS_DIR.value] = prev
-        reset_config()
 
 
 # ---------------------------------------------------------------------------
@@ -205,3 +184,89 @@ class TestStartupPhaseLabel:
         from ..cli._service_start import _startup_phase_label
 
         assert _startup_phase_label(None) == "waiting for the daemon to come up"
+
+
+def _serving_health(**overrides: object) -> dict[str, object]:
+    """A health payload from a daemon that has finished coming up."""
+    payload: dict[str, object] = {
+        "status": "ready",
+        "models_loaded": True,
+        "qdrant": {"mode": "server", "alive": True},
+        "degraded_reasons": [],
+    }
+    payload.update(overrides)
+    return payload
+
+
+class TestDaemonIsServing:
+    """The start wait ends when the daemon can serve, not when its history is clean."""
+
+    def test_job_history_degradation_still_counts_as_serving(self) -> None:
+        """A daemon degraded only by a failed job is serving and must end the wait.
+
+        This is the regression guard for a start that burned its full 300s
+        deadline against a daemon that had been answering requests the whole
+        time. The payload below is the shape a real service reports once any
+        indexing job has ever failed: every infrastructure signal is healthy and
+        the only complaint is job history. Asserting on ``models_loaded`` and the
+        backend rather than the status word is the point - gating on
+        ``status == "ready"`` is exactly the defect.
+        """
+        from ..cli._service_start import _daemon_is_serving
+
+        health = _serving_health(
+            status="degraded",
+            degraded_reasons=["the latest indexing job failed: other"],
+        )
+        assert _daemon_is_serving(health) is True
+
+    def test_models_not_loaded_is_not_serving(self) -> None:
+        from ..cli._service_start import _daemon_is_serving
+
+        assert _daemon_is_serving(_serving_health(models_loaded=False)) is False
+
+    def test_dead_vector_backend_is_not_serving(self) -> None:
+        from ..cli._service_start import _daemon_is_serving
+
+        health = _serving_health(qdrant={"mode": "server", "alive": False})
+        assert _daemon_is_serving(health) is False
+
+    def test_local_backend_needs_no_live_server(self) -> None:
+        """Local mode has no server to be alive, so models alone decide."""
+        from ..cli._service_start import _daemon_is_serving
+
+        health = _serving_health(qdrant={"mode": "local", "alive": False})
+        assert _daemon_is_serving(health) is True
+
+
+class TestServingWarningLines:
+    """A start that succeeds against a degraded daemon still reports why."""
+
+    def test_reasons_are_rendered(self) -> None:
+        from ..cli._service_start import _serving_warning_lines
+
+        lines = _serving_warning_lines(
+            {"degraded_reasons": ["the latest indexing job failed: other"]}
+        )
+        assert lines == (
+            "Serving, with warnings:",
+            "  - the latest indexing job failed: other",
+        )
+
+    def test_unrecognised_reason_is_never_swallowed(self) -> None:
+        """An unknown reason is shown verbatim rather than filtered out.
+
+        The reason strings are daemon-side display text and get reworded; a
+        renderer that only knew a fixed vocabulary would silently drop the one
+        message explaining a degradation.
+        """
+        from ..cli._service_start import _serving_warning_lines
+
+        lines = _serving_warning_lines({"degraded_reasons": ["something brand new"]})
+        assert "  - something brand new" in lines
+
+    def test_no_reasons_render_nothing(self) -> None:
+        from ..cli._service_start import _serving_warning_lines
+
+        assert _serving_warning_lines({"degraded_reasons": []}) == ()
+        assert _serving_warning_lines({}) == ()

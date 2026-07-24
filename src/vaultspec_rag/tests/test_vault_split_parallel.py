@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import os
-import subprocess
-import sys
 
 from .._store_models import VaultDocument
 from ..config import EnvVar, reset_config
@@ -13,6 +11,7 @@ from ..indexer._vault_prep import (
     split_document,
     split_documents,
 )
+from ._import_probe import assert_fresh_import_excludes, import_probe_source
 
 
 class _Workers:
@@ -102,17 +101,6 @@ def test_vault_prep_import_does_not_load_torch() -> None:
     Checked in a fresh interpreter so the parent process's already-loaded
     torch cannot mask a regression. See rule ``index-workers-stay-cpu-only``.
     """
-    code = (
-        "import sys\n"
-        "import vaultspec_rag.indexer._vault_prep\n"
-        "torch_mods = sorted(m for m in sys.modules if m == 'torch' "
-        "or m.startswith('torch.'))\n"
-        "assert not torch_mods, torch_mods\n"
+    assert_fresh_import_excludes(
+        import_probe_source("vaultspec_rag.indexer._vault_prep")
     )
-    proc = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert proc.returncode == 0, proc.stderr

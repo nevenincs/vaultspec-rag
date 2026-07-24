@@ -15,6 +15,7 @@ imports the leaf commands from them.
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING, cast
 
 import typer
 
@@ -23,6 +24,11 @@ import vaultspec_rag.cli as _cli
 from ..config import EnvVar, get_config
 from ._app import server_app
 from ._gpu_errors import _handle_gpu_error
+from ._progress import StartupStatusReporter
+from ._render import _plain
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 __all__ = [
     "_address_line",
@@ -60,15 +66,15 @@ __all__ = [
 
 
 def _print_lifecycle_lines(title: str, *lines: str) -> None:
-    _cli.console.print(title, markup=False, highlight=False)
+    _plain(title)
     for line in lines:
-        _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
+        _plain(line, soft_wrap=True)
 
 
 def _print_lifecycle_next_actions(*commands: str) -> None:
-    _cli.console.print("Next actions:", markup=False, highlight=False)
+    _plain("Next actions:")
     for command in commands:
-        _cli.console.print(f"  {command}", markup=False, highlight=False)
+        _plain(f"  {command}")
 
 
 def _process_line(pid: object) -> str:
@@ -80,7 +86,7 @@ def _address_line(port: object) -> str:
 
 
 def _print_detail_line(label: str, value: object) -> None:
-    _cli.console.print(f"{label}: {value}", markup=False, highlight=False)
+    _plain(f"{label}: {value}")
 
 
 def _should_unlink_discovery_file(pid_alive: bool) -> bool:
@@ -97,13 +103,49 @@ def _should_unlink_discovery_file(pid_alive: bool) -> bool:
     return not pid_alive
 
 
+def _warmup_failure_detail(repo_id: str, exc: Exception) -> str:
+    """Explain a failed model fetch as an operator-actionable line."""
+    msg = str(exc)
+    if "401" in msg or "403" in msg or "GatedRepo" in msg:
+        return f"{repo_id} auth required; run huggingface-cli login"
+    return f"{repo_id} failed: {exc} (partial cache may remain in ~/.cache/huggingface)"
+
+
+def _warmup_fetch_model(
+    download: Callable[..., object],
+    progress: StartupStatusReporter,
+    *,
+    repo_id: str,
+    label: str,
+    position: int,
+    total: int,
+) -> str:
+    """Fetch one model repo with live progress; return its result line.
+
+    The fetch is minutes long and its size is known to the hub, so the stage
+    names WHICH repo of how many is running and the tracker turns the hub's own
+    counters into bytes-of-bytes. Every failure is reported and none aborts the
+    remaining models: a warmup that stops at the first gated repo leaves the
+    operator re-running it to discover the next one.
+    """
+    from ._hf_progress import SnapshotProgress
+
+    heading = f"Downloading {label} ({position}/{total})"
+    progress.stage(f"{heading}...")
+    try:
+        with SnapshotProgress(progress.heartbeat, prefix=heading) as tracker:
+            download(repo_id, tqdm_class=tracker.tqdm_class)
+    except Exception as exc:
+        return _warmup_failure_detail(repo_id, exc)
+    return f"{repo_id} downloaded"
+
+
 @server_app.command(
     "warmup",
     help=(
         "Download GPU model files before they are needed. "
         "Run once before the first index to avoid model download latency at "
-        "search time. "
-        "See the indexing architecture guide: docs/indexing.md"
+        "search time."
     ),
 )
 def service_warmup() -> None:
@@ -134,40 +176,39 @@ def service_warmup() -> None:
         ("Reranker (CrossEncoder)", cfg.reranker_model),
     ]
 
-    _cli.console.print("Model warmup")
-    token = get_token()
-    if token:
-        _print_detail_line("HuggingFace auth", "configured")
-    else:
-        _print_detail_line(
-            "HuggingFace auth",
-            "missing; run huggingface-cli login if downloads fail",
-        )
+    # No ``--json`` mode on this verb, so the reporter always speaks; it is the
+    # only thing an operator sees during a multi-gigabyte, effectively
+    # unbounded download.
+    with StartupStatusReporter(json_mode=False) as progress:
+        progress.announce("Model warmup")
+        token = get_token()
+        if token:
+            _print_detail_line("HuggingFace auth", "configured")
+        else:
+            _print_detail_line(
+                "HuggingFace auth",
+                "missing; run huggingface-cli login if downloads fail",
+            )
 
-    for label, repo_id in models:
-        # Check if already cached
-        cached = try_to_load_from_cache(repo_id, "config.json")
-        if cached is not None:
-            _print_detail_line(label, f"{repo_id} cached")
-            continue
-
-        try:
-            with _cli.console.status(f"Downloading {label}..."):
-                snapshot_download(repo_id)
-            _print_detail_line(label, f"{repo_id} downloaded")
-        except Exception as exc:
-            msg = str(exc)
-            if "401" in msg or "403" in msg or "GatedRepo" in msg:
-                _print_detail_line(
-                    label,
-                    f"{repo_id} auth required; run huggingface-cli login",
-                )
-            else:
-                _print_detail_line(
-                    label,
-                    f"{repo_id} failed: {exc}"
-                    " (partial cache may remain in ~/.cache/huggingface)",
-                )
+        for position, (label, repo_id) in enumerate(models, start=1):
+            progress.stage(f"Checking the cache for {label} ({position}/{len(models)})")
+            if try_to_load_from_cache(repo_id, "config.json") is not None:
+                _print_detail_line(label, f"{repo_id} cached")
+                continue
+            _print_detail_line(
+                label,
+                _warmup_fetch_model(
+                    # The hub ships partial stubs, so the imported symbol is
+                    # only partially typed; naming the shape this call site
+                    # actually uses is what keeps the strict gate honest.
+                    cast("Callable[..., object]", snapshot_download),
+                    progress,
+                    repo_id=repo_id,
+                    label=label,
+                    position=position,
+                    total=len(models),
+                ),
+            )
 
 
 # Facade: import the split command modules so their ``server_app`` commands

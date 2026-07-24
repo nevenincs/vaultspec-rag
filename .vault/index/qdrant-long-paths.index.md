@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#qdrant-long-paths'
-date: '2026-07-23'
-modified: '2026-07-23'
+date: '2026-07-24'
+modified: '2026-07-24'
 related:
   - '[[2026-07-14-qdrant-long-paths-adr]]'
 ---

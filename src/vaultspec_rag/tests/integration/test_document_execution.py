@@ -57,6 +57,7 @@ from ...jobs import (
 )
 from ...service import ServiceRegistry
 from ...watcher_retry import WatcherRetryPolicy, WatcherSource
+from ._helpers import _document_policy
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -97,20 +98,6 @@ def _context(root: Path) -> PreprocessContext:
         cache_root=root / "cache",
         max_emitted_bytes=64 * 1024,
         project_root=root,
-    )
-
-
-def _document_policy(pattern: str):
-    from ...indexer._content_policy import (
-        ContentKind,
-        ContentRoute,
-        RootContentPolicy,
-        SourceProfileVersion,
-    )
-
-    return RootContentPolicy(
-        SourceProfileVersion.CONVENTIONAL_V1,
-        (ContentRoute(pattern, ContentKind.DOCUMENT),),
     )
 
 

@@ -26,12 +26,13 @@ from ..qdrant_runtime import (
     resolve_binary,
 )
 from ._app import server_qdrant_app
-from ._render import _emit_json
+from ._progress import StartupStatusReporter
+from ._render import _emit_json, _plain
 from ._service_status import _read_service_status
 
 
 def _print_line(text: str) -> None:
-    _cli.console.print(text, markup=False, highlight=False, soft_wrap=True)
+    _plain(text, soft_wrap=True)
 
 
 def _readyz_probe(port: int) -> bool:
@@ -111,7 +112,19 @@ def qdrant_install(
     ] = False,
 ) -> None:
     """Install the managed Qdrant server."""
-    report = provision(upgrade=upgrade, dry_run=dry_run, binary=binary)
+    # A first install downloads a native archive, hashes it, and unpacks it,
+    # none of which said anything before this. The report is rendered after the
+    # block so the terminal outcome never has to share a line with a live
+    # region, and ``--json`` keeps the reporter silent so exactly one envelope
+    # reaches stdout.
+    with StartupStatusReporter(json_mode=json_mode) as progress:
+        progress.announce("Installing the managed Qdrant server...")
+        report = provision(
+            upgrade=upgrade,
+            dry_run=dry_run,
+            binary=binary,
+            on_progress=progress.stage,
+        )
     failed = report.action == QdrantProvisionAction.FAILED
 
     if json_mode:

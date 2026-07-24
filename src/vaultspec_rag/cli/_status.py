@@ -7,14 +7,14 @@ from typing import Annotated, Any, cast
 
 import typer
 
-import vaultspec_rag.cli as _cli
-
 from ._app import CLIState, app
+from ._cli_format import _counted_unit, _format_mb
 from ._http_search import _try_http_admin
 from ._render import (
     _emit_json,
     _emit_json_error_and_exit,
     _format_local_index_busy_message,
+    _plain,
 )
 from ._service_status import _default_service_port
 from ._status_labels import render_degradation
@@ -103,13 +103,64 @@ def _support_profile_lines(status: dict[str, object]) -> list[str]:
         if not isinstance(raw_domain, dict):
             continue
         domain = cast("dict[str, object]", raw_domain)
+        # Byte caps go through the shared vocabulary like every other size in
+        # this command: printed raw, `source_bytes=137438953472` asks the
+        # operator to do the arithmetic that "128.0 GiB" already did.
         lines.append(
             f"{source.capitalize()} support: "
-            f"source_files={domain.get('source_files', 0)}, "
-            f"source_bytes={domain.get('source_bytes', 0)}, "
-            f"generated_chunks={domain.get('generated_chunks', 0)}, "
-            f"weighted_bytes={domain.get('weighted_bytes', 0)}"
+            f"{_counted_unit(_domain_count(domain, 'source_files'), 'file')}, "
+            f"{_profile_bytes(domain, 'source_bytes')} of source, "
+            f"{_counted_unit(_domain_count(domain, 'generated_chunks'), 'section')} "
+            f"generated, {_profile_bytes(domain, 'weighted_bytes')} weighted"
         )
+    return lines
+
+
+def _domain_count(domain: dict[str, object], key: str) -> int:
+    """Read one integer cap from a support domain, defaulting to zero."""
+    raw = domain.get(key, 0)
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        return 0
+    return int(raw)
+
+
+def _generation_lines(generations: object) -> list[str]:
+    """Render the per-domain index generation records.
+
+    The payload carries one structured record per domain - generation number,
+    the job that produced it, its state and any error kind. Interpolated whole
+    it printed a nested Python repr several lines long, which is unreadable and
+    tells an operator nothing they can act on. Each domain gets one line here,
+    and a record whose shape is not recognised is still named rather than
+    dropped, so an unexpected payload degrades to less detail instead of to
+    silence.
+    """
+    if not isinstance(generations, dict):
+        return []
+    records = cast("dict[str, object]", generations)
+    lines: list[str] = []
+    for domain in sorted(records):
+        raw = records[domain]
+        if raw is None:
+            # A domain the service knows about but has never indexed. Saying so
+            # beats rendering the literal "None", which reads as a fault.
+            lines.append(f"  {domain}: not indexed yet")
+            continue
+        if not isinstance(raw, dict):
+            lines.append(f"  {domain}: {raw}")
+            continue
+        record = cast("dict[str, object]", raw)
+        parts = [f"generation {record.get('generation', 'not reported')}"]
+        state = record.get("state")
+        if state:
+            parts.append(str(state))
+        error_kind = record.get("error_kind")
+        if error_kind:
+            parts.append(f"error: {error_kind}")
+        job_id = record.get("job_id")
+        if job_id:
+            parts.append(f"job {str(job_id)[:8]}")
+        lines.append(f"  {domain}: {', '.join(parts)}")
     return lines
 
 
@@ -127,8 +178,10 @@ def _status_diagnostics(status: dict[str, object]) -> list[str]:
     generations = status.get("generations", status.get("generation"))
     if policy not in (None, "", {}):
         lines.append(f"Policy: {policy}")
-    if generations not in (None, "", {}):
-        lines.append(f"Generations: {generations}")
+    generation_lines = _generation_lines(generations)
+    if generation_lines:
+        lines.append("Index generations:")
+        lines.extend(generation_lines)
     lines.extend(render_degradation(status, header="Degraded because:"))
     return lines
 
@@ -148,7 +201,10 @@ def _render_status_text(
     )
     vault_count, code_count, document_count = _status_counts(status)
     device = (
-        f"GPU - {gpu_name} ({vram_mb} MB VRAM)"
+        # vram_mb is produced by bytes_to_mib, so it is mebibytes; rendering it
+        # as "MB" both mislabelled it and left the operator converting five
+        # digits to work out whether a model fits.
+        f"GPU - {gpu_name} ({_format_mb(vram_mb)} VRAM)"
         if cuda_available
         else "CPU only (no supported GPU detected)"
     )
@@ -169,21 +225,12 @@ def _render_status_text(
         lines.append("Server details:")
     next_action = _status_next_action(vault_count, code_count, document_count)
     for line in lines:
-        _cli.console.print(
-            line,
-            markup=False,
-            highlight=False,
-            soft_wrap=line.startswith(("Index data:", "Project:", "Address:")),
-        )
+        _plain(line, soft_wrap=line.startswith(("Index data:", "Project:", "Address:")))
     if service_port is not None:
-        _cli.console.print(
-            f"  vaultspec-rag server status --port {service_port}",
-            markup=False,
-            highlight=False,
-        )
+        _plain(f"  vaultspec-rag server status --port {service_port}")
     if next_action:
-        _cli.console.print("Next action:", markup=False, highlight=False)
-        _cli.console.print(f"  {next_action}", markup=False, highlight=False)
+        _plain("Next action:")
+        _plain(f"  {next_action}")
 
 
 def _emit_status_json(
@@ -295,11 +342,7 @@ def handle_status(
                     "Retry after the current index operation finishes.",
                 ],
             )
-        _cli.console.print(
-            _format_local_index_busy_message("read index status"),
-            markup=False,
-            highlight=False,
-        )
+        _plain(_format_local_index_busy_message("read index status"))
         raise typer.Exit(code=1) from None
     except (ImportError, RuntimeError) as e:
         _handle_gpu_error(e)

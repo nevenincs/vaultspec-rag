@@ -12,8 +12,6 @@ from typing import Annotated, Literal, cast
 
 import typer
 
-import vaultspec_rag.cli as _cli
-
 from ..logging_config import (
     DEFAULT_MANAGED_LOG_LINES,
     ManagedLogGroup,
@@ -26,7 +24,7 @@ from ..logging_config import (
 )
 from ._app import server_app
 from ._http_search import _try_http_admin
-from ._render import _emit_json, _emit_json_error_and_exit
+from ._render import _emit_json, _emit_json_error_and_exit, _plain
 from ._service_status import _default_service_port
 
 _LOGS_COMMAND = "server.logs"
@@ -82,7 +80,7 @@ def _exit_live_log_error(
     message = str(result.get("message") or "The service could not read managed logs.")
     if json_mode:
         _emit_json_error_and_exit(_LOGS_COMMAND, error, message, 1)
-    _cli.console.print(f"Logs: {message}", markup=False, highlight=False)
+    _plain(f"Logs: {message}")
     raise typer.Exit(1)
 
 

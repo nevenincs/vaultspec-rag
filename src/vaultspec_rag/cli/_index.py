@@ -26,6 +26,7 @@ from .._store_writes import InsufficientDiskSpaceError
 from ..config import EnvVar
 from ..store import VaultStoreLockedError
 from ._app import CLIState, app
+from ._cli_format import _counted_unit
 from ._core import logger
 from ._gpu_errors import _handle_gpu_error
 from ._http_search import _try_http_reindex
@@ -35,6 +36,7 @@ from ._render import (
     _emit_json,
     _emit_json_error_and_exit,
     _format_local_index_busy_message,
+    _plain,
 )
 from ._service_status import _default_service_port
 
@@ -56,7 +58,7 @@ def _warn_preprocess_flag_ignored_when_delegating(json_mode: bool) -> None:
     )
     logger.warning("%s", message)
     if not json_mode:
-        _cli.console.print(f"Warning: {message}", markup=False, highlight=False)
+        _plain(f"Warning: {message}")
 
 
 def _apply_preprocess_off_env() -> None:
@@ -106,13 +108,8 @@ def _parse_index_source(
                 2,
                 **exc.as_payload(),
             )
-        _cli.console.print(f"Error: {exc}", markup=False, highlight=False)
+        _plain(f"Error: {exc}")
         raise typer.Exit(code=2) from None
-
-
-def _counted_unit(value: int, singular: str, plural: str | None = None) -> str:
-    unit = singular if value == 1 else plural or f"{singular}s"
-    return f"{value} {unit}"
 
 
 def _format_index_duration(raw: object) -> str:
@@ -140,11 +137,7 @@ def _format_index_duration(raw: object) -> str:
 
 
 def _print_index_summary(sources: list[dict[str, object]], *, via: str) -> None:
-    _cli.console.print(
-        f"Indexing summary: ran in {_index_route_label(via)}.",
-        markup=False,
-        highlight=False,
-    )
+    _plain(f"Indexing summary: ran in {_index_route_label(via)}.")
     if not sources:
         _cli.console.print("No sources indexed.")
         return
@@ -157,14 +150,12 @@ def _print_index_summary(sources: list[dict[str, object]], *, via: str) -> None:
             if duration != "not reported"
             else "duration not reported"
         )
-        _cli.console.print(
+        _plain(
             f"{label}: added {row.get('added', 0)}; "
             f"updated {row.get('updated', 0)}; "
             f"removed {row.get('removed', 0)}; "
             f"total {row.get('total', 0)}; "
             f"{duration_text}",
-            markup=False,
-            highlight=False,
             soft_wrap=True,
         )
 
@@ -207,9 +198,9 @@ def _validate_dry_run_request(
                 2,
                 remediation=remediation,
             )
-        _cli.console.print(message, markup=False, highlight=False)
-        _cli.console.print("Run:", markup=False, highlight=False)
-        _cli.console.print(f"  {remediation[0]}", markup=False, highlight=False)
+        _plain(message)
+        _plain("Run:")
+        _plain(f"  {remediation[0]}")
         raise typer.Exit(code=2)
     if dry_run_limit >= 0:
         return
@@ -222,13 +213,9 @@ def _validate_dry_run_request(
             2,
             remediation=["Use --dry-run-limit 0 or a positive number."],
         )
-    _cli.console.print(message, markup=False, highlight=False)
-    _cli.console.print("Run:", markup=False, highlight=False)
-    _cli.console.print(
-        "  vaultspec-rag index --type code --dry-run --dry-run-limit 50",
-        markup=False,
-        highlight=False,
-    )
+    _plain(message)
+    _plain("Run:")
+    _plain("  vaultspec-rag index --type code --dry-run --dry-run-limit 50")
     raise typer.Exit(code=2)
 
 
@@ -341,27 +328,19 @@ def _render_dry_run(
     source_description = (
         "source-code" if index_type is PublicSourceType.CODE else index_type.value
     )
-    _cli.console.print(
-        f"Dry run: {scan.total} {source_description} {noun} would be indexed.",
-        markup=False,
-        highlight=False,
-    )
+    _plain(f"Dry run: {scan.total} {source_description} {noun} would be indexed.")
     if scan.code_scan is not None and scan.code_scan.counts:
-        _cli.console.print("Admission summary:", markup=False, highlight=False)
+        _plain("Admission summary:")
         for count in scan.code_scan.counts:
             kind = count.kind.value if count.kind is not None else "unowned"
             disposition = "admitted" if count.admitted else "rejected"
-            _cli.console.print(
-                f"  - {kind}/{disposition}/{count.reason.value}: {count.count}",
-                markup=False,
-                highlight=False,
-            )
+            _plain(f"  - {kind}/{disposition}/{count.reason.value}: {count.count}")
     if shown_files:
-        _cli.console.print("Files shown:", markup=False, highlight=False)
+        _plain("Files shown:")
         for path in shown_files:
             _cli.console.print(f"  - {path}")
     elif scan.total:
-        _cli.console.print("Files shown: none.", markup=False, highlight=False)
+        _plain("Files shown: none.")
     _render_hidden_dry_run_files(scan.total - len(shown_files), scan.total, index_type)
 
 
@@ -379,10 +358,8 @@ def _render_hidden_dry_run_files(
         if index_type is PublicSourceType.CODE
         else "to request a larger bounded sample."
     )
-    _cli.console.print(
+    _plain(
         f"{hidden} more {hidden_noun} not shown. Use --dry-run-limit {total} {suffix}",
-        markup=False,
-        highlight=False,
         soft_wrap=True,
     )
 
@@ -433,9 +410,9 @@ def _validate_rebuild(ctx: typer.Context, json_mode: bool) -> None:
                 2,
                 remediation=remediation,
             )
-        _cli.console.print(f"Error: {msg}", markup=False, highlight=False)
+        _plain(f"Error: {msg}")
         for line in remediation:
-            _cli.console.print(f"  {line}", markup=False, highlight=False)
+            _plain(f"  {line}")
         raise typer.Exit(code=2)
 
 
@@ -465,11 +442,9 @@ def _try_service_delegation(
         and data.get("partial") is not True
     ):
         if not json_mode:
-            _cli.console.print(
+            _plain(
                 f"Reindex {index_type.value} reported an error; "
-                "refusing to silently fall back.",
-                markup=False,
-                highlight=False,
+                "refusing to silently fall back."
             )
         _display_service_error(data, json_mode=json_mode, command="index")
         raise typer.Exit(code=1)
@@ -482,11 +457,9 @@ def _try_service_delegation(
                 data={"via": "service", "source": index_type.value, "outcome": data},
             )
         elif "job_id" in data:
-            _cli.console.print(
+            _plain(
                 f"{_index_source_label(index_type.value)} re-index job queued on "
-                f"service: {data.get('job_id')}",
-                markup=False,
-                highlight=False,
+                f"service: {data.get('job_id')}"
             )
             _cli.console.print("Check progress with: vaultspec-rag server jobs")
         elif _print_service_domain_outcomes(data.get("domains")):
@@ -534,16 +507,10 @@ def _print_service_domain_outcomes(raw_domains: object) -> bool:
         rendered = True
         label = _index_source_label(source)
         if domain.get("ok") is True:
-            _cli.console.print(
-                f"{label} re-index job queued on service: {domain.get('job_id')}",
-                markup=False,
-                highlight=False,
-            )
+            _plain(f"{label} re-index job queued on service: {domain.get('job_id')}")
         else:
-            _cli.console.print(
-                f"{label}: failed: {domain.get('error_kind')}: {domain.get('detail')}",
-                markup=False,
-                highlight=False,
+            _plain(
+                f"{label}: failed: {domain.get('error_kind')}: {domain.get('detail')}"
             )
     if rendered:
         _cli.console.print("Check progress with: vaultspec-rag server jobs")
@@ -554,8 +521,7 @@ def _print_service_domain_outcomes(raw_domains: object) -> bool:
     "index",
     help=(
         "Build or update the vault, code, and extracted-document search indexes. "
-        "Uses the running service when available; otherwise runs locally. "
-        "See the indexing architecture guide: docs/indexing.md"
+        "Uses the running service when available; otherwise runs locally."
     ),
 )
 def handle_index(
@@ -743,11 +709,7 @@ def _try_in_process_indexing(
                         "Retry after the current index operation finishes.",
                     ],
                 )
-            _cli.console.print(
-                _format_local_index_busy_message("update the index"),
-                markup=False,
-                highlight=False,
-            )
+            _plain(_format_local_index_busy_message("update the index"))
             raise typer.Exit(code=1) from None
         except InsufficientDiskSpaceError as exc:
             # A RuntimeError subclass: without this branch the disk
@@ -766,7 +728,7 @@ def _try_in_process_indexing(
                         "Free disk space on the store volume and retry.",
                     ],
                 )
-            _cli.console.print(f"Error: {exc}", markup=False, highlight=False)
+            _plain(f"Error: {exc}")
             raise typer.Exit(code=1) from None
         except (ImportError, RuntimeError) as e:
             _handle_gpu_error(e)
@@ -836,11 +798,7 @@ def _render_failed_index_rows(rows: list[dict[str, object]]) -> None:
     for row in rows:
         if row.get("ok") is not False:
             continue
-        _cli.console.print(
-            f"{_index_source_label(str(row['source']))}: failed: {row['error']}",
-            markup=False,
-            highlight=False,
-        )
+        _plain(f"{_index_source_label(str(row['source']))}: failed: {row['error']}")
 
 
 def _execute_source_indexing(
@@ -928,8 +886,7 @@ def _index_result_row(source: str, result: IndexResult) -> dict[str, object]:
     "clean",
     help=(
         "Delete selected index data without rebuilding it. "
-        "Does not load models or use the GPU. "
-        "See the indexing architecture guide: docs/indexing.md"
+        "Does not load models or use the GPU."
     ),
 )
 def handle_clean(
@@ -1009,11 +966,7 @@ def handle_clean(
                     "Retry after the current index operation finishes.",
                 ],
             )
-        _cli.console.print(
-            _format_local_index_busy_message("clean the index"),
-            markup=False,
-            highlight=False,
-        )
+        _plain(_format_local_index_busy_message("clean the index"))
         raise typer.Exit(code=1) from None
 
     cleared = [s.lower() for s in cleared_raw]
@@ -1033,4 +986,4 @@ def handle_clean(
     _cli.console.print("Clean summary")
     for source in cleared:
         label = _index_source_label("codebase" if source == "code" else source)
-        _cli.console.print(f"{label} index: empty.", markup=False, highlight=False)
+        _plain(f"{label} index: empty.")

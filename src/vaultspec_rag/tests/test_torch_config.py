@@ -560,52 +560,181 @@ def test_top_level_split_tool_proxy(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_has_direct_torch_dep_in_project_dependencies(tmp_path: Path) -> None:
-    p = tmp_path / "pyproject.toml"
-    _write(
-        p,
+# One row per dependency surface a real consumer can declare torch in. The
+# reported location is asserted, not just the boolean, because the warning the
+# helper feeds tells the user WHERE their torch lives; a detector that finds
+# torch but names the wrong section sends them to edit the wrong table.
+_DIRECT_DEP_SURFACES: list[tuple[str, str, str, bool]] = [
+    (
+        "project-dependencies",
         '[project]\nname = "demo"\ndependencies = ["requests", "torch>=2.4"]\n',
-    )
-    found, location = tc.has_direct_torch_dep(p)
-    assert found is True
-    assert location == "[project].dependencies"
-
-
-def test_has_direct_torch_dep_in_dependency_groups(tmp_path: Path) -> None:
-    p = tmp_path / "pyproject.toml"
-    _write(
-        p,
+        "[project].dependencies",
+        True,
+    ),
+    (
+        "dependency-groups",
         '[project]\nname = "demo"\n'
         "\n[dependency-groups]\n"
         'dev = ["pytest", "torch>=2.4"]\n',
-    )
-    found, location = tc.has_direct_torch_dep(p)
-    assert found is True
-    assert location == "[dependency-groups].dev"
-
-
-def test_has_direct_torch_dep_in_optional_dependencies(tmp_path: Path) -> None:
-    p = tmp_path / "pyproject.toml"
-    _write(
-        p,
+        "[dependency-groups].dev",
+        True,
+    ),
+    (
+        "optional-dependencies",
         '[project]\nname = "demo"\n'
         "\n[project.optional-dependencies]\n"
         'gpu = ["torch>=2.4", "triton"]\n',
-    )
-    found, location = tc.has_direct_torch_dep(p)
-    assert found is True
-    assert location == "[project.optional-dependencies].gpu"
-
-
-def test_has_direct_torch_dep_absent(tmp_path: Path) -> None:
-    p = tmp_path / "pyproject.toml"
-    _write(
-        p,
+        "[project.optional-dependencies].gpu",
+        True,
+    ),
+    # Torch in the SECOND group, not the first: an implementation that returned
+    # on the first group it looked at would silently miss this.
+    (
+        "optional-dependencies-second-group",
+        '[project]\nname = "demo"\n'
+        "\n[project.optional-dependencies]\n"
+        'gpu = ["triton"]\n'
+        'cuda = ["torch>=2.4", "tensorboard"]\n',
+        "[project.optional-dependencies].cuda",
+        True,
+    ),
+    (
+        "dependency-groups-second-group",
+        '[project]\nname = "demo"\n'
+        "\n[dependency-groups]\n"
+        'lint = ["ruff"]\n'
+        'gpu = ["triton", "torch>=2.4"]\n',
+        "[dependency-groups].gpu",
+        True,
+    ),
+    # Poetry declares deps as Mapping[name -> spec], not a list of PEP 508
+    # strings, so the detector has to read the KEYS on these surfaces.
+    (
+        "poetry-dependencies",
+        "[tool.poetry]\n"
+        'name = "demo"\n'
+        "\n"
+        "[tool.poetry.dependencies]\n"
+        'python = "^3.11"\n'
+        'torch = "^2.4"\n',
+        "[tool.poetry.dependencies]",
+        True,
+    ),
+    (
+        "poetry-group",
+        "[tool.poetry]\n"
+        'name = "demo"\n'
+        "\n"
+        "[tool.poetry.dependencies]\n"
+        'python = "^3.11"\n'
+        "\n"
+        "[tool.poetry.group.gpu.dependencies]\n"
+        'torch = "^2.4"\n',
+        "[tool.poetry.group.gpu.dependencies]",
+        True,
+    ),
+    # Pre-1.2 Poetry wrote dev deps here. Poetry 1.2+ moved them under
+    # [tool.poetry.group.dev.dependencies], but the legacy section is still on
+    # countless deployed pyprojects and must not produce a false warning.
+    (
+        "poetry-legacy-dev-dependencies",
+        "[tool.poetry]\n"
+        'name = "demo"\n'
+        "\n"
+        "[tool.poetry.dependencies]\n"
+        'python = "^3.11"\n'
+        "\n"
+        "[tool.poetry.dev-dependencies]\n"
+        'pytest = "*"\n'
+        'torch = "^2.4"\n',
+        "[tool.poetry.dev-dependencies]",
+        True,
+    ),
+    (
+        "pdm-dev-dependencies",
+        "[project]\n"
+        'name = "demo"\n'
+        'dependencies = ["vaultspec-rag"]\n'
+        "\n"
+        "[tool.pdm.dev-dependencies]\n"
+        'test = ["pytest", "torch>=2.4"]\n',
+        "[tool.pdm.dev-dependencies].test",
+        True,
+    ),
+    (
+        "hatch-env-dependencies-list",
+        '[project]\nname = "demo"\n'
+        "\n[tool.hatch.envs.default]\n"
+        'dependencies = ["pytest", "torch>=2.4"]\n',
+        "[tool.hatch.envs.default].dependencies",
+        True,
+    ),
+    (
+        "hatch-env-extra-dependencies",
+        '[project]\nname = "demo"\n'
+        "\n[tool.hatch.envs.test]\n"
+        'extra-dependencies = ["torch>=2.4"]\n',
+        "[tool.hatch.envs.test].extra-dependencies",
+        True,
+    ),
+    # The table form is rarer but legal, and conventional in projects migrated
+    # from Poetry.
+    (
+        "hatch-env-dependencies-table",
+        '[project]\nname = "demo"\n'
+        "\n[tool.hatch.envs.gpu.dependencies]\n"
+        'torch = "^2.4"\n',
+        "[tool.hatch.envs.gpu.dependencies]",
+        True,
+    ),
+    (
+        "uv-dev-dependencies",
+        "[project]\n"
+        'name = "demo"\n'
+        'dependencies = ["vaultspec-rag"]\n'
+        "\n"
+        "[tool.uv]\n"
+        'dev-dependencies = ["pytest", "torch>=2.4"]\n',
+        "[tool.uv].dev-dependencies",
+        True,
+    ),
+    # Negative pairs. Without them every row above would still pass against a
+    # detector that answered "yes" unconditionally.
+    (
+        "absent-from-pep621",
         '[project]\nname = "demo"\ndependencies = ["requests", "numpy"]\n',
-    )
-    found, location = tc.has_direct_torch_dep(p)
-    assert found is False
-    assert location == ""
+        "",
+        False,
+    ),
+    (
+        "absent-from-poetry",
+        "[tool.poetry]\n"
+        'name = "demo"\n'
+        "\n"
+        "[tool.poetry.dependencies]\n"
+        'python = "^3.11"\n'
+        'numpy = "*"\n',
+        "",
+        False,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("pyproject_text", "location", "found"),
+    [row[1:] for row in _DIRECT_DEP_SURFACES],
+    ids=[row[0] for row in _DIRECT_DEP_SURFACES],
+)
+def test_has_direct_torch_dep_reads_every_declaration_surface(
+    tmp_path: Path,
+    pyproject_text: str,
+    location: str,
+    found: bool,
+) -> None:
+    p = tmp_path / "pyproject.toml"
+    _write(p, pyproject_text)
+
+    assert tc.has_direct_torch_dep(p) == (found, location)
 
 
 def test_ensure_direct_torch_dep_adds_project_dependency(tmp_path: Path) -> None:
@@ -816,40 +945,6 @@ def test_remove_preserves_user_overrides_in_tool_uv(tmp_path: Path) -> None:
     assert '"urllib3<3"' in after
     assert "pytorch-cu130" not in after
     tomlkit.parse(after)
-
-
-def test_has_direct_torch_dep_multi_group_optional_dependencies(tmp_path: Path) -> None:
-    """TEST-05 regression: when ``[project.optional-dependencies]``
-    has multiple groups and torch lives in the SECOND group (not the
-    first), the iteration must keep going. A future refactor that
-    early-returned on first group would silently miss this.
-    """
-    p = tmp_path / "pyproject.toml"
-    _write(
-        p,
-        '[project]\nname = "demo"\n'
-        "\n[project.optional-dependencies]\n"
-        'gpu = ["triton"]\n'
-        'cuda = ["torch>=2.4", "tensorboard"]\n',
-    )
-    found, location = tc.has_direct_torch_dep(p)
-    assert found is True
-    assert location == "[project.optional-dependencies].cuda"
-
-
-def test_has_direct_torch_dep_multi_group_dependency_groups(tmp_path: Path) -> None:
-    """TEST-05 regression: same shape for PEP 735 ``[dependency-groups]``."""
-    p = tmp_path / "pyproject.toml"
-    _write(
-        p,
-        '[project]\nname = "demo"\n'
-        "\n[dependency-groups]\n"
-        'lint = ["ruff"]\n'
-        'gpu = ["triton", "torch>=2.4"]\n',
-    )
-    found, location = tc.has_direct_torch_dep(p)
-    assert found is True
-    assert location == "[dependency-groups].gpu"
 
 
 def test_apply_scattered_pyproject_reparses_canonical(tmp_path: Path) -> None:
@@ -1131,180 +1226,6 @@ def test_apply_remove_round_trip_byte_equal_double_trailing_newline(
     tc.remove_patch(p)
     sha_after = hashlib.sha256(p.read_bytes()).hexdigest()
     assert sha_after == sha_before
-
-
-def test_has_direct_torch_dep_in_poetry_dependencies(tmp_path: Path) -> None:
-    """REAL-03: Poetry's ``[tool.poetry.dependencies]`` is
-    ``Mapping[name → spec]``, not a list. The detector must see
-    ``torch = "^2.4"`` as a direct dep.
-    """
-    p = tmp_path / "pyproject.toml"
-    _write(
-        p,
-        "[tool.poetry]\n"
-        'name = "demo"\n'
-        "\n"
-        "[tool.poetry.dependencies]\n"
-        'python = "^3.11"\n'
-        'torch = "^2.4"\n',
-    )
-    found, location = tc.has_direct_torch_dep(p)
-    assert found is True
-    assert location == "[tool.poetry.dependencies]"
-
-
-def test_has_direct_torch_dep_in_poetry_group(tmp_path: Path) -> None:
-    p = tmp_path / "pyproject.toml"
-    _write(
-        p,
-        "[tool.poetry]\n"
-        'name = "demo"\n'
-        "\n"
-        "[tool.poetry.dependencies]\n"
-        'python = "^3.11"\n'
-        "\n"
-        "[tool.poetry.group.gpu.dependencies]\n"
-        'torch = "^2.4"\n',
-    )
-    found, location = tc.has_direct_torch_dep(p)
-    assert found is True
-    assert location == "[tool.poetry.group.gpu.dependencies]"
-
-
-def test_has_direct_torch_dep_in_poetry_legacy_dev_dependencies(
-    tmp_path: Path,
-) -> None:
-    """Pre-1.2 Poetry expressed dev deps as
-    ``[tool.poetry.dev-dependencies]``. Poetry 1.2+ moved them under
-    ``[tool.poetry.group.dev.dependencies]`` but the legacy section
-    is still produced by older ``poetry add`` invocations and still
-    on countless deployed pyprojects. The detector must find torch
-    in the legacy section so users on those projects don't get the
-    misleading "not a direct dep" warning.
-    """
-    p = tmp_path / "pyproject.toml"
-    _write(
-        p,
-        "[tool.poetry]\n"
-        'name = "demo"\n'
-        "\n"
-        "[tool.poetry.dependencies]\n"
-        'python = "^3.11"\n'
-        "\n"
-        "[tool.poetry.dev-dependencies]\n"
-        'pytest = "*"\n'
-        'torch = "^2.4"\n',
-    )
-    found, location = tc.has_direct_torch_dep(p)
-    assert found is True
-    assert location == "[tool.poetry.dev-dependencies]"
-
-
-def test_has_direct_torch_dep_in_pdm_dev_dependencies(tmp_path: Path) -> None:
-    """PDM's ``[tool.pdm.dev-dependencies]`` is the same
-    ``Mapping[group → list[str]]`` shape as PEP 735.
-    """
-    p = tmp_path / "pyproject.toml"
-    _write(
-        p,
-        "[project]\n"
-        'name = "demo"\n'
-        'dependencies = ["vaultspec-rag"]\n'
-        "\n"
-        "[tool.pdm.dev-dependencies]\n"
-        'test = ["pytest", "torch>=2.4"]\n',
-    )
-    found, location = tc.has_direct_torch_dep(p)
-    assert found is True
-    assert location == "[tool.pdm.dev-dependencies].test"
-
-
-def test_has_direct_torch_dep_in_hatch_env_dependencies_list(tmp_path: Path) -> None:
-    """Gemini round-6 finding: Hatch's
-    ``[tool.hatch.envs.<env>] dependencies = [...]`` (list of PEP 508
-    strings) is the most common Hatch dev-dep surface.
-    """
-    p = tmp_path / "pyproject.toml"
-    _write(
-        p,
-        '[project]\nname = "demo"\n'
-        "\n[tool.hatch.envs.default]\n"
-        'dependencies = ["pytest", "torch>=2.4"]\n',
-    )
-    found, location = tc.has_direct_torch_dep(p)
-    assert found is True
-    assert location == "[tool.hatch.envs.default].dependencies"
-
-
-def test_has_direct_torch_dep_in_hatch_env_extra_dependencies(tmp_path: Path) -> None:
-    """Hatch ``extra-dependencies`` is a sibling key to
-    ``dependencies`` and just as common in env definitions.
-    """
-    p = tmp_path / "pyproject.toml"
-    _write(
-        p,
-        '[project]\nname = "demo"\n'
-        "\n[tool.hatch.envs.test]\n"
-        'extra-dependencies = ["torch>=2.4"]\n',
-    )
-    found, location = tc.has_direct_torch_dep(p)
-    assert found is True
-    assert location == "[tool.hatch.envs.test].extra-dependencies"
-
-
-def test_has_direct_torch_dep_in_hatch_env_dependencies_table(tmp_path: Path) -> None:
-    """The table form ``[tool.hatch.envs.<env>.dependencies] torch =
-    "^2.4"`` is less common but still legal Hatch config - and
-    conventional in projects migrated from Poetry.
-    """
-    p = tmp_path / "pyproject.toml"
-    _write(
-        p,
-        '[project]\nname = "demo"\n'
-        "\n[tool.hatch.envs.gpu.dependencies]\n"
-        'torch = "^2.4"\n',
-    )
-    found, location = tc.has_direct_torch_dep(p)
-    assert found is True
-    assert location == "[tool.hatch.envs.gpu.dependencies]"
-
-
-def test_has_direct_torch_dep_in_uv_dev_dependencies(tmp_path: Path) -> None:
-    """uv's pre-PEP-735 ``[tool.uv].dev-dependencies`` (still common)."""
-    p = tmp_path / "pyproject.toml"
-    _write(
-        p,
-        "[project]\n"
-        'name = "demo"\n'
-        'dependencies = ["vaultspec-rag"]\n'
-        "\n"
-        "[tool.uv]\n"
-        'dev-dependencies = ["pytest", "torch>=2.4"]\n',
-    )
-    found, location = tc.has_direct_torch_dep(p)
-    assert found is True
-    assert location == "[tool.uv].dev-dependencies"
-
-
-def test_has_direct_torch_dep_poetry_without_torch_returns_false(
-    tmp_path: Path,
-) -> None:
-    """Negative pair to the Poetry tests: a Poetry project without
-    torch must still classify as no-direct-dep.
-    """
-    p = tmp_path / "pyproject.toml"
-    _write(
-        p,
-        "[tool.poetry]\n"
-        'name = "demo"\n'
-        "\n"
-        "[tool.poetry.dependencies]\n"
-        'python = "^3.11"\n'
-        'numpy = "*"\n',
-    )
-    found, location = tc.has_direct_torch_dep(p)
-    assert found is False
-    assert location == ""
 
 
 def test_apply_on_inline_sources_form(tmp_path: Path) -> None:

@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#search-freshness-and-empty-results'
-date: '2026-07-23'
-modified: '2026-07-23'
+date: '2026-07-24'
+modified: '2026-07-24'
 related:
   - '[[2026-06-11-search-freshness-and-empty-results-adr]]'
   - '[[2026-06-11-search-freshness-and-empty-results-research]]'

@@ -26,6 +26,7 @@ from ..serviceclient._transport import (
     _get_admin_timeout,
     _try_http_admin,
 )
+from ._http_stubs import QuietHandler
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit]
 
 
-class _MalformedJSONHandler(BaseHTTPRequestHandler):
+class _MalformedJSONHandler(QuietHandler):
     """Answer every GET with a 200 whose body is not valid JSON."""
 
     def do_GET(self) -> None:
@@ -45,11 +46,8 @@ class _MalformedJSONHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, *_args: object, **_kwargs: object) -> None:
-        """Silence the default stderr request logging."""
 
-
-class _EmptyJSONHandler(BaseHTTPRequestHandler):
+class _EmptyJSONHandler(QuietHandler):
     """Answer every GET with a valid, genuinely-empty JSON object."""
 
     def do_GET(self) -> None:
@@ -60,11 +58,8 @@ class _EmptyJSONHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, *_args: object, **_kwargs: object) -> None:
-        """Silence the default stderr request logging."""
 
-
-class _AuthDeadlineHandler(BaseHTTPRequestHandler):
+class _AuthDeadlineHandler(QuietHandler):
     """Exercise the real 401, health-token, authenticated-retry sequence."""
 
     service_token = "live-loopback-token"
@@ -105,11 +100,8 @@ class _AuthDeadlineHandler(BaseHTTPRequestHandler):
         ):
             self.wfile.write(body)
 
-    def log_message(self, *_args: object, **_kwargs: object) -> None:
-        """Silence the default stderr request logging."""
 
-
-class _RedirectSinkHandler(BaseHTTPRequestHandler):
+class _RedirectSinkHandler(QuietHandler):
     """Stand in for the host a redirect names; record everything it receives.
 
     Answers with a body that would be mistaken for a genuine service response if
@@ -136,11 +128,8 @@ class _RedirectSinkHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         self.do_GET()
 
-    def log_message(self, *_args: object, **_kwargs: object) -> None:
-        """Silence the default stderr request logging."""
 
-
-class _RedirectingHandler(BaseHTTPRequestHandler):
+class _RedirectingHandler(QuietHandler):
     """Answer every request with a 302 pointing at the sink server."""
 
     sink_port: ClassVar[int] = 0
@@ -157,9 +146,6 @@ class _RedirectingHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         self.do_GET()
-
-    def log_message(self, *_args: object, **_kwargs: object) -> None:
-        """Silence the default stderr request logging."""
 
 
 def _serve(handler: type[BaseHTTPRequestHandler]) -> tuple[ThreadingHTTPServer, int]:
@@ -184,21 +170,6 @@ def refused_port() -> Iterator[int]:
         yield sock.getsockname()[1]
     finally:
         sock.close()
-
-
-@pytest.fixture
-def isolated_status_dir(tmp_path: object) -> Iterator[None]:
-    """Point the status dir at an empty temp dir so no ambient token couples in."""
-    key = EnvVar.STATUS_DIR.value
-    previous = os.environ.get(key)
-    os.environ[key] = str(tmp_path)
-    try:
-        yield
-    finally:
-        if previous is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = previous
 
 
 @pytest.fixture
@@ -507,7 +478,7 @@ class TestRedirectsAreRefused:
         assert "sink-token-never-legitimate" not in str(result)
 
 
-class _SlowHandler(BaseHTTPRequestHandler):
+class _SlowHandler(QuietHandler):
     """Answer only after a delay far longer than any bound under test."""
 
     def do_GET(self) -> None:
@@ -523,9 +494,6 @@ class _SlowHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
-
-    def log_message(self, *_args: object, **_kwargs: object) -> None:
-        """Silence the default stderr request logging."""
 
 
 @pytest.mark.usefixtures("isolated_status_dir", "isolated_admin_timeout_env")
@@ -559,7 +527,7 @@ class TestOmittedTimeoutIsBounded:
         assert elapsed < 4.0
 
 
-class _NonObjectBodyHandler(BaseHTTPRequestHandler):
+class _NonObjectBodyHandler(QuietHandler):
     """Answer with valid JSON that is not an object.
 
     This is the shape a foreign process on the port produces - the very
@@ -576,11 +544,8 @@ class _NonObjectBodyHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, *_args: object, **_kwargs: object) -> None:
-        """Silence the default stderr request logging."""
 
-
-class _HealthyHandler(BaseHTTPRequestHandler):
+class _HealthyHandler(QuietHandler):
     """Answer the health route the way a live daemon does."""
 
     def do_GET(self) -> None:
@@ -595,11 +560,8 @@ class _HealthyHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, *_args: object, **_kwargs: object) -> None:
-        """Silence the default stderr request logging."""
 
-
-class _UnhealthyHandler(BaseHTTPRequestHandler):
+class _UnhealthyHandler(QuietHandler):
     """Answer with a server error: the service is up, but not well."""
 
     def do_GET(self) -> None:
@@ -607,9 +569,6 @@ class _UnhealthyHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", "0")
         self.end_headers()
-
-    def log_message(self, *_args: object, **_kwargs: object) -> None:
-        """Silence the default stderr request logging."""
 
 
 @pytest.mark.usefixtures("isolated_status_dir")

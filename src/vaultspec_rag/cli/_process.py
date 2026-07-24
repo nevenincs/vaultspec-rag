@@ -17,6 +17,7 @@ import signal
 import subprocess
 import sys
 import sysconfig
+import threading
 import time
 import uuid
 from datetime import UTC, datetime
@@ -31,17 +32,27 @@ from .._machine_lock import (
     machine_lock_path,
     release_machine_lock,
 )
+from .._win32 import (
+    WIN_CREATE_BREAKAWAY_FROM_JOB,
+    WIN_CREATE_NEW_PROCESS_GROUP,
+    WIN_CREATE_NO_WINDOW,
+    WIN_DETACHED_PROCESS,
+)
 from ..config import EnvVar
+from ..serviceclient._discovery import HEARTBEAT_STALENESS_SECONDS
 from ..serviceclient._transport import _try_http_health
 from ._core import logger
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ..qdrant_runtime._resolve import QdrantIdentity
 
 __all__ = [
     "_DEFAULT_GRACEFUL_DRAIN_SECONDS",
     "_HEARTBEAT_STALENESS_SECONDS",
     "DaemonBreakawayError",
+    "_call_interruptibly",
     "_heartbeat_age_seconds",
     "_is_our_service",
     "_is_pid_alive",
@@ -232,11 +243,9 @@ def _port_is_available(port: int) -> bool:
             return False
 
 
-# Mirrored from server._HEARTBEAT_STALENESS_SECONDS - kept as a
-# local constant so cli.py does not import server (which would
-# pull in FastMCP + heavy deps at CLI startup time). Bump both in
-# lockstep if the contract changes.
-_HEARTBEAT_STALENESS_SECONDS = 60
+# Re-exported from the shared heartbeat contract so this module keeps its
+# existing name for importers. The CLI still never imports ``server``.
+_HEARTBEAT_STALENESS_SECONDS = HEARTBEAT_STALENESS_SECONDS
 
 # Post-signal drain bound before a forced kill. The short default serves
 # callers that only need the process gone; an operator stop overrides it so the
@@ -251,6 +260,60 @@ _DEFAULT_GRACEFUL_DRAIN_SECONDS = 2.0
 # blocked mid-iteration - only a bound on the call itself can. Kept well under
 # the whole-cleanup timeout so a healthy probe always completes within it.
 _PROBE_BUDGET_SECONDS = 1.0
+
+#: How often the main thread wakes while a blocking call runs elsewhere. Small
+#: enough that an interrupt is serviced well inside the eye's notice, large
+#: enough that idling costs one syscall per tick.
+_INTERRUPT_WAKE_SECONDS = 0.05
+
+
+def _call_interruptibly[T](
+    work: Callable[[], T],
+    *,
+    sleep: Callable[[float], None] | None = None,
+) -> T:
+    """Run *work* on a worker thread, keeping the main thread interruptible.
+
+    An interrupt only becomes ``KeyboardInterrupt`` at an interpreter check, and
+    a thread parked in a blocking socket read reaches none of them: run a
+    network call on the main thread and the operator's Ctrl+C is dead for the
+    request's entire timeout, however long the service takes to answer.
+    ``time.sleep`` *is* woken by an interrupt on every platform, so the main
+    thread waits in short sleeps while the call runs elsewhere.
+
+    A timed ``Event.wait`` would reintroduce the defect - on Windows it parks
+    the caller in a lock acquire that no interrupt can wake - so the wait is
+    deliberately a sleep loop over a non-blocking ``is_set``.
+
+    Callers must only pass read-only work: the worker is a daemon thread, so
+    abandoning one in flight neither delays process exit nor leaves anything
+    modified.
+
+    *sleep* exists so a caller can drive the wait; it defaults to the real one.
+    """
+    wait = sleep if sleep is not None else time.sleep
+    outcome: T | None = None
+    # Anything the worker raises is carried back to the caller rather than left
+    # to the thread excepthook, which would turn a failed call into an
+    # indistinguishable "no result".
+    failure: BaseException | None = None
+    done = threading.Event()
+
+    def run() -> None:
+        nonlocal outcome, failure
+        try:
+            outcome = work()
+        except BaseException as exc:
+            failure = exc
+        finally:
+            done.set()
+
+    threading.Thread(target=run, name="cli-interruptible-call", daemon=True).start()
+    while not done.is_set():
+        wait(_INTERRUPT_WAKE_SECONDS)
+    if failure is not None:
+        raise failure
+    return cast("T", outcome)
 
 
 def _port_is_listening(port: int) -> bool:
@@ -353,23 +416,15 @@ def _service_child_env(
     return env
 
 
-# Windows process-creation flags used when spawning the detached daemon.
-# Defined as named constants so tests can assert their values without
-# hard-coding magic numbers.
-_WIN_CREATE_NEW_PROCESS_GROUP = 0x00000200
-_WIN_CREATE_NO_WINDOW = 0x08000000
-# Detaches the new process from the launching shell's Windows Job Object so the
-# daemon survives when the parent shell exits.  Some restricted Job Objects deny
-# breakaway; _spawn_service then attempts a console-detached spawn and, if that
-# is also refused, fails loudly rather than silently producing a shell-bound
-# daemon doomed to die with the launching shell.
-_WIN_CREATE_BREAKAWAY_FROM_JOB = 0x01000000
-# Detaches the child from the parent's console.  Combined with a new process
-# group this is the best-effort fallback when breakaway is denied: it severs the
-# console association and the CTRL_BREAK group so an interactive shell exit is
-# less likely to reach the daemon, though a Job Object configured to kill on
-# close can still terminate it (which is why breakaway denial fails loudly).
-_WIN_DETACHED_PROCESS = 0x00000008
+# Windows process-creation flags for the detached daemon spawn. The values are
+# Win32 API facts held once in .._win32; the combination below is this spawn's
+# policy - break away from the launching shell's Job Object so the daemon
+# survives the shell, with a console-detached fallback when breakaway is denied.
+# Kept under the existing names so importers and tests are unaffected.
+_WIN_CREATE_NEW_PROCESS_GROUP = WIN_CREATE_NEW_PROCESS_GROUP
+_WIN_CREATE_NO_WINDOW = WIN_CREATE_NO_WINDOW
+_WIN_CREATE_BREAKAWAY_FROM_JOB = WIN_CREATE_BREAKAWAY_FROM_JOB
+_WIN_DETACHED_PROCESS = WIN_DETACHED_PROCESS
 
 
 def _resolve_daemon_interpreter() -> str:

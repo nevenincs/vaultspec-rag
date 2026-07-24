@@ -12,11 +12,9 @@ from typing import Annotated
 
 import typer
 
-import vaultspec_rag.cli as _cli
-
 from ._app import server_app
 from ._http_search import _try_http_admin
-from ._render import _emit_json, _emit_json_error_and_exit
+from ._render import _emit_json, _emit_json_error_and_exit, _plain
 from ._service_status import _default_service_port
 
 _PAUSE_COMMAND = "service.pause"
@@ -46,7 +44,7 @@ def _quiesce(*, pause: bool, command: str, port: int | None, json_mode: bool) ->
         message = str(result.get("message", "The pause/resume request failed."))
         if json_mode:
             _emit_json_error_and_exit(command, error, message, 1, data=result)
-        _cli.console.print(message, markup=False, highlight=False)
+        _plain(message)
         raise typer.Exit(1)
 
     status = str(result.get("status", ""))
@@ -62,13 +60,13 @@ def _quiesce(*, pause: bool, command: str, port: int | None, json_mode: bool) ->
         )
         if json_mode:
             _emit_json_error_and_exit(command, error, message, 1, data=result)
-        _cli.console.print(message, markup=False, highlight=False)
+        _plain(message)
         raise typer.Exit(1)
 
     if json_mode:
         _emit_json(True, command, data=result)
         raise typer.Exit(0)
-    _cli.console.print(_human_line(status), markup=False, highlight=False)
+    _plain(_human_line(status))
     raise typer.Exit(0)
 
 
@@ -89,10 +87,8 @@ def _fail_unreachable(command: str, json_mode: bool, *, port: int | None) -> Non
             command, "service_unreachable", message, 1, data={"port": port}
         )
     if port is not None:
-        _cli.console.print(
-            f"Address: http://127.0.0.1:{port}", markup=False, highlight=False
-        )
-    _cli.console.print(message, markup=False, highlight=False)
+        _plain(f"Address: http://127.0.0.1:{port}")
+    _plain(message)
     raise typer.Exit(1)
 
 

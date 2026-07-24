@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#cli-json-output'
-date: '2026-07-23'
-modified: '2026-07-23'
+date: '2026-07-24'
+modified: '2026-07-24'
 related:
   - '[[2026-05-30-cli-json-output-adr]]'
   - '[[2026-05-30-cli-json-output-plan]]'

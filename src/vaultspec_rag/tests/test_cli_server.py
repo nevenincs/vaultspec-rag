@@ -31,6 +31,7 @@ from ._cli_helpers import (
     reset_rag_config,
     runner,
 )
+from ._http_stubs import QuietHandler
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -172,7 +173,7 @@ class TestServerRoutingFlattened:
         project.mkdir()
         paths: list[str] = []
 
-        class WatcherStateHandler(http.server.BaseHTTPRequestHandler):
+        class WatcherStateHandler(QuietHandler):
             def do_GET(self) -> None:
                 paths.append(self.path)
                 response = {
@@ -183,9 +184,6 @@ class TestServerRoutingFlattened:
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps(response).encode("utf-8"))
-
-            def log_message(self, format: str, *args: object) -> None:
-                _ = format, args
 
         server = http.server.HTTPServer(("127.0.0.1", 0), WatcherStateHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)

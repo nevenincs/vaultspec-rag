@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from contextlib import contextmanager
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, TypedDict
@@ -24,8 +26,8 @@ from .._test_isolation import (
     PYTEST_MANAGED_SINGLETON_ROOT_ENV,
     register_pytest_singleton_root,
 )
+from ..config import EnvVar, get_config
 from ..config import VaultSpecConfigWrapper as VaultSpecConfig
-from ..config import get_config
 from ..config import reset_config as reset_rag_config
 from ..progress import NullProgressReporter
 from ._model_setup import ensure_model_snapshots, model_setup_timeout_seconds
@@ -36,7 +38,6 @@ from .corpus import CorpusManifest, build_synthetic_vault
 
 def _force_machine_singleton_test_paths(paths: Mapping[str, str]) -> None:
     """Restore the session-owned singleton paths and clear both config caches."""
-    import os
 
     for var, value in paths.items():
         os.environ[var] = value
@@ -59,7 +60,6 @@ def isolated_machine_singleton_dirs(
     trusted during the run, and individual tests may still narrow further
     with their own isolated overrides.
     """
-    import os
 
     from ..config import EnvVar
     from .integration._helpers import _mirror_managed_qdrant_binary
@@ -121,6 +121,75 @@ def rearm_machine_singleton_isolation(
         yield
     finally:
         _force_machine_singleton_test_paths(isolated_machine_singleton_dirs)
+
+
+def _apply_env(values: Mapping[str, str | None]) -> None:
+    """Set or unset *values* and clear both configuration caches."""
+    for key, value in values.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+    reset_config()  # pyright: ignore[reportMissingTypeStubs]
+    reset_rag_config()
+
+
+@contextmanager
+def managed_env(**overrides: str | None) -> Generator[None]:
+    """Apply environment *overrides* for the duration of the block.
+
+    A ``None`` value removes the variable. Both configuration caches are
+    cleared on entry and again on exit, because the managed directories and the
+    Qdrant URL are all read through a cached config object: an override that
+    does not clear the cache silently has no effect, and one that does not
+    clear it on the way out leaks into whatever reads config next.
+
+    The autouse re-arm below already restores the two session singleton paths at
+    every test boundary; this restores whatever keys the caller actually named,
+    which is what makes it usable for the other overrides (a Qdrant URL, an
+    admin timeout) and for a block narrower than one test.
+    """
+    prior: dict[str, str | None] = {key: os.environ.get(key) for key in overrides}
+    try:
+        _apply_env(overrides)
+        yield
+    finally:
+        _apply_env(prior)
+
+
+@pytest.fixture
+def isolated_status_dir(tmp_path: Path) -> Generator[Path]:
+    """Redirect the managed service dir at a fresh temp dir for one test.
+
+    The status dir resolves the recorded service, its auth token, the managed
+    log tree, and the storage manifest, so a test that reads or writes any of
+    those has to relocate it or it shares state with the operator's real
+    service. Yields the relocated directory, created and empty.
+    """
+    status_dir = tmp_path / "managed"
+    status_dir.mkdir(parents=True, exist_ok=True)
+    with managed_env(**{EnvVar.STATUS_DIR.value: str(status_dir)}):
+        yield status_dir
+
+
+@pytest.fixture
+def isolated_singleton_dirs(tmp_path: Path) -> Generator[Path]:
+    """Redirect both machine-singleton dirs so lock and service stay in tmp.
+
+    The machine lock and the Qdrant identity sidecar are anchored to the Qdrant
+    storage dir, not the status dir, so a test driving service start or stop
+    must relocate both or it contends for the real machine singleton. Yields
+    the relocated status dir.
+    """
+    status_dir = tmp_path / "status"
+    status_dir.mkdir(parents=True, exist_ok=True)
+    with managed_env(
+        **{
+            EnvVar.STATUS_DIR.value: str(status_dir),
+            EnvVar.QDRANT_STORAGE_DIR.value: str(tmp_path / "qdrant" / "storage"),
+        }
+    ):
+        yield status_dir
 
 
 class RagComponents(TypedDict):

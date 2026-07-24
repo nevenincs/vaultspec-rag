@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#code-document-index-boundary'
-date: '2026-07-23'
-modified: '2026-07-23'
+date: '2026-07-24'
+modified: '2026-07-24'
 related:
   - '[[2026-07-21-code-document-index-boundary-adr]]'
   - '[[2026-07-21-code-document-index-boundary-reference]]'

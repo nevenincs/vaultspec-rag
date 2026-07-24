@@ -271,6 +271,7 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
         Control to the running application.
     """
     _m._start_time = time.monotonic()
+    _m._start_wall_time = time.time()
     _m._shutdown_recorded = False
     # Generate the per-process identity token before the first
     # heartbeat tick fires (which would otherwise persist an empty
@@ -355,6 +356,23 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
         # race: no lease was retained, no component started, no view published, so
         # there is nothing to tear down - fall straight through to the daemon exit.
         contention_yield = isinstance(exc, RunningClaimContendedError)
+        # The operator's only account of why the daemon refused to start. The
+        # exit below is ``os._exit`` on the standalone daemon, so the ``raise``
+        # ending this handler never runs and the exception text - which names
+        # the winning holder and what to do about it - would be discarded
+        # entirely, leaving a bare non-zero exit that reads as a crash.
+        # Logged before the teardown so the cause survives a teardown that
+        # itself fails or hangs.
+        if contention_yield:
+            logger.info("Daemon yielded the machine to its owner: %s", exc)
+        else:
+            # Traceback first, the one-line cause last. The CLI surfaces only
+            # the final few lines of this log, so the sentence an operator can
+            # act on has to be the last thing written - while the frames stay
+            # above it, which is what makes an unexpected crash diagnosable and
+            # what identifies which guard refused a deliberate one.
+            logger.error("Daemon startup failure detail", exc_info=True)
+            logger.error("Daemon startup failed: %s", exc)
         if not cleanup_started and discovery is not None:
             cleanup_started = True
             await _shutdown_components(
@@ -927,12 +945,78 @@ def _resilience_job_health(
     }
 
 
+def _uptime_seconds() -> float:
+    """Return seconds elapsed since this generation's monotonic start stamp.
+
+    ``0.0`` before a generation is stamped, which is the value the health
+    payload reports for a process that has not run the lifespan.
+    """
+    return time.monotonic() - _m._start_time if _m._start_time > 0 else 0.0
+
+
+def _generation_start_wall_clock() -> float | None:
+    """Return the epoch instant this service generation began, or ``None``.
+
+    Two independent witnesses are stamped at lifespan startup: the epoch
+    reading itself, and a monotonic reading from which the epoch start can be
+    re-derived at call time (``now - uptime``). Neither survives every clock
+    adjustment alone - a backward step invalidates the recorded epoch stamp, a
+    forward step invalidates the derived one - so the earlier of the two is
+    returned. Widening the window can only make a stale failure look current,
+    which is the same verdict an unbounded check would give; narrowing it would
+    hide a live failure, which is the outcome worth ruling out.
+
+    ``None`` means no generation has been stamped, which is every caller
+    outside a running lifespan.
+    """
+    candidates: list[float] = []
+    if _m._start_time > 0:
+        candidates.append(time.time() - _uptime_seconds())
+    if _m._start_wall_time > 0:
+        candidates.append(_m._start_wall_time)
+    return min(candidates) if candidates else None
+
+
+def _failure_belongs_to_this_generation(record: dict[str, object]) -> bool:
+    """Return whether a failed job's failure happened under the running process.
+
+    Job records are durable and outlive the process that ran them, so the
+    latest failure on file is routinely one some earlier daemon suffered, hours
+    or restarts ago. Such a failure is history, not a verdict on the process
+    reading it: it stays in the reported rollup, but only a failure that
+    finished inside the current generation may degrade health.
+    """
+    from ._routes_jobs import _job_number
+
+    generation_start = _generation_start_wall_clock()
+    if generation_start is None:
+        # No generation is stamped, so nothing can be ruled out of it. Report
+        # the failure rather than suppress every failure a non-lifespan caller
+        # could ever see.
+        return True
+    finished_at = _job_number(record, "finished_at")
+    if finished_at is None:
+        # Missing or non-numeric stamp: a failure that cannot be placed in time
+        # degrades. Under-reporting costs an operator the only signal that the
+        # live service is broken; over-reporting is visible in the payload and
+        # clears itself once a job completes with a usable stamp.
+        return True
+    return finished_at >= generation_start
+
+
 def _jobs_health() -> tuple[dict[str, object], list[str]]:
     """Build the bounded job rollup and its service degradation reasons."""
     from ._routes_jobs import _job_summary, job_state
 
     canonical_records, job_records = _health_job_records()
     summary = _job_summary(job_records, now=time.time())
+    # Health answers one question: can this process serve a query right now.
+    # Only a failure bears on that, which is why the selector is narrower than
+    # the set of terminal states that are not success. An interrupted run left
+    # the published data intact, the models resident, and the backend live, so
+    # serving is unimpaired and it must not degrade here - whether the index
+    # that run was building is complete is a separate question with its own
+    # answer, and folding it in would report a healthy service as broken.
     last_failed = _latest_job_record(
         [record for record in job_records if job_state(record) == "failed"]
     )
@@ -958,7 +1042,7 @@ def _jobs_health() -> tuple[dict[str, object], list[str]]:
     degraded_reasons: list[str] = []
     if summary["stalled"]:
         degraded_reasons.append(f"{summary['stalled']} indexing job(s) are stalled")
-    if last_failed is not None:
+    if last_failed is not None and _failure_belongs_to_this_generation(last_failed):
         failed_kind = last_failed.get("error_kind") or "unknown"
         degraded_reasons.append(f"the latest indexing job failed: {failed_kind}")
     return jobs_health, degraded_reasons
@@ -979,7 +1063,7 @@ async def health_handler(_request: Request) -> object:
     from .. import store_schema
 
     reg_health = _m._registry.health()
-    uptime = time.monotonic() - _m._start_time if _m._start_time > 0 else 0.0
+    uptime = _uptime_seconds()
     from .. import qdrant_runtime as _qr
 
     qdrant_state = _qr.runtime_state()

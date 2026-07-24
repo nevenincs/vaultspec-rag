@@ -16,6 +16,7 @@ Personas
 
 from __future__ import annotations
 
+import re
 import typing
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -111,8 +112,9 @@ def _assert_first_time_help_output(observations: list[_Observation]) -> None:
             f"Expected command {expected_cmd!r} missing from --help:\n{top_help}"
         )
     index_help = observations[1].output
-    assert "docs/indexing.md" in index_help, (
-        f"Cross-reference to docs/indexing.md missing from index --help:\n{index_help}"
+    assert re.search(r"docs/\S+\.md", index_help) is None, (
+        f"index --help defers to a repo doc instead of documenting "
+        f"itself:\n{index_help}"
     )
 
 

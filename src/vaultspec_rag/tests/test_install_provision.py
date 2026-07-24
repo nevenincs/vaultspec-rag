@@ -46,30 +46,6 @@ PROJECT_ONLY = (
 )
 
 
-@pytest.fixture(autouse=True)
-def _reset_config_around_each_test() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
-    reset_config()
-    yield
-    reset_config()
-
-
-@pytest.fixture
-def isolated_status_dir(tmp_path: Path) -> Iterator[Path]:
-    """Point the managed service dir at a temp path for marker isolation."""
-    prev = os.environ.get(EnvVar.STATUS_DIR.value)
-    status = tmp_path / "managed"
-    os.environ[EnvVar.STATUS_DIR.value] = str(status)
-    reset_config()
-    try:
-        yield status
-    finally:
-        if prev is None:
-            os.environ.pop(EnvVar.STATUS_DIR.value, None)
-        else:
-            os.environ[EnvVar.STATUS_DIR.value] = prev
-        reset_config()
-
-
 @pytest.fixture
 def consumer_workspace(tmp_path: Path) -> Path:
     ws = tmp_path / "consumer"

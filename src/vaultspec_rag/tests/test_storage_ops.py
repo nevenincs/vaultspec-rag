@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from ..config import reset_config
 from ..storage_manifest import load_manifest, record_root, update_orphan_stamps
 from ..storage_ops import (
     GeometryEntry,
@@ -31,7 +30,6 @@ from ..storage_survey import NamespaceSurvey
 from ..store_schema import SERVER_SEGMENT_NUMBER
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
 
     from qdrant_client import QdrantClient
@@ -49,20 +47,9 @@ _POLICY = ReclaimPolicy(
 
 
 @pytest.fixture(autouse=True)
-def isolated_status_dir(tmp_path: Path) -> Iterator[None]:
-    """Point the manifest's managed dir at a temp path via the env seam."""
-    key = "VAULTSPEC_RAG_STATUS_DIR"
-    prev = os.environ.get(key)
-    os.environ[key] = str(tmp_path / "managed")
-    reset_config()
-    try:
-        yield
-    finally:
-        if prev is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = prev
-        reset_config()
+def isolate_manifest_dir(isolated_status_dir: Path) -> None:
+    """Resolve the manifest under a temp managed dir for every test here."""
+    del isolated_status_dir
 
 
 def _survey(

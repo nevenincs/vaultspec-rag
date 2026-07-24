@@ -118,37 +118,41 @@ class TestMcpFastPath:
         # No live service → transport failure → None (not a usage-error dict).
         assert result is None
 
-    def test_search_cmd_rejects_filter_with_vault(self):
-        """The CLI ``search`` command refuses filter flags when --type vault."""
+    # The corpus-specific flags and the type they belong to. Each row asserts the
+    # usage exit AND the sentence that names the right --type, because the two
+    # directions render different remediation and a shared-prefix match would
+    # stop telling them apart.
+    @pytest.mark.parametrize(
+        ("corpus", "flag", "required_type"),
+        [
+            ("vault", ["--function-name", "foo"], "code"),
+            ("code", ["--feature", "auth"], "vault"),
+            ("vault", ["--include-path", "src/**"], "code"),
+            ("vault", ["--exclude-path", "locales/*.yml"], "code"),
+            ("vault", ["--dedup-locales"], "code"),
+            ("vault", ["--prefer", "production"], "code"),
+        ],
+        ids=[
+            "function-name",
+            "feature",
+            "include-path",
+            "exclude-path",
+            "dedup-locales",
+            "prefer",
+        ],
+    )
+    def test_search_cmd_rejects_a_flag_for_the_other_corpus(
+        self,
+        corpus: str,
+        flag: list[str],
+        required_type: str,
+    ) -> None:
         result = runner.invoke(
             app,
-            [
-                "search",
-                "anything",
-                "--type",
-                "vault",
-                "--function-name",
-                "foo",
-            ],
+            ["search", "anything", "--type", corpus, *flag],
         )
         assert result.exit_code == 2
-        assert "require --type code" in result.output
-
-    def test_search_cmd_rejects_vault_filter_with_code(self):
-        """Vault filters with --type code error explicitly."""
-        result = runner.invoke(
-            app,
-            [
-                "search",
-                "anything",
-                "--type",
-                "code",
-                "--feature",
-                "auth",
-            ],
-        )
-        assert result.exit_code == 2
-        assert "require --type vault" in result.output
+        assert f"require --type {required_type}" in result.output
 
     def test_search_cmd_rejects_unknown_option_with_plain_language(self):
         result = runner.invoke(app, ["search", "anything", "--bogus-option"])
@@ -256,38 +260,6 @@ class TestMcpFastPath:
         )
         assert result is None
 
-    def test_search_cmd_rejects_include_path_with_vault(self):
-        """CLI: --include-path + --type vault exits 2 with usage error."""
-        result = runner.invoke(
-            app,
-            [
-                "search",
-                "anything",
-                "--type",
-                "vault",
-                "--include-path",
-                "src/**",
-            ],
-        )
-        assert result.exit_code == 2
-        assert "require --type code" in result.output
-
-    def test_search_cmd_rejects_exclude_path_with_vault(self):
-        """CLI: --exclude-path + --type vault exits 2 with usage error."""
-        result = runner.invoke(
-            app,
-            [
-                "search",
-                "anything",
-                "--type",
-                "vault",
-                "--exclude-path",
-                "locales/*.yml",
-            ],
-        )
-        assert result.exit_code == 2
-        assert "require --type code" in result.output
-
     def test_dedup_locales_with_vault_returns_usage_error(self):
         """--dedup-locales is a code-only post-process flag."""
         result = _try_http_search(
@@ -328,37 +300,6 @@ class TestMcpFastPath:
             prefer="tests",
         )
         assert result is None
-
-    def test_search_cmd_rejects_dedup_locales_with_vault(self):
-        """CLI: --dedup-locales + --type vault exits 2 with usage error."""
-        result = runner.invoke(
-            app,
-            [
-                "search",
-                "anything",
-                "--type",
-                "vault",
-                "--dedup-locales",
-            ],
-        )
-        assert result.exit_code == 2
-        assert "require --type code" in result.output
-
-    def test_search_cmd_rejects_prefer_with_vault(self):
-        """CLI: --prefer + --type vault exits 2 with usage error."""
-        result = runner.invoke(
-            app,
-            [
-                "search",
-                "anything",
-                "--type",
-                "vault",
-                "--prefer",
-                "production",
-            ],
-        )
-        assert result.exit_code == 2
-        assert "require --type code" in result.output
 
     def test_search_cmd_rejects_invalid_prefer_value(self):
         """CLI: --prefer reports user-facing supported values."""

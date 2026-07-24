@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#cli-tree-overhaul'
-date: '2026-07-23'
-modified: '2026-07-23'
+date: '2026-07-24'
+modified: '2026-07-24'
 related:
   - '[[2026-06-06-cli-tree-overhaul-W01-P01-S36]]'
   - '[[2026-06-06-cli-tree-overhaul-W01-P01-S37]]'

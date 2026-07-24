@@ -2,21 +2,12 @@
 
 from __future__ import annotations
 
-import os
-import socket
 from typing import TYPE_CHECKING
 
 import pytest
 
 from ... import store_schema
 from ...cli._service_storage import _migrate_name_map
-from ...config import EnvVar, reset_config
-from ...qdrant_runtime import (
-    QdrantProvisionAction,
-    QdrantSupervisor,
-    provision,
-    resolve_binary,
-)
 from ...server._routes_storage import _shape_survey_payload
 from ...storage_manifest import record_root
 from ...storage_ops import (
@@ -26,6 +17,7 @@ from ...storage_ops import (
     prune_orphaned,
 )
 from ...store import root_collection_prefix
+from ._helpers import provisioned_qdrant_binary, serve_qdrant
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -34,28 +26,15 @@ if TYPE_CHECKING:
     from pytest import TempPathFactory
     from qdrant_client import QdrantClient
 
+    from ...qdrant_runtime import QdrantSupervisor
+
 pytestmark = [pytest.mark.integration]
-
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
 
 
 @pytest.fixture(scope="module")
 def migration_qdrant_binary() -> Path:
-    """Provision the pinned real Qdrant binary."""
-    reset_config()
-    report = provision()
-    assert report.action in {
-        QdrantProvisionAction.CREATED,
-        QdrantProvisionAction.UNCHANGED,
-        QdrantProvisionAction.UPDATED,
-    }
-    resolved = resolve_binary()
-    assert resolved is not None
-    return resolved.path
+    """Provision (or reuse) the pinned real Qdrant binary."""
+    return provisioned_qdrant_binary()
 
 
 @pytest.fixture(scope="module")
@@ -63,36 +42,10 @@ def migration_qdrant_server(
     migration_qdrant_binary: Path,
     tmp_path_factory: TempPathFactory,
 ) -> Iterator[QdrantSupervisor]:
-    """Run one isolated real server for migration and maintenance."""
-    root = tmp_path_factory.mktemp("document-migration-qdrant")
-    supervisor = QdrantSupervisor(
-        migration_qdrant_binary,
-        http_port=_free_port(),
-        grpc_port=_free_port(),
-        storage_dir=root / "storage",
-        log_path=root / "qdrant.log",
+    """One real qdrant server on ephemeral ports with temp storage."""
+    yield from serve_qdrant(
+        migration_qdrant_binary, tmp_path_factory.mktemp("document-migration-qdrant")
     )
-    supervisor.start(timeout=60.0)
-    yield supervisor
-    supervisor.stop()
-
-
-@pytest.fixture
-def isolated_storage_status(tmp_path: Path) -> Iterator[Path]:
-    """Keep the real manifest inside the test's managed directory."""
-    status_key = EnvVar.STATUS_DIR.value
-    previous = os.environ.get(status_key)
-    status_dir = tmp_path / "managed"
-    os.environ[status_key] = str(status_dir)
-    reset_config()
-    try:
-        yield status_dir
-    finally:
-        if previous is None:
-            os.environ.pop(status_key, None)
-        else:
-            os.environ[status_key] = previous
-        reset_config()
 
 
 def _make_document_collection(client: QdrantClient, name: str) -> None:
@@ -117,7 +70,7 @@ def _make_document_collection(client: QdrantClient, name: str) -> None:
 
 def test_real_local_to_service_document_migration_is_idempotent(
     migration_qdrant_server: QdrantSupervisor,
-    isolated_storage_status: Path,  # noqa: ARG001
+    isolated_status_dir: Path,  # noqa: ARG001
     tmp_path: Path,
 ) -> None:
     """Copy a real local document collection once and safely skip its replay."""
@@ -156,7 +109,7 @@ def test_real_local_to_service_document_migration_is_idempotent(
 
 def test_real_document_pruning_debris_and_maintenance_route(
     migration_qdrant_server: QdrantSupervisor,
-    isolated_storage_status: Path,  # noqa: ARG001
+    isolated_status_dir: Path,  # noqa: ARG001
     tmp_path: Path,
 ) -> None:
     """Cover document prefix pruning, debris classification, and route counts."""

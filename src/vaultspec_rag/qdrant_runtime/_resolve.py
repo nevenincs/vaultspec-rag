@@ -22,7 +22,6 @@ import shutil
 import sys
 import time
 import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -32,6 +31,7 @@ if TYPE_CHECKING:
 
 from ..config import EnvVar, get_config
 from ._constants import (
+    LOOPBACK_OPENER,
     MANIFEST_FILENAME,
     QDRANT_ASSET_SHA256,
     QDRANT_SERVER_VERSION,
@@ -67,10 +67,6 @@ __all__ = [
     "write_qdrant_identity",
 ]
 
-# Loopback probes must never traverse an HTTP(S) proxy from the environment: a
-# proxy could spoof a "ready"/version response a caller would trust when
-# deciding whether to attach to an already-running Qdrant.
-_LOOPBACK_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 _START_TIME_TOLERANCE_SECONDS = 1e-6
 
 
@@ -113,7 +109,7 @@ def probe_qdrant_endpoint(
     listening = False
     ready = False
     try:
-        with _LOOPBACK_OPENER.open(f"{base}/readyz", timeout=timeout) as resp:
+        with LOOPBACK_OPENER.open(f"{base}/readyz", timeout=timeout) as resp:
             listening = True
             ready = int(resp.status) == 200
     except urllib.error.HTTPError as exc:
@@ -127,7 +123,7 @@ def probe_qdrant_endpoint(
 
     version = ""
     try:
-        with _LOOPBACK_OPENER.open(base, timeout=timeout) as resp:
+        with LOOPBACK_OPENER.open(base, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         if isinstance(payload, dict):
             version = str(cast("dict[str, object]", payload).get("version", ""))

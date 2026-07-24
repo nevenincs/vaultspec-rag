@@ -22,6 +22,7 @@ from ._render import (
     _display_service_error,
     _emit_json,
     _emit_json_error_and_exit,
+    _plain,
 )
 from ._service_status import _default_service_port
 
@@ -94,11 +95,7 @@ def _handle_service_results(
         )
         return
     if not service_results:
-        _cli.console.print(
-            f"No {search_type} results found for: {query}",
-            markup=False,
-            highlight=False,
-        )
+        _plain(f"No {search_type} results found for: {query}")
         return
     _display_search_results(
         service_results,
@@ -160,11 +157,9 @@ def _render_partial_domain_failures(payload: dict[str, object]) -> None:
             continue
         outcome = cast("dict[str, object]", raw)
         if outcome.get("ok") is False:
-            _cli.console.print(
+            _plain(
                 f"{_search_type_result_label(source.value).capitalize()} search "
-                f"failed ({outcome.get('error_kind')}): {outcome.get('detail')}",
-                markup=False,
-                highlight=False,
+                f"failed ({outcome.get('error_kind')}): {outcome.get('detail')}"
             )
 
 
@@ -173,17 +168,13 @@ def _render_empty_service_results(
     query: str,
     search_type: str,
 ) -> None:
-    _cli.console.print(
-        f"No {_search_type_result_label(search_type)} results found for: {query}",
-        markup=False,
-        highlight=False,
-    )
+    _plain(f"No {_search_type_result_label(search_type)} results found for: {query}")
     remediation: object = None
     empty = payload.get("empty")
     if isinstance(empty, dict):
         empty_map = cast("dict[str, object]", empty)
         message = str(empty_map.get("message", "No matching indexed items found."))
-        _cli.console.print(f"Why: {message}", markup=False)
+        _plain(f"Why: {message}")
         remediation = empty_map.get("remediation")
     index_state = payload.get("index_state")
     if isinstance(index_state, dict):
@@ -225,40 +216,17 @@ def _render_empty_index_state(
 ) -> None:
     source = str(index_state.get("source") or search_type)
     indexed = index_state.get("indexed_count", "?")
-    _cli.console.print(
-        f"Indexed {_search_type_count_label(source)}: {indexed}.",
-        markup=False,
-        highlight=False,
-    )
+    _plain(f"Indexed {_search_type_count_label(source)}: {indexed}.")
     requested = str(index_state.get("requested_target_root", "")).strip()
     indexed_target = str(index_state.get("indexed_target_root", "")).strip()
     if not requested or not indexed_target:
         return
     if index_state.get("target_matches") is False and requested != indexed_target:
-        _cli.console.print(
-            "Project mismatch: requested project differs from indexed project.",
-            markup=False,
-            highlight=False,
-        )
-        _cli.console.print(
-            f"Requested project: {requested}",
-            markup=False,
-            highlight=False,
-            soft_wrap=True,
-        )
-        _cli.console.print(
-            f"Indexed project: {indexed_target}",
-            markup=False,
-            highlight=False,
-            soft_wrap=True,
-        )
+        _plain("Project mismatch: requested project differs from indexed project.")
+        _plain(f"Requested project: {requested}", soft_wrap=True)
+        _plain(f"Indexed project: {indexed_target}", soft_wrap=True)
         return
-    _cli.console.print(
-        f"Project: {requested}",
-        markup=False,
-        highlight=False,
-        soft_wrap=True,
-    )
+    _plain(f"Project: {requested}", soft_wrap=True)
 
 
 def _handle_vaultstore_locked_error(
@@ -286,7 +254,7 @@ def _handle_vaultstore_locked_error(
                 "Stop any orphaned Python process that is still using this workspace.",
             ],
         )
-    _cli.console.print(
+    _plain(
         f"Error: The local search index at {exc.db_path} is busy.\n\n"
         "  This command tried to search the index directly, but another "
         "vaultspec-rag command, the background service, or an automatic index "
@@ -304,9 +272,7 @@ def _handle_vaultstore_locked_error(
         "    4. Stop the running service:\n"
         "         vaultspec-rag server stop\n"
         "    5. If no vaultspec-rag process is alive, look for an "
-        "orphaned Python process using the index and stop it manually.",
-        markup=False,
-        highlight=False,
+        "orphaned Python process using the index and stop it manually."
     )
     raise typer.Exit(code=1) from exc
 
@@ -499,7 +465,7 @@ def _validate_and_handle_filters(
                 2,
                 value=exc.prefer_value,
             )
-        _cli.console.print(f"Error: {msg}", markup=False, highlight=False)
+        _plain(f"Error: {msg}")
         raise typer.Exit(code=2) from None
     except InvalidFilterForSearchTypeError as exc:
         msg = str(exc)
@@ -512,7 +478,7 @@ def _validate_and_handle_filters(
                 filter_kind=exc.filter_kind,
                 offending=exc.offending_filters,
             )
-        _cli.console.print(f"Error: {msg}", markup=False, highlight=False)
+        _plain(f"Error: {msg}")
         raise typer.Exit(code=2) from None
 
 
@@ -538,7 +504,7 @@ def _search_prefer_filter(prefer: str | None, *, json_mode: bool = False) -> str
             2,
             value=prefer,
         )
-    _cli.console.print(f"Error: {msg}", markup=False, highlight=False)
+    _plain(f"Error: {msg}")
     raise typer.Exit(code=2)
 
 
@@ -554,7 +520,7 @@ def _validate_search_type(search_type: str, *, json_mode: bool) -> PublicSourceT
                 2,
                 **exc.as_payload(),
             )
-        _cli.console.print(f"Error: {exc}", markup=False, highlight=False)
+        _plain(f"Error: {exc}")
         raise typer.Exit(code=2) from None
 
 
@@ -656,33 +622,12 @@ def _render_empty_in_process_results(
 ) -> None:
     result_label = _search_type_result_label(search_type)
     count_label = _search_type_count_label(search_type)
-    _cli.console.print(
-        f"No {result_label} results found for: {query}",
-        markup=False,
-        highlight=False,
-    )
-    _cli.console.print(
-        f"Why: No matching {count_label} were found in the local index.",
-        markup=False,
-        highlight=False,
-    )
-    _cli.console.print(
-        f"Project: {target}",
-        markup=False,
-        highlight=False,
-        soft_wrap=True,
-    )
-    _cli.console.print("Next actions:", markup=False, highlight=False)
-    _cli.console.print(
-        f"  - vaultspec-rag index --type {search_type}",
-        markup=False,
-        highlight=False,
-    )
-    _cli.console.print(
-        "  - vaultspec-rag status",
-        markup=False,
-        highlight=False,
-    )
+    _plain(f"No {result_label} results found for: {query}")
+    _plain(f"Why: No matching {count_label} were found in the local index.")
+    _plain(f"Project: {target}", soft_wrap=True)
+    _plain("Next actions:")
+    _plain(f"  - vaultspec-rag index --type {search_type}")
+    _plain("  - vaultspec-rag status")
 
 
 def _local_only_configured() -> bool:
@@ -732,7 +677,7 @@ def _display_service_down_error(*, json_mode: bool) -> NoReturn:
                 "rerun with --allow-fallback (one local user only)",
             ],
         )
-    _cli.console.print(
+    _plain(
         "No running vaultspec-rag service was found.\n"
         "The CLI will not silently run the search locally because that would "
         "open the local search index directly and block other users.\n"
@@ -740,9 +685,7 @@ def _display_service_down_error(*, json_mode: bool) -> NoReturn:
         "  1. Check status:  vaultspec-rag server status\n"
         "  2. Start service: vaultspec-rag server start\n"
         "  3. Or run locally anyway: re-run with "
-        "--allow-fallback (one user only).",
-        markup=False,
-        highlight=False,
+        "--allow-fallback (one user only)."
     )
     raise typer.Exit(code=1)
 
@@ -824,9 +767,35 @@ def _local_search_deadline(
 @app.command(
     "search",
     help=(
-        "Search project documents or source code. Uses the running service "
-        "when available. Local search runs only with an explicit mandate "
-        "(--allow-fallback or configured local-only mode)."
+        "Search project documents or source code by meaning.\n"
+        "\n"
+        "Uses the running service when available. Local search runs only "
+        "with an explicit mandate (--allow-fallback or configured "
+        "local-only mode).\n"
+        "\n"
+        "\b\n"
+        "Query markers - write them anywhere in the query text:\n"
+        "  documents  type:adr feature:rag date:2026-07 tag:research\n"
+        "  code       lang:python path:src/ func:encode class:Searcher\n"
+        "             nodetype:function_definition\n"
+        "  noise      only:prod exclude:tests,docs include:locale\n"
+        "  ranking    status:active intent:debugging\n"
+        "\n"
+        "\b\n"
+        "  domains    prod tests docs locale generated vendored worktree\n"
+        "  status     all | active | accepted,proposed,superseded,...\n"
+        "  intent     orientation (default) | debugging\n"
+        "\n"
+        "only:/exclude:/include:, status:, and intent: are marker-only - "
+        "they have no --flag equivalent. Comma-separated sets accumulate "
+        "when repeated.\n"
+        "\n"
+        "\b\n"
+        "Examples:\n"
+        '  vaultspec-rag search "auth token validation only:prod" --type code\n'
+        '  vaultspec-rag search "fixture helpers exclude:tests" --type code\n'
+        '  vaultspec-rag search "encode batch lang:python func:encode" --type code\n'
+        '  vaultspec-rag search "gpu lock decision type:adr status:active"\n'
     ),
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
@@ -1171,7 +1140,5 @@ def _validate_search_extra_args(ctx: typer.Context) -> None:
     if not extras:
         return
     unexpected = " ".join(extras)
-    _cli.console.print(
-        f"Unexpected search options: {unexpected}", markup=False, highlight=False
-    )
+    _plain(f"Unexpected search options: {unexpected}")
     raise typer.Exit(code=2)

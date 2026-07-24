@@ -17,4 +17,4 @@ Auto-generated index of all documents tagged with `#vault-true-incremental`.
 
 ### adr
 
-- `2026-07-24-vault-true-incremental-adr` - `vault-true-incremental` adr: `frontmatter-volatility-agnostic vault change detection` | (**status:** `{proposed|accepted|rejected|superseded|deprecated}`)
+- `2026-07-24-vault-true-incremental-adr` - `vault-true-incremental` adr: `frontmatter-volatility-agnostic vault change detection` | (**status:** `accepted`)

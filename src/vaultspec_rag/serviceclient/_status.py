@@ -400,6 +400,10 @@ def _is_positive_pid(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
+def _ignore_attempt(_attempt: int, _verdict: DiscoveryStatus) -> None:
+    """Drop a poll observation, for callers that want no reporting."""
+
+
 def reconcile_discovery(
     resolve: Callable[[], MachineResolution],
     probe_liveness: Callable[[MachineResolution], LivenessSignals],
@@ -409,6 +413,7 @@ def reconcile_discovery(
     interval_s: float = RECONCILE_INTERVAL_SECONDS,
     sleep: Callable[[float], None] | None = None,
     monotonic: Callable[[], float] | None = None,
+    on_attempt: Callable[[int, DiscoveryStatus], None] = _ignore_attempt,
 ) -> ReconcileOutcome:
     """Wait boundedly for the owner's own heartbeat to republish discovery.
 
@@ -417,6 +422,12 @@ def reconcile_discovery(
     owner's next heartbeat. This polls for that convergence and reports what it
     saw; it never writes, deletes, restarts, or terminates anything, which is
     what makes it safe to run against a healthy machine.
+
+    ``on_attempt`` observes each non-terminal poll - the attempt number and the
+    verdict that did not yet converge - just before the wait. It exists so an
+    adapter can keep an operator informed across a wait measured in tens of
+    seconds; it cannot influence the outcome, and the loop is identical without
+    it.
     """
     import time as _time
 
@@ -468,4 +479,5 @@ def reconcile_discovery(
                     f"{verdict.label}; discovery did not converge within {timeout_s:g}s"
                 ),
             )
+        on_attempt(attempts, verdict)
         wait(min(interval_s, max(0.0, deadline - clock())))

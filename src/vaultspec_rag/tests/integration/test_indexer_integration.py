@@ -20,6 +20,7 @@ from ..benchmarks.bench_large_index_resilience import (
     prepare_corpus,
     retain_benchmark_evidence,
 )
+from ._helpers import _document_policy
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -91,21 +92,6 @@ def _write_code_memory_corpus(root: Path, count: int = 4) -> None:
             f'    return "alpha beta gamma index memory {ordinal:03d}"\n',
             encoding="utf-8",
         )
-
-
-def _document_policy(pattern: str):
-    """Route one explicit pattern through the production document domain."""
-    from ...indexer._content_policy import (
-        ContentKind,
-        ContentRoute,
-        RootContentPolicy,
-        SourceProfileVersion,
-    )
-
-    return RootContentPolicy(
-        SourceProfileVersion.CONVENTIONAL_V1,
-        (ContentRoute(pattern, ContentKind.DOCUMENT),),
-    )
 
 
 def _assert_code_pipeline_released(indexer: object) -> None:

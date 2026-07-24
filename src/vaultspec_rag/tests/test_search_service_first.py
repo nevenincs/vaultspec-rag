@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import json
 import os
-import socket
 import subprocess
 import sys
 import threading
@@ -37,6 +36,8 @@ from ..cli._search import (
     _local_search_mandated,
 )
 from ..config import EnvVar, reset_config
+from ._ports import free_loopback_port
+from .conftest import managed_env
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -54,49 +55,18 @@ def _repo_root() -> Path:
     return root
 
 
-def _free_port() -> int:
-    """Return a loopback port with no listener, so a connect is refused fast."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
-
-
 @pytest.fixture()
-def isolated_status_dir(tmp_path: Path) -> Iterator[Path]:
-    """Redirect the status dir at an empty tmp dir and clear the local mandate.
+def isolated_status_dir(isolated_singleton_dirs: Path) -> Iterator[Path]:
+    """Add a cleared local mandate on top of the singleton-dir relocation.
 
-    Sets ``VAULTSPEC_RAG_STATUS_DIR`` to a fresh empty directory and clears
-    ``VAULTSPEC_RAG_LOCAL_ONLY`` so neither the env nor the persisted marker
-    grants a local mandate, then resets the cached config on enter and exit.
-    Also isolates ``VAULTSPEC_RAG_QDRANT_STORAGE_DIR``: service discovery now
-    resolves the machine-global pointer (status-directory independent) before
-    the status-dir hint, so without this a real service running on the host
-    would be discovered and the "no service" cases would not hold.
+    Both managed directories move because discovery resolves the machine-global
+    pointer before the status-dir hint, so relocating only the status dir would
+    let a live service on the host satisfy the "no service" cases. Clearing
+    ``VAULTSPEC_RAG_LOCAL_ONLY`` on top of that is what makes the mandate come
+    from neither the environment nor a persisted marker.
     """
-    prev_status = os.environ.get(EnvVar.STATUS_DIR.value)
-    prev_local = os.environ.get(EnvVar.LOCAL_ONLY.value)
-    prev_storage = os.environ.get(EnvVar.QDRANT_STORAGE_DIR.value)
-    status_dir = tmp_path / "vaultspec-rag"
-    status_dir.mkdir()
-    os.environ[EnvVar.STATUS_DIR.value] = str(status_dir)
-    os.environ.pop(EnvVar.LOCAL_ONLY.value, None)
-    os.environ[EnvVar.QDRANT_STORAGE_DIR.value] = str(
-        tmp_path / "qdrant-server" / "storage"
-    )
-    reset_config()
-    try:
-        yield status_dir
-    finally:
-        for key, prev in (
-            (EnvVar.STATUS_DIR.value, prev_status),
-            (EnvVar.LOCAL_ONLY.value, prev_local),
-            (EnvVar.QDRANT_STORAGE_DIR.value, prev_storage),
-        ):
-            if prev is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = prev
-        reset_config()
+    with managed_env(**{EnvVar.LOCAL_ONLY.value: None}):
+        yield isolated_singleton_dirs
 
 
 class TestLocalSearchMandate:
@@ -246,7 +216,11 @@ class TestServiceFirstRouting:
         """
         proc = _run_cli_search_subprocess(
             isolated_status_dir,
-            service_json={"pid": 999_999, "port": _free_port(), "service_token": ""},
+            service_json={
+                "pid": 999_999,
+                "port": free_loopback_port(),
+                "service_token": "",
+            },
         )
         assert proc.returncode == 0, proc.stderr
         assert "port_unreachable" in proc.stderr

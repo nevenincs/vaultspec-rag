@@ -9,7 +9,6 @@ GPU-backed slot. No mocks: env vars on the real ``os.environ``, the real
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING
 
 import pytest
@@ -17,31 +16,16 @@ import pytest
 import vaultspec_rag.mcp._admin_client as admin
 
 from ... import server
-from ...config import EnvVar, reset_config
+from ...config import reset_config
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
 
+from ._helpers import _make_root
+
 pytestmark = [pytest.mark.integration]
-
-
-def _set_env(  # pyright: ignore[reportUnusedFunction]
-    var: EnvVar, value: str
-) -> str | None:
-    prev = os.environ.get(var.value)
-    os.environ[var.value] = value
-    return prev
-
-
-def _restore_env(  # pyright: ignore[reportUnusedFunction]
-    var: EnvVar, prev: str | None
-) -> None:
-    if prev is None:
-        os.environ.pop(var.value, None)
-    else:
-        os.environ[var.value] = prev
 
 
 @pytest.fixture
@@ -51,16 +35,6 @@ def _clean_watchers(  # pyright: ignore[reportUnusedFunction]
     yield
     server._stop_all_watchers()
     reset_config()
-
-
-def _make_root(tmp_path: Path) -> Path:
-    adr_dir = tmp_path / ".vault" / "adr"
-    adr_dir.mkdir(parents=True)
-    (adr_dir / "x.md").write_text(
-        "---\ntags: ['#adr', '#t']\n---\n# x\n\nbody\n",
-        encoding="utf-8",
-    )
-    return tmp_path
 
 
 @pytest.mark.subprocess_gpu

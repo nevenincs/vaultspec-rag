@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#rag-index-performance'
-date: '2026-07-23'
-modified: '2026-07-23'
+date: '2026-07-24'
+modified: '2026-07-24'
 related:
   - '[[2026-06-02-rag-index-performance-P01-S01]]'
   - '[[2026-06-02-rag-index-performance-P01-S02]]'

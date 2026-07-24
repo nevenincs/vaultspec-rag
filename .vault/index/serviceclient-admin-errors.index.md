@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#serviceclient-admin-errors'
-date: '2026-07-23'
-modified: '2026-07-23'
+date: '2026-07-24'
+modified: '2026-07-24'
 related:
   - '[[2026-06-24-serviceclient-admin-errors-S01]]'
   - '[[2026-06-24-serviceclient-admin-errors-S02]]'

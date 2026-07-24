@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#storage-schema-contract'
-date: '2026-07-23'
-modified: '2026-07-23'
+date: '2026-07-24'
+modified: '2026-07-24'
 related:
   - '[[2026-06-26-storage-schema-contract-adr]]'
   - '[[2026-06-26-storage-schema-contract-research]]'

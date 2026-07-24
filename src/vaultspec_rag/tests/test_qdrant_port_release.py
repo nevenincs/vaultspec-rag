@@ -9,27 +9,23 @@ frees the port the same way a reaped child's socket release does.
 
 from __future__ import annotations
 
-import socket
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 
 import pytest
 
 from ..qdrant_runtime._supervise import _port_is_listening, _wait_for_port_release
+from ._http_stubs import QuietHandler
+from ._ports import free_loopback_port
 
 pytestmark = [pytest.mark.unit]
 
 
-class _SilentHandler(BaseHTTPRequestHandler):
+class _SilentHandler(QuietHandler):
     def do_GET(self) -> None:  # stdlib handler contract
         self.send_response(200)
         self.end_headers()
-
-    def log_message(self, format: str, *args: object) -> None:  # noqa: ARG002
-        # Silence stderr noise; the override matches the stdlib signature
-        # (``format`` is the stdlib parameter name).
-        return
 
 
 def _accepting_server() -> ThreadingHTTPServer:
@@ -38,12 +34,6 @@ def _accepting_server() -> ThreadingHTTPServer:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server
-
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
 
 
 class TestPortIsListening:
@@ -57,13 +47,13 @@ class TestPortIsListening:
             server.server_close()
 
     def test_free_port_is_not_listening(self) -> None:
-        assert _port_is_listening(_free_port()) is False
+        assert _port_is_listening(free_loopback_port()) is False
 
 
 class TestWaitForPortRelease:
     def test_free_port_returns_true_fast(self) -> None:
         start = time.monotonic()
-        assert _wait_for_port_release(_free_port(), timeout=2.0) is True
+        assert _wait_for_port_release(free_loopback_port(), timeout=2.0) is True
         # A free port resolves on the first probe (plus the settle), not the
         # whole timeout.
         assert time.monotonic() - start < 1.5
