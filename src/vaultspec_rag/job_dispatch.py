@@ -296,15 +296,22 @@ def _admitted_resilience(source: JobSource) -> IndexResilienceSnapshot:
     profile = get_index_support_profile(config.index_support_profile)
     domain = IndexDomain.CODE if source is JobSource.CODE else IndexDomain.DOCUMENT
     limits = profile.limits_for(domain)
-    from .memory_probe import resolve_index_cuda_ceiling_mb
+    from .memory_probe import (
+        resident_cuda_baseline_mb,
+        resolve_index_cuda_ceiling_mb,
+    )
 
     mib = 1024**2
     rss_ceiling_mb = limits.rss_bytes / mib
     rss_ceiling_mb = min(rss_ceiling_mb, config.index_rss_ceiling_mb)
+    # Point-in-time diagnostic only: this snapshot is reported and persisted,
+    # never enforced, and may legitimately differ from the later per-job
+    # enforcing derivation the budget builders compute post-flush.
     cuda_ceiling_mb = resolve_index_cuda_ceiling_mb(
         configured_mb=config.index_cuda_ceiling_mb,
         headroom_mb=config.index_cuda_headroom_mb,
         profile_cuda_mb=limits.cuda_bytes / mib,
+        baseline_mb=resident_cuda_baseline_mb(),
     )
     return IndexResilienceSnapshot(
         rss_ceiling_mb=rss_ceiling_mb,

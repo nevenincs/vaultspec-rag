@@ -460,20 +460,24 @@ class CodebaseIndexer:
             if limits is not None
             else config.index_cuda_ceiling_mb
         )
-        cuda_ceiling_mb = resolve_index_cuda_ceiling_mb(
-            configured_mb=config.index_cuda_ceiling_mb,
-            headroom_mb=config.index_cuda_headroom_mb,
-            profile_cuda_mb=profile_cuda_mb,
-        )
         if limits is not None:
             rss_ceiling_mb = min(rss_ceiling_mb, limits.rss_bytes / mib)
         uses_cuda = getattr(self.model, "device", None) == "cuda"
         if uses_cuda:
+            # Flush the allocator cache before deriving the ceiling so this
+            # process's own retention does not depress the free reading.
             reset_cuda_peak_memory_stats()
+        cuda_baseline_mb = resident_cuda_baseline_mb() if uses_cuda else None
+        cuda_ceiling_mb = resolve_index_cuda_ceiling_mb(
+            configured_mb=config.index_cuda_ceiling_mb,
+            headroom_mb=config.index_cuda_headroom_mb,
+            profile_cuda_mb=profile_cuda_mb,
+            baseline_mb=cuda_baseline_mb or 0.0,
+        )
         self._memory_budget = MemoryBudget(
             rss_ceiling_mb=rss_ceiling_mb,
             cuda_ceiling_mb=cuda_ceiling_mb if uses_cuda else None,
-            cuda_baseline_mb=resident_cuda_baseline_mb() if uses_cuda else None,
+            cuda_baseline_mb=cuda_baseline_mb,
         )
         self._sample_memory_budget("before code dispatch")
 

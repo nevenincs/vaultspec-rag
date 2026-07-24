@@ -26,6 +26,7 @@ from .config import get_config
 from .job_control import (
     CancelRequested,
     PauseRequested,
+    QuiesceGate,
     RunControlToken,
     ShutdownRequested,
 )
@@ -233,6 +234,7 @@ class JobManager:
         state_path: (
             str | os.PathLike[str] | None | _ConfiguredStatePath
         ) = _CONFIGURED_STATE_PATH,
+        quiesce_gate: QuiesceGate | None = None,
     ) -> None:
         resolved_max = (
             get_config().job_max_nonterminal
@@ -257,6 +259,10 @@ class JobManager:
             self._state_path = (
                 Path(resolved_path) if resolved_path is not None else None
             )
+        # One shared hold gate injected into every attempt's control token
+        # so a single process-global pause quiesces all in-flight jobs.
+        # ``None`` keeps tokens gateless (no hold behavior).
+        self._quiesce_gate = quiesce_gate
         self._lock = threading.RLock()
         self._active: dict[str, _ManagedJob] = {}
         self._terminal: deque[_ManagedJob] = deque()
@@ -444,7 +450,7 @@ class JobManager:
                 binding = replace(binding, loop=loop)
                 self._dispatchers[job_id] = binding
             attempt = managed.snapshot.attempt.number
-            control = RunControlToken()
+            control = RunControlToken(gate=self._quiesce_gate)
             task = loop.create_task(
                 self._run_attempt(
                     job_id=job_id,
@@ -528,7 +534,7 @@ class JobManager:
                 binding = replace(binding, loop=loop)
                 self._dispatchers[job_id] = binding
             attempt = managed.snapshot.attempt.number
-            control = RunControlToken()
+            control = RunControlToken(gate=self._quiesce_gate)
             task = loop.create_task(
                 self._run_attempt_after_start(
                     start_gate,
