@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
+import http.server
 import json
 import os
-from typing import TYPE_CHECKING, cast
+import threading
+import time
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -26,9 +30,414 @@ from ._cli_helpers import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
+
+#: A full-length job id, so the rendered prose (short prefix) and the rendered
+#: command (full id, which is what the log filter needs) stay distinguishable.
+_FAILED_JOB_ID = "e8f8ac43-438e-42de-8037-3d83e7fc9e3e"
+
+#: Chosen to land mid-minute so the rendered age cannot flip a minute boundary
+#: while the test runs.
+_FAILURE_AGE_SECONDS = 5 * 3600 + 46 * 60 + 30
+_FAILURE_AGE_TEXT = "5 hours 46 minutes"
+
+
+def _jobs_payload(*, done: int = 191, failed: int = 45) -> dict[str, object]:
+    return {
+        "ok": True,
+        "jobs": [],
+        "total": done + failed,
+        "returned": 0,
+        "summary": {"running": 0, "phases": {"done": done, "error": failed}},
+    }
+
+
+def _last_failed_record() -> dict[str, object]:
+    return {
+        "id": _FAILED_JOB_ID,
+        "error_kind": "other",
+        "finished_at": time.time() - _FAILURE_AGE_SECONDS,
+    }
+
+
+def _health_payload(
+    *,
+    status: str = "degraded",
+    reasons: list[str] | None = None,
+    jobs: dict[str, object] | None = None,
+    **extra: object,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "status": status,
+        "degraded_reasons": [] if reasons is None else reasons,
+        "cuda": True,
+        "models_loaded": True,
+        "reranker_loaded": True,
+        "project_count": 3,
+        "uptime_s": 850.0,
+        "jobs": {"running": 0, "queued": 0, "stalled": 0} | (jobs or {}),
+    }
+    payload.update(extra)
+    return payload
+
+
+@contextlib.contextmanager
+def _health_contract_server(
+    health: dict[str, object],
+    jobs: dict[str, object],
+) -> Generator[int]:
+    """Serve one fixed ``/health`` and ``/jobs`` pair, yielding the port."""
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            payload = jobs if self.path.startswith("/jobs") else health
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server.server_address[1]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _status_against(
+    tmp_path: Path,
+    health: dict[str, object],
+    *args: str,
+    jobs: dict[str, object] | None = None,
+) -> Any:
+    """Run ``server status`` against a service reporting the given health."""
+    from datetime import UTC, datetime
+
+    served_jobs = _jobs_payload() if jobs is None else jobs
+    with _health_contract_server(health, served_jobs) as port:
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            _write_service_status(pid=os.getpid(), port=port)
+            record_path = tmp_path / "service.json"
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            record["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            return runner.invoke(app, ["server", "status", *args])
+        finally:
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+
+
+class TestDegradedStatusExplainsItself:
+    """A degraded service must report its cause and a runnable remediation.
+
+    The health payload already carries both - the reasons and the structured
+    signals behind them - so a summary that prints the severity word alone is
+    discarding what the operator needs. Each test below pins one reason family
+    to the verb that inspects it.
+    """
+
+    def test_failed_indexing_job_names_the_job_and_the_log_command(
+        self, tmp_path: Path
+    ) -> None:
+        result = _status_against(
+            tmp_path,
+            _health_payload(
+                reasons=["the latest indexing job failed: other"],
+                jobs={"last_failed": _last_failed_record()},
+            ),
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        assert "Degraded because:" in lines
+        assert "- the latest indexing job failed: other" in lines
+        assert f"job e8f8ac43, {_FAILURE_AGE_TEXT} ago" in lines
+        assert f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}" in lines
+        # The concrete remediation replaces the generic re-run-with-more-rows.
+        next_action = lines[lines.index("Next action:") + 1]
+        assert next_action == f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}"
+        assert "--verbose" not in result.output
+
+    def test_failed_job_count_carries_the_failed_jobs_view(
+        self, tmp_path: Path
+    ) -> None:
+        result = _status_against(
+            tmp_path,
+            _health_payload(
+                reasons=["the latest indexing job failed: other"],
+                jobs={"last_failed": _last_failed_record()},
+            ),
+        )
+
+        assert result.exit_code == 0, result.output
+        labels = _label_values(result.output)
+        assert (
+            labels["Processed jobs"] == "191 finished, 0 active, 0 waiting, 45 failed"
+        )
+        assert labels["Review failures"] == "vaultspec-rag server jobs --failed"
+        # The degraded block already named this job; naming it twice is noise.
+        assert "Last failure" not in labels
+
+    def test_stalled_jobs_point_at_the_active_jobs_view(self, tmp_path: Path) -> None:
+        result = _status_against(
+            tmp_path,
+            _health_payload(
+                reasons=["2 indexing job(s) are stalled"],
+                jobs={"stalled": 2},
+            ),
+            jobs=_jobs_payload(failed=0),
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        assert "- 2 indexing job(s) are stalled" in lines
+        assert "vaultspec-rag server jobs --state active" in lines
+        assert lines[lines.index("Next action:") + 1] == (
+            "vaultspec-rag server jobs --state active"
+        )
+
+    def test_unloaded_models_point_at_the_readiness_check(self, tmp_path: Path) -> None:
+        result = _status_against(
+            tmp_path,
+            _health_payload(
+                reasons=["embedding models are not loaded"],
+                models_loaded=False,
+            ),
+            jobs=_jobs_payload(failed=0),
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        assert "- embedding models are not loaded" in lines
+        assert "run server warmup when the model files are missing" in lines
+        assert lines[lines.index("Next action:") + 1] == "vaultspec-rag server doctor"
+
+    def test_dead_vector_service_points_at_the_qdrant_view(
+        self, tmp_path: Path
+    ) -> None:
+        result = _status_against(
+            tmp_path,
+            _health_payload(
+                reasons=["the configured vector service is not live"],
+                qdrant={"mode": "server", "alive": False, "port": 6333},
+            ),
+            jobs=_jobs_payload(failed=0),
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        assert "- the configured vector service is not live" in lines
+        assert lines[lines.index("Next action:") + 1] == (
+            "vaultspec-rag server qdrant status"
+        )
+
+    def test_every_reason_is_rendered_when_several_are_reported(
+        self, tmp_path: Path
+    ) -> None:
+        result = _status_against(
+            tmp_path,
+            _health_payload(
+                reasons=[
+                    "embedding models are not loaded",
+                    "3 indexing job(s) are stalled",
+                ],
+                models_loaded=False,
+                jobs={"stalled": 3},
+            ),
+            jobs=_jobs_payload(failed=0),
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        assert "- embedding models are not loaded" in lines
+        assert "- 3 indexing job(s) are stalled" in lines
+        assert "vaultspec-rag server doctor" in lines
+        assert "vaultspec-rag server jobs --state active" in lines
+
+    def test_verbose_detail_also_explains_the_degradation(self, tmp_path: Path) -> None:
+        result = _status_against(
+            tmp_path,
+            _health_payload(
+                reasons=["the latest indexing job failed: other"],
+                jobs={"last_failed": _last_failed_record()},
+            ),
+            "--verbose",
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        assert lines[lines.index("Requests: degraded") + 1] == "Degraded because:"
+        assert f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}" in lines
+
+    def test_json_envelope_carries_the_structured_findings(
+        self, tmp_path: Path
+    ) -> None:
+        result = _status_against(
+            tmp_path,
+            _health_payload(
+                reasons=["the latest indexing job failed: other"],
+                jobs={"last_failed": _last_failed_record()},
+            ),
+            "--json",
+        )
+
+        assert result.exit_code == 0, result.output
+        operational = json.loads(result.stdout)["data"]["operational"]
+        findings = cast("list[dict[str, str]]", operational["degraded"])
+        assert [finding["cause"] for finding in findings] == [
+            "the latest indexing job failed: other"
+        ]
+        assert findings[0]["family"] == "failed_job"
+        assert findings[0]["command"] == (
+            f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}"
+        )
+        assert operational["failure"]["command"] == "vaultspec-rag server jobs --failed"
+
+
+class TestReasonsSurviveRewording:
+    """A reason this build cannot recognise must still reach the operator.
+
+    The reasons are prose owned by the service, so any pairing between a reason
+    and a remediation is a guess that can go stale. Both directions of that
+    staleness are guarded here: an unrecognised reason is still rendered, and a
+    recognised problem still gets its command even when no reason claimed it.
+    """
+
+    def test_unrecognised_reason_is_rendered_beside_a_recognised_one(
+        self, tmp_path: Path
+    ) -> None:
+        """An unmappable reason is reported even with no remediation to offer.
+
+        The recognised reason is here so the block still renders when the
+        unrecognised one is dropped: that isolates the failure to the verbatim
+        line, which is the property under test. Asserting the exact raw text is
+        deliberate - a looser match would pass on a paraphrase, and a paraphrase
+        of a reason this build does not understand is a fabrication.
+
+        Verified to fail for the right reason: dropping the unpaired reason
+        instead of recording it (the ``stem is None`` branch of the finding
+        walk) fails this test on the verbatim line while every other assertion
+        here still passes; restoring the branch returns it to green.
+        """
+        result = _status_against(
+            tmp_path,
+            _health_payload(
+                reasons=[
+                    "embedding models are not loaded",
+                    "the storage volume is nearly full",
+                ],
+                models_loaded=False,
+            ),
+            jobs=_jobs_payload(failed=0),
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        assert "Degraded because:" in lines
+        assert "- the storage volume is nearly full" in lines
+
+    def test_degradation_nothing_recognises_falls_back_to_the_logs(
+        self, tmp_path: Path
+    ) -> None:
+        result = _status_against(
+            tmp_path,
+            _health_payload(reasons=["the storage volume is nearly full"]),
+            jobs=_jobs_payload(failed=0),
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        assert "- the storage volume is nearly full" in lines
+        # Nothing specific applies, so the logs beat re-running status verbose.
+        assert lines[lines.index("Next action:") + 1] == (
+            "vaultspec-rag server logs --limit 80"
+        )
+        assert "--verbose" not in result.output
+
+    def test_reworded_reason_keeps_the_remediation_for_its_signal(
+        self, tmp_path: Path
+    ) -> None:
+        result = _status_against(
+            tmp_path,
+            _health_payload(
+                reasons=["the most recent index run did not complete"],
+                jobs={"last_failed": _last_failed_record()},
+            ),
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        assert "- the most recent index run did not complete" in lines
+        # Unclaimed by any reason, the proven signal still reports itself.
+        assert "- an indexing job failed: other" in lines
+        assert f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}" in lines
+
+
+class TestHealthyServiceStaysQuiet:
+    """Nothing above is allowed to add noise to a service with no problem."""
+
+    def test_healthy_summary_has_no_degraded_block(self, tmp_path: Path) -> None:
+        server, thread = _status_contract_server()
+        port = server.server_address[1]
+        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
+        try:
+            from datetime import UTC, datetime
+
+            _write_service_status(pid=os.getpid(), port=port)
+            record_path = tmp_path / "service.json"
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            record["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+
+            result = runner.invoke(app, ["server", "status"])
+
+            assert result.exit_code == 0, result.output
+            _assert_default_status_summary(result.output, port)
+            assert "Degraded because" not in result.output
+            assert "Review failures" not in result.output
+            assert "Last failure" not in result.output
+        finally:
+            server.shutdown()
+            server.server_close()
+            os.environ.pop(EnvVar.STATUS_DIR, None)
+            thread.join(timeout=5)
+
+    def test_historical_failure_is_reported_without_declaring_degradation(
+        self, tmp_path: Path
+    ) -> None:
+        """A failure the service did not degrade over is history, not a verdict.
+
+        It is still worth naming - the failed count above it is otherwise a dead
+        end - but it belongs beside the count, not in a degradation block the
+        service never reported.
+        """
+        result = _status_against(
+            tmp_path,
+            _health_payload(
+                status="ready",
+                jobs={"last_failed": _last_failed_record()},
+            ),
+        )
+
+        assert result.exit_code == 0, result.output
+        labels = _label_values(result.output)
+        assert labels["Requests"] == "ready for requests"
+        assert "Degraded because" not in result.output
+        assert (
+            labels["Last failure"] == f"job e8f8ac43 (other), {_FAILURE_AGE_TEXT} ago"
+        )
+        assert labels["Review failures"] == "vaultspec-rag server jobs --failed"
+        lines = _plain_lines(result.output)
+        assert lines[lines.index("Next action:") + 1].startswith("vaultspec-rag search")
 
 
 class TestServiceDaemonHelpers:

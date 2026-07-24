@@ -47,9 +47,14 @@ from ._service_status import (
     _service_phase,
 )
 from ._status_labels import (
+    _FAILED_JOB_FAMILY,
+    _degraded_findings,
+    _DegradedFinding,
+    _failed_job_total,
     _format_started_label,
     _format_status_duration,
     _get_token_label,
+    _last_failure_label,
     _model_ready_label,
     _network_label,
     _plain_status_label,
@@ -64,8 +69,10 @@ from ._status_labels import (
 
 __all__ = [
     "_compute_state",
+    "_degraded_lines",
     "_evaluate_service_signals",
     "_explicit_port_state",
+    "_failure_lines",
     "_liveness_from_resolution",
     "_status_busy_label",
     "_status_env_label",
@@ -417,14 +424,77 @@ def _print_current_job_detail(jobs: dict[str, object] | None) -> None:
         _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
 
 
+def _degraded_entries(
+    operational: dict[str, object] | None,
+    health: dict[str, object] | None,
+) -> list[dict[str, object]]:
+    """Return the degradation findings, computing them when none were passed.
+
+    The summary path carries findings on ``operational`` because that is where
+    the port qualifier is known. The discovery fallback has no operational
+    summary and would otherwise print a bare severity word, so it derives the
+    findings from the health payload it already holds.
+    """
+    if isinstance(operational, dict):
+        raw = operational.get("degraded")
+        entries = cast("list[object]", raw) if isinstance(raw, list) else []
+    else:
+        entries = [finding.as_dict() for finding in _degraded_findings(health)]
+    return [
+        cast("dict[str, object]", entry) for entry in entries if isinstance(entry, dict)
+    ]
+
+
+def _degraded_lines(
+    operational: dict[str, object] | None,
+    health: dict[str, object] | None,
+) -> list[str]:
+    """Render each reported cause above the command that inspects it."""
+    entries = _degraded_entries(operational, health)
+    if not entries:
+        return []
+    lines = ["Degraded because:"]
+    for entry in entries:
+        lines.append(f"  - {entry.get('cause')}")
+        detail = entry.get("detail")
+        if detail:
+            lines.append(f"    {detail}")
+        command = entry.get("command")
+        if command:
+            lines.append(f"    {command}")
+    return lines
+
+
+def _failure_lines(operational: dict[str, object] | None) -> list[str]:
+    """Render the failed-job follow-up that hangs off the processed-jobs line."""
+    if not isinstance(operational, dict):
+        return []
+    failure = operational.get("failure")
+    if not isinstance(failure, dict):
+        return []
+    entry = cast("dict[str, object]", failure)
+    lines: list[str] = []
+    summary = entry.get("summary")
+    if summary:
+        lines.append(f"  Last failure: {summary}")
+    command = entry.get("command")
+    if command:
+        lines.append(f"  Review failures: {command}")
+    return lines
+
+
 def _print_health_detail(
-    health: dict[str, object] | None, port_listening: bool
+    health: dict[str, object] | None,
+    port_listening: bool,
+    operational: dict[str, object] | None = None,
 ) -> None:
     if isinstance(health, dict):
         _print_detail_line(
             "Requests",
             _status_health_label(health, port_listening=port_listening),
         )
+        for line in _degraded_lines(operational, health):
+            _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
         compute = (
             "GPU available"
             if health.get("cuda") is True
@@ -541,6 +611,7 @@ def _status_next_action(
     health: dict[str, object] | None,
     jobs: dict[str, object],
     *,
+    findings: list[_DegradedFinding] | None = None,
     port: int | None = None,
 ) -> str:
     port_arg = f" --port {port}" if port is not None else ""
@@ -550,12 +621,60 @@ def _status_next_action(
         return f"vaultspec-rag server status{port_arg}  (models loading; retry shortly)"
     if state != "running":
         return f"vaultspec-rag server logs --limit 80{port_arg}"
+    return _running_service_next_action(
+        health,
+        jobs,
+        findings or [],
+        port_arg=port_arg,
+    )
+
+
+def _running_service_next_action(
+    health: dict[str, object] | None,
+    jobs: dict[str, object],
+    findings: list[_DegradedFinding],
+    *,
+    port_arg: str,
+) -> str:
+    """Choose the follow-up for a service that is up, degraded or not."""
+    # A named cause outranks every generic follow-up: the operator's next move
+    # is whatever inspects the thing that is actually broken.
+    remediation = next((finding.command for finding in findings if finding.command), "")
+    if remediation:
+        return f"{remediation}{port_arg}"
     if not isinstance(health, dict) or health.get("status") != "ready":
+        # Degraded for reasons this build cannot pair with a verb: the logs are
+        # a sharper move than re-running status with more rows.
+        if findings:
+            return f"vaultspec-rag server logs --limit 80{port_arg}"
         return f"vaultspec-rag server status --verbose{port_arg}"
     running_jobs = jobs.get("running")
     if isinstance(running_jobs, int) and running_jobs > 0:
         return f"vaultspec-rag server jobs --state active{port_arg}"
     return f'vaultspec-rag search "<query>" --type code{port_arg} --timeout 120'
+
+
+def _failure_followup(
+    health: dict[str, object] | None,
+    jobs: dict[str, object],
+    findings: list[_DegradedFinding],
+    *,
+    port_arg: str,
+) -> dict[str, str] | None:
+    """Turn a non-zero failed-job count into something the operator can run.
+
+    The latest failure is named here only when the degraded block did not
+    already name it, so the same job is never reported twice.
+    """
+    failed_total = _failed_job_total(jobs)
+    already_reported = any(finding.family == _FAILED_JOB_FAMILY for finding in findings)
+    summary = "" if already_reported else _last_failure_label(health)
+    if failed_total <= 0 and not summary:
+        return None
+    followup = {"command": f"vaultspec-rag server jobs --failed{port_arg}"}
+    if summary:
+        followup["summary"] = summary
+    return followup
 
 
 def _status_operational_summary(
@@ -567,15 +686,23 @@ def _status_operational_summary(
     explicit_port: bool = False,
 ) -> dict[str, object]:
     jobs = _status_jobs_summary(port, port_listening)
-    return {
+    port_arg = f" --port {port}" if explicit_port else ""
+    findings = _degraded_findings(health)
+    operational: dict[str, object] = {
         "jobs": jobs,
+        "degraded": [finding.as_dict(port_arg=port_arg) for finding in findings],
         "next_action": _status_next_action(
             state,
             health,
             jobs,
+            findings=findings,
             port=port if explicit_port else None,
         ),
     }
+    failure = _failure_followup(health, jobs, findings, port_arg=port_arg)
+    if failure is not None:
+        operational["failure"] = failure
+    return operational
 
 
 def _print_operational_detail(
@@ -593,6 +720,8 @@ def _print_operational_detail(
             _print_detail_line("Busy", _status_busy_label(jobs_dict))
             _print_detail_line("Queue", _status_queue_label(jobs_dict))
             _print_detail_line("Processed jobs", _status_jobs_label(jobs_dict))
+            for line in _failure_lines(operational):
+                _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
             _print_current_job_detail(jobs_dict)
         else:
             _print_detail_line("Processed jobs", "not reported by service")
@@ -621,12 +750,14 @@ def _render_status_summary(
     lines = [
         f"Server: {_plain_status_label(state_label)}",
         f"Requests: {_status_health_label(health, port_listening=port_listening)}",
+        *_degraded_lines(operational, health),
         f"Busy: {_status_busy_label(jobs_dict)}",
         f"Address: http://127.0.0.1:{port}",
         f"Service env: {_status_env_label(health)}",
         f"Uptime: {_status_uptime_label(health)}",
         f"Queue: {_status_queue_label(jobs_dict)}",
         f"Processed jobs: {_status_jobs_label(jobs_dict)}",
+        *_failure_lines(operational),
     ]
     for line in lines:
         _cli.console.print(line, markup=False, highlight=False)
@@ -671,7 +802,7 @@ def _render_status_detail(
         _print_detail_line("Heartbeat", f"{heartbeat_age:.0f}s ago{suffix}")
     _print_detail_line("Server", _plain_status_label(state_label))
 
-    _print_health_detail(health, port_listening)
+    _print_health_detail(health, port_listening, operational)
     _print_operational_detail(operational)
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
@@ -752,7 +883,7 @@ def _render_port_only_status(
         "accepting connections" if port_listening else "not accepting connections",
     )
     _print_detail_line("Server", state)
-    _print_health_detail(health, port_listening)
+    _print_health_detail(health, port_listening, operational)
     _print_operational_detail(operational)
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
