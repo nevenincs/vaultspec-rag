@@ -354,8 +354,9 @@ def test_forward_peak_capture_routes_to_thread_recorder_and_keeps_maximum(
         lambda: 321.5,
     )
     budget = MemoryBudget(cuda_ceiling_mb=1000.0)
-    with record_forward_peaks(budget.record_forward_peak_mb), (
-        cuda_forward_peak_capture()
+    with (
+        record_forward_peaks(budget.record_forward_peak_mb),
+        cuda_forward_peak_capture(),
     ):
         pass
     assert budget.captured_cuda_peak_mb == 321.5
@@ -366,8 +367,9 @@ def test_forward_peak_capture_routes_to_thread_recorder_and_keeps_maximum(
         "_read_cuda_peak_allocated_mb",
         lambda: 100.0,
     )
-    with record_forward_peaks(budget.record_forward_peak_mb), (
-        cuda_forward_peak_capture()
+    with (
+        record_forward_peaks(budget.record_forward_peak_mb),
+        cuda_forward_peak_capture(),
     ):
         pass
     assert budget.captured_cuda_peak_mb == 321.5

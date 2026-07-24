@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, cast
 from ._job_errors import JobError, JobErrorKind
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Generator
 
 logger = logging.getLogger(__name__)
 
@@ -317,20 +317,13 @@ def resident_cuda_baseline_mb() -> float:
         return _resident_baseline_mb
 
 
-def _reset_resident_cuda_baseline() -> None:
-    """Clear the recorded baseline (test isolation only)."""
-    global _resident_baseline_mb
-    with _resident_baseline_lock:
-        _resident_baseline_mb = 0.0
-
-
 _forward_peak_recorder = threading.local()
 
 
 @contextlib.contextmanager
 def record_forward_peaks(
     recorder: Callable[[float], None],
-) -> Iterator[None]:
+) -> Generator[None]:
     """Route this thread's captured forward peaks to *recorder*.
 
     Attribution is by thread: every GPU forward a job issues runs on the
@@ -347,7 +340,7 @@ def record_forward_peaks(
 
 
 @contextlib.contextmanager
-def cuda_forward_peak_capture() -> Iterator[None]:
+def cuda_forward_peak_capture() -> Generator[None]:
     """Bracket one model forward with a job-local peak capture.
 
     Must run inside the GPU-lock hold that serialises the forward: the
@@ -562,9 +555,7 @@ class MemoryBudget:
         """
         self._raise_if_latched()
         measured_rss = _measure_rss_mb()
-        measured_cuda = (
-            _measure_cuda_mb() if self.cuda_ceiling_mb is not None else None
-        )
+        measured_cuda = _measure_cuda_mb() if self.cuda_ceiling_mb is not None else None
         return self._record(
             label=label,
             rss_mb=measured_rss if measured_rss is not None else 0.0,
