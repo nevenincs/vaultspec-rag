@@ -565,3 +565,36 @@ class TestNewlineParity:
         assert [c.content for c in new_chunks] == [c.content for c in ref_chunks]
         # And no carriage returns survive translation.
         assert all("\r" not in c.content for c in new_chunks)
+
+    def test_crlf_file_and_lf_twin_chunk_identically(self, tmp_path: Path) -> None:
+        """CRLF and LF twins must yield identical chunk ids and contents.
+
+        Decode-time newline normalization makes a chunk's identity a
+        function of its logical text, not its on-disk line endings. Donor
+        vector reuse verifies adoption by chunk id and text, so a Windows
+        worktree (CRLF checkout) must chunk byte-identically to its LF
+        twin or every donor lookup silently misses.
+        """
+        body = (
+            '"""Twin doc."""\n\n\n'
+            "class Twin:\n"
+            "    def run(self, x):\n"
+            "        return x + 1\n\n\n"
+            "def standalone(a, b):\n"
+            "    return a * b\n"
+        )
+        lf_root = tmp_path / "lf-root"
+        crlf_root = tmp_path / "crlf-root"
+        lf_root.mkdir()
+        crlf_root.mkdir()
+        (lf_root / "twin_module.py").write_bytes(body.encode("utf-8"))
+        (crlf_root / "twin_module.py").write_bytes(
+            body.replace("\n", "\r\n").encode("utf-8")
+        )
+
+        lf_chunks = _chunk_worker.chunk_file(lf_root / "twin_module.py", lf_root)
+        crlf_chunks = _chunk_worker.chunk_file(crlf_root / "twin_module.py", crlf_root)
+
+        assert lf_chunks, "the twin module must produce chunks"
+        assert [c.id for c in crlf_chunks] == [c.id for c in lf_chunks]
+        assert [c.content for c in crlf_chunks] == [c.content for c in lf_chunks]
