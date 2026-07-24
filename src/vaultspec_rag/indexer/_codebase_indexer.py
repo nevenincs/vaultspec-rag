@@ -443,41 +443,14 @@ class CodebaseIndexer:
 
     def _begin_memory_budget(self) -> None:
         """Freeze and sample one production memory budget before dispatch."""
-        from .._units import bytes_to_mib
-        from ..config import get_config
-        from ..memory_probe import (
-            MemoryBudget,
-            reset_cuda_peak_memory_stats,
-            resident_cuda_baseline_mb,
-            resolve_index_cuda_ceiling_mb,
-        )
+        from ..memory_probe import MemoryBudget
+        from ._resource_ceilings import admit_index_ceilings
 
-        config = get_config()
-        limits = self._support_limits
-        rss_ceiling_mb = config.index_rss_ceiling_mb
-        profile_cuda_mb = (
-            bytes_to_mib(limits.cuda_bytes)
-            if limits is not None
-            else config.index_cuda_ceiling_mb
-        )
-        if limits is not None:
-            rss_ceiling_mb = min(rss_ceiling_mb, bytes_to_mib(limits.rss_bytes))
-        uses_cuda = getattr(self.model, "device", None) == "cuda"
-        if uses_cuda:
-            # Flush the allocator cache before deriving the ceiling so this
-            # process's own retention does not depress the free reading.
-            reset_cuda_peak_memory_stats()
-        cuda_baseline_mb = resident_cuda_baseline_mb() if uses_cuda else None
-        cuda_ceiling_mb = resolve_index_cuda_ceiling_mb(
-            configured_mb=config.index_cuda_ceiling_mb,
-            headroom_mb=config.index_cuda_headroom_mb,
-            profile_cuda_mb=profile_cuda_mb,
-            baseline_mb=cuda_baseline_mb or 0.0,
-        )
+        ceilings = admit_index_ceilings(self.model, self._support_limits)
         self._memory_budget = MemoryBudget(
-            rss_ceiling_mb=rss_ceiling_mb,
-            cuda_ceiling_mb=cuda_ceiling_mb if uses_cuda else None,
-            cuda_baseline_mb=cuda_baseline_mb,
+            rss_ceiling_mb=ceilings.rss_ceiling_mb,
+            cuda_ceiling_mb=ceilings.enforced_cuda_ceiling_mb,
+            cuda_baseline_mb=ceilings.cuda_baseline_mb,
         )
         self._sample_memory_budget("before code dispatch")
 
