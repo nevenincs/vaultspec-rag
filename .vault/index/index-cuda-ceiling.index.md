@@ -7,6 +7,7 @@ date: '2026-07-24'
 modified: '2026-07-24'
 related:
   - '[[2026-07-24-index-cuda-ceiling-adr]]'
+  - '[[2026-07-24-index-cuda-ceiling-plan]]'
   - '[[2026-07-24-index-cuda-ceiling-research]]'
 ---
 
@@ -18,7 +19,11 @@ Auto-generated index of all documents tagged with `#index-cuda-ceiling`.
 
 ### adr
 
-- `2026-07-24-index-cuda-ceiling-adr` - `index-cuda-ceiling` adr: `size the indexing CUDA ceiling to real device headroom and scope it per job` | (**status:** `{proposed|accepted|rejected|superseded|deprecated}`)
+- `2026-07-24-index-cuda-ceiling-adr` - `index-cuda-ceiling` adr: `size the indexing CUDA ceiling to real device headroom and scope it per job` | (**status:** `accepted`)
+
+### plan
+
+- `2026-07-24-index-cuda-ceiling-plan` - `index-cuda-ceiling` plan
 
 ### research
 
