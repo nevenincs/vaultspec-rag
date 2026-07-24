@@ -70,11 +70,13 @@ Baseline treatment:
 
 Per-job scoping:
 
-- **Scope the peak measurement to the job by resetting and reading the allocation
-  high-water inside the `gpu_lock` critical section that already serialises the
-  forward.** Because the lock guarantees one forward at a time, a peak captured
-  across the lock hold is that job's own demand, and no sibling can perturb it.
-  Chosen.
+- **Capture each job's own forward peak inside the `gpu_lock` critical section,
+  and enforce every checkpoint against that captured value rather than the
+  process-global high-water.** The lock guarantees one forward at a time, so a
+  peak reset-and-read bracketed inside the lock hold is that job's own demand.
+  Enforcement stays where it is - outside the lock, at the existing sample
+  checkpoints - but reads the job-local captured peak, not
+  `max_memory_allocated`. Chosen.
 - **Serialise index jobs so only one runs at a time.** Makes the process-wide
   reading per-job by construction, but discards the CPU-produce / GPU-consume
   concurrency the pipeline is built on and slows the common multi-domain
@@ -90,10 +92,16 @@ Document encode batch (compounding fix, not an axis of the core decision):
 
 ## Constraints
 
-- The peak-measurement scope depends on the background memory-probe sampler
-  thread not writing the same counters mid-critical-section; the research flags
-  this as untested, so the implementation must confirm the lock-scoped reset and
-  read are not raced by the sampler.
+- The background memory-probe sampler records RSS only and never touches a CUDA
+  counter (`2026-07-24-index-cuda-ceiling-research`), so it cannot race the
+  in-bracket CUDA capture; this removes a risk an earlier draft carried.
+- Model loading is the one CUDA allocation the `gpu_lock` capture does not
+  bracket, because the reranker loads lazily under a separate lock. The baseline
+  must be pinned to after all models are resident, and a job's capture must not
+  span a first reranker load, or the peak is inflated by the model's size.
+- The unraisable-ceiling fix must reach both indexer budget-building sites, not
+  only the dispatch admission copy, or the ceiling stays unraisable where it is
+  actually enforced (`2026-07-24-index-cuda-ceiling-research`).
 - Device-capacity query must tolerate a CPU-only or torch-absent host in the
   read-only probes that already run there, per
   `torch-loads-through-centralized-gpu-gate`; the ceiling derivation runs only on
@@ -115,17 +123,35 @@ path that needs this value is not reached, so the derivation lives behind the
 same GPU gate the encoders use.
 
 The budget is constructed against indexing headroom rather than the whole device:
-the resident-model baseline is sampled once after models load and subtracted, so
-a job's ceiling is what indexing may add on top of the always-resident models,
-matching the baseline contract the memory budget already documents.
+the resident-model baseline is sampled after every model is resident - including
+the CrossEncoder reranker, which loads lazily under its own lock and so must be
+loaded (or its load resampled) before the baseline is trusted - and the budget
+enforces the job's demand net of that baseline. Because a peak read after a reset
+is absolute (the reset rebases to current allocation, which already contains the
+resident models), the two sides are made consistent: the captured peak is reduced
+by the baseline before it is compared to a ceiling that is itself device-capacity
+minus headroom minus baseline. Subtracting the baseline from only one side would
+double-count the models and silently re-tighten the ceiling, reproducing the
+original defect; the record requires both sides move together.
 
-Peak measurement moves inside the serialised critical section. The allocation
-high-water is reset and read within the `gpu_lock` hold that already brackets the
-forward, so the peak a job enforces against is the peak of its own forward, not a
-since-reset maximum spanning sibling jobs. This removes the cross-job
-contamination without serialising the jobs themselves - the producers still run
-concurrently; only the GPU-touching measurement is lock-scoped, which it already
-is for the forward it measures.
+Peak measurement is captured, not relocated. Enforcement stays at the existing
+sample checkpoints outside `gpu_lock` - the field failure `code producer queue
+wait` is one such checkpoint, and `MemoryBudget.sample` is contractually
+forbidden from taking the lock - so those checkpoints continue to run where they
+do. What changes is the number they read: a raw peak reset-and-read is bracketed
+inside the `gpu_lock` hold that already wraps the forward, recording that job's
+own forward peak, and the budget enforces the maximum across a job's own captured
+brackets instead of the process-global counter. No enforcement path reads
+`max_memory_allocated` directly any longer. The in-bracket reset must be a bare
+`reset_peak_memory_stats` without the allocator-cache flush the per-run reset
+helper bundles, so the throttled every-eighth-slice flush design is preserved
+rather than replaced by a device sync per forward.
+
+The unraisable-ceiling fix lands at both budget-building sites, not only the
+admission copy: the one-way `min(profile, config)` is duplicated in each
+indexer's budget construction as well as at dispatch, and all of them switch to
+the device-derived, bidirectionally-overridable value or the ceiling stays
+unraisable where it is enforced.
 
 Document embedding gains `embedding_document_encode_batch_size`, defaulted low
 enough for sequence-window-sized fragments and independent of the vault and code
@@ -163,12 +189,19 @@ advises.
 The costs are real. Querying device capacity and subtracting a live baseline adds
 two GPU-state reads to job admission, and a mis-derived headroom margin could
 admit a genuine OOM - caught by the existing backoff, but as a slower failure than
-a pre-emptive refusal. Lock-scoped peak measurement narrows the window in which
-the background sampler may observe a transient, so metrics-side peak reporting may
-read lower than before; that is a reporting change to note, not a regression.
-Adding a fourth encode-batch knob grows the tuning surface, and the three
-sub-batches (vault, code, document) will drift unless their defaults are chosen
-against a shared rationale.
+a pre-emptive refusal. The `index_cuda_ceiling_mb` knob changes meaning: today it
+is an absolute cap that can only lower; after this it is a bidirectional override
+of a device-derived, baseline-net headroom. That is a semantic migration
+operators must be told about in the changelog and the setting's documentation, not
+a silent behaviour change. Adding a fourth encode-batch knob grows the tuning
+surface, and the three sub-batches (vault, code, document) will drift unless their
+defaults are chosen against a shared rationale.
+
+The baseline-relative arithmetic is the subtle failure mode to guard: enforcing an
+absolute captured peak against a baseline-subtracted ceiling would double-count the
+resident models and make the ceiling stricter than today, turning a fix into a
+regression in the tightening direction. A test must pin that both sides are
+baseline-consistent.
 
 Two boundaries stay out of scope: the single-GPU-consumer and lock architecture
 is unchanged, and search-path memory (the reranker cache) is not retimed here -
