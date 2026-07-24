@@ -78,7 +78,7 @@ SHA256-pinned in the release notes
 
 ### Machine-identity leakage is a live incident theme
 
-Real paths (`Y:\code\...`), the username, the hostname, and any runner
+Real absolute checkout paths, the username, the hostname, and any runner
 registration token must never land in tracked files. Registration tokens are
 short-lived secrets minted on demand
 (`POST /repos/{owner}/{repo}/actions/runners/registration-token`, ~1 h TTL);

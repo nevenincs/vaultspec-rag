@@ -182,7 +182,7 @@ The immediate operational recovery is a signature sweep, but a *blanket*
 `pkill -f vaultspec_rag.server` is unsafe while any legitimate daemon runs: on
 the dev box it would kill the real singleton (pid 48944,
 `…\uv\tools\versions\vaultspec-rag\…python.exe -m vaultspec_rag.server --port 8766`),
-the CI runner's daemons under `C:\actions-runner-vaultspec-rag\_work\`, and 8
+the CI runner's daemons under its `_work` directory, and 8
 `vaultspec-core` test daemons — hence recovery must be scoped by explicit PID to
 the confirmed orphans. Confirmed the orphans hold no GPU: pids 40900/14440 are
 absent from `nvidia-smi --query-compute-apps`, i.e. they raised at the machine
