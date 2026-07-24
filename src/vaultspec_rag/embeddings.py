@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, cast
 
 from .config import EnvVar
+from .job_control import timed_gpu_lock
 
 if TYPE_CHECKING:
     import numpy as np
@@ -734,7 +735,7 @@ class EmbeddingModel:
                                 ),
                             )
                         else:
-                            with gpu_lock, cuda_forward_peak_capture():
+                            with timed_gpu_lock(gpu_lock), cuda_forward_peak_capture():
                                 accelerator_tensor = cast(
                                     "torch.Tensor",
                                     self._sparse_model.encode_document(

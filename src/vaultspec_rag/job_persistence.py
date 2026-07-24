@@ -532,6 +532,9 @@ def _job_snapshot_from_dict(value: object) -> JobSnapshot:
         resources=_job_resources_from_dict(raw.get("resources")),
         resilience=_job_resilience_from_dict(raw.get("resilience")),
         reuse=_job_reuse_from_dict(raw.get("reuse")),
+        gpu_lock_wait_seconds=_optional_float(
+            raw.get("gpu_lock_wait_seconds"), "gpu_lock_wait_seconds"
+        ),
     )
 
 

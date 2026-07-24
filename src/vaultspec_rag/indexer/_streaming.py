@@ -10,13 +10,12 @@ from __future__ import annotations
 import logging
 import queue
 import time
-from contextlib import nullcontext
 from dataclasses import dataclass
 from functools import partial
 from itertools import chain, pairwise
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
-from ..job_control import NO_RUN_CONTROL
+from ..job_control import NO_RUN_CONTROL, timed_gpu_lock
 
 if TYPE_CHECKING:
     import threading
@@ -375,7 +374,7 @@ def _encode_slice_vector_fields(
     dense_cpu: object | None = None
     sparse: Iterable[_SparseVectorLike | None] | None = None
     try:
-        with gpu_lock if gpu_lock is not None else nullcontext():
+        with timed_gpu_lock(gpu_lock):
             dense_device = model.encode_documents_on_device(
                 slice_texts,
                 batch_size=encode_batch_size,
@@ -589,11 +588,14 @@ def _encode_and_upsert_vault_slice(
     run_control: RunControl = NO_RUN_CONTROL,
     reuse: DonorReuseContext | None = None,
     writer: _SliceWriter | None = None,
+    release_cache: bool = True,
 ) -> None:
     """Encode one vault chunk slice and store it, inline or via the writer.
 
     ``ingest_wait=False`` defers the server-mode apply handshake to the
     caller's ingest barrier; the embedded backend ignores it.
+    ``release_cache=False`` skips this slice's CUDA cache flush so the
+    caller's cadence throttle decides when the allocator is emptied.
 
     With a ``writer``, the synchronous upsert is handed to the single writer
     thread so the next slice's encode overlaps this slice's storage I/O; the
@@ -643,7 +645,8 @@ def _encode_and_upsert_vault_slice(
     finally:
         if not handed_off:
             _release_vector_fields(slice_chunks)
-        _release_cuda_cache()
+        if release_cache:
+            _release_cuda_cache()
 
 
 def _stream_encode_and_upsert_vault(
@@ -708,8 +711,12 @@ def _stream_encode_and_upsert_vault(
         writer = _SliceWriter(name="vault-slice-writer")
         try:
             try:
-                for i in range(0, len(sorted_chunks), slice_size):
+                flush_slices = max(1, int(cfg.vault_cache_flush_slices))
+                for slice_index, i in enumerate(
+                    range(0, len(sorted_chunks), slice_size)
+                ):
                     slice_chunks = sorted_chunks[i : i + slice_size]
+                    is_last = i + slice_size >= len(sorted_chunks)
                     _encode_and_upsert_vault_slice(
                         slice_chunks=slice_chunks,
                         slice_index=i,
@@ -722,6 +729,9 @@ def _stream_encode_and_upsert_vault(
                         run_control=run_control,
                         reuse=reuse,
                         writer=writer,
+                        release_cache=(
+                            is_last or (slice_index + 1) % flush_slices == 0
+                        ),
                     )
                     probe.checkpoint(f"slice-{i}-after-empty-cache")
                     reporter.advance(len(slice_chunks))

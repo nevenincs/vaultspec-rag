@@ -295,6 +295,12 @@ class JobSnapshot:
     #: the served job view reports it; the legacy activity record is
     #: shadowed by this snapshot for every manager-owned job.
     reuse: dict[str, object] | None = None
+    #: Seconds the finished (or in-flight, at last publication) attempt
+    #: spent waiting to acquire the process GPU lock, accumulated across
+    #: every timed acquisition. ``None`` until the attempt first publishes
+    #: it; together with the admission stamp this splits a job's wall
+    #: clock into admission wait, lock wait, and work.
+    gpu_lock_wait_seconds: float | None = None
 
     def __post_init__(self) -> None:
         if self.revision < 1:
@@ -336,6 +342,7 @@ class JobSnapshot:
             "control_requested_at": self.timestamps.control_requested_at,
             "control_acknowledged_at": self.timestamps.control_acknowledged_at,
             "admission_acquired_at": self.timestamps.admission_acquired_at,
+            "gpu_lock_wait_seconds": self.gpu_lock_wait_seconds,
             "progress": _progress_to_dict(self.progress),
             "result": self.result,
             "error_kind": self.error_kind,

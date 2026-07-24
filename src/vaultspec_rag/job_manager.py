@@ -32,6 +32,7 @@ from .job_control import (
     QuiesceGate,
     RunControlToken,
     ShutdownRequested,
+    gpu_lock_wait_scope,
 )
 from .job_models import (
     DesiredJobState,
@@ -151,6 +152,7 @@ class JobAttemptContext:
         writer_lock_held: bool | None = None,
         pipeline_active: bool | None = None,
         admission_acquired_at: float | None = None,
+        gpu_lock_wait_seconds: float | None = None,
     ) -> bool:
         """Update this attempt's resource ownership without stale-task writes."""
         return self.manager.update_execution_resources(
@@ -163,6 +165,7 @@ class JobAttemptContext:
             writer_lock_held=writer_lock_held,
             pipeline_active=pipeline_active,
             admission_acquired_at=admission_acquired_at,
+            gpu_lock_wait_seconds=gpu_lock_wait_seconds,
         )
 
     def set_resilience(self, resilience: IndexResilienceSnapshot) -> bool:
@@ -831,7 +834,14 @@ class JobManager:
         )
         if not capacity_persisted:
             raise RuntimeError("could not publish managed index-capacity ownership")
-        return binding.runner(context)
+        # The scope makes every timed GPU-lock acquisition on this attempt's
+        # threads attributable to this job; the total publishes beside the
+        # admission stamp even when the runner unwinds on control or error.
+        with gpu_lock_wait_scope() as gpu_wait:
+            try:
+                return binding.runner(context)
+            finally:
+                context.set_resources(gpu_lock_wait_seconds=gpu_wait.seconds)
 
     def _complete_attempt(
         self,
@@ -1502,6 +1512,7 @@ class JobManager:
         writer_lock_held: bool | None = None,
         pipeline_active: bool | None = None,
         admission_acquired_at: float | None = None,
+        gpu_lock_wait_seconds: float | None = None,
     ) -> bool:
         with self._lock:
             backup = self._capture_state_locked()
@@ -1519,6 +1530,11 @@ class JobManager:
                         timestamps,
                         admission_acquired_at=admission_acquired_at,
                     )
+                ),
+                gpu_lock_wait_seconds=(
+                    managed.snapshot.gpu_lock_wait_seconds
+                    if gpu_lock_wait_seconds is None
+                    else gpu_lock_wait_seconds
                 ),
                 resources=replace(
                     previous,

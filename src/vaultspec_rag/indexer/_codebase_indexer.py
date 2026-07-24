@@ -2130,11 +2130,16 @@ class CodebaseIndexer:
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> threading.Thread:
         """Start the sole GPU consumer for weighted file segments."""
+        import contextvars
         import threading
 
+        # The consumer runs under a copy of the spawning attempt's context
+        # so its timed GPU-lock waits accumulate on the owning job record;
+        # a bare Thread would silently detach the attribution.
         consumer = threading.Thread(
-            target=self._run_weighted_consumer,
+            target=contextvars.copy_context().run,
             args=(
+                self._run_weighted_consumer,
                 segment_queue,
                 consumer_exceptions,
                 limits,

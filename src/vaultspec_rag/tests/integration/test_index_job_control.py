@@ -1103,9 +1103,7 @@ async def test_managed_cancel_at_write_gate_wins_without_spurious_failure(
         root,
         slot,
     )
-    await _assert_cancel_wins_at_the_write_gate(
-        managed_job_manager, cancelled_id, slot
-    )
+    await _assert_cancel_wins_at_the_write_gate(managed_job_manager, cancelled_id, slot)
 
 
 class _AbortAfterFirstCommitReporter(NullProgressReporter):
