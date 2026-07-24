@@ -6,7 +6,8 @@ from typing import cast
 import pytest
 
 from .._job_errors import JobError, JobErrorKind
-from .._store_writes import StoreVolume
+from .._store_writes import VolumeReading
+from .._units import human_bytes
 from ..index_profiles import (
     IndexDomain,
     StorageBackend,
@@ -17,14 +18,28 @@ from ..index_profiles import (
 )
 
 
-def _volume(free_bytes: int | None, path: str = "managed/storage") -> StoreVolume:
-    """A store-volume observation with an exact free figure.
+def _volume(
+    free_bytes: int | None,
+    path: str = "managed/storage",
+    *,
+    role: str = "vector store",
+    device: int | None = 1,
+) -> VolumeReading:
+    """One volume observation with an exact free figure.
 
-    ``StoreVolume`` is a pure record, so the path need not exist; nothing in
-    admission touches the filesystem once the probe has run.
+    ``VolumeReading`` is a pure record, so the path need not exist; nothing
+    in admission touches the filesystem once the probe has run. ``device``
+    is what decides whether two readings are the same volume, so distinct
+    volumes must be given distinct ids here.
     """
     resolved = pathlib.Path(path)
-    return StoreVolume(path=resolved, measured_path=resolved, free_bytes=free_bytes)
+    return VolumeReading(
+        role=role,
+        path=resolved,
+        measured_path=resolved,
+        free_bytes=free_bytes,
+        device_id=device,
+    )
 
 
 def test_profiles_keep_code_and_document_limits_independent() -> None:
@@ -185,6 +200,61 @@ def test_unmeasurable_store_volume_skips_the_disk_check() -> None:
     # An unknown free figure (a remote store this host cannot see) must not
     # be read as zero: refusing on a number nobody measured is the same
     # class of defect as refusing on another volume's number.
+    assert admitted is profile
+
+
+def test_workspace_shortfall_is_reported_as_its_own_condition() -> None:
+    profile = get_index_support_profile("managed-service")
+    store = _volume(profile.minimum_free_disk_bytes, "managed/storage")
+    workspace = _volume(
+        1024,
+        "project/.vault/data/search-data",
+        role="project data dir",
+        device=2,
+    )
+
+    with pytest.raises(JobError) as raised:
+        validate_profile_admission(
+            profile.name,
+            IndexDomain.CODE,
+            SupportMeasurement(1, 1),
+            backend="server",
+            available_ram_bytes=profile.minimum_ram_bytes,
+            store_volume=store,
+            workspace_volume=workspace,
+        )
+
+    detail = raised.value.detail
+    assert raised.value.error_kind is JobErrorKind.DISK_PREFLIGHT_FAILED
+    # The two targets have wildly different requirements. Naming the one
+    # that is short - and never quoting the store's profile floor at the
+    # data dir - is what keeps the operator from freeing space on the
+    # wrong drive.
+    assert workspace.describe() in detail
+    assert "project data dir" in detail
+    assert str(store.path) not in detail
+    assert human_bytes(profile.minimum_free_disk_bytes) not in detail
+
+
+def test_workspace_check_defers_when_both_targets_share_a_volume() -> None:
+    profile = get_index_support_profile("embedded-local")
+    shared = "project/.vault/data/search-data"
+    store = _volume(profile.minimum_free_disk_bytes, shared)
+    workspace = _volume(1024, shared, role="project data dir", device=1)
+
+    admitted = validate_profile_admission(
+        profile.name,
+        IndexDomain.CODE,
+        SupportMeasurement(1, 1),
+        backend="local",
+        available_ram_bytes=profile.minimum_ram_bytes,
+        store_volume=store,
+        workspace_volume=workspace,
+    )
+
+    # Local mode puts both targets on one volume, where the store's larger
+    # requirement has already answered the question. Reporting a second
+    # shortfall on the same drive would invite freeing space twice.
     assert admitted is profile
 
 
