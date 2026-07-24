@@ -21,6 +21,7 @@ import pytest
 from .._job_errors import JobError, JobErrorKind
 from .._store_writes import (
     BYTES_PER_POINT_ESTIMATE,
+    DISK_FLOOR_BYTES,
     InsufficientDiskSpaceError,
     StoreWritePolicy,
     classify_write_error,
@@ -575,6 +576,70 @@ class TestEnsureDiskHeadroom:
             ensure_disk_headroom(tmp_path, floor_bytes=2**40)
         assert str(2**40) not in str(raised.value)
         assert "1.0 TiB" in str(raised.value)
+
+
+class TestPerRunEstimateSizesTheRun:
+    """The per-run estimate, not the flat floor, decides whether a run fits.
+
+    This is the protection bought by lowering the host-provisioning floor:
+    the flat floor was over-serving as a proxy for run size, and refusing
+    ordinary runs on hosts with ample room. Both cases here run against the
+    SAME real volume with real ``shutil.disk_usage``, so the only variable
+    is the size of the requested run - which is precisely the property the
+    flat floor cannot express and the estimate can.
+    """
+
+    @staticmethod
+    def _free_bytes_of(path: Path) -> int:
+        import shutil
+
+        return shutil.disk_usage(path).free
+
+    def test_an_oversized_run_is_refused_on_this_volume(self, tmp_path: Path) -> None:
+        free = self._free_bytes_of(tmp_path)
+        # Twice what the volume holds, expressed in points at the production
+        # per-point estimate - derived from the live measurement rather than
+        # a hardcoded constant, so the test cannot pass by coincidence on a
+        # differently sized runner.
+        oversized = (2 * free) // BYTES_PER_POINT_ESTIMATE
+
+        with pytest.raises(InsufficientDiskSpaceError) as raised:
+            ensure_disk_headroom(tmp_path, new_points=oversized)
+        assert "No space left on" in str(raised.value)
+
+    def test_an_ordinary_run_admits_on_the_same_volume(self, tmp_path: Path) -> None:
+        free = self._free_bytes_of(tmp_path)
+        # An ordinary project: the measured 12,408-point namespace. Skipping
+        # rather than asserting on a genuinely full runner keeps the test
+        # honest - it has nothing to say about a volume that cannot hold the
+        # run either way.
+        ordinary = 12_408
+        needed = DISK_FLOOR_BYTES + ordinary * BYTES_PER_POINT_ESTIMATE
+        assert free > needed, (
+            "this runner's volume cannot fit an ordinary project; the "
+            f"comparison is meaningless here (free={free}, needed={needed})"
+        )
+
+        ensure_disk_headroom(tmp_path, new_points=ordinary)
+
+    def test_the_flat_floor_would_not_have_told_them_apart(
+        self, tmp_path: Path
+    ) -> None:
+        """Both runs clear the host floor; only the estimate separates them.
+
+        Without this the pair above proves only that a huge number and a
+        small number differ. The point is that the flat host floor admits
+        BOTH, so removing the estimate would silently admit the impossible
+        run - which is exactly the regression to guard against.
+        """
+        from ..index_profiles import get_index_support_profile
+
+        free = self._free_bytes_of(tmp_path)
+        host_floor = get_index_support_profile("managed-service")
+        assert free >= host_floor.minimum_free_disk_bytes
+
+        ordinary = DISK_FLOOR_BYTES + 12_408 * BYTES_PER_POINT_ESTIMATE
+        assert ordinary < host_floor.minimum_free_disk_bytes
 
 
 @contextmanager
