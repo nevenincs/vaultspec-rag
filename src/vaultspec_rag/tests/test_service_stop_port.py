@@ -32,6 +32,17 @@ from ._ports import free_loopback_port
 if TYPE_CHECKING:
     from pathlib import Path
 
+#: Budget for one `server stop --orphans` subprocess. The reap walks the whole
+#: process table, and the CLI is a fresh process every time, so it always pays
+#: the COLD walk: measured at 65.4s on a host with ~1400 processes, against
+#: 3.8-5.6s warm. A 60s budget therefore killed these guards on
+#: `TimeoutExpired` before a single safety assertion ran - they reported a
+#: failure that said nothing about whether the reap spares the singleton, which
+#: is the only thing they exist to check. The integration tier already carries
+#: this figure; the unit tier now shares it rather than rediscovering it.
+_REAP_SUBPROCESS_BUDGET_SECONDS = 240.0
+
+
 pytestmark = [pytest.mark.unit]
 
 runner = CliRunner()
@@ -176,7 +187,7 @@ def _reap_via_subprocess(port: int) -> dict[str, object]:
         ],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=_REAP_SUBPROCESS_BUDGET_SECONDS,
         check=False,
     )
     for line in reversed(completed.stdout.splitlines()):

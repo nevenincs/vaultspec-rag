@@ -128,6 +128,11 @@ class TestStartOutcomeHelpers:
         assert exc.exit_code == 1
         env = json.loads(capsys.readouterr().out)
         assert env["ok"] is False
+        # The command name is asserted because the two lifecycle leaves now
+        # share one emitter: without this, invoking the stop helper where the
+        # start one belongs yields command "service.stop" and this test still
+        # passes. The stop-side twin asserts its own name for the same reason.
+        assert env["command"] == "service.start"
         assert env["error"] == "machine_owned"
         assert env["data"] == {"holder_pid": 4242}
 

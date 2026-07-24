@@ -469,6 +469,42 @@ def _pid_terminated(pid: int) -> bool:
         return False
 
 
+def _guard_unconfirmed_port_holder(
+    port: int,
+    serving: tuple[int, str | None] | None,
+    json_mode: bool,
+) -> None:
+    """Refuse the reap when the port is held by something that will not identify.
+
+    The identity anchor protects a listener that ANSWERS the health probe. One
+    that accepts the connection and stays silent leaves every anchor at zero, so
+    the sweep would terminate a live port holder and report a satisfied reap.
+
+    A genuine orphan holds no port - that is what makes it an orphan - so
+    refusing here loses nothing this verb exists to clear, and the sibling
+    single-port stop already refuses exactly this situation rather than killing
+    what it cannot confirm.
+
+    Raises:
+        typer.Exit: When something is listening but unidentifiable.
+    """
+    if serving is not None or not _port_is_listening(port):
+        return
+    raise _fail_stop(
+        json_mode,
+        error="port_holder_unconfirmed",
+        message="Orphan reap refused: the port is held by an unconfirmed process",
+        human_lines=(
+            f"Something is listening on port {port} but did not answer the "
+            "identity probe, so it cannot be told apart from a live service.",
+            "No daemon was reaped. An orphan holds no port, so nothing this "
+            "command clears is affected by stopping here.",
+        ),
+        next_actions=(f"vaultspec-rag server status --port {port} --verbose",),
+        port=port,
+    )
+
+
 def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
     """Reap race-loser daemons for the machine singleton on *port*.
 
@@ -518,6 +554,8 @@ def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
     # port-bound daemon is spared regardless of which config's state we can see.
     serving = _service_pid_on_port(port)
     serving_pid = serving[0] if serving is not None else 0
+
+    _guard_unconfirmed_port_holder(port, serving, json_mode)
 
     anchors = {os.getpid(), lock_holder, pointer_pid, serving_pid}
     protected = set(anchors)
