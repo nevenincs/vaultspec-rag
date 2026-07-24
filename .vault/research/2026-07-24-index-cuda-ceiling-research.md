@@ -17,8 +17,9 @@ and code index job for a hook-backed corpus with `cuda_memory_ceiling`, on a
 document-chunk-bounding work correctly moved enforcement onto allocated demand,
 which surfaced - rather than caused - two structural defects in the ceiling
 itself. First, the ceiling is a hardcoded profile constant clamped so no
-operator lever can raise it, while the failure message instructs the operator
-to raise headroom and resume. Second, it is enforced against a process-wide
+operator lever can raise it, while the failure message directs the operator to
+free headroom and resume - a remedy that has no raising lever to reach for.
+Second, it is enforced against a process-wide
 allocation high-water shared by concurrently running index jobs, so one job's
 legitimate peak fails the others and a per-job reset clears a sibling's
 measurement. A third, narrower gap compounds both: document embedding has no
@@ -44,6 +45,13 @@ configured value enters through `min`, the `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB`
 knob can only ever lower the ceiling, never raise it above 12 GiB - verified live
 on 2026-07-24 when setting it to 15000 was silently ignored and the failure
 continued to name `12288.0 MiB`.
+
+The same one-way clamp is duplicated at the two sites that build the budget that
+actually enforces: `src/vaultspec_rag/indexer/_codebase_indexer.py:449` and
+`src/vaultspec_rag/indexer/_document_indexer.py:422`. `job_dispatch.py:300` is
+the admission-time copy; the per-run budgets each re-apply their own
+`min(config.index_cuda_ceiling_mb, limits.cuda_bytes / mib)`. A fix that touches
+only the dispatch site leaves the ceiling unraisable where it is enforced.
 
 This is in direct tension with the operator guidance the failure itself emits:
 the `cuda_memory_ceiling` job error tells the operator to "stop competing GPU
@@ -81,18 +89,39 @@ the failing job's batch but inherited from the process history.
 
 ### GPU forward passes are already serialised, so the true concurrent peak is bounded
 
-The instantaneous GPU working set is not the sum of the concurrent jobs. All
-model forward passes run under one process-global `gpu_lock`
-(`src/vaultspec_rag/embeddings.py:728`, `src/vaultspec_rag/indexer/_streaming.py:316`),
-so exactly one encode executes at a time - the single-GPU-consumer discipline
-the `2026-06-12-service-concurrency-adr` established. The genuine peak is
-therefore one forward pass plus the resident-model baseline, not three
-concurrent forwards. This matters to the fix space: the process-wide high-water
-overstates the true instantaneous demand precisely because it is a
-since-reset maximum spanning every job, while the thing that actually risks
-device OOM is bounded by the lock. A budget scoped to the lock-held critical
-section, or a ceiling that accounts for the serialised single-forward reality,
-would measure the real risk.
+The instantaneous GPU working set is not the sum of the concurrent jobs. One
+process-global `gpu_lock` is created once on the service registry singleton and
+handed to the searcher and all three indexers, so dense slice encode
+(`src/vaultspec_rag/indexer/_streaming.py:316`), sparse encode
+(`src/vaultspec_rag/embeddings.py:728`), and the reranker forward all acquire the
+same instance - exactly one forward executes at a time, the single-GPU-consumer
+discipline the `2026-06-12-service-concurrency-adr` established. Streaming drops
+device tensors between forwards (`_streaming.py:321`), so the genuine
+instantaneous demand is one forward plus the resident-model baseline, not three
+concurrent forwards. The process-wide high-water overstates that demand because
+it is a since-reset maximum spanning every job, while the thing that actually
+risks device OOM is bounded by the lock.
+
+A correct fix cannot simply move enforcement under the lock, because the budget's
+own architecture forbids it: `MemoryBudget.sample()` "never acquires or accepts
+the GPU lock" and must run outside the forward critical section
+(`src/vaultspec_rag/memory_probe.py:236`). And the field failures occur at those
+outside-the-lock checkpoints - the live `code producer queue wait` failure is a
+`_sample_memory_budget` call at `_codebase_indexer.py:2378`, not a forward.
+Re-scoping only the forward bracket would leave every enforcing checkpoint still
+reading the process-global counter, so the contamination would persist exactly
+where it was observed. What the serialisation buys is not a place to enforce but
+a place to *capture*: a raw peak reset-and-read bracketed inside the lock hold
+yields one job's own forward peak, which every checkpoint can then enforce
+against instead of the shared global. The reset helper currently also flushes the
+allocator cache (`memory_probe.py:182`), which is deliberate per-run behaviour
+and throttled to every eighth slice (`index_cache_flush_slices`, `config.py:546`);
+a per-forward capture must use a raw reset without that flush or it reintroduces a
+device sync per slice.
+
+The background memory sampler does not complicate this: it records RSS only
+(`current_rss_mb`, `memory_probe.py:600`) and never reads or resets a CUDA
+counter, so no sampler thread races the CUDA capture.
 
 ### The resident-model baseline consumes a third of the ceiling and is not excluded
 
@@ -108,6 +137,22 @@ is entirely reasonable on an 8.5 GiB working budget is measured against a ceilin
 already 3.5 GiB pre-consumed. Excluding the resident baseline so the ceiling
 describes indexing headroom is one of the open follow-ons the
 `2026-07-23-document-chunk-bounding-adr` explicitly deferred.
+
+Two subtleties bound how the baseline can be used. First, a peak read after a
+`reset_peak_memory_stats` is absolute - the reset rebases to the current
+allocation, which already includes the ~3.5 GiB resident models
+(`memory_probe.py:182`) - so a captured peak is total device use, not the job's
+delta. Subtracting the baseline from the ceiling while enforcing an absolute peak
+would double-count the models and re-tighten the ceiling by ~3.5 GiB. The two
+sides must match: either enforce `peak - baseline` against `capacity - headroom -
+baseline`, or enforce absolute `peak` against `capacity - headroom`. Second, the
+resident baseline is not fully present until every model is resident, and the
+CrossEncoder reranker loads lazily under a separate `_reranker_lock` rather than
+`gpu_lock`; a baseline sampled before that lazy load understates the true
+resident set, and a reranker load landing inside a job's capture bracket inflates
+that job's peak by the model's size. The baseline must be pinned to after all
+resident models load, and model loading is the one residual perturbation the
+`gpu_lock` capture does not itself exclude.
 
 ### Document embedding has no dedicated encode sub-batch
 
@@ -154,20 +199,24 @@ and adding the document encode batch are lower-risk and can land independently.
 
 ### Not investigated
 
-Whether `reset_peak_memory_stats` under `gpu_lock` fully isolates a job's peak
-in the presence of the background memory sampler thread was not tested. The exact
-token-length distribution of the failing corpus's fragments was not measured; the
-2.7x figure is derived from the character bound, not tokenised. Whether the
-`embedded-local` 6 GiB profile has the same unraisable-ceiling problem on smaller
-cards was not exercised.
+The exact token-length distribution of the failing corpus's fragments was not
+measured; the 2.7x figure is derived from the character bound, not tokenised.
+Whether the `embedded-local` 6 GiB profile has the same unraisable-ceiling
+problem on smaller cards was not exercised. Whether a slice of many forwards ever
+peaks above one forward plus baseline - which would make per-forward capture
+under-measure - was reasoned to be unlikely from the between-forward tensor
+release but not measured; a job must in any case enforce the maximum across its
+own captured brackets, not a single one.
 
 ## Sources
 
 - `src/vaultspec_rag/job_dispatch.py:300`
+- `src/vaultspec_rag/indexer/_codebase_indexer.py:449`, `:2378`
+- `src/vaultspec_rag/indexer/_document_indexer.py:422`
 - `src/vaultspec_rag/index_profiles.py:158`, `:168`, `:184`, `:194`
-- `src/vaultspec_rag/memory_probe.py:154`, `:167`, `:215`, `:498`
+- `src/vaultspec_rag/memory_probe.py:154`, `:167`, `:182`, `:215`, `:236`, `:498`, `:600`
 - `src/vaultspec_rag/embeddings.py:728`
-- `src/vaultspec_rag/indexer/_streaming.py:316`
-- `src/vaultspec_rag/config.py:521`, `:545`
+- `src/vaultspec_rag/indexer/_streaming.py:316`, `:321`
+- `src/vaultspec_rag/config.py:521`, `:545`, `:546`
 - Live service `/metrics`, `server jobs`, and daemon log readings, 2026-07-23
   and 2026-07-24 (observational; not reproducible from this repository)
