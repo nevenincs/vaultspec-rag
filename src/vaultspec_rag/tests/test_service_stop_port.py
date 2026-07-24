@@ -277,14 +277,14 @@ class TestOrphanReapSafety:
             assert envelope["ok"] is True, envelope
 
             _await_all_terminated(orphan_pair)
-            assert not any(psutil.pid_exists(pid) for pid in orphan_pair), (
+            assert all(_pid_terminated(pid) for pid in orphan_pair), (
                 f"the whole orphan pair {orphan_pair} must be reaped"
             )
-            assert all(psutil.pid_exists(pid) for pid in singleton_pair), (
+            assert all(_pid_live(pid) for pid in singleton_pair), (
                 f"the singleton pair {singleton_pair} (pointer plus shim) "
                 "must be spared"
             )
-            assert psutil.pid_exists(foreign.pid), (
+            assert _pid_live(foreign.pid), (
                 "a daemon launched for a different port must be spared"
             )
         finally:
@@ -335,10 +335,10 @@ class TestOrphanReapSafety:
             assert envelope["ok"] is True, envelope
 
             _await_all_terminated(orphan_pair)
-            assert not any(psutil.pid_exists(pid) for pid in orphan_pair), (
+            assert all(_pid_terminated(pid) for pid in orphan_pair), (
                 f"the whole orphan pair {orphan_pair} must be reaped"
             )
-            assert all(psutil.pid_exists(pid) for pid in singleton_pair), (
+            assert all(_pid_live(pid) for pid in singleton_pair), (
                 f"the singleton pair {singleton_pair} (worker + shim launcher) "
                 "must be spared"
             )
@@ -386,10 +386,10 @@ class TestOrphanReapSafety:
             assert envelope["ok"] is True, envelope
 
             _await_all_terminated(orphan_pair)
-            assert not any(psutil.pid_exists(pid) for pid in orphan_pair), (
+            assert all(_pid_terminated(pid) for pid in orphan_pair), (
                 f"the whole orphan pair {orphan_pair} must be reaped"
             )
-            assert all(psutil.pid_exists(pid) for pid in singleton_pair), (
+            assert all(_pid_live(pid) for pid in singleton_pair), (
                 f"the lock-holding singleton pair {singleton_pair} must be "
                 "spared by the machine-lock anchor alone"
             )
