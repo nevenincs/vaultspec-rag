@@ -18,7 +18,6 @@ actually reads.
 from __future__ import annotations
 
 import shutil
-import socket
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -27,14 +26,9 @@ from ... import jobs
 from ...concurrency import reset_limiters
 from ...config import get_config, reset_config
 from ...job_models import JobState
-from ...qdrant_runtime import (
-    QdrantProvisionAction,
-    QdrantSupervisor,
-    provision,
-    resolve_binary,
-)
 from ...registry import get_registry, reset_registry
 from ...server._routes import _service_job_snapshot
+from ._helpers import provisioned_qdrant_binary, serve_qdrant
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Generator
@@ -43,17 +37,12 @@ if TYPE_CHECKING:
     from pytest import TempPathFactory
 
     from ...job_manager import JobManager
+    from ...qdrant_runtime import QdrantSupervisor
     from ...service import ServiceRegistry
 
 pytestmark = [pytest.mark.integration]
 
 _JOB_WAIT_SECONDS = 240.0
-
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
 
 
 def _write_code_files(root: Path, count: int) -> list[Path]:
@@ -75,17 +64,8 @@ def _write_code_files(root: Path, count: int) -> list[Path]:
 
 @pytest.fixture(scope="module")
 def real_qdrant_binary() -> Path:
-    """Provision (or reuse) the real pinned binary in the managed dir."""
-    reset_config()
-    report = provision()
-    assert report.action in (
-        QdrantProvisionAction.CREATED,
-        QdrantProvisionAction.UNCHANGED,
-        QdrantProvisionAction.UPDATED,
-    ), report.message
-    resolved = resolve_binary()
-    assert resolved is not None, "provisioned binary must resolve"
-    return resolved.path
+    """Provision (or reuse) the pinned real Qdrant binary."""
+    return provisioned_qdrant_binary()
 
 
 @pytest.fixture(scope="module")
@@ -93,18 +73,8 @@ def qdrant_server(
     real_qdrant_binary: Path,
     tmp_path_factory: TempPathFactory,
 ) -> Generator[QdrantSupervisor]:
-    """One real qdrant server on an ephemeral port with temp storage."""
-    tmp = tmp_path_factory.mktemp("reuse-qdrant")
-    supervisor = QdrantSupervisor(
-        real_qdrant_binary,
-        http_port=_free_port(),
-        grpc_port=_free_port(),
-        storage_dir=tmp / "storage",
-        log_path=tmp / "qdrant.log",
-    )
-    supervisor.start(timeout=60.0)
-    yield supervisor
-    supervisor.stop()
+    """One real qdrant server on ephemeral ports with temp storage."""
+    yield from serve_qdrant(real_qdrant_binary, tmp_path_factory.mktemp("reuse-qdrant"))
 
 
 def _server_mode_config(status_dir: Path, qdrant_url: str) -> dict[str, object]:

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ...progress import NullProgressReporter
+from ._helpers import _document_policy
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -19,20 +20,6 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(600)]
 
 _WAIT_SECONDS = 30.0
-
-
-def _document_policy(pattern: str):
-    from ...indexer._content_policy import (
-        ContentKind,
-        ContentRoute,
-        RootContentPolicy,
-        SourceProfileVersion,
-    )
-
-    return RootContentPolicy(
-        SourceProfileVersion.CONVENTIONAL_V1,
-        (ContentRoute(pattern, ContentKind.DOCUMENT),),
-    )
 
 
 def test_completed_source_generation_exposes_route_migration_evidence(

@@ -734,7 +734,16 @@ def index_job_status(
 
 
 def _job_degraded_reason(job: JobSnapshot, *, stalled: bool) -> str | None:
-    """Return the stable degradation reason for one latest domain job."""
+    """Return the stable degradation reason for one latest domain job.
+
+    This answers one question: is this project's index complete and worth
+    trusting. An interrupted run degrades it as surely as a failed one - the
+    attempt stopped partway, so the index it was building is missing whatever
+    it had not reached - which is why the set here is deliberately wider than
+    a liveness verdict on the service process, something an interrupted run
+    does not impair. Narrowing it to failures alone would leave an operator
+    querying a half-built index with nothing telling them so.
+    """
     if stalled:
         return "stalled"
     if job.state in {JobState.FAILED, JobState.INTERRUPTED}:

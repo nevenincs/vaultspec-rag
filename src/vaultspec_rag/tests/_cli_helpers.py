@@ -28,23 +28,12 @@ from ..cli._http_search import DEFAULT_SEARCH_TIMEOUT_SECONDS, _get_search_timeo
 from ..config import EnvVar
 from ..config import reset_config as reset_rag_config
 from ..torch_config import TorchConfigAction
+from ._http_stubs import QuietHandler
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
 runner = CliRunner()
-
-
-class _QuietHandler(http.server.BaseHTTPRequestHandler):
-    """Base for the suite's contract servers, silent on stderr.
-
-    ``BaseHTTPRequestHandler`` logs one line per request to stderr, which
-    interleaves with the output a CLI test is asserting on. Every contract
-    server in this module wants that off, so the override lives here once.
-    """
-
-    def log_message(self, format: str, *args: object) -> None:
-        _ = format, args
 
 
 @contextlib.contextmanager
@@ -335,13 +324,12 @@ def _status_contract_server(
     whose subject is the payload itself, so a status test never has to stand up
     its own server.
     """
-    import http.server
     import threading
     import time
 
     running_job_started_at = time.time() - 42
 
-    class _StatusContractHandler(_QuietHandler):
+    class _StatusContractHandler(QuietHandler):
         def do_GET(self):
             status_code = 200
             if self.path.startswith("/jobs"):
@@ -472,11 +460,10 @@ def _slow_search_contract_server(
     jobs_status_code: int = 200,
 ) -> tuple[typing.Any, typing.Any]:
     """Start a local service that lets /search time out while probes work."""
-    import http.server
     import threading
     import time
 
-    class _SlowSearchHandler(_QuietHandler):
+    class _SlowSearchHandler(QuietHandler):
         def do_POST(self):
             if self.path != "/search":
                 self.send_response(404)
@@ -531,12 +518,11 @@ def _slow_search_contract_server(
 
 def _search_output_contract_server() -> tuple[typing.Any, typing.Any, list[object]]:
     """Start a local service returning deterministic search results."""
-    import http.server
     import threading
 
     requests: list[object] = []
 
-    class _SearchOutputHandler(_QuietHandler):
+    class _SearchOutputHandler(QuietHandler):
         def do_POST(self):
             if self.path != "/search":
                 self.send_response(404)
@@ -584,12 +570,11 @@ def _sparse_search_output_contract_server() -> tuple[
     typing.Any, typing.Any, list[object]
 ]:
     """Start a local service returning a result without locator fields."""
-    import http.server
     import threading
 
     requests: list[object] = []
 
-    class _SparseSearchOutputHandler(_QuietHandler):
+    class _SparseSearchOutputHandler(QuietHandler):
         def do_POST(self):
             if self.path != "/search":
                 self.send_response(404)
@@ -620,12 +605,11 @@ def _sparse_search_output_contract_server() -> tuple[
 
 def _empty_search_contract_server() -> tuple[typing.Any, typing.Any, list[object]]:
     """Start a local service returning empty-search diagnostics."""
-    import http.server
     import threading
 
     requests: list[object] = []
 
-    class _EmptySearchHandler(_QuietHandler):
+    class _EmptySearchHandler(QuietHandler):
         def do_POST(self):
             if self.path != "/search":
                 self.send_response(404)
@@ -679,12 +663,11 @@ def _find_free_port() -> int:
 
 
 def _projects_list_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
-    import http.server
     import threading
 
     requests: list[str] = []
 
-    class _ProjectsHandler(_QuietHandler):
+    class _ProjectsHandler(QuietHandler):
         def do_GET(self) -> None:
             requests.append(self.path)
             self.send_response(200)
@@ -722,12 +705,11 @@ def _projects_list_contract_server() -> tuple[typing.Any, typing.Any, list[str]]
 def _logs_contract_server() -> (  # pyright: ignore[reportUnusedFunction]
     tuple[typing.Any, typing.Any, list[str]]
 ):
-    import http.server
     import threading
 
     requests: list[str] = []
 
-    class _LogsContractHandler(_QuietHandler):
+    class _LogsContractHandler(QuietHandler):
         def do_GET(self) -> None:
             requests.append(self.path)
             self.send_response(200)
@@ -754,12 +736,11 @@ def _logs_contract_server() -> (  # pyright: ignore[reportUnusedFunction]
 
 
 def _empty_logs_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
-    import http.server
     import threading
 
     requests: list[str] = []
 
-    class _LogsContractHandler(_QuietHandler):
+    class _LogsContractHandler(QuietHandler):
         def do_GET(self) -> None:
             requests.append(self.path)
             self.send_response(200)
@@ -774,13 +755,12 @@ def _empty_logs_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
 
 
 def _jobs_empty_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
-    import http.server
     import threading
     import urllib.parse
 
     requests: list[str] = []
 
-    class _JobsContractHandler(_QuietHandler):
+    class _JobsContractHandler(QuietHandler):
         def do_GET(self) -> None:
             requests.append(self.path)
             parsed = urllib.parse.urlparse(self.path)
@@ -810,12 +790,11 @@ def _jobs_empty_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
 
 
 def _jobs_populated_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
-    import http.server
     import threading
 
     requests: list[str] = []
 
-    class _JobsContractHandler(_QuietHandler):
+    class _JobsContractHandler(QuietHandler):
         def do_GET(self) -> None:
             requests.append(self.path)
             payload = {
@@ -868,13 +847,12 @@ def _jobs_populated_contract_server() -> tuple[typing.Any, typing.Any, list[str]
 def _projects_unload_contract_server(
     response: dict[str, object] | None = None,
 ) -> tuple[typing.Any, typing.Any, list[dict[str, object]]]:
-    import http.server
     import threading
 
     requests: list[dict[str, object]] = []
     payload = response or {"unexpected": {"raw": True}}
 
-    class _ProjectsEvictHandler(_QuietHandler):
+    class _ProjectsEvictHandler(QuietHandler):
         def do_POST(self) -> None:
             length = int(self.headers.get("Content-Length", "0"))
             requests.append(json.loads(self.rfile.read(length).decode("utf-8")))
@@ -932,7 +910,6 @@ __all__ = [
     "_SEARCH_RECORD_RE",
     "EnvVar",
     "TorchConfigAction",
-    "_QuietHandler",
     "_assert_default_status_summary",
     "_assert_no_table_borders",
     "_assert_project_summary_language",

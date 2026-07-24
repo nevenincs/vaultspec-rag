@@ -28,6 +28,7 @@ from ._constants import (
     TableLike,
     TorchConfigAction,
     TorchConfigState,
+    tget,
 )
 from ._inspect import (
     classify_doc,
@@ -43,16 +44,6 @@ from ._inspect import (
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-
-def _tget(mapping: TableLike | TOMLDocument, key: str) -> object:
-    """Typed wrapper for tomlkit Container.get() which returns Unknown.
-
-    tomlkit's Container inherits from an unparameterised dict, so
-    .get() has return type ``Unknown | None`` in strict mode.
-    Centralising the cast here keeps all other call sites clean.
-    """
-    return cast("object", mapping.get(key))  # pyright: ignore[reportUnknownMemberType]
 
 
 def manual_snippet() -> str:
@@ -294,7 +285,7 @@ def _ensure_tool_uv_index(doc: TOMLDocument) -> None:
     existing array-of-tables if one is present.
     """
     uv = _get_or_create_tool_uv(doc)
-    existing: object = _tget(uv, "index")
+    existing: object = tget(uv, "index")
     entry = tomlkit.table()
     entry["name"] = CU130_INDEX_NAME
     entry["url"] = CU130_INDEX_URL
@@ -347,7 +338,7 @@ def _ensure_torch_source(doc: TOMLDocument) -> None:
     inline["index"] = CU130_INDEX_NAME
     inline["marker"] = CU130_MARKER
 
-    current: object = _tget(sources, "torch")
+    current: object = tget(sources, "torch")
     if current is None:
         arr = tomlkit.array()
         arr.append(inline)  # pyright: ignore[reportUnknownMemberType]  # tomlkit Array
@@ -407,7 +398,7 @@ def _drop_cu130_index(doc: TOMLDocument) -> None:
 def _drop_canonical_torch_entry(sources: object) -> None:
     if not isinstance(sources, _TABLE_LIKE_TYPES):
         return
-    torch_entry: object = _tget(sources, "torch")
+    torch_entry: object = tget(sources, "torch")
     if torch_entry is None:
         return
 
@@ -437,7 +428,7 @@ def _cleanup_empty_sources(doc: TOMLDocument, sources: object) -> None:
 def _cleanup_empty_uv_tables(doc: TOMLDocument) -> None:
     uv = get_tool_uv_table(doc)
     if uv is not None and not uv:
-        tool: object = _tget(doc, "tool")
+        tool: object = tget(doc, "tool")
         if isinstance(tool, _TABLE_LIKE_TYPES):
             del tool["uv"]
             if not tool:
@@ -464,7 +455,7 @@ def _drop_torch_source(doc: TOMLDocument) -> None:
     uv = get_tool_uv_table(doc)
     if uv is None:
         return
-    sources: object = _tget(uv, "sources")
+    sources: object = tget(uv, "sources")
 
     _drop_canonical_torch_entry(sources)
     _cleanup_empty_sources(doc, sources)

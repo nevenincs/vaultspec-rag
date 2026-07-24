@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 from typing import TYPE_CHECKING
 
 import pytest
@@ -30,6 +30,7 @@ from .._machine_lock import (
 )
 from ..config import EnvVar, reset_config
 from ..server._lifespan import service_lifespan
+from ._http_stubs import QuietHandler
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit]
 
 
-class _ForeignHolderHandler(BaseHTTPRequestHandler):
+class _ForeignHolderHandler(QuietHandler):
     """A non-managed HTTP server: ready, but with no managed identity sidecar."""
 
     def do_GET(self) -> None:  # stdlib handler contract
@@ -54,11 +55,6 @@ class _ForeignHolderHandler(BaseHTTPRequestHandler):
         else:
             self.send_response(404)
             self.end_headers()
-
-    def log_message(self, format: str, *args: object) -> None:  # noqa: ARG002
-        # Silence stderr noise; the override matches the stdlib signature
-        # (``format`` is the stdlib parameter name).
-        return
 
 
 def _foreign_holder() -> Iterator[int]:

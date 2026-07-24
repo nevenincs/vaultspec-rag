@@ -10,16 +10,6 @@ related:
   - '[[2026-07-24-index-cuda-ceiling-research]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 # `index-cuda-ceiling` plan
 
 Size the indexing CUDA budget to real device headroom and charge each job only

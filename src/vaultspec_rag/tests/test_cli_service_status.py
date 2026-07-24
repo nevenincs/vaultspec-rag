@@ -30,6 +30,7 @@ from ._cli_helpers import (
     app,
     runner,
 )
+from ._http_stubs import QuietHandler
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -532,6 +533,41 @@ class TestHealthyServiceStaysQuiet:
         lines = _plain_lines(result.output)
         assert lines[lines.index("Next action:") + 1].startswith("vaultspec-rag search")
 
+    def test_a_historical_failure_is_not_a_cause_of_a_live_degradation(
+        self, tmp_path: Path
+    ) -> None:
+        """A degraded service lists only what the service said degraded it.
+
+        The renderer derives remediation from structured signals, and a failed
+        job leaves one behind forever. Promoting that signal to a cause whenever
+        anything else degrades the service would put a failure from a previous
+        daemon generation under "Degraded because" - which is exactly the verdict
+        the service withholds by bounding job-history degradation to the current
+        generation. Observed live before this was fixed: the service reported one
+        reason and the status view printed two.
+
+        The failure is not suppressed, only relocated: it still appears beside
+        the failed count with the command that inspects it.
+        """
+        result = _status_against(
+            tmp_path,
+            _health_payload(
+                status="degraded",
+                reasons=["1 indexing job(s) are stalled"],
+                jobs={"stalled": 1, "last_failed": _last_failed_record()},
+            ),
+        )
+
+        assert result.exit_code == 0, result.output
+        degraded = [
+            line for line in _plain_lines(result.output) if line.startswith("- ")
+        ]
+        assert degraded == ["- 1 indexing job(s) are stalled"], result.output
+        labels = _label_values(result.output)
+        assert (
+            labels["Last failure"] == f"job e8f8ac43 (other), {_FAILURE_AGE_TEXT} ago"
+        )
+
 
 class TestServiceDaemonHelpers:
     """Tests for the service daemon helper functions."""
@@ -672,15 +708,12 @@ class TestServiceDaemonHelpers:
     def test_health_probe_non_json_response(self):
         """Health probe returns None when server sends non-JSON."""
 
-        class _GarbageHandler(http.server.BaseHTTPRequestHandler):
+        class _GarbageHandler(QuietHandler):
             def do_GET(self):
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain")
                 self.end_headers()
                 self.wfile.write(b"not json at all")
-
-            def log_message(self, format: str, *args: object) -> None:
-                _ = format, args
 
         server = http.server.HTTPServer(("127.0.0.1", 0), _GarbageHandler)
         port = server.server_address[1]

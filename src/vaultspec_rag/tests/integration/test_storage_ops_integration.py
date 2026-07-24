@@ -10,7 +10,6 @@ manifest never touches the real host. No GPU: these are pure storage ops.
 from __future__ import annotations
 
 import os
-import socket
 from typing import TYPE_CHECKING
 
 import pytest
@@ -30,6 +29,7 @@ from ...storage_ops import (
     prune_orphaned,
 )
 from ...store import root_collection_prefix
+from .._ports import free_loopback_port
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -41,12 +41,6 @@ pytestmark = [pytest.mark.integration]
 
 # Valid namespacing prefixes are r + 12 hex + _ (blake2b digest_size=6).
 _UNKNOWN_PREFIX = "rdeadbeefcafe_"
-
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
 
 
 @pytest.fixture(scope="module")
@@ -72,30 +66,14 @@ def ops_qdrant(_qdrant_binary: Path, tmp_path: Path) -> Iterator[QdrantSuperviso
     """
     supervisor = QdrantSupervisor(
         _qdrant_binary,
-        http_port=_free_port(),
-        grpc_port=_free_port(),
+        http_port=free_loopback_port(),
+        grpc_port=free_loopback_port(),
         storage_dir=tmp_path / "storage",
         log_path=tmp_path / "qdrant.log",
     )
     supervisor.start()
     yield supervisor
     supervisor.stop()
-
-
-@pytest.fixture
-def isolated_status_dir(tmp_path: Path) -> Iterator[Path]:
-    key = "VAULTSPEC_RAG_STATUS_DIR"
-    prev = os.environ.get(key)
-    os.environ[key] = str(tmp_path / "managed")
-    reset_config()  # manifest resolves the status dir via get_config()
-    try:
-        yield tmp_path / "managed"
-    finally:
-        if prev is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = prev
-        reset_config()
 
 
 def _make_collection(client: QdrantClient, name: str) -> None:
@@ -235,7 +213,6 @@ def test_ensure_table_records_manifest_and_survey_shows_live(
 ) -> None:
     """Opening a server-mode store and ensuring its table records the root in
     the manifest, so a subsequent survey classifies it live (not unknown)."""
-    import os
 
     from qdrant_client import QdrantClient
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import typing
 
 import pytest
@@ -14,10 +15,9 @@ from ._cli_helpers import (
     _help_option_descriptions,
     _write_service_status,
     app,
-    reset_base_config,
-    reset_rag_config,
     runner,
 )
+from .conftest import managed_env
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -140,11 +140,32 @@ class TestHelpCleanup:
         for forbidden in ("Qdrant", "tqdm", "agent / CI", "fast path"):
             assert forbidden not in normalized
 
-    def test_index_help_cross_ref(self):
-        """index --help must reference docs/indexing.md."""
-        result = runner.invoke(app, ["index", "--help"])
+    @pytest.mark.parametrize(
+        "command",
+        [
+            ["--help"],
+            ["index", "--help"],
+            ["clean", "--help"],
+            ["status", "--help"],
+            ["search", "--help"],
+            ["server", "warmup", "--help"],
+        ],
+        ids=["root", "index", "clean", "status", "search", "warmup"],
+    )
+    def test_help_is_self_documenting(self, command: list[str]):
+        """Help must stand alone rather than point into the repo doc tree.
+
+        An operator reading --help has the CLI, not a checkout. A
+        ``docs/*.md`` pointer defers the explanation to a file they may
+        not have, so the help text must carry the substance itself.
+        """
+        result = runner.invoke(app, command)
         assert result.exit_code == 0, result.output
-        assert "docs/indexing.md" in result.output
+        leaked = re.search(r"docs/\S+\.md", result.output)
+        assert leaked is None, (
+            f"Help for {' '.join(command)!r} defers to {leaked.group(0)!r} "
+            f"instead of documenting itself:\n{result.output}"
+        )
 
     def test_clean_help_clean(self):
         result = runner.invoke(app, ["clean", "--help"])
@@ -156,12 +177,6 @@ class TestHelpCleanup:
         assert "Required so nothing is deleted by accident" in normalized
         for forbidden in ("Qdrant", "metadata sidecars", "collections", "footgun"):
             assert forbidden not in normalized
-
-    def test_clean_help_cross_ref(self):
-        """clean --help must reference docs/indexing.md."""
-        result = runner.invoke(app, ["clean", "--help"])
-        assert result.exit_code == 0, result.output
-        assert "docs/indexing.md" in result.output
 
     def test_search_help_clean(self):
         result = runner.invoke(app, ["search", "--help"])
@@ -260,12 +275,6 @@ class TestHelpCleanup:
         assert "--limit" in result.output
         assert "Maximum number of results" in result.output
 
-    def test_status_help_cross_ref(self):
-        """status --help must reference docs/indexing.md."""
-        result = runner.invoke(app, ["status", "--help"])
-        assert result.exit_code == 0, result.output
-        assert "docs/indexing.md" in result.output
-
     def test_server_start_help_clean(self):
         result = runner.invoke(app, ["server", "start", "--help"])
         assert result.exit_code == 0, result.output
@@ -295,23 +304,15 @@ class TestHelpCleanup:
         # guard - otherwise an ambient running service would make start return
         # `already_running` regardless of the bound port (service-tests-isolate-
         # status-dir).
-        prior_status = os.environ.get(EnvVar.STATUS_DIR)
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path / "status")
-        reset_rag_config()
-
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind(("127.0.0.1", 0))
         sock.listen(1)
         port = int(sock.getsockname()[1])
         try:
-            result = runner.invoke(app, ["server", "start", "--port", str(port)])
+            with managed_env(**{EnvVar.STATUS_DIR: str(tmp_path / "status")}):
+                result = runner.invoke(app, ["server", "start", "--port", str(port)])
         finally:
             sock.close()
-            if prior_status is None:
-                os.environ.pop(EnvVar.STATUS_DIR, None)
-            else:
-                os.environ[EnvVar.STATUS_DIR] = prior_status
-            reset_rag_config()
 
         assert result.exit_code == 1, result.output
         assert f"Port {port} is already in use." in result.output
@@ -329,36 +330,28 @@ class TestHelpCleanup:
 
         # Isolated status dir so the idempotent check falls through to the port
         # guard (service-tests-isolate-status-dir).
-        prior_status = os.environ.get(EnvVar.STATUS_DIR)
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path / "status")
-        reset_rag_config()
-
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind(("127.0.0.1", 0))
         sock.listen(1)
         port = int(sock.getsockname()[1])
         try:
-            result = runner.invoke(
-                app,
-                [
-                    "server",
-                    "start",
-                    "--port",
-                    str(port),
-                    "--updates",
-                    "--update-delay-ms",
-                    "250",
-                    "--repeat-update-delay-s",
-                    "1.5",
-                ],
-            )
+            with managed_env(**{EnvVar.STATUS_DIR: str(tmp_path / "status")}):
+                result = runner.invoke(
+                    app,
+                    [
+                        "server",
+                        "start",
+                        "--port",
+                        str(port),
+                        "--updates",
+                        "--update-delay-ms",
+                        "250",
+                        "--repeat-update-delay-s",
+                        "1.5",
+                    ],
+                )
         finally:
             sock.close()
-            if prior_status is None:
-                os.environ.pop(EnvVar.STATUS_DIR, None)
-            else:
-                os.environ[EnvVar.STATUS_DIR] = prior_status
-            reset_rag_config()
 
         assert result.exit_code == 1, result.output
         assert f"Port {port} is already in use." in result.output
@@ -390,12 +383,6 @@ class TestHelpCleanup:
         assert result.exit_code == 0, result.output
         self._assert_clean(result)
         assert "model" in result.output.lower() or "GPU" in result.output
-
-    def test_server_warmup_help_cross_ref(self):
-        """server warmup --help must reference docs/indexing.md."""
-        result = runner.invoke(app, ["server", "warmup", "--help"])
-        assert result.exit_code == 0, result.output
-        assert "docs/indexing.md" in result.output
 
     def test_mcp_start_help_removed(self):
         result = runner.invoke(app, ["server", "mcp", "start", "--help"])
@@ -534,10 +521,7 @@ class TestJsonOutputMode:
         # Isolate STATUS_DIR to an empty dir so the assertion does not depend
         # on the developer machine's ambient ~/.vaultspec-rag/ service state;
         # a running service would otherwise return exit 0 here.
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        reset_base_config()
-        reset_rag_config()
-        try:
+        with managed_env(**{EnvVar.STATUS_DIR: str(tmp_path)}):
             result = runner.invoke(
                 app,
                 ["server", "status", "--json"],
@@ -548,15 +532,10 @@ class TestJsonOutputMode:
             assert env["command"] == "service.status"
             assert env["error"] == "stopped"
             assert env["data"]["service_json_present"] is False
-        finally:
-            os.environ.pop(EnvVar.STATUS_DIR, None)
-            reset_base_config()
-            reset_rag_config()
 
     def test_service_status_json_crashed_envelope(self, tmp_path: Path):
         """File present + dead PID: exit 4 + ok=false + state=crashed_*."""
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
+        with managed_env(**{EnvVar.STATUS_DIR: str(tmp_path)}):
             _write_service_status(pid=99999999, port=8766)
             result = runner.invoke(app, ["server", "status", "--json"])
             assert result.exit_code == 4
@@ -564,8 +543,6 @@ class TestJsonOutputMode:
             assert env["ok"] is False
             assert env["command"] == "service.status"
             assert env["data"]["state"].startswith("crashed_")
-        finally:
-            os.environ.pop(EnvVar.STATUS_DIR, None)
 
     def test_clean_json_requires_yes(self, tmp_path: Path):
         """--json without --yes yields json_requires_yes envelope, exit 2."""

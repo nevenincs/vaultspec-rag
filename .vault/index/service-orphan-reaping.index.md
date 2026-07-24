@@ -3,14 +3,16 @@ generated: true
 tags:
   - '#index'
   - '#service-orphan-reaping'
-date: '2026-07-23'
-modified: '2026-07-23'
+date: '2026-07-24'
+modified: '2026-07-24'
 related:
   - '[[2026-07-23-service-orphan-reaping-P02-S01]]'
   - '[[2026-07-23-service-orphan-reaping-P02-S03]]'
   - '[[2026-07-23-service-orphan-reaping-P02-S04]]'
   - '[[2026-07-23-service-orphan-reaping-P03-S06]]'
   - '[[2026-07-23-service-orphan-reaping-P03-S07]]'
+  - '[[2026-07-23-service-orphan-reaping-P03-S08]]'
+  - '[[2026-07-23-service-orphan-reaping-P03-S09]]'
   - '[[2026-07-23-service-orphan-reaping-adr]]'
   - '[[2026-07-23-service-orphan-reaping-plan]]'
   - '[[2026-07-23-service-orphan-reaping-research]]'
@@ -33,6 +35,8 @@ Auto-generated index of all documents tagged with `#service-orphan-reaping`.
 - `2026-07-23-service-orphan-reaping-P02-S04` - Add a top-level entrypoint os.\_exit backstop on any startup exception escaping uvicorn.run
 - `2026-07-23-service-orphan-reaping-P03-S06` - Add the daemon-signature enumeration and the lock-and-pointer-anchored reap predicate
 - `2026-07-23-service-orphan-reaping-P03-S07` - Wire the opt-in server stop --orphans flag with its structured reaped-count success and refusal-fault envelope
+- `2026-07-23-service-orphan-reaping-P03-S08` - Add guard tests that the reap never targets the singleton, a foreign process, or an isolated-config instance
+- `2026-07-23-service-orphan-reaping-P03-S09` - Add a test that the reap clears a real lingering launcher-daemon orphan pair
 
 ### plan
 

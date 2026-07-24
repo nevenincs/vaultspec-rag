@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#search-noise-filtering'
-date: '2026-07-23'
-modified: '2026-07-23'
+date: '2026-07-24'
+modified: '2026-07-24'
 related:
   - '[[2026-06-30-search-noise-filtering-P01-S01]]'
   - '[[2026-06-30-search-noise-filtering-P01-S02]]'

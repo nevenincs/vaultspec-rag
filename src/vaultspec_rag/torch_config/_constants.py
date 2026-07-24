@@ -2,7 +2,9 @@
 
 These are the single source of truth for the canonical cu130 block shape
 and the closed action / state / diagnosis vocabularies. The inspection,
-mutation, direct-dep, and diagnosis submodules all import from here.
+mutation, direct-dep, and diagnosis submodules all import from here, as
+does the MCP-extra reconciler, which reads the same pyproject surfaces.
+The typed table accessor lives here too, beside the table type it reads.
 """
 
 from __future__ import annotations
@@ -10,7 +12,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, cast
 
 from tomlkit.container import OutOfOrderTableProxy
 from tomlkit.items import InlineTable, Table
@@ -35,8 +37,21 @@ from tomlkit.items import InlineTable, Table
 TableLike = Table | OutOfOrderTableProxy | InlineTable
 _TABLE_LIKE_TYPES = (Table, OutOfOrderTableProxy, InlineTable)
 
+
+def tget(mapping: TableLike | TOMLDocument, key: str) -> object:
+    """Typed wrapper for tomlkit Container.get() which returns Unknown.
+
+    tomlkit's Container inherits from an unparameterised dict, so
+    .get() has return type ``Unknown | None`` in strict mode.
+    Centralising the cast here keeps all other call sites clean.
+    """
+    return cast("object", mapping.get(key))  # pyright: ignore[reportUnknownMemberType]
+
+
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from tomlkit import TOMLDocument
 
 logger = logging.getLogger(__name__)
 

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from ..config import EnvVar
+from ._http_stubs import QuietHandler
 from ._model_setup import (
     configured_service_model_ids,
     ensure_model_snapshots,
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-class _PersistentGatewayTimeout(http.server.BaseHTTPRequestHandler):
+class _PersistentGatewayTimeout(QuietHandler):
     """Delay if requested, then return a real HTTP 504."""
 
     response_delay_seconds = 0.0
@@ -56,9 +57,6 @@ class _PersistentGatewayTimeout(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(b"persistent metadata gateway timeout")
-
-    def log_message(self, format: str, *args: object) -> None:
-        """Keep the regression output focused on the acquisition worker."""
 
 
 class _ThreadingGatewayTimeoutServer(http.server.ThreadingHTTPServer):

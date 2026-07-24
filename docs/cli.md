@@ -270,7 +270,11 @@ Exit/JSON: pytest's own exit code is propagated.
 
 `vaultspec-rag server start`
 
-Start the background search service as a detached process. The service spawns the daemon on the given port, polls `/health` until it reports `ready`, and records how the CLI can reach it. Server mode is the default. The daemon supervises the managed Qdrant child. If the Qdrant binary is missing, `start` prints the install command.
+Start the background search service as a detached process. The service spawns the daemon on the given port, polls `/health` until the daemon can serve, and records how the CLI can reach it. Server mode is the default. The daemon supervises the managed Qdrant child. If the Qdrant binary is missing, `start` prints the install command.
+
+"Can serve" means the embedding models are resident and the configured vector backend is live - not that `/health` reports the literal status `ready`. The daemon also reports `degraded` for job history, such as an indexing job that failed, which says nothing about its ability to answer a search; waiting for the strict word would let a stale job failure hold the command open until the deadline. A start that completes against a degraded daemon is a success, prints the daemon's degradation reasons, and carries `health` and `degraded_reasons` in the `--json` envelope.
+
+Progress is reported continuously while the command runs. On a terminal the current stage is shown live - the pre-flight checks, then the daemon's own cold-start phases, including a determinate model-load count - with elapsed time that advances even when the stage does not. Off a terminal the same stages are written to stderr as plain, rate-limited lines, so stdout stays the parseable result channel. `--json` suppresses progress on both streams so exactly one envelope reaches stdout.
 
 Arguments: none.
 
@@ -290,7 +294,7 @@ Options:
 
 The daemon inherits configuration only through the environment, so each set flag is translated to its `VAULTSPEC_RAG_*` variable on the child process before spawn.
 
-Exit/JSON: `0` once the service is ready; `1` on a failure to start or a health-check timeout. A missing Qdrant binary fails with remediation that names `server qdrant install`, `--qdrant-auto-provision`, and `--local-only`. When a target root defines preprocess rules, the command prints a notice stating whether they will run or be skipped (mode is `off`).
+Exit/JSON: `0` once the service can serve, including when it is serving but degraded; `1` on a failure to start or a health-check timeout, whose message names the last startup phase the daemon published. A missing Qdrant binary fails with remediation that names `server qdrant install`, `--qdrant-auto-provision`, and `--local-only`. When a target root defines preprocess rules, the command prints a notice stating whether they will run or be skipped (mode is `off`).
 
 ## server stop
 
@@ -383,7 +387,9 @@ Options:
 | `--interval`      | float   | `2.0`                | Refresh interval for `--watch`, in seconds.                                        |
 | `--refresh-count` | integer | unset                | Stop `--watch` after this many refreshes.                                          |
 
-Exit/JSON: `0` on success; `2` on an invalid filter value (`invalid_filter`); `3` when the service is not running. With `--json`, the result is one envelope on stdout.
+Exit/JSON: `0` on success; `2` on an invalid filter value (`invalid_filter`); `3` when the service is not running; `130` when `--watch` is stopped with Ctrl+C. With `--json`, the result is one envelope on stdout.
+
+`--watch` is a read-only view: every refresh is a plain read of the service's job registry, so stopping it at any moment leaves no job, lock, or service state changed. Ctrl+C stops it promptly even while a refresh is still waiting on a slow or unresponsive service.
 
 ## server job
 

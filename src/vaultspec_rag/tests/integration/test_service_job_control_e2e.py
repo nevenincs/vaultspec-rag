@@ -6,7 +6,6 @@ import asyncio
 import json
 import os
 import shutil
-import socket
 import threading
 import time
 from contextlib import contextmanager
@@ -42,6 +41,7 @@ from ...serviceclient import (
     _try_http_get_job,
     _try_http_set_job_desired_state,
 )
+from .._ports import free_loopback_port
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Generator
@@ -58,17 +58,11 @@ _E2E_POLL_SECONDS = 0.01
 _CLI_RUNNER = CliRunner()
 
 
-def _free_loopback_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
 @contextmanager
 def _real_job_control_server(tmp_path: Path) -> Generator[int]:
     """Serve the production route table over a real loopback socket."""
     status_dir = tmp_path / "http-status"
-    port = _free_loopback_port()
+    port = free_loopback_port()
     token = "service-job-control-e2e-token"
     prior_status_dir = os.environ.get(EnvVar.STATUS_DIR)
     prior_watch_enabled = os.environ.get(EnvVar.WATCH_ENABLED)

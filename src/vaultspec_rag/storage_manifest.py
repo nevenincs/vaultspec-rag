@@ -39,7 +39,7 @@ from .store import root_collection_prefix
 
 __all__ = [
     "ManifestEntry",
-    "ReconcileResult",
+    "ManifestReconcileResult",
     "SnapshotCollection",
     "StorageSnapshotManifest",
     "classify_root",
@@ -69,8 +69,15 @@ _LOCK = threading.RLock()
 
 
 @dataclass(frozen=True)
-class ReconcileResult:
-    """Outcome of reconciling the manifest against the live server.
+class ManifestReconcileResult:
+    """Outcome of reconciling the manifest's bookkeeping against the server.
+
+    Named for the manifest because a second, unrelated reconcile result lives
+    in ``storage_ops``: that one reports a single collection's *geometry*
+    converging toward its target, while this one reports which *prefix records*
+    were dropped or kept. Two modules in this package previously called both
+    ``ReconcileResult``, which reads as one type until you notice the fields
+    have nothing in common.
 
     Attributes:
         dropped: Prefixes removed because their root is gone AND no
@@ -540,7 +547,7 @@ def rekey_prefix(
     return entry
 
 
-def reconcile_manifest(known_prefixes: set[str]) -> ReconcileResult:
+def reconcile_manifest(known_prefixes: set[str]) -> ManifestReconcileResult:
     """Drop manifest entries whose root is gone and whose data is gone too.
 
     Called on service start (and after a root rename/move) to keep the
@@ -559,7 +566,7 @@ def reconcile_manifest(known_prefixes: set[str]) -> ReconcileResult:
             currently backs (each stored collection's ``r{hash}_`` prefix).
 
     Returns:
-        A :class:`ReconcileResult` naming the dropped and kept prefixes.
+        A :class:`ManifestReconcileResult` naming the dropped and kept prefixes.
     """
     dropped: list[str] = []
     kept: list[str] = []
@@ -576,4 +583,4 @@ def reconcile_manifest(known_prefixes: set[str]) -> ReconcileResult:
             kept.append(prefix)
         if dropped:
             _write_manifest(survivors)
-    return ReconcileResult(sorted(dropped), sorted(kept))
+    return ManifestReconcileResult(sorted(dropped), sorted(kept))

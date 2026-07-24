@@ -22,21 +22,111 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
 from ...cli import _is_pid_alive
 from ...config import reset_config as reset_rag_config
 from ...serviceclient._transport import _try_http_health
+from .._ports import free_loopback_port
 
 if TYPE_CHECKING:
     import subprocess
     from collections.abc import Generator, Mapping
     from pathlib import Path
 
+    from ...indexer._content_policy import RootContentPolicy
+    from ...qdrant_runtime import QdrantSupervisor
+
 __all__ = [
+    "_document_policy",
     "_get_ephemeral_port",
+    "_make_root",
     "_mirror_managed_qdrant_binary",
     "_poll_health",
     "_poll_own_health",
     "_resolve_host_provisioned_qdrant",
     "_service_env",
     "_wait_for_exit",
+    "provisioned_qdrant_binary",
+    "serve_qdrant",
 ]
+
+
+def provisioned_qdrant_binary() -> Path:
+    """Provision (or reuse) the pinned real Qdrant binary, returning its path.
+
+    Provisioning is idempotent, so a module that asks for the binary gets the
+    already-installed one on every run after the first. Any action other than
+    the three benign ones means the managed install is not in a usable state,
+    which is a failure of the test's premise rather than of its subject.
+    """
+    from ...qdrant_runtime import QdrantProvisionAction, provision, resolve_binary
+
+    reset_config()
+    report = provision()
+    assert report.action in {
+        QdrantProvisionAction.CREATED,
+        QdrantProvisionAction.UNCHANGED,
+        QdrantProvisionAction.UPDATED,
+    }, report.message
+    resolved = resolve_binary()
+    assert resolved is not None, "provisioned binary must resolve"
+    return resolved.path
+
+
+def serve_qdrant(binary: Path, root: Path) -> Generator[QdrantSupervisor]:
+    """Run one real Qdrant on ephemeral ports under *root* for the caller.
+
+    Delegated to with ``yield from`` by each module's own server fixture, so the
+    fixture keeps its local name and its own binary dependency while the setup
+    and teardown live in one place. The stop runs from a ``finally``: a test
+    that fails mid-body would otherwise leave a real server process and its
+    storage behind for the rest of the session.
+    """
+    from ...qdrant_runtime import QdrantSupervisor as _Supervisor
+
+    supervisor = _Supervisor(
+        binary,
+        http_port=free_loopback_port(),
+        grpc_port=free_loopback_port(),
+        storage_dir=root / "storage",
+        log_path=root / "qdrant.log",
+    )
+    supervisor.start(timeout=60.0)
+    try:
+        yield supervisor
+    finally:
+        supervisor.stop()
+
+
+def _document_policy(pattern: str) -> RootContentPolicy:
+    """Route one explicit pattern through the production document domain.
+
+    The import stays function-local so this helper module keeps its light
+    import cost for the service tests that never touch the content policy.
+    """
+    from ...indexer._content_policy import (
+        ContentKind,
+        ContentRoute,
+        RootContentPolicy,
+        SourceProfileVersion,
+    )
+
+    return RootContentPolicy(
+        SourceProfileVersion.CONVENTIONAL_V1,
+        (ContentRoute(pattern, ContentKind.DOCUMENT),),
+    )
+
+
+def _make_root(tmp_path: Path) -> Path:
+    """Create a minimal vaultspec project root with one indexable doc.
+
+    The smallest tree the indexer will accept and produce a point from, for
+    tests whose subject is the service around the index rather than the
+    indexing itself.
+    """
+    adr_dir = tmp_path / ".vault" / "adr"
+    adr_dir.mkdir(parents=True)
+    (adr_dir / "x.md").write_text(
+        "---\ntags: ['#adr', '#t']\n---\n# x\n\nbody\n",
+        encoding="utf-8",
+    )
+    return tmp_path
 
 
 def _resolve_host_provisioned_qdrant() -> tuple[Path, Path] | None:

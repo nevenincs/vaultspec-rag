@@ -21,20 +21,11 @@ from ._constants import (
     TableLike,
     TorchConfigState,
     logger,
+    tget,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-
-def _tget(mapping: TableLike | TOMLDocument, key: str) -> object:
-    """Typed wrapper for tomlkit Container.get() which returns Unknown.
-
-    tomlkit's Container inherits from an unparameterised dict, so
-    .get() has return type ``Unknown | None`` in strict mode.
-    Centralising the cast here keeps all other call sites clean.
-    """
-    return cast("object", mapping.get(key))  # pyright: ignore[reportUnknownMemberType]
 
 
 def detect_crlf(pyproject: Path) -> bool:
@@ -87,10 +78,10 @@ def get_tool_uv_table(doc: TOMLDocument) -> TableLike | None:
     dominant ``[tool.*]`` layout in real-world pyprojects. Both expose
     the same Mapping surface we touch.
     """
-    tool = _tget(doc, "tool")
+    tool = tget(doc, "tool")
     if not isinstance(tool, _TABLE_LIKE_TYPES):
         return None
-    uv = _tget(tool, "uv")
+    uv = tget(tool, "uv")
     if not isinstance(uv, _TABLE_LIKE_TYPES):
         return None
     return uv
@@ -109,7 +100,7 @@ def get_indices_aot(doc: TOMLDocument) -> AoT | None:
     uv = get_tool_uv_table(doc)
     if uv is None:
         return None
-    idx = _tget(uv, "index")
+    idx = tget(uv, "index")
     if not isinstance(idx, AoT):
         return None
     return idx
@@ -131,10 +122,10 @@ def _torch_sources(doc: TOMLDocument) -> Any:
     uv = get_tool_uv_table(doc)
     if uv is None:
         return None
-    sources = _tget(uv, "sources")
+    sources = tget(uv, "sources")
     if not isinstance(sources, _TABLE_LIKE_TYPES):
         return None
-    result: Any = _tget(sources, "torch")
+    result: Any = tget(sources, "torch")
     return result
 
 
@@ -146,11 +137,11 @@ def match_index_entry(entry: TableLike) -> str:
     disagrees on url/explicit; ``""`` if the entry is unrelated (name
     does not match).
     """
-    name = _tget(entry, "name")
+    name = tget(entry, "name")
     if name != CU130_INDEX_NAME:
         return ""
-    url = _tget(entry, "url")
-    explicit = _tget(entry, "explicit")
+    url = tget(entry, "url")
+    explicit = tget(entry, "explicit")
     if explicit is None:
         explicit = False
     if url == CU130_INDEX_URL and bool(explicit):
@@ -166,10 +157,10 @@ def match_source_entry(entry: TableLike) -> str:
     if the entry references our index name but disagrees; ``""`` if
     the entry is unrelated (different index).
     """
-    idx = _tget(entry, "index")
+    idx = tget(entry, "index")
     if idx != CU130_INDEX_NAME:
         return ""
-    marker = _tget(entry, "marker")
+    marker = tget(entry, "marker")
     extras = set(cast("dict[str, object]", entry).keys()) - {"index", "marker"}  # pyright: ignore[reportUnknownMemberType]  # tomlkit keys() returns dict_keys[Unknown, Unknown]
     if marker == CU130_MARKER and not extras:
         return "canonical"
@@ -224,7 +215,7 @@ def _classify_indices(
     conflicts: list[str] = []
 
     uv = get_tool_uv_table(doc)
-    raw_index: object = _tget(uv, "index") if uv is not None else None
+    raw_index: object = tget(uv, "index") if uv is not None else None
 
     if not _check_index_shape(raw_index, conflicts):
         return None, False, conflicts

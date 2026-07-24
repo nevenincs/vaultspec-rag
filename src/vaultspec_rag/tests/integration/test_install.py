@@ -19,7 +19,7 @@ from contextvars import Context
 from importlib.resources import files
 from pathlib import Path
 from threading import Event, Thread
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
 from vaultspec_core.config.workspace import (  # pyright: ignore[reportMissingTypeStubs]
@@ -42,9 +42,6 @@ from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissin
 
 from ...builtins import list_builtins
 from ...commands import install_run, uninstall_run
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 pytestmark = [pytest.mark.integration]
 
@@ -3283,30 +3280,6 @@ class TestSafetyGuards:
             _builtins.__dict__["_builtins_root"] = original_root
 
 
-@pytest.fixture()
-def isolated_status_dir(tmp_path: Path) -> Iterator[Path]:
-    """Point the managed service / qdrant bin dir at tmp and reset config.
-
-    Keeps the provisioning front door's qdrant resolution off any ambient
-    ``~/.vaultspec-rag/`` state, per the service-tests-isolate-STATUS_DIR
-    discipline, so the test cannot disturb the live service.
-    """
-    from ...config import EnvVar, reset_config
-
-    key = EnvVar.STATUS_DIR.value
-    prev = os.environ.get(key)
-    os.environ[key] = str(tmp_path / "status")
-    reset_config()
-    try:
-        yield tmp_path
-    finally:
-        if prev is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = prev
-        reset_config()
-
-
 class TestProvisioningReport:
     """The default install provisioning path reports heterogeneous outcomes.
 
@@ -3421,4 +3394,4 @@ class TestProvisioningReport:
         qdrant = report.provision_outcome.result_for(ProvisionStep.QDRANT)
         assert qdrant is not None
         assert qdrant.action in {ProvisionAction.DRY_RUN, ProvisionAction.SKIPPED}
-        assert not (isolated_status_dir / "status" / "bin").exists()
+        assert not (isolated_status_dir / "bin").exists()

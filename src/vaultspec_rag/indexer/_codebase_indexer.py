@@ -443,6 +443,7 @@ class CodebaseIndexer:
 
     def _begin_memory_budget(self) -> None:
         """Freeze and sample one production memory budget before dispatch."""
+        from .._units import bytes_to_mib
         from ..config import get_config
         from ..memory_probe import (
             MemoryBudget,
@@ -453,15 +454,14 @@ class CodebaseIndexer:
 
         config = get_config()
         limits = self._support_limits
-        mib = 1024**2
         rss_ceiling_mb = config.index_rss_ceiling_mb
         profile_cuda_mb = (
-            limits.cuda_bytes / mib
+            bytes_to_mib(limits.cuda_bytes)
             if limits is not None
             else config.index_cuda_ceiling_mb
         )
         if limits is not None:
-            rss_ceiling_mb = min(rss_ceiling_mb, limits.rss_bytes / mib)
+            rss_ceiling_mb = min(rss_ceiling_mb, bytes_to_mib(limits.rss_bytes))
         uses_cuda = getattr(self.model, "device", None) == "cuda"
         if uses_cuda:
             # Flush the allocator cache before deriving the ceiling so this
@@ -492,16 +492,16 @@ class CodebaseIndexer:
 
     def _sample_memory_budget(self, label: str) -> MemoryBudgetSnapshot:
         """Enforce the current budget and retain its resource high-water."""
+        from ..memory_probe import snapshot_resource_bytes
+
         budget = self._memory_budget
         if budget is None:
             raise RuntimeError("code memory budget was not admitted")
         snapshot = budget.sample(label)
-        # Project the allocated high-water (demand) into the profile's CUDA
-        # dimension; reserved ratchets with allocator retention history and
-        # must never decide job outcome.
+        rss_bytes, cuda_bytes = snapshot_resource_bytes(snapshot)
         self._record_resource_measurement(
-            rss_bytes=int(snapshot.peak_rss_mb * 1024**2),
-            cuda_bytes=int(snapshot.peak_cuda_allocated_mb * 1024**2),
+            rss_bytes=rss_bytes,
+            cuda_bytes=cuda_bytes,
         )
         return snapshot
 

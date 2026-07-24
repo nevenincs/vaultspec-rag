@@ -28,7 +28,6 @@ from ..commands import (
     provision_dependencies,
     provision_models,
 )
-from ..config import EnvVar, reset_config
 from ..qdrant_runtime import (
     QDRANT_ASSET_SHA256,
     QDRANT_SERVER_VERSION,
@@ -40,7 +39,6 @@ from ..qdrant_runtime import (
 from ..torch_config import TorchConfigState, detect_state
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
@@ -52,29 +50,6 @@ PROJECT_ONLY = (
     'version = "0.1.0"\n'
     'dependencies = ["vaultspec-rag"]\n'
 )
-
-
-@pytest.fixture(autouse=True)
-def _reset_config_around_each_test() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
-    reset_config()
-    yield
-    reset_config()
-
-
-@pytest.fixture
-def isolated_status_dir(tmp_path: Path) -> Iterator[Path]:
-    """Point the managed service dir (and thus the qdrant bin dir) at tmp."""
-    prev = os.environ.get(EnvVar.STATUS_DIR.value)
-    os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path)
-    reset_config()
-    try:
-        yield tmp_path
-    finally:
-        if prev is None:
-            os.environ.pop(EnvVar.STATUS_DIR.value, None)
-        else:
-            os.environ[EnvVar.STATUS_DIR.value] = prev
-        reset_config()
 
 
 @pytest.fixture

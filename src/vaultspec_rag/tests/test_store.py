@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from ..store import VaultStore
@@ -26,36 +26,28 @@ pytestmark = [pytest.mark.unit]
 class TestInterpreterIsSupported:
     """Pure-function tests for _interpreter_is_supported."""
 
-    def test_cpython_313_is_supported(self):
+    @pytest.mark.parametrize(
+        ("version", "supported"),
+        [
+            ((3, 13, 11), True),
+            ((3, 13, 0), True),
+            # 3.12 pre-dates the pinned floor, so it is rejected from below just
+            # as later lines are rejected from above.
+            ((3, 12, 0), False),
+            ((3, 14, 0), False),
+            ((3, 15, 0), False),
+            ((4, 0, 0), False),
+        ],
+        ids=["3.13.11", "3.13.0", "3.12.0", "3.14.0", "3.15.0", "4.0.0"],
+    )
+    def test_support_is_confined_to_the_pinned_line(
+        self,
+        version: tuple[int, int, int],
+        supported: bool,
+    ) -> None:
         from ..store import _interpreter_is_supported
 
-        assert _interpreter_is_supported((3, 13, 11)) is True
-
-    def test_cpython_313_zero_is_supported(self):
-        from ..store import _interpreter_is_supported
-
-        assert _interpreter_is_supported((3, 13, 0)) is True
-
-    def test_cpython_314_is_not_supported(self):
-        from ..store import _interpreter_is_supported
-
-        assert _interpreter_is_supported((3, 14, 0)) is False
-
-    def test_cpython_315_is_not_supported(self):
-        from ..store import _interpreter_is_supported
-
-        assert _interpreter_is_supported((3, 15, 0)) is False
-
-    def test_cpython_312_is_not_supported(self):
-        """3.12 pre-dates the pinned floor and is also rejected."""
-        from ..store import _interpreter_is_supported
-
-        assert _interpreter_is_supported((3, 12, 0)) is False
-
-    def test_cpython_4_x_is_not_supported(self):
-        from ..store import _interpreter_is_supported
-
-        assert _interpreter_is_supported((4, 0, 0)) is False
+        assert _interpreter_is_supported(version) is supported
 
 
 class TestStoreHelpers:
@@ -571,7 +563,7 @@ class TestDropTable:
             store.drop_table()
 
             assert not store.client.collection_exists(store.TABLE_NAME)
-            assert store._vault_ensured is False
+            assert store._ensured.get(store.TABLE_NAME) is False
         finally:
             store.close()
 
@@ -582,7 +574,7 @@ class TestDropTable:
         store = VaultStore(tmp_path)
         try:
             store.drop_table()
-            assert store._vault_ensured is False
+            assert store._ensured.get(store.TABLE_NAME) is False
         finally:
             store.close()
 
@@ -656,7 +648,7 @@ class TestDropTable:
             store.drop_code_table()
 
             assert not store.client.collection_exists(store.CODE_TABLE_NAME)
-            assert store._code_ensured is False
+            assert store._ensured.get(store.CODE_TABLE_NAME) is False
         finally:
             store.close()
 
@@ -669,7 +661,7 @@ class TestDropTable:
         store = VaultStore(tmp_path)
         try:
             store.drop_code_table()
-            assert store._code_ensured is False
+            assert store._ensured.get(store.CODE_TABLE_NAME) is False
         finally:
             store.close()
 
@@ -877,3 +869,77 @@ class TestStoreBoundedForceClose:
         finally:
             release.set()
             worker.join(timeout=5.0)
+
+
+class TestEnsureTableBackfill:
+    """The per-collection ensure paths differ, deliberately, on one point."""
+
+    @staticmethod
+    def _recording_store(tmp_path: Path) -> tuple[VaultStore, list[str]]:
+        """Return a real store that records which collections it indexed.
+
+        A subclass overriding one of our own methods and delegating to it,
+        rather than a stand-in for the store: every call still reaches the
+        real Qdrant collection underneath. Local-mode Qdrant ignores payload
+        indexes, so the call itself is the only observable evidence that the
+        backfill path ran.
+        """
+        from ..store import VaultStore
+
+        indexed: list[str] = []
+
+        class RecordingStore(VaultStore):
+            def _ensure_payload_indexes(  # pyright: ignore[reportPrivateUsage]
+                self,
+                collection: str,
+                keyword_fields: Sequence[str],
+                integer_fields: Sequence[str],
+            ) -> None:
+                indexed.append(collection)
+                super()._ensure_payload_indexes(  # pyright: ignore[reportPrivateUsage]
+                    collection, keyword_fields, integer_fields
+                )
+
+        return RecordingStore(tmp_path), indexed
+
+    def test_code_table_reindexes_an_existing_collection(self, tmp_path: Path) -> None:
+        """A newly declared code index must appear without a drop-and-reindex.
+
+        The second ensure runs against a collection that already exists and a
+        cleared latch - exactly the next-open case - so it must still apply
+        the declared index set.
+        """
+        store, indexed = self._recording_store(tmp_path)
+        try:
+            store.ensure_code_table()
+            store._ensured.clear()  # pyright: ignore[reportPrivateUsage]
+            indexed.clear()
+
+            store.ensure_code_table()
+
+            assert indexed == [store.CODE_TABLE_NAME]
+        finally:
+            store.close()
+
+    def test_vault_table_accepts_an_existing_collection_untouched(
+        self, tmp_path: Path
+    ) -> None:
+        """The vault path deliberately does not re-apply indexes.
+
+        This asymmetry is load-bearing, not an oversight in the shared helper:
+        if someone drops ``backfill_existing`` and lets every collection take
+        one path, this assertion is what reports it. The vault set is applied
+        on creation (asserted by the first call) and skipped thereafter.
+        """
+        store, indexed = self._recording_store(tmp_path)
+        try:
+            store.ensure_table()
+            assert indexed == [store.TABLE_NAME], "creation must apply the index set"
+            store._ensured.clear()  # pyright: ignore[reportPrivateUsage]
+            indexed.clear()
+
+            store.ensure_table()
+
+            assert indexed == []
+        finally:
+            store.close()

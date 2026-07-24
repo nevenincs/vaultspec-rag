@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 from typing import TYPE_CHECKING
 
 import pytest
 
 from ..mcp._mcp import mcp
 from ..serviceclient._transport import _do_http_call
+from ._http_stubs import QuietHandler
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -159,7 +160,7 @@ class TestNarrowedSurface:
                 assert {"results", "summary"} <= model_props
 
 
-class _EmptyBody404Handler(BaseHTTPRequestHandler):
+class _EmptyBody404Handler(QuietHandler):
     """A server that answers every request with a bodyless 404."""
 
     def _respond_404(self) -> None:
@@ -171,9 +172,6 @@ class _EmptyBody404Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # stdlib handler contract
         self._respond_404()
-
-    def log_message(self, format: str, *args: object) -> None:  # noqa: ARG002
-        return
 
 
 @pytest.fixture

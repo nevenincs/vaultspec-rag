@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#code-stands-alone-boundary'
-date: '2026-07-23'
-modified: '2026-07-23'
+date: '2026-07-24'
+modified: '2026-07-24'
 related:
   - '[[2026-07-22-code-stands-alone-boundary-plan]]'
   - '[[2026-07-23-code-stands-alone-boundary-adr]]'

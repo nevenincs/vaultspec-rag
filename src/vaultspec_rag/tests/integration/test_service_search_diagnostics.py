@@ -6,7 +6,6 @@ import asyncio
 import json
 import os
 import re
-import socket
 import sys
 import threading
 import time
@@ -24,6 +23,7 @@ from mcp.types import CallToolResult, TextContent
 from ...cli._http_search import _do_http_call, _timeout_diagnostics, _try_http_search
 from ...job_manager import JobManager
 from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
+from .._ports import free_loopback_port
 from ..corpus import build_synthetic_vault
 from .conftest import _live_service_context
 
@@ -1493,14 +1493,8 @@ def test_service_search_short_timeout_reports_operational_diagnostics(
     assert any("server jobs --state active" in str(item) for item in remediation)
 
 
-def _unused_local_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
 def test_timeout_diagnostics_survive_unavailable_probe_port() -> None:
-    result = _timeout_diagnostics(_unused_local_port(), 0.01)
+    result = _timeout_diagnostics(free_loopback_port(), 0.01)
 
     assert result["ok"] is False
     assert result["error"] == "http_search_timeout"

@@ -9,12 +9,15 @@ import tomlkit
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from tomlkit import TOMLDocument
-from tomlkit.container import OutOfOrderTableProxy
-from tomlkit.items import InlineTable, Table
 from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
     InstallMode,
 )
 
+from ..torch_config._constants import (
+    _TABLE_LIKE_TYPES,  # pyright: ignore[reportPrivateUsage]  # shared toml surface
+    TableLike,
+    tget,
+)
 from ..torch_config._inspect import load_pyproject
 from ..torch_config._mutate import write_doc_preserving_shape
 from ._mode import RAG_DISTRIBUTION_NAME
@@ -22,8 +25,6 @@ from ._mode import RAG_DISTRIBUTION_NAME
 if TYPE_CHECKING:
     from pathlib import Path
 
-TableLike = Table | InlineTable | OutOfOrderTableProxy
-_TABLE_TYPES = (Table, InlineTable, OutOfOrderTableProxy)
 _PROJECT_DEPS = "[project].dependencies"
 _OPTIONAL_PREFIX = "[project.optional-dependencies]."
 _DEV_GROUP = "[dependency-groups].dev"
@@ -50,12 +51,8 @@ class McpExtraReport:
     conflicts: list[str] = field(default_factory=list)
 
 
-def _tget(mapping: TableLike | TOMLDocument, key: str) -> object:
-    return cast("object", mapping.get(key))  # pyright: ignore[reportUnknownMemberType]
-
-
 def _as_table(value: object) -> TableLike | None:
-    return value if isinstance(value, _TABLE_TYPES) else None
+    return value if isinstance(value, _TABLE_LIKE_TYPES) else None
 
 
 def _requirement(value: object) -> Requirement | None:
@@ -86,12 +83,12 @@ def _with_mcp_extra(value: str) -> str:
 
 def _dependency_lists(doc: TOMLDocument) -> list[tuple[str, list[object]]]:
     found: list[tuple[str, list[object]]] = []
-    project = _as_table(_tget(doc, "project"))
+    project = _as_table(tget(doc, "project"))
     if project is not None:
-        dependencies = _tget(project, "dependencies")
+        dependencies = tget(project, "dependencies")
         if isinstance(dependencies, list):
             found.append((_PROJECT_DEPS, cast("list[object]", dependencies)))
-        optional = _as_table(_tget(project, "optional-dependencies"))
+        optional = _as_table(tget(project, "optional-dependencies"))
         if optional is not None:
             for name, entries in optional.items():  # pyright: ignore[reportUnknownVariableType]
                 if isinstance(entries, list):
@@ -102,16 +99,16 @@ def _dependency_lists(doc: TOMLDocument) -> list[tuple[str, list[object]]]:
                         )
                     )
 
-    groups = _as_table(_tget(doc, "dependency-groups"))
+    groups = _as_table(tget(doc, "dependency-groups"))
     if groups is not None:
-        dev = _tget(groups, "dev")
+        dev = tget(groups, "dev")
         if isinstance(dev, list):
             found.append((_DEV_GROUP, cast("list[object]", dev)))
 
-    tool = _as_table(_tget(doc, "tool"))
-    uv = _as_table(_tget(tool, "uv")) if tool is not None else None
+    tool = _as_table(tget(doc, "tool"))
+    uv = _as_table(tget(tool, "uv")) if tool is not None else None
     if uv is not None:
-        dev = _tget(uv, "dev-dependencies")
+        dev = tget(uv, "dev-dependencies")
         if isinstance(dev, list):
             found.append((_UV_DEV, cast("list[object]", dev)))
     return found
@@ -125,14 +122,12 @@ def _top_level_array(
     create: bool,
 ) -> list[object] | None:
     value = (
-        doc.setdefault(table_name, tomlkit.table())
-        if create
-        else _tget(doc, table_name)
+        doc.setdefault(table_name, tomlkit.table()) if create else tget(doc, table_name)
     )
     table = _as_table(value)
     if table is None:
         return None
-    entries = _tget(table, array_name)
+    entries = tget(table, array_name)
     if entries is None and create:
         entries = tomlkit.array()
         table[array_name] = entries
@@ -155,7 +150,7 @@ def _entries_at(
 
 def _ownership_table(doc: TOMLDocument, *, create: bool) -> TableLike | None:
     tool_value = (
-        doc.setdefault("tool", tomlkit.table()) if create else _tget(doc, "tool")
+        doc.setdefault("tool", tomlkit.table()) if create else tget(doc, "tool")
     )
     tool = _as_table(tool_value)
     if tool is None:
@@ -163,7 +158,7 @@ def _ownership_table(doc: TOMLDocument, *, create: bool) -> TableLike | None:
     rag_value = (
         tool.setdefault("vaultspec-rag", tomlkit.table())
         if create
-        else _tget(tool, "vaultspec-rag")
+        else tget(tool, "vaultspec-rag")
     )
     rag = _as_table(rag_value)
     if rag is None:
@@ -171,7 +166,7 @@ def _ownership_table(doc: TOMLDocument, *, create: bool) -> TableLike | None:
     value = (
         rag.setdefault("mcp-extra", tomlkit.table())
         if create
-        else _tget(rag, "mcp-extra")
+        else tget(rag, "mcp-extra")
     )
     return _as_table(value)
 
@@ -180,11 +175,11 @@ def _read_ownership(doc: TOMLDocument) -> McpExtraOwnership | None:
     table = _ownership_table(doc, create=False)
     if table is None:
         return None
-    location = _tget(table, "location")
-    managed = _tget(table, "managed")
-    original = _tget(table, "original")
-    added = _tget(table, "added")
-    created_surface = _tget(table, "created-surface") is True
+    location = tget(table, "location")
+    managed = tget(table, "managed")
+    original = tget(table, "original")
+    added = tget(table, "added")
+    created_surface = tget(table, "created-surface") is True
     if not isinstance(location, str) or not isinstance(managed, str):
         return None
     if added is True:
@@ -213,8 +208,8 @@ def _write_ownership(doc: TOMLDocument, ownership: McpExtraOwnership) -> None:
 
 
 def _clear_ownership(doc: TOMLDocument) -> None:
-    tool = _as_table(_tget(doc, "tool"))
-    rag = _as_table(_tget(tool, "vaultspec-rag")) if tool is not None else None
+    tool = _as_table(tget(doc, "tool"))
+    rag = _as_table(tget(tool, "vaultspec-rag")) if tool is not None else None
     if rag is None or "mcp-extra" not in rag:
         return
     del rag["mcp-extra"]
@@ -227,13 +222,13 @@ def _clear_ownership(doc: TOMLDocument) -> None:
 def _drop_empty_created_surface(doc: TOMLDocument, location: str) -> None:
     """Remove an empty dependency container created by this reconciliation."""
     if location == _PROJECT_DEPS:
-        project = _as_table(_tget(doc, "project"))
-        if project is not None and _tget(project, "dependencies") == []:
+        project = _as_table(tget(doc, "project"))
+        if project is not None and tget(project, "dependencies") == []:
             del project["dependencies"]
         return
     if location == _DEV_GROUP:
-        groups = _as_table(_tget(doc, "dependency-groups"))
-        if groups is not None and _tget(groups, "dev") == []:
+        groups = _as_table(tget(doc, "dependency-groups"))
+        if groups is not None and tget(groups, "dev") == []:
             del groups["dev"]
             if not groups:
                 del doc["dependency-groups"]

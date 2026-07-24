@@ -10,7 +10,7 @@ process, which is what makes it safe to run against a healthy machine.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
@@ -23,12 +23,16 @@ from ..serviceclient._status import (
 )
 from ._app import server_app
 from ._http_search import _try_http_health
+from ._progress import StartupStatusReporter
 from ._render import _emit_json
 from ._service_lifecycle import (
     _print_lifecycle_lines,
     _print_lifecycle_next_actions,
 )
 from ._status_render import _liveness_from_resolution
+
+if TYPE_CHECKING:
+    from ..serviceclient._status import DiscoveryStatus
 
 __all__ = ["service_reconcile"]
 
@@ -68,13 +72,26 @@ def service_reconcile(
     ``already_converged`` and exits 0, so a supervising caller can invoke it
     speculatively without having to test first.
     """
-    outcome = reconcile_discovery(
-        resolve_machine_service,
-        _liveness_from_resolution,
-        _try_http_health,
-        timeout_s=max(0.0, timeout),
-        interval_s=RECONCILE_INTERVAL_SECONDS,
-    )
+    # The wait runs to tens of seconds against a machine that has not converged
+    # yet, and every poll knows what it is still waiting for. The reporter turns
+    # that into a visible tick; ``--json`` keeps it silent so the envelope below
+    # is the only thing on stdout.
+    with StartupStatusReporter(json_mode=json_mode) as progress:
+        progress.announce("Waiting for service discovery to converge...")
+
+        def _report(attempt: int, verdict: DiscoveryStatus) -> None:
+            progress.heartbeat(
+                f"Waiting for discovery: {verdict.label} (poll {attempt})"
+            )
+
+        outcome = reconcile_discovery(
+            resolve_machine_service,
+            _liveness_from_resolution,
+            _try_http_health,
+            timeout_s=max(0.0, timeout),
+            interval_s=RECONCILE_INTERVAL_SECONDS,
+            on_attempt=_report,
+        )
     if json_mode:
         _emit_json(
             outcome.converged,

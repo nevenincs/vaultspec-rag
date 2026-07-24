@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import socket
 import subprocess
 import sys
 import threading
@@ -34,6 +33,7 @@ from ...serviceclient._transport import (
     _logs_route_path,
     _try_http_admin,
 )
+from .._ports import free_loopback_port
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -342,19 +342,13 @@ def test_logs_transport_path_carries_source_and_filters() -> None:
     assert "ignored" not in path
 
 
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
 async def _oversized_logs_response(_request: Request) -> JSONResponse:
     """Serve a real JSON body one byte beyond the transport's hard ceiling."""
     return JSONResponse({"blob": "x" * MAX_SERVICE_RESPONSE_BYTES})
 
 
 def test_admin_transport_rejects_oversized_http_response_before_json_decode() -> None:
-    port = _free_port()
+    port = free_loopback_port()
     server = uvicorn.Server(
         uvicorn.Config(
             Starlette(routes=[Route("/logs/json", _oversized_logs_response)]),
@@ -390,7 +384,7 @@ def test_admin_transport_preserves_live_structured_log_error(
     managed_log_app: tuple[HTTPTestClient, str, Path],
 ) -> None:
     _client, token, status_dir = managed_log_app
-    port = _free_port()
+    port = free_loopback_port()
     (status_dir / "service.json").write_text(
         json.dumps({"pid": os.getpid(), "port": port, "service_token": token}),
         encoding="utf-8",
@@ -431,7 +425,7 @@ def test_uvicorn_access_only_traffic_drives_live_service_log_rollover(
     tmp_path: Path,
 ) -> None:
     """Real Uvicorn access records rotate without an application log event."""
-    port = _free_port()
+    port = free_loopback_port()
     log_path = tmp_path / "service.log"
     marker = "ACCESS_ONLY_FINAL_MARKER_4fcb5f"
     code = r"""

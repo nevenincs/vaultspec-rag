@@ -14,21 +14,15 @@ subject under test is the store's wait policy and barrier placement.
 
 from __future__ import annotations
 
-import socket
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
 from ...config import EnvVar, get_config, reset_config
 from ...progress import NullProgressReporter
-from ...qdrant_runtime import (
-    QdrantProvisionAction,
-    QdrantSupervisor,
-    provision,
-    resolve_binary,
-)
 from ...store import IngestVerificationError, VaultStore
 from ..corpus import build_synthetic_vault
+from ._helpers import provisioned_qdrant_binary, serve_qdrant
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -37,30 +31,16 @@ if TYPE_CHECKING:
     from pytest import TempPathFactory
 
     from ..._store_writes import StoreWritePolicy
+    from ...qdrant_runtime import QdrantSupervisor
     from ...store import CodeChunk, VaultChunk
 
 pytestmark = [pytest.mark.integration]
 
 
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
 @pytest.fixture(scope="module")
 def real_qdrant_binary() -> Path:
-    """Provision (or reuse) the real pinned binary in the managed dir."""
-    reset_config()
-    report = provision()
-    assert report.action in (
-        QdrantProvisionAction.CREATED,
-        QdrantProvisionAction.UNCHANGED,
-        QdrantProvisionAction.UPDATED,
-    ), report.message
-    resolved = resolve_binary()
-    assert resolved is not None, "provisioned binary must resolve"
-    return resolved.path
+    """Provision (or reuse) the pinned real Qdrant binary."""
+    return provisioned_qdrant_binary()
 
 
 @pytest.fixture(scope="module")
@@ -68,18 +48,10 @@ def qdrant_server(
     real_qdrant_binary: Path,
     tmp_path_factory: TempPathFactory,
 ) -> Iterator[QdrantSupervisor]:
-    """One real qdrant server on an ephemeral port with temp storage."""
-    tmp = tmp_path_factory.mktemp("qdrant-barrier")
-    supervisor = QdrantSupervisor(
-        real_qdrant_binary,
-        http_port=_free_port(),
-        grpc_port=_free_port(),
-        storage_dir=tmp / "storage",
-        log_path=tmp / "qdrant.log",
+    """One real qdrant server on ephemeral ports with temp storage."""
+    yield from serve_qdrant(
+        real_qdrant_binary, tmp_path_factory.mktemp("qdrant-barrier")
     )
-    supervisor.start(timeout=60.0)
-    yield supervisor
-    supervisor.stop()
 
 
 @pytest.fixture

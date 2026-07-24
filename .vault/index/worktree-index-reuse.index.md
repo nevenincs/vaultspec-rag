@@ -24,6 +24,7 @@ related:
   - '[[2026-07-24-worktree-index-reuse-W03-P04-S16]]'
   - '[[2026-07-24-worktree-index-reuse-W03-P05-S17]]'
   - '[[2026-07-24-worktree-index-reuse-W03-P05-S18]]'
+  - '[[2026-07-24-worktree-index-reuse-W03-P05-S20]]'
   - '[[2026-07-24-worktree-index-reuse-adr]]'
   - '[[2026-07-24-worktree-index-reuse-plan]]'
   - '[[2026-07-24-worktree-index-reuse-research]]'
@@ -59,6 +60,7 @@ Auto-generated index of all documents tagged with `#worktree-index-reuse`.
 - `2026-07-24-worktree-index-reuse-W03-P04-S16` - run the full quality gates on the changed surface: ruff, formatting, type check with the project settings, complexity gate, and the affected pytest suites
 - `2026-07-24-worktree-index-reuse-W03-P05-S17` - run the end-to-end fork index with the flag on and off against a real sibling donor
 - `2026-07-24-worktree-index-reuse-W03-P05-S18` - document the reuse behavior, the off-switch, and the telemetry fields in the user-facing docs
+- `2026-07-24-worktree-index-reuse-W03-P05-S20` - fix or explicitly file the rebuild-replays-deleted-collections defect: storage delete leaves the resume ledger, so a rebuild replays committed vectors instead of rebuilding
 
 ### plan
 

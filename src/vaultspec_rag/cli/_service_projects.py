@@ -9,11 +9,13 @@ import typer
 import vaultspec_rag.cli as _cli
 
 from ._app import server_projects_app
+from ._cli_format import _counted_unit, _project_name
 from ._http_search import _try_http_admin
 from ._render import (
     _display_service_not_running,
     _emit_json,
     _emit_json_error_and_exit,
+    _plain,
 )
 from ._service_status import _default_service_port
 
@@ -22,11 +24,6 @@ __all__ = [
     "service_projects_list",
     "service_projects_unload",
 ]
-
-
-def _counted_unit(value: int, singular: str, plural: str | None = None) -> str:
-    unit = singular if value == 1 else plural or f"{singular}s"
-    return f"{value} {unit}"
 
 
 def _humanize_idle(seconds: float) -> str:
@@ -72,11 +69,6 @@ def _truncate_root(root: str, width: int = 60) -> str:
     return "…" + root[-(width - 1) :]
 
 
-def _project_name(root: str) -> str:
-    parts = root.replace("\\", "/").rstrip("/").split("/")
-    return parts[-1] if parts and parts[-1] else root
-
-
 def _handle_list_not_running(json_mode: bool, port: int | None = None) -> NoReturn:
     if json_mode:
         _emit_json_error_and_exit(
@@ -120,11 +112,7 @@ def _print_projects_summary(
     port: int | None = None,
 ) -> None:
     if port is not None:
-        _cli.console.print(
-            f"Address: http://127.0.0.1:{port}",
-            markup=False,
-            highlight=False,
-        )
+        _plain(f"Address: http://127.0.0.1:{port}")
     if not projects:
         _cli.console.print(
             f"Capacity: 0 of {max_projects} projects loaded",
@@ -144,12 +132,7 @@ def _print_projects_summary(
         summary = _project_summary(raw_entry)
         if summary:
             for line in summary:
-                _cli.console.print(
-                    line,
-                    markup=False,
-                    highlight=False,
-                    soft_wrap=True,
-                )
+                _plain(line, soft_wrap=True)
 
 
 @server_projects_app.command("list")
@@ -232,29 +215,12 @@ def _print_project_unload_result(
     status: str,
     next_action: str | None = None,
 ) -> None:
-    _cli.console.print(
-        f"Address: http://127.0.0.1:{port}",
-        markup=False,
-        highlight=False,
-    )
-    _cli.console.print(
-        f"Project: {_project_name(project)}",
-        markup=False,
-        highlight=False,
-    )
-    _cli.console.print(
-        f"Path: {project}",
-        markup=False,
-        highlight=False,
-        soft_wrap=True,
-    )
-    _cli.console.print(f"Unload: {status}", markup=False, highlight=False)
+    _plain(f"Address: http://127.0.0.1:{port}")
+    _plain(f"Project: {_project_name(project)}")
+    _plain(f"Path: {project}", soft_wrap=True)
+    _plain(f"Unload: {status}")
     if next_action:
-        _cli.console.print(
-            f"Next action: {next_action}",
-            markup=False,
-            highlight=False,
-        )
+        _plain(f"Next action: {next_action}")
 
 
 def _handle_evict_json(

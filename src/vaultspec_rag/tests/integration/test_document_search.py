@@ -7,14 +7,9 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ...indexer import DocumentIndexer
-from ...indexer._content_policy import (
-    ContentKind,
-    ContentRoute,
-    RootContentPolicy,
-    SourceProfileVersion,
-)
 from ...progress import NullProgressReporter
 from ...search import VaultSearcher
+from ._helpers import _document_policy
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -22,13 +17,6 @@ if TYPE_CHECKING:
     from ..conftest import RagComponentsWithManifest
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(600)]
-
-
-def _document_policy() -> RootContentPolicy:
-    return RootContentPolicy(
-        SourceProfileVersion.CONVENTIONAL_V1,
-        (ContentRoute("records/*.txt", ContentKind.DOCUMENT),),
-    )
 
 
 def test_document_and_combined_search_use_real_content_and_stable_selection(
@@ -53,7 +41,7 @@ def test_document_and_combined_search_use_real_content_and_stable_selection(
             root,
             model,
             store,
-            content_policy=_document_policy(),
+            content_policy=_document_policy("records/*.txt"),
         )
         indexed = indexer.full_index(
             reporter=NullProgressReporter(),

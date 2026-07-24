@@ -10,18 +10,15 @@ import typer
 import vaultspec_rag.cli as _cli
 
 from ._app import server_watcher_app
+from ._cli_format import _counted_unit, _project_name
 from ._http_search import _try_http_admin
 from ._render import (
     _display_service_not_running,
     _emit_json,
     _emit_json_error_and_exit,
+    _plain,
 )
 from ._service_status import _default_service_port
-
-
-def _counted_unit(value: int, singular: str, plural: str | None = None) -> str:
-    unit = singular if value == 1 else plural or f"{singular}s"
-    return f"{value} {unit}"
 
 
 def _format_milliseconds(raw: object) -> str:
@@ -56,45 +53,22 @@ def _format_seconds(raw: object) -> str:
     return _counted_unit(minutes, "minute")
 
 
-def _project_name(root: object) -> str:
-    value = str(root)
-    parts = value.replace("\\", "/").rstrip("/").split("/")
-    return parts[-1] if parts and parts[-1] else value
-
-
 def _resolve_project_argument(project: str) -> str:
     return str(Path(project).expanduser().resolve())
 
 
 def _print_update_address(port: int) -> None:
-    _cli.console.print(
-        f"Address: http://127.0.0.1:{port}",
-        markup=False,
-        highlight=False,
-    )
+    _plain(f"Address: http://127.0.0.1:{port}")
 
 
 def _print_update_project(project: str) -> None:
-    _cli.console.print(
-        f"Project: {_project_name(project)}",
-        markup=False,
-        highlight=False,
-    )
-    _cli.console.print(
-        f"Path: {project}",
-        markup=False,
-        highlight=False,
-        soft_wrap=True,
-    )
+    _plain(f"Project: {_project_name(project)}")
+    _plain(f"Path: {project}", soft_wrap=True)
 
 
 def _print_update_result(port: int, status: str, project: str) -> None:
     _print_update_address(port)
-    _cli.console.print(
-        f"Automatic index updates: {status}",
-        markup=False,
-        highlight=False,
-    )
+    _plain(f"Automatic index updates: {status}")
     _print_update_project(project)
 
 
@@ -102,28 +76,14 @@ def _print_update_timing(result: dict[str, object]) -> None:
     update_delay = _format_milliseconds(result.get("debounce_ms"))
     repeat_update_delay = _format_seconds(result.get("cooldown_s"))
     if update_delay == "not reported":
-        _cli.console.print(
-            "File changes: not reported by service.",
-            markup=False,
-            highlight=False,
-        )
+        _plain("File changes: not reported by service.")
     else:
-        _cli.console.print(
-            f"File changes: wait {update_delay} before updating.",
-            markup=False,
-            highlight=False,
-        )
+        _plain(f"File changes: wait {update_delay} before updating.")
     if repeat_update_delay == "not reported":
-        _cli.console.print(
-            "Repeat updates: not reported by service.",
-            markup=False,
-            highlight=False,
-        )
+        _plain("Repeat updates: not reported by service.")
         return
-    _cli.console.print(
-        f"Repeat updates: wait {repeat_update_delay} before updating a project again.",
-        markup=False,
-        highlight=False,
+    _plain(
+        f"Repeat updates: wait {repeat_update_delay} before updating a project again."
     )
 
 
@@ -159,20 +119,12 @@ def _watcher_admin_error(
     if json_mode:
         _emit_json_error_and_exit(command, error, message, 1, root=root, port=port)
     _print_update_address(port)
-    _cli.console.print(f"Automatic index updates: {message}", markup=False)
+    _plain(f"Automatic index updates: {message}")
     if root is not None:
         _print_update_project(root)
-    _cli.console.print("Next actions:", markup=False, highlight=False)
-    _cli.console.print(
-        f"  vaultspec-rag server status --port {port}",
-        markup=False,
-        highlight=False,
-    )
-    _cli.console.print(
-        f"  vaultspec-rag server logs --limit 200 --port {port}",
-        markup=False,
-        highlight=False,
-    )
+    _plain("Next actions:")
+    _plain(f"  vaultspec-rag server status --port {port}")
+    _plain(f"  vaultspec-rag server logs --limit 200 --port {port}")
     raise typer.Exit(1)
 
 
@@ -217,24 +169,15 @@ def service_watcher_status(
         return
     mode = "enabled" if enabled else "disabled; indexes update when requested"
     _print_update_address(resolved_port)
-    _cli.console.print(f"Automatic index updates: {mode}", markup=False)
+    _plain(f"Automatic index updates: {mode}")
     _print_update_timing(result)
     if not watching:
         _cli.console.print("No projects currently have automatic index updates.")
         return
     _cli.console.print(f"Projects updating automatically: {len(watching)}")
     for entry in watching:
-        _cli.console.print(
-            f"- Project: {_project_name(entry)}",
-            markup=False,
-            highlight=False,
-        )
-        _cli.console.print(
-            f"  Path: {entry}",
-            markup=False,
-            highlight=False,
-            soft_wrap=True,
-        )
+        _plain(f"- Project: {_project_name(entry)}")
+        _plain(f"  Path: {entry}", soft_wrap=True)
 
 
 @server_watcher_app.command("start")
@@ -287,11 +230,7 @@ def service_watcher_start(
             "disabled; this project will update when requested",
             resolved_project,
         )
-        _cli.console.print(
-            "Next action: vaultspec-rag server start --updates",
-            markup=False,
-            highlight=False,
-        )
+        _plain("Next action: vaultspec-rag server start --updates")
     else:
         _print_update_result(resolved_port, "could not start", resolved_project)
     raise typer.Exit(0)

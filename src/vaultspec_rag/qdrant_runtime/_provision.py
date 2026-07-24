@@ -26,6 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
+from .._units import human_bytes
 from ._constants import (
     ALLOWED_DOWNLOAD_HOSTS,
     MANIFEST_FILENAME,
@@ -38,6 +39,7 @@ from ._constants import (
 from ._resolve import asset_for_platform, binary_filename, qdrant_bin_dir, read_manifest
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from http.client import HTTPMessage
     from typing import IO, Any
 
@@ -58,6 +60,19 @@ _DOWNLOAD_TIMEOUT_SECONDS = 120.0
 # host-pinned-but-defective response cannot fill the disk before the
 # SHA256 check would reject it (defense in depth behind the host pin).
 _MAX_DOWNLOAD_BYTES = 256 << 20
+# Report every few chunks rather than every chunk: the reporter prints a plain
+# line per distinct activity off a terminal, so a per-megabyte tick would fill
+# a piped install log with a hundred near-identical lines.
+_DOWNLOAD_REPORT_BYTES = 4 << 20
+
+
+def _no_progress(_line: str) -> None:
+    """Drop a progress line, for callers that asked for no reporting.
+
+    A no-op sink rather than a ``None`` check at each call site: provisioning
+    runs on a daemon start path as well as an operator command, and only the
+    latter has a console to report to.
+    """
 
 
 class ChecksumMismatchError(RuntimeError):
@@ -114,8 +129,85 @@ class _HostPinnedRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def _download(url: str, dest: Path) -> None:
+def _declared_length(headers: object) -> int:
+    """Read a response's ``Content-Length``, or 0 when it declares none."""
+    getter = getattr(headers, "get", None)
+    if getter is None:
+        return 0
+    try:
+        return max(0, int(getter("Content-Length") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _download_line(written: int, declared: int) -> str:
+    """Render one line of download progress, with a total when one was declared."""
+    if declared:
+        return (
+            f"Downloading the Qdrant server: "
+            f"{human_bytes(written)} of {human_bytes(declared)}"
+        )
+    return f"Downloading the Qdrant server: {human_bytes(written)}"
+
+
+def _stream_capped(
+    source: IO[bytes],
+    out: IO[bytes],
+    *,
+    declared: int,
+    on_progress: Callable[[str], None],
+) -> int:
+    """Copy *source* into *out* under the size cap, reporting as it goes.
+
+    Split from the request handling so the cap and the reporting cadence can
+    be exercised over an ordinary binary stream rather than only over a live
+    HTTPS response.
+
+    Args:
+        source: The readable stream to drain.
+        out: The staging file to write into.
+        declared: The size the response claimed, or 0 when it claimed none.
+        on_progress: Sink for byte-progress lines.
+
+    Returns:
+        The number of bytes written.
+
+    Raises:
+        urllib.error.URLError: When the stream exceeds the download cap.
+    """
+    written = 0
+    reported = 0
+    while chunk := source.read(_DOWNLOAD_CHUNK_BYTES):
+        written += len(chunk)
+        if written > _MAX_DOWNLOAD_BYTES:
+            raise urllib.error.URLError(
+                f"Download exceeded the {_MAX_DOWNLOAD_BYTES} byte cap; "
+                "refusing to continue"
+            )
+        out.write(chunk)
+        if written - reported >= _DOWNLOAD_REPORT_BYTES:
+            reported = written
+            on_progress(_download_line(written, declared))
+    # The final tick lands on the true size, so the last thing an operator
+    # reads is the transfer completing rather than stalling near the end.
+    if written != reported:
+        on_progress(_download_line(written, declared))
+    return written
+
+
+def _download(
+    url: str,
+    dest: Path,
+    *,
+    on_progress: Callable[[str], None] = _no_progress,
+) -> None:
     """Stream *url* to *dest* with host-pinned redirects.
+
+    Args:
+        url: The pinned release asset to fetch.
+        dest: The staging path to stream into.
+        on_progress: Sink for byte-progress lines, emitted every few
+            megabytes and once more on the final byte.
 
     Raises:
         urllib.error.URLError: On connection failure, a disallowed
@@ -134,15 +226,12 @@ def _download(url: str, dest: Path) -> None:
         opener.open(url, timeout=_DOWNLOAD_TIMEOUT_SECONDS) as resp,
         dest.open("wb") as out,
     ):
-        written = 0
-        while chunk := resp.read(_DOWNLOAD_CHUNK_BYTES):
-            written += len(chunk)
-            if written > _MAX_DOWNLOAD_BYTES:
-                raise urllib.error.URLError(
-                    f"Download exceeded the {_MAX_DOWNLOAD_BYTES} byte cap; "
-                    "refusing to continue"
-                )
-            out.write(chunk)
+        _stream_capped(
+            resp,
+            out,
+            declared=_declared_length(getattr(resp, "headers", None)),
+            on_progress=on_progress,
+        )
 
 
 def _open_extract_dest(path: Path) -> IO[bytes]:
@@ -201,6 +290,8 @@ def extract_verified_archive(
     archive: Path,
     expected_sha256: str,
     dest_dir: Path,
+    *,
+    on_progress: Callable[[str], None] = _no_progress,
 ) -> tuple[Path, str]:
     """Verify *archive* against *expected_sha256*, then extract.
 
@@ -212,6 +303,9 @@ def extract_verified_archive(
         archive: The downloaded release archive.
         expected_sha256: The committed digest to verify against.
         dest_dir: Directory to place the extracted binary in.
+        on_progress: Sink announcing each stage; reporting only, and the
+            verify-then-extract order it describes is the order enforced
+            below.
 
     Returns:
         ``(binary_path, binary_sha256)`` for the extracted executable.
@@ -219,16 +313,19 @@ def extract_verified_archive(
     Raises:
         ChecksumMismatchError: On digest mismatch (archive deleted).
     """
+    on_progress("Verifying the Qdrant download checksum...")
     actual = file_sha256(archive)
     if actual.lower() != expected_sha256.lower():
         archive.unlink(missing_ok=True)
         raise ChecksumMismatchError(archive, expected_sha256, actual)
 
+    on_progress("Extracting the Qdrant server...")
     binary = _extract_binary_member(archive, dest_dir)
     if sys.platform != "win32":
         # Owner-only rwx: the service runs as one user; a world-executable
         # managed binary needlessly widens who can run it on a shared host.
         binary.chmod(0o700)
+    on_progress("Verifying the extracted Qdrant server...")
     return binary, file_sha256(binary)
 
 
@@ -344,15 +441,17 @@ def _download_and_install(
     expected_sha256: str,
     version_dir: Path,
     previously: str,
+    on_progress: Callable[[str], None] = _no_progress,
 ) -> ProvisionReport:
     """Download, verify, extract, and record the pinned binary."""
     version_dir.mkdir(parents=True, exist_ok=True)
     archive = version_dir / f"{asset}.partial"
     try:
         logger.info("Downloading %s", url)
-        _download(url, archive)
+        on_progress(f"Downloading the Qdrant server ({asset})...")
+        _download(url, archive, on_progress=on_progress)
         binary, binary_sha = extract_verified_archive(
-            archive, expected_sha256, version_dir
+            archive, expected_sha256, version_dir, on_progress=on_progress
         )
     except ChecksumMismatchError as exc:
         logger.error("qdrant provisioning failed verification: %s", exc)
@@ -410,6 +509,7 @@ def provision(
     upgrade: bool = False,
     dry_run: bool = False,
     binary: Path | None = None,
+    on_progress: Callable[[str], None] = _no_progress,
 ) -> ProvisionReport:
     """Provision the pinned qdrant server binary into the managed dir.
 
@@ -427,6 +527,10 @@ def provision(
         binary: Operator-supplied binary to register instead of
             downloading (no checksum pin applies; recorded in the
             manifest as operator-sourced).
+        on_progress: Sink for stage and byte-progress lines during a real
+            download. Reporting only: it observes the download, verify, and
+            extract sequence and never alters it. Defaults to silence, which
+            is what a daemon-side provision wants.
 
     Returns:
         A :class:`ProvisionReport` in the sync vocabulary.
@@ -496,6 +600,7 @@ def provision(
         expected_sha256=expected,
         version_dir=version_dir,
         previously=state,
+        on_progress=on_progress,
     )
 
 

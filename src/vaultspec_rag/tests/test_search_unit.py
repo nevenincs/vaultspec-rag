@@ -81,35 +81,54 @@ class TestParseQuery:
         assert result.text == "vector database"
         assert result.filters == {}
 
-    def test_type_filter(self):
-        result = parse_query("type:adr vector database")
-        assert result.text == "vector database"
-        assert result.filters == {"doc_type": "adr"}
-
-    def test_feature_filter(self):
-        result = parse_query("feature:rag search stuff")
-        assert result.text == "search stuff"
-        assert result.filters == {"feature": "rag"}
-
-    def test_date_filter(self):
-        result = parse_query("date:2026-02 recent docs")
-        assert result.text == "recent docs"
-        assert result.filters == {"date": "2026-02"}
-
-    def test_tag_filter(self):
-        result = parse_query("tag:#research my query")
-        assert result.text == "my query"
-        assert result.filters == {"tag": "research"}
-
-    def test_lang_filter(self):
-        result = parse_query("lang:python search codebase")
-        assert result.text == "search codebase"
-        assert result.filters == {"language": "python"}
-
-    def test_path_filter(self):
-        result = parse_query("path:src/ search code")
-        assert result.text == "search code"
-        assert result.filters == {"path": "src/"}
+    # One row per supported filter token. The ids are the token names, so a
+    # failure still says which filter broke rather than only a row number.
+    @pytest.mark.parametrize(
+        ("query", "text", "filters"),
+        [
+            ("type:adr vector database", "vector database", {"doc_type": "adr"}),
+            ("feature:rag search stuff", "search stuff", {"feature": "rag"}),
+            ("date:2026-02 recent docs", "recent docs", {"date": "2026-02"}),
+            ("tag:#research my query", "my query", {"tag": "research"}),
+            ("lang:python search codebase", "search codebase", {"language": "python"}),
+            ("path:src/ search code", "search code", {"path": "src/"}),
+            (
+                "func:encode_query authentication",
+                "authentication",
+                {"function_name": "encode_query"},
+            ),
+            (
+                "class:VaultStore storage logic",
+                "storage logic",
+                {"class_name": "VaultStore"},
+            ),
+            (
+                "nodetype:function_definition helpers",
+                "helpers",
+                {"node_type": "function_definition"},
+            ),
+        ],
+        ids=[
+            "type",
+            "feature",
+            "date",
+            "tag",
+            "lang",
+            "path",
+            "func",
+            "class",
+            "nodetype",
+        ],
+    )
+    def test_one_filter_is_extracted_and_stripped_from_the_text(
+        self,
+        query: str,
+        text: str,
+        filters: dict[str, str],
+    ) -> None:
+        result = parse_query(query)
+        assert result.text == text
+        assert result.filters == filters
 
     def test_multiple_filters(self):
         result = parse_query("type:adr feature:auth lang:python authentication")
@@ -135,21 +154,6 @@ class TestParseQuery:
     def test_collapses_multiple_spaces(self):
         result = parse_query("type:adr  hello   world")
         assert result.text == "hello world"
-
-    def test_func_filter(self):
-        result = parse_query("func:encode_query authentication")
-        assert result.text == "authentication"
-        assert result.filters == {"function_name": "encode_query"}
-
-    def test_class_filter(self):
-        result = parse_query("class:VaultStore storage logic")
-        assert result.text == "storage logic"
-        assert result.filters == {"class_name": "VaultStore"}
-
-    def test_nodetype_filter(self):
-        result = parse_query("nodetype:function_definition helpers")
-        assert result.text == "helpers"
-        assert result.filters == {"node_type": "function_definition"}
 
     def test_combined_code_filters(self):
         result = parse_query("lang:python func:search class:Searcher query")

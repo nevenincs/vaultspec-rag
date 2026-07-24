@@ -33,7 +33,7 @@ from ..indexer._preprocess_config import (
 )
 from ..indexer._preprocess_runner import PreprocessAbortError, run_preprocessor
 from ._app import CLIState, preprocess_app
-from ._render import _emit_json, _emit_json_error_and_exit
+from ._render import _emit_json, _emit_json_error_and_exit, _plain
 
 
 def _root(ctx: typer.Context) -> Path:
@@ -57,11 +57,7 @@ def _report_config_error(
     error_kind = _config_error_kind(exc)
     if json_mode:
         _emit_json_error_and_exit(command, error_kind, str(exc), 1)
-    _cli.console.print(
-        f"Preprocess config has a problem ({error_kind}): {exc}",
-        markup=False,
-        highlight=False,
-    )
+    _plain(f"Preprocess config has a problem ({error_kind}): {exc}")
     raise typer.Exit(code=1) from exc
 
 
@@ -133,31 +129,17 @@ def handle_preprocess_list(
         return
     _cli.console.print(f"Preprocess rules: {len(rules)}")
     for index, rule in enumerate(rules, start=1):
-        _cli.console.print(f"{index}. Files: {rule['pattern']}", markup=False)
-        _cli.console.print(f"   Priority: {rule['priority']}", markup=False)
-        _cli.console.print(f"   Target: {rule['target']}", markup=False)
-        _cli.console.print(
-            f"   Extractor version: {rule['extractor_version']}",
-            markup=False,
-        )
-        _cli.console.print(
+        _plain(f"{index}. Files: {rule['pattern']}")
+        _plain(f"   Priority: {rule['priority']}")
+        _plain(f"   Target: {rule['target']}")
+        _plain(f"   Extractor version: {rule['extractor_version']}")
+        _plain(
             "   Cross-path cache reuse: "
-            f"{'enabled' if rule['path_independent'] else 'disabled'}",
-            markup=False,
+            f"{'enabled' if rule['path_independent'] else 'disabled'}"
         )
-        _cli.console.print(
-            f"   Failure handling: {_format_failure_handling(rule['on_error'])}",
-            markup=False,
-        )
-        _cli.console.print(
-            f"   Timeout: {_format_timeout(rule['timeout_s'])}",
-            markup=False,
-        )
-        _cli.console.print(
-            f"   Invocation: {rule['command'] or rule['entry_point']}",
-            markup=False,
-            highlight=False,
-        )
+        _plain(f"   Failure handling: {_format_failure_handling(rule['on_error'])}")
+        _plain(f"   Timeout: {_format_timeout(rule['timeout_s'])}")
+        _plain(f"   Invocation: {rule['command'] or rule['entry_point']}")
 
 
 @preprocess_app.command(
@@ -232,11 +214,7 @@ def _report_preprocess_no_match(
                 },
             )
             return
-        _cli.console.print(
-            _gated_run_one_message(gate),
-            markup=False,
-            highlight=False,
-        )
+        _plain(_gated_run_one_message(gate))
         return
     if json_mode:
         _emit_json(True, "preprocess run-one", data={"matched": False, "path": rel})
@@ -294,11 +272,7 @@ def handle_preprocess_run_one(
                 str(exc),
                 1,
             )
-        _cli.console.print(
-            f"Preprocess failed: {exc}",
-            markup=False,
-            highlight=False,
-        )
+        _plain(f"Preprocess failed: {exc}")
         raise typer.Exit(code=1) from exc
 
     output = result.output
@@ -315,11 +289,7 @@ def handle_preprocess_run_one(
     if json_mode:
         _emit_json(True, "preprocess run-one", data=data)
         return
-    _cli.console.print(
-        f"Matched rule: {rule.pattern}",
-        markup=False,
-        highlight=False,
-    )
+    _plain(f"Matched rule: {rule.pattern}")
     _cli.console.print(f"Outcome: {_format_preprocess_result(result.status)}")
     if result.reason:
         _cli.console.print(f"Why: {result.reason}")
@@ -458,30 +428,18 @@ def handle_preprocess_status(
         )
         return
 
-    _cli.console.print(f"Preprocess mode: {mode}", markup=False, highlight=False)
-    _cli.console.print(
+    _plain(f"Preprocess mode: {mode}")
+    _plain(
         f"Config: {'present' if config_present else 'absent'}"
-        f"{'' if config_valid else ' (invalid)'}",
-        markup=False,
-        highlight=False,
+        f"{'' if config_valid else ' (invalid)'}"
     )
-    _cli.console.print(f"Rules: {rule_count}", markup=False, highlight=False)
+    _plain(f"Rules: {rule_count}")
     if config_error_kind is not None:
-        _cli.console.print(
-            f"Config error: {config_error_kind}: {config_error_message}",
-            markup=False,
-            highlight=False,
-        )
+        _plain(f"Config error: {config_error_kind}: {config_error_message}")
     if schema_version is not None:
-        _cli.console.print(
+        _plain(
             f"Schema: {schema_version}; targets: {', '.join(targets) or 'none'}; "
             f"extractor versions: {', '.join(extractor_versions) or 'none'}; "
-            f"cross-path cache rules: {path_independent_rules}",
-            markup=False,
-            highlight=False,
+            f"cross-path cache rules: {path_independent_rules}"
         )
-    _cli.console.print(
-        f"Effect: {_status_effect_line(mode, rule_count)}",
-        markup=False,
-        highlight=False,
-    )
+    _plain(f"Effect: {_status_effect_line(mode, rule_count)}")

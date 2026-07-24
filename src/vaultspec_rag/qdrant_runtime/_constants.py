@@ -15,6 +15,7 @@ never consulted at provisioning time.
 
 from __future__ import annotations
 
+import urllib.request
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Final
@@ -72,6 +73,16 @@ QDRANT_ASSET_SHA256: Final[dict[str, str]] = {
 
 #: Name of the provisioning manifest written next to the binary.
 MANIFEST_FILENAME: Final[str] = "manifest.json"
+
+
+#: Opener for every loopback probe in this package, built once so the proxy
+#: bypass cannot be applied on one probe path and quietly forgotten on another.
+#: Environment proxies are stripped deliberately: a probe that traversed one
+#: could be answered by the proxy instead of by Qdrant, letting a spoofed
+#: "ready" or version response decide whether a caller attaches to a server
+#: that is not there. The resolver and the supervisor both make that trust
+#: decision, so both must make it through the same opener.
+LOOPBACK_OPENER: Final = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 class QdrantProvisionAction(StrEnum):

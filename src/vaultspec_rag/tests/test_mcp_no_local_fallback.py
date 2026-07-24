@@ -21,52 +21,17 @@ local fallback in its own interpreter.
 from __future__ import annotations
 
 import asyncio
-import os
-import subprocess
-import sys
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from ..config import EnvVar, reset_config
+from ._import_probe import assert_fresh_import_excludes, import_probe_source
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Iterator
+    from collections.abc import Callable, Coroutine
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
-
-
-@pytest.fixture()
-def isolated_status_dir(tmp_path: Path) -> Iterator[Path]:
-    """Point the status dir and machine-global dir at empty *tmp_path* dirs.
-
-    Sets ``VAULTSPEC_RAG_STATUS_DIR`` to a fresh empty directory (no
-    ``service.json``) and ``VAULTSPEC_RAG_QDRANT_STORAGE_DIR`` to a fresh path so
-    the machine-global discovery pointer and lock resolve under the temp dir too,
-    not the real machine singleton. Both knobs are required because service
-    discovery now resolves the machine-global pointer authoritatively before the
-    status-dir hint; isolating only the status dir would let a live machine
-    service on the host leak in. ``reset_config()`` brackets the redirect.
-    """
-    prev = {
-        k: os.environ.get(k)
-        for k in (EnvVar.STATUS_DIR.value, EnvVar.QDRANT_STORAGE_DIR.value)
-    }
-    status_dir = tmp_path / "vaultspec-rag"
-    status_dir.mkdir()
-    os.environ[EnvVar.STATUS_DIR.value] = str(status_dir)
-    os.environ[EnvVar.QDRANT_STORAGE_DIR.value] = str(tmp_path / "qdrant" / "storage")
-    reset_config()
-    try:
-        yield status_dir
-    finally:
-        for key, value in prev.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-        reset_config()
 
 
 def _tool_invocations() -> list[tuple[str, Callable[[], Coroutine[Any, Any, Any]]]]:
@@ -105,7 +70,7 @@ _INVOCATIONS = _tool_invocations()
 )
 def test_tool_raises_service_not_running(
     make_coro: Callable[[], Coroutine[Any, Any, Any]],
-    isolated_status_dir: Path,
+    isolated_singleton_dirs: Path,
 ) -> None:
     """With no service.json, every MCP tool/resource raises the service-down error.
 
@@ -113,7 +78,7 @@ def test_tool_raises_service_not_running(
     status dir and proves the call reaches the single no-local-fallback guard
     rather than constructing a local engine.
     """
-    assert not (isolated_status_dir / "service.json").exists()
+    assert not (isolated_singleton_dirs / "service.json").exists()
     with pytest.raises(RuntimeError) as exc_info:
         asyncio.run(make_coro())
     # SD6: the failure must be fast and carry the full actionable remediation,
@@ -133,8 +98,8 @@ def test_failed_call_loads_no_heavy_ml_libs() -> None:
     service-down ``RuntimeError``; then ``sys.modules`` is asserted free of the
     heavy ML libraries.
     """
-    code = (
-        "import os, sys, tempfile, asyncio\n"
+    drive_a_failed_search = (
+        "import os, tempfile, asyncio\n"
         "d = tempfile.mkdtemp()\n"
         "os.environ['VAULTSPEC_RAG_STATUS_DIR'] = d\n"
         "os.environ['VAULTSPEC_RAG_QDRANT_STORAGE_DIR'] = os.path.join(d, 'qdrant')\n"
@@ -145,19 +110,16 @@ def test_failed_call_loads_no_heavy_ml_libs() -> None:
         "except RuntimeError as exc:\n"
         "    raised = 'is not running' in str(exc)\n"
         "assert raised, 'expected service-not-running RuntimeError'\n"
-        "forbidden = ('torch', 'sentence_transformers', 'qdrant_client', "
-        "'transformers', 'onnxruntime')\n"
-        "heavy = sorted(\n"
-        "    m\n"
-        "    for m in sys.modules\n"
-        "    if any(m == f or m.startswith(f + '.') for f in forbidden)\n"
-        ")\n"
-        "assert not heavy, heavy\n"
     )
-    proc = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        check=False,
+    assert_fresh_import_excludes(
+        import_probe_source(
+            setup=drive_a_failed_search,
+            forbidden=(
+                "torch",
+                "sentence_transformers",
+                "qdrant_client",
+                "transformers",
+                "onnxruntime",
+            ),
+        )
     )
-    assert proc.returncode == 0, proc.stderr

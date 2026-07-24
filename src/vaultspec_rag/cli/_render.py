@@ -18,6 +18,8 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from ._cli_format import _counted_unit
+
 if TYPE_CHECKING:
     from ..commands import ProvisionOutcome
 
@@ -29,9 +31,27 @@ __all__ = [
     "_emit_json",
     "_emit_json_error_and_exit",
     "_format_local_index_busy_message",
+    "_plain",
     "_render_install_report",
     "_render_uninstall_report",
 ]
+
+
+def _plain(text: str, *, soft_wrap: bool | None = None) -> None:
+    """Print one literal operator line: no Rich markup, no auto-highlighting.
+
+    Operator output is data - paths, ids, commands, service messages - so Rich
+    must not read a bracketed substring as markup or restyle numbers and paths
+    inside it. That made ``markup=False, highlight=False`` the standing idiom on
+    nearly two hundred call sites; naming it once keeps a new line from
+    acquiring styling by simply forgetting them.
+
+    ``soft_wrap`` defaults to ``None`` rather than ``False`` so an unspecified
+    call defers to the console's own setting, exactly as omitting it does.
+    The console is read at call time, so a test that swaps
+    ``vaultspec_rag.cli.console`` still observes the substitution.
+    """
+    _cli.console.print(text, markup=False, highlight=False, soft_wrap=soft_wrap)
 
 
 def _emit_json(
@@ -89,16 +109,8 @@ def _emit_json_error_and_exit(
 
 def _display_service_not_running(port: int | None = None) -> None:
     if port is not None:
-        _cli.console.print(
-            f"Address: http://127.0.0.1:{port}",
-            markup=False,
-            highlight=False,
-        )
-    _cli.console.print(
-        "Service is not running. Start it with `vaultspec-rag server start`.",
-        markup=False,
-        highlight=False,
-    )
+        _plain(f"Address: http://127.0.0.1:{port}")
+    _plain("Service is not running. Start it with `vaultspec-rag server start`.")
 
 
 def _format_local_index_busy_message(action: str) -> str:
@@ -151,16 +163,12 @@ def _display_service_error(
             **extra,
         )
         return
-    _cli.console.print(
-        f"Error: {_human_service_error_message(message)}",
-        markup=False,
-        highlight=False,
-    )
+    _plain(f"Error: {_human_service_error_message(message)}")
     if error != "http_search_timeout":
-        _cli.console.print(f"Code: {error}", markup=False, highlight=False)
+        _plain(f"Code: {error}")
     db_path = payload.get("db_path")
     if db_path:
-        _cli.console.print(f"Index data: {db_path}", markup=False, highlight=False)
+        _plain(f"Index data: {db_path}")
     _display_service_diagnostic_summary(payload.get("diagnostics"))
     remediation = payload.get("remediation")
     if isinstance(remediation, list) and remediation:
@@ -264,22 +272,12 @@ def _display_search_results(
         line = f"{rank}. {location}"
         if show_scores:
             line += f" (score {_search_result_score(result):.4f})"
-        _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
+        _plain(line, soft_wrap=True)
         meta_line = _search_result_meta_line(result)
         if meta_line is not None:
-            _cli.console.print(
-                f"   {meta_line}",
-                markup=False,
-                highlight=False,
-                soft_wrap=True,
-            )
+            _plain(f"   {meta_line}", soft_wrap=True)
         for text_line in _search_result_text_lines(result, root=root):
-            _cli.console.print(
-                f"   {text_line}",
-                markup=False,
-                highlight=False,
-                soft_wrap=True,
-            )
+            _plain(f"   {text_line}", soft_wrap=True)
 
 
 def _search_result_meta_line(result: dict[str, object]) -> str | None:
@@ -453,7 +451,7 @@ def _display_port_unreachable_error(
             ],
         )
         return
-    _cli.console.print(
+    _plain(
         f"Service on port {port} is unreachable.\n"
         f"The CLI will not silently run {command} locally because that would "
         f"open the local search index directly "
@@ -462,9 +460,7 @@ def _display_port_unreachable_error(
         f"  1. Check status:  vaultspec-rag server status\n"
         f"  2. Start service: vaultspec-rag server start\n"
         f"  3. Or run locally anyway: re-run with "
-        f"--allow-fallback (one user only).",
-        markup=False,
-        highlight=False,
+        f"--allow-fallback (one user only)."
     )
 
 
@@ -496,11 +492,7 @@ def _render_sync_summary(added: int, updated: int, removed: int) -> None:
     if removed:
         parts.append(f"removed {removed}")
     if parts:
-        _cli.console.print(
-            f"tool integrations: {', '.join(parts)}",
-            markup=False,
-            highlight=False,
-        )
+        _plain(f"tool integrations: {', '.join(parts)}")
 
 
 def _render_provider_outcome(provider: str, outcome: dict[str, object]) -> None:
@@ -517,18 +509,12 @@ def _render_provider_outcome(provider: str, outcome: dict[str, object]) -> None:
         if isinstance(outcome.get(label), int) and outcome[label]
     ]
     summary = ", ".join(parts) if parts else "no changes"
-    _cli.console.print(
-        f"{provider.capitalize()} MCP: {summary}",
-        markup=False,
-        highlight=False,
-    )
+    _plain(f"{provider.capitalize()} MCP: {summary}")
     for label in ("warnings", "errors"):
         messages = outcome.get(label)
         if isinstance(messages, list):
             for message in cast("list[object]", messages):
-                _cli.console.print(
-                    f"  {label[:-1]}: {message}", markup=False, highlight=False
-                )
+                _plain(f"  {label[:-1]}: {message}")
 
 
 def _render_provider_sync(report: Any) -> None:
@@ -544,13 +530,7 @@ def _render_provider_sync(report: Any) -> None:
     top_level_errors = data.get("mcp_errors")
     if isinstance(top_level_errors, list):
         for error in cast("list[object]", top_level_errors):
-            _cli.console.print(
-                f"MCP lifecycle error: {error}", markup=False, highlight=False
-            )
-
-
-def _counted(count: int, singular: str, plural: str | None = None) -> str:
-    return f"{count} {singular if count == 1 else plural or singular + 's'}"
+            _plain(f"MCP lifecycle error: {error}")
 
 
 def _warning_text(warning: str) -> str:
@@ -572,7 +552,7 @@ def _warning_text(warning: str) -> str:
 def _print_warning_or_note(warning: object) -> None:
     text = _warning_text(str(warning))
     prefix = "Note" if text.startswith("dry-run preview:") else "Warning"
-    _cli.console.print(f"{prefix}: {text}", markup=False, highlight=False)
+    _plain(f"{prefix}: {text}")
 
 
 def _render_mcp_extra(report: Any) -> None:
@@ -582,11 +562,7 @@ def _render_mcp_extra(report: Any) -> None:
         return
     location = getattr(report, "mcp_extra_location", "")
     suffix = f" ({location})" if location else ""
-    _cli.console.print(
-        f"MCP optional dependency: {_action_label(action)}{suffix}",
-        markup=False,
-        highlight=False,
-    )
+    _plain(f"MCP optional dependency: {_action_label(action)}{suffix}")
 
 
 def _render_install_report(report: Any) -> None:
@@ -597,18 +573,21 @@ def _render_install_report(report: Any) -> None:
         "dry_run": "vaultspec-rag install (dry-run)",
     }.get(report.action, "vaultspec-rag install")
     dry_run = report.action == "dry_run"
-    _cli.console.print(title, markup=False, highlight=False)
-    _cli.console.print(f"Target: {report.target}", markup=False, highlight=False)
+    _plain(title)
+    _plain(f"Target: {report.target}")
     if report.created_dirs:
         verb = "would create" if dry_run else "created"
         _cli.console.print(
-            f"{verb} {_counted(len(report.created_dirs), 'directory', 'directories')}"
+            f"{verb} "
+            f"{_counted_unit(len(report.created_dirs), 'directory', 'directories')}"
         )
     if report.seeded:
         verb = "would seed" if dry_run else "seeded"
-        _cli.console.print(f"{verb} {_counted(len(report.seeded), 'bundled file')}:")
+        _cli.console.print(
+            f"{verb} {_counted_unit(len(report.seeded), 'bundled file')}:"
+        )
         for rel, action in report.seeded:
-            _cli.console.print(f"  {action} {rel}", markup=False, highlight=False)
+            _plain(f"  {action} {rel}")
     sync_added = sum(getattr(r, "added", 0) for r in report.sync_results)
     sync_updated = sum(getattr(r, "updated", 0) for r in report.sync_results)
     sync_pruned = sum(getattr(r, "pruned", 0) for r in report.sync_results)
@@ -616,29 +595,17 @@ def _render_install_report(report: Any) -> None:
     _render_provider_sync(report)
     _render_mcp_extra(report)
     tc_action = getattr(report, "torch_config_action", "skipped")
-    _cli.console.print(
-        f"PyTorch configuration: {_action_label(tc_action)}",
-        markup=False,
-        highlight=False,
-    )
+    _plain(f"PyTorch configuration: {_action_label(tc_action)}")
     td_action = getattr(report, "torch_direct_dep_action", "skipped")
     if td_action not in ("skipped",):
         td_location = getattr(report, "torch_direct_dep_location", "")
         suffix = f" ({td_location})" if td_location else ""
-        _cli.console.print(
-            f"PyTorch dependency: {_action_label(td_action)}{suffix}",
-            markup=False,
-            highlight=False,
-        )
+        _plain(f"PyTorch dependency: {_action_label(td_action)}{suffix}")
     for conflict in getattr(report, "torch_config_conflicts", []):
-        _cli.console.print(f"  conflict: {conflict}", markup=False, highlight=False)
+        _plain(f"  conflict: {conflict}")
     tsync = getattr(report, "torch_sync_action", "skipped")
     if tsync not in ("skipped",):
-        _cli.console.print(
-            f"uv sync --reinstall-package torch: {tsync}",
-            markup=False,
-            highlight=False,
-        )
+        _plain(f"uv sync --reinstall-package torch: {tsync}")
     _render_provisioning_outcome(getattr(report, "provision_outcome", None))
     for warning in report.warnings:
         _print_warning_or_note(warning)
@@ -698,11 +665,7 @@ def _render_provisioning_outcome(outcome: ProvisionOutcome | None) -> None:
     steps = data.get("steps")
     if not isinstance(steps, list) or not steps:
         return
-    _cli.console.print(
-        f"Provisioning: {data.get('status', 'unchanged')}",
-        markup=False,
-        highlight=False,
-    )
+    _plain(f"Provisioning: {data.get('status', 'unchanged')}")
     for step in cast("list[object]", steps):
         if not isinstance(step, dict):
             continue
@@ -711,11 +674,7 @@ def _render_provisioning_outcome(outcome: ProvisionOutcome | None) -> None:
         phrase = _provision_action_phrase(step_map)
         detail = str(step_map.get("detail", "")).strip()
         suffix = f" ({detail})" if detail else ""
-        _cli.console.print(
-            f"  {label}: {phrase}{suffix}",
-            markup=False,
-            highlight=False,
-        )
+        _plain(f"  {label}: {phrase}{suffix}")
 
 
 def _render_uninstall_report(report: Any) -> None:
@@ -725,15 +684,15 @@ def _render_uninstall_report(report: Any) -> None:
         "dry_run": "vaultspec-rag uninstall (dry-run; use --force to apply)",
     }.get(report.action, "vaultspec-rag uninstall")
     dry_run = report.action == "dry_run"
-    _cli.console.print(title, markup=False, highlight=False)
-    _cli.console.print(f"Target: {report.target}", markup=False, highlight=False)
+    _plain(title)
+    _plain(f"Target: {report.target}")
     if report.removed:
         verb = "would remove" if dry_run else "removed"
         _cli.console.print(
-            f"{verb} {_counted(len(report.removed), 'bundled source file')}:"
+            f"{verb} {_counted_unit(len(report.removed), 'bundled source file')}:"
         )
         for rel in report.removed:
-            _cli.console.print(f"  - {rel}", markup=False, highlight=False)
+            _plain(f"  - {rel}")
     if report.data_removed:
         verb = "would remove" if dry_run else "removed"
         _cli.console.print(f"{verb} .vault/data/ index data")
@@ -743,21 +702,13 @@ def _render_uninstall_report(report: Any) -> None:
     _render_provider_sync(report)
     _render_mcp_extra(report)
     tc_action = getattr(report, "torch_config_action", "skipped")
-    _cli.console.print(
-        f"PyTorch configuration: {_action_label(tc_action)}",
-        markup=False,
-        highlight=False,
-    )
+    _plain(f"PyTorch configuration: {_action_label(tc_action)}")
     td_action = getattr(report, "torch_direct_dep_action", "skipped")
     if td_action not in ("skipped",):
         td_location = getattr(report, "torch_direct_dep_location", "")
         suffix = f" ({td_location})" if td_location else ""
-        _cli.console.print(
-            f"PyTorch dependency: {_action_label(td_action)}{suffix}",
-            markup=False,
-            highlight=False,
-        )
+        _plain(f"PyTorch dependency: {_action_label(td_action)}{suffix}")
     for conflict in getattr(report, "torch_config_conflicts", []):
-        _cli.console.print(f"  conflict: {conflict}", markup=False, highlight=False)
+        _plain(f"  conflict: {conflict}")
     for warning in report.warnings:
         _print_warning_or_note(warning)

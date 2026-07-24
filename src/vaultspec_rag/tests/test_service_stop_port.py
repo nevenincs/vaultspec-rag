@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import contextlib
 import json
-import socket
 import subprocess
 import sys
 import time
@@ -28,6 +27,7 @@ from ..cli._service_lifecycle import _service_pid_on_port, _stop_service_on_port
 from ..cli._service_status import _write_service_status
 from ..cli._service_stop import _orphan_daemon_pids
 from ..config import reset_config
+from ._ports import free_loopback_port
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -37,15 +37,9 @@ pytestmark = [pytest.mark.unit]
 runner = CliRunner()
 
 
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
-
-
 class TestServicePidOnPort:
     def test_free_port_resolves_to_none(self) -> None:
-        assert _service_pid_on_port(_free_port()) is None
+        assert _service_pid_on_port(free_loopback_port()) is None
 
 
 class TestStopServiceOnPort:
@@ -54,7 +48,7 @@ class TestStopServiceOnPort:
     ) -> None:
         # A free port has no service to stop; the call must be a clean no-op that
         # never terminates anything.
-        _stop_service_on_port(_free_port())
+        _stop_service_on_port(free_loopback_port())
         out = capsys.readouterr().out.lower()
         assert "not running" in out
 
@@ -63,7 +57,7 @@ class TestStopCliPortOption:
     def test_stop_accepts_port_option_with_no_service(self) -> None:
         # The pre-fix defect was a hard `No such option '--port'`. The option
         # now exists, and stopping a free port exits 0 with "not running".
-        port = _free_port()
+        port = free_loopback_port()
         result = runner.invoke(app, ["server", "stop", "--port", str(port)])
         assert result.exit_code == 0, result.output
         assert "no such option" not in result.output.lower()
@@ -257,8 +251,8 @@ class TestOrphanReapSafety:
         )
         reset_config()
 
-        port = _free_port()
-        foreign_port = _free_port()
+        port = free_loopback_port()
+        foreign_port = free_loopback_port()
         procs: list[subprocess.Popen[bytes]] = []
         try:
             singleton = _spawn_witness_daemon(port)
@@ -312,7 +306,7 @@ class TestOrphanReapSafety:
         )
         reset_config()
 
-        port = _free_port()
+        port = free_loopback_port()
         procs: list[subprocess.Popen[bytes]] = []
         try:
             singleton = _spawn_witness_daemon(port)
@@ -367,7 +361,7 @@ class TestOrphanReapSafety:
         )
         reset_config()
 
-        port = _free_port()
+        port = free_loopback_port()
         procs: list[subprocess.Popen[bytes]] = []
         try:
             singleton = _spawn_lock_holding_daemon(port)

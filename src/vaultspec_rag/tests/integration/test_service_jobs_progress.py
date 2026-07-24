@@ -12,11 +12,12 @@ from typing import ClassVar
 from typer.testing import CliRunner
 
 from ...cli import app
+from .._http_stubs import QuietHandler
 
 runner = CliRunner()
 
 
-class _JobsHTTPHandler(http.server.BaseHTTPRequestHandler):
+class _JobsHTTPHandler(QuietHandler):
     payloads: ClassVar[list[dict[str, object]]] = []
 
     def do_GET(self) -> None:
@@ -25,9 +26,6 @@ class _JobsHTTPHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(json.dumps(payload).encode("utf-8"))
-
-    def log_message(self, format: str, *args: object) -> None:
-        _ = format, args
 
 
 @contextlib.contextmanager

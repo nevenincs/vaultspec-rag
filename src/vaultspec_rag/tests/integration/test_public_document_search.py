@@ -12,25 +12,13 @@ from ..._public_search import (
     search_documents,
 )
 from ...api import index_documents
-from ...indexer._content_policy import (
-    ContentKind,
-    ContentRoute,
-    RootContentPolicy,
-    SourceProfileVersion,
-)
 from ...registry import get_registry
+from ._helpers import _document_policy
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = pytest.mark.integration
-
-
-def _document_policy() -> RootContentPolicy:
-    return RootContentPolicy(
-        SourceProfileVersion.CONVENTIONAL_V1,
-        (ContentRoute("records/*.txt", ContentKind.DOCUMENT),),
-    )
 
 
 def test_empty_document_and_combined_search_need_no_model(tmp_path: Path) -> None:
@@ -63,7 +51,7 @@ def test_non_empty_public_facade_applies_document_owned_combined_filters(
     indexed = index_documents(
         tmp_path,
         full=True,
-        content_policy=_document_policy(),
+        content_policy=_document_policy("records/*.txt"),
     )
     try:
         assert indexed.total >= 2

@@ -14,9 +14,10 @@ Rebind discipline (mirrors the ``cli`` split's monkeypatch handling):
 - ``_watcher_tasks``, ``_watcher_stops``, ``_watcher_lock`` are mutated
   *in place* (dict insert/pop, lock acquire) and may be imported by
   reference.
-- ``_registry``, ``_http_mode``, ``_SERVICE_TOKEN``, ``_start_time``
-  are *reassigned* at runtime (``main`` sets ``_http_mode``;
-  ``service_lifespan`` sets ``_start_time``/``_SERVICE_TOKEN``; tests
+- ``_registry``, ``_http_mode``, ``_SERVICE_TOKEN``, ``_start_time``,
+  ``_start_wall_time`` are *reassigned* at runtime (``main`` sets
+  ``_http_mode``; ``service_lifespan`` sets the start stamps and
+  ``_SERVICE_TOKEN``; tests
   rebind ``_registry``). Consumers must read them at call time through
   ``import vaultspec_rag.server as _m`` so a rebind on the package
   namespace is observed.
@@ -28,6 +29,8 @@ import logging
 import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from ..serviceclient._discovery import HEARTBEAT_STALENESS_SECONDS
 
 __all__ = [
     "_HEARTBEAT_INTERVAL_SECONDS",
@@ -46,6 +49,7 @@ __all__ = [
     "_shutdown_hooks_installed",
     "_shutdown_recorded",
     "_start_time",
+    "_start_wall_time",
     "_watcher_lock",
     "_watcher_stops",
     "_watcher_tasks",
@@ -81,6 +85,15 @@ _watcher_tasks: dict[Path, asyncio.Task[None]] = {}
 _watcher_stops: dict[Path, asyncio.Event] = {}
 _watcher_lock = threading.Lock()
 _start_time: float = 0.0
+# Wall-clock twin of ``_start_time``, stamped in the same statement pair at
+# lifespan startup. ``_start_time`` is monotonic (correct for durations, not
+# comparable to anything epoch-stamped), while job records carry epoch
+# ``finished_at`` values, so placing a job relative to this process needs an
+# epoch witness. Both are kept: the monotonic one still yields uptime, and the
+# pair lets a reader derive the generation start two independent ways and take
+# the earlier, so a mid-run system-clock adjustment can only widen the window a
+# job is judged against, never narrow it.
+_start_wall_time: float = 0.0
 _http_mode: bool = False  # set once in main() before event loop starts
 _service_port: int = 0  # set by main() before the HTTP lifespan starts
 _launch_token: str = ""  # unique CLI launch-attempt witness, HTTP mode only
@@ -115,7 +128,7 @@ _SERVICE_TOKEN: str = ""
 # minute tolerates up to three missed beats before the verdict
 # flips to "crashed".
 _HEARTBEAT_INTERVAL_SECONDS = 15
-_HEARTBEAT_STALENESS_SECONDS = 60
+_HEARTBEAT_STALENESS_SECONDS = HEARTBEAT_STALENESS_SECONDS
 
 _MAX_QUERY_LEN = 10_000  # characters; prevents accidental OOM on huge queries
 

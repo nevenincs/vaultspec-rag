@@ -8,12 +8,10 @@ how the integration suite isolates runtime state.
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING
 
 import pytest
 
-from ..config import reset_config
 from ..storage_manifest import (
     classify_root,
     load_manifest,
@@ -27,31 +25,19 @@ from ..storage_manifest import (
 from ..store import root_collection_prefix
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
 
 @pytest.fixture(autouse=True)
-def isolated_status_dir(tmp_path: Path) -> Iterator[None]:
-    """Point the manifest's managed dir at a temp path via the env seam.
+def isolate_manifest_dir(isolated_status_dir: Path) -> None:
+    """Resolve the manifest under a temp managed dir for every test here.
 
-    Autouse so every test in this module resolves the manifest under an
-    isolated temp directory; tests never touch the real managed dir.
+    Autouse so no test in this module can reach the real managed dir; the
+    relocation itself is the shared ``isolated_status_dir`` fixture.
     """
-    key = "VAULTSPEC_RAG_STATUS_DIR"
-    prev = os.environ.get(key)
-    os.environ[key] = str(tmp_path / "managed")
-    reset_config()  # manifest resolves the status dir via get_config()
-    try:
-        yield
-    finally:
-        if prev is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = prev
-        reset_config()
+    del isolated_status_dir
 
 
 def test_record_and_load_round_trips(tmp_path: Path) -> None:

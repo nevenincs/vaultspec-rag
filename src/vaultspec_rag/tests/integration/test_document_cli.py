@@ -9,17 +9,12 @@ import pytest
 
 from ...indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
 from .._cli_helpers import app, runner
+from .._scaffold import make_workspace
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = pytest.mark.integration
-
-
-def _workspace(root: Path) -> Path:
-    (root / ".vault").mkdir()
-    (root / ".vaultspec").mkdir()
-    return root
 
 
 def _route_documents(root: Path) -> None:
@@ -40,7 +35,7 @@ extractor_version = "1"
 def test_document_and_combined_dry_runs_are_bounded_and_disjoint(
     tmp_path: Path,
 ) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     _route_documents(root)
     (root / "alpha.py").write_text("print('code')\n", encoding="utf-8")
     (root / "first.bin").write_bytes(b"first")
@@ -99,7 +94,7 @@ def test_unknown_source_type_is_a_structured_usage_error(
     tmp_path: Path,
     command: str,
 ) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     if command == "index":
         args = ["index", "--type", "mystery", "--dry-run", "--json"]
     elif command == "search":
@@ -116,7 +111,7 @@ def test_unknown_source_type_is_a_structured_usage_error(
 
 
 def test_legacy_docs_alias_remains_vault_not_document(tmp_path: Path) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     result = runner.invoke(
         app,
         ["--target", str(root), "index", "--type", "docs", "--dry-run", "--json"],
@@ -129,7 +124,7 @@ def test_legacy_docs_alias_remains_vault_not_document(tmp_path: Path) -> None:
 def test_empty_document_and_combined_search_are_real_model_free_cli_calls(
     tmp_path: Path,
 ) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     for source in ("document", "combined"):
         result = runner.invoke(
             app,
@@ -160,7 +155,7 @@ def test_empty_document_and_combined_search_are_real_model_free_cli_calls(
 def test_clean_and_status_expose_document_domain_and_support_profile(
     tmp_path: Path,
 ) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     cleaned = runner.invoke(
         app,
         ["--target", str(root), "clean", "document", "--yes", "--json"],

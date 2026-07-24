@@ -21,6 +21,7 @@ import pytest
 from typer.testing import CliRunner
 
 from ..cli import app
+from ._http_stubs import QuietHandler
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -46,7 +47,7 @@ _TEST_PROJECT_ROOT = os.path.abspath(
 )
 
 
-class _UpdatesHTTPHandler(http.server.BaseHTTPRequestHandler):
+class _UpdatesHTTPHandler(QuietHandler):
     payloads: ClassVar[list[dict[str, object]]] = []
     requests: ClassVar[list[dict[str, object]]] = []
 
@@ -68,11 +69,8 @@ class _UpdatesHTTPHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(payload).encode("utf-8"))
 
-    def log_message(self, format: str, *args: object) -> None:
-        _ = format, args
 
-
-class _SlowUpdatesHTTPHandler(http.server.BaseHTTPRequestHandler):
+class _SlowUpdatesHTTPHandler(QuietHandler):
     requests: ClassVar[list[dict[str, object]]] = []
     delay_seconds: ClassVar[float] = 0.5
 
@@ -87,9 +85,6 @@ class _SlowUpdatesHTTPHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         with contextlib.suppress(OSError):
             self.wfile.write(json.dumps({"started": True}).encode("utf-8"))
-
-    def log_message(self, format: str, *args: object) -> None:
-        _ = format, args
 
 
 @contextlib.contextmanager

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, NamedTuple, cast
 
-from ._cli_format import NOT_REPORTED, _counted_unit
+from ._cli_format import NOT_REPORTED, _counted_unit, _duration_phrase
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -85,25 +85,7 @@ def _plain_status_label(state: str) -> str:
 def _format_status_duration(raw: object) -> str:
     if not isinstance(raw, int | float):
         return NOT_REPORTED
-    seconds = max(0, int(float(raw)))
-    if seconds < 60:
-        return _counted_unit(seconds, "second")
-    minutes, seconds = divmod(seconds, 60)
-    if minutes < 60:
-        if seconds:
-            return (
-                f"{_counted_unit(minutes, 'minute')} {_counted_unit(seconds, 'second')}"
-            )
-        return _counted_unit(minutes, "minute")
-    hours, minutes = divmod(minutes, 60)
-    if hours < 24:
-        if minutes:
-            return f"{_counted_unit(hours, 'hour')} {_counted_unit(minutes, 'minute')}"
-        return _counted_unit(hours, "hour")
-    days, hours = divmod(hours, 24)
-    if hours:
-        return f"{_counted_unit(days, 'day')} {_counted_unit(hours, 'hour')}"
-    return _counted_unit(days, "day")
+    return _duration_phrase(max(0, int(float(raw))), days=True)
 
 
 def _format_started_label(raw: object) -> str:
@@ -280,6 +262,17 @@ STALLED_JOBS_FAMILY = "stalled_jobs"
 VECTOR_SERVICE_FAMILY = "vector_service"
 MODELS_FAMILY = "models"
 DOMAIN_INDEX_FAMILY = "domain_index"
+
+#: Families whose signal records something that HAPPENED, not something that
+#: IS. Such a signal explains a reason the service reported, but is never
+#: promoted to a cause on its own: the service alone decides whether a past
+#: failure still bears on the running process, and it bounds that judgement to
+#: the current generation. A renderer that promoted the signal anyway would
+#: restate a verdict the service deliberately withheld - listing a failure from
+#: a previous generation under "degraded because", which is the defect the
+#: generation bound exists to prevent. Every other family reports live state,
+#: so an unclaimed one is still worth surfacing.
+_HISTORICAL_FAMILIES = frozenset({FAILED_JOB_FAMILY})
 
 
 def _health_jobs(health: dict[str, object] | None) -> dict[str, object]:
@@ -517,7 +510,8 @@ def degradation_findings(
     whether or not it can be paired. The structured signals are the authority on
     where to look, so the remediation is derived from them rather than parsed
     out of the prose - a reworded reason loses its pairing, never its
-    visibility, and a proven signal no entry claimed is reported anyway.
+    visibility, and a proven current-state signal no entry claimed is reported
+    anyway.
 
     A service that reports no problem gets no findings even when a failed job
     sits in its history: history is reported elsewhere and is not a verdict on
@@ -530,7 +524,17 @@ def degradation_findings(
         return []
     unclaimed = _proven_findings(payload, time.time() if now is None else now)
     findings = [_reported_finding(entry, unclaimed) for entry in reported]
-    findings.extend(unclaimed.values())
+    # A reason that paired with no signal means the service named a cause in
+    # words this renderer does not recognise, and a historical signal may be
+    # precisely its explanation - so it is surfaced. When every reason found
+    # its signal, a leftover historical one explains nothing that was reported
+    # and promoting it would invent a cause the service did not claim.
+    unexplained = any(not finding.family for finding in findings)
+    findings.extend(
+        finding
+        for finding in unclaimed.values()
+        if unexplained or finding.family not in _HISTORICAL_FAMILIES
+    )
     return [finding for finding in findings if finding.cause]
 
 

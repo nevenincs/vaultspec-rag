@@ -7,12 +7,11 @@ advertise the descriptor without loading a model.
 
 from __future__ import annotations
 
-import subprocess
-import sys
-
 import pytest
 
 from vaultspec_rag import store_schema as ss
+
+from ._import_probe import assert_fresh_import_excludes, import_probe_source
 
 pytestmark = [pytest.mark.unit]
 
@@ -181,18 +180,4 @@ def test_store_schema_imports_no_torch() -> None:
     in ``sys.modules`` and mask a regression (mirrors the index-worker and MCP
     lazy-import guards).
     """
-    code = (
-        "import sys\n"
-        "import vaultspec_rag.store_schema\n"
-        "heavy = sorted(\n"
-        "    m for m in sys.modules if m == 'torch' or m.startswith('torch.')\n"
-        ")\n"
-        "assert not heavy, heavy\n"
-    )
-    proc = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert proc.returncode == 0, proc.stderr
+    assert_fresh_import_excludes(import_probe_source("vaultspec_rag.store_schema"))

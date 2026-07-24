@@ -10,7 +10,6 @@ the worker import chain stays torch-free with the preprocess modules wired in
 
 import pickle
 import shlex
-import subprocess
 import sys
 import textwrap
 from pathlib import Path
@@ -25,6 +24,7 @@ from ..indexer._preprocess_config import (
     PreprocessContext,
     PreprocessRule,
 )
+from ._import_probe import assert_fresh_import_excludes, import_probe_source
 
 pytestmark = [pytest.mark.unit]
 
@@ -182,20 +182,11 @@ def test_context_is_picklable(tmp_path: Path) -> None:
 
 
 def test_worker_import_chain_with_preprocess_is_torch_free() -> None:
-    code = (
-        "import sys\n"
-        "import vaultspec_rag.indexer._chunk_worker\n"
-        "import vaultspec_rag.indexer._preprocess_runner\n"
-        "import vaultspec_rag.indexer._preprocess_cache\n"
-        "import vaultspec_rag.indexer._preprocess_config\n"
-        "torch_mods = sorted(m for m in sys.modules "
-        "if m == 'torch' or m.startswith('torch.'))\n"
-        "assert not torch_mods, torch_mods\n"
+    assert_fresh_import_excludes(
+        import_probe_source(
+            "vaultspec_rag.indexer._chunk_worker",
+            "vaultspec_rag.indexer._preprocess_runner",
+            "vaultspec_rag.indexer._preprocess_cache",
+            "vaultspec_rag.indexer._preprocess_config",
+        )
     )
-    completed = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert completed.returncode == 0, completed.stderr

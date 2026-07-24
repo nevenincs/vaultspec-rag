@@ -27,6 +27,8 @@ related:
   - '[[2026-07-24-index-cuda-ceiling-P04-S16]]'
   - '[[2026-07-24-index-cuda-ceiling-P04-S17]]'
   - '[[2026-07-24-index-cuda-ceiling-P04-S18]]'
+  - '[[2026-07-24-index-cuda-ceiling-P04-S19]]'
+  - '[[2026-07-24-index-cuda-ceiling-P04-summary]]'
   - '[[2026-07-24-index-cuda-ceiling-adr]]'
   - '[[2026-07-24-index-cuda-ceiling-plan]]'
   - '[[2026-07-24-index-cuda-ceiling-research]]'
@@ -65,6 +67,8 @@ Auto-generated index of all documents tagged with `#index-cuda-ceiling`.
 - `2026-07-24-index-cuda-ceiling-P04-S16` - prove the cross-job contamination guard fails when enforcement reads the process-global counter and passes when it reads the captured peak, recording both directions
 - `2026-07-24-index-cuda-ceiling-P04-S17` - prove the double-count guard fails when the baseline is subtracted from only one side of the ceiling comparison, recording both directions
 - `2026-07-24-index-cuda-ceiling-P04-S18` - run the full unit suite and the citation-gate lint over every changed file
+- `2026-07-24-index-cuda-ceiling-P04-S19` - restart the service on the built code and confirm a live feature-profile corpus rebuild completes with no spurious cuda_memory_ceiling failures under concurrency
+- `2026-07-24-index-cuda-ceiling-P04-summary` - `index-cuda-ceiling` `P04` summary
 
 ### plan
 

@@ -303,9 +303,10 @@ class VaultStore(_VaultSearchMixin):
         # descriptor advertises, so the advertised dimension always equals what
         # the live collection is built with - even under a config override.
         self._embedding_dim = embedding_dim or store_schema.effective_dense_dim()
-        self._vault_ensured = False
-        self._code_ensured = False
-        self._document_ensured = False
+        # One latch per collection rather than a field per collection: the
+        # create-once fast path is identical for all three, and three parallel
+        # booleans invite a drop that clears the wrong one.
+        self._ensured: dict[str, bool] = {}
         # Best-effort storage-manifest attribution is recorded at most once per
         # store instance (server mode only) so it never re-enters the hot path.
         self._manifest_recorded = False
@@ -698,29 +699,30 @@ class VaultStore(_VaultSearchMixin):
                     f"{collection_dir}; same-name recreate would resurrect points"
                 )
 
+    def _drop_collection(self, collection: str) -> None:
+        """Drop one collection if it exists and clear its ensured latch.
+
+        The latch is cleared inside the lifecycle lock, alongside the drop: a
+        latch that stayed set past the drop would let the next caller skip
+        re-creation and address a collection that no longer exists.
+        """
+        with self._lifecycle_lock, self._point_lock(collection):
+            if self._collection_exists(collection):
+                self._delete_collection_hard(collection)
+                logger.info("Dropped collection '%s'", collection)
+            self._ensured[collection] = False
+
     def drop_table(self) -> None:
         """Drop the vault_docs collection if it exists."""
-        with self._lifecycle_lock, self._point_lock(self.TABLE_NAME):
-            if self._collection_exists(self.TABLE_NAME):
-                self._delete_collection_hard(self.TABLE_NAME)
-                logger.info("Dropped collection '%s'", self.TABLE_NAME)
-            self._vault_ensured = False
+        self._drop_collection(self.TABLE_NAME)
 
     def drop_code_table(self) -> None:
         """Drop the codebase_docs collection if it exists."""
-        with self._lifecycle_lock, self._point_lock(self.CODE_TABLE_NAME):
-            if self._collection_exists(self.CODE_TABLE_NAME):
-                self._delete_collection_hard(self.CODE_TABLE_NAME)
-                logger.info("Dropped collection '%s'", self.CODE_TABLE_NAME)
-            self._code_ensured = False
+        self._drop_collection(self.CODE_TABLE_NAME)
 
     def drop_document_table(self) -> None:
         """Drop only the independently owned document collection."""
-        with self._lifecycle_lock, self._point_lock(self.DOCUMENT_TABLE_NAME):
-            if self._collection_exists(self.DOCUMENT_TABLE_NAME):
-                self._delete_collection_hard(self.DOCUMENT_TABLE_NAME)
-                logger.info("Dropped collection '%s'", self.DOCUMENT_TABLE_NAME)
-            self._document_ensured = False
+        self._drop_collection(self.DOCUMENT_TABLE_NAME)
 
     def _record_manifest(self) -> None:
         """Record this root in the storage manifest (server mode only).
@@ -774,64 +776,75 @@ class VaultStore(_VaultSearchMixin):
                 exc_info=True,
             )
 
-    def ensure_table(self) -> None:
-        """Create the vault_docs collection if it doesn't exist."""
-        from qdrant_client import models
+    def _ensure_payload_indexes(
+        self,
+        collection: str,
+        keyword_fields: Sequence[str],
+        integer_fields: Sequence[str],
+    ) -> None:
+        """Create every declared payload index for one collection.
 
-        self._record_manifest()
-        with self._lifecycle_lock:
-            if self._vault_ensured:
-                return
-
-            if self._collection_exists(self.TABLE_NAME):
-                self._vault_ensured = True
-                return
-
-            self._ensure_collection(self.TABLE_NAME)
-
-            # ``doc_id`` backs delete-by-document and chunk grouping;
-            # ``chunk_ordinal`` backs the doc-level listing filter. The field
-            # sets are declared once in ``store_schema``.
-            for fname in store_schema.VAULT_KEYWORD_INDEXES:
-                self._create_payload_index(
-                    self.TABLE_NAME,
-                    fname,
-                    models.PayloadSchemaType.KEYWORD,
-                )
-            for fname in store_schema.VAULT_INTEGER_INDEXES:
-                self._create_payload_index(
-                    self.TABLE_NAME,
-                    fname,
-                    models.PayloadSchemaType.INTEGER,
-                )
-            self._vault_ensured = True
-
-    def _ensure_code_indexes(self) -> None:
-        """Create every declared code payload index (idempotent).
-
-        ``node_type`` is in the KEYWORD set so the MCP
-        ``search_codebase(node_type=...)`` filter does not fall back to a linear
-        scan on remote Qdrant deployments, ``domain`` backs the noise
-        exclude/only pushdown, and the document-preprocessing hook locators
-        (#185) keep a typed index per value kind. The field sets are declared
-        once in ``store_schema``. ``create_payload_index`` is a no-op when the
-        index already exists, so this is safe to call on a pre-existing
-        collection to backfill a newly added index (e.g. ``domain``).
+        ``create_payload_index`` is a no-op when the index already exists, so
+        this is safe to call against a pre-existing collection to backfill a
+        newly declared index. The field sets themselves are declared once in
+        ``store_schema``; this is the single loop that applies them.
         """
         from qdrant_client import models
 
-        for fname in store_schema.CODE_KEYWORD_INDEXES:
+        for fname in keyword_fields:
             self._create_payload_index(
-                self.CODE_TABLE_NAME,
+                collection,
                 fname,
                 models.PayloadSchemaType.KEYWORD,
             )
-        for fname in store_schema.CODE_INTEGER_INDEXES:
+        for fname in integer_fields:
             self._create_payload_index(
-                self.CODE_TABLE_NAME,
+                collection,
                 fname,
                 models.PayloadSchemaType.INTEGER,
             )
+
+    def _ensure_table(
+        self,
+        collection: str,
+        keyword_fields: Sequence[str],
+        integer_fields: Sequence[str],
+        *,
+        backfill_existing: bool,
+    ) -> None:
+        """Create one collection and its payload indexes, at most once.
+
+        ``backfill_existing`` decides what happens when the collection is
+        already present: ``True`` re-runs the (idempotent) index creation so a
+        newly declared index appears on the next open, ``False`` accepts the
+        collection as-is and only latches it. The distinction is real and the
+        two behaviours are not interchangeable, so callers state it.
+        """
+        self._record_manifest()
+        with self._lifecycle_lock:
+            if self._ensured.get(collection):
+                return
+            exists = self._collection_exists(collection)
+            if exists and not backfill_existing:
+                self._ensured[collection] = True
+                return
+            if not exists:
+                self._ensure_collection(collection)
+            self._ensure_payload_indexes(collection, keyword_fields, integer_fields)
+            self._ensured[collection] = True
+
+    def ensure_table(self) -> None:
+        """Create the vault_docs collection if it doesn't exist.
+
+        ``doc_id`` backs delete-by-document and chunk grouping; ``chunk_ordinal``
+        backs the doc-level listing filter.
+        """
+        self._ensure_table(
+            self.TABLE_NAME,
+            store_schema.VAULT_KEYWORD_INDEXES,
+            store_schema.VAULT_INTEGER_INDEXES,
+            backfill_existing=False,
+        )
 
     def code_collection_exists(self) -> bool:
         """Return whether the code collection currently exists in storage.
@@ -848,46 +861,26 @@ class VaultStore(_VaultSearchMixin):
 
         On an existing collection the declared indexes are still ensured so a
         newly added KEYWORD index (e.g. ``domain``) is backfilled on the next
-        open rather than requiring a full drop-and-reindex.
+        open rather than requiring a full drop-and-reindex. ``node_type`` is in
+        the KEYWORD set so the MCP ``search_codebase(node_type=...)`` filter
+        does not fall back to a linear scan on remote Qdrant deployments, and
+        ``domain`` backs the noise exclude/only pushdown.
         """
-        self._record_manifest()
-        with self._lifecycle_lock:
-            if self._code_ensured:
-                return
-
-            if not self._collection_exists(self.CODE_TABLE_NAME):
-                self._ensure_collection(self.CODE_TABLE_NAME)
-
-            self._ensure_code_indexes()
-            self._code_ensured = True
-
-    def _ensure_document_indexes(self) -> None:
-        """Create every declared document payload index idempotently."""
-        from qdrant_client import models
-
-        for fname in store_schema.DOCUMENT_KEYWORD_INDEXES:
-            self._create_payload_index(
-                self.DOCUMENT_TABLE_NAME,
-                fname,
-                models.PayloadSchemaType.KEYWORD,
-            )
-        for fname in store_schema.DOCUMENT_INTEGER_INDEXES:
-            self._create_payload_index(
-                self.DOCUMENT_TABLE_NAME,
-                fname,
-                models.PayloadSchemaType.INTEGER,
-            )
+        self._ensure_table(
+            self.CODE_TABLE_NAME,
+            store_schema.CODE_KEYWORD_INDEXES,
+            store_schema.CODE_INTEGER_INDEXES,
+            backfill_existing=True,
+        )
 
     def ensure_document_table(self) -> None:
         """Create the document collection and its declared payload indexes."""
-        self._record_manifest()
-        with self._lifecycle_lock:
-            if self._document_ensured:
-                return
-            if not self._collection_exists(self.DOCUMENT_TABLE_NAME):
-                self._ensure_collection(self.DOCUMENT_TABLE_NAME)
-            self._ensure_document_indexes()
-            self._document_ensured = True
+        self._ensure_table(
+            self.DOCUMENT_TABLE_NAME,
+            store_schema.DOCUMENT_KEYWORD_INDEXES,
+            store_schema.DOCUMENT_INTEGER_INDEXES,
+            backfill_existing=True,
+        )
 
     @staticmethod
     def _document_chunk_payload(
@@ -1661,6 +1654,16 @@ class VaultStore(_VaultSearchMixin):
             offset = next_offset
         return ids
 
+    def _count_collection(self, collection: str) -> int:
+        """Return the point count for one already-ensured collection."""
+        with self._point_lock(collection):
+            return self._retried(
+                f"count {collection}",
+                lambda timeout: (
+                    self.client.count(collection_name=collection, timeout=timeout).count
+                ),
+            )
+
     def count(self) -> int:
         """Return total number of indexed documents in vault_docs.
 
@@ -1668,15 +1671,7 @@ class VaultStore(_VaultSearchMixin):
             Point count in the vault_docs collection.
         """
         self.ensure_table()
-        with self._point_lock(self.TABLE_NAME):
-            return self._retried(
-                f"count {self.TABLE_NAME}",
-                lambda timeout: (
-                    self.client.count(
-                        collection_name=self.TABLE_NAME, timeout=timeout
-                    ).count
-                ),
-            )
+        return self._count_collection(self.TABLE_NAME)
 
     def count_code(self) -> int:
         """Return total number of indexed codebase chunks.
@@ -1685,28 +1680,12 @@ class VaultStore(_VaultSearchMixin):
             Point count in the codebase_docs collection.
         """
         self.ensure_code_table()
-        with self._point_lock(self.CODE_TABLE_NAME):
-            return self._retried(
-                f"count {self.CODE_TABLE_NAME}",
-                lambda timeout: (
-                    self.client.count(
-                        collection_name=self.CODE_TABLE_NAME, timeout=timeout
-                    ).count
-                ),
-            )
+        return self._count_collection(self.CODE_TABLE_NAME)
 
     def count_document(self) -> int:
         """Return the point count in the document collection."""
         self.ensure_document_table()
-        with self._point_lock(self.DOCUMENT_TABLE_NAME):
-            return self._retried(
-                f"count {self.DOCUMENT_TABLE_NAME}",
-                lambda timeout: (
-                    self.client.count(
-                        collection_name=self.DOCUMENT_TABLE_NAME, timeout=timeout
-                    ).count
-                ),
-            )
+        return self._count_collection(self.DOCUMENT_TABLE_NAME)
 
     def get_by_id(self, doc_id: str) -> dict[str, Any] | None:
         """Retrieve a single document by ID, or ``None`` if not found.

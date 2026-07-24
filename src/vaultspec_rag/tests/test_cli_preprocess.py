@@ -24,6 +24,7 @@ from ..cli import app
 from ..cli._index import _apply_preprocess_off_env
 from ..cli._process import _service_child_env
 from ..config import EnvVar, get_config, reset_config
+from ._scaffold import make_workspace
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -73,12 +74,6 @@ def _off_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     """Switch the current test to the off (kill-switch) mode."""
     monkeypatch.setenv(EnvVar.PREPROCESS.value, "off")
     reset_config()
-
-
-def _workspace(tmp_path: Path) -> Path:
-    (tmp_path / ".vault").mkdir()
-    (tmp_path / ".vaultspec").mkdir()
-    return tmp_path
 
 
 def _write_extractor(root: Path) -> Path:
@@ -166,14 +161,14 @@ def test_trust_verbs_are_removed() -> None:
 
 
 def test_list_empty(tmp_path: Path) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     result = runner.invoke(app, ["--target", str(root), "preprocess", "list", "--json"])
     assert result.exit_code == 0
     assert _json(result.output)["data"]["rules"] == []
 
 
 def test_list_shows_rule(tmp_path: Path) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     _config_with_rule(root)
     result = runner.invoke(app, ["--target", str(root), "preprocess", "list", "--json"])
     assert result.exit_code == 0
@@ -187,7 +182,7 @@ def test_list_shows_rule(tmp_path: Path) -> None:
 
 
 def test_list_human_output_uses_plain_labels(tmp_path: Path) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     _config_with_rule(root)
     result = runner.invoke(app, ["--target", str(root), "preprocess", "list"])
     assert result.exit_code == 0
@@ -206,7 +201,7 @@ def test_list_human_output_uses_plain_labels(tmp_path: Path) -> None:
 
 
 def test_check_valid(tmp_path: Path) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     _config_with_rule(root)
     result = runner.invoke(
         app, ["--target", str(root), "preprocess", "check", "--json"]
@@ -222,7 +217,7 @@ def test_check_valid(tmp_path: Path) -> None:
 
 
 def test_check_valid_human_output_is_user_facing(tmp_path: Path) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     _config_with_rule(root)
     result = runner.invoke(app, ["--target", str(root), "preprocess", "check"])
     assert result.exit_code == 0
@@ -232,7 +227,7 @@ def test_check_valid_human_output_is_user_facing(tmp_path: Path) -> None:
 
 
 def test_check_valid_zero_rules_uses_plain_absence_language(tmp_path: Path) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     result = runner.invoke(app, ["--target", str(root), "preprocess", "check"])
 
     assert result.exit_code == 0, result.output
@@ -244,7 +239,7 @@ def test_check_valid_zero_rules_uses_plain_absence_language(tmp_path: Path) -> N
 
 
 def test_check_invalid_exits_nonzero(tmp_path: Path) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     (root / ".vaultragpreprocess.toml").write_text(
         "not = = valid [[[", encoding="utf-8"
     )
@@ -256,7 +251,7 @@ def test_check_invalid_exits_nonzero(tmp_path: Path) -> None:
 
 
 def test_check_invalid_rule_exits_nonzero(tmp_path: Path) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     # A rule with neither command nor entry_point is invalid.
     (root / ".vaultragpreprocess.toml").write_text(
         '[[rule]]\npattern = "*.pdf"\non_error = "skip"\n', encoding="utf-8"
@@ -266,7 +261,7 @@ def test_check_invalid_rule_exits_nonzero(tmp_path: Path) -> None:
 
 
 def test_run_one_no_match(tmp_path: Path) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     _config_with_rule(root)
     (root / "notes.txt").write_text("hello", encoding="utf-8")
     result = runner.invoke(
@@ -277,7 +272,7 @@ def test_run_one_no_match(tmp_path: Path) -> None:
 
 
 def test_run_one_matches_and_runs(tmp_path: Path) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     _config_with_rule(root)
     (root / "report.pdf").write_bytes(b"\x00\x01binary")
     result = runner.invoke(
@@ -292,7 +287,7 @@ def test_run_one_matches_and_runs(tmp_path: Path) -> None:
 
 
 def test_run_one_human_output_uses_plain_result_language(tmp_path: Path) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     _config_with_rule(root)
     (root / "report.pdf").write_bytes(b"\x00\x01binary")
     # Default mode resolves the rules for any root - no trust act is needed, and
@@ -313,7 +308,7 @@ def test_run_one_human_output_uses_plain_result_language(tmp_path: Path) -> None
 def test_run_one_gated_off_message(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     _config_with_rule(root)
     (root / "report.pdf").write_bytes(b"\x00\x01binary")
     _off_mode(monkeypatch)
@@ -327,7 +322,7 @@ def test_run_one_gated_off_message(
 def test_run_one_gated_off_json_reports_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     _config_with_rule(root)
     (root / "report.pdf").write_bytes(b"\x00\x01binary")
     _off_mode(monkeypatch)
@@ -345,7 +340,7 @@ def test_run_one_gated_off_json_reports_mode(
 
 
 def test_status_default_mode_reports_would_run(tmp_path: Path) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     _config_with_rule(root)
     result = runner.invoke(
         app, ["--target", str(root), "preprocess", "status", "--json"]
@@ -368,7 +363,7 @@ def test_status_default_mode_reports_would_run(tmp_path: Path) -> None:
 
 
 def test_status_no_config_reports_no_rules(tmp_path: Path) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     result = runner.invoke(
         app, ["--target", str(root), "preprocess", "status", "--json"]
     )
@@ -383,7 +378,7 @@ def test_status_no_config_reports_no_rules(tmp_path: Path) -> None:
 def test_status_off_mode_reports_off(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     _config_with_rule(root)
     _off_mode(monkeypatch)
     result = runner.invoke(
@@ -397,7 +392,7 @@ def test_status_off_mode_reports_off(
 
 
 def test_status_human_output_reports_direct_execution(tmp_path: Path) -> None:
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     _config_with_rule(root)
     result = runner.invoke(app, ["--target", str(root), "preprocess", "status"])
     assert result.exit_code == 0, result.output
@@ -460,7 +455,7 @@ def test_removed_trust_all_knob_is_gone() -> None:
 def test_index_rejects_removed_unsandboxed_flag(tmp_path: Path) -> None:
     # The --preprocess-unsandboxed escape hatch was removed from `index`; the
     # parser must reject it as an unknown option.
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     result = runner.invoke(
         app,
         [
@@ -481,7 +476,7 @@ def test_index_preprocess_flag_warns_when_service_targeted(tmp_path: Path) -> No
     # flag does not apply to a delegated run, so the CLI warns loudly (rather
     # than silently accepting it) and still proceeds to delegation - which then
     # fails against the unreachable fake port (exit 1, no fallback).
-    root = _workspace(tmp_path)
+    root = make_workspace(tmp_path)
     result = runner.invoke(
         app,
         [

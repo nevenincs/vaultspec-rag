@@ -42,11 +42,26 @@ SERVICE_DISCOVERY_VERSION = 1
 SERVICE_PHASE_WARMING = "warming"
 SERVICE_PHASE_RUNNING = "running"
 
+#: The heartbeat contract, defined once for every process that participates in
+#: it. The daemon writes ``last_heartbeat`` into the discovery file four times a
+#: minute; a reader calls the file stale once its age exceeds this window, which
+#: tolerates three missed beats before the verdict flips to "crashed".
+#:
+#: It lives in this package because it is the only one all three participants
+#: can already import: the daemon writes the beat, the CLI judges it, and this
+#: client falls back to it. The CLI must not import ``server`` (that would pull
+#: the whole service stack into CLI startup) and ``server`` must not import
+#: ``cli``, so before this the value existed as three hand-synchronised copies -
+#: one of which carried a comment instructing the next reader to "bump both in
+#: lockstep". A threshold that must be edited in three places to stay correct
+#: will eventually be edited in one, and the symptom is a status surface that
+#: calls a live daemon dead.
+HEARTBEAT_STALENESS_SECONDS = 60
+
 #: Fallback staleness window when a discovery payload omits ``stale_after_s``
-#: (a pre-upgrade pointer). Mirrors ``server._HEARTBEAT_STALENESS_SECONDS``; the
-#: payload's own ``stale_after_s`` is preferred when present so the threshold
-#: tracks the writing daemon, not this consumer.
-_HEARTBEAT_STALENESS_FALLBACK_SECONDS = 60
+#: (a pre-upgrade pointer). The payload's own ``stale_after_s`` is preferred when
+#: present so the threshold tracks the writing daemon, not this consumer.
+_HEARTBEAT_STALENESS_FALLBACK_SECONDS = HEARTBEAT_STALENESS_SECONDS
 
 #: Resolution outcomes. ``ready`` carries a usable address; ``absent`` means no
 #: machine singleton is held, so nothing is running; ``degraded`` means a live

@@ -17,7 +17,6 @@ import os
 import socket
 import subprocess
 import sys
-from typing import TYPE_CHECKING
 
 import pytest
 from typer.testing import CliRunner
@@ -29,11 +28,6 @@ from ..cli._service_lifecycle import (
     _stop_success,
     _terminate_and_confirm,
 )
-from ..config import EnvVar, reset_config
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-    from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
@@ -44,36 +38,6 @@ def test_server_stop_help_renders_json_flag() -> None:
     result = runner.invoke(app, ["server", "stop", "--help"])
     assert result.exit_code == 0
     assert "--json" in result.output
-
-
-@pytest.fixture
-def _isolated_singleton(  # pyright: ignore[reportUnusedFunction]
-    tmp_path: Path,
-) -> Iterator[None]:
-    """Isolate the managed-singleton paths so stop touches only tmp.
-
-    Sets both the status dir AND the qdrant storage dir (the machine lock
-    lives beside the latter), per the managed-singleton-paths isolation rule,
-    so the test never touches the operator's real service or lock.
-    """
-    status_key = EnvVar.STATUS_DIR.value
-    storage_key = EnvVar.QDRANT_STORAGE_DIR.value
-    prior = {
-        status_key: os.environ.get(status_key),
-        storage_key: os.environ.get(storage_key),
-    }
-    os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path / "status")
-    os.environ[EnvVar.QDRANT_STORAGE_DIR.value] = str(tmp_path / "qdrant" / "storage")
-    reset_config()
-    try:
-        yield
-    finally:
-        for key, value in prior.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-        reset_config()
 
 
 class TestStopOutcomeHelpers:
@@ -136,7 +100,7 @@ class TestStopOutcomeHelpers:
 class TestStopLiveOutcomes:
     """The stageable stop outcomes through the real CLI wiring."""
 
-    @pytest.mark.usefixtures("_isolated_singleton")
+    @pytest.mark.usefixtures("isolated_singleton_dirs")
     def test_nothing_to_stop_is_already_stopped_json(self) -> None:
         # No service.json in the isolated status dir and no machine-lock
         # holder: the idempotent success, exit 0.
@@ -146,7 +110,7 @@ class TestStopLiveOutcomes:
         assert env["ok"] is True
         assert env["data"]["status"] == "already_stopped"
 
-    @pytest.mark.usefixtures("_isolated_singleton")
+    @pytest.mark.usefixtures("isolated_singleton_dirs")
     def test_silent_port_is_already_stopped_json(self) -> None:
         # Nothing answers on a fresh ephemeral port: the --port variant's
         # idempotent success.
@@ -161,7 +125,7 @@ class TestStopLiveOutcomes:
         assert env["data"]["status"] == "already_stopped"
         assert env["data"]["port"] == port
 
-    @pytest.mark.usefixtures("_isolated_singleton")
+    @pytest.mark.usefixtures("isolated_singleton_dirs")
     def test_dead_recorded_pid_is_cleaned_json(self) -> None:
         # A discovery file recording a confirmed-dead pid is stale state the
         # stop removes: status `cleaned`, exit 0.
@@ -187,7 +151,7 @@ class TestStopLiveOutcomes:
         assert "initiator_cmd" not in env["data"]
         assert "initiator_cwd" not in env["data"]
 
-    @pytest.mark.usefixtures("_isolated_singleton")
+    @pytest.mark.usefixtures("isolated_singleton_dirs")
     def test_live_unconfirmed_pid_is_identity_unconfirmed(self) -> None:
         # A live recorded pid whose identity cannot be confirmed as ours is
         # left running - the one genuine failure, exit 1 in BOTH modes. The
@@ -255,7 +219,7 @@ class TestShutdownAttribution:
         assert data["initiator_cmd"]
         assert data["initiator_cwd"] == os.getcwd()
 
-    @pytest.mark.usefixtures("_isolated_singleton")
+    @pytest.mark.usefixtures("isolated_singleton_dirs")
     def test_terminate_writes_initiator_attribution_to_log(self) -> None:
         # Terminate a real non-python child (a python child would be confirmed
         # ours by the tokenless fallback, and CTRL_BREAK on a shared Windows

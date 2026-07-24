@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#ci-self-hosted-gpu-runner'
-date: '2026-07-23'
-modified: '2026-07-23'
+date: '2026-07-24'
+modified: '2026-07-24'
 related:
   - '[[2026-07-23-ci-self-hosted-gpu-runner-adr]]'
   - '[[2026-07-23-ci-self-hosted-gpu-runner-research]]'

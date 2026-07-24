@@ -655,14 +655,25 @@ class TestJobsHumanSummarySignpost:
         assert "Scripting:" in out
 
     def test_json_help_warns_about_the_summary_words(self) -> None:
-        import re
+        # Read the declared option metadata rather than regexing the module
+        # source. The source form is a formatting choice - `help="..."` and
+        # `help=("..." "...")` declare the same option - so a regex demanding
+        # the parenthesised form fails on a pure reformat that changed no
+        # behaviour. Reading the file also made this assertion sensitive to an
+        # edit landing mid-run, because `inspect.getsource` goes through
+        # `linecache`. The declared metadata is what Typer renders, which is
+        # the contract this test exists to defend.
+        from typing import get_args, get_type_hints
+
+        from typer.models import OptionInfo
 
         from ..cli._service_jobs import service_jobs
 
-        source = inspect.getsource(service_jobs)
-        match = re.search(r'"--json",\s*help=\(([^)]*)\)', source)
-        assert match is not None
-        assert "scripted waits" in match.group(1)
+        annotation = get_type_hints(service_jobs, include_extras=True)["json_mode"]
+        option = next(
+            meta for meta in get_args(annotation)[1:] if isinstance(meta, OptionInfo)
+        )
+        assert "scripted waits" in (option.help or "")
 
 
 class TestInterruptedJobRestore:
@@ -1951,3 +1962,111 @@ class TestQuiesceAdmissionComposition:
             assert "QuiesceGate" not in source, (
                 f"{rel} must not consult the quiesce gate"
             )
+
+
+class TestInterruptedJobDegradationSplit:
+    """An interrupted run degrades the project index view, never health.
+
+    The two surfaces answer different questions and their degrading state sets
+    differ because of it. Nothing else pins that difference, so a change to
+    either selector would otherwise pass silently as a tidy-up; both directions
+    are asserted here so the split reads as a decision rather than an oversight.
+    """
+
+    @pytest.mark.asyncio
+    async def test_an_interrupted_run_degrades_the_project_index_status(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """The index that run was building is incomplete, so it must be flagged.
+
+        The interruption is produced the way a daemon death produces it: a
+        started attempt is persisted, and a fresh manager restores that state
+        and finds an attempt no live worker owns. No state is hand-written.
+        """
+        state_path = tmp_path / "managed-jobs.json"
+        manager = JobManager(max_nonterminal=2, state_path=state_path)
+        created = manager.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.CODE,
+                str(tmp_path),
+                JobMode.INCREMENTAL,
+            ),
+            JobInitiator("service", "degradation split coverage", str(tmp_path)),
+        )
+        assert created.job is not None
+        task = asyncio.create_task(asyncio.Event().wait())
+        try:
+            started = manager.start_attempt(
+                created.job.id,
+                task=task,
+                control=RunControlToken(),
+            )
+            assert started.job is not None
+            assert started.job.state is JobState.RUNNING
+
+            restarted = JobManager(max_nonterminal=2, state_path=state_path)
+            assert restarted.restore_persisted().code == "job_state_restored"
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        interrupted = restarted.get(created.job.id)
+        assert interrupted is not None
+        assert interrupted.state is JobState.INTERRUPTED
+
+        status = index_job_status(tmp_path, manager=restarted, now=1_000_000.0)
+        # The reason token is asserted, not merely the presence of an entry:
+        # a "stalled" or "failed" entry here would mean the interrupted state
+        # reached the check under some other branch and proves nothing.
+        assert status["degraded_reasons"] == [
+            {
+                "source": "code",
+                "job_id": created.job.id,
+                "reason": "interrupted",
+                "error_kind": "interrupted",
+            }
+        ]
+
+    def test_an_interrupted_run_leaves_service_health_undegraded(
+        self,
+        isolated_status_dir: Path,
+    ) -> None:
+        """Serving is unimpaired by an interruption, so health must stay clean.
+
+        The record is asserted present in the rollup before the empty reason
+        list is asserted. Without that, the test could not tell "the health
+        selector considered an interrupted job and declined it" from "no
+        interrupted job ever reached the selector", and only the first is the
+        property being defended.
+        """
+        del isolated_status_dir
+        from ..jobs import restore_interrupted
+        from ..server._lifespan import _jobs_health
+
+        reset()
+        try:
+            job_id = record_start("code", "tool")
+            # Losing the in-memory ring while the persisted snapshot survives
+            # is exactly what a killed daemon leaves behind.
+            reset()
+            assert restore_interrupted() == 1
+            records = {record["id"]: record for record in snapshot()}
+            assert records[job_id]["phase"] == "interrupted"
+
+            jobs_health, degraded_reasons = _jobs_health()
+        finally:
+            reset()
+
+        states = cast("dict[str, int]", jobs_health["states"])
+        assert states.get("interrupted") == 1, (
+            "the interrupted record must reach the health rollup, or the "
+            "empty reason list below would prove nothing"
+        )
+        # The empty reason list is asserted before the corroborating detail
+        # below, so widening the health selector breaks the property this test
+        # defends rather than an incidental consequence of it.
+        assert degraded_reasons == []
+        assert jobs_health["last_failed"] is None

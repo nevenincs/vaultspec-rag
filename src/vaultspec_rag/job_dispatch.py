@@ -7,6 +7,7 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ._units import bytes_to_mib
 from .job_manager import JobAttemptContext, JobExecutionResult
 from .job_models import (
     IndexResilienceSnapshot,
@@ -301,8 +302,7 @@ def _admitted_resilience(source: JobSource) -> IndexResilienceSnapshot:
         resolve_index_cuda_ceiling_mb,
     )
 
-    mib = 1024**2
-    rss_ceiling_mb = limits.rss_bytes / mib
+    rss_ceiling_mb = bytes_to_mib(limits.rss_bytes)
     rss_ceiling_mb = min(rss_ceiling_mb, config.index_rss_ceiling_mb)
     # Point-in-time diagnostic only: this snapshot is reported and persisted,
     # never enforced, and may legitimately differ from the later per-job
@@ -310,7 +310,7 @@ def _admitted_resilience(source: JobSource) -> IndexResilienceSnapshot:
     cuda_ceiling_mb = resolve_index_cuda_ceiling_mb(
         configured_mb=config.index_cuda_ceiling_mb,
         headroom_mb=config.index_cuda_headroom_mb,
-        profile_cuda_mb=limits.cuda_bytes / mib,
+        profile_cuda_mb=bytes_to_mib(limits.cuda_bytes),
         baseline_mb=resident_cuda_baseline_mb(),
     )
     return IndexResilienceSnapshot(
@@ -359,12 +359,13 @@ def _code_resilience(indexer: CodebaseIndexer) -> IndexResilienceSnapshot:
     admitted = _admitted_resilience(JobSource.CODE)
     measurement = indexer.support_measurement
     budget = indexer.memory_budget_snapshot
-    mib = 1024**2
     return _checkpoint_resilience(
         indexer.last_checkpoint,
         admitted,
         peak_rss_mb=(
-            budget.peak_rss_mb if budget is not None else measurement.rss_bytes / mib
+            budget.peak_rss_mb
+            if budget is not None
+            else bytes_to_mib(measurement.rss_bytes)
         ),
         peak_cuda_allocated_mb=(
             budget.peak_cuda_allocated_mb if budget is not None else None
@@ -372,7 +373,7 @@ def _code_resilience(indexer: CodebaseIndexer) -> IndexResilienceSnapshot:
         peak_cuda_reserved_mb=(
             budget.peak_cuda_reserved_mb
             if budget is not None
-            else measurement.cuda_bytes / mib
+            else bytes_to_mib(measurement.cuda_bytes)
         ),
     )
 

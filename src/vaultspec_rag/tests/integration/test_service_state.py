@@ -21,6 +21,7 @@ import vaultspec_rag.mcp._admin_client as admin
 
 from ... import server, store_schema
 from ...cli import app
+from ._helpers import _make_root
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -40,16 +41,6 @@ def _clean_watchers(  # pyright: ignore[reportUnusedFunction]
     """Stop any watcher the consolidated read may have started as a side effect."""
     yield
     server._stop_all_watchers()
-
-
-def _make_root(tmp_path: Path) -> Path:
-    adr_dir = tmp_path / ".vault" / "adr"
-    adr_dir.mkdir(parents=True)
-    (adr_dir / "x.md").write_text(
-        "---\ntags: ['#adr', '#t']\n---\n# x\n\nbody\n",
-        encoding="utf-8",
-    )
-    return tmp_path
 
 
 def _assert_managed_qdrant_state(qdrant: object) -> None:

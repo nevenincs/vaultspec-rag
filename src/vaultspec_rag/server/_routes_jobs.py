@@ -20,6 +20,7 @@ from . import _jobs
 __all__ = [
     "_clamp_limit",
     "_job_matches",
+    "_job_number",
     "_job_resilience",
     "_job_stalled",
     "_job_summary",
@@ -49,6 +50,28 @@ _LEGACY_TERMINAL_PHASES = {
 def _job_mapping(record: dict[str, object], key: str) -> dict[str, object]:
     value = record.get(key)
     return cast("dict[str, object]", value) if isinstance(value, dict) else {}
+
+
+def _job_number(record: dict[str, object], key: str) -> float | None:
+    """Read *key* as a float, or ``None`` when absent or non-numeric.
+
+    Job records arrive as untyped mappings decoded from persisted JSON, so
+    every timestamp read has to tolerate a missing or malformed field. This is
+    the single reader for that; combine it with :func:`_job_mapping` to reach a
+    timestamp nested inside a sub-mapping.
+    """
+    value = record.get(key)
+    return float(value) if isinstance(value, int | float) else None
+
+
+def _age_seconds(timestamp: float | None, now: float) -> float | None:
+    """Return the elapsed time since *timestamp*, clamped at zero.
+
+    Clock adjustments and out-of-order stamps can put a timestamp ahead of
+    *now*; an age is never negative, so it floors rather than reporting the
+    future. ``None`` propagates for an unreadable timestamp.
+    """
+    return None if timestamp is None else max(0.0, now - timestamp)
 
 
 def job_state(record: dict[str, object]) -> str:
@@ -179,56 +202,50 @@ def _job_progress_step(record: dict[str, object]) -> str:
     return str(progress.get("step", "")).strip().lower()
 
 
+def _job_progress_timestamp(record: dict[str, object]) -> float | None:
+    return _job_number(_job_mapping(record, "progress"), "last_updated")
+
+
 def job_updated_timestamp(record: dict[str, object]) -> float | None:
-    candidates: list[float] = []
-    progress = record.get("progress")
-    if isinstance(progress, dict):
-        last_updated = cast("dict[str, object]", progress).get("last_updated")
-        if isinstance(last_updated, int | float):
-            candidates.append(float(last_updated))
-    for key in (
-        "state_changed_at",
-        "finished_at",
-        "started_at",
-        "created_at",
-    ):
-        timestamp = record.get(key)
-        if isinstance(timestamp, int | float):
-            candidates.append(float(timestamp))
+    candidates = [
+        timestamp
+        for timestamp in (
+            _job_progress_timestamp(record),
+            _job_number(record, "state_changed_at"),
+            _job_number(record, "finished_at"),
+            _job_number(record, "started_at"),
+            _job_number(record, "created_at"),
+        )
+        if timestamp is not None
+    ]
     return max(candidates) if candidates else None
 
 
 def _job_runtime_seconds(record: dict[str, object], now: float) -> float | None:
-    started_at = record.get("started_at")
-    if not isinstance(started_at, int | float):
+    started_at = _job_number(record, "started_at")
+    if started_at is None:
         return None
     state = job_state(record)
     if state == JobState.QUEUED.value:
         return None
-    finished_at = record.get("finished_at")
-    if isinstance(finished_at, int | float):
-        end = float(finished_at)
+    finished_at = _job_number(record, "finished_at")
+    if finished_at is not None:
+        end = finished_at
     elif state == JobState.PAUSED.value:
-        state_changed_at = record.get("state_changed_at")
-        if not isinstance(state_changed_at, int | float):
+        state_changed_at = _job_number(record, "state_changed_at")
+        if state_changed_at is None:
             return None
-        end = float(state_changed_at)
+        end = state_changed_at
     else:
         end = now
-    return max(0.0, end - float(started_at))
+    return max(0.0, end - started_at)
 
 
 def _job_last_progress_age_seconds(
     record: dict[str, object],
     now: float,
 ) -> float | None:
-    progress = record.get("progress")
-    if not isinstance(progress, dict):
-        return None
-    last_updated = cast("dict[str, object]", progress).get("last_updated")
-    if not isinstance(last_updated, int | float):
-        return None
-    return max(0.0, now - float(last_updated))
+    return _age_seconds(_job_progress_timestamp(record), now)
 
 
 def _timestamp_age_seconds(
@@ -236,20 +253,15 @@ def _timestamp_age_seconds(
     key: str,
     now: float,
 ) -> float | None:
-    timestamp = record.get(key)
-    if not isinstance(timestamp, int | float):
-        return None
-    return max(0.0, now - float(timestamp))
+    return _age_seconds(_job_number(record, key), now)
 
 
 def _control_acknowledgement_seconds(record: dict[str, object]) -> float | None:
-    requested = record.get("control_requested_at")
-    acknowledged = record.get("control_acknowledged_at")
-    if not isinstance(requested, int | float) or not isinstance(
-        acknowledged, int | float
-    ):
+    requested = _job_number(record, "control_requested_at")
+    acknowledged = _job_number(record, "control_acknowledged_at")
+    if requested is None or acknowledged is None:
         return None
-    duration = float(acknowledged) - float(requested)
+    duration = acknowledged - requested
     return duration if duration >= 0 else None
 
 
@@ -259,15 +271,13 @@ def _control_pending_age_seconds(
 ) -> float | None:
     if job_state(record) not in _TRANSITIONAL_STATES:
         return None
-    requested = record.get("control_requested_at")
-    acknowledged = record.get("control_acknowledged_at")
-    if not isinstance(requested, int | float):
+    requested = _job_number(record, "control_requested_at")
+    if requested is None:
         return None
-    if isinstance(acknowledged, int | float) and float(acknowledged) >= float(
-        requested
-    ):
+    acknowledged = _job_number(record, "control_acknowledged_at")
+    if acknowledged is not None and acknowledged >= requested:
         return None
-    return max(0.0, now - float(requested))
+    return _age_seconds(requested, now)
 
 
 def _job_is_waiting(record: dict[str, object]) -> bool:

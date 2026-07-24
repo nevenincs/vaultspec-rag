@@ -6,7 +6,6 @@ import contextlib
 import copy
 import json
 import os
-import socket
 from typing import TYPE_CHECKING
 
 import pytest
@@ -26,15 +25,10 @@ from ...indexer._document_meta import (
     document_metadata_path,
     write_document_meta,
 )
-from ...qdrant_runtime import (
-    QdrantProvisionAction,
-    QdrantSupervisor,
-    provision,
-    resolve_binary,
-)
 from ...server._routes_storage import _shape_survey_payload
 from ...storage_ops import archive_prefix, gather_survey
 from ...store import VaultStore
+from ._helpers import provisioned_qdrant_binary, serve_qdrant
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -42,28 +36,15 @@ if TYPE_CHECKING:
 
     from pytest import TempPathFactory
 
+    from ...qdrant_runtime import QdrantSupervisor
+
 pytestmark = [pytest.mark.integration]
-
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
 
 
 @pytest.fixture(scope="module")
 def document_qdrant_binary() -> Path:
-    """Provision the pinned real Qdrant binary."""
-    reset_config()
-    report = provision()
-    assert report.action in {
-        QdrantProvisionAction.CREATED,
-        QdrantProvisionAction.UNCHANGED,
-        QdrantProvisionAction.UPDATED,
-    }
-    resolved = resolve_binary()
-    assert resolved is not None
-    return resolved.path
+    """Provision (or reuse) the pinned real Qdrant binary."""
+    return provisioned_qdrant_binary()
 
 
 @pytest.fixture(scope="module")
@@ -71,18 +52,10 @@ def document_qdrant_server(
     document_qdrant_binary: Path,
     tmp_path_factory: TempPathFactory,
 ) -> Iterator[QdrantSupervisor]:
-    """Run one isolated real server for the document-store tests."""
-    root = tmp_path_factory.mktemp("document-qdrant")
-    supervisor = QdrantSupervisor(
-        document_qdrant_binary,
-        http_port=_free_port(),
-        grpc_port=_free_port(),
-        storage_dir=root / "storage",
-        log_path=root / "qdrant.log",
+    """One real qdrant server on ephemeral ports with temp storage."""
+    yield from serve_qdrant(
+        document_qdrant_binary, tmp_path_factory.mktemp("document-qdrant")
     )
-    supervisor.start(timeout=60.0)
-    yield supervisor
-    supervisor.stop()
 
 
 @pytest.fixture
