@@ -239,7 +239,13 @@ def test_persistent_metadata_failure_cannot_hang_model_fixture(
     assert "exceeded 1.500s" in message
     assert "vaultspec-regression/unavailable-model" in message
     assert endpoint in message
-    assert "/api/models/vaultspec-regression/unavailable-model/revision/main" in message
+    # This test's subject is the deadline, and the two assertions above prove
+    # it fired. It deliberately does NOT assert the metadata URL: the worker is
+    # killed at 1.5s, so on a loaded machine it is cut off before issuing a
+    # single request and there is no URL to report - an assertion that failed
+    # roughly half the time while testing nothing this test is about. The URL
+    # is pinned by test_model_setup_failure_retains_final_url_and_response,
+    # which gives the worker a real budget and an endpoint that answers at once.
 
 
 def test_worker_process_creation_is_inside_whole_operation_deadline() -> None:
@@ -369,4 +375,4 @@ def test_model_setup_failure_retains_final_url_and_response(tmp_path: Path) -> N
 
     message = str(caught.value)
     assert "504" in message
-    assert "/api/models/vaultspec-regression/unavailable-model" in message
+    assert "/api/models/vaultspec-regression/unavailable-model/revision/main" in message
