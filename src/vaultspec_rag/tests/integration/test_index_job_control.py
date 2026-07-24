@@ -264,9 +264,10 @@ def _assert_manager_resources_released(
     assert snapshot.resources.project_lease_held is False
     assert snapshot.resources.writer_lock_held is False
     assert snapshot.resources.pipeline_active is False
-    index_capacity = limiter_stats()["index"]
-    assert index_capacity["borrowed_tokens"] == 0
-    assert index_capacity["waiting"] == 0
+    for pool in ("index", "encode"):
+        capacity = limiter_stats()[pool]
+        assert capacity["borrowed_tokens"] == 0
+        assert capacity["waiting"] == 0
     assert slot.ref_count == 0
     indexer = slot.code_indexer if code else slot.vault_indexer
     assert indexer._writer_lock.acquire(blocking=False)  # pyright: ignore[reportPrivateUsage]
@@ -972,7 +973,9 @@ async def test_managed_vault_pause_releases_resources_and_resume_reconciles(
     )
     assert live.attempt.number == 1
     assert slot.ref_count == 1
-    assert limiter_stats()["index"]["borrowed_tokens"] == 1
+    # Encode-bearing jobs borrow the machine-wide encode admission
+    # slot rather than the wider index partition.
+    assert limiter_stats()["encode"]["borrowed_tokens"] == 1
     first_task, paused = await _pause_managed_attempt(managed_job_manager, job_id)
     _assert_manager_resources_released(paused, slot, code=False)
 
@@ -1007,7 +1010,9 @@ async def test_managed_code_pause_releases_pipeline_and_resume_reconciles(
     )
     assert live.attempt.number == 1
     assert slot.ref_count == 1
-    assert limiter_stats()["index"]["borrowed_tokens"] == 1
+    # Encode-bearing jobs borrow the machine-wide encode admission
+    # slot rather than the wider index partition.
+    assert limiter_stats()["encode"]["borrowed_tokens"] == 1
 
     first_task, paused = await _pause_managed_attempt(managed_job_manager, job_id)
     _assert_manager_resources_released(paused, slot, code=True)
