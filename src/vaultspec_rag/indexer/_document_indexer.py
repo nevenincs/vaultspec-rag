@@ -540,7 +540,7 @@ class DocumentIndexer:
                         model=self.model,
                         store=self.store,
                         gpu_lock=self._gpu_lock,
-                        encode_batch_size=int(cfg.embedding_encode_batch_size),
+                        encode_batch_size=int(cfg.embedding_document_encode_batch_size),
                         write_policy=checkpoint.run_policy.store_write_policy,
                         after_forward=_after_forward,
                         on_cuda_oom=_on_cuda_oom,
@@ -619,7 +619,7 @@ class DocumentIndexer:
                 weighted_bytes=limits.weighted_bytes,
                 sparse_enabled=sparse_enabled,
                 sparse_dimension=sparse_dimension,
-                encode_batch_size=int(config.embedding_encode_batch_size),
+                encode_batch_size=int(config.embedding_document_encode_batch_size),
             ),
         )
         self._last_checkpoint = checkpoint

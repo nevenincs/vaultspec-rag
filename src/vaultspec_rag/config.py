@@ -126,6 +126,9 @@ class EnvVar(StrEnum):
     # Codebase-index parallelism + throughput knobs (#155).
     INDEX_CHUNK_WORKERS = "VAULTSPEC_RAG_INDEX_CHUNK_WORKERS"
     EMBEDDING_CODE_ENCODE_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_CODE_ENCODE_BATCH_SIZE"
+    EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE = (
+        "VAULTSPEC_RAG_EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE"
+    )
     INDEX_CACHE_FLUSH_SLICES = "VAULTSPEC_RAG_INDEX_CACHE_FLUSH_SLICES"
     INDEX_PARALLEL_MIN_BYTES = "VAULTSPEC_RAG_INDEX_PARALLEL_MIN_BYTES"
     # Dense-encoder backend selection (#155).
@@ -262,6 +265,9 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "max_embed_chars": EnvVar.MAX_EMBED_CHARS,
     "index_chunk_workers": EnvVar.INDEX_CHUNK_WORKERS,
     "embedding_code_encode_batch_size": EnvVar.EMBEDDING_CODE_ENCODE_BATCH_SIZE,
+    "embedding_document_encode_batch_size": (
+        EnvVar.EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE
+    ),
     "index_cache_flush_slices": EnvVar.INDEX_CACHE_FLUSH_SLICES,
     "index_parallel_min_bytes": EnvVar.INDEX_PARALLEL_MIN_BYTES,
     "dense_backend": EnvVar.DENSE_BACKEND,
@@ -543,6 +549,15 @@ class VaultSpecConfigWrapper:
         # raises encode throughput. The OOM-backoff in ``encode_documents``
         # still halves this on memory pressure.
         "embedding_code_encode_batch_size": 32,
+        # Inner encode sub-batch for the DOCUMENT path, decoupled from the vault
+        # and code sub-batches. Document fragments are bounded at the model's
+        # full sequence window (~2048 tokens), roughly 2.7x the vault chunk's
+        # token volume, so a batch of 32 window-sized fragments is far more
+        # activation memory than the vault batch was sized for. A smaller
+        # sub-batch keeps the per-forward working set within the indexing
+        # budget; the OOM-backoff in ``encode_documents`` still halves it under
+        # pressure.
+        "embedding_document_encode_batch_size": 12,
         # Flush the CUDA caching allocator every N codebase embed slices
         # instead of every slice (#155). Per-slice flushing (the #68 RSS fix)
         # forces a device sync each iteration; throttling to every N slices

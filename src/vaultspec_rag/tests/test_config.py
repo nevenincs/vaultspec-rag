@@ -296,6 +296,39 @@ def test_managed_log_environment_names_are_generic_only() -> None:
     )
 
 
+def test_document_encode_batch_is_independent_of_vault_and_code() -> None:
+    # Document fragments are window-sized after chunk-bounding, so the document
+    # encode sub-batch is decoupled from the vault and code sub-batches and
+    # defaults smaller. This test binds that independence: pointing the document
+    # path back at embedding_encode_batch_size would silently reintroduce the
+    # window-sized-batch overrun the dedicated knob exists to prevent.
+    cfg = get_config()
+    assert cfg.embedding_document_encode_batch_size == 12
+    assert cfg.embedding_encode_batch_size == 32
+    assert cfg.embedding_code_encode_batch_size == 32
+    assert (
+        cfg.embedding_document_encode_batch_size
+        != cfg.embedding_encode_batch_size
+    )
+
+
+def test_document_encode_batch_env_override_is_independent() -> None:
+    # The document knob overrides on its own env var without perturbing the
+    # vault or code sub-batches.
+    prev = _set_env(EnvVar.EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE, "5")
+    try:
+        reset_config()
+        cfg = get_config()
+        value = cfg.embedding_document_encode_batch_size
+        assert value == 5
+        assert isinstance(value, int)
+        assert cfg.embedding_encode_batch_size == 32
+        assert cfg.embedding_code_encode_batch_size == 32
+    finally:
+        _restore_env(EnvVar.EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE, prev)
+        reset_config()
+
+
 def test_service_idle_ttl_env_override() -> None:
     prev = _set_env(EnvVar.SERVICE_IDLE_TTL_SECONDS, "60")
     try:

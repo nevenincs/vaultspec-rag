@@ -38,9 +38,9 @@ proves the two guards both directions and verifies a live corpus rebuild.
 
 Add embedding_document_encode_batch_size mirroring the code path, retiring the shared-knob runtime workaround that currently keeps the corpus indexing.
 
-- [ ] `P01.S01` - add embedding_document_encode_batch_size to config defaults and the env-var mapping with a window-appropriate default; `src/vaultspec_rag/config.py`.
-- [ ] `P01.S02` - have the document indexer read the document encode batch instead of falling through to embedding_encode_batch_size; `src/vaultspec_rag/indexer/_document_indexer.py`.
-- [ ] `P01.S03` - add a test asserting document embedding uses the document sub-batch and is independent of the vault and code sub-batches; `src/vaultspec_rag/tests/test_config.py`.
+- [x] `P01.S01` - add embedding_document_encode_batch_size to config defaults and the env-var mapping with a window-appropriate default; `src/vaultspec_rag/config.py`.
+- [x] `P01.S02` - have the document indexer read the document encode batch instead of falling through to embedding_encode_batch_size; `src/vaultspec_rag/indexer/_document_indexer.py`.
+- [x] `P01.S03` - add a test asserting document embedding uses the document sub-batch and is independent of the vault and code sub-batches; `src/vaultspec_rag/tests/test_config.py`.
 
 ### Phase `P02` - derive the ceiling from device capacity and make the override bidirectional
 
