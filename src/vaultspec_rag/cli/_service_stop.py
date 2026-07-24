@@ -28,8 +28,8 @@ from ._process import (
 )
 from ._render import _emit_json
 from ._service_lifecycle import (
+    _fail_lifecycle,
     _print_lifecycle_lines,
-    _print_lifecycle_next_actions,
     _process_line,
     _should_unlink_discovery_file,
 )
@@ -295,23 +295,20 @@ def _fail_stop(
 ) -> typer.Exit:
     """Render a failed stop outcome and RETURN the ``typer.Exit`` to raise.
 
-    A stop that leaves the service running did not do its job, so it exits 1
-    in BOTH human and ``--json`` modes - a broker or script must never read a
-    skipped stop as success. Mirrors ``_fail_start``.
+    A stop that leaves the service running did not do its job, so it exits 1 in
+    BOTH human and ``--json`` modes - a broker or script must never read a
+    skipped stop as success. That rule lives in the shared renderer this binds
+    the stop command name to.
     """
-    if json_mode:
-        _emit_json(
-            False,
-            _STOP_COMMAND,
-            error=error,
-            message=message,
-            data=dict(data) or None,
-        )
-    else:
-        _print_lifecycle_lines(message, *human_lines)
-        if next_actions:
-            _print_lifecycle_next_actions(*next_actions)
-    return typer.Exit(code=1)
+    return _fail_lifecycle(
+        json_mode,
+        command=_STOP_COMMAND,
+        error=error,
+        message=message,
+        human_lines=human_lines,
+        next_actions=next_actions,
+        **data,
+    )
 
 
 def _stop_service_on_port(port: int, json_mode: bool = False) -> None:

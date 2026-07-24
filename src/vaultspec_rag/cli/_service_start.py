@@ -41,8 +41,8 @@ from ._progress import StartupStatusReporter
 from ._render import _emit_json
 from ._service_lifecycle import (
     _address_line,
+    _fail_lifecycle,
     _print_lifecycle_lines,
-    _print_lifecycle_next_actions,
     _process_line,
     _should_unlink_discovery_file,
 )
@@ -241,24 +241,18 @@ def _fail_start(
 ) -> typer.Exit:
     """Render a failed start outcome and RETURN the ``typer.Exit`` to raise.
 
-    In ``--json`` mode emits one ``ok:false`` error envelope (``error`` is the
-    machine status, ``data`` the structured fields); otherwise the bespoke human
-    lines and next actions. Returns the ``Exit`` so the call site keeps an
-    explicit ``raise`` for control-flow clarity.
+    Binds the start command name to the one shared lifecycle failure renderer;
+    the envelope-versus-human decision and the exit code live there.
     """
-    if json_mode:
-        _emit_json(
-            False,
-            _START_COMMAND,
-            error=error,
-            message=message,
-            data=dict(data) or None,
-        )
-    else:
-        _print_lifecycle_lines(message, *human_lines)
-        if next_actions:
-            _print_lifecycle_next_actions(*next_actions)
-    return typer.Exit(code=1)
+    return _fail_lifecycle(
+        json_mode,
+        command=_START_COMMAND,
+        error=error,
+        message=message,
+        human_lines=human_lines,
+        next_actions=next_actions,
+        **data,
+    )
 
 
 def _preflight_daemon_cuda(interpreter: str, *, json_mode: bool) -> None:

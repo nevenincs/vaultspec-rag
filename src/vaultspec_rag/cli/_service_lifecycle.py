@@ -25,7 +25,7 @@ from ..config import EnvVar, get_config
 from ._app import server_app
 from ._gpu_errors import _handle_gpu_error
 from ._progress import StartupStatusReporter
-from ._render import _plain
+from ._render import _emit_json, _plain
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -38,6 +38,7 @@ __all__ = [
     "_evaluate_service_signals",
     "_existing_service_running",
     "_explicit_port_state",
+    "_fail_lifecycle",
     "_fail_start",
     "_fail_stop",
     "_initiator_fields",
@@ -75,6 +76,45 @@ def _print_lifecycle_next_actions(*commands: str) -> None:
     _plain("Next actions:")
     for command in commands:
         _plain(f"  {command}")
+
+
+def _fail_lifecycle(
+    json_mode: bool,
+    *,
+    command: str,
+    error: str,
+    message: str,
+    human_lines: tuple[str, ...],
+    next_actions: tuple[str, ...] = (),
+    **data: object,
+) -> typer.Exit:
+    """Render a failed lifecycle outcome and RETURN the ``typer.Exit`` to raise.
+
+    One renderer for every terminal failure of every lifecycle verb. A verb a
+    broker drives owes exactly one structured envelope on stdout per exit path,
+    so the branch that decides envelope-versus-human-lines exists once: a second
+    copy is free to drift into emitting two envelopes, or none, on some path
+    nobody re-checked.
+
+    Failure is always exit 1, in both modes. An outcome that leaves the
+    requested state unachieved must not read as success to a script.
+
+    Returns the ``Exit`` rather than raising it so the call site keeps an
+    explicit ``raise`` and its control flow stays legible.
+    """
+    if json_mode:
+        _emit_json(
+            False,
+            command,
+            error=error,
+            message=message,
+            data=dict(data) or None,
+        )
+    else:
+        _print_lifecycle_lines(message, *human_lines)
+        if next_actions:
+            _print_lifecycle_next_actions(*next_actions)
+    return typer.Exit(code=1)
 
 
 def _process_line(pid: object) -> str:

@@ -809,26 +809,22 @@ class VaultStore(_VaultSearchMixin):
         collection: str,
         keyword_fields: Sequence[str],
         integer_fields: Sequence[str],
-        *,
-        backfill_existing: bool,
     ) -> None:
         """Create one collection and its payload indexes, at most once.
 
-        ``backfill_existing`` decides what happens when the collection is
-        already present: ``True`` re-runs the (idempotent) index creation so a
-        newly declared index appears on the next open, ``False`` accepts the
-        collection as-is and only latches it. The distinction is real and the
-        two behaviours are not interchangeable, so callers state it.
+        An existing collection still has its declared indexes applied. That is
+        what lets a newly declared index reach a collection created before it
+        was declared: index creation is idempotent, so the cost is one no-op
+        call per collection per process, and the alternative is an index that
+        never exists outside a full drop-and-reindex. Every collection is
+        treated the same way here - an exception for one of them is how a
+        filter ends up silently doing a linear scan on only that collection.
         """
         self._record_manifest()
         with self._lifecycle_lock:
             if self._ensured.get(collection):
                 return
-            exists = self._collection_exists(collection)
-            if exists and not backfill_existing:
-                self._ensured[collection] = True
-                return
-            if not exists:
+            if not self._collection_exists(collection):
                 self._ensure_collection(collection)
             self._ensure_payload_indexes(collection, keyword_fields, integer_fields)
             self._ensured[collection] = True
@@ -837,13 +833,13 @@ class VaultStore(_VaultSearchMixin):
         """Create the vault_docs collection if it doesn't exist.
 
         ``doc_id`` backs delete-by-document and chunk grouping; ``chunk_ordinal``
-        backs the doc-level listing filter.
+        backs the doc-level listing filter; ``doc_type``, ``feature``, and
+        ``tags`` back the vault search filters.
         """
         self._ensure_table(
             self.TABLE_NAME,
             store_schema.VAULT_KEYWORD_INDEXES,
             store_schema.VAULT_INTEGER_INDEXES,
-            backfill_existing=False,
         )
 
     def code_collection_exists(self) -> bool:
@@ -870,7 +866,6 @@ class VaultStore(_VaultSearchMixin):
             self.CODE_TABLE_NAME,
             store_schema.CODE_KEYWORD_INDEXES,
             store_schema.CODE_INTEGER_INDEXES,
-            backfill_existing=True,
         )
 
     def ensure_document_table(self) -> None:
@@ -879,7 +874,6 @@ class VaultStore(_VaultSearchMixin):
             self.DOCUMENT_TABLE_NAME,
             store_schema.DOCUMENT_KEYWORD_INDEXES,
             store_schema.DOCUMENT_INTEGER_INDEXES,
-            backfill_existing=True,
         )
 
     @staticmethod

@@ -29,6 +29,7 @@ import zipfile
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from ..cli._core import _build_console
@@ -488,6 +489,167 @@ class TestQdrantProvisionProgress:
         payload = json.loads(result.output)
         assert payload["command"] == "server.qdrant.install"
         assert "Installing the managed Qdrant server" not in result.output
+
+
+class TestStartPathProvisionProgress:
+    """The first-use provision a ``server start`` triggers on its own.
+
+    The seam that carries provisioning progress and the reporter that renders
+    it each have their own coverage above. What is proven here is the wiring
+    between them on the start path, which is the only place a provision runs
+    unattended - and therefore the only place a silent one reads as a hung
+    start rather than as a command the operator chose to run.
+    """
+
+    @staticmethod
+    def _substitute_download(
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        succeeds: bool,
+    ) -> list[str]:
+        """Replace the network half of provisioning, and nothing else.
+
+        The reported lines come from the shipped ``_download_line`` renderer
+        rather than from literals, so a change to how bytes are phrased travels
+        into this test instead of stranding it. On success a real binary and a
+        real manifest are written into the isolated managed dir, so it is the
+        real ``resolve_binary`` that confirms the install afterwards.
+
+        The substitution binds to ``vaultspec_rag.qdrant_runtime.provision``,
+        and it works only because ``_ensure_qdrant_binary`` imports that name
+        INSIDE the function and so resolves it once per call. Moving that
+        import to module scope would leave this interception inert while the
+        real network download ran; the call-time test below is what catches
+        that, and it must not be deleted as redundant.
+
+        Returns:
+            A list appended to on each call, so a test can assert the
+            interception was actually reached.
+        """
+        from .. import qdrant_runtime
+        from ..qdrant_runtime import (
+            QDRANT_SERVER_VERSION,
+            ProvisionReport,
+            QdrantProvisionAction,
+        )
+        from ..qdrant_runtime._constants import MANIFEST_FILENAME
+        from ..qdrant_runtime._provision import _download_line, _no_progress
+        from ..qdrant_runtime._resolve import binary_filename, qdrant_bin_dir
+
+        calls: list[str] = []
+
+        def _provision(
+            *,
+            upgrade: bool = False,
+            dry_run: bool = False,
+            binary: Path | None = None,
+            # Defaulted exactly as the real signature defaults it. A substitute
+            # that made the callback mandatory would turn "the caller stopped
+            # passing it" - the regression this exists to catch - into a
+            # TypeError, which reports the wrong defect and passes through any
+            # assertion the test actually makes.
+            on_progress: Callable[[str], None] = _no_progress,
+        ) -> ProvisionReport:
+            del upgrade, dry_run, binary
+            calls.append("provision")
+            on_progress("Downloading the Qdrant server (release archive)...")
+            on_progress(_download_line(4 << 20, 31 << 20))
+            on_progress("Verifying the Qdrant download checksum...")
+            if not succeeds:
+                return ProvisionReport(
+                    action=QdrantProvisionAction.FAILED,
+                    message="SHA256 mismatch for the release archive",
+                )
+            version_dir = qdrant_bin_dir()
+            version_dir.mkdir(parents=True, exist_ok=True)
+            target = version_dir / binary_filename()
+            target.write_bytes(b"not a real server")
+            (version_dir / MANIFEST_FILENAME).write_text(
+                json.dumps(
+                    {"version": QDRANT_SERVER_VERSION, "binary_sha256": "00" * 32}
+                ),
+                encoding="utf-8",
+            )
+            return ProvisionReport(action=QdrantProvisionAction.CREATED, binary=target)
+
+        monkeypatch.setattr(qdrant_runtime, "provision", _provision)
+        return calls
+
+    def test_the_provision_symbol_is_resolved_at_call_time(self):
+        """The start module must not bind ``provision`` at import.
+
+        Its own reason to exist: a module-scope import would pull the qdrant
+        runtime onto the CLI import path. Its reason to live HERE: it is also
+        the single condition every interception of that symbol depends on, and
+        an interception that has gone inert reports success while the real
+        download runs against the operator's machine.
+        """
+        from ..cli import _service_start
+
+        assert not hasattr(_service_start, "provision")
+
+    def test_provisioning_progress_reaches_the_operator(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_status_dir: Path,
+    ):
+        """A first-use download reports its bytes through the start reporter."""
+        import vaultspec_rag.cli as _cli
+
+        from ..cli._service_start import _ensure_qdrant_binary
+        from ..qdrant_runtime import resolve_binary
+
+        del isolated_status_dir
+        assert resolve_binary() is None, (
+            "premise: no binary may already resolve, or the guard returns "
+            "before it ever provisions"
+        )
+        calls = self._substitute_download(monkeypatch, succeeds=True)
+
+        buffer = io.StringIO()
+        console = _build_console(interactive=False, file=buffer)
+        # The success lines print through the shared console; pointing it at the
+        # same buffer is what the reporter's own placement rule requires and
+        # what lets one assertion see everything the operator would.
+        monkeypatch.setattr(_cli, "console", console)
+        reporter = _reporter(buffer, interactive=False)
+        with reporter:
+            _ensure_qdrant_binary(auto_provision=True, progress=reporter)
+
+        assert calls == ["provision"], "the interception was never reached"
+        plain = _plain(buffer.getvalue())
+        assert "4.0 MiB of 31.0 MiB" in plain
+        assert "Verifying the Qdrant download checksum" in plain
+        assert "Installed Qdrant server" in plain
+
+    def test_a_failed_provision_stays_one_envelope_in_json_mode(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_status_dir: Path,
+        capsys: pytest.CaptureFixture[str],
+    ):
+        """The broker channel carries the fault, and no progress beside it."""
+        from ..cli._service_start import _ensure_qdrant_binary
+        from ..qdrant_runtime import resolve_binary
+
+        del isolated_status_dir
+        assert resolve_binary() is None, "premise: nothing is installed yet"
+        calls = self._substitute_download(monkeypatch, succeeds=False)
+
+        reporter = StartupStatusReporter(json_mode=True, interactive=False)
+        with reporter, pytest.raises(typer.Exit) as exit_info:
+            _ensure_qdrant_binary(
+                auto_provision=True, json_mode=True, progress=reporter
+            )
+
+        assert calls == ["provision"], "the interception was never reached"
+        assert exit_info.value.exit_code == 1
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)
+        assert payload["ok"] is False
+        assert payload["error"] == "qdrant_provision_failed"
+        assert "Downloading the Qdrant server" not in captured.out
+        assert "Downloading the Qdrant server" not in captured.err
 
 
 class TestReconcileProgress:

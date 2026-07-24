@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#service-orphan-reaping'
 date: '2026-07-23'
-modified: '2026-07-24'
+modified: '2026-07-25'
 tier: L2
 related:
   - '[[2026-07-23-service-orphan-reaping-adr]]'
@@ -16,7 +16,7 @@ related:
 
 Reproduce a race-losing daemon in isolation and capture its process tree so the reap predicate handles the launcher plus daemon pair, not a lone process.
 
-- [ ] `P01.S02` - Reproduce a race-losing daemon in an isolated sandbox and capture the launcher-daemon process tree, persisting the pair-origin confirmation; `.vault/reference/service-orphan-reaping`.
+- [x] `P01.S02` - Reproduce a race-losing daemon in an isolated sandbox and capture the launcher-daemon process tree, persisting the pair-origin confirmation; `.vault/reference/service-orphan-reaping`.
 
 ### Phase `P02` - guarantee daemon self-exit on a failed claim
 
@@ -40,7 +40,7 @@ Add an opt-in server stop reap that clears accumulated orphans by daemon signatu
 
 Prove self-exit and reap against regression and the broker structured-stop contract, then run the gate suite and code review.
 
-- [ ] `P04.S10` - Reconcile the reap envelope with the broker and control-plane structured-stop regression suite; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
+- [x] `P04.S10` - Reconcile the reap envelope with the broker and control-plane structured-stop regression suite; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
 - [ ] `P04.S11` - Run the code review and the full gate suite for the changed lifecycle and stop surface; `.vault/audit/service-orphan-reaping`.
 
 ## Description
