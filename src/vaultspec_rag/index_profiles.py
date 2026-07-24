@@ -11,6 +11,8 @@ from ._job_errors import JobError, JobErrorKind
 from ._units import human_bytes
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from ._store_writes import VolumeReading
 
 __all__ = [
@@ -168,6 +170,21 @@ _GIB: Final = 1024**3
 # number.
 _MANAGED_DISK_FLOOR: Final = 8 * _GIB
 
+# The same derivation at this profile's scale. Its corpus caps are a tenth of
+# managed-service's, so an ordinary project here is smaller (~1.7 GiB of data,
+# ~0.5 GiB of optimizer inflation on it), and the shared write floor still
+# reserves 1.0 GiB. The preallocation term stays: this profile accepts the
+# SERVER backend as well as the local one, and only local mode preallocates
+# nothing - a floor has to hold for every backend its profile admits, so it is
+# derived against the costlier of the two (~1.0 GiB). That totals ~4.2 GiB,
+# rounded up for margin.
+#
+# This must stay strictly below the managed floor. A ladder whose smaller
+# profile demands more disk than its larger one is an incoherent contract, and
+# it also silently breaks the refusal's fall-back suggestion, which can only
+# offer a profile with a lower floor.
+_EMBEDDED_DISK_FLOOR: Final = 5 * _GIB
+
 _PROFILES: Final = MappingProxyType(
     {
         "managed-service": IndexSupportProfile(
@@ -200,7 +217,7 @@ _PROFILES: Final = MappingProxyType(
             name="embedded-local",
             accepted_backends=frozenset({"local", "server"}),
             minimum_ram_bytes=8 * _GIB,
-            minimum_free_disk_bytes=16 * _GIB,
+            minimum_free_disk_bytes=_EMBEDDED_DISK_FLOOR,
             code=SupportProfileLimits(
                 source_files=50_000,
                 source_bytes=16 * _GIB,
@@ -289,7 +306,7 @@ def _store_disk_refusal(
     """
     from .config import EnvVar
 
-    smaller = _smaller_disk_profile(profile, backend)
+    smaller = _smaller_disk_profile(profile, backend, _PROFILES.values())
     lines = [
         f"profile {profile.name!r}: "
         f"{_shortfall(reading, profile.minimum_free_disk_bytes)}.",
@@ -348,6 +365,7 @@ def _check_workspace_volume(
 def _smaller_disk_profile(
     active: IndexSupportProfile,
     backend: StorageBackend,
+    candidates: Iterable[IndexSupportProfile],
 ) -> IndexSupportProfile | None:
     """Return the lowest-floor profile that would actually admit this caller.
 
@@ -357,10 +375,15 @@ def _smaller_disk_profile(
     accept the backend in use - switching to it trades a disk refusal for a
     backend refusal, which is worse than saying nothing. ``None`` means no
     candidate clears both, and the caller omits the sentence entirely.
+
+    ``candidates`` is a parameter rather than a read of the shipped profile
+    table so the backend rule stays exercisable. No profile in the current
+    table can trip it - the only lower-floor profile accepts both backends -
+    and a rule that no test can make fail is one nobody can trust.
     """
     usable = [
         candidate
-        for candidate in _PROFILES.values()
+        for candidate in candidates
         if candidate.minimum_free_disk_bytes < active.minimum_free_disk_bytes
         and backend in candidate.accepted_backends
     ]
