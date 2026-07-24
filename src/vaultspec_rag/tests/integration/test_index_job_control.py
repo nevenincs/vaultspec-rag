@@ -1188,3 +1188,50 @@ def test_clean_rebuild_reencodes_when_collection_vanished_under_the_ledger(
         assert fresh.resumed_units == 0
         assert store.count_code() == result.added
     _assert_code_resources_released()
+
+
+def test_incremental_reencodes_when_collection_vanished_under_published_metadata(
+    tmp_path: Path,
+    cpu_embedding_model: EmbeddingModel,
+) -> None:
+    """An incremental run must not trust carried evidence for a destroyed collection.
+
+    External storage destruction (the storage delete verb) drops the code
+    collection but leaves the per-root metadata sidecar and run ledger
+    behind. An incremental diff against that carried metadata classifies
+    every surviving file as unchanged, skips all encoding, and reports
+    success over a collection whose points no longer exist anywhere. The
+    incremental path must detect the vanished collection and escalate to a
+    full failure-safe reconciliation.
+    """
+    paths = _write_code_files(tmp_path, 32, "meta-stale")
+
+    with VaultStore(tmp_path, embedding_dim=cpu_embedding_model.dimension) as store:
+        indexer = CodebaseIndexer(
+            tmp_path,
+            cpu_embedding_model,
+            store,
+            gpu_lock=threading.Lock(),
+        )
+        published = indexer.full_index(
+            clean=True,
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
+        assert published.added > 0
+
+        # The storage-delete equivalent: the collection vanishes out-of-band
+        # while the metadata sidecar and per-root run ledger stay behind.
+        store.drop_code_table()
+
+        indexer.incremental_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
+
+        # Binds the incremental staleness guard: without it the unchanged
+        # scan trusts the carried metadata, skips every file, and reports a
+        # mutation-free success while the store holds zero points.
+        _assert_current_code_state(indexer, store, paths, "meta-stale")
+        assert store.count_code() == published.added
+    _assert_code_resources_released()
