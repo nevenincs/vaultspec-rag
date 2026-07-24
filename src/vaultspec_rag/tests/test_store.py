@@ -872,7 +872,13 @@ class TestStoreBoundedForceClose:
 
 
 class TestEnsureTableBackfill:
-    """The per-collection ensure paths differ, deliberately, on one point."""
+    """Every collection re-applies its declared indexes to an existing one.
+
+    The paths used to differ on exactly this point, with vault alone skipping
+    the re-apply. They no longer do, and this class is what keeps them from
+    diverging again: an exemption reintroduced for any one collection shows up
+    here as a single failing parameter.
+    """
 
     @staticmethod
     def _recording_store(tmp_path: Path) -> tuple[VaultStore, list[str]]:
