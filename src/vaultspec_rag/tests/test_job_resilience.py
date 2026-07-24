@@ -294,6 +294,43 @@ def test_budget_enforces_captured_job_peak_not_process_global_counter(
     assert snapshot.cuda_reserved_mb == 9500.0
 
 
+def test_runtime_cuda_peak_is_not_a_corpus_rejection_dimension() -> None:
+    """Corpus-admission guard: a runtime CUDA peak must never reject.
+
+    The code indexer projects the runtime allocated high-water into the
+    measurement's ``cuda_bytes`` and republishes it through
+    ``exceeded_by``. That value is runtime demand, owned by the per-job
+    ceiling and forward-peak capture - not corpus size. The first
+    assertion is the one that catches the mutation re-adding
+    ``cuda_bytes`` to ``exceeded_by``'s rejection set: under that form a
+    peak above the profile figure is refused as corpus_limit_exceeded.
+    """
+    from ..config import get_config
+    from ..index_profiles import (
+        SupportMeasurement,
+        get_index_support_profile,
+    )
+
+    limits = get_index_support_profile(get_config().index_support_profile).code
+    over_peak = SupportMeasurement(
+        source_files=1,
+        source_bytes=1,
+        cuda_bytes=limits.cuda_bytes + 1,
+    )
+    assert limits.exceeded_by(over_peak) is None
+
+    # The neighbouring dimensions still reject in their stable order.
+    over_rss = SupportMeasurement(
+        source_files=1,
+        source_bytes=1,
+        rss_bytes=limits.rss_bytes + 1,
+        cuda_bytes=limits.cuda_bytes + 1,
+    )
+    exceeded = limits.exceeded_by(over_rss)
+    assert exceeded is not None
+    assert exceeded[0] == "rss_bytes"
+
+
 def test_forward_peak_capture_routes_to_thread_recorder_and_keeps_maximum(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
