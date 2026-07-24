@@ -116,6 +116,7 @@ from ._service_qdrant import (
     qdrant_install,
     qdrant_status,
 )
+from ._service_quiesce import service_pause, service_resume
 from ._service_reconcile import service_reconcile
 from ._service_status import (
     _append_lifecycle_shutdown_log,
@@ -203,9 +204,11 @@ __all__ = [
     "service_doctor",
     "service_jobs",
     "service_logs",
+    "service_pause",
     "service_projects_list",
     "service_projects_unload",
     "service_reconcile",
+    "service_resume",
     "service_start",
     "service_status",
     "service_stop",
