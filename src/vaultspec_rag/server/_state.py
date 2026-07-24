@@ -69,6 +69,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("vaultspec_rag.server")
 
+# This import-time alias caches the registry singleton, and the watcher reads
+# it (as ``server._registry``) while the job dispatcher reads the live
+# ``get_registry()``. That is safe ONLY because nothing in a live process ever
+# rebuilds the singleton - the two always resolve to one object. Any future
+# production reset or hot-swap path MUST read ``get_registry()`` live here (or
+# refresh this alias at the swap), or the watcher and the dispatcher will drive
+# different registries and double-open the same non-parallel-safe local store.
 _registry = get_registry()
 _watcher_tasks: dict[Path, asyncio.Task[None]] = {}
 _watcher_stops: dict[Path, asyncio.Event] = {}
