@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import http.server
 import json
 import os
 import re
@@ -32,6 +33,76 @@ if typing.TYPE_CHECKING:
     from pathlib import Path
 
 runner = CliRunner()
+
+
+class _QuietHandler(http.server.BaseHTTPRequestHandler):
+    """Base for the suite's contract servers, silent on stderr.
+
+    ``BaseHTTPRequestHandler`` logs one line per request to stderr, which
+    interleaves with the output a CLI test is asserting on. Every contract
+    server in this module wants that off, so the override lives here once.
+    """
+
+    def log_message(self, format: str, *args: object) -> None:
+        _ = format, args
+
+
+@contextlib.contextmanager
+def _isolated_status_dir(status_dir: Path) -> typing.Generator[Path]:
+    """Point the CLI's service discovery at a temp directory for one block.
+
+    Every CLI test that touches service state has to redirect this and put the
+    environment back, including on failure - so it is one helper rather than a
+    try/finally in each test, where a missed restore leaks into the next one.
+    """
+    os.environ[EnvVar.STATUS_DIR] = str(status_dir)
+    try:
+        yield status_dir
+    finally:
+        os.environ.pop(EnvVar.STATUS_DIR, None)
+
+
+@contextlib.contextmanager
+def _serving(contract_server: tuple[typing.Any, typing.Any]) -> typing.Generator[int]:
+    """Own the shutdown of a contract server and its thread, yielding the port."""
+    server, thread = contract_server
+    try:
+        yield server.server_address[1]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@contextlib.contextmanager
+def _running_service_record(
+    status_dir: Path,
+    port: int,
+    *,
+    drop: tuple[str, ...] = (),
+) -> typing.Generator[Path]:
+    """Isolate the status dir and leave a record that reads as a live daemon.
+
+    A running daemon publishes two things: the discovery file, and a heartbeat
+    it keeps fresh. A record without the heartbeat is *correctly* read as
+    crashed, so a test that wants a running service has to write both - which is
+    why this is one helper rather than a line in each test. ``drop`` removes
+    keys afterwards, for the tests whose subject is a field the daemon omitted.
+
+    Yields the record path and restores the environment on exit.
+    """
+    from datetime import UTC, datetime
+
+    with _isolated_status_dir(status_dir):
+        _write_service_status(pid=os.getpid(), port=port)
+        record_path = status_dir / "service.json"
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        record["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
+        for key in drop:
+            record.pop(key, None)
+        record_path.write_text(json.dumps(record), encoding="utf-8")
+        yield record_path
+
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mK]")
 _SEARCH_RECORD_RE = re.compile(
@@ -252,35 +323,49 @@ def _status_contract_server(
     failed_jobs: int = 0,
     omit_project: bool = False,
     omit_job_started_at: bool = False,
+    health: dict[str, object] | None = None,
+    jobs: dict[str, object] | None = None,
+    jobs_status_code: int = 200,
 ) -> tuple[typing.Any, typing.Any]:
-    """Start a local HTTP service exposing /health and /jobs for status tests."""
+    """Start a local HTTP service exposing /health and /jobs for status tests.
+
+    The keyword flags shape the default payloads for tests that vary one job
+    property. ``health`` and ``jobs`` replace a payload outright, and
+    ``jobs_status_code`` lets a test drive the jobs-route error path - for tests
+    whose subject is the payload itself, so a status test never has to stand up
+    its own server.
+    """
     import http.server
     import threading
     import time
 
     running_job_started_at = time.time() - 42
 
-    class _StatusContractHandler(http.server.BaseHTTPRequestHandler):
+    class _StatusContractHandler(_QuietHandler):
         def do_GET(self):
-            payload = (
-                _status_contract_jobs_payload(
-                    running_job_started_at,
-                    last_progress_age_seconds=last_progress_age_seconds,
-                    extra_running_job=extra_running_job,
-                    failed_jobs=failed_jobs,
-                    omit_project=omit_project,
-                    omit_job_started_at=omit_job_started_at,
+            status_code = 200
+            if self.path.startswith("/jobs"):
+                status_code = jobs_status_code
+                payload = (
+                    jobs
+                    if jobs is not None
+                    else _status_contract_jobs_payload(
+                        running_job_started_at,
+                        last_progress_age_seconds=last_progress_age_seconds,
+                        extra_running_job=extra_running_job,
+                        failed_jobs=failed_jobs,
+                        omit_project=omit_project,
+                        omit_job_started_at=omit_job_started_at,
+                    )
                 )
-                if self.path.startswith("/jobs")
-                else _status_contract_health_payload()
-            )
-            self.send_response(200)
+            else:
+                payload = (
+                    health if health is not None else _status_contract_health_payload()
+                )
+            self.send_response(status_code)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps(payload).encode("utf-8"))
-
-        def log_message(self, format: str, *args: object) -> None:
-            _ = format, args
 
     server = http.server.HTTPServer(("127.0.0.1", 0), _StatusContractHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -391,7 +476,7 @@ def _slow_search_contract_server(
     import threading
     import time
 
-    class _SlowSearchHandler(http.server.BaseHTTPRequestHandler):
+    class _SlowSearchHandler(_QuietHandler):
         def do_POST(self):
             if self.path != "/search":
                 self.send_response(404)
@@ -438,9 +523,6 @@ def _slow_search_contract_server(
             self.end_headers()
             self.wfile.write(json.dumps(payload).encode("utf-8"))
 
-        def log_message(self, format: str, *args: object) -> None:
-            _ = format, args
-
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _SlowSearchHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -454,7 +536,7 @@ def _search_output_contract_server() -> tuple[typing.Any, typing.Any, list[objec
 
     requests: list[object] = []
 
-    class _SearchOutputHandler(http.server.BaseHTTPRequestHandler):
+    class _SearchOutputHandler(_QuietHandler):
         def do_POST(self):
             if self.path != "/search":
                 self.send_response(404)
@@ -492,9 +574,6 @@ def _search_output_contract_server() -> tuple[typing.Any, typing.Any, list[objec
             self.end_headers()
             self.wfile.write(json.dumps(payload).encode("utf-8"))
 
-        def log_message(self, format: str, *args: object) -> None:
-            _ = format, args
-
     server = http.server.HTTPServer(("127.0.0.1", 0), _SearchOutputHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -510,7 +589,7 @@ def _sparse_search_output_contract_server() -> tuple[
 
     requests: list[object] = []
 
-    class _SparseSearchOutputHandler(http.server.BaseHTTPRequestHandler):
+    class _SparseSearchOutputHandler(_QuietHandler):
         def do_POST(self):
             if self.path != "/search":
                 self.send_response(404)
@@ -533,9 +612,6 @@ def _sparse_search_output_contract_server() -> tuple[
             self.end_headers()
             self.wfile.write(json.dumps(payload).encode("utf-8"))
 
-        def log_message(self, format: str, *args: object) -> None:
-            _ = format, args
-
     server = http.server.HTTPServer(("127.0.0.1", 0), _SparseSearchOutputHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -549,7 +625,7 @@ def _empty_search_contract_server() -> tuple[typing.Any, typing.Any, list[object
 
     requests: list[object] = []
 
-    class _EmptySearchHandler(http.server.BaseHTTPRequestHandler):
+    class _EmptySearchHandler(_QuietHandler):
         def do_POST(self):
             if self.path != "/search":
                 self.send_response(404)
@@ -582,9 +658,6 @@ def _empty_search_contract_server() -> tuple[typing.Any, typing.Any, list[object
             self.end_headers()
             self.wfile.write(json.dumps(payload).encode("utf-8"))
 
-        def log_message(self, format: str, *args: object) -> None:
-            _ = format, args
-
     server = http.server.HTTPServer(("127.0.0.1", 0), _EmptySearchHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -595,19 +668,14 @@ _FORBIDDEN_DOCSTRING_TOKENS = ("Args:", "Raises:", "CLIState", " ctx ")
 
 
 def _find_free_port() -> int:
-    """Bind to an ephemeral port, close, and return the number.
+    """Return a loopback port nothing is listening on.
 
-    Good enough for the in-process service-down tests: the OS will not
-    reuse it immediately, so subsequent connection attempts reliably
-    fail with ConnectionRefused.
+    The name the CLI tests already call; the suite has one implementation of
+    "a free port" and this is an alias onto it, not a second one.
     """
-    import socket
+    from ._ports import free_loopback_port
 
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+    return free_loopback_port()
 
 
 def _projects_list_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
@@ -616,7 +684,7 @@ def _projects_list_contract_server() -> tuple[typing.Any, typing.Any, list[str]]
 
     requests: list[str] = []
 
-    class _ProjectsHandler(http.server.BaseHTTPRequestHandler):
+    class _ProjectsHandler(_QuietHandler):
         def do_GET(self) -> None:
             requests.append(self.path)
             self.send_response(200)
@@ -645,9 +713,6 @@ def _projects_list_contract_server() -> tuple[typing.Any, typing.Any, list[str]]
                 ).encode("utf-8")
             )
 
-        def log_message(self, format: str, *args: object) -> None:
-            _ = format, args
-
     server = http.server.HTTPServer(("127.0.0.1", 0), _ProjectsHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -662,7 +727,7 @@ def _logs_contract_server() -> (  # pyright: ignore[reportUnusedFunction]
 
     requests: list[str] = []
 
-    class _LogsContractHandler(http.server.BaseHTTPRequestHandler):
+    class _LogsContractHandler(_QuietHandler):
         def do_GET(self) -> None:
             requests.append(self.path)
             self.send_response(200)
@@ -682,9 +747,6 @@ def _logs_contract_server() -> (  # pyright: ignore[reportUnusedFunction]
                 ).encode("utf-8")
             )
 
-        def log_message(self, format: str, *args: object) -> None:
-            _ = format, args
-
     server = http.server.HTTPServer(("127.0.0.1", 0), _LogsContractHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -697,16 +759,13 @@ def _empty_logs_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
 
     requests: list[str] = []
 
-    class _LogsContractHandler(http.server.BaseHTTPRequestHandler):
+    class _LogsContractHandler(_QuietHandler):
         def do_GET(self) -> None:
             requests.append(self.path)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps({"lines": []}).encode("utf-8"))
-
-        def log_message(self, format: str, *args: object) -> None:
-            _ = format, args
 
     server = http.server.HTTPServer(("127.0.0.1", 0), _LogsContractHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -721,7 +780,7 @@ def _jobs_empty_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
 
     requests: list[str] = []
 
-    class _JobsContractHandler(http.server.BaseHTTPRequestHandler):
+    class _JobsContractHandler(_QuietHandler):
         def do_GET(self) -> None:
             requests.append(self.path)
             parsed = urllib.parse.urlparse(self.path)
@@ -744,9 +803,6 @@ def _jobs_empty_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
             self.end_headers()
             self.wfile.write(json.dumps(payload).encode("utf-8"))
 
-        def log_message(self, format: str, *args: object) -> None:
-            _ = format, args
-
     server = http.server.HTTPServer(("127.0.0.1", 0), _JobsContractHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -759,7 +815,7 @@ def _jobs_populated_contract_server() -> tuple[typing.Any, typing.Any, list[str]
 
     requests: list[str] = []
 
-    class _JobsContractHandler(http.server.BaseHTTPRequestHandler):
+    class _JobsContractHandler(_QuietHandler):
         def do_GET(self) -> None:
             requests.append(self.path)
             payload = {
@@ -803,9 +859,6 @@ def _jobs_populated_contract_server() -> tuple[typing.Any, typing.Any, list[str]
             self.end_headers()
             self.wfile.write(json.dumps(payload).encode("utf-8"))
 
-        def log_message(self, format: str, *args: object) -> None:
-            _ = format, args
-
     server = http.server.HTTPServer(("127.0.0.1", 0), _JobsContractHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -821,7 +874,7 @@ def _projects_unload_contract_server(
     requests: list[dict[str, object]] = []
     payload = response or {"unexpected": {"raw": True}}
 
-    class _ProjectsEvictHandler(http.server.BaseHTTPRequestHandler):
+    class _ProjectsEvictHandler(_QuietHandler):
         def do_POST(self) -> None:
             length = int(self.headers.get("Content-Length", "0"))
             requests.append(json.loads(self.rfile.read(length).decode("utf-8")))
@@ -829,9 +882,6 @@ def _projects_unload_contract_server(
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps(payload).encode())
-
-        def log_message(self, format: str, *args: object) -> None:
-            _ = format, args
 
     server = http.server.HTTPServer(("127.0.0.1", 0), _ProjectsEvictHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -882,6 +932,7 @@ __all__ = [
     "_SEARCH_RECORD_RE",
     "EnvVar",
     "TorchConfigAction",
+    "_QuietHandler",
     "_assert_default_status_summary",
     "_assert_no_table_borders",
     "_assert_project_summary_language",
@@ -899,6 +950,7 @@ __all__ = [
     "_invoke_search_contract",
     "_is_our_service",
     "_is_pid_alive",
+    "_isolated_status_dir",
     "_jobs_empty_contract_server",
     "_jobs_populated_contract_server",
     "_label_values",
@@ -907,9 +959,11 @@ __all__ = [
     "_projects_list_contract_server",
     "_projects_unload_contract_server",
     "_read_service_status",
+    "_running_service_record",
     "_search_output_contract_server",
     "_search_records",
     "_section_label_values",
+    "_serving",
     "_slow_search_contract_server",
     "_sparse_search_output_contract_server",
     "_status_contract_health_payload",

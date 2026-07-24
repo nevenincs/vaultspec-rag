@@ -25,6 +25,7 @@ from ..serviceclient._status import (
     compose_discovery_status,
 )
 from ._app import server_app
+from ._cli_format import NOT_REPORTED
 from ._http_search import _try_http_admin, _try_http_health
 from ._process import (
     _HEARTBEAT_STALENESS_SECONDS,
@@ -38,7 +39,11 @@ from ._service_jobs import (
     _project_label,
     _stale_progress_label,
 )
-from ._service_lifecycle import _print_detail_line, _should_unlink_discovery_file
+from ._service_lifecycle import (
+    _address_line,
+    _print_detail_line,
+    _should_unlink_discovery_file,
+)
 from ._service_status import (
     SERVICE_PHASE_WARMING,
     _default_service_port,
@@ -329,24 +334,36 @@ def _job_progress_summary(job: dict[str, object]) -> str:
     return f", {', '.join(parts)}" if parts else ""
 
 
+def _job_project(job: dict[str, object]) -> str:
+    """Return the job's project, or an empty string when it reported none.
+
+    The project label carries its own absence sentinel, so every caller would
+    otherwise repeat the comparison against that exact phrase - and a reword of
+    the sentinel would silently start printing it as if it were a project name.
+    """
+    project = _project_label(job)
+    return "" if project == "project not reported" else project
+
+
+def _job_runtime_label(job: dict[str, object]) -> str:
+    """Return how long the job has been running, from its start stamp."""
+    started_at = job.get("started_at")
+    if not isinstance(started_at, int | float):
+        return NOT_REPORTED
+    return _format_status_duration(time.time() - float(started_at))
+
+
 def _job_command_name(job: dict[str, object]) -> str:
     operation = _operation_label(job)
-    project = _project_label(job)
-    if project != "project not reported":
-        return f"{operation} for {project}"
-    return operation
+    project = _job_project(job)
+    return f"{operation} for {project}" if project else operation
 
 
 def _current_job_summary(job: dict[str, object] | None) -> str:
     if job is None:
         return "none"
-    started_at = job.get("started_at")
-    age = (
-        _format_status_duration(time.time() - float(started_at))
-        if isinstance(started_at, int | float)
-        else "not reported by service"
-    )
-    return f"{_job_command_name(job)} ({age}{_job_progress_summary(job)})"
+    runtime = _job_runtime_label(job)
+    return f"{_job_command_name(job)} ({runtime}{_job_progress_summary(job)})"
 
 
 def _active_job_records(
@@ -377,7 +394,7 @@ def _running_job_line(job: dict[str, object]) -> str:
 
 def _current_job_detail_lines(jobs: dict[str, object] | None) -> list[str]:
     if not isinstance(jobs, dict) or jobs.get("available") is not True:
-        return ["Current job: not reported by service"]
+        return [f"Current job: {NOT_REPORTED}"]
     raw_current_jobs = jobs.get("current_jobs")
     current_jobs = (
         cast("list[object]", raw_current_jobs)
@@ -396,33 +413,37 @@ def _current_job_detail_lines(jobs: dict[str, object] | None) -> list[str]:
     current_job = jobs.get("current_job")
     if not isinstance(current_job, dict):
         return ["Current job: none active"]
-    job = cast("dict[str, object]", current_job)
-    started_at = job.get("started_at")
-    runtime = (
-        _format_status_duration(time.time() - float(started_at))
-        if isinstance(started_at, int | float)
-        else "not reported by service"
-    )
-    lines = [
-        "Current job:",
-        f"  Operation: {_operation_label(job)}",
-    ]
-    project = _project_label(job)
-    if project != "project not reported":
+    return _single_job_detail_lines(cast("dict[str, object]", current_job))
+
+
+def _single_job_detail_lines(job: dict[str, object]) -> list[str]:
+    lines = ["Current job:", f"  Operation: {_operation_label(job)}"]
+    project = _job_project(job)
+    if project:
         lines.append(f"  Project: {project}")
-    lines.append(f"  Runtime: {runtime}")
-    progress = _human_progress(job)
-    if progress:
-        lines.append(f"  Progress: {progress}")
-    warning = _stale_progress_label(job)
-    if warning:
-        lines.append(f"  Warning: {warning}")
+    lines.append(f"  Runtime: {_job_runtime_label(job)}")
+    for label, value in (
+        ("Progress", _human_progress(job)),
+        ("Warning", _stale_progress_label(job)),
+    ):
+        if value:
+            lines.append(f"  {label}: {value}")
     return lines
 
 
-def _print_current_job_detail(jobs: dict[str, object] | None) -> None:
-    for line in _current_job_detail_lines(jobs):
+def _print_status_lines(lines: list[str]) -> None:
+    """Write already-shaped operator lines, soft-wrapped and unstyled.
+
+    Status output is data an operator reads and copies - paths, commands, job
+    ids - so it goes out without markup or highlighting, and that decision is
+    made once here rather than at each print site.
+    """
+    for line in lines:
         _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
+
+
+def _print_current_job_detail(jobs: dict[str, object] | None) -> None:
+    _print_status_lines(_current_job_detail_lines(jobs))
 
 
 def _degraded_findings_for_render(
@@ -486,14 +507,13 @@ def _print_health_detail(
             "Requests",
             _status_health_label(health, port_listening=port_listening),
         )
-        for line in _degraded_lines(operational, health):
-            _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
+        _print_status_lines(_degraded_lines(operational, health))
         compute = (
             "GPU available"
             if health.get("cuda") is True
             else "no supported GPU detected"
             if health.get("cuda") is False
-            else "not reported by service"
+            else NOT_REPORTED
         )
         _print_detail_line("Compute", compute)
         env_exe = health.get("executable")
@@ -507,7 +527,7 @@ def _print_health_detail(
         )
         _print_detail_line(
             "Loaded projects",
-            health.get("project_count", "not reported by service"),
+            health.get("project_count", NOT_REPORTED),
         )
         _print_detail_line("Uptime", _format_status_duration(health.get("uptime_s")))
     elif port_listening:
@@ -713,11 +733,10 @@ def _print_operational_detail(
             _print_detail_line("Busy", _status_busy_label(jobs_dict))
             _print_detail_line("Queue", _status_queue_label(jobs_dict))
             _print_detail_line("Processed jobs", _status_jobs_label(jobs_dict))
-            for line in _failure_lines(operational):
-                _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
+            _print_status_lines(_failure_lines(operational))
             _print_current_job_detail(jobs_dict)
         else:
-            _print_detail_line("Processed jobs", "not reported by service")
+            _print_detail_line("Processed jobs", NOT_REPORTED)
     next_action = operational.get("next_action")
     if next_action:
         _print_next_action(next_action)
@@ -725,8 +744,7 @@ def _print_operational_detail(
 
 def _print_next_action(next_action: object) -> None:
     if next_action:
-        _cli.console.print("Next action:", markup=False, highlight=False)
-        _cli.console.print(f"  {next_action}", markup=False, highlight=False)
+        _print_status_lines(["Next action:", f"  {next_action}"])
 
 
 def _render_status_summary(
@@ -745,15 +763,14 @@ def _render_status_summary(
         f"Requests: {_status_health_label(health, port_listening=port_listening)}",
         *_degraded_lines(operational, health),
         f"Busy: {_status_busy_label(jobs_dict)}",
-        f"Address: http://127.0.0.1:{port}",
+        _address_line(port),
         f"Service env: {_status_env_label(health)}",
         f"Uptime: {_status_uptime_label(health)}",
         f"Queue: {_status_queue_label(jobs_dict)}",
         f"Processed jobs: {_status_jobs_label(jobs_dict)}",
         *_failure_lines(operational),
     ]
-    for line in lines:
-        _cli.console.print(line, markup=False, highlight=False)
+    _print_status_lines(lines)
     _print_current_job_detail(jobs_dict)
     if isinstance(operational, dict):
         _print_next_action(operational.get("next_action"))
@@ -779,7 +796,7 @@ def _render_status_detail(
     _cli.console.print("Service status")
     _print_detail_line("Local record", "found")
     _print_detail_line("Process ID", pid)
-    _print_detail_line("Address", f"http://127.0.0.1:{port}")
+    _print_status_lines([_address_line(port)])
     _print_detail_line("Started", _format_started_label(started_at))
     _print_detail_line("Process", "running" if pid_alive else "not running")
     _print_detail_line(
@@ -870,7 +887,7 @@ def _render_port_only_status(
     _cli.console.print("Service status")
     _print_detail_line("Local record", "not found")
     _print_detail_line("Process", "not reported")
-    _print_detail_line("Address", f"http://127.0.0.1:{port}")
+    _print_status_lines([_address_line(port)])
     _print_detail_line(
         "Network",
         "accepting connections" if port_listening else "not accepting connections",
