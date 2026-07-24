@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.6](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.5...vaultspec-rag-v0.3.6) (2026-07-24)
+
+
+### Bug Fixes
+
+* **cli:** count a POSIX zombie as reaped so --orphans works on Linux ([3d91843](https://github.com/nevenincs/vaultspec-rag/commit/3d91843c90dbc1a54d2382de85fa87ab5bf35080))
+* **reap:** match qdrant image, not the whole cmdline, on POSIX ([9caecf7](https://github.com/nevenincs/vaultspec-rag/commit/9caecf75acdbcc07928482ed79d3854507001b2d))
+* **tests:** derive the reap witness count from the platform ([c6ff1d2](https://github.com/nevenincs/vaultspec-rag/commit/c6ff1d2605a3b16f3ca00dcdb116da1ffae567fa))
+
 ## [0.3.5](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.4...vaultspec-rag-v0.3.5) (2026-07-23)
 
 
