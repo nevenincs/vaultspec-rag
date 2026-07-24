@@ -207,6 +207,35 @@ deletions, metadata, schema evidence, and generation finalization are durable. I
 runs resume from the final unconfirmed unit; retryable extraction and decode/chunk
 failures remain visible obligations instead of being hidden behind a content hash.
 
+### Reusing vectors across worktrees
+
+Indexing a fresh git worktree of a branch you have already indexed does not have
+to pay the GPU cost a second time. Before the encoder runs, the index looks for
+each chunk in the already-indexed sibling namespaces on the same machine and, on
+a match, adopts that chunk's stored dense and sparse vectors instead of encoding
+it again. For a near-identical fork the encode stage all but disappears, so the
+run collapses to chunking, lookup, and upsert time - reindexing a new worktree of
+an indexed branch is orders of magnitude cheaper than a full rebuild.
+
+Reuse applies only within one machine's shared server-mode storage, only from
+sibling roots that are already indexed, and only when the content matches
+exactly. A donor must clear every eligibility gate first: same collection kind,
+identical vector dimensions and layout, a matching embedding-schema marker, and
+the same content epoch, so vectors produced under a different model or schema are
+never adopted. The match itself is exact, never similarity-based: the candidate
+point id must match, and the donor's stored content must verify byte-for-byte
+against the chunk being indexed before its vectors are reused. Anything that does
+not match - a changed line, an absent donor, a failed gate - is simply a miss and
+is encoded exactly as it would have been without reuse, so the index a run
+produces is identical whether a vector was reused or freshly encoded.
+
+Reuse is on by default and can be turned off end to end. Set the config key
+`index_reuse_enabled` to `false`, or the environment variable
+`VAULTSPEC_RAG_INDEX_REUSE` to a falsey value, and every chunk encodes as before.
+Each run records its reuse outcome - hits, misses, hit rate, estimated GPU time
+saved, and which donor collections were consulted - on the job record; see
+[observing activity](service-mode.md#observe-activity) for how to read it.
+
 ### Incremental versus rebuild
 
 Indexing is incremental by default: it hashes every file, skips the unchanged
@@ -241,6 +270,7 @@ default and precedence; the ones specific to this pipeline are:
 | `VAULTSPEC_RAG_MAX_EMBED_CHARS`          | Character truncation limit per document before encoding        |
 | `VAULTSPEC_RAG_INDEX_CHUNK_WORKERS`      | Chunk worker processes; auto-sizes by default, 1 forces serial |
 | `VAULTSPEC_RAG_INDEX_PARALLEL_MIN_BYTES` | Source-size threshold before the process pool activates        |
+| `VAULTSPEC_RAG_INDEX_REUSE`              | Vector reuse across worktrees; falsey encodes every chunk      |
 | `VAULTSPEC_RAG_RERANKER_MAX_LENGTH`      | Reranker token bound on candidate content                      |
 | `VAULTSPEC_RAG_QDRANT_QUANTIZATION`      | Vector quantization: `scalar`, `turbo`, or `product`           |
 

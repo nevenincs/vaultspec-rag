@@ -96,6 +96,7 @@ A transient store-write failure (disk pressure, a write-ahead-log stall) is retr
 | ---------------------------------------- | ------- | -------------------- | ------------------------------------------------- | -------- |
 | `VAULTSPEC_RAG_INDEX_CHUNK_WORKERS`      | integer | `0` (auto)           | Code-chunk process-pool size                      | -        |
 | `VAULTSPEC_RAG_INDEX_PARALLEL_MIN_BYTES` | integer | `8388608`            | Auto-parallel chunking threshold in bytes (8 MiB) | -        |
+| `VAULTSPEC_RAG_INDEX_REUSE`              | boolean | `1` (true)           | Reuse sibling-namespace vectors across worktrees  | -        |
 | `VAULTSPEC_RAG_INDEX_CACHE_FLUSH_SLICES` | integer | `8`                  | CUDA allocator flush cadence in slices            | -        |
 | `VAULTSPEC_RAG_DENSE_BACKEND`            | string  | `torch`              | Dense encoder backend (`onnx` experimental)       | -        |
 | `VAULTSPEC_RAG_DENSE_ONNX_FILE`          | string  | `onnx/model_O4.onnx` | ONNX model file relative path                     | -        |
