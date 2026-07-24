@@ -94,6 +94,13 @@ def _spawn_witness_daemon(port: int) -> subprocess.Popen[bytes]:
     return subprocess.Popen(argv, start_new_session=True)
 
 
+#: Processes one witness spawn produces. On Windows the venv console shim
+#: execs a worker child, so a spawn enumerates as a launcher+worker pair; on
+#: POSIX the interpreter is exec'd directly and a spawn is a single process.
+#: Verified by probe: one spawn enumerates 2 matches on win32, 1 on Linux.
+_PROCESSES_PER_WITNESS = 2 if sys.platform == "win32" else 1
+
+
 def _wait_for_matched(port: int, count: int) -> dict[int, int]:
     """Wait until at least *count* witness processes enumerate for *port*."""
     matched: dict[int, int] = {}
@@ -208,18 +215,6 @@ class TestOrphanReapSafety:
     and a daemon on a different port is never enumerated.
     """
 
-    # Windows-only: on this platform a race-loser daemon is a venv-shim
-    # launcher+worker PAIR, which is the process model the witness-count and
-    # pair-protection invariants below assume. A POSIX daemon is a single
-    # process, so these pair fixtures do not apply; POSIX single-process reap
-    # safety is a tracked follow-up (the orphan-accumulation this guards, #256,
-    # is itself a Windows uv-tool-shim behaviour).
-    pytestmark = pytest.mark.skipif(
-        sys.platform != "win32",
-        reason="reap pair-protection fixtures assume the Windows venv-shim "
-        "launcher+worker pair; POSIX single-process reap is a tracked follow-up",
-    )
-
     def test_reap_spares_singleton_pair_and_reaps_the_orphan_pair(
         self,
         tmp_path: Path,
@@ -240,8 +235,9 @@ class TestOrphanReapSafety:
             foreign = _spawn_witness_daemon(foreign_port)
             procs = [singleton, orphan, foreign]
 
-            # Each witness spawn is a shim launcher + worker pair; wait for both.
-            matched = _wait_for_matched(port, count=4)
+            # Two witnesses share this port; wait for every process each
+            # spawn enumerates as on this platform.
+            matched = _wait_for_matched(port, count=2 * _PROCESSES_PER_WITNESS)
             singleton_pair = _pair_of(singleton.pid, matched)
             orphan_pair = _pair_of(orphan.pid, matched)
 
@@ -292,7 +288,7 @@ class TestOrphanReapSafety:
             singleton = _spawn_witness_daemon(port)
             orphan = _spawn_witness_daemon(port)
             procs = [singleton, orphan]
-            matched = _wait_for_matched(port, count=4)
+            matched = _wait_for_matched(port, count=2 * _PROCESSES_PER_WITNESS)
             singleton_pair = _pair_of(singleton.pid, matched)
             orphan_pair = _pair_of(orphan.pid, matched)
             workers = singleton_pair - {singleton.pid}
@@ -343,7 +339,7 @@ class TestOrphanReapSafety:
             singleton = _spawn_lock_holding_daemon(port)
             orphan = _spawn_witness_daemon(port)
             procs = [singleton, orphan]
-            matched = _wait_for_matched(port, count=4)
+            matched = _wait_for_matched(port, count=2 * _PROCESSES_PER_WITNESS)
             singleton_pair = _pair_of(singleton.pid, matched)
             orphan_pair = _pair_of(orphan.pid, matched)
 
