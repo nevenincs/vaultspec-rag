@@ -61,6 +61,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "CodeChunk",
     "DonorPoint",
+    "IngestVerificationError",
     "VaultDocument",
     "VaultStore",
     "VaultStoreLockedError",
@@ -90,6 +91,24 @@ class DonorPoint:
     sparse_indices: list[int] | None
     sparse_values: list[float] | None
     payload: dict[str, Any] = field(default_factory=dict)
+
+#: Reserved fence point identity for the ingest barrier. ``_stable_id``
+#: only ever produces integers, so a UUID point id can never collide with
+#: a real chunk; deleting it is always an idempotent no-op the server
+#: applies in WAL order behind every previously acknowledged update.
+_INGEST_FENCE_POINT_ID = "00000000-0000-4000-8000-000000000000"
+
+
+class IngestVerificationError(RuntimeError):
+    """Acknowledged writes did not all apply to the collection.
+
+    Raised by the ingest barrier when the exact post-fence point count
+    disagrees with the caller's expectation. This is the silent-loss
+    class a non-blocking upsert can hide: the server can acknowledge a
+    batch (for example one naming an unknown vector) and never apply
+    it, without ever reporting an error. A job that sees this must
+    fail rather than publish terminal metadata over missing points.
+    """
 
 
 @contextmanager
@@ -948,6 +967,7 @@ class VaultStore(_VaultSearchMixin):
         chunks: list[VaultChunk],
         *,
         write_policy: StoreWritePolicy | None,
+        wait: bool = True,
     ) -> None:
         """Insert or update vault chunks keyed by ``doc_id#c{ordinal}``.
 
@@ -959,6 +979,11 @@ class VaultStore(_VaultSearchMixin):
             chunks: Vault chunks to insert or replace.
             write_policy: Caller-owned retry/deadline policy for managed runs;
                 direct store callers pass ``None``.
+            wait: Server-mode durability handshake. Rebuild-path callers
+                pass ``False`` to acknowledge on the WAL write and must
+                run :meth:`apply_ingest_barrier` before any stale purge
+                or terminal metadata publish. Ignored by the embedded
+                backend, which applies synchronously.
         """
         if not chunks:
             return
@@ -990,6 +1015,7 @@ class VaultStore(_VaultSearchMixin):
                 points,
                 "vault chunks",
                 write_policy=write_policy,
+                wait=wait,
             )
         logger.info("Upserted %d vault chunk(s)", len(chunks))
 
@@ -998,6 +1024,7 @@ class VaultStore(_VaultSearchMixin):
         chunks: list[CodeChunk],
         *,
         write_policy: StoreWritePolicy | None,
+        wait: bool = True,
     ) -> None:
         """Insert or update codebase chunks by ``id``.
 
@@ -1005,6 +1032,11 @@ class VaultStore(_VaultSearchMixin):
             chunks: Code chunks to insert or replace.
             write_policy: Caller-owned retry/deadline policy for managed runs;
                 direct store callers pass ``None``.
+            wait: Server-mode durability handshake. Rebuild-path callers
+                pass ``False`` to acknowledge on the WAL write and must
+                run :meth:`apply_ingest_barrier` before any stale purge
+                or terminal metadata publish. Ignored by the embedded
+                backend, which applies synchronously.
         """
         if not chunks:
             return
@@ -1036,6 +1068,7 @@ class VaultStore(_VaultSearchMixin):
                 points,
                 "code chunks",
                 write_policy=write_policy,
+                wait=wait,
             )
         logger.info("Upserted %d codebase chunk(s)", len(chunks))
 
@@ -1087,6 +1120,7 @@ class VaultStore(_VaultSearchMixin):
         description: str,
         *,
         write_policy: StoreWritePolicy | None,
+        wait: bool = True,
     ) -> None:
         """Upsert under the write-failure guards.
 
@@ -1094,18 +1128,101 @@ class VaultStore(_VaultSearchMixin):
         volume is exhausted (before Qdrant can wedge on it), then the upsert
         runs under the bounded retry: transient failures back off and retry,
         storage exhaustion raises immediately so the embedder upstream stops
-        burning GPU on vectors that cannot be persisted.
+        burning GPU on vectors that cannot be persisted. That distinction
+        survives ``wait=False``: acknowledgement includes the WAL write, so
+        exhaustion, wrong dimensions, and a missing collection still raise
+        synchronously - only the apply step becomes deferred, and the ingest
+        barrier is what verifies it.
         """
         ensure_disk_headroom(self._storage_probe_path)
-        run_store_operation_with_retry(
-            lambda attempt_timeout: self.client.upsert(
+        deferred = self._server_mode and not wait
+
+        def attempt(attempt_timeout: int) -> object:
+            if deferred:
+                return self.client.upsert(
+                    collection_name=collection_name,
+                    points=points,
+                    timeout=attempt_timeout,
+                    wait=False,
+                )
+            return self.client.upsert(
                 collection_name=collection_name,
                 points=points,
                 timeout=attempt_timeout,
-            ),
+            )
+
+        run_store_operation_with_retry(
+            attempt,
             description=f"upsert {description} into {collection_name}",
             policy=write_policy,
         )
+
+    def apply_ingest_barrier(
+        self,
+        collection_name: str,
+        *,
+        expected_points: int,
+        write_policy: StoreWritePolicy | None = None,
+    ) -> None:
+        """Prove every acknowledged write applied before terminal steps run.
+
+        Server mode only; the embedded backend applies synchronously and
+        returns immediately. The barrier is writer-agnostic: it fences the
+        collection, not a particular caller, so any thread that upserted
+        with ``wait=False`` (including a future writer-side upsert queue)
+        is covered by one barrier call.
+
+        Two steps, each replay-safe under the bounded retry:
+
+        1. Fence: delete the reserved sentinel point id with ``wait=True``.
+           Updates apply in WAL order per shard, so when this no-op returns
+           every previously acknowledged update has been applied.
+        2. Verify: an exact count must equal ``expected_points``. Applied
+           order alone cannot catch the silent-drop class where the server
+           acknowledges a batch and never applies it (no error is ever
+           reported); the count does.
+
+        Raises:
+            IngestVerificationError: When the applied point count disagrees
+                with the expectation - the caller's job must fail instead
+                of purging stale points or publishing terminal metadata.
+        """
+        if not self._server_mode:
+            return
+        from qdrant_client import models
+
+        run_store_operation_with_retry(
+            lambda attempt_timeout: self.client.delete(
+                collection_name=collection_name,
+                points_selector=models.PointIdsList(
+                    points=[_INGEST_FENCE_POINT_ID],
+                ),
+                wait=True,
+                timeout=attempt_timeout,
+            ),
+            description=f"ingest fence for {collection_name}",
+            policy=write_policy,
+        )
+        applied = int(
+            run_store_operation_with_retry(
+                lambda attempt_timeout: self.client.count(
+                    collection_name=collection_name,
+                    exact=True,
+                    timeout=attempt_timeout,
+                ),
+                description=f"ingest verification count for {collection_name}",
+                policy=write_policy,
+            ).count
+        )
+        if applied != expected_points:
+            raise IngestVerificationError(
+                f"ingest verification failed for {collection_name}: expected "
+                f"{expected_points} applied point(s), found {applied}. One or "
+                "more acknowledged batches did not apply; failing the run "
+                "before stale-purge or metadata publish. If this collection "
+                "predates the current storage schema, rebuild it with a "
+                "clean re-index."
+            )
 
     def disk_headroom_preflight(self, new_points: int) -> None:
         """Bulk-index pre-flight: fail fast when the run cannot fit on disk.

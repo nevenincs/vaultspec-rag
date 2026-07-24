@@ -392,9 +392,12 @@ def _validate_persisted_timestamps(job: JobSnapshot) -> None:
         ("finished_at", timestamps.finished_at),
         ("control_requested_at", timestamps.control_requested_at),
         ("control_acknowledged_at", timestamps.control_acknowledged_at),
+        ("admission_acquired_at", timestamps.admission_acquired_at),
     ):
         if value is not None and value < timestamps.created_at:
             raise ValueError(f"job {job.id}: {name} predates creation")
+    if timestamps.admission_acquired_at is not None and timestamps.started_at is None:
+        raise ValueError(f"job {job.id}: admission stamp lacks an attempt start")
     if (
         timestamps.control_acknowledged_at is not None
         and timestamps.control_requested_at is None
@@ -516,6 +519,9 @@ def _job_snapshot_from_dict(value: object) -> JobSnapshot:
             ),
             control_acknowledged_at=_optional_float(
                 raw.get("control_acknowledged_at"), "control_acknowledged_at"
+            ),
+            admission_acquired_at=_optional_float(
+                raw.get("admission_acquired_at"), "admission_acquired_at"
             ),
         ),
         progress=progress,

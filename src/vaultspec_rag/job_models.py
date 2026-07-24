@@ -28,6 +28,7 @@ __all__ = [
     "JobTimestamps",
     "ProcessResourceSnapshot",
     "ResumeStrategy",
+    "is_encode_bearing",
 ]
 
 
@@ -158,7 +159,14 @@ class JobAttempt:
 
 @dataclass(frozen=True, slots=True)
 class JobTimestamps:
-    """Lifecycle clocks carried by every canonical snapshot."""
+    """Lifecycle clocks carried by every canonical snapshot.
+
+    ``admission_acquired_at`` marks when the attempt's worker actually
+    began executing - for an encode-bearing job, the moment it won the
+    machine-wide encode admission slot. A live attempt whose value is
+    still ``None`` is honestly waiting for admission, and the span from
+    ``started_at`` to this stamp is the measurable admission wait.
+    """
 
     created_at: float
     state_changed_at: float
@@ -166,6 +174,7 @@ class JobTimestamps:
     finished_at: float | None = None
     control_requested_at: float | None = None
     control_acknowledged_at: float | None = None
+    admission_acquired_at: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,6 +335,7 @@ class JobSnapshot:
             "finished_at": self.timestamps.finished_at,
             "control_requested_at": self.timestamps.control_requested_at,
             "control_acknowledged_at": self.timestamps.control_acknowledged_at,
+            "admission_acquired_at": self.timestamps.admission_acquired_at,
             "progress": _progress_to_dict(self.progress),
             "result": self.result,
             "error_kind": self.error_kind,
@@ -432,6 +442,21 @@ def _resilience_to_dict(
         "cuda_ceiling_mb": resilience.cuda_ceiling_mb,
         "support_profile": resilience.support_profile,
         "terminal_outcome": resilience.terminal_outcome,
+    }
+
+
+def is_encode_bearing(spec: JobSpec) -> bool:
+    """Return whether a job specification will run GPU encoding.
+
+    Indexing any corpus (vault, code, or document) encodes on the single
+    GPU, so those jobs must take the machine-wide encode admission slot.
+    Maintenance and every read-only operation stay outside the gate so
+    lifecycle-inert work can never starve or deadlock behind an encode job.
+    """
+    return spec.operation is JobOperation.INDEX and spec.source in {
+        JobSource.VAULT,
+        JobSource.CODE,
+        JobSource.DOCUMENT,
     }
 
 
