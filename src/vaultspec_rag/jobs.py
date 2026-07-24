@@ -48,6 +48,7 @@ from .job_models import (
     JobTimestamps,
     ProcessResourceSnapshot,
     ResumeStrategy,
+    is_encode_bearing,
 )
 from .logging_config import log_event
 from .registry import get_registry
@@ -104,6 +105,7 @@ __all__ = [
     "get_job_manager",
     "index_all_domains",
     "index_job_status",
+    "is_encode_bearing",
     "record_finish",
     "record_progress",
     "record_start",
@@ -668,6 +670,7 @@ def _domain_job_snapshot(job: JobSnapshot, *, now: float) -> dict[str, object]:
                 "finished_at",
                 "control_requested_at",
                 "control_acknowledged_at",
+                "admission_acquired_at",
             )
         },
         "stalled": _job_snapshot_stalled(job, now=now),
