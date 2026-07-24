@@ -1,6 +1,7 @@
 """Closed support-profile admission over real typed measurements."""
 
 import pathlib
+from dataclasses import replace
 from typing import cast
 
 import pytest
@@ -154,6 +155,34 @@ def test_managed_disk_floor_is_a_host_provisioning_number() -> None:
     assert profile.minimum_free_disk_bytes < 10 * 1024**3
 
 
+def test_embedded_disk_floor_is_derived_at_its_own_scale() -> None:
+    """Same derivation, this profile's scale.
+
+    The preallocation term is included even though local mode preallocates
+    nothing, because this profile also accepts the server backend and a
+    floor has to hold for every backend its profile admits.
+    """
+    profile = get_index_support_profile("embedded-local")
+
+    assert profile.minimum_free_disk_bytes == 5 * 1024**3
+    assert "server" in profile.accepted_backends
+
+
+def test_the_disk_floor_ladder_is_ordered() -> None:
+    """The smaller profile must never demand more disk than the larger one.
+
+    This is the invariant, not the two value pins above, which only happen
+    to agree today. Lowering the managed floor once inverted this ladder and
+    nothing in the suite noticed - an incoherent contract that also silently
+    disables the refusal's fall-back suggestion, since a suggestion can only
+    offer a profile whose floor is lower.
+    """
+    managed = get_index_support_profile("managed-service")
+    embedded = get_index_support_profile("embedded-local")
+
+    assert embedded.minimum_free_disk_bytes < managed.minimum_free_disk_bytes
+
+
 def test_disk_refusal_names_units_location_and_a_way_out() -> None:
     profile = get_index_support_profile("managed-service")
     free = 3_221_225_472
@@ -186,31 +215,76 @@ def test_disk_refusal_names_units_location_and_a_way_out() -> None:
     assert "VAULTSPEC_RAG_QDRANT_STORAGE_DIR" in detail
 
 
-def test_disk_refusal_never_suggests_a_profile_that_would_not_help() -> None:
-    """A suggestion must survive being taken.
+def test_ordered_ladder_offers_the_lower_floor_as_a_way_out() -> None:
+    """With the ladder ordered, a managed refusal has somewhere to send you."""
+    profile = get_index_support_profile("managed-service")
+    embedded = get_index_support_profile("embedded-local")
 
-    Two things disqualify a candidate independently, and both are live now
-    that the floors are close together: a floor that is not lower, and a
-    profile that rejects the backend in use. Asserting the env-var token is
-    absent rather than matching refusal prose is deliberate - the sentence
-    is the ONLY place that token appears, so its absence cannot be produced
-    by a wording change.
-    """
-    for name, backend in (("managed-service", "server"), ("embedded-local", "local")):
-        profile = get_index_support_profile(name)
-        with pytest.raises(JobError) as raised:
-            validate_profile_admission(
-                profile.name,
-                IndexDomain.CODE,
-                SupportMeasurement(1, 1),
-                backend=cast("StorageBackend", backend),  # ty: ignore[redundant-cast]
-                available_ram_bytes=profile.minimum_ram_bytes,
-                store_volume=_volume(profile.minimum_free_disk_bytes - 1),
-            )
-        detail = raised.value.detail
-        assert "VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE" not in detail, (
-            f"{name} was offered a profile switch that cannot help: {detail}"
+    with pytest.raises(JobError) as raised:
+        validate_profile_admission(
+            profile.name,
+            IndexDomain.CODE,
+            SupportMeasurement(1, 1),
+            backend="server",
+            available_ram_bytes=profile.minimum_ram_bytes,
+            store_volume=_volume(profile.minimum_free_disk_bytes - 1),
         )
+
+    detail = raised.value.detail
+    # The suggestion is only sound because embedded-local accepts the server
+    # backend; asserting the name alone would not distinguish a sound
+    # suggestion from one that swaps a disk refusal for a backend refusal.
+    assert f"VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE={embedded.name}" in detail
+    assert "server" in embedded.accepted_backends
+    assert human_bytes(embedded.minimum_free_disk_bytes) in detail
+
+
+def test_the_lowest_profile_offers_no_switch() -> None:
+    """Offering the profile that just refused is a dead end.
+
+    The env-var token is asserted absent rather than matching refusal prose
+    because the suggestion sentence is the ONLY place that token appears, so
+    its absence cannot be produced by a wording change elsewhere.
+    """
+    profile = get_index_support_profile("embedded-local")
+
+    with pytest.raises(JobError) as raised:
+        validate_profile_admission(
+            profile.name,
+            IndexDomain.CODE,
+            SupportMeasurement(1, 1),
+            backend="local",
+            available_ram_bytes=profile.minimum_ram_bytes,
+            store_volume=_volume(profile.minimum_free_disk_bytes - 1),
+        )
+
+    assert "VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE" not in raised.value.detail
+
+
+def test_a_lower_floor_alone_does_not_qualify_a_profile_as_a_suggestion() -> None:
+    """The backend rule, exercised against profiles that can trip it.
+
+    No profile in the shipped table can: the only lower-floor profile
+    accepts both backends. That is exactly why the selector takes its
+    candidate pool as an argument - a rule no test can make fail is a rule
+    nobody can trust, and this one was load-bearing while the ladder was
+    inverted. These are real ``IndexSupportProfile`` values, not doubles.
+    """
+    from ..index_profiles import _smaller_disk_profile
+
+    active = get_index_support_profile("managed-service")
+    server_only = replace(
+        get_index_support_profile("embedded-local"),
+        name="server-only-cheap",
+        accepted_backends=frozenset({"server"}),
+        minimum_free_disk_bytes=active.minimum_free_disk_bytes // 2,
+    )
+
+    # Lower floor and an accepted backend: qualifies.
+    assert _smaller_disk_profile(active, "server", [server_only]) is server_only
+    # Lower floor but the wrong backend: switching would trade a disk
+    # refusal for a backend refusal, so no suggestion is made at all.
+    assert _smaller_disk_profile(active, "local", [server_only]) is None
 
 
 def test_unmeasurable_store_volume_skips_the_disk_check() -> None:
