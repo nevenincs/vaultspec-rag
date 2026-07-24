@@ -21,9 +21,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 __all__ = [
-    "_FAILED_JOB_FAMILY",
-    "_DegradedFinding",
-    "_degraded_findings",
+    "DOMAIN_INDEX_FAMILY",
+    "FAILED_JOB_FAMILY",
+    "DegradedFinding",
     "_failed_job_total",
     "_format_started_label",
     "_format_status_duration",
@@ -40,6 +40,9 @@ __all__ = [
     "_status_jobs_label",
     "_status_queue_label",
     "_status_uptime_label",
+    "degradation_findings",
+    "degradation_lines",
+    "render_degradation",
 ]
 
 
@@ -225,7 +228,7 @@ def _status_uptime_label(health: dict[str, object] | None) -> str:
 
 
 @dataclass(frozen=True)
-class _DegradedFinding:
+class DegradedFinding:
     """One reported cause of degradation plus the verb that inspects it.
 
     ``cause`` is what the operator is told is wrong, ``detail`` narrows it to a
@@ -250,16 +253,32 @@ class _DegradedFinding:
             payload["family"] = self.family
         return payload
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, object]) -> DegradedFinding:
+        """Rebuild a finding a caller carried through a JSON envelope."""
+
+        def text(key: str) -> str:
+            value = payload.get(key)
+            return value if isinstance(value, str) else ""
+
+        return cls(
+            cause=text("cause"),
+            detail=text("detail"),
+            command=text("command"),
+            family=text("family"),
+        )
+
 
 #: Health statuses that describe a service with nothing to explain. Anything
 #: else - ``degraded``, ``error``, or a status this build has never seen - is
 #: treated as a service that owes the operator a reason.
 _UNDEGRADED_STATUSES = frozenset({"ready", "starting", "unknown"})
 
-_FAILED_JOB_FAMILY = "failed_job"
-_STALLED_JOBS_FAMILY = "stalled_jobs"
-_VECTOR_SERVICE_FAMILY = "vector_service"
-_MODELS_FAMILY = "models"
+FAILED_JOB_FAMILY = "failed_job"
+STALLED_JOBS_FAMILY = "stalled_jobs"
+VECTOR_SERVICE_FAMILY = "vector_service"
+MODELS_FAMILY = "models"
+DOMAIN_INDEX_FAMILY = "domain_index"
 
 
 def _health_jobs(health: dict[str, object] | None) -> dict[str, object]:
@@ -337,39 +356,39 @@ def _last_failure_label(
 def _failed_job_finding(
     health: dict[str, object] | None,
     now: float,
-) -> _DegradedFinding | None:
+) -> DegradedFinding | None:
     record = _last_failed_record(health)
     job_id = _last_failure_job_id(health)
     if not job_id:
         return None
     kind = _error_kind(record)
-    return _DegradedFinding(
+    return DegradedFinding(
         cause=f"an indexing job failed{f': {kind}' if kind else ''}",
         detail=_failed_job_identity(record, now=now, with_kind=False),
         command=f"vaultspec-rag server logs --job-id {job_id}",
-        family=_FAILED_JOB_FAMILY,
+        family=FAILED_JOB_FAMILY,
     )
 
 
 def _stalled_jobs_finding(
     health: dict[str, object] | None,
     now: float,
-) -> _DegradedFinding | None:
+) -> DegradedFinding | None:
     _ = now
     stalled = _health_jobs(health).get("stalled")
     if not isinstance(stalled, int) or stalled <= 0:
         return None
-    return _DegradedFinding(
+    return DegradedFinding(
         cause=f"{_counted_unit(stalled, 'indexing job')} stopped reporting progress",
         command="vaultspec-rag server jobs --state active",
-        family=_STALLED_JOBS_FAMILY,
+        family=STALLED_JOBS_FAMILY,
     )
 
 
 def _vector_service_finding(
     health: dict[str, object] | None,
     now: float,
-) -> _DegradedFinding | None:
+) -> DegradedFinding | None:
     _ = now
     if not isinstance(health, dict):
         return None
@@ -378,25 +397,25 @@ def _vector_service_finding(
         return None
     if cast("dict[str, object]", qdrant).get("alive") is not False:
         return None
-    return _DegradedFinding(
+    return DegradedFinding(
         cause="the vector storage service is not live",
         command="vaultspec-rag server qdrant status",
-        family=_VECTOR_SERVICE_FAMILY,
+        family=VECTOR_SERVICE_FAMILY,
     )
 
 
 def _models_finding(
     health: dict[str, object] | None,
     now: float,
-) -> _DegradedFinding | None:
+) -> DegradedFinding | None:
     _ = now
     if not isinstance(health, dict) or health.get("models_loaded") is not False:
         return None
-    return _DegradedFinding(
+    return DegradedFinding(
         cause="the embedding models are not loaded",
         detail="run server warmup when the model files are missing",
         command="vaultspec-rag server doctor",
-        family=_MODELS_FAMILY,
+        family=MODELS_FAMILY,
     )
 
 
@@ -406,7 +425,7 @@ def _models_finding(
 #: reason downgrades it to the unpaired sweep below - which still emits the
 #: command - instead of silently losing the remediation.
 _DEGRADED_FAMILIES: tuple[
-    tuple[str, Callable[[dict[str, object] | None, float], _DegradedFinding | None]],
+    tuple[str, Callable[[dict[str, object] | None, float], DegradedFinding | None]],
     ...,
 ] = (
     ("stall", _stalled_jobs_finding),
@@ -416,75 +435,185 @@ _DEGRADED_FAMILIES: tuple[
 )
 
 
-def _degraded_reason_texts(health: dict[str, object]) -> list[str]:
-    reasons = health.get("degraded_reasons")
-    if not isinstance(reasons, list):
-        return []
-    return [
-        reason.strip()
-        for reason in cast("list[object]", reasons)
-        if isinstance(reason, str) and reason.strip()
-    ]
+def _reported_degradations(payload: dict[str, object]) -> list[object]:
+    """Return the reported degradation entries under either accepted key.
+
+    Entry types are preserved rather than coerced to text: the index status
+    payload reports structured per-domain records, and stringifying one turns
+    an operator-facing cause into a container repr.
+    """
+    reasons = payload.get("degraded_reasons", payload.get("degraded"))
+    return cast("list[object]", reasons) if isinstance(reasons, list) else []
 
 
-def _health_is_degraded(health: dict[str, object]) -> bool:
-    status = health.get("status")
+def _health_is_degraded(payload: dict[str, object]) -> bool:
+    status = payload.get("status")
     return isinstance(status, str) and status not in _UNDEGRADED_STATUSES
 
 
-def _degraded_findings(
-    health: dict[str, object] | None,
+#: Operator vocabulary for a per-domain index degradation: the phrasing and the
+#: inspecting verb for each stable reason token the job registry records. A
+#: token with no entry is still rendered, quoted verbatim inside the phrase, and
+#: falls back to the log filter for the named job.
+_DOMAIN_REASONS = {
+    "stalled": ("is stalled", "vaultspec-rag server jobs --state active"),
+    "failed": ("failed", ""),
+    "interrupted": ("was interrupted", ""),
+}
+
+
+def _domain_cause(record: dict[str, object]) -> str:
+    """Compose the cause sentence for a structured per-domain record.
+
+    A record this build cannot phrase is flattened to its own fields, never
+    rendered as a container: a repr in front of an operator is the defect this
+    renderer exists to remove.
+    """
+    reason = record.get("reason")
+    if not isinstance(reason, str) or not reason:
+        return ", ".join(f"{key}: {value}" for key, value in record.items() if value)
+    source = record.get("source")
+    domain = (
+        f"the {source} index job"
+        if isinstance(source, str) and source
+        else "an index job"
+    )
+    phrase, _ = _DOMAIN_REASONS.get(reason, (f"reported {reason}", ""))
+    kind = _error_kind(record)
+    return f"{domain} {phrase}{f': {kind}' if kind else ''}"
+
+
+def _domain_degradation(record: dict[str, object]) -> DegradedFinding:
+    """Turn one structured per-domain index degradation into a finding."""
+    raw_job_id = record.get("job_id")
+    job_id = raw_job_id.strip() if isinstance(raw_job_id, str) else ""
+    _, command = _DOMAIN_REASONS.get(str(record.get("reason")), ("", ""))
+    if not command and job_id:
+        command = f"vaultspec-rag server logs --job-id {job_id}"
+    return DegradedFinding(
+        cause=_domain_cause(record),
+        detail=f"job {_short_job_id(job_id)}" if job_id else "",
+        command=command,
+        family=DOMAIN_INDEX_FAMILY,
+    )
+
+
+def degradation_findings(
+    payload: dict[str, object] | None,
     *,
     now: float | None = None,
-) -> list[_DegradedFinding]:
+) -> list[DegradedFinding]:
     """Pair every reported degradation cause with the verb that inspects it.
 
-    The reported reasons are the authority on what is wrong, so each one is
-    rendered whether or not it can be paired. The structured signals are the
-    authority on where to look, so the remediation is derived from them rather
-    than parsed out of the prose - a reworded reason loses its pairing, never
-    its visibility, and a proven signal no reason claimed is reported anyway.
+    This is the one place that turns a degradation report into operator-facing
+    causes and remedies - extend it rather than adding a second renderer. It
+    accepts any payload carrying ``degraded_reasons`` (or the legacy
+    ``degraded``): the service health payload, whose entries are prose backed by
+    structured signals in the same payload, and the index status payload, whose
+    entries are structured per-domain records.
+
+    The reported entries are the authority on what is wrong, so each is rendered
+    whether or not it can be paired. The structured signals are the authority on
+    where to look, so the remediation is derived from them rather than parsed
+    out of the prose - a reworded reason loses its pairing, never its
+    visibility, and a proven signal no entry claimed is reported anyway.
 
     A service that reports no problem gets no findings even when a failed job
     sits in its history: history is reported elsewhere and is not a verdict on
     the running process.
     """
-    if not isinstance(health, dict):
+    if not isinstance(payload, dict):
         return []
-    reasons = _degraded_reason_texts(health)
-    if not reasons and not _health_is_degraded(health):
+    reported = _reported_degradations(payload)
+    if not reported and not _health_is_degraded(payload):
         return []
-    unclaimed = _proven_findings(health, time.time() if now is None else now)
-    findings: list[_DegradedFinding] = []
-    for reason in reasons:
-        lowered = reason.lower()
-        stem = next((known for known in unclaimed if known in lowered), None)
-        if stem is None:
-            findings.append(_DegradedFinding(cause=reason))
-            continue
-        evidence = unclaimed.pop(stem)
-        findings.append(
-            _DegradedFinding(
-                cause=reason,
-                detail=evidence.detail,
-                command=evidence.command,
-                family=evidence.family,
-            )
-        )
+    unclaimed = _proven_findings(payload, time.time() if now is None else now)
+    findings = [_reported_finding(entry, unclaimed) for entry in reported]
     findings.extend(unclaimed.values())
-    return findings
+    return [finding for finding in findings if finding.cause]
+
+
+def _reported_finding(
+    entry: object,
+    unclaimed: dict[str, DegradedFinding],
+) -> DegradedFinding:
+    """Render one reported entry, claiming the signal that explains it."""
+    if isinstance(entry, dict):
+        return _domain_degradation(cast("dict[str, object]", entry))
+    reason = str(entry).strip()
+    stem = next((known for known in unclaimed if known in reason.lower()), None)
+    if not reason or stem is None:
+        return DegradedFinding(cause=reason)
+    evidence = unclaimed.pop(stem)
+    return DegradedFinding(
+        cause=reason,
+        detail=evidence.detail,
+        command=evidence.command,
+        family=evidence.family,
+    )
 
 
 def _proven_findings(
-    health: dict[str, object],
+    payload: dict[str, object],
     now: float,
-) -> dict[str, _DegradedFinding]:
+) -> dict[str, DegradedFinding]:
     """Build the finding for every family whose structured signal fires."""
     return {
         stem: finding
         for stem, builder in _DEGRADED_FAMILIES
-        if (finding := builder(health, now)) is not None
+        if (finding := builder(payload, now)) is not None
     }
+
+
+def degradation_lines(
+    findings: list[DegradedFinding],
+    *,
+    header: str,
+    remediation: bool = True,
+    port_arg: str = "",
+) -> list[str]:
+    """Shape findings into operator lines under ``header``.
+
+    With ``remediation`` each cause is followed by its indented detail and the
+    command that inspects it. Without it only the causes are listed, which is
+    the compact shape for a surface that already states its own next action.
+    """
+    if not findings:
+        return []
+    lines = [header]
+    for finding in findings:
+        lines.append(f"  - {finding.cause}")
+        if not remediation:
+            continue
+        if finding.detail:
+            lines.append(f"    {finding.detail}")
+        if finding.command:
+            lines.append(f"    {finding.command}{port_arg}")
+    return lines
+
+
+def render_degradation(
+    payload: dict[str, object] | None,
+    *,
+    header: str,
+    remediation: bool = True,
+    port_arg: str = "",
+    now: float | None = None,
+) -> list[str]:
+    """Render a payload's degradation report as operator lines.
+
+    The single entry point for any surface that shows why something is
+    degraded. A caller that also needs the findings themselves - to choose a
+    next action, or to put them in a JSON envelope - composes
+    :func:`degradation_findings` with :func:`degradation_lines` instead of
+    re-deriving either half.
+    """
+    return degradation_lines(
+        degradation_findings(payload, now=now),
+        header=header,
+        remediation=remediation,
+        port_arg=port_arg,
+    )
 
 
 def _status_env_label(health: dict[str, object] | None) -> str:

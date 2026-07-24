@@ -382,6 +382,100 @@ class TestReasonsSurviveRewording:
         assert f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}" in lines
 
 
+class TestOneRendererServesEverySurface:
+    """Degradation is rendered in one place, for every payload that reports it.
+
+    Two payloads report degradation in different shapes - the service health
+    payload in prose, the project index payload in structured per-domain records
+    - and both reach operators through the same renderer. The shapes are covered
+    here because a second renderer for either one is how the wording, the
+    remediation, and the never-drop guarantee drift apart.
+    """
+
+    def test_structured_index_records_render_a_cause_not_a_container(self) -> None:
+        from ..cli._status import _status_diagnostics
+
+        lines = _status_diagnostics(
+            {
+                "degraded_reasons": [
+                    {
+                        "source": "code",
+                        "job_id": _FAILED_JOB_ID,
+                        "reason": "failed",
+                        "error_kind": "other",
+                    },
+                    {"source": "vault", "job_id": "abc12345-0000", "reason": "stalled"},
+                ]
+            }
+        )
+
+        assert lines == [
+            "Degraded because:",
+            "  - the code index job failed: other",
+            "    job e8f8ac43",
+            f"    vaultspec-rag server logs --job-id {_FAILED_JOB_ID}",
+            "  - the vault index job is stalled",
+            "    job abc12345",
+            "    vaultspec-rag server jobs --state active",
+        ]
+        # The defect this replaced: a list of records interpolated into one
+        # line, printing Python syntax at an operator.
+        assert not any(("{" in line or "'" in line) for line in lines)
+
+    def test_unphrasable_index_record_is_flattened_not_repred(self) -> None:
+        from ..cli._status import _status_diagnostics
+
+        lines = _status_diagnostics(
+            {"degraded_reasons": [{"source": "code", "detail": "disk full"}]}
+        )
+
+        assert lines == ["Degraded because:", "  - source: code, detail: disk full"]
+
+    def test_index_status_without_degradation_says_nothing(self) -> None:
+        from ..cli._status import _status_diagnostics
+
+        assert _status_diagnostics({"degraded_reasons": []}) == []
+        assert _status_diagnostics({}) == []
+
+    def test_compact_shape_lists_causes_without_remediation(self) -> None:
+        from ..cli._status_labels import render_degradation
+
+        payload = _health_payload(
+            reasons=[
+                "embedding models are not loaded",
+                "the latest indexing job failed: other",
+            ],
+            models_loaded=False,
+            jobs={"last_failed": _last_failed_record()},
+        )
+
+        assert render_degradation(
+            payload,
+            header="Serving, with warnings:",
+            remediation=False,
+        ) == [
+            "Serving, with warnings:",
+            "  - embedding models are not loaded",
+            "  - the latest indexing job failed: other",
+        ]
+
+    def test_port_qualifier_reaches_every_rendered_command(self) -> None:
+        from ..cli._status_labels import render_degradation
+
+        lines = render_degradation(
+            _health_payload(
+                reasons=["the latest indexing job failed: other"],
+                jobs={"last_failed": _last_failed_record()},
+            ),
+            header="Degraded because:",
+            port_arg=" --port 8123",
+        )
+
+        assert lines[-1] == (
+            f"    vaultspec-rag server logs --job-id {_FAILED_JOB_ID} --port 8123"
+        )
+
+
 class TestHealthyServiceStaysQuiet:
     """Nothing above is allowed to add noise to a service with no problem."""
 
