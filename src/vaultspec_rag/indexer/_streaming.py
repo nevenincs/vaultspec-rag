@@ -8,8 +8,11 @@ keep peak memory bounded (the #68 RSS-leak fix).
 from __future__ import annotations
 
 import logging
+import queue
+import time
 from contextlib import nullcontext
 from dataclasses import dataclass
+from functools import partial
 from itertools import chain, pairwise
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
@@ -31,8 +34,11 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "CodeFileSegment",
+    "StoreWriteTask",
+    "UnsettledStoreWriterError",
     "WeightedCodeSlice",
     "WeightedDocumentSlice",
+    "_SliceWriter",
     "_release_cuda_cache",
     "_stream_encode_and_upsert_codebase",
     "_stream_encode_and_upsert_vault",
@@ -44,6 +50,16 @@ __all__ = [
     "iter_weighted_code_slices",
     "iter_weighted_document_slices",
 ]
+
+# Polling bound for every wait against the writer-side queue, so cooperative
+# control and failure checks run between bounded blocking attempts.
+_WRITER_POLL_SECONDS = 0.1
+
+# Upper bound on how long writer shutdown waits for the writer thread to
+# drain its final upsert and terminate. Generous for any healthy final store
+# write yet finite, so a wedged Qdrant call escalates to a raised error
+# instead of hanging the encoding thread under the indexer's writer lock.
+_WRITER_SHUTDOWN_TIMEOUT_S = 300.0
 
 
 # Conservative 64-bit CPython lifetime estimates. A dense element exists once
@@ -350,6 +366,165 @@ def _encode_slice_vector_fields(
         del slice_texts
 
 
+@dataclass(slots=True)
+class StoreWriteTask:
+    """One ordered storage hand-off from the encoding thread.
+
+    ``write`` performs the synchronous store mutation plus any
+    storage-confirmed accounting; ``release`` drops the slice's vector-bearing
+    fields and always runs once the task settles, successful or not.
+    """
+
+    write: Callable[[], None]
+    release: Callable[[], None]
+
+
+class UnsettledStoreWriterError(RuntimeError):
+    """The store writer thread remained live after its bounded shutdown wait."""
+
+
+class _SliceWriter:
+    """Single writer thread draining a bounded queue of store-write tasks.
+
+    Overlaps slice N's storage I/O with slice N+1's encode while the calling
+    (encoding) thread remains the only thread touching the GPU: the writer
+    performs storage work exclusively and never acquires ``gpu_lock``. Tasks
+    execute in submission order on one thread, so storage confirmations and
+    checkpoints land in slice order. After the first task failure the writer
+    stops writing and only releases the remaining tasks' vector fields; the
+    recorded failure re-raises on the encoding side at the next ``submit`` or
+    at ``close``. Every shutdown wait (the sentinel put and the join) is
+    liveness-guarded and time-bounded so a wedged store call aborts the run
+    rather than hanging it.
+    """
+
+    __slots__ = ("_failure", "_poll_seconds", "_queue", "_shutdown_timeout", "_thread")
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        max_pending: int = 2,
+        poll_seconds: float = _WRITER_POLL_SECONDS,
+        shutdown_timeout_seconds: float = _WRITER_SHUTDOWN_TIMEOUT_S,
+    ) -> None:
+        import threading
+
+        if isinstance(max_pending, bool) or max_pending <= 0:
+            raise ValueError("max_pending must be a positive integer")
+        self._queue: queue.Queue[StoreWriteTask | None] = queue.Queue(
+            maxsize=max_pending
+        )
+        self._poll_seconds = poll_seconds
+        self._shutdown_timeout = shutdown_timeout_seconds
+        self._failure: BaseException | None = None
+        self._thread = threading.Thread(target=self._run, name=name)
+        self._thread.start()
+
+    def _run(self) -> None:
+        while True:
+            task = self._queue.get()
+            if task is None:
+                return
+            try:
+                if self._failure is None:
+                    task.write()
+            except BaseException as exc:
+                self._failure = exc
+            finally:
+                task.release()
+
+    @property
+    def failure(self) -> BaseException | None:
+        """Return the first recorded write failure, if any."""
+        return self._failure
+
+    def _raise_if_failed(self) -> None:
+        if self._failure is not None:
+            raise self._failure
+
+    def submit(
+        self,
+        task: StoreWriteTask,
+        *,
+        run_control: RunControl = NO_RUN_CONTROL,
+    ) -> None:
+        """Queue one write task, re-raising any already-recorded failure.
+
+        The caller retains cleanup responsibility for ``task`` until this
+        method returns: on any raise here the task was not accepted and its
+        ``release`` has not run.
+        """
+        while True:
+            run_control.checkpoint()
+            self._raise_if_failed()
+            if not self._thread.is_alive():
+                raise RuntimeError("store writer terminated unexpectedly")
+            try:
+                self._queue.put(task, timeout=self._poll_seconds)
+            except queue.Full:
+                continue
+            return
+
+    def close(self, *, run_control: RunControl = NO_RUN_CONTROL) -> None:
+        """Drain outstanding writes and stop the writer, bounded end to end.
+
+        Raises the writer's recorded failure once the thread settles, and
+        raises :class:`UnsettledStoreWriterError` when the sentinel cannot be
+        delivered or the thread does not terminate within the shutdown bound.
+        """
+        deadline = time.monotonic() + self._shutdown_timeout
+        sentinel_delivered = False
+        while self._thread.is_alive() and not sentinel_delivered:
+            run_control.checkpoint()
+            if time.monotonic() >= deadline:
+                break
+            try:
+                self._queue.put(None, timeout=self._poll_seconds)
+            except queue.Full:
+                continue
+            sentinel_delivered = True
+        while self._thread.is_alive():
+            run_control.checkpoint()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            self._thread.join(timeout=min(self._poll_seconds, remaining))
+        if self._thread.is_alive():
+            logger.error(
+                "store writer %r did not terminate within %.0fs; aborting the run",
+                self._thread.name,
+                self._shutdown_timeout,
+            )
+            raise UnsettledStoreWriterError(
+                f"store writer {self._thread.name!r} did not terminate within "
+                f"{self._shutdown_timeout:.0f}s"
+            )
+        self._raise_if_failed()
+
+    def abandon(self) -> None:
+        """Best-effort bounded shutdown for the encoding side's error path.
+
+        Never raises, so the original encoding-side exception propagates; a
+        writer that cannot be settled within the bound is logged and left to
+        finish its wedged store call on its own.
+        """
+        deadline = time.monotonic() + self._shutdown_timeout
+        while self._thread.is_alive():
+            try:
+                self._queue.put(None, timeout=self._poll_seconds)
+                break
+            except queue.Full:
+                if time.monotonic() >= deadline:
+                    break
+        self._thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        if self._thread.is_alive():
+            logger.error(
+                "store writer %r still live after abandon; a store call may be wedged",
+                self._thread.name,
+            )
+
+
 def _encode_and_upsert_vault_slice(
     *,
     slice_chunks: list[VaultChunk],
@@ -360,13 +535,22 @@ def _encode_and_upsert_vault_slice(
     sparse_enabled: bool,
     probe: MemoryProbe,
     run_control: RunControl = NO_RUN_CONTROL,
+    writer: _SliceWriter | None = None,
 ) -> None:
-    """Encode, synchronously store, and release one vault chunk slice."""
+    """Encode one vault chunk slice and store it, inline or via the writer.
+
+    With a ``writer``, the synchronous upsert is handed to the single writer
+    thread so the next slice's encode overlaps this slice's storage I/O; the
+    writer releases the slice's vector fields once its upsert settles. The
+    per-slice CUDA cache flush stays on this (encoding) thread at the same
+    once-per-slice cadence as the inline path.
+    """
 
     def _after_encode() -> None:
         probe.checkpoint(f"slice-{slice_index}-after-encode")
 
     probe.checkpoint(f"slice-{slice_index}-before-encode")
+    handed_off = False
     try:
         run_control.checkpoint()
         _encode_slice_vector_fields(
@@ -379,9 +563,24 @@ def _encode_and_upsert_vault_slice(
             after_encode=_after_encode,
         )
         run_control.checkpoint()
-        store.upsert_document_chunks(slice_chunks, write_policy=None)
+        if writer is None:
+            store.upsert_document_chunks(slice_chunks, write_policy=None)
+        else:
+            writer.submit(
+                StoreWriteTask(
+                    write=partial(
+                        store.upsert_document_chunks,
+                        slice_chunks,
+                        write_policy=None,
+                    ),
+                    release=partial(_release_vector_fields, slice_chunks),
+                ),
+                run_control=run_control,
+            )
+            handed_off = True
     finally:
-        _release_vector_fields(slice_chunks)
+        if not handed_off:
+            _release_vector_fields(slice_chunks)
         _release_cuda_cache()
 
 
@@ -418,7 +617,7 @@ def _stream_encode_and_upsert_vault(
     """
     from ..config import get_config
     from ..memory_probe import MemoryProbe
-    from ._vault_prep import split_document
+    from ._vault_prep import split_documents
 
     cfg = get_config()
     sparse_enabled = cfg.sparse_enabled
@@ -429,7 +628,7 @@ def _stream_encode_and_upsert_vault(
     # sorts again per call, but the slice-level sort makes each slice's
     # longest text close in length to its shortest, bounding the
     # slice's worst-case padding cost.
-    chunks = [c for d in docs for c in split_document(d, chunk_chars)]
+    chunks = split_documents(docs, chunk_chars, run_control=run_control)
     chunk_counts = {c.doc_id: c.chunk_count for c in chunks}
     sorted_chunks = sorted(
         chunks,
@@ -442,21 +641,28 @@ def _stream_encode_and_upsert_vault(
 
     with MemoryProbe(name="vault-full-index") as probe:
         reporter.phase_start("embed + upsert documents", len(sorted_chunks))
+        writer = _SliceWriter(name="vault-slice-writer")
         try:
-            for i in range(0, len(sorted_chunks), slice_size):
-                slice_chunks = sorted_chunks[i : i + slice_size]
-                _encode_and_upsert_vault_slice(
-                    slice_chunks=slice_chunks,
-                    slice_index=i,
-                    model=model,
-                    store=store,
-                    gpu_lock=gpu_lock,
-                    sparse_enabled=sparse_enabled,
-                    probe=probe,
-                    run_control=run_control,
-                )
-                probe.checkpoint(f"slice-{i}-after-empty-cache")
-                reporter.advance(len(slice_chunks))
+            try:
+                for i in range(0, len(sorted_chunks), slice_size):
+                    slice_chunks = sorted_chunks[i : i + slice_size]
+                    _encode_and_upsert_vault_slice(
+                        slice_chunks=slice_chunks,
+                        slice_index=i,
+                        model=model,
+                        store=store,
+                        gpu_lock=gpu_lock,
+                        sparse_enabled=sparse_enabled,
+                        probe=probe,
+                        run_control=run_control,
+                        writer=writer,
+                    )
+                    probe.checkpoint(f"slice-{i}-after-empty-cache")
+                    reporter.advance(len(slice_chunks))
+            except BaseException:
+                writer.abandon()
+                raise
+            writer.close(run_control=run_control)
         finally:
             # Always close the phase so progress reporters never see
             # an unbalanced phase_start/phase_end pair, even when the
@@ -509,12 +715,22 @@ def encode_and_upsert_document_slice(
     after_forward: Callable[[str], None] | None = None,
     on_cuda_oom: Callable[[BaseException], None] | None = None,
     run_control: RunControl = NO_RUN_CONTROL,
+    writer: _SliceWriter | None = None,
 ) -> None:
-    """Encode and synchronously publish one bounded document-only slice."""
+    """Encode and publish one bounded document-only slice.
+
+    Without a ``writer`` the upsert and its confirmation callback run
+    synchronously on this thread. With a ``writer``, both are handed to the
+    single writer thread in submission order, so the next slice's encode
+    overlaps this slice's storage I/O; the writer releases the slice's vector
+    fields once the task settles, and any write failure re-raises on the
+    encoding side at the next hand-off or at the writer's close.
+    """
     from ..config import get_config
 
     if not slice_chunks:
         return
+    handed_off = False
     try:
         run_control.checkpoint()
         _encode_slice_vector_fields(
@@ -528,16 +744,49 @@ def encode_and_upsert_document_slice(
             on_cuda_oom=on_cuda_oom,
         )
         run_control.checkpoint()
-        store.upsert_document_content_chunks(
-            slice_chunks,
-            write_policy=write_policy,
-        )
-        if on_storage_confirmed is not None:
-            on_storage_confirmed()
+        if writer is None:
+            store.upsert_document_content_chunks(
+                slice_chunks,
+                write_policy=write_policy,
+            )
+            if on_storage_confirmed is not None:
+                on_storage_confirmed()
+        else:
+            writer.submit(
+                StoreWriteTask(
+                    write=partial(
+                        _write_document_slice,
+                        slice_chunks,
+                        store=store,
+                        write_policy=write_policy,
+                        on_storage_confirmed=on_storage_confirmed,
+                    ),
+                    release=partial(_release_vector_fields, slice_chunks),
+                ),
+                run_control=run_control,
+            )
+            handed_off = True
     finally:
-        _release_vector_fields(slice_chunks)
+        if not handed_off:
+            _release_vector_fields(slice_chunks)
         if release_cache:
             _release_cuda_cache()
+
+
+def _write_document_slice(
+    slice_chunks: list[DocumentChunk],
+    *,
+    store: VaultStore,
+    write_policy: StoreWritePolicy | None,
+    on_storage_confirmed: Callable[[], None] | None,
+) -> None:
+    """Publish one encoded document slice and confirm it, in writer order."""
+    store.upsert_document_content_chunks(
+        slice_chunks,
+        write_policy=write_policy,
+    )
+    if on_storage_confirmed is not None:
+        on_storage_confirmed()
 
 
 def _utf8_size(value: str | None) -> int:
