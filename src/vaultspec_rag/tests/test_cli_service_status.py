@@ -14,15 +14,17 @@ import pytest
 
 from ..serviceclient._transport import _try_http_health
 from ._cli_helpers import (
-    EnvVar,
     _assert_default_status_summary,
     _assert_verbose_status_summary,
     _find_free_port,
     _is_our_service,
     _is_pid_alive,
+    _isolated_status_dir,
     _label_values,
     _plain_lines,
     _read_service_status,
+    _running_service_record,
+    _serving,
     _status_contract_server,
     _write_service_status,
     app,
@@ -52,6 +54,32 @@ def _jobs_payload(*, done: int = 191, failed: int = 45) -> dict[str, object]:
         "total": done + failed,
         "returned": 0,
         "summary": {"running": 0, "phases": {"done": done, "error": failed}},
+    }
+
+
+def _idle_jobs_payload() -> dict[str, object]:
+    """The jobs report of a service with no history and nothing running."""
+    return {
+        "ok": True,
+        "jobs": [],
+        "total": 0,
+        "returned": 0,
+        "summary": {"running": 0, "phases": {}},
+    }
+
+
+def _ready_health_payload() -> dict[str, object]:
+    """A minimal healthy report, for tests whose subject is not the health."""
+    return {
+        "status": "ready",
+        "cuda": True,
+        "models_loaded": True,
+        "project_count": 1,
+        "backend_capabilities": {
+            "same_project_search_strategy": "serialized",
+            "cross_project_search_strategy": "parallel",
+            "local_storage_process_model": "exclusive",
+        },
     }
 
 
@@ -85,28 +113,22 @@ def _health_payload(
 
 
 @contextlib.contextmanager
-def _health_contract_server(
-    health: dict[str, object],
-    jobs: dict[str, object],
+def _live_status_service(
+    status_dir: Path,
+    contract_server: tuple[Any, Any],
+    *,
+    drop: tuple[str, ...] = (),
 ) -> Generator[int]:
-    """Serve one fixed ``/health`` and ``/jobs`` pair, yielding the port."""
+    """Serve the shared status contract behind a live-looking service record.
 
-    class _Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            payload = jobs if self.path.startswith("/jobs") else health
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(payload).encode("utf-8"))
-
-        def log_message(self, format: str, *args: object) -> None:
-            _ = format, args
-
-    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    Takes the already-constructed server so each caller keeps its own typed
+    ``_status_contract_server`` arguments, and owns the teardown of both the
+    server thread and the status-directory isolation.
+    """
+    server, thread = contract_server
     try:
-        yield server.server_address[1]
+        with _running_service_record(status_dir, server.server_address[1], drop=drop):
+            yield server.server_address[1]
     finally:
         server.shutdown()
         server.server_close()
@@ -120,20 +142,13 @@ def _status_against(
     jobs: dict[str, object] | None = None,
 ) -> Any:
     """Run ``server status`` against a service reporting the given health."""
-    from datetime import UTC, datetime
-
-    served_jobs = _jobs_payload() if jobs is None else jobs
-    with _health_contract_server(health, served_jobs) as port:
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
-            _write_service_status(pid=os.getpid(), port=port)
-            record_path = tmp_path / "service.json"
-            record = json.loads(record_path.read_text(encoding="utf-8"))
-            record["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
-            record_path.write_text(json.dumps(record), encoding="utf-8")
-            return runner.invoke(app, ["server", "status", *args])
-        finally:
-            os.environ.pop(EnvVar.STATUS_DIR, None)
+    with _live_status_service(
+        tmp_path,
+        _status_contract_server(
+            health=health, jobs=_jobs_payload() if jobs is None else jobs
+        ),
+    ):
+        return runner.invoke(app, ["server", "status", *args])
 
 
 class TestDegradedStatusExplainsItself:
@@ -480,18 +495,7 @@ class TestHealthyServiceStaysQuiet:
     """Nothing above is allowed to add noise to a service with no problem."""
 
     def test_healthy_summary_has_no_degraded_block(self, tmp_path: Path) -> None:
-        server, thread = _status_contract_server()
-        port = server.server_address[1]
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
-            from datetime import UTC, datetime
-
-            _write_service_status(pid=os.getpid(), port=port)
-            record_path = tmp_path / "service.json"
-            record = json.loads(record_path.read_text(encoding="utf-8"))
-            record["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
-            record_path.write_text(json.dumps(record), encoding="utf-8")
-
+        with _live_status_service(tmp_path, _status_contract_server()) as port:
             result = runner.invoke(app, ["server", "status"])
 
             assert result.exit_code == 0, result.output
@@ -499,11 +503,6 @@ class TestHealthyServiceStaysQuiet:
             assert "Degraded because" not in result.output
             assert "Review failures" not in result.output
             assert "Last failure" not in result.output
-        finally:
-            server.shutdown()
-            server.server_close()
-            os.environ.pop(EnvVar.STATUS_DIR, None)
-            thread.join(timeout=5)
 
     def test_historical_failure_is_reported_without_declaring_degradation(
         self, tmp_path: Path
@@ -571,21 +570,17 @@ class TestServiceDaemonHelpers:
 
     def test_write_read_status_roundtrip(self, tmp_path: Path):
         """Write and read back should produce the same pid/port."""
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
+        with _isolated_status_dir(tmp_path):
             _write_service_status(pid=12345, port=9999)
             data = _read_service_status()
             assert data is not None
             assert data["pid"] == 12345
             assert data["port"] == 9999
             assert "started_at" in data
-        finally:
-            os.environ.pop(EnvVar.STATUS_DIR, None)
 
     def test_write_creates_valid_json(self, tmp_path: Path):
         """Status file must be valid JSON with expected keys."""
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
+        with _isolated_status_dir(tmp_path):
             _write_service_status(pid=42, port=8766)
             import json
 
@@ -598,43 +593,31 @@ class TestServiceDaemonHelpers:
                 "port",
                 "started_at",
             }
-        finally:
-            os.environ.pop(EnvVar.STATUS_DIR, None)
 
     def test_read_status_missing_file(self, tmp_path: Path):
         """Reading a nonexistent file should return None."""
         empty_dir = tmp_path / "empty"
         empty_dir.mkdir()
-        os.environ[EnvVar.STATUS_DIR] = str(empty_dir)
-        try:
+        with _isolated_status_dir(empty_dir):
             assert _read_service_status() is None
-        finally:
-            os.environ.pop(EnvVar.STATUS_DIR, None)
 
     def test_read_status_invalid_json(self, tmp_path: Path):
         """Invalid JSON in status file should return None."""
         sf = tmp_path / "service.json"
         sf.write_text("not json", encoding="utf-8")
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
+        with _isolated_status_dir(tmp_path):
             assert _read_service_status() is None
-        finally:
-            os.environ.pop(EnvVar.STATUS_DIR, None)
 
     def test_read_status_missing_pid_key(self, tmp_path: Path):
         """Status JSON without a pid key should return None."""
         sf = tmp_path / "service.json"
         sf.write_text('{"port": 8766}', encoding="utf-8")
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
+        with _isolated_status_dir(tmp_path):
             assert _read_service_status() is None
-        finally:
-            os.environ.pop(EnvVar.STATUS_DIR, None)
 
     def test_service_stop_stale_pid(self, tmp_path: Path):
         """service_stop with a dead PID cleans up the status file."""
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
+        with _isolated_status_dir(tmp_path):
             _write_service_status(pid=99999999, port=8766)
             sf = tmp_path / "service.json"
             assert sf.exists()
@@ -646,8 +629,6 @@ class TestServiceDaemonHelpers:
             assert "recorded process 99999999 is no longer running" in out
             assert "pid:" not in out
             assert not sf.exists()
-        finally:
-            os.environ.pop(EnvVar.STATUS_DIR, None)
 
     def test_service_status_stale_pid(self, tmp_path: Path):
         """service_status with a dead PID exits 4 and cleans the file.
@@ -655,8 +636,7 @@ class TestServiceDaemonHelpers:
         Divergent/crashed states exit 4 so scripts can branch on
         "known-bad" without parsing prose.
         """
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
+        with _isolated_status_dir(tmp_path):
             _write_service_status(pid=99999999, port=8766)
             sf = tmp_path / "service.json"
             assert sf.exists()
@@ -666,14 +646,11 @@ class TestServiceDaemonHelpers:
             lower = result.output.lower()
             assert "crashed" in lower or "stale" in lower
             assert not sf.exists()
-        finally:
-            os.environ.pop(EnvVar.STATUS_DIR, None)
 
     def test_service_status_stale_pid_verbose_uses_condition_language(
         self, tmp_path: Path
     ):
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
+        with _isolated_status_dir(tmp_path):
             _write_service_status(pid=99999999, port=8766)
 
             result = runner.invoke(app, ["server", "status", "--verbose"])
@@ -687,8 +664,6 @@ class TestServiceDaemonHelpers:
             assert "Network: not accepting connections" in result.output
             assert "Service process:" not in result.output
             assert "not checked" not in result.output
-        finally:
-            os.environ.pop(EnvVar.STATUS_DIR, None)
 
     def test_health_probe_nonlistening_port(self):
         """Health probe on a port with no listener should return None."""
@@ -696,8 +671,6 @@ class TestServiceDaemonHelpers:
 
     def test_health_probe_non_json_response(self):
         """Health probe returns None when server sends non-JSON."""
-        import http.server
-        import threading
 
         class _GarbageHandler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
@@ -722,24 +695,10 @@ class TestServiceDaemonHelpers:
 
     def test_service_status_default_human_output_is_plain_summary(self, tmp_path: Path):
         """service status renders the plain operator summary by default."""
-        import json
-
-        server, thread = _status_contract_server()
-        port = server.server_address[1]
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
-            # A healthy running service writes last_heartbeat to
-            # service.json. Without it the divergence check
-            # correctly flags "absent + PID alive" as crashed.
-            # Inject a fresh heartbeat to model a running daemon.
-            _write_service_status(pid=os.getpid(), port=port)
-            sf = tmp_path / "service.json"
-            data = json.loads(sf.read_text(encoding="utf-8"))
-            from datetime import UTC, datetime
-
-            data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
-            sf.write_text(json.dumps(data), encoding="utf-8")
-
+        with _live_status_service(
+            tmp_path,
+            _status_contract_server(),
+        ) as port:
             result = runner.invoke(app, ["server", "status"])
 
             assert result.exit_code == 0
@@ -753,27 +712,12 @@ class TestServiceDaemonHelpers:
             assert "Service identity:" not in verbose.output
             assert "Identity check: not checked" not in verbose.output
             assert "Started: 2026-" not in verbose.output
-        finally:
-            server.shutdown()
-            server.server_close()
-            os.environ.pop(EnvVar.STATUS_DIR, None)
-            thread.join(timeout=5)
 
     def test_service_status_lists_multiple_active_jobs(self, tmp_path: Path):
-        import json
-
-        server, thread = _status_contract_server(extra_running_job=True)
-        port = server.server_address[1]
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
-            _write_service_status(pid=os.getpid(), port=port)
-            sf = tmp_path / "service.json"
-            data = json.loads(sf.read_text(encoding="utf-8"))
-            from datetime import UTC, datetime
-
-            data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
-            sf.write_text(json.dumps(data), encoding="utf-8")
-
+        with _live_status_service(
+            tmp_path,
+            _status_contract_server(extra_running_job=True),
+        ):
             result = runner.invoke(app, ["server", "status"])
 
             assert result.exit_code == 0, result.output
@@ -792,27 +736,12 @@ class TestServiceDaemonHelpers:
             assert "embedding source code sections 7 of 20" in active_rows[1]
             assert all(row.count("no progress for") <= 1 for row in active_rows)
             assert "Current job:" not in result.output
-        finally:
-            server.shutdown()
-            server.server_close()
-            os.environ.pop(EnvVar.STATUS_DIR, None)
-            thread.join(timeout=5)
 
     def test_service_status_summary_reports_failed_jobs(self, tmp_path: Path):
-        import json
-
-        server, thread = _status_contract_server(failed_jobs=2)
-        port = server.server_address[1]
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
-            _write_service_status(pid=os.getpid(), port=port)
-            sf = tmp_path / "service.json"
-            data = json.loads(sf.read_text(encoding="utf-8"))
-            from datetime import UTC, datetime
-
-            data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
-            sf.write_text(json.dumps(data), encoding="utf-8")
-
+        with _live_status_service(
+            tmp_path,
+            _status_contract_server(failed_jobs=2),
+        ):
             result = runner.invoke(app, ["server", "status"])
 
             assert result.exit_code == 0, result.output
@@ -822,27 +751,12 @@ class TestServiceDaemonHelpers:
             )
             assert "recent jobs" not in result.output
             assert "Jobs:" not in result.output
-        finally:
-            server.shutdown()
-            server.server_close()
-            os.environ.pop(EnvVar.STATUS_DIR, None)
-            thread.join(timeout=5)
 
     def test_service_status_omits_missing_current_job_project(self, tmp_path: Path):
-        import json
-
-        server, thread = _status_contract_server(omit_project=True)
-        port = server.server_address[1]
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
-            _write_service_status(pid=os.getpid(), port=port)
-            sf = tmp_path / "service.json"
-            data = json.loads(sf.read_text(encoding="utf-8"))
-            from datetime import UTC, datetime
-
-            data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
-            sf.write_text(json.dumps(data), encoding="utf-8")
-
+        with _live_status_service(
+            tmp_path,
+            _status_contract_server(omit_project=True),
+        ):
             result = runner.invoke(app, ["server", "status"])
 
             assert result.exit_code == 0, result.output
@@ -852,30 +766,15 @@ class TestServiceDaemonHelpers:
             assert not any(line.startswith("Project:") for line in lines)
             assert "project not reported" not in result.output
             assert "project unknown" not in result.output
-        finally:
-            server.shutdown()
-            server.server_close()
-            os.environ.pop(EnvVar.STATUS_DIR, None)
-            thread.join(timeout=5)
 
     def test_service_status_missing_start_times_use_reported_absence_language(
         self, tmp_path: Path
     ):
-        import json
-
-        server, thread = _status_contract_server(omit_job_started_at=True)
-        port = server.server_address[1]
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
-            _write_service_status(pid=os.getpid(), port=port)
-            sf = tmp_path / "service.json"
-            data = json.loads(sf.read_text(encoding="utf-8"))
-            data.pop("started_at", None)
-            from datetime import UTC, datetime
-
-            data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
-            sf.write_text(json.dumps(data), encoding="utf-8")
-
+        with _live_status_service(
+            tmp_path,
+            _status_contract_server(omit_job_started_at=True),
+            drop=("started_at",),
+        ):
             result = runner.invoke(app, ["server", "status", "--verbose"])
 
             assert result.exit_code == 0, result.output
@@ -883,11 +782,6 @@ class TestServiceDaemonHelpers:
             assert labels["Started"] == "not reported by local record"
             assert labels["Runtime"] == "not reported by service"
             assert "unknown" not in result.output.lower()
-        finally:
-            server.shutdown()
-            server.server_close()
-            os.environ.pop(EnvVar.STATUS_DIR, None)
-            thread.join(timeout=5)
 
     def _service_status_current_job_output(
         self,
@@ -895,31 +789,16 @@ class TestServiceDaemonHelpers:
         *,
         last_progress_age_seconds: float,
     ) -> str:
-        import json
-
-        server, thread = _status_contract_server(
-            last_progress_age_seconds=last_progress_age_seconds,
-        )
-        port = server.server_address[1]
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
-            _write_service_status(pid=os.getpid(), port=port)
-            sf = tmp_path / "service.json"
-            data = json.loads(sf.read_text(encoding="utf-8"))
-            from datetime import UTC, datetime
-
-            data["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
-            sf.write_text(json.dumps(data), encoding="utf-8")
-
+        with _live_status_service(
+            tmp_path,
+            _status_contract_server(
+                last_progress_age_seconds=last_progress_age_seconds,
+            ),
+        ):
             result = runner.invoke(app, ["server", "status"])
 
             assert result.exit_code == 0, result.output
             return " ".join(result.output.split())
-        finally:
-            server.shutdown()
-            server.server_close()
-            os.environ.pop(EnvVar.STATUS_DIR, None)
-            thread.join(timeout=5)
 
     def test_service_status_current_job_flags_no_recent_progress(
         self,
@@ -959,51 +838,14 @@ class TestServiceDaemonHelpers:
 
     def test_service_status_port_only_json(self, tmp_path: Path):
         """server status --port can inspect a reachable service without service.json."""
-        import http.server
-        import json
-        import threading
-
-        class _StatusHandler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                payload: dict[str, object]
-                if self.path == "/health":
-                    payload = {
-                        "status": "ready",
-                        "cuda": True,
-                        "models_loaded": True,
-                        "project_count": 1,
-                        "backend_capabilities": {
-                            "same_project_search_strategy": "serialized",
-                            "cross_project_search_strategy": "parallel",
-                            "local_storage_process_model": "exclusive",
-                        },
-                    }
-                elif self.path.startswith("/jobs"):
-                    payload = {
-                        "ok": True,
-                        "jobs": [],
-                        "total": 0,
-                        "returned": 0,
-                        "summary": {"running": 0, "phases": {}},
-                    }
-                else:
-                    self.send_response(404)
-                    self.end_headers()
-                    return
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps(payload).encode("utf-8"))
-
-            def log_message(self, format: str, *args: object) -> None:
-                _ = format, args
-
-        server = http.server.HTTPServer(("127.0.0.1", 0), _StatusHandler)
-        port = server.server_address[1]
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
+        with (
+            _isolated_status_dir(tmp_path),
+            _serving(
+                _status_contract_server(
+                    health=_ready_health_payload(), jobs=_idle_jobs_payload()
+                )
+            ) as port,
+        ):
             result = runner.invoke(
                 app,
                 ["server", "status", "--port", str(port), "--json"],
@@ -1018,49 +860,18 @@ class TestServiceDaemonHelpers:
             operational = data["operational"]
             assert f"--port {port}" in operational["next_action"]
             assert "server info" not in operational["next_action"]
-        finally:
-            server.shutdown()
-            server.server_close()
-            os.environ.pop(EnvVar.STATUS_DIR, None)
-            thread.join(timeout=5)
 
     def test_service_status_sparse_health_uses_reported_absence_language(
         self, tmp_path: Path
     ):
-        import http.server
-        import threading
-
-        class _SparseHealthHandler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                payload: dict[str, object]
-                if self.path == "/health":
-                    payload = {"status": "ready"}
-                elif self.path.startswith("/jobs"):
-                    payload = {
-                        "ok": True,
-                        "jobs": [],
-                        "total": 0,
-                        "returned": 0,
-                        "summary": {"running": 0, "phases": {}},
-                    }
-                else:
-                    self.send_response(404)
-                    self.end_headers()
-                    return
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps(payload).encode("utf-8"))
-
-            def log_message(self, format: str, *args: object) -> None:
-                _ = format, args
-
-        server = http.server.HTTPServer(("127.0.0.1", 0), _SparseHealthHandler)
-        port = server.server_address[1]
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
+        with (
+            _isolated_status_dir(tmp_path),
+            _serving(
+                _status_contract_server(
+                    health={"status": "ready"}, jobs=_idle_jobs_payload()
+                )
+            ) as port,
+        ):
             result = runner.invoke(
                 app,
                 ["server", "status", "--port", str(port), "--verbose"],
@@ -1076,49 +887,18 @@ class TestServiceDaemonHelpers:
             assert labels["Loaded projects"] == "not reported by service"
             assert labels["Uptime"] == "not reported by service"
             assert "unknown" not in result.output.lower()
-        finally:
-            server.shutdown()
-            server.server_close()
-            os.environ.pop(EnvVar.STATUS_DIR, None)
-            thread.join(timeout=5)
 
     def test_service_status_missing_health_status_is_reported_absence(
         self, tmp_path: Path
     ) -> None:
-        import http.server
-        import threading
-
-        class _MissingHealthStatusHandler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                payload: dict[str, object]
-                if self.path == "/health":
-                    payload = {"uptime_s": 12}
-                elif self.path.startswith("/jobs"):
-                    payload = {
-                        "ok": True,
-                        "jobs": [],
-                        "total": 0,
-                        "returned": 0,
-                        "summary": {"running": 0, "phases": {}},
-                    }
-                else:
-                    self.send_response(404)
-                    self.end_headers()
-                    return
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps(payload).encode("utf-8"))
-
-            def log_message(self, format: str, *args: object) -> None:
-                _ = format, args
-
-        server = http.server.HTTPServer(("127.0.0.1", 0), _MissingHealthStatusHandler)
-        port = server.server_address[1]
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
+        with (
+            _isolated_status_dir(tmp_path),
+            _serving(
+                _status_contract_server(
+                    health={"uptime_s": 12}, jobs=_idle_jobs_payload()
+                )
+            ) as port,
+        ):
             result = runner.invoke(
                 app,
                 ["server", "status", "--port", str(port)],
@@ -1131,48 +911,24 @@ class TestServiceDaemonHelpers:
             assert "Health" not in labels
             assert labels["Uptime"] == "12 seconds"
             assert "unknown" not in result.output.lower()
-        finally:
-            server.shutdown()
-            server.server_close()
-            os.environ.pop(EnvVar.STATUS_DIR, None)
-            thread.join(timeout=5)
 
     def test_service_status_jobs_error_is_reported_absence(
         self, tmp_path: Path
     ) -> None:
-        import http.server
-        import threading
-
-        class _JobsErrorStatusHandler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                if self.path == "/health":
-                    payload = {"status": "ready", "uptime_s": 60}
-                    status_code = 200
-                elif self.path.startswith("/jobs"):
-                    payload = {
+        with (
+            _isolated_status_dir(tmp_path),
+            _serving(
+                _status_contract_server(
+                    health={"status": "ready", "uptime_s": 60},
+                    jobs={
                         "ok": False,
                         "error": "jobs_unavailable",
                         "message": "Job summary is not available.",
-                    }
-                    status_code = 503
-                else:
-                    self.send_response(404)
-                    self.end_headers()
-                    return
-                self.send_response(status_code)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps(payload).encode("utf-8"))
-
-            def log_message(self, format: str, *args: object) -> None:
-                _ = format, args
-
-        server = http.server.HTTPServer(("127.0.0.1", 0), _JobsErrorStatusHandler)
-        port = server.server_address[1]
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
+                    },
+                    jobs_status_code=503,
+                )
+            ) as port,
+        ):
             result = runner.invoke(
                 app,
                 ["server", "status", "--port", str(port)],
@@ -1189,18 +945,12 @@ class TestServiceDaemonHelpers:
             assert labels["Current job"] == "not reported by service"
             assert "unknown" not in result.output.lower()
             assert "unavailable" not in result.output.lower()
-        finally:
-            server.shutdown()
-            server.server_close()
-            os.environ.pop(EnvVar.STATUS_DIR, None)
-            thread.join(timeout=5)
 
     def test_service_status_port_only_verbose_uses_network_language(
         self, tmp_path: Path
     ) -> None:
         """Port-only verbose output should not expose raw yes/no socket labels."""
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
+        with _isolated_status_dir(tmp_path):
             port = _find_free_port()
             result = runner.invoke(
                 app,
@@ -1225,56 +975,19 @@ class TestServiceDaemonHelpers:
             assert "Port listening: no" not in result.output
             assert "Service file:" not in result.output
             assert "Service record:" not in result.output
-        finally:
-            os.environ.pop(EnvVar.STATUS_DIR, None)
 
     def test_service_status_port_ignores_stale_service_json(self, tmp_path: Path):
         """server status --port ignores stale service.json."""
-        import http.server
         import json
-        import threading
 
-        class _StatusHandler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                payload: dict[str, object]
-                if self.path == "/health":
-                    payload = {
-                        "status": "ready",
-                        "cuda": True,
-                        "models_loaded": True,
-                        "project_count": 1,
-                        "backend_capabilities": {
-                            "same_project_search_strategy": "serialized",
-                            "cross_project_search_strategy": "parallel",
-                            "local_storage_process_model": "exclusive",
-                        },
-                    }
-                elif self.path.startswith("/jobs"):
-                    payload = {
-                        "ok": True,
-                        "jobs": [],
-                        "total": 0,
-                        "returned": 0,
-                        "summary": {"running": 0, "phases": {}},
-                    }
-                else:
-                    self.send_response(404)
-                    self.end_headers()
-                    return
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps(payload).encode("utf-8"))
-
-            def log_message(self, format: str, *args: object) -> None:
-                _ = format, args
-
-        server = http.server.HTTPServer(("127.0.0.1", 0), _StatusHandler)
-        port = server.server_address[1]
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
+        with (
+            _isolated_status_dir(tmp_path),
+            _serving(
+                _status_contract_server(
+                    health=_ready_health_payload(), jobs=_idle_jobs_payload()
+                )
+            ) as port,
+        ):
             _write_service_status(pid=99999999, port=1)
             result = runner.invoke(
                 app,
@@ -1304,11 +1017,6 @@ class TestServiceDaemonHelpers:
             assert f"Address: http://127.0.0.1:{port}" in human.output
             assert "probing" not in human.output
             assert "Status file port" not in human.output
-        finally:
-            server.shutdown()
-            server.server_close()
-            os.environ.pop(EnvVar.STATUS_DIR, None)
-            thread.join(timeout=5)
 
 
 class TestUnreachableStaysASentinelNotAnEscape:
@@ -1333,15 +1041,12 @@ class TestUnreachableStaysASentinelNotAnEscape:
     def test_stop_against_a_dead_port_emits_one_success_envelope(
         self, tmp_path: Path
     ) -> None:
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
+        with _isolated_status_dir(tmp_path):
             port = _find_free_port()
             result = runner.invoke(
                 app, ["server", "stop", "--port", str(port), "--json"]
             )
             envelope = self._one_envelope(result.output)
-        finally:
-            os.environ.pop(EnvVar.STATUS_DIR, None)
 
         # Nothing was listening, so the probe returned its sentinel and the verb
         # treated it as an ordinary branch: an idempotent success, exit 0.
@@ -1355,15 +1060,12 @@ class TestUnreachableStaysASentinelNotAnEscape:
     def test_status_against_a_dead_port_emits_one_envelope(
         self, tmp_path: Path
     ) -> None:
-        os.environ[EnvVar.STATUS_DIR] = str(tmp_path)
-        try:
+        with _isolated_status_dir(tmp_path):
             port = _find_free_port()
             result = runner.invoke(
                 app, ["server", "status", "--port", str(port), "--json"]
             )
             envelope = self._one_envelope(result.output)
-        finally:
-            os.environ.pop(EnvVar.STATUS_DIR, None)
 
         # Whatever the verdict, it is a rendered envelope rather than a
         # traceback: the unreachable probe did not escape as an exception.

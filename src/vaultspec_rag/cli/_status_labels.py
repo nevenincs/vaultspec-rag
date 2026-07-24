@@ -13,9 +13,9 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, NamedTuple, cast
 
-from ._cli_format import _counted_unit
+from ._cli_format import NOT_REPORTED, _counted_unit
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -59,7 +59,7 @@ def _model_ready_label(value: object) -> str:
         return "ready"
     if value is False:
         return "not ready"
-    return "not reported by service"
+    return NOT_REPORTED
 
 
 def _process_identity_label(pid_alive: bool, pid_is_ours: bool) -> str:
@@ -84,7 +84,7 @@ def _plain_status_label(state: str) -> str:
 
 def _format_status_duration(raw: object) -> str:
     if not isinstance(raw, int | float):
-        return "not reported by service"
+        return NOT_REPORTED
     seconds = max(0, int(float(raw)))
     if seconds < 60:
         return _counted_unit(seconds, "second")
@@ -124,7 +124,7 @@ def _status_health_label(
     if isinstance(health, dict):
         raw_status = health.get("status")
         if not isinstance(raw_status, str) or not raw_status or raw_status == "unknown":
-            return "not reported by service"
+            return NOT_REPORTED
         status = raw_status
         if status == "ready":
             return "ready for requests"
@@ -134,57 +134,62 @@ def _status_health_label(
     return "not reachable" if port_listening else "not available"
 
 
-def _status_busy_label(jobs: dict[str, object] | None) -> str:
+class _JobCounts(NamedTuple):
+    """The three counts every busy, queue, and processed row is derived from."""
+
+    running: int
+    queued: int
+    active: int
+
+
+def _job_counts(jobs: dict[str, object] | None) -> _JobCounts | None:
+    """Read the job counts once for every row that reports on them.
+
+    ``None`` means the service reported no jobs at all, which each caller
+    renders as an absence rather than as an idle service - the distinction the
+    availability flag exists to carry.
+    """
     if not isinstance(jobs, dict) or jobs.get("available") is not True:
-        return "not reported by service"
+        return None
     running = jobs.get("running")
     queued = jobs.get("queued")
     running_count = running if isinstance(running, int) else 0
     queued_count = queued if isinstance(queued, int) else 0
-    if running_count <= 0:
+    return _JobCounts(
+        running=running_count,
+        queued=queued_count,
+        active=max(0, running_count - queued_count),
+    )
+
+
+def _status_busy_label(jobs: dict[str, object] | None) -> str:
+    counts = _job_counts(jobs)
+    if counts is None:
+        return NOT_REPORTED
+    if counts.running <= 0:
         return "idle"
-    active_count = max(0, running_count - queued_count)
-    if active_count <= 0 and queued_count > 0:
-        return (
-            "1 job waiting to write"
-            if queued_count == 1
-            else f"{queued_count} jobs waiting to write"
-        )
-    if active_count > 0 and queued_count > 0:
-        active_text = (
-            "processing 1 job"
-            if active_count == 1
-            else f"processing {active_count} jobs"
-        )
-        waiting_text = "1 waiting" if queued_count == 1 else f"{queued_count} waiting"
-        return f"{active_text}; {waiting_text}"
-    if active_count == 1:
-        return "processing 1 job"
-    return f"processing {active_count} jobs"
+    # Nothing active while jobs are running means every one of them is queued
+    # behind the writer, which is a wait rather than work in progress.
+    if counts.active <= 0:
+        return f"{_counted_unit(counts.queued, 'job')} waiting to write"
+    processing = f"processing {_counted_unit(counts.active, 'job')}"
+    if counts.queued > 0:
+        return f"{processing}; {counts.queued} waiting"
+    return processing
 
 
 def _status_queue_label(jobs: dict[str, object] | None) -> str:
-    if not isinstance(jobs, dict) or jobs.get("available") is not True:
-        return "not reported by service"
-    running = jobs.get("running")
-    queued = jobs.get("queued")
-    running_count = running if isinstance(running, int) else 0
-    queued_count = queued if isinstance(queued, int) else 0
-    if running_count <= 0:
+    counts = _job_counts(jobs)
+    if counts is None:
+        return NOT_REPORTED
+    if counts.running <= 0:
         return "nothing waiting"
-    active_count = max(0, running_count - queued_count)
-    if queued_count > 0:
-        active_text = (
-            "1 active job" if active_count == 1 else f"{active_count} active jobs"
+    if counts.queued > 0:
+        return (
+            f"{_counted_unit(counts.queued, 'waiting job')}; "
+            f"{_counted_unit(counts.active, 'active job')}"
         )
-        queued_text = (
-            "1 waiting job" if queued_count == 1 else f"{queued_count} waiting jobs"
-        )
-        return f"{queued_text}; {active_text}"
-    running_text = (
-        "1 active job" if running_count == 1 else f"{running_count} active jobs"
-    )
-    return f"nothing waiting; {running_text}"
+    return f"nothing waiting; {_counted_unit(counts.running, 'active job')}"
 
 
 def _job_phase_counts(jobs: dict[str, object] | None) -> dict[str, object]:
@@ -206,24 +211,20 @@ def _failed_job_total(jobs: dict[str, object] | None) -> int:
 
 
 def _status_jobs_label(jobs: dict[str, object] | None) -> str:
-    if not isinstance(jobs, dict) or jobs.get("available") is not True:
-        return "not reported by service"
-    running = jobs.get("running")
-    queued = jobs.get("queued")
-    running_count = running if isinstance(running, int) else 0
-    queued_count = queued if isinstance(queued, int) else 0
-    active_count = max(0, running_count - queued_count)
+    counts = _job_counts(jobs)
+    if counts is None:
+        return NOT_REPORTED
     done = _job_phase_counts(jobs).get("done")
     finished_count = done if isinstance(done, int) else 0
     return (
-        f"{finished_count} finished, {active_count} active, "
-        f"{queued_count} waiting, {_failed_job_total(jobs)} failed"
+        f"{finished_count} finished, {counts.active} active, "
+        f"{counts.queued} waiting, {_failed_job_total(jobs)} failed"
     )
 
 
 def _status_uptime_label(health: dict[str, object] | None) -> str:
     if not isinstance(health, dict):
-        return "not reported by service"
+        return NOT_REPORTED
     return _format_status_duration(health.get("uptime_s"))
 
 
@@ -627,4 +628,4 @@ def _status_env_label(health: dict[str, object] | None) -> str:
         exe = health.get("executable")
         if isinstance(exe, str) and exe:
             return exe
-    return "not reported by service"
+    return NOT_REPORTED
