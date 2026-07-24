@@ -434,35 +434,15 @@ class DocumentIndexer:
         limits: SupportProfileLimits,
     ) -> _DocumentResourceBudget:
         """Freeze effective document ceilings and sample before dispatch."""
-        from .._units import bytes_to_mib
-        from ..config import get_config
-        from ..memory_probe import (
-            reset_cuda_peak_memory_stats,
-            resident_cuda_baseline_mb,
-            resolve_index_cuda_ceiling_mb,
-        )
+        from ._resource_ceilings import admit_index_ceilings
 
-        config = get_config()
-        uses_cuda = getattr(self.model, "device", None) == "cuda"
-        if uses_cuda:
-            # Flush the allocator cache before deriving the ceiling so this
-            # process's own retention does not depress the free reading.
-            reset_cuda_peak_memory_stats()
-        cuda_baseline_mb = resident_cuda_baseline_mb() if uses_cuda else None
+        ceilings = admit_index_ceilings(self.model, limits)
         budget = _DocumentResourceBudget(
             limits,
-            rss_ceiling_mb=min(
-                config.index_rss_ceiling_mb,
-                bytes_to_mib(limits.rss_bytes),
-            ),
-            cuda_ceiling_mb=resolve_index_cuda_ceiling_mb(
-                configured_mb=config.index_cuda_ceiling_mb,
-                headroom_mb=config.index_cuda_headroom_mb,
-                profile_cuda_mb=bytes_to_mib(limits.cuda_bytes),
-                baseline_mb=cuda_baseline_mb or 0.0,
-            ),
-            cuda_baseline_mb=cuda_baseline_mb,
-            enforce_cuda=uses_cuda,
+            rss_ceiling_mb=ceilings.rss_ceiling_mb,
+            cuda_ceiling_mb=ceilings.cuda_ceiling_mb,
+            cuda_baseline_mb=ceilings.cuda_baseline_mb,
+            enforce_cuda=ceilings.uses_cuda,
         )
         self._memory_budget = budget.memory_budget
         budget.checkpoint_runtime_resources("before document dispatch")
