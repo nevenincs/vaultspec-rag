@@ -1276,6 +1276,13 @@ def _execute_search_request(
                 "qdrant_seconds": phase_timing.get("qdrant_seconds"),
                 "rerank_seconds": phase_timing.get("rerank_seconds"),
                 "postprocess_seconds": phase_timing.get("postprocess_seconds"),
+                # Promoted alongside the phases above, not nested only. A
+                # reshape of this dict carried the other phase keys up and left
+                # these two reachable solely through "phases", which silently
+                # broke the diagnostic contract a consumer reads to tell a cold
+                # model load apart from a slow query.
+                "model_load_seconds": phase_timing.get("model_load_seconds"),
+                "project_lease_seconds": phase_timing.get("project_lease_seconds"),
                 "serialization_seconds": time.perf_counter() - phase_started,
                 "queue_wait_seconds": phase_timing.get("queue_wait_seconds", 0.0),
                 "timing_scope": "server_route",
