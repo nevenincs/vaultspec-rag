@@ -427,6 +427,32 @@ def _orphan_daemon_pids(port: int) -> dict[int, int]:
     return found
 
 
+def _pid_terminated(pid: int) -> bool:
+    """True if *pid* is gone or a POSIX zombie (dead, awaiting parent reap).
+
+    A force-killed orphan whose parent has not yet ``waitpid``'d it lingers as a
+    zombie: ``os.kill(pid, 0)`` still succeeds so ``_is_pid_alive`` reports it
+    live, yet the process is terminated and holds no GPU, port, or machine lock.
+    The reap must count such a defunct process as reaped, not as a survivor -
+    otherwise a killed orphan whose supervisor is still running (which reparents
+    to init only once that supervisor exits) reads as ``orphan_reap_incomplete``
+    despite being dead. Windows has no zombie state (``TerminateProcess`` removes
+    the process), so this only refines the POSIX case.
+    """
+    if not _cli._is_pid_alive(pid):
+        return True
+    if sys.platform == "win32":
+        return False
+    import psutil
+
+    try:
+        return psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return True
+    except psutil.Error:
+        return False
+
+
 def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
     """Reap race-loser daemons for the machine singleton on *port*.
 
@@ -473,7 +499,7 @@ def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
         # Discovered pid, not one we spawned: force-kill by pid, never a
         # console-group CTRL_BREAK that could reach the operator's own console.
         _terminate_and_confirm(pid, console_group_signal=False)
-        (reaped if not _cli._is_pid_alive(pid) else survivors).append(pid)
+        (reaped if _pid_terminated(pid) else survivors).append(pid)
 
     if survivors:
         raise _fail_stop(
