@@ -13,7 +13,7 @@ related:
 
 ## Scope
 
-- `src/vaultspec_rag/tests/test_index_reuse.py` (new)`
+- `src/vaultspec_rag/tests/test_index_reuse.py` (new)\`
 
 ## Description
 

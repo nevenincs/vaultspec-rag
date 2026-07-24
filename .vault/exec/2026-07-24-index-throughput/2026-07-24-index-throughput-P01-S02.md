@@ -13,7 +13,7 @@ related:
 
 ## Scope
 
-- `src/vaultspec_rag/tests/` job-control suite`
+- `src/vaultspec_rag/tests/` job-control suite\`
 
 ## Description
 

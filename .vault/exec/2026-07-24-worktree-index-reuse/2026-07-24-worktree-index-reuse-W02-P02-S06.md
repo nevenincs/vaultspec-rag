@@ -13,7 +13,7 @@ related:
 
 ## Scope
 
-- `src/vaultspec_rag/tests/test_donor_candidates.py` (new)`
+- `src/vaultspec_rag/tests/test_donor_candidates.py` (new)\`
 
 ## Description
 

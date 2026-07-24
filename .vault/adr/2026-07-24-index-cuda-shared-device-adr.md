@@ -95,8 +95,7 @@ Corpus CUDA dimension (code path only):
 ## Implementation
 
 The device probe gains a guarded free-memory reading from `mem_get_info`. The
-auto ceiling becomes an ABSOLUTE figure - `min(baseline + free - headroom,
-total - headroom)` - where `baseline` is the resident-model allocation the budget
+auto ceiling becomes an ABSOLUTE figure - `min(baseline + free - headroom, total - headroom)` - where `baseline` is the resident-model allocation the budget
 already tracks and `free` is sampled after models are resident and after the
 admission cache flush. Adding the baseline back is what keeps the result
 absolute: because enforcement subtracts the baseline from both the peak and the
