@@ -440,6 +440,7 @@ class CodebaseIndexer:
         from ..memory_probe import (
             MemoryBudget,
             reset_cuda_peak_memory_stats,
+            resident_cuda_baseline_mb,
             resolve_index_cuda_ceiling_mb,
         )
 
@@ -465,8 +466,18 @@ class CodebaseIndexer:
         self._memory_budget = MemoryBudget(
             rss_ceiling_mb=rss_ceiling_mb,
             cuda_ceiling_mb=cuda_ceiling_mb if uses_cuda else None,
+            cuda_baseline_mb=resident_cuda_baseline_mb() if uses_cuda else None,
         )
         self._sample_memory_budget("before code dispatch")
+
+    def _forward_peak_recording(self) -> contextlib.AbstractContextManager[None]:
+        """Route this thread's forward-peak captures into the job budget."""
+        from ..memory_probe import record_forward_peaks
+
+        budget = getattr(self, "_memory_budget", None)
+        if budget is None:
+            return contextlib.nullcontext()
+        return record_forward_peaks(budget.record_forward_peak_mb)
 
     def _sample_memory_budget(self, label: str) -> MemoryBudgetSnapshot:
         """Enforce the current budget and retain its resource high-water."""
@@ -1986,23 +1997,29 @@ class CodebaseIndexer:
                     exc,
                 )
 
-            encode_and_upsert_code_slice(
-                slice_chunks,
-                model=self.model,
-                store=self.store,
-                gpu_lock=self._gpu_lock,
-                release_cache=(completed_slice_index % limits.flush_slices == 0),
-                encode_batch_size=limits.encode_batch_size,
-                write_policy=(
-                    checkpoint.run_policy.store_write_policy
-                    if checkpoint is not None
-                    else None
-                ),
-                on_storage_confirmed=on_storage_confirmed,
-                after_forward=_after_forward,
-                on_cuda_oom=_on_cuda_oom,
-                run_control=run_control,
-            )
+            # Route the lock-bracketed forward captures of this consumer
+            # thread into this job's own budget, so checkpoints enforce
+            # the job's demand rather than a process-wide high-water.
+            with self._forward_peak_recording():
+                encode_and_upsert_code_slice(
+                    slice_chunks,
+                    model=self.model,
+                    store=self.store,
+                    gpu_lock=self._gpu_lock,
+                    release_cache=(
+                        completed_slice_index % limits.flush_slices == 0
+                    ),
+                    encode_batch_size=limits.encode_batch_size,
+                    write_policy=(
+                        checkpoint.run_policy.store_write_policy
+                        if checkpoint is not None
+                        else None
+                    ),
+                    on_storage_confirmed=on_storage_confirmed,
+                    after_forward=_after_forward,
+                    on_cuda_oom=_on_cuda_oom,
+                    run_control=run_control,
+                )
             run_control.checkpoint()
             new_ids.update(chunk.id for chunk in slice_chunks)
             total[0] += len(slice_chunks)

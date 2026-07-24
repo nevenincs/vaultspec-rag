@@ -77,6 +77,7 @@ class _DocumentResourceBudget:
     limits: SupportProfileLimits
     rss_ceiling_mb: float | None = None
     cuda_ceiling_mb: float | None = None
+    cuda_baseline_mb: float | None = None
     enforce_cuda: bool = True
     generated_chunks: int = 0
     weighted_bytes: int = 0
@@ -102,6 +103,7 @@ class _DocumentResourceBudget:
         self.memory_budget = MemoryBudget(
             rss_ceiling_mb=rss_ceiling_mb,
             cuda_ceiling_mb=cuda_ceiling_mb if self.enforce_cuda else None,
+            cuda_baseline_mb=self.cuda_baseline_mb if self.enforce_cuda else None,
         )
 
     def reserve(
@@ -411,6 +413,7 @@ class DocumentIndexer:
         from ..config import get_config
         from ..memory_probe import (
             reset_cuda_peak_memory_stats,
+            resident_cuda_baseline_mb,
             resolve_index_cuda_ceiling_mb,
         )
 
@@ -427,6 +430,7 @@ class DocumentIndexer:
                 headroom_mb=config.index_cuda_headroom_mb,
                 profile_cuda_mb=limits.cuda_bytes / mib,
             ),
+            cuda_baseline_mb=resident_cuda_baseline_mb() if uses_cuda else None,
             enforce_cuda=uses_cuda,
         )
         self._memory_budget = budget.memory_budget
@@ -458,6 +462,7 @@ class DocumentIndexer:
         run_control: RunControl,
     ) -> tuple[DocumentFileMetadata | None, int, str | None]:
         """Chunk and publish one document, returning durable file evidence."""
+        from ..memory_probe import record_forward_peaks
         from ._run_policy import RunPolicy
 
         run_control.checkpoint()
@@ -539,17 +544,25 @@ class DocumentIndexer:
                             exc,
                         )
 
-                    encode_and_upsert_document_slice(
-                        selected,
-                        model=self.model,
-                        store=self.store,
-                        gpu_lock=self._gpu_lock,
-                        encode_batch_size=int(cfg.embedding_document_encode_batch_size),
-                        write_policy=checkpoint.run_policy.store_write_policy,
-                        after_forward=_after_forward,
-                        on_cuda_oom=_on_cuda_oom,
-                        run_control=run_control,
-                    )
+                    # Route the lock-bracketed forward captures into this
+                    # job's own budget so checkpoints enforce the job's
+                    # demand rather than a process-wide high-water.
+                    with record_forward_peaks(
+                        budget.memory_budget.record_forward_peak_mb
+                    ):
+                        encode_and_upsert_document_slice(
+                            selected,
+                            model=self.model,
+                            store=self.store,
+                            gpu_lock=self._gpu_lock,
+                            encode_batch_size=int(
+                                cfg.embedding_document_encode_batch_size
+                            ),
+                            write_policy=checkpoint.run_policy.store_write_policy,
+                            after_forward=_after_forward,
+                            on_cuda_oom=_on_cuda_oom,
+                            run_control=run_control,
+                        )
                     checkpoint.record_confirmed_slice(unit)
                     budget.checkpoint_runtime_resources(
                         f"{result.rel_path} slice-{ordinal} after store"

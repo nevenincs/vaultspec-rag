@@ -15,6 +15,15 @@ related:
   - '[[2026-07-24-index-cuda-ceiling-P02-S07]]'
   - '[[2026-07-24-index-cuda-ceiling-P02-S08]]'
   - '[[2026-07-24-index-cuda-ceiling-P02-S09]]'
+  - '[[2026-07-24-index-cuda-ceiling-P03-S10]]'
+  - '[[2026-07-24-index-cuda-ceiling-P03-S11]]'
+  - '[[2026-07-24-index-cuda-ceiling-P03-S12]]'
+  - '[[2026-07-24-index-cuda-ceiling-P03-S13]]'
+  - '[[2026-07-24-index-cuda-ceiling-P03-S14]]'
+  - '[[2026-07-24-index-cuda-ceiling-P03-S15]]'
+  - '[[2026-07-24-index-cuda-ceiling-P04-S16]]'
+  - '[[2026-07-24-index-cuda-ceiling-P04-S17]]'
+  - '[[2026-07-24-index-cuda-ceiling-P04-S18]]'
   - '[[2026-07-24-index-cuda-ceiling-adr]]'
   - '[[2026-07-24-index-cuda-ceiling-plan]]'
   - '[[2026-07-24-index-cuda-ceiling-research]]'
@@ -41,6 +50,15 @@ Auto-generated index of all documents tagged with `#index-cuda-ceiling`.
 - `2026-07-24-index-cuda-ceiling-P02-S07` - replace the one-way min-clamp in the codebase indexer budget builder with the derived ceiling
 - `2026-07-24-index-cuda-ceiling-P02-S08` - replace the one-way min-clamp in the document indexer budget builder with the derived ceiling
 - `2026-07-24-index-cuda-ceiling-P02-S09` - add a test asserting the config override raises the ceiling above the profile floor and still lowers it below
+- `2026-07-24-index-cuda-ceiling-P03-S10` - add a bare peak reset-and-read helper that resets peak stats without flushing the allocator cache
+- `2026-07-24-index-cuda-ceiling-P03-S11` - sample the resident-model baseline after every model including the lazily-loaded reranker is resident
+- `2026-07-24-index-cuda-ceiling-P03-S12` - capture the allocation high-water inside the gpu_lock forward bracket in the shared encode path
+- `2026-07-24-index-cuda-ceiling-P03-S13` - thread the captured per-job forward peak into the memory budget as the maximum across the job's brackets
+- `2026-07-24-index-cuda-ceiling-P03-S14` - enforce every sample checkpoint against the captured baseline-net peak so no path reads max_memory_allocated directly
+- `2026-07-24-index-cuda-ceiling-P03-S15` - make the ceiling comparison baseline-consistent by subtracting the baseline from the captured peak and from the derived ceiling on the same side
+- `2026-07-24-index-cuda-ceiling-P04-S16` - prove the cross-job contamination guard fails when enforcement reads the process-global counter and passes when it reads the captured peak, recording both directions
+- `2026-07-24-index-cuda-ceiling-P04-S17` - prove the double-count guard fails when the baseline is subtracted from only one side of the ceiling comparison, recording both directions
+- `2026-07-24-index-cuda-ceiling-P04-S18` - run the full unit suite and the citation-gate lint over every changed file
 
 ### plan
 

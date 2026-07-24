@@ -67,20 +67,20 @@ Replace the hardcoded 12 GiB min-clamp with a device-capacity-minus-headroom der
 
 Capture the allocation high-water inside the gpu_lock forward bracket and enforce every checkpoint against that job-local, baseline-net value instead of the process-global counter, without double-counting the resident models.
 
-- [ ] `P03.S10` - add a bare peak reset-and-read helper that resets peak stats without flushing the allocator cache; `src/vaultspec_rag/memory_probe.py`.
-- [ ] `P03.S11` - sample the resident-model baseline after every model including the lazily-loaded reranker is resident; `src/vaultspec_rag/service.py`.
-- [ ] `P03.S12` - capture the allocation high-water inside the gpu_lock forward bracket in the shared encode path; `src/vaultspec_rag/indexer/_streaming.py`.
-- [ ] `P03.S13` - thread the captured per-job forward peak into the memory budget as the maximum across the job's brackets; `src/vaultspec_rag/memory_probe.py`.
-- [ ] `P03.S14` - enforce every sample checkpoint against the captured baseline-net peak so no path reads max_memory_allocated directly; `src/vaultspec_rag/memory_probe.py`.
-- [ ] `P03.S15` - make the ceiling comparison baseline-consistent by subtracting the baseline from the captured peak and from the derived ceiling on the same side; `src/vaultspec_rag/memory_probe.py`.
+- [x] `P03.S10` - add a bare peak reset-and-read helper that resets peak stats without flushing the allocator cache; `src/vaultspec_rag/memory_probe.py`.
+- [x] `P03.S11` - sample the resident-model baseline after every model including the lazily-loaded reranker is resident; `src/vaultspec_rag/service.py`.
+- [x] `P03.S12` - capture the allocation high-water inside the gpu_lock forward bracket in the shared encode path; `src/vaultspec_rag/indexer/_streaming.py`.
+- [x] `P03.S13` - thread the captured per-job forward peak into the memory budget as the maximum across the job's brackets; `src/vaultspec_rag/memory_probe.py`.
+- [x] `P03.S14` - enforce every sample checkpoint against the captured baseline-net peak so no path reads max_memory_allocated directly; `src/vaultspec_rag/memory_probe.py`.
+- [x] `P03.S15` - make the ceiling comparison baseline-consistent by subtracting the baseline from the captured peak and from the derived ceiling on the same side; `src/vaultspec_rag/memory_probe.py`.
 
 ### Phase `P04` - prove the guards and verify end to end
 
 Demonstrate the cross-job-contamination and double-count guards failing for their intended reason before trusting them, then confirm a live corpus rebuild indexes with no spurious ceiling failures.
 
-- [ ] `P04.S16` - prove the cross-job contamination guard fails when enforcement reads the process-global counter and passes when it reads the captured peak, recording both directions; `src/vaultspec_rag/tests/test_job_resilience.py`.
-- [ ] `P04.S17` - prove the double-count guard fails when the baseline is subtracted from only one side of the ceiling comparison, recording both directions; `src/vaultspec_rag/tests/test_config.py`.
-- [ ] `P04.S18` - run the full unit suite and the citation-gate lint over every changed file; `src/vaultspec_rag/tests`.
+- [x] `P04.S16` - prove the cross-job contamination guard fails when enforcement reads the process-global counter and passes when it reads the captured peak, recording both directions; `src/vaultspec_rag/tests/test_job_resilience.py`.
+- [x] `P04.S17` - prove the double-count guard fails when the baseline is subtracted from only one side of the ceiling comparison, recording both directions; `src/vaultspec_rag/tests/test_config.py`.
+- [x] `P04.S18` - run the full unit suite and the citation-gate lint over every changed file; `src/vaultspec_rag/tests`.
 - [ ] `P04.S19` - restart the service on the built code and confirm a live feature-profile corpus rebuild completes with no spurious cuda_memory_ceiling failures under concurrency; `src/vaultspec_rag`.
 
 ## Parallelization
