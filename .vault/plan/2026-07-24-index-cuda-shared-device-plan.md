@@ -10,6 +10,16 @@ related:
   - '[[2026-07-24-index-cuda-shared-device-research]]'
 ---
 
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
+
 # `index-cuda-shared-device` plan
 
 Derive the indexing CUDA ceiling from free device memory as an absolute figure, and stop the code indexer rejecting a runtime peak as corpus size.
@@ -26,25 +36,25 @@ Executes `2026-07-24-index-cuda-shared-device-adr`, grounded in `2026-07-24-inde
 
 Derive the auto ceiling from free device memory made absolute by re-adding the resident baseline, sampled after the admission cache flush, so it never double-subtracts the models and tracks real free memory on a shared GPU.
 
-- [ ] `P01.S01` - add a guarded cuda_free_memory_mb probe returning mem_get_info free in MiB or None off the GPU path; `src/vaultspec_rag/memory_probe.py`.
-- [ ] `P01.S02` - change resolve_index_cuda_ceiling_mb to derive the absolute auto ceiling as min(baseline + free - headroom, total - headroom) with the operator override and profile fallback unchanged; `src/vaultspec_rag/memory_probe.py`.
-- [ ] `P01.S03` - pass the resident baseline into the ceiling derivation and move it after the admission cache flush in the codebase indexer budget builder; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
-- [ ] `P01.S04` - pass the resident baseline into the ceiling derivation and keep it after the admission cache flush in the document indexer budget builder; `src/vaultspec_rag/indexer/_document_indexer.py`.
-- [ ] `P01.S05` - carry the free-derived ceiling through the dispatch admission snapshot as a point-in-time diagnostic without changing enforcement; `src/vaultspec_rag/job_dispatch.py`.
+- [x] `P01.S01` - add a guarded cuda_free_memory_mb probe returning mem_get_info free in MiB or None off the GPU path; `src/vaultspec_rag/memory_probe.py`.
+- [x] `P01.S02` - change resolve_index_cuda_ceiling_mb to derive the absolute auto ceiling as min(baseline + free - headroom, total - headroom) with the operator override and profile fallback unchanged; `src/vaultspec_rag/memory_probe.py`.
+- [x] `P01.S03` - pass the resident baseline into the ceiling derivation and move it after the admission cache flush in the codebase indexer budget builder; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `P01.S04` - pass the resident baseline into the ceiling derivation and keep it after the admission cache flush in the document indexer budget builder; `src/vaultspec_rag/indexer/_document_indexer.py`.
+- [x] `P01.S05` - carry the free-derived ceiling through the dispatch admission snapshot as a point-in-time diagnostic without changing enforcement; `src/vaultspec_rag/job_dispatch.py`.
 
 ### Phase `P02` - drop the code-path corpus CUDA rejection
 
 Stop the code indexer rejecting a runtime CUDA peak as a corpus-sizing dimension, matching the document indexer's diagnostic-only treatment, keeping the measurement field and JSON.
 
-- [ ] `P02.S06` - remove cuda_bytes from the code indexer corpus-dimension rejection while keeping the measured field and its JSON reporting; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `P02.S06` - remove cuda_bytes from the code indexer corpus-dimension rejection while keeping the measured field and its JSON reporting; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 
 ### Phase `P03` - prove the guards and verify
 
 Prove the double-count and corpus-rejection guards fail for their intended reason, then run the full unit suite and lint.
 
-- [ ] `P03.S07` - prove the double-count guard fails when the ceiling reverts to bare free-minus-headroom and passes at baseline-plus-free-minus-headroom, both directions recorded; `src/vaultspec_rag/tests/test_config.py`.
-- [ ] `P03.S08` - prove the corpus-rejection guard fails when a runtime CUDA peak above the profile is re-admitted and rejects again if reinstated, both directions recorded; `src/vaultspec_rag/tests/test_job_resilience.py`.
-- [ ] `P03.S09` - run the full unit suite and the citation-gate lint over every changed file; `src/vaultspec_rag/tests`.
+- [x] `P03.S07` - prove the double-count guard fails when the ceiling reverts to bare free-minus-headroom and passes at baseline-plus-free-minus-headroom, both directions recorded; `src/vaultspec_rag/tests/test_config.py`.
+- [x] `P03.S08` - prove the corpus-rejection guard fails when a runtime CUDA peak above the profile is re-admitted and rejects again if reinstated, both directions recorded; `src/vaultspec_rag/tests/test_job_resilience.py`.
+- [x] `P03.S09` - run the full unit suite and the citation-gate lint over every changed file; `src/vaultspec_rag/tests`.
 
 ## Parallelization
 
