@@ -37,6 +37,25 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+def _assert_windows_singleton_refusal(output: str, holder_pid: int) -> None:
+    """Assert the Windows loser's singleton-claim refusal diagnostics.
+
+    On Windows a losing daemon reaches the singleton-claim refusal path and
+    formats the live holder pid, the claim frame, and its "already owns this
+    machine" message into the managed log. On POSIX the loser exits via the
+    bounded-shutdown backstop without that trace (still binding and publishing
+    nothing), so these are asserted on Windows only; POSIX loser-diagnostics
+    parity is a tracked follow-up.
+    """
+    assert str(holder_pid) in output, (
+        f"refusal did not name the live holder; output:\n{output[-3000:]}"
+    )
+    assert "_claim_machine_singleton" in output, (
+        f"refusal did not originate at the singleton claim; output:\n{output[-3000:]}"
+    )
+    assert "already owns this machine" in output
+
+
 class TestMachineLock:
     def test_acquire_release_then_reacquire(self, isolated_lock: Path) -> None:
         acquired, holder = acquire_machine_lock()
@@ -243,16 +262,6 @@ class TestLosingDaemonBoundary:
                 f"{completed.returncode}; status dir contents="
                 f"{sorted(item.name for item in status_dir.rglob('*'))}"
             )
-            # It must name the incumbent rather than fail opaquely. On Windows
-            # the loser reaches the singleton-claim refusal path and formats the
-            # holder pid into its diagnostics; on POSIX it exits via the bounded-
-            # shutdown backstop (still nonzero, and still binds/publishes nothing
-            # per the assertions around this) without formatting the holder pid.
-            # POSIX loser-diagnostics parity is a tracked follow-up.
-            if sys.platform == "win32":
-                assert str(incumbent.holder_pid) in output, (
-                    f"refusal did not name the live holder; output:\n{output[-3000:]}"
-                )
             # It must not have bound the listener it was asked for.
             assert not _port_is_listening(port), (
                 f"losing daemon bound port {port} before refusing"
@@ -265,18 +274,11 @@ class TestLosingDaemonBoundary:
             assert not (status_dir / "service.json").exists(), (
                 "losing daemon published a status view"
             )
-            # The refusal must come from the singleton claim itself. On Windows
-            # the loser reaches the singleton-claim refusal path, which names the
-            # frame and the "already owns this machine" message; on POSIX it exits
-            # via the bounded-shutdown backstop (still binding and publishing
-            # nothing, asserted above and below) without that specific refusal
-            # trace. POSIX loser-diagnostics parity is a tracked follow-up.
+            # The refusal must come from the singleton claim itself, naming the
+            # incumbent rather than failing opaquely. This diagnostic trace is
+            # Windows-only; the guard states why.
             if sys.platform == "win32":
-                assert "_claim_machine_singleton" in output, (
-                    f"refusal did not originate at the singleton claim;"
-                    f" output:\n{output[-3000:]}"
-                )
-                assert "already owns this machine" in output
+                _assert_windows_singleton_refusal(output, incumbent.holder_pid)
             # Component startup is where the listener, the Qdrant child, the
             # watcher, and the maintenance loop are brought up. Its absence
             # from the failure trace is the boundary proof: the claim refused
