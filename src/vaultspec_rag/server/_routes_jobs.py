@@ -59,9 +59,17 @@ def _job_number(record: dict[str, object], key: str) -> float | None:
     every timestamp read has to tolerate a missing or malformed field. This is
     the single reader for that; combine it with :func:`_job_mapping` to reach a
     timestamp nested inside a sub-mapping.
+
+    ``bool`` is excluded despite being an ``int``. It is the one malformed shape
+    that fails toward silence: a ``finished_at`` of ``True`` reads as ``1.0``,
+    which compares as a 1970 timestamp and so places a live failure before the
+    current generation, suppressing a degradation the service should report.
+    Every other malformed value yields ``None`` and degrades toward reporting.
     """
     value = record.get(key)
-    return float(value) if isinstance(value, int | float) else None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
 
 
 def _age_seconds(timestamp: float | None, now: float) -> float | None:
