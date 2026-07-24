@@ -446,7 +446,10 @@ class DocumentIndexer:
         mib = 1024**2
         uses_cuda = getattr(self.model, "device", None) == "cuda"
         if uses_cuda:
+            # Flush the allocator cache before deriving the ceiling so this
+            # process's own retention does not depress the free reading.
             reset_cuda_peak_memory_stats()
+        cuda_baseline_mb = resident_cuda_baseline_mb() if uses_cuda else None
         budget = _DocumentResourceBudget(
             limits,
             rss_ceiling_mb=min(config.index_rss_ceiling_mb, limits.rss_bytes / mib),
@@ -454,8 +457,9 @@ class DocumentIndexer:
                 configured_mb=config.index_cuda_ceiling_mb,
                 headroom_mb=config.index_cuda_headroom_mb,
                 profile_cuda_mb=limits.cuda_bytes / mib,
+                baseline_mb=cuda_baseline_mb or 0.0,
             ),
-            cuda_baseline_mb=resident_cuda_baseline_mb() if uses_cuda else None,
+            cuda_baseline_mb=cuda_baseline_mb,
             enforce_cuda=uses_cuda,
         )
         self._memory_budget = budget.memory_budget

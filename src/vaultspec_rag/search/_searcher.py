@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     )
 
     from ..embeddings import EmbeddingModel, SparseResult
+    from ..job_control import QuiesceGate
     from ..store import VaultStore
     from ._noise import NoisePolicy
 
@@ -103,6 +104,7 @@ class VaultSearcher:
         gpu_lock: threading.Lock | None = None,
         reranker: CrossEncoder | None = None,
         local_files_only: bool = False,
+        quiesce_gate: QuiesceGate | None = None,
     ) -> None:
         """Initialize the searcher.
 
@@ -130,6 +132,10 @@ class VaultSearcher:
             local_files_only: Load a lazy reranker from the local Hugging Face
                 cache without remote metadata requests. Normal product
                 construction remains online-capable by default.
+            quiesce_gate: Optional process-global hold gate consulted at
+                search admission, before the GPU lock is acquired. When
+                paused, new GPU sections park at zero CPU until resumed;
+                requests already inside a GPU section are never preempted.
         """
         from ..config import get_config
 
@@ -148,6 +154,7 @@ class VaultSearcher:
         self._graph_built_at: float = 0.0
         self._graph_lock = threading.Lock()
         self._gpu_lock = gpu_lock
+        self._quiesce_gate = quiesce_gate
         self._reranker_enabled: bool = cfg.reranker_enabled
         self._reranker_model_name: str = cfg.reranker_model
         self._sparse_enabled: bool = cfg.sparse_enabled
@@ -163,6 +170,11 @@ class VaultSearcher:
 
     @contextmanager
     def _gpu_section(self, timings: dict[str, float] | None = None):
+        # Admission gating: the quiesce wait must complete before the GPU
+        # lock is acquired - parking while holding gpu_lock would serialize
+        # every tenant behind a paused daemon.
+        if self._quiesce_gate is not None:
+            self._quiesce_gate.wait()
         if self._gpu_lock is None:
             with nullcontext():
                 yield
