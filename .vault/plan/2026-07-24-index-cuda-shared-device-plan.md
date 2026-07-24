@@ -10,16 +10,6 @@ related:
   - '[[2026-07-24-index-cuda-shared-device-research]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 # `index-cuda-shared-device` plan
 
 Derive the indexing CUDA ceiling from free device memory as an absolute figure, and stop the code indexer rejecting a runtime peak as corpus size.

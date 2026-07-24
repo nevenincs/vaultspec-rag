@@ -8,6 +8,7 @@ step_id: 'S17'
 related:
   - "[[2026-07-24-worktree-index-reuse-plan]]"
 ---
+
 # run the end-to-end fork index with the flag on and off against a real sibling donor
 
 ## Scope
@@ -95,14 +96,19 @@ related:
   - Realistic git-checkout fork of HEAD (donor = the live `main` namespace):
     69.2% hit rate (4,448 hits / 1,976 misses of 6,424 chunks), 45.8 s
     wall-clock (still 6.8x under baseline), 52.2 GPU-seconds saved. The
-    ~31% miss share is the byte-vs-git-identity gap the ADR measured: a
-    fresh `git worktree` checkout renormalises line endings, so its bytes
-    diverge from the donor's indexed bytes on the CRLF-divergent files and
-    the per-point content verify correctly MISSES them rather than adopting
-    a mismatched vector - divergent content pays today's encode cost, which
-    is exactly the designed-for behaviour. Only 21 tracked files differ
-    between HEAD and `main`'s working tree, far too few to explain the
-    misses, confirming the cause is byte renormalisation, not stale content.
+    ~31% miss share was later root-caused as a MEASUREMENT ARTIFACT, not a
+    feature limitation and not line endings: the donor namespace indexed
+    `main`'s dirty working tree, which carried the then-uncommitted reuse
+    feature source files themselves, while the fork checked out clean HEAD
+    without them - so the repository's largest files (the store, the job
+    manager, the indexers) genuinely differed and were correctly refused.
+    The originally recorded CRLF explanation was wrong: a direct probe
+    through the real chunker (CRLF file vs LF twin) produces byte-identical
+    chunk ids AND contents, because newline normalisation happens at decode
+    time on both the donor-indexing side and the verify side - line-ending
+    divergence cannot cause verify misses. A real same-commit worktree fork
+    approaches the ~100% seen on the byte-identical leg. The feature refused
+    correctly in every miss.
 - Both acceptance signals are therefore met on the clean leg: ~100% hit rate
   on the served record AND a large real wall-clock reduction versus the
   311 s flag-OFF baseline. The earlier "effective 0% hit rate, null
