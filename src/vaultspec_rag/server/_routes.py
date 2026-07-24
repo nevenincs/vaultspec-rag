@@ -82,6 +82,7 @@ if TYPE_CHECKING:
 
     from ..indexer._codebase_indexer import CodeIndexPreflight
     from ..indexer._document_indexer import DocumentIndexPreflight
+    from ..job_control import QuiesceGate
     from ..job_models import JobInitiator, JobSpec
 
 logger = logging.getLogger("vaultspec_rag.server")
@@ -2121,6 +2122,61 @@ async def vault_document_route(request: Request) -> JSONResponse:
     return JSONResponse(result)
 
 
+def _quiesce_transition(gate: QuiesceGate, *, pause: bool) -> str:
+    """Apply one pause/resume transition and name the outcome.
+
+    The prior gate state is read BEFORE the mutation so an
+    already-satisfied request is reported as ``already_*`` rather than
+    as a fresh state change. This is the single service-domain owner of
+    the pause/resume status vocabulary; adapters (CLI, MCP) render it
+    without recomputing state.
+    """
+    was_paused = gate.is_paused()
+    if pause:
+        gate.pause()
+        return "already_paused" if was_paused else "paused"
+    gate.resume()
+    return "resumed" if was_paused else "already_running"
+
+
+async def _quiesce_route(request: Request, *, pause: bool) -> JSONResponse:
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    gate = _m._registry.quiesce_gate
+    status = _quiesce_transition(gate, pause=pause)
+    # Re-read after the transition: a gate latched open by a pending
+    # shutdown ignores pause(), and the honest post-state lets the
+    # caller detect the unachieved hold instead of trusting the verb.
+    paused = gate.is_paused()
+    log_event(
+        logger,
+        "service.quiesce",
+        status,
+        fields={"paused": paused},
+    )
+    return JSONResponse({"ok": True, "status": status, "paused": paused})
+
+
+async def pause_service_route(request: Request) -> JSONResponse:
+    """Token-gated ``POST /pause`` holding the whole daemon at safe points.
+
+    Idempotent: pausing an already-paused service reports
+    ``already_paused`` with HTTP 200. Quiesce is a hold, never a stop -
+    the daemon stays alive and ``POST /resume`` releases it.
+    """
+    return await _quiesce_route(request, pause=True)
+
+
+async def resume_service_route(request: Request) -> JSONResponse:
+    """Token-gated ``POST /resume`` releasing a held daemon.
+
+    Idempotent: resuming an already-running service reports
+    ``already_running`` with HTTP 200.
+    """
+    return await _quiesce_route(request, pause=False)
+
+
 ROUTES: list[Route] = [
     Route("/logs", logs_route, methods=["GET"]),
     Route("/logs/json", logs_json_route, methods=["GET"]),
@@ -2145,6 +2201,8 @@ ROUTES: list[Route] = [
     Route("/watcher/start", start_watcher_route, methods=["POST"]),
     Route("/watcher/stop", stop_watcher_route, methods=["POST"]),
     Route("/watcher/reconfigure", reconfigure_watcher_route, methods=["POST"]),
+    Route("/pause", pause_service_route, methods=["POST"]),
+    Route("/resume", resume_service_route, methods=["POST"]),
     Route("/service-state", get_service_state_route, methods=["GET"]),
     Route("/storage/survey", storage_survey_route, methods=["GET"]),
     Route("/code-file", code_file_route, methods=["POST"]),
