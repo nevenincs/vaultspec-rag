@@ -58,8 +58,11 @@ Part A removes the single largest measured sink (roughly 2,000-2,500 s of per-jo
 
 ## Consequences
 
-- Contended multi-repo windows collapse from 4-6x inflation toward serial-sum wall-clock; single-job behavior unchanged.
-- Jobs now visibly queue under the cap; operators see honest queued state instead of slow concurrent grinding.
-- wait=False ingest shifts durability to a barrier point; the barrier is new correctness surface and carries its own guard test.
-- Vault/document paths gain the code path's complexity (bounded queue, sentinel shutdown with time-bounded joins) - accepted cost, mitigated by reusing the existing pattern rather than a new one.
+STATUS OF CLAIMS: every throughput number in this section is PROJECTED from the research's measurements of the current system, not yet demonstrated by the changed system. The mutation and composition proofs establish safety and behavioral correctness only; the acceptance signal for the win itself is the before/after measurement (contended-window and solo-rebuild wall-clock, ingest throughput, flush-cadence reserved-memory validation) in a coordinated contention-free GPU window. Until those measured steps run, the plan's measurement steps stay open and this campaign is not complete - correct-but-unmeasured performance code can regress or no-op silently, the same failure class as a green-tested feature that never engages.
+
+- PROJECTED: contended multi-repo windows collapse from the measured 4-6x inflation toward serial-sum wall-clock; single-job behavior unchanged. Measured admission-wait telemetry (now first-class on the job record) is the regression guard once demonstrated.
+- Jobs now visibly queue under the cap; operators see honest queued state instead of slow concurrent grinding (this part is behavioral, proven by test).
+- Non-blocking ingest shifts durability to an application-verified barrier; the barrier is new correctness surface with its own mutation-proven guard and composition proof against the writer-side queue. PROJECTED ingest gains ride on moving upserts off the consumer thread plus transport (gRPC), not on the wait flag itself (measured as neutral in isolation).
+- Vault/document paths gain the code path's producer/consumer complexity (bounded queue, sentinel shutdown with time-bounded joins) - accepted cost, mitigated by reusing the proven pattern.
+- The flush-cadence throttles ship conservative-default (current behavior preserved byte-for-byte); flipping them is gated on peak-reserved-memory and OOM validation in the measured window, because cache flushing may be load-bearing against fragmentation on a ceiling that counts reserved memory.
 - True-incremental vault and any WAL-geometry change remain separate, telemetry-gated decisions.

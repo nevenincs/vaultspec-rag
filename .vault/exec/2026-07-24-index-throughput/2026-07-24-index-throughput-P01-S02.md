@@ -21,4 +21,6 @@ Admission-gate guard tests (`tests/test_jobs_unit.py::TestEncodeAdmissionGate`, 
 
 ## Outcome
 
+Post-merge addendum: the proof was re-run on the merged main tree (quiesce and reuse composed in) as one uninterrupted sequence - `_attempt_limiter` mutated to hand encode jobs the general index limiter turned `test_two_concurrent_encode_jobs_serialize_on_the_slot` red on `DID NOT RAISE TimeoutError`; restored, the five-test class green, working tree byte-identical. The quiesce-composition guards (`TestQuiesceAdmissionComposition`, commit `60f0e11b`) extend this gate: pause during a held slot parks the holder boundedly with the slot retained (acquisition order proof: slot first, gate second), resume reclaims and admits the queued encode job, and the donor-read plus maintenance-evaluation exemptions complete with the slot borrowed and the gate paused. Their mutation (the gate consult stubbed out of the checkpoint) was observed red on the parked assertion before restore to green.
+
 ## Notes
