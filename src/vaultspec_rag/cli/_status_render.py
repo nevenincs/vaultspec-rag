@@ -47,9 +47,8 @@ from ._service_status import (
     _service_phase,
 )
 from ._status_labels import (
-    _FAILED_JOB_FAMILY,
-    _degraded_findings,
-    _DegradedFinding,
+    FAILED_JOB_FAMILY,
+    DegradedFinding,
     _failed_job_total,
     _format_started_label,
     _format_status_duration,
@@ -65,6 +64,8 @@ from ._status_labels import (
     _status_jobs_label,
     _status_queue_label,
     _status_uptime_label,
+    degradation_findings,
+    degradation_lines,
 )
 
 __all__ = [
@@ -424,24 +425,25 @@ def _print_current_job_detail(jobs: dict[str, object] | None) -> None:
         _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
 
 
-def _degraded_entries(
+def _degraded_findings_for_render(
     operational: dict[str, object] | None,
     health: dict[str, object] | None,
-) -> list[dict[str, object]]:
-    """Return the degradation findings, computing them when none were passed.
+) -> list[DegradedFinding]:
+    """Return the findings to render, computing them when none were passed.
 
     The summary path carries findings on ``operational`` because that is where
-    the port qualifier is known. The discovery fallback has no operational
-    summary and would otherwise print a bare severity word, so it derives the
-    findings from the health payload it already holds.
+    the port qualifier is known, so those are rebuilt rather than re-derived.
+    The discovery fallback has no operational summary and would otherwise print
+    a bare severity word, so it derives them from the health payload it holds.
     """
-    if isinstance(operational, dict):
-        raw = operational.get("degraded")
-        entries = cast("list[object]", raw) if isinstance(raw, list) else []
-    else:
-        entries = [finding.as_dict() for finding in _degraded_findings(health)]
+    if not isinstance(operational, dict):
+        return degradation_findings(health)
+    raw = operational.get("degraded")
+    entries = cast("list[object]", raw) if isinstance(raw, list) else []
     return [
-        cast("dict[str, object]", entry) for entry in entries if isinstance(entry, dict)
+        DegradedFinding.from_dict(cast("dict[str, object]", entry))
+        for entry in entries
+        if isinstance(entry, dict)
     ]
 
 
@@ -450,19 +452,10 @@ def _degraded_lines(
     health: dict[str, object] | None,
 ) -> list[str]:
     """Render each reported cause above the command that inspects it."""
-    entries = _degraded_entries(operational, health)
-    if not entries:
-        return []
-    lines = ["Degraded because:"]
-    for entry in entries:
-        lines.append(f"  - {entry.get('cause')}")
-        detail = entry.get("detail")
-        if detail:
-            lines.append(f"    {detail}")
-        command = entry.get("command")
-        if command:
-            lines.append(f"    {command}")
-    return lines
+    return degradation_lines(
+        _degraded_findings_for_render(operational, health),
+        header="Degraded because:",
+    )
 
 
 def _failure_lines(operational: dict[str, object] | None) -> list[str]:
@@ -611,7 +604,7 @@ def _status_next_action(
     health: dict[str, object] | None,
     jobs: dict[str, object],
     *,
-    findings: list[_DegradedFinding] | None = None,
+    findings: list[DegradedFinding] | None = None,
     port: int | None = None,
 ) -> str:
     port_arg = f" --port {port}" if port is not None else ""
@@ -632,7 +625,7 @@ def _status_next_action(
 def _running_service_next_action(
     health: dict[str, object] | None,
     jobs: dict[str, object],
-    findings: list[_DegradedFinding],
+    findings: list[DegradedFinding],
     *,
     port_arg: str,
 ) -> str:
@@ -657,7 +650,7 @@ def _running_service_next_action(
 def _failure_followup(
     health: dict[str, object] | None,
     jobs: dict[str, object],
-    findings: list[_DegradedFinding],
+    findings: list[DegradedFinding],
     *,
     port_arg: str,
 ) -> dict[str, str] | None:
@@ -667,7 +660,7 @@ def _failure_followup(
     already name it, so the same job is never reported twice.
     """
     failed_total = _failed_job_total(jobs)
-    already_reported = any(finding.family == _FAILED_JOB_FAMILY for finding in findings)
+    already_reported = any(finding.family == FAILED_JOB_FAMILY for finding in findings)
     summary = "" if already_reported else _last_failure_label(health)
     if failed_total <= 0 and not summary:
         return None
@@ -687,7 +680,7 @@ def _status_operational_summary(
 ) -> dict[str, object]:
     jobs = _status_jobs_summary(port, port_listening)
     port_arg = f" --port {port}" if explicit_port else ""
-    findings = _degraded_findings(health)
+    findings = degradation_findings(health)
     operational: dict[str, object] = {
         "jobs": jobs,
         "degraded": [finding.as_dict(port_arg=port_arg) for finding in findings],

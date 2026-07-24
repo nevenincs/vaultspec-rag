@@ -17,6 +17,7 @@ from ._render import (
     _format_local_index_busy_message,
 )
 from ._service_status import _default_service_port
+from ._status_labels import render_degradation
 
 
 def _status_counts(status: dict[str, object]) -> tuple[int, int, int | None]:
@@ -67,6 +68,16 @@ def _status_next_action(
     return "vaultspec-rag index --type all"
 
 
+def _profile_bytes(profile: dict[str, object], key: str) -> str:
+    """Render one profile byte threshold in operator units."""
+    from .._units import human_bytes
+
+    raw = profile.get(key, 0)
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        return "not reported"
+    return human_bytes(raw)
+
+
 def _support_profile_lines(status: dict[str, object]) -> list[str]:
     raw_profile = status.get("support_profile")
     if not isinstance(raw_profile, dict):
@@ -79,8 +90,8 @@ def _support_profile_lines(status: dict[str, object]) -> list[str]:
         lines.append(f"Accepted backends: {', '.join(map(str, typed_backends))}")
     lines.extend(
         (
-            f"Minimum RAM bytes: {profile.get('minimum_ram_bytes', 0)}",
-            f"Minimum free disk bytes: {profile.get('minimum_free_disk_bytes', 0)}",
+            f"Minimum RAM: {_profile_bytes(profile, 'minimum_ram_bytes')}",
+            f"Minimum free disk: {_profile_bytes(profile, 'minimum_free_disk_bytes')}",
         )
     )
     raw_domains = profile.get("domains")
@@ -103,18 +114,22 @@ def _support_profile_lines(status: dict[str, object]) -> list[str]:
 
 
 def _status_diagnostics(status: dict[str, object]) -> list[str]:
-    """Render optional policy, generation, and degraded-state diagnostics."""
+    """Render optional policy, generation, and degraded-state diagnostics.
+
+    Degradation goes through the shared renderer rather than being formatted
+    here: this payload reports one structured record per index domain, and
+    interpolating that list printed a container repr at the operator instead of
+    a cause and a command.
+    """
     lines: list[str] = []
     lines.extend(_support_profile_lines(status))
     policy = status.get("policy", status.get("policy_fingerprint"))
     generations = status.get("generations", status.get("generation"))
-    degraded = status.get("degraded_reasons", status.get("degraded"))
     if policy not in (None, "", {}):
         lines.append(f"Policy: {policy}")
     if generations not in (None, "", {}):
         lines.append(f"Generations: {generations}")
-    if degraded not in (None, "", [], {}):
-        lines.append(f"Degraded: {degraded}")
+    lines.extend(render_degradation(status, header="Degraded because:"))
     return lines
 
 
@@ -227,10 +242,7 @@ def _service_index_status(target: object) -> tuple[dict[str, object], int] | Non
 
 @app.command(
     "status",
-    help=(
-        "Show project index counts, index data location, and compute device. "
-        "See the indexing architecture guide: docs/indexing.md"
-    ),
+    help="Show project index counts, index data location, and compute device.",
 )
 def handle_status(
     ctx: typer.Context,
