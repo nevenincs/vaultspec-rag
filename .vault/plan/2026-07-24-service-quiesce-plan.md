@@ -10,6 +10,16 @@ related:
   - '[[2026-07-24-service-quiesce-research]]'
 ---
 
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
+
 # `service-quiesce` plan
 
 ### Phase `P01` - QuiesceGate primitive and RunControlToken latch integration
@@ -32,7 +42,7 @@ Give ServiceRegistry one process-global QuiesceGate beside its GPU lock, inject 
 
 Add service-domain pause/resume behavior over the gate and the server pause / server resume CLI verbs mirroring the structured-idempotent JSON envelope pattern, treating already-paused/already-running as success exit 0 with an already_* status.
 
-- [ ] `P03.S07` - Add service-domain pause and resume behavior driving the registry gate and expose it through a localhost server route returning a structured status of paused, already_paused, running or already_running so the CLI adapts to service-owned behavior rather than owning it; `src/vaultspec_rag/server/_routes.py`.
+- [x] `P03.S07` - Add service-domain pause and resume behavior driving the registry gate and expose it through a localhost server route returning a structured status of paused, already_paused, running or already_running so the CLI adapts to service-owned behavior rather than owning it; `src/vaultspec_rag/server/_routes.py`.
 - [ ] `P03.S08` - Add the server pause and server resume CLI verbs that call the route and emit exactly one structured JSON envelope on every exit path, mirroring the start-success and fail-start helper pattern, with already-paused and already-running returning success exit 0 carrying an already_* status; `src/vaultspec_rag/cli/_service_quiesce.py`.
 - [ ] `P03.S09` - Add guard tests for the pause and resume envelope contract proving both directions of the idempotent already_* path, where already-paused and already-running return exit 0 with the already_* status and a genuine state change returns the changed status, each proven red-then-green; `src/vaultspec_rag/tests/test_service_quiesce_cli.py`.
 
