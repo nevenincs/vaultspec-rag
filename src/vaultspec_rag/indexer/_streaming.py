@@ -411,10 +411,15 @@ def _encode_and_upsert_vault_slice(
     gpu_lock: threading.Lock | None,
     sparse_enabled: bool,
     probe: MemoryProbe,
+    ingest_wait: bool = True,
     run_control: RunControl = NO_RUN_CONTROL,
     reuse: DonorReuseContext | None = None,
 ) -> None:
-    """Encode, synchronously store, and release one vault chunk slice."""
+    """Encode, store, and release one vault chunk slice.
+
+    ``ingest_wait=False`` defers the server-mode apply handshake to the
+    caller's ingest barrier; the embedded backend ignores it.
+    """
 
     def _after_encode() -> None:
         probe.checkpoint(f"slice-{slice_index}-after-encode")
@@ -433,7 +438,11 @@ def _encode_and_upsert_vault_slice(
             reuse=reuse,
         )
         run_control.checkpoint()
-        store.upsert_document_chunks(slice_chunks, write_policy=None)
+        store.upsert_document_chunks(
+            slice_chunks,
+            write_policy=None,
+            wait=ingest_wait,
+        )
     finally:
         _release_vector_fields(slice_chunks)
         _release_cuda_cache()
@@ -447,6 +456,7 @@ def _stream_encode_and_upsert_vault(
     store: VaultStore,
     gpu_lock: threading.Lock | None,
     reporter: ProgressReporter,
+    ingest_wait: bool = True,
     run_control: RunControl = NO_RUN_CONTROL,
     reuse: DonorReuseContext | None = None,
 ) -> dict[str, int]:
@@ -508,6 +518,7 @@ def _stream_encode_and_upsert_vault(
                     gpu_lock=gpu_lock,
                     sparse_enabled=sparse_enabled,
                     probe=probe,
+                    ingest_wait=ingest_wait,
                     run_control=run_control,
                     reuse=reuse,
                 )
@@ -1074,6 +1085,7 @@ def encode_and_upsert_code_slice(
     release_cache: bool = True,
     encode_batch_size: int | None = None,
     write_policy: StoreWritePolicy | None = None,
+    ingest_wait: bool = True,
     on_storage_confirmed: Callable[[], None] | None = None,
     after_forward: Callable[[str], None] | None = None,
     on_cuda_oom: Callable[[BaseException], None] | None = None,
@@ -1101,6 +1113,10 @@ def encode_and_upsert_code_slice(
             model default. The codebase path passes the larger
             ``embedding_code_encode_batch_size`` (#155) since code chunks
             are short and length-uniform.
+        ingest_wait: Server-mode durability handshake for the upsert.
+            Rebuild callers pass ``False`` and verify application through
+            the store's ingest barrier before their terminal steps; the
+            embedded backend ignores it.
         run_control: Cooperative control checked outside the GPU lock before
             and after this bounded slice.
     """
@@ -1124,7 +1140,11 @@ def encode_and_upsert_code_slice(
             reuse=reuse,
         )
         run_control.checkpoint()
-        store.upsert_code_chunks(slice_chunks, write_policy=write_policy)
+        store.upsert_code_chunks(
+            slice_chunks,
+            write_policy=write_policy,
+            wait=ingest_wait,
+        )
         if on_storage_confirmed is not None:
             on_storage_confirmed()
     finally:

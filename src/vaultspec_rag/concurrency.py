@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     import anyio
 
 __all__ = [
+    "get_encode_limiter",
     "get_index_limiter",
     "get_search_limiter",
     "limiter_stats",
@@ -29,6 +30,13 @@ __all__ = [
 _lock = threading.Lock()
 _search_limiter: anyio.CapacityLimiter | None = None
 _index_limiter: anyio.CapacityLimiter | None = None
+_encode_limiter: anyio.CapacityLimiter | None = None
+
+#: Exactly one encode-bearing index job may run at a time. A single GPU
+#: gains nothing from job-level concurrency: concurrent encode jobs only
+#: serialize on the process-wide GPU lock and inflate every job's wall
+#: clock, so the machine-wide admission slot is fixed rather than tunable.
+_ENCODE_ADMISSION_SLOTS = 1
 
 
 def _make_limiter(tokens: int) -> anyio.CapacityLimiter:
@@ -65,6 +73,23 @@ def get_index_limiter() -> anyio.CapacityLimiter:
     return _index_limiter
 
 
+def get_encode_limiter() -> anyio.CapacityLimiter:
+    """Return the single-slot admission gate for encode-bearing index jobs.
+
+    The daemon is the machine singleton, so this in-process limiter is the
+    machine-wide encode-job admission slot. Jobs that will run GPU encoding
+    acquire it before their worker thread starts; everyone else - searches,
+    the storage-maintenance tick, and non-encode reads - never touches it,
+    so nothing lifecycle-inert can starve or deadlock behind an encode job.
+    """
+    global _encode_limiter
+    if _encode_limiter is None:
+        with _lock:
+            if _encode_limiter is None:
+                _encode_limiter = _make_limiter(_ENCODE_ADMISSION_SLOTS)
+    return _encode_limiter
+
+
 def _stats(limiter: anyio.CapacityLimiter | None) -> dict[str, Any]:
     if limiter is None:
         return {"total_tokens": None, "borrowed_tokens": 0, "waiting": 0}
@@ -85,12 +110,14 @@ def limiter_stats() -> dict[str, dict[str, Any]]:
     return {
         "search": _stats(_search_limiter),
         "index": _stats(_index_limiter),
+        "encode": _stats(_encode_limiter),
     }
 
 
 def reset_limiters() -> None:
-    """Drop both limiters so the next caller rebuilds them (tests only)."""
-    global _search_limiter, _index_limiter
+    """Drop every limiter so the next caller rebuilds them (tests only)."""
+    global _search_limiter, _index_limiter, _encode_limiter
     with _lock:
         _search_limiter = None
         _index_limiter = None
+        _encode_limiter = None

@@ -15,13 +15,16 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 
+if TYPE_CHECKING:
+    import anyio
+
 from . import job_persistence as _job_persistence
 from ._job_errors import classify_error_text
-from .concurrency import get_index_limiter
+from .concurrency import get_encode_limiter, get_index_limiter
 from .config import get_config
 from .job_control import (
     CancelRequested,
@@ -53,6 +56,9 @@ from .job_models import (
 )
 from .job_models import (
     capabilities_for_state as _capabilities_for_state,
+)
+from .job_models import (
+    is_encode_bearing as _is_encode_bearing,
 )
 from .job_models import (
     job_spec_error as _job_spec_error,
@@ -144,6 +150,7 @@ class JobAttemptContext:
         project_lease_held: bool | None = None,
         writer_lock_held: bool | None = None,
         pipeline_active: bool | None = None,
+        admission_acquired_at: float | None = None,
     ) -> bool:
         """Update this attempt's resource ownership without stale-task writes."""
         return self.manager.update_execution_resources(
@@ -155,6 +162,7 @@ class JobAttemptContext:
             project_lease_held=project_lease_held,
             writer_lock_held=writer_lock_held,
             pipeline_active=pipeline_active,
+            admission_acquired_at=admission_acquired_at,
         )
 
     def set_resilience(self, resilience: IndexResilienceSnapshot) -> bool:
@@ -727,7 +735,7 @@ class JobManager:
                 self._run_worker_attempt,
                 context,
                 binding,
-                limiter=get_index_limiter(),
+                limiter=self._attempt_limiter(job_id),
             )
         except (PauseRequested, CancelRequested, ShutdownRequested) as exc:
             control_signal = exc
@@ -775,6 +783,22 @@ class JobManager:
             binding=binding,
         )
 
+    def _attempt_limiter(self, job_id: str) -> anyio.CapacityLimiter:
+        """Return the worker-thread limiter that admits one exact attempt.
+
+        Encode-bearing jobs pass through the single machine-wide encode
+        admission slot so at most one of them is ever in flight; every
+        other managed job keeps the wider index partition. The mapping is
+        spec-driven, so read-only and maintenance work can never be pulled
+        behind the encode slot by a dispatch-site mistake.
+        """
+        with self._lock:
+            managed = self._active.get(job_id)
+            spec = managed.snapshot.spec if managed is not None else None
+        if spec is not None and _is_encode_bearing(spec):
+            return get_encode_limiter()
+        return get_index_limiter()
+
     def _run_worker_attempt(
         self,
         context: JobAttemptContext,
@@ -789,9 +813,15 @@ class JobManager:
         )
         if not worker_persisted:
             raise RuntimeError("could not publish managed worker ownership")
+        # This worker thread only starts once the attempt's capacity
+        # limiter admitted it, so this transaction is the admission
+        # moment: the stamp makes the record's admission wait measurable
+        # and distinguishes a genuinely running attempt from one still
+        # queued behind the encode slot.
         capacity_persisted = context.set_resources(
             started=self._process_resource_snapshot(),
             index_capacity_held=True,
+            admission_acquired_at=time.time(),
         )
         if not capacity_persisted:
             raise RuntimeError("could not publish managed index-capacity ownership")
@@ -1465,6 +1495,7 @@ class JobManager:
         project_lease_held: bool | None = None,
         writer_lock_held: bool | None = None,
         pipeline_active: bool | None = None,
+        admission_acquired_at: float | None = None,
     ) -> bool:
         with self._lock:
             backup = self._capture_state_locked()
@@ -1472,8 +1503,17 @@ class JobManager:
             if managed is None or managed.runtime.task is not task:
                 return False
             previous = managed.snapshot.resources
+            timestamps = managed.snapshot.timestamps
             managed.snapshot = replace(
                 managed.snapshot,
+                timestamps=(
+                    timestamps
+                    if admission_acquired_at is None
+                    else replace(
+                        timestamps,
+                        admission_acquired_at=admission_acquired_at,
+                    )
+                ),
                 resources=replace(
                     previous,
                     started=(
@@ -2655,6 +2695,12 @@ class JobManager:
                     timestamps.started_at
                     if started_at is ...
                     else cast("float | None", started_at)
+                ),
+                # Admission is a per-attempt fact: any transition that
+                # rewrites the start clock (a fresh start, a requeued
+                # resume) discards the previous attempt's admission stamp.
+                admission_acquired_at=(
+                    timestamps.admission_acquired_at if started_at is ... else None
                 ),
                 control_requested_at=(
                     timestamps.control_requested_at
