@@ -314,10 +314,16 @@ def test_cuda_ceiling_override_raises_and_lowers_past_the_profile() -> None:
 
     profile_mb = 12288.0
     raised = resolve_index_cuda_ceiling_mb(
-        configured_mb=15000.0, headroom_mb=2048.0, profile_cuda_mb=profile_mb
+        configured_mb=15000.0,
+        headroom_mb=2048.0,
+        profile_cuda_mb=profile_mb,
+        baseline_mb=0.0,
     )
     lowered = resolve_index_cuda_ceiling_mb(
-        configured_mb=6000.0, headroom_mb=2048.0, profile_cuda_mb=profile_mb
+        configured_mb=6000.0,
+        headroom_mb=2048.0,
+        profile_cuda_mb=profile_mb,
+        baseline_mb=0.0,
     )
     assert raised == 15000.0
     assert raised > profile_mb
@@ -328,26 +334,82 @@ def test_cuda_ceiling_override_raises_and_lowers_past_the_profile() -> None:
 def test_cuda_ceiling_auto_derives_or_falls_back_to_profile(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # With no override (0), the ceiling derives from the device off a positive
-    # capacity, or falls back to the profile figure when the device total is
-    # unavailable (the torch-free / CPU-only path). Patch the device probe to
-    # exercise both branches without a GPU dependency.
+    # With no override (0), the ceiling derives from the device: total minus
+    # headroom when the free reading is unavailable, or the profile figure when
+    # the device total is also unavailable (the torch-free / CPU-only path).
+    # Patch both device probes to exercise the branches without a GPU
+    # dependency.
     from .. import memory_probe
 
     def _fake_total() -> float | None:
         return 16376.0
 
     monkeypatch.setattr(memory_probe, "cuda_device_total_mb", _fake_total)
+    monkeypatch.setattr(memory_probe, "cuda_free_memory_mb", lambda: None)
     derived = memory_probe.resolve_index_cuda_ceiling_mb(
-        configured_mb=0.0, headroom_mb=2048.0, profile_cuda_mb=12288.0
+        configured_mb=0.0,
+        headroom_mb=2048.0,
+        profile_cuda_mb=12288.0,
+        baseline_mb=0.0,
     )
     assert derived == 16376.0 - 2048.0
 
     monkeypatch.setattr(memory_probe, "cuda_device_total_mb", lambda: None)
     fallback = memory_probe.resolve_index_cuda_ceiling_mb(
-        configured_mb=0.0, headroom_mb=2048.0, profile_cuda_mb=12288.0
+        configured_mb=0.0,
+        headroom_mb=2048.0,
+        profile_cuda_mb=12288.0,
+        baseline_mb=0.0,
     )
     assert fallback == 12288.0
+
+
+def test_cuda_ceiling_auto_is_absolute_over_free_plus_resident_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Double-count guard. The free reading is sampled after the resident
+    # models loaded, so it already excludes them, while enforcement compares
+    # peak and ceiling net of the resident baseline. The auto ceiling must
+    # therefore be ABSOLUTE - baseline + free - headroom, clamped below
+    # total - headroom. The observe() call below is the assertion that
+    # catches the mutation back to a bare free - headroom ceiling: under
+    # that form the resident models are charged twice and this legitimate
+    # net forward (within free minus headroom) is falsely rejected as a
+    # cuda_memory_ceiling JobError.
+    from .. import memory_probe
+
+    monkeypatch.setattr(memory_probe, "cuda_device_total_mb", lambda: 16000.0)
+    monkeypatch.setattr(memory_probe, "cuda_free_memory_mb", lambda: 6000.0)
+    baseline = 5000.0
+    ceiling = memory_probe.resolve_index_cuda_ceiling_mb(
+        configured_mb=0.0,
+        headroom_mb=2048.0,
+        profile_cuda_mb=12288.0,
+        baseline_mb=baseline,
+    )
+    budget = memory_probe.MemoryBudget(
+        cuda_ceiling_mb=ceiling,
+        cuda_baseline_mb=baseline,
+    )
+    # Net demand 3500 MiB sits inside free - headroom (3952 MiB): admitted.
+    snapshot = budget.observe(
+        label="net forward within free memory",
+        rss_mb=0.0,
+        cuda_allocated_mb=baseline + 3500.0,
+        cuda_reserved_mb=baseline + 3500.0,
+    )
+    assert snapshot.peak_cuda_allocated_mb == baseline + 3500.0
+    assert ceiling == baseline + 6000.0 - 2048.0
+
+    # An idle-device free reading recovers the total - headroom clamp.
+    monkeypatch.setattr(memory_probe, "cuda_free_memory_mb", lambda: 15500.0)
+    clamped = memory_probe.resolve_index_cuda_ceiling_mb(
+        configured_mb=0.0,
+        headroom_mb=2048.0,
+        profile_cuda_mb=12288.0,
+        baseline_mb=baseline,
+    )
+    assert clamped == 16000.0 - 2048.0
 
 
 def test_document_encode_batch_is_independent_of_vault_and_code() -> None:

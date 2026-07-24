@@ -62,10 +62,6 @@ def test_document_profile_admits_within_every_declared_bound() -> None:
             SupportMeasurement(1, 1, rss_bytes=16 * 1024**3 + 1),
             JobErrorKind.CORPUS_LIMIT_EXCEEDED,
         ),
-        (
-            SupportMeasurement(1, 1, cuda_bytes=12 * 1024**3 + 1),
-            JobErrorKind.CORPUS_LIMIT_EXCEEDED,
-        ),
     ],
 )
 def test_profile_rejects_corpus_dimensions_structurally(
