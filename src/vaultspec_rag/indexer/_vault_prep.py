@@ -9,6 +9,7 @@ both indexers.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -19,11 +20,15 @@ from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs
     parse_vault_metadata,
 )
 
+from ..job_control import NO_RUN_CONTROL
 from ..store import VaultChunk, VaultDocument
 from ._chunking import TextSplitter
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Sequence
+
+    from ..job_control import RunControl
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +39,12 @@ __all__ = [
     "_extract_title",
     "prepare_document",
     "split_document",
+    "split_documents",
 ]
+
+# Fan each worker's share out over several batches so one heavyweight
+# document cannot serialize the tail of the pool behind a single task.
+_SPLIT_BATCHES_PER_WORKER = 4
 
 # ADR status lives in the H1 title, not frontmatter, in the canonical
 # vaultspec-core form ``... | (**status:** `value`)``. The marker is optional
@@ -202,6 +212,114 @@ def split_document(
         )
         for ordinal, piece in enumerate(pieces)
     ]
+
+
+def _split_document_batch(
+    docs: list[VaultDocument],
+    chunk_chars: int,
+) -> list[VaultChunk]:
+    """Split one ordered document batch (spawn-worker entry point).
+
+    Runs inside CPU-only spawn workers: it must never construct an embedding
+    model, touch CUDA, or pull a module-scope torch import onto this module's
+    import chain (rule ``index-workers-stay-cpu-only``).
+    """
+    return [chunk for doc in docs for chunk in split_document(doc, chunk_chars)]
+
+
+def _plan_split_workers(docs: Sequence[VaultDocument]) -> int:
+    """Decide the split worker count, gating auto mode on corpus size.
+
+    Mirrors the code path's worker policy: ``index_chunk_workers`` ``0`` means
+    auto (process CPU count) but engages the spawn pool only once the corpus
+    crosses ``index_parallel_min_bytes`` - below that, worker startup cost
+    outweighs the parallel split. An explicit positive value is honoured
+    verbatim, clamped to the document count.
+    """
+    from ..config import get_config
+
+    cfg = get_config()
+    configured = int(cfg.index_chunk_workers)
+    workers = configured if configured > 0 else (os.process_cpu_count() or 1)
+    workers = max(1, min(workers, len(docs)))
+    if workers <= 1:
+        return 1
+    if configured > 0:
+        return workers
+    min_bytes = int(cfg.index_parallel_min_bytes)
+    total = 0
+    for doc in docs:
+        total += len(doc.content)
+        if total >= min_bytes:
+            return workers
+    return 1
+
+
+def _split_documents_serial(
+    docs: list[VaultDocument],
+    chunk_chars: int,
+    run_control: RunControl,
+) -> list[VaultChunk]:
+    """Split documents one at a time on the calling thread."""
+    chunks: list[VaultChunk] = []
+    for doc in docs:
+        run_control.checkpoint()
+        chunks.extend(split_document(doc, chunk_chars))
+    run_control.checkpoint()
+    return chunks
+
+
+def split_documents(
+    docs: list[VaultDocument],
+    chunk_chars: int,
+    *,
+    run_control: RunControl = NO_RUN_CONTROL,
+) -> list[VaultChunk]:
+    """Split prepared documents into chunks, preserving document order.
+
+    Whole-corpus markdown splitting is a pure-CPU stage that previously ran
+    single-threaded for the entire corpus. Above the configured parallel byte
+    gate it fans out across a ``spawn`` process pool whose workers do CPU-only
+    work and never initialise CUDA. Output is identical to the serial path
+    because workers run the same :func:`split_document` over contiguous,
+    order-preserving batches.
+    """
+    from itertools import repeat
+
+    workers = _plan_split_workers(docs)
+    if workers <= 1:
+        return _split_documents_serial(docs, chunk_chars, run_control)
+
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+    from concurrent.futures.process import BrokenProcessPool
+
+    batch_size = max(
+        1,
+        -(-len(docs) // (workers * _SPLIT_BATCHES_PER_WORKER)),
+    )
+    batches = [
+        docs[index : index + batch_size] for index in range(0, len(docs), batch_size)
+    ]
+    ctx = multiprocessing.get_context("spawn")
+    chunks: list[VaultChunk] = []
+    try:
+        with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+            for batch_chunks in pool.map(
+                _split_document_batch,
+                batches,
+                repeat(chunk_chars),
+            ):
+                run_control.checkpoint()
+                chunks.extend(batch_chunks)
+    except BrokenProcessPool:
+        logger.warning(
+            "Document split process pool broke; splitting serially",
+            exc_info=True,
+        )
+        return _split_documents_serial(docs, chunk_chars, run_control)
+    run_control.checkpoint()
+    return chunks
 
 
 def prepare_document(

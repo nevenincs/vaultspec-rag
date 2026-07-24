@@ -29,6 +29,7 @@ from ._route_migration import reconcile_generation_storage
 from ._run_ledger import FinalizationPhase, RunOperation
 from ._run_policy import RunPolicy
 from ._streaming import (
+    _SliceWriter,
     encode_and_upsert_document_slice,
     iter_weighted_document_slices,
 )
@@ -37,6 +38,7 @@ from ._vault_prep import IndexResult
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from .._store_models import DocumentChunk
     from ..embeddings import EmbeddingModel
     from ..index_profiles import SupportProfileLimits
     from ..job_control import RunControl
@@ -46,6 +48,7 @@ if TYPE_CHECKING:
     from ._preprocess_config import PreprocessContext
     from ._resolved_policy import ResolvedIndexPolicy
     from ._reuse import DonorReuseContext, ReuseStats
+    from ._run_ledger import CommitUnit
 
 __all__ = ["DocumentIndexPreflight", "DocumentIndexer", "DocumentScopedPreflight"]
 
@@ -491,7 +494,6 @@ class DocumentIndexer:
         run_control: RunControl,
     ) -> tuple[DocumentFileMetadata | None, int, str | None]:
         """Chunk and publish one document, returning durable file evidence."""
-        from ..memory_probe import record_forward_peaks
         from ._run_policy import RunPolicy
 
         run_control.checkpoint()
@@ -525,82 +527,54 @@ class DocumentIndexer:
         )
         point_ids: list[str] = []
         reporter.phase_start("embed + upsert document chunks", None)
+        writer = _SliceWriter(name="document-slice-writer")
         try:
-            iterator = iter(weighted_slices)
-            weighted = next(iterator, None)
-            ordinal = 0
-            while weighted is not None:
-                run_control.checkpoint()
-                following = next(iterator, None)
-                selected = list(weighted.chunks)
-                budget.reserve(
-                    len(selected),
-                    weighted.estimated_bytes,
-                    sum(
-                        len(chunk.payload.content.encode("utf-8")) for chunk in selected
-                    ),
-                )
-                budget.checkpoint_runtime_resources(
-                    f"{result.rel_path} slice-{ordinal} before encode"
-                )
-                unit = checkpoint.unit_for(
-                    result.rel_path,
-                    result.content_hash,
-                    ordinal,
-                    is_file_end=following is None,
-                    point_ids=tuple(chunk.id for chunk in selected),
-                )
-                if not checkpoint.slice_committed(unit):
-                    self.store.disk_headroom_preflight(len(selected))
-
-                    def _after_forward(
-                        kind: str,
-                        slice_ordinal: int = ordinal,
-                    ) -> None:
-                        run_control.checkpoint()
-                        budget.checkpoint_runtime_resources(
-                            f"{result.rel_path} slice-{slice_ordinal} "
-                            f"after-{kind}-forward"
-                        )
-                        run_control.checkpoint()
-
-                    def _on_cuda_oom(
-                        exc: BaseException,
-                        slice_ordinal: int = ordinal,
-                    ) -> None:
-                        budget.fail_cuda_oom(
-                            f"{result.rel_path} slice-{slice_ordinal} allocator-oom",
-                            exc,
-                        )
-
-                    # Route the lock-bracketed forward captures into this
-                    # job's own budget so checkpoints enforce the job's
-                    # demand rather than a process-wide high-water.
-                    with record_forward_peaks(
-                        budget.memory_budget.record_forward_peak_mb
-                    ):
-                        encode_and_upsert_document_slice(
+            try:
+                iterator = iter(weighted_slices)
+                weighted = next(iterator, None)
+                ordinal = 0
+                while weighted is not None:
+                    run_control.checkpoint()
+                    following = next(iterator, None)
+                    selected = list(weighted.chunks)
+                    budget.reserve(
+                        len(selected),
+                        weighted.estimated_bytes,
+                        sum(
+                            len(chunk.payload.content.encode("utf-8"))
+                            for chunk in selected
+                        ),
+                    )
+                    budget.checkpoint_runtime_resources(
+                        f"{result.rel_path} slice-{ordinal} before encode"
+                    )
+                    unit = checkpoint.unit_for(
+                        result.rel_path,
+                        result.content_hash,
+                        ordinal,
+                        is_file_end=following is None,
+                        point_ids=tuple(chunk.id for chunk in selected),
+                    )
+                    if not checkpoint.slice_committed(unit):
+                        self._encode_slice_through_writer(
                             selected,
-                            model=self.model,
-                            store=self.store,
-                            gpu_lock=self._gpu_lock,
-                            encode_batch_size=int(
-                                cfg.embedding_document_encode_batch_size
-                            ),
-                            write_policy=checkpoint.run_policy.store_write_policy,
-                            after_forward=_after_forward,
-                            on_cuda_oom=_on_cuda_oom,
+                            unit=unit,
+                            ordinal=ordinal,
+                            rel_path=result.rel_path,
+                            budget=budget,
+                            checkpoint=checkpoint,
+                            writer=writer,
                             run_control=run_control,
                             reuse=self._donor_reuse,
                         )
-                    checkpoint.record_confirmed_slice(unit)
-                    budget.checkpoint_runtime_resources(
-                        f"{result.rel_path} slice-{ordinal} after store"
-                    )
-                point_ids.extend(chunk.id for chunk in selected)
-                reporter.advance(len(selected))
-                ordinal += 1
-                weighted = following
+                    point_ids.extend(chunk.id for chunk in selected)
+                    reporter.advance(len(selected))
+                    ordinal += 1
+                    weighted = following
+            except BaseException:
+                writer.abandon()
+                raise
+            writer.close(run_control=run_control)
         finally:
             reporter.phase_end()
         if not point_ids:
@@ -620,6 +594,68 @@ class DocumentIndexer:
             len(point_ids),
             None,
         )
+
+    def _encode_slice_through_writer(
+        self,
+        selected: list[DocumentChunk],
+        *,
+        unit: CommitUnit,
+        ordinal: int,
+        rel_path: str,
+        budget: _DocumentResourceBudget,
+        checkpoint: DocumentRunCheckpoint,
+        writer: _SliceWriter,
+        run_control: RunControl,
+        reuse: DonorReuseContext | None = None,
+    ) -> None:
+        """Encode one uncommitted slice and hand its publication to the writer.
+
+        Storage confirmation (the ledger checkpoint and the after-store budget
+        sample) runs on the writer thread strictly after the slice's upsert
+        returns, in slice order, so a write failure surfaces before this
+        file's evidence is treated as durable.
+        """
+        from ..config import get_config
+        from ..memory_probe import record_forward_peaks
+
+        self.store.disk_headroom_preflight(len(selected))
+
+        def _after_forward(kind: str) -> None:
+            run_control.checkpoint()
+            budget.checkpoint_runtime_resources(
+                f"{rel_path} slice-{ordinal} after-{kind}-forward"
+            )
+            run_control.checkpoint()
+
+        def _on_cuda_oom(exc: BaseException) -> None:
+            budget.fail_cuda_oom(f"{rel_path} slice-{ordinal} allocator-oom", exc)
+
+        def _on_storage_confirmed() -> None:
+            checkpoint.record_confirmed_slice(unit)
+            budget.checkpoint_runtime_resources(
+                f"{rel_path} slice-{ordinal} after store"
+            )
+
+        # Route the lock-bracketed forward captures into this job's own
+        # budget so checkpoints enforce the job's demand rather than a
+        # process-wide high-water.
+        with record_forward_peaks(budget.memory_budget.record_forward_peak_mb):
+            encode_and_upsert_document_slice(
+                selected,
+                model=self.model,
+                store=self.store,
+                gpu_lock=self._gpu_lock,
+                encode_batch_size=int(
+                    get_config().embedding_document_encode_batch_size
+                ),
+                write_policy=checkpoint.run_policy.store_write_policy,
+                on_storage_confirmed=_on_storage_confirmed,
+                after_forward=_after_forward,
+                on_cuda_oom=_on_cuda_oom,
+                run_control=run_control,
+                reuse=reuse,
+                writer=writer,
+            )
 
     def _open_checkpoint(
         self,
