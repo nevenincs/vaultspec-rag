@@ -22,9 +22,13 @@ Confirm the result:
 uv run vaultspec-rag --version
 ```
 
+<!-- x-release-please-start-version -->
+
 ```
 vaultspec-rag v0.3.5
 ```
+
+<!-- x-release-please-end -->
 
 ## Step 2: Start the service and index your project
 
