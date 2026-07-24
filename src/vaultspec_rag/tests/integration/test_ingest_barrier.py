@@ -271,6 +271,111 @@ class _VanishingChunkStore(VaultStore):
         )
 
 
+class _PoisonedThroughWriterStore(VaultStore):
+    """Real store that swaps one chunk's write for an acknowledged no-apply.
+
+    The swap happens inside ``upsert_document_chunks`` itself, so during a
+    production rebuild it executes on the slice-writer thread: one chunk's
+    point is written through the raw client with an unknown named vector
+    (the proven acknowledged-but-never-applied class) while the remainder
+    of the slice takes the production path unmodified. The recorded thread
+    idents prove the injection rode the writer, not the encoding caller.
+    """
+
+    def __init__(self, root: Path, raw: Any) -> None:
+        super().__init__(root)
+        self._raw_client = raw
+        self.upsert_threads: list[int] = []
+        self._poisoned = False
+
+    def upsert_document_chunks(
+        self,
+        chunks: list[VaultChunk],
+        *,
+        write_policy: StoreWritePolicy | None,
+        wait: bool = True,
+    ) -> None:
+        import threading
+
+        from qdrant_client import models
+
+        self.upsert_threads.append(threading.get_ident())
+        delivered = chunks
+        if not self._poisoned and chunks:
+            victim, delivered = chunks[0], chunks[1:]
+            self._poisoned = True
+            dimension = int(get_config().embedding_dimension)
+            self._raw_client.upsert(
+                collection_name=self.TABLE_NAME,
+                points=[
+                    models.PointStruct(
+                        id=self._stable_id(victim.point_key),
+                        vector={"bogus": [0.5] * dimension},
+                        payload={"id": victim.point_key},
+                    )
+                ],
+                wait=False,
+            )
+        if delivered:
+            super().upsert_document_chunks(
+                delivered,
+                write_policy=write_policy,
+                wait=wait,
+            )
+
+
+class TestBarrierComposesWithSliceWriter:
+    """The terminal barrier drains the writer queue and verifies its writes."""
+
+    def test_rebuild_fails_at_barrier_when_writer_carried_a_silent_drop(
+        self,
+        server_mode: QdrantSupervisor,
+        tmp_path: Path,
+    ) -> None:
+        """A writer-carried acknowledged-never-applied point fails the run.
+
+        The production vault rebuild hands every upsert to the single
+        slice-writer thread; the poisoned store swaps one chunk for a
+        wrong-named-vector write the server acknowledges and silently
+        drops. Only the barrier's exact count - which runs after the
+        writer queue drains and before stale-purge or metadata publish -
+        can reject the run. Weakening the barrier's count comparison
+        makes the rebuild "succeed" over the missing point, turning the
+        raises-assertion below red; that is the mutation this test
+        exists to catch.
+        """
+        import threading
+
+        from qdrant_client import QdrantClient
+
+        from ...indexer import VaultIndexer
+
+        build_synthetic_vault(tmp_path, n_docs=4, seed=7)
+        raw = QdrantClient(url=server_mode.url)
+        store = _PoisonedThroughWriterStore(tmp_path, raw)
+        indexer = VaultIndexer(
+            tmp_path,
+            cast("Any", _DeterministicCpuModel()),
+            store,
+        )
+        caller = threading.get_ident()
+        try:
+            with pytest.raises(IngestVerificationError):
+                indexer.full_index(reporter=NullProgressReporter())
+            assert not indexer._meta_path.exists(), (
+                "terminal metadata was published over a writer-carried "
+                "silent drop"
+            )
+            assert store.upsert_threads, "the rebuild never reached storage"
+            assert all(ident != caller for ident in store.upsert_threads), (
+                "upserts ran inline on the encoding thread; the injection "
+                "never rode the slice writer"
+            )
+        finally:
+            raw.close()
+            store.close()
+
+
 class TestTerminalStateNeverPrecedesAppliedPoints:
     """A rebuild whose points did not apply must fail before metadata."""
 
