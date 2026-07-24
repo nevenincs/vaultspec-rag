@@ -655,9 +655,13 @@ async def _validate_index_job_spec(
         )
         return await _run_in_thread(validator, Path(spec.project_root))
     except JobError as exc:
+        # ``exc.detail``, never ``str(exc)``: the exception text carries the
+        # kind as a prefix so the typed identity survives the background-job
+        # text boundary, and the kind is already travelling separately as the
+        # response code. Rendering both concatenates the kind twice.
         raise _InvalidJobRequestError(
             exc.error_kind.value,
-            str(exc),
+            exc.detail,
         ) from exc
     except ValueError as exc:
         raise _InvalidJobRequestError(

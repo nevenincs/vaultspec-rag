@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, cast
 
 import httpx
@@ -21,6 +22,7 @@ from ...jobs import get_job_manager, reset
 from ...server._routes import ROUTES
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from pathlib import Path
 
 pytestmark = [pytest.mark.integration]
@@ -132,26 +134,27 @@ def test_code_runtime_measurement_keeps_extractor_host_and_device_bounds_separat
     assert "rss_bytes" in str(raised.value)
 
 
-@pytest.mark.asyncio
-async def test_code_profile_refusal_is_structured_before_job_creation(
-    tmp_path: Path,
-) -> None:
+@contextmanager
+def _refusing_admission_service(tmp_path: Path, token: str) -> Generator[Path]:
+    """Yield a project root whose code admission is refused by the profile.
+
+    ``managed-service`` accepts only the server backend, so selecting the
+    local-only backend produces a genuine profile refusal from the real
+    admission path - no doubles anywhere between the route and the check.
+    """
     root = tmp_path / "project"
     (root / ".vault").mkdir(parents=True)
     source = root / "src" / "feature.py"
     source.parent.mkdir(parents=True)
     source.write_text("feature = 42\n", encoding="utf-8")
-    prior_env = {
-        variable: os.environ.get(variable.value)
-        for variable in (
-            EnvVar.STATUS_DIR,
-            EnvVar.INDEX_SUPPORT_PROFILE,
-            EnvVar.LOCAL_ONLY,
-            EnvVar.QDRANT_SERVER,
-        )
-    }
+    variables = (
+        EnvVar.STATUS_DIR,
+        EnvVar.INDEX_SUPPORT_PROFILE,
+        EnvVar.LOCAL_ONLY,
+        EnvVar.QDRANT_SERVER,
+    )
+    prior_env = {variable: os.environ.get(variable.value) for variable in variables}
     prior_token = server_package._SERVICE_TOKEN
-    token = "test-code-support-admission"
     os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path / "status")
     os.environ[EnvVar.INDEX_SUPPORT_PROFILE.value] = "managed-service"
     os.environ[EnvVar.LOCAL_ONLY.value] = "1"
@@ -159,29 +162,8 @@ async def test_code_profile_refusal_is_structured_before_job_creation(
     reset_config()
     reset()
     server_package._SERVICE_TOKEN = token
-
     try:
-        transport = httpx.ASGITransport(app=Starlette(routes=ROUTES))
-        async with httpx.AsyncClient(
-            transport=transport,
-            base_url="http://testserver",
-        ) as client:
-            response = await client.post(
-                "/jobs",
-                headers={"Authorization": f"Bearer {token}"},
-                json={
-                    "operation": "index",
-                    "source": "code",
-                    "project_root": str(root),
-                    "mode": "incremental",
-                },
-            )
-
-        payload = cast("dict[str, object]", response.json())
-        assert response.status_code == 422
-        assert payload["code"] == JobErrorKind.PROFILE_REQUIREMENTS_NOT_MET.value
-        assert payload["error"] == JobErrorKind.PROFILE_REQUIREMENTS_NOT_MET.value
-        assert get_job_manager().list_jobs() == []
+        yield root
     finally:
         reset()
         server_package._SERVICE_TOKEN = prior_token
@@ -191,3 +173,78 @@ async def test_code_profile_refusal_is_structured_before_job_creation(
             else:
                 os.environ[variable.value] = value
         reset_config()
+
+
+async def _post_index_job(token: str, root: Path, source: str) -> httpx.Response:
+    transport = httpx.ASGITransport(app=Starlette(routes=ROUTES))
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+    ) as client:
+        return await client.post(
+            "/jobs",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "operation": "index",
+                "source": source,
+                "project_root": str(root),
+                "mode": "incremental",
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_code_profile_refusal_is_structured_before_job_creation(
+    tmp_path: Path,
+) -> None:
+    token = "test-code-support-admission"
+    with _refusing_admission_service(tmp_path, token) as root:
+        response = await _post_index_job(token, root, "code")
+
+        payload = cast("dict[str, object]", response.json())
+        assert response.status_code == 422
+        assert payload["code"] == JobErrorKind.PROFILE_REQUIREMENTS_NOT_MET.value
+        assert payload["error"] == JobErrorKind.PROFILE_REQUIREMENTS_NOT_MET.value
+        assert get_job_manager().list_jobs() == []
+
+
+@pytest.mark.asyncio
+async def test_admission_refusal_states_its_kind_exactly_once(
+    tmp_path: Path,
+) -> None:
+    """The machine kind travels as the code; the message must not repeat it.
+
+    An admission failure's exception text carries its kind as a prefix so
+    the typed identity survives the background-job text boundary. Every
+    transport that also carries the kind as a separate field must strip it,
+    or the operator reads the token twice in one line. Asserting on the
+    exact leading token is deliberate: a looser "kind appears once anywhere"
+    match would pass on a message that merely mentions its own kind in
+    prose.
+    """
+    from ...cli import console
+    from ...cli._index import _print_service_domain_outcomes
+    from ...server._routes import _reindex_failure
+
+    token = "test-admission-message-shape"
+    with _refusing_admission_service(tmp_path, token) as root:
+        response = await _post_index_job(token, root, "code")
+
+    payload = cast("dict[str, object]", response.json())
+    kind = str(payload["code"])
+    message = str(payload["message"])
+    assert kind == JobErrorKind.PROFILE_REQUIREMENTS_NOT_MET.value
+    assert not message.startswith(f"{kind}:")
+
+    # The whole chain an operator actually reads: the route's per-domain
+    # failure record rendered by the CLI that requested a combined index.
+    with console.capture() as captured:
+        _print_service_domain_outcomes(
+            {"code": _reindex_failure(error_kind=kind, detail=message)}
+        )
+    line = next(
+        text
+        for text in captured.get().splitlines()
+        if text.startswith("Source code: failed:")
+    )
+    assert line.count(kind) == 1

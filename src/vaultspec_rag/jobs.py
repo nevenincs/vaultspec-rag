@@ -873,10 +873,9 @@ def validate_code_support_profile(
     preflight: CodeIndexPreflight | CodeScopedPreflight,
 ) -> SupportMeasurement:
     """Enforce the named code profile before any model or mutable resource."""
-    import shutil
-
     import psutil
 
+    from ._store_writes import probe_store_volume
     from .config import get_config
     from .index_profiles import IndexDomain, validate_profile_admission
     from .indexer._codebase_indexer import CodeIndexPreflight
@@ -898,7 +897,7 @@ def validate_code_support_profile(
         measurement,
         backend="server" if cfg.effective_server_mode() else "local",
         available_ram_bytes=int(psutil.virtual_memory().total),
-        free_disk_bytes=int(shutil.disk_usage(root).free),
+        store_volume=probe_store_volume(root),
     )
     return measurement
 
@@ -953,10 +952,9 @@ def validate_document_support_profile(
     run_control: RunControl = NO_RUN_CONTROL,
 ) -> None:
     """Enforce the named document profile before any model or mutable resource."""
-    import shutil
-
     import psutil
 
+    from ._store_writes import probe_store_volume
     from .config import get_config
     from .index_profiles import (
         IndexDomain,
@@ -993,7 +991,7 @@ def validate_document_support_profile(
         measurement,
         backend="server" if cfg.effective_server_mode() else "local",
         available_ram_bytes=int(psutil.virtual_memory().total),
-        free_disk_bytes=int(shutil.disk_usage(root).free),
+        store_volume=probe_store_volume(root),
     )
 
 

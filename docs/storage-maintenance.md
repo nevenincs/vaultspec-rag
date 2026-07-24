@@ -39,9 +39,9 @@ uv run vaultspec-rag server storage survey
 ```
 
 ```
-144 namespaces  (orphaned=79 unknown=0 unverifiable=0 live=65)  300.8GB on disk
-  orphaned r02c5d80096c3_         0 pts      2.1GB  C:\Users\me\AppData\Local\Temp\.tmpMum3wV
-  live     r45b56789f389_     12408 pts      3.4GB  C:\projects\my-project
+144 namespaces  (orphaned=79 unknown=0 unverifiable=0 live=65)  300.8 GiB on disk
+  orphaned r02c5d80096c3_         0 pts   2.1 GiB  C:\Users\me\AppData\Local\Temp\.tmpMum3wV
+  live     r45b56789f389_     12408 pts   3.4 GiB  C:\projects\my-project
 ```
 
 Each row reads left to right as the classification, the namespace prefix, the document count, the on-disk footprint, and the attributed root path; a namespace no root can be attributed to shows `(unattributable)` in the final column. `--orphaned` and `--unknown` narrow the list to those states. With a running daemon the survey is answered by the service itself, so the CLI, the MCP tools, and HTTP consumers all see one classification; without a daemon the CLI reads the store directly.
@@ -94,8 +94,8 @@ uv run vaultspec-rag server storage reconcile --yes
 ```
 
 ```
-Reconciled 6 collections (23.4GB reclaimed); 0 still converging.
-  reconciled       r45b56789f389_vault_docs         8->1 segments, 1.0GB freed
+Reconciled 6 collections (23.4 GiB reclaimed); 0 still converging.
+  reconciled       r45b56789f389_vault_docs         8->1 segments, 1.0 GiB freed
 ```
 
 Merging is a background operation, so the command waits for each collection to settle before reporting what it saved. That wait matters: while the engine restructures a collection, both its segment count and its on-disk size briefly rise *above* where they started before falling well below. A figure read mid-merge would report a reclamation in progress as growth, so `vaultspec-rag` only ever reports a size it has watched stop changing — and it waits for the merge to actually *begin* before it starts watching, because a merge still queued behind a busy engine looks exactly as motionless as a finished one.
@@ -136,7 +136,7 @@ uv run vaultspec-rag server storage prune --yes
 ```
 
 ```
-Reclaimed 79 orphaned namespaces (167.9GB); 0 unknown left untouched.
+Reclaimed 79 orphaned namespaces (167.9 GiB); 0 unknown left untouched.
 ```
 
 Prune targets only `orphaned` namespaces; `unknown` and `unverifiable` are never touched. To remove one specific namespace, name its prefix:

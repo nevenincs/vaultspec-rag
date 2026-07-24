@@ -5,9 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
 
 from ._job_errors import JobError, JobErrorKind
+from ._units import human_bytes
+
+if TYPE_CHECKING:
+    from ._store_writes import StoreVolume
 
 __all__ = [
     "IndexDomain",
@@ -243,6 +247,53 @@ def index_support_profile_status(name: str) -> dict[str, object]:
     }
 
 
+def _disk_refusal(profile: IndexSupportProfile, store_volume: StoreVolume) -> str:
+    """Explain a headroom refusal in units, at a location, with a way out.
+
+    The requirement is a property of the vector store's volume, which is
+    frequently not the volume holding the indexed tree. Naming the exact
+    directory and drive is what stops the refusal reading as a flat
+    contradiction of what the operator's file manager shows.
+    """
+    from .config import EnvVar
+
+    free = store_volume.free_bytes or 0
+    required = human_bytes(profile.minimum_free_disk_bytes)
+    observed = human_bytes(free)
+    short = human_bytes(profile.minimum_free_disk_bytes - free)
+    smaller = _smaller_disk_profile(profile)
+    lines = [
+        f"profile {profile.name!r} requires {required} free for the vector "
+        f"store; {store_volume.describe()} has {observed} free ({short} short).",
+        f"Free space on that volume, or point {EnvVar.QDRANT_STORAGE_DIR.value} "
+        f"at a volume with room.",
+    ]
+    if smaller is not None:
+        lines.append(
+            f"A smaller profile is available: set "
+            f"{EnvVar.INDEX_SUPPORT_PROFILE.value}={smaller.name} "
+            f"(needs {human_bytes(smaller.minimum_free_disk_bytes)})."
+        )
+    return " ".join(lines)
+
+
+def _smaller_disk_profile(active: IndexSupportProfile) -> IndexSupportProfile | None:
+    """Return the lowest-floor profile below *active*, or ``None`` if it is lowest.
+
+    Offering the active profile back as the remediation is worse than
+    offering nothing, so the suggestion is omitted when no profile has a
+    lower disk floor.
+    """
+    lower = [
+        candidate
+        for candidate in _PROFILES.values()
+        if candidate.minimum_free_disk_bytes < active.minimum_free_disk_bytes
+    ]
+    if not lower:
+        return None
+    return min(lower, key=lambda candidate: candidate.minimum_free_disk_bytes)
+
+
 def validate_profile_admission(
     profile_name: str,
     domain: IndexDomain,
@@ -250,9 +301,16 @@ def validate_profile_admission(
     *,
     backend: StorageBackend,
     available_ram_bytes: int,
-    free_disk_bytes: int,
+    store_volume: StoreVolume,
 ) -> IndexSupportProfile:
-    """Validate known host and corpus dimensions before mutable/GPU work."""
+    """Validate known host and corpus dimensions before mutable/GPU work.
+
+    ``store_volume`` measures the volume the vector store writes to, which
+    is frequently not the volume holding the indexed tree. A ``None`` free
+    figure means this process cannot see that volume (a remote store), and
+    the headroom check is skipped rather than decided against an unrelated
+    number; the per-write floor still guards the run.
+    """
     profile = get_index_support_profile(profile_name)
     if backend not in profile.accepted_backends:
         raise JobError(
@@ -262,14 +320,18 @@ def validate_profile_admission(
     if available_ram_bytes < profile.minimum_ram_bytes:
         raise JobError(
             JobErrorKind.PROFILE_REQUIREMENTS_NOT_MET,
-            f"profile {profile.name!r} requires {profile.minimum_ram_bytes} RAM bytes; "
-            f"host reports {available_ram_bytes}",
+            f"profile {profile.name!r} requires "
+            f"{human_bytes(profile.minimum_ram_bytes)} RAM; host reports "
+            f"{human_bytes(available_ram_bytes)}",
         )
-    if free_disk_bytes < profile.minimum_free_disk_bytes:
+    free_disk_bytes = store_volume.free_bytes
+    if (
+        free_disk_bytes is not None
+        and free_disk_bytes < profile.minimum_free_disk_bytes
+    ):
         raise JobError(
             JobErrorKind.DISK_PREFLIGHT_FAILED,
-            f"profile {profile.name!r} requires {profile.minimum_free_disk_bytes} "
-            f"free disk bytes; storage reports {free_disk_bytes}",
+            _disk_refusal(profile, store_volume),
         )
     exceeded = profile.limits_for(domain).exceeded_by(measured)
     if exceeded is not None:
