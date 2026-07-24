@@ -16,6 +16,10 @@
         { "type": "ci", "section": "CI", "hidden": true },
         { "type": "refactor", "section": "Code Refactoring", "hidden": true },
         { "type": "test", "section": "Tests", "hidden": true }
+      ],
+      "extra-files": [
+        "docs/getting-started.md",
+        "docs/installation.md"
       ]
     }
   }
