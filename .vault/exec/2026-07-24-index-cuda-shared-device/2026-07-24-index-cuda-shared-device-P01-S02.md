@@ -18,7 +18,7 @@ related:
 ## Description
 
 - Add a required `baseline_mb` keyword to `resolve_index_cuda_ceiling_mb` in `src/vaultspec_rag/memory_probe.py`.
-- Derive the auto branch (configured_mb <= 0) as `max(0, min(baseline_mb + free - headroom_mb, total - headroom_mb))` - ABSOLUTE, inclusive of the resident models, because enforcement subtracts the baseline from both the captured peak and the ceiling; a bare `free - headroom` would charge the models twice and falsely reject legitimate forwards.
+- Derive the auto branch (configured_mb \<= 0) as `max(0, min(baseline_mb + free - headroom_mb, total - headroom_mb))` - ABSOLUTE, inclusive of the resident models, because enforcement subtracts the baseline from both the captured peak and the ceiling; a bare `free - headroom` would charge the models twice and falsely reject legitimate forwards.
 - Keep the fallback chain: free unavailable -> `total - headroom`; total unavailable -> profile figure.
 - Keep the positive operator override authoritative and unchanged.
 

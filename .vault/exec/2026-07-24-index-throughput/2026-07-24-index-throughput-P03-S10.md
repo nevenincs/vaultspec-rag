@@ -13,7 +13,7 @@ related:
 
 ## Scope
 
-- `src/vaultspec_rag/tests/` streaming suites`
+- `src/vaultspec_rag/tests/` streaming suites\`
 
 ## Description
 

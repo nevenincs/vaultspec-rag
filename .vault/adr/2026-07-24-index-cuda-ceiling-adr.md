@@ -135,8 +135,7 @@ double-count the models and silently re-tighten the ceiling, reproducing the
 original defect; the record requires both sides move together.
 
 Peak measurement is captured, not relocated. Enforcement stays at the existing
-sample checkpoints outside `gpu_lock` - the field failure `code producer queue
-wait` is one such checkpoint, and `MemoryBudget.sample` is contractually
+sample checkpoints outside `gpu_lock` - the field failure `code producer queue wait` is one such checkpoint, and `MemoryBudget.sample` is contractually
 forbidden from taking the lock - so those checkpoints continue to run where they
 do. What changes is the number they read: a raw peak reset-and-read is bracketed
 inside the `gpu_lock` hold that already wraps the forward, recording that job's

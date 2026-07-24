@@ -13,7 +13,7 @@ related:
 
 ## Scope
 
-- `src/vaultspec_rag/indexer/_streaming.py` (temporary patch`
+- `src/vaultspec_rag/indexer/_streaming.py` (temporary patch\`
 - `not for landing)`
 
 ## Description

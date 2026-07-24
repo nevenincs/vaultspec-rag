@@ -13,7 +13,7 @@ related:
 
 ## Scope
 
-- `src/vaultspec_rag/tests/` store/indexer suites`
+- `src/vaultspec_rag/tests/` store/indexer suites\`
 
 ## Description
 

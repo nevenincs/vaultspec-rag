@@ -144,8 +144,7 @@ allocation, which already includes the ~3.5 GiB resident models
 (`memory_probe.py:182`) - so a captured peak is total device use, not the job's
 delta. Subtracting the baseline from the ceiling while enforcing an absolute peak
 would double-count the models and re-tighten the ceiling by ~3.5 GiB. The two
-sides must match: either enforce `peak - baseline` against `capacity - headroom -
-baseline`, or enforce absolute `peak` against `capacity - headroom`. Second, the
+sides must match: either enforce `peak - baseline` against `capacity - headroom - baseline`, or enforce absolute `peak` against `capacity - headroom`. Second, the
 resident baseline is not fully present until every model is resident, and the
 CrossEncoder reranker loads lazily under a separate `_reranker_lock` rather than
 `gpu_lock`; a baseline sampled before that lazy load understates the true
