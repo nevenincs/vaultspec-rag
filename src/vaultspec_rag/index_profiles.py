@@ -87,7 +87,13 @@ class SupportProfileLimits:
                 raise ValueError(f"{name} must be a positive integer")
 
     def exceeded_by(self, measured: SupportMeasurement) -> tuple[str, int, int] | None:
-        """Return the first exceeded dimension in stable diagnostic order."""
+        """Return the first exceeded dimension in stable diagnostic order.
+
+        ``cuda_bytes`` is deliberately absent: the measured value is a runtime
+        allocation peak, not a corpus dimension, and runtime CUDA demand is
+        governed by the per-job ceiling and forward-peak capture. It stays a
+        measured, reported field but never decides corpus admission.
+        """
         for name in (
             "source_files",
             "source_bytes",
@@ -96,7 +102,6 @@ class SupportProfileLimits:
             "weighted_bytes",
             "queue_bytes",
             "rss_bytes",
-            "cuda_bytes",
         ):
             actual = getattr(measured, name)
             limit = getattr(self, name)

@@ -161,20 +161,46 @@ def cuda_device_total_mb() -> float | None:
         return None
 
 
+def cuda_free_memory_mb() -> float | None:
+    """Return the active CUDA device's free memory in MiB, or ``None``.
+
+    A guarded probe, not a hard gate: it returns ``None`` on a torch-absent or
+    CPU-only host rather than raising, so the ceiling derivation degrades to
+    its total-memory (or profile) fallback off the GPU compute path and never
+    forces torch onto a service-client or worker path. Shares the cached
+    module probe with :func:`_measure_cuda_mb`.
+    """
+    _measure_cuda_mb()
+    if _torch_module is None or not _torch_has_cuda:
+        return None
+    try:
+        return float(_torch_module.cuda.mem_get_info()[0]) / (1024.0 * 1024.0)
+    except (RuntimeError, AssertionError):
+        return None
+
+
 def resolve_index_cuda_ceiling_mb(
     *,
     configured_mb: float,
     headroom_mb: float,
     profile_cuda_mb: float,
+    baseline_mb: float,
 ) -> float:
     """Resolve the effective indexing CUDA ceiling in MiB.
 
     A positive ``configured_mb`` is an authoritative operator override that wins
     in either direction - it may raise the ceiling above the profile figure as
     well as lower it below, replacing the former one-way ``min`` clamp. When it
-    is unset (zero or negative), the ceiling is derived from the real device:
-    total memory minus a reserved ``headroom_mb`` margin. Off the GPU compute
-    path the device total is unavailable, so the derivation falls back to
+    is unset (zero or negative), the ceiling is derived from the real device as
+    an ABSOLUTE figure: ``min(baseline_mb + free - headroom_mb,
+    total - headroom_mb)``. Free memory is sampled after the resident models
+    loaded, so it already excludes them - and enforcement compares peak and
+    ceiling net of the resident baseline, so ``baseline_mb`` must be added back
+    here. A bare ``free - headroom`` ceiling would charge the resident models
+    twice (once inside the free reading, once via the baseline-net comparison)
+    and falsely reject legitimate forwards. When the free reading is
+    unavailable the derivation falls back to ``total - headroom_mb``; off the
+    GPU compute path the device total is also unavailable, so it falls back to
     ``profile_cuda_mb`` - the profile figure becomes a default rather than a
     hard cap.
     """
@@ -183,7 +209,11 @@ def resolve_index_cuda_ceiling_mb(
     total = cuda_device_total_mb()
     if total is None:
         return float(profile_cuda_mb)
-    return max(0.0, total - headroom_mb)
+    total_capped = max(0.0, total - headroom_mb)
+    free = cuda_free_memory_mb()
+    if free is None:
+        return total_capped
+    return max(0.0, min(baseline_mb + free - headroom_mb, total_capped))
 
 
 def current_cuda_mb() -> tuple[float, float]:
