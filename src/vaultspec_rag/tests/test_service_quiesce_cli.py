@@ -11,10 +11,13 @@ branch it exercises: flip the expected exit code and the assertion reports it.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from typer.testing import CliRunner
+
+if TYPE_CHECKING:
+    from typer.testing import Result
 
 from ..cli import _service_quiesce as quiesce
 from ..cli import app
@@ -34,12 +37,16 @@ def _stub_admin(
     let the real transport run and the test would fail loudly rather than pass
     vacuously.
     """
+
+    def _fake_admin(*_a: object, **_k: object) -> dict[str, Any] | None:
+        return envelope
+
     monkeypatch.setattr(quiesce, "_default_service_port", lambda: 8766)
-    monkeypatch.setattr(quiesce, "_try_http_admin", lambda *_a, **_k: envelope)
+    monkeypatch.setattr(quiesce, "_try_http_admin", _fake_admin)
 
 
-def _json(result: object) -> dict[str, Any]:
-    return json.loads(result.output)  # type: ignore[attr-defined]
+def _json(result: Result) -> dict[str, Any]:
+    return json.loads(result.output)
 
 
 def test_pause_change_is_success_exit_zero(monkeypatch: pytest.MonkeyPatch) -> None:
