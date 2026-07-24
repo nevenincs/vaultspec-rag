@@ -72,6 +72,10 @@ class IndexResult:
             skipped this run (``on_error=skip``), surfaced so coverage gaps are
             never silent (#185).
         preprocess_failures: ``"rel_path: reason"`` for each skipped file.
+        reuse: Donor vector-reuse telemetry for this run (hit/miss counts,
+            hit rate, estimated GPU seconds saved, donor availability), or
+            ``None`` when reuse is disabled or the run never reached the
+            encode pipeline.
     """
 
     total: int
@@ -84,6 +88,7 @@ class IndexResult:
     preprocess_ok: int = 0
     preprocess_skipped: int = 0
     preprocess_failures: list[str] = field(default_factory=list)
+    reuse: dict[str, object] | None = None
 
 
 def _first_h1(body: str) -> str:

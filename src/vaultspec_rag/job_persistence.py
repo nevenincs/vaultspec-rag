@@ -525,6 +525,7 @@ def _job_snapshot_from_dict(value: object) -> JobSnapshot:
         runtime=_job_runtime_from_dict(raw.get("runtime")),
         resources=_job_resources_from_dict(raw.get("resources")),
         resilience=_job_resilience_from_dict(raw.get("resilience")),
+        reuse=_job_reuse_from_dict(raw.get("reuse")),
     )
 
 
@@ -695,6 +696,13 @@ def _job_resilience_from_dict(value: object) -> IndexResilienceSnapshot | None:
             "resilience terminal_outcome",
         ),
     )
+
+
+def _job_reuse_from_dict(value: object) -> dict[str, object] | None:
+    """Read the optional donor-reuse telemetry block (absent on old state)."""
+    if value is None:
+        return None
+    return dict(_required_mapping(value, "job reuse"))
 
 
 def _required_mapping(value: object, name: str) -> dict[str, object]:

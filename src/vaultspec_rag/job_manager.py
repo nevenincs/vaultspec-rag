@@ -89,6 +89,7 @@ class JobExecutionResult:
     preprocess_ok: int = 0
     preprocess_skipped: int = 0
     preprocess_failures: tuple[str, ...] = ()
+    reuse: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -874,6 +875,7 @@ class JobManager:
                 task=task,
                 state=JobState.SUCCEEDED,
                 result=result.summary if result is not None else None,
+                reuse=result.reuse if result is not None else None,
             )
 
     def _recover_completion_persistence(
@@ -2031,6 +2033,7 @@ class JobManager:
         state: JobState,
         result: str | None = None,
         error_kind: str | None = None,
+        reuse: dict[str, object] | None = None,
     ) -> JobOutcome:
         """Commit one attempt's terminal outcome with first-writer-wins semantics."""
         command = "finish_attempt"
@@ -2075,6 +2078,7 @@ class JobManager:
                 finished_at=now,
                 result=result,
                 error_kind=error_kind,
+                reuse=reuse,
             )
             self._archive_terminal_locked(managed)
             persistence_error = self._persist_locked()
@@ -2627,6 +2631,7 @@ class JobManager:
         finished_at: float | None | object = ...,
         result: str | None | object = ...,
         error_kind: str | None | object = ...,
+        reuse: dict[str, object] | None | object = ...,
     ) -> None:
         previous = managed.snapshot
         timestamps = previous.timestamps
@@ -2666,6 +2671,11 @@ class JobManager:
                 previous.error_kind
                 if error_kind is ...
                 else cast("str | None", error_kind)
+            ),
+            reuse=(
+                previous.reuse
+                if reuse is ...
+                else cast("dict[str, object] | None", reuse)
             ),
         )
 

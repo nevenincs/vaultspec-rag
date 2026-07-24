@@ -141,7 +141,8 @@ def _run_vault_attempt(
         summary=(
             f"+{result.added} /{result.updated} "
             f"-{result.removed} ({result.duration_ms}ms)"
-        )
+        ),
+        reuse=result.reuse,
     )
 
 
@@ -213,6 +214,7 @@ def _run_code_attempt(
         preprocess_ok=result.preprocess_ok,
         preprocess_skipped=result.preprocess_skipped,
         preprocess_failures=tuple(result.preprocess_failures),
+        reuse=result.reuse,
     )
 
 
@@ -281,6 +283,7 @@ def _run_document_attempt(
         preprocess_ok=result.preprocess_ok,
         preprocess_skipped=result.preprocess_skipped,
         preprocess_failures=tuple(result.preprocess_failures),
+        reuse=result.reuse,
     )
 
 
