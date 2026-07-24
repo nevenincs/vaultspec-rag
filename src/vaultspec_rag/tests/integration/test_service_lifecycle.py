@@ -2249,16 +2249,36 @@ def test_reconcile_recovers_discovery_without_touching_the_daemon(
         assert json.loads(again.stdout)["data"]["status"] == "already_converged"
 
 
-def test_race_losing_daemon_self_exits(tmp_path: Path) -> None:
-    """A daemon that loses the machine-singleton claim terminates, never hangs.
+# The witness the daemon's forced-exit backstop logs immediately before calling
+# ``os._exit``. A daemon that reached a natural interpreter exit never writes it,
+# which is what makes its presence positive evidence that the backstop fired
+# rather than that the process happened to end on its own.
+_FORCED_DAEMON_EXIT_WITNESS = "Forcing daemon process exit after bounded shutdown"
 
-    Positive smoke for the orphan-accumulation fix: this process holds the
-    machine lock, so the spawned daemon must fail its claim and must terminate on
-    its own within the bound rather than hang the machine as a lingering,
-    unmanaged process. It does not reproduce the specific interpreter-exit wedge
-    the fix targets (that needs a hung non-daemon thread, absent this early in
-    startup), so it guards against a gross hang, not the subtle wedge; the wedge
-    fix is covered by the claim-inside-the-guard change and its end-to-end proof.
+# The daemon spends most of a lost race importing: a cold interpreter reaches the
+# singleton claim in roughly forty seconds on a developer machine, and the claim
+# itself refuses immediately once reached. The bound is generous against that
+# measurement so a slow host reports a real hang, never a tight deadline.
+_LOSING_DAEMON_EXIT_BOUND_SECONDS = 180.0
+
+
+@pytest.mark.timeout(300)
+def test_race_losing_daemon_self_exits(tmp_path: Path) -> None:
+    """A daemon that loses the machine-singleton claim forces its own exit.
+
+    This process holds the machine lock, so the spawned daemon must fail its
+    claim, and it must leave through the forced-exit backstop rather than by
+    whatever the interpreter would have done next. The distinction is the whole
+    point: an unguarded failure path also ends this particular process (nothing
+    is wedged this early in startup), so asserting only that the process died
+    would pass with the backstop deleted. The log witness is what binds - remove
+    the backstop and the daemon leaves without it, exiting zero besides, because
+    a lifespan startup failure is something uvicorn returns from rather than
+    raises.
+
+    The cause is asserted too. Without it a daemon that died of an unrelated
+    startup failure - a port already taken, a missing binary - would satisfy
+    every other assertion here and report the singleton path as covered.
     """
     from ..._machine_lock import (
         acquire_machine_lock_lease,
@@ -2276,6 +2296,9 @@ def test_race_losing_daemon_self_exits(tmp_path: Path) -> None:
             else 0
         )
         port = _get_ephemeral_port()
+        # The daemon redirects its own captured output into the managed log at
+        # this same path, so one file carries both the spawn pipe and the
+        # daemon's own lines.
         log_path = tmp_path / "service.log"
         try:
             with log_path.open("ab") as output:
@@ -2289,7 +2312,7 @@ def test_race_losing_daemon_self_exits(tmp_path: Path) -> None:
                     start_new_session=sys.platform != "win32",
                 )
             try:
-                deadline = time.monotonic() + 60.0
+                deadline = time.monotonic() + _LOSING_DAEMON_EXIT_BOUND_SECONDS
                 while time.monotonic() < deadline and process.poll() is None:
                     time.sleep(0.1)
                 assert process.poll() is not None, (
@@ -2300,5 +2323,195 @@ def test_race_losing_daemon_self_exits(tmp_path: Path) -> None:
                 if process.poll() is None:
                     process.kill()
                     process.wait(timeout=5)
+            log = log_path.read_text(encoding="utf-8", errors="replace")
+            assert "already owns this machine" in log, (
+                f"the daemon did not exit on the singleton claim; log:\n{log[-3000:]}"
+            )
+            assert str(os.getpid()) in log, (
+                f"the refusal did not name this test as the holder; log:\n{log[-3000:]}"
+            )
+            assert f"{_FORCED_DAEMON_EXIT_WITNESS} (code=1)" in log, (
+                "the daemon did not leave through the forced-exit backstop; "
+                f"log:\n{log[-3000:]}"
+            )
         finally:
             release_machine_lock_lease(lease)
+
+
+def _json_envelopes(output: str) -> list[dict[str, object]]:
+    """Return every structured outcome envelope found in *output*.
+
+    The broker contract is "exactly one envelope per exit path", so the count
+    matters as much as the content and the caller asserts on it. Scanning for
+    every parseable envelope - rather than taking the first or last line that
+    looks like one - is what lets a second envelope be caught instead of
+    silently discarded.
+    """
+    envelopes: list[dict[str, object]] = []
+    for line in output.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("{"):
+            continue
+        try:
+            parsed = cast("dict[str, object]", json.loads(stripped))
+        except json.JSONDecodeError:
+            continue
+        if "ok" in parsed:
+            envelopes.append(parsed)
+    return envelopes
+
+
+def _spawn_reap_witness(port: int) -> subprocess.Popen[bytes]:
+    """Spawn a harmless sleeper whose command line carries the launch witness.
+
+    The witness tokens ride as trailing argv to ``-c``, so the process
+    enumerates with the daemon's launch signature without importing the daemon
+    or touching a GPU. It sleeps far longer than one host-wide command-line
+    sweep costs, because a process that exits mid-sweep is dropped from the
+    enumeration and the test would then be asserting against an empty match.
+    Spawned into its own group or session, as the real detached daemon is, so
+    the reap's termination cannot cascade back into this test process.
+    """
+    argv = [
+        sys.executable,
+        "-c",
+        "import time; time.sleep(600)",
+        "-m",
+        "vaultspec_rag.server",
+        "--port",
+        str(port),
+    ]
+    if sys.platform == "win32":
+        return subprocess.Popen(argv, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+    return subprocess.Popen(argv, start_new_session=True)
+
+
+# One host-wide command-line sweep is the reap's dominant cost and runs into
+# tens of seconds on a busy machine, so an out-of-process reap gets a budget
+# well past that rather than a round number that would turn host load into a
+# spurious failure.
+_REAP_SUBPROCESS_BUDGET_SECONDS = 240.0
+
+
+class TestOrphanReapStructuredStop:
+    """The orphan reap answers to the same structured-stop contract as its peers.
+
+    ``server stop --orphans`` is a lifecycle verb a supervising broker drives, so
+    it owes the same envelope discipline the other stop outcomes already keep:
+    one envelope per exit path in ``--json`` mode, none in human mode, an
+    already-satisfied request as a success rather than a fault, and a non-zero
+    exit only where the requested state was not achieved.
+
+    Every test here pins the reap to an explicit ephemeral port under isolated
+    singleton paths. That is a safety property, not a convenience: the port is
+    the reap's blast radius.
+    """
+
+    def test_nothing_to_reap_is_one_idempotent_success_envelope(
+        self, tmp_path: Path
+    ) -> None:
+        # The broker's idempotent case: asked to clear orphans where there are
+        # none, the reap reports success rather than a fault a supervisor would
+        # have to special-case.
+        port = _get_ephemeral_port()
+        with _service_env(tmp_path):
+            result = runner.invoke(
+                app, ["server", "stop", "--orphans", "--port", str(port), "--json"]
+            )
+        assert result.exit_code == 0, result.output
+        envelopes = _json_envelopes(result.stdout)
+        assert len(envelopes) == 1, f"expected one envelope, got: {result.stdout!r}"
+        envelope = envelopes[0]
+        assert envelope["ok"] is True
+        assert envelope["command"] == "service.stop"
+        data = cast("dict[str, object]", envelope["data"])
+        assert data["status"] == "reaped"
+        assert data["reaped"] == 0
+        assert data["reaped_pids"] == []
+        assert data["port"] == port
+        # The reap is a terminating outcome, so it carries the same initiator
+        # attribution the other terminating stops do - "who cleared the machine"
+        # is answerable from the envelope alone.
+        assert data["initiator_pid"] == str(os.getpid())
+        assert data["initiator_cwd"] == os.getcwd()
+
+    def test_human_mode_reap_emits_no_envelope(self, tmp_path: Path) -> None:
+        # The mode split: human output never leaks a machine envelope, and the
+        # satisfied no-op still exits 0.
+        port = _get_ephemeral_port()
+        with _service_env(tmp_path):
+            result = runner.invoke(
+                app, ["server", "stop", "--orphans", "--port", str(port)]
+            )
+        assert result.exit_code == 0, result.output
+        assert _json_envelopes(result.stdout) == []
+        assert str(port) in result.stdout
+
+    def test_unresolvable_port_refuses_instead_of_defaulting(
+        self, tmp_path: Path
+    ) -> None:
+        # Without --port the reap resolves its own scope, and when it cannot it
+        # must REFUSE. Falling back to a shared default here would aim a
+        # terminating sweep at whatever service happens to hold that port on the
+        # machine, which is the one outcome a scoped reap exists to prevent.
+        with _service_env(tmp_path):
+            result = runner.invoke(app, ["server", "stop", "--orphans", "--json"])
+        assert result.exit_code == 1, result.output
+        envelopes = _json_envelopes(result.stdout)
+        assert len(envelopes) == 1, f"expected one envelope, got: {result.stdout!r}"
+        envelope = envelopes[0]
+        assert envelope["ok"] is False
+        assert envelope["command"] == "service.stop"
+        assert envelope["error"] == "port_unresolved"
+
+    def test_real_reap_emits_one_terminating_envelope_naming_its_pids(
+        self, tmp_path: Path
+    ) -> None:
+        # The terminating success path end to end. The reap runs OUT of process:
+        # the witness is this test's own child, and an in-process reap would
+        # spare it as a descendant of an anchor - a confound absent in
+        # production, where the reap is never the orphans' parent.
+        port = _get_ephemeral_port()
+        with _service_env(tmp_path):
+            witness = _spawn_reap_witness(port)
+            try:
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "vaultspec_rag",
+                        "server",
+                        "stop",
+                        "--orphans",
+                        "--port",
+                        str(port),
+                        "--json",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=_REAP_SUBPROCESS_BUDGET_SECONDS,
+                    check=False,
+                )
+                assert completed.returncode == 0, completed.stdout + completed.stderr
+                envelopes = _json_envelopes(completed.stdout)
+                assert len(envelopes) == 1, (
+                    f"expected one envelope, got: {completed.stdout!r}"
+                )
+                envelope = envelopes[0]
+                assert envelope["ok"] is True
+                assert envelope["command"] == "service.stop"
+                data = cast("dict[str, object]", envelope["data"])
+                assert data["status"] == "reaped"
+                assert cast("int", data["reaped"]) >= 1
+                reaped_pids = cast("list[int]", data["reaped_pids"])
+                assert witness.pid in reaped_pids, (
+                    f"the reaped pids {reaped_pids} do not name the witness "
+                    f"{witness.pid}"
+                )
+                assert data["port"] == port
+                assert data["initiator_pid"] not in {"", str(os.getpid())}
+                assert _wait_for_exit(witness.pid, timeout=30.0)
+            finally:
+                if witness.poll() is None:
+                    witness.kill()
+                    witness.wait(timeout=10)

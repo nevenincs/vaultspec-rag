@@ -32,7 +32,7 @@ from ._process import (
     _heartbeat_age_seconds,
     _port_is_listening,
 )
-from ._render import _emit_json
+from ._render import _emit_json, _plain
 from ._service_jobs import (
     _human_progress,
     _operation_label,
@@ -439,7 +439,7 @@ def _print_status_lines(lines: list[str]) -> None:
     made once here rather than at each print site.
     """
     for line in lines:
-        _cli.console.print(line, markup=False, highlight=False, soft_wrap=True)
+        _plain(line, soft_wrap=True)
 
 
 def _print_current_job_detail(jobs: dict[str, object] | None) -> None:
@@ -987,12 +987,10 @@ def _render_explicit_port_status(
         return
 
     if target_port != status_file_port:
-        _cli.console.print(
+        _plain(
             "Local record points to "
             f"http://127.0.0.1:{status_file_port}; "
-            f"checking http://127.0.0.1:{target_port}.",
-            markup=False,
-            highlight=False,
+            f"checking http://127.0.0.1:{target_port}."
         )
     if verbose:
         _render_status_detail(

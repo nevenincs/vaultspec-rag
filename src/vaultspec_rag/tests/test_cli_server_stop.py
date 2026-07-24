@@ -8,6 +8,11 @@ outcomes that can be staged without a full service: ``already_stopped``
 (both the default and ``--port`` variants), ``cleaned`` (a dead recorded
 pid), and the ``identity_unconfirmed`` failure (a live recorded pid that is
 not ours), which must exit 1 in both output modes.
+
+The orphan reap answers to the same contract, so its two statuses are pinned
+here alongside the rest: ``reaped`` as a success, and the
+``orphan_reap_incomplete`` fault whose surviving pids cannot be staged live
+because it needs a process that outlives a force-kill.
 """
 
 from __future__ import annotations
@@ -44,7 +49,7 @@ class TestStopOutcomeHelpers:
     """The --json envelope contract for each stop outcome."""
 
     @pytest.mark.parametrize(
-        "status", ["stopped", "already_stopped", "cleaned", "reclaimed"]
+        "status", ["stopped", "already_stopped", "cleaned", "reclaimed", "reaped"]
     )
     def test_success_envelope_shape(
         self, status: str, capsys: pytest.CaptureFixture[str]
@@ -95,6 +100,34 @@ class TestStopOutcomeHelpers:
         assert env["command"] == "service.stop"
         assert env["error"] == "identity_unconfirmed"
         assert env["data"] == {"pid": 4242}
+
+    def test_orphan_reap_incomplete_failure_envelope(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # An orphan that refuses to die leaves the requested state unachieved,
+        # so it is a fault and not a partial success - and the surviving pids
+        # ride in the envelope, because "reaped some, one would not die" is the
+        # outcome an operator has to act on. This shape cannot be staged live
+        # (it needs a process that survives a force-kill), so the helper is
+        # where it is pinned.
+        import typer
+
+        exc = _fail_stop(
+            True,
+            error="orphan_reap_incomplete",
+            message="Orphan reap left daemons running",
+            human_lines=("...",),
+            reaped=1,
+            survivors=[4242],
+            port=8766,
+        )
+        assert isinstance(exc, typer.Exit)
+        assert exc.exit_code == 1
+        env = json.loads(capsys.readouterr().out)
+        assert env["ok"] is False
+        assert env["command"] == "service.stop"
+        assert env["error"] == "orphan_reap_incomplete"
+        assert env["data"] == {"reaped": 1, "survivors": [4242], "port": 8766}
 
 
 class TestStopLiveOutcomes:

@@ -902,44 +902,38 @@ class TestEnsureTableBackfill:
 
         return RecordingStore(tmp_path), indexed
 
-    def test_code_table_reindexes_an_existing_collection(self, tmp_path: Path) -> None:
-        """A newly declared code index must appear without a drop-and-reindex.
-
-        The second ensure runs against a collection that already exists and a
-        cleared latch - exactly the next-open case - so it must still apply
-        the declared index set.
-        """
-        store, indexed = self._recording_store(tmp_path)
-        try:
-            store.ensure_code_table()
-            store._ensured.clear()  # pyright: ignore[reportPrivateUsage]
-            indexed.clear()
-
-            store.ensure_code_table()
-
-            assert indexed == [store.CODE_TABLE_NAME]
-        finally:
-            store.close()
-
-    def test_vault_table_accepts_an_existing_collection_untouched(
-        self, tmp_path: Path
+    @pytest.mark.parametrize(
+        ("ensure", "collection"),
+        [
+            ("ensure_table", "TABLE_NAME"),
+            ("ensure_code_table", "CODE_TABLE_NAME"),
+            ("ensure_document_table", "DOCUMENT_TABLE_NAME"),
+        ],
+    )
+    def test_every_collection_reindexes_an_existing_collection(
+        self, tmp_path: Path, ensure: str, collection: str
     ) -> None:
-        """The vault path deliberately does not re-apply indexes.
+        """A newly declared index must reach every collection without a rebuild.
 
-        This asymmetry is load-bearing, not an oversight in the shared helper:
-        if someone drops ``backfill_existing`` and lets every collection take
-        one path, this assertion is what reports it. The vault set is applied
-        on creation (asserted by the first call) and skipped thereafter.
+        The second ensure runs against a collection that already exists with a
+        cleared latch - exactly the next-open case a schema addition lands in.
+        Skipping it would leave the index absent until someone drops and
+        reindexes, and on the vault collection that silently demotes the
+        doc-type, feature, and tag filters to linear scans on a server backend.
+
+        Parametrized over all three deliberately: this used to hold for two of
+        them and not the third, and nothing reported the gap.
         """
         store, indexed = self._recording_store(tmp_path)
+        name = getattr(store, collection)
         try:
-            store.ensure_table()
-            assert indexed == [store.TABLE_NAME], "creation must apply the index set"
+            getattr(store, ensure)()
+            assert indexed == [name], "creation must apply the index set"
             store._ensured.clear()  # pyright: ignore[reportPrivateUsage]
             indexed.clear()
 
-            store.ensure_table()
+            getattr(store, ensure)()
 
-            assert indexed == []
+            assert indexed == [name]
         finally:
             store.close()
