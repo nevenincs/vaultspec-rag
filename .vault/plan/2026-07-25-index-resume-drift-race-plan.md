@@ -36,6 +36,7 @@ Fix the behavioural oracle and prove the seams are not carrying duplicate implem
 - [x] `W01.P01.S01` - Capture the behavioural baseline: run the full suite and record the passing count and the per-module test inventory that the extractions must preserve; `src/vaultspec_rag/tests/`.
 - [x] `W01.P01.S02` - Sweep the indexer for duplicate behaviour with vaultspec-rag semantic search before any extraction, recording each duplicate pair so extraction collapses it rather than carrying both across the seam; `src/vaultspec_rag/indexer/`.
 - [x] `W01.P01.S15` - Cover the drift-detection predicate with direct tests before it moves across a seam, since it currently has no test of its own and only its remedy is exercised; `src/vaultspec_rag/indexer/_run_checkpoint.py`.
+- [ ] `W01.P01.S16` - Repair the test construction pattern that bypasses the indexer constructor, so a collaborator can be held as constructor state instead of rebuilt per access; `src/vaultspec_rag/tests/test_indexer_unit.py`.
 
 ### Phase `W01.P02` - Extract the collaborators
 
@@ -45,6 +46,7 @@ One extraction per responsibility cluster, each landing green before the next be
 - [ ] `W01.P02.S04` - Extract chunk production and submission into its own collaborator, grounding first with vaultspec-rag semantic search and citing what it returned; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [ ] `W01.P02.S05` - Extract generation and ledger lifecycle into its own collaborator, grounding first with vaultspec-rag semantic search and citing what it returned; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [ ] `W01.P02.S06` - Extract drift ownership into its own collaborator that holds the drop-points-then-remove-units ordering as a property of the type; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [ ] `W01.P02.S17` - Collapse the duplicated stat-failure classification so an admitted file is stat-ed once per scan rather than twice, treating it as the behaviour change it is; `src/vaultspec_rag/indexer/_content_discovery.py`.
 
 ## Wave `W02` - Give drift a single owner and close the window
 
