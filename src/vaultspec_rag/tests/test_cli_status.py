@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
+import http.server
 import json
 import os
+import threading
 import typing
 
 import pytest
@@ -23,6 +26,7 @@ from ._http_stubs import QuietHandler
 from ._scaffold import make_workspace
 
 if typing.TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
@@ -349,6 +353,38 @@ class TestServiceLifecycleHelpers:
 _UNSERVED_PORT = 9
 
 
+@contextlib.contextmanager
+def _health_service(payload: dict[str, object]) -> Iterator[tuple[int, list[str]]]:
+    """Serve ``/health`` over real HTTP and record every path requested.
+
+    Yields the bound port and the live request log. The log is what proves a
+    negative: a test asserting the probe was skipped reads an empty list from
+    a server that was genuinely reachable, rather than a counter incremented
+    by a function standing in for the transport.
+    """
+    body = json.dumps(payload).encode()
+    seen: list[str] = []
+
+    class _Handler(QuietHandler):
+        def do_GET(self) -> None:
+            seen.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield int(server.server_address[1]), seen
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 class TestServiceTokenIdentity:
     """Per-process service_token round-trip.
 
@@ -360,58 +396,39 @@ class TestServiceTokenIdentity:
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def test_token_match_returns_true(self, monkeypatch: pytest.MonkeyPatch):
+    def test_token_match_returns_true(self) -> None:
         from .. import cli
-        from ..cli import _process
 
-        def _probe_abc(_port: int) -> dict[str, object]:
-            return {"service_token": "abc"}
+        # A real daemon answering /health, and this process's own pid, which is
+        # alive by construction rather than by assertion.
+        with _health_service({"service_token": "abc"}) as (port, seen):
+            assert cli._is_our_service(os.getpid(), port=port, expected_token="abc")
+        assert seen == ["/health"]
 
-        def _alive(_pid: int) -> bool:
-            return True
-
-        monkeypatch.setattr(_process, "_try_http_health", _probe_abc)
-        monkeypatch.setattr(cli, "_is_pid_alive", _alive)
-        assert cli._is_our_service(123, port=_UNSERVED_PORT, expected_token="abc")
-
-    def test_token_mismatch_returns_false(self, monkeypatch: pytest.MonkeyPatch):
+    def test_token_mismatch_returns_false(self) -> None:
         from .. import cli
-        from ..cli import _process
 
-        def _probe_abc(_port: int) -> dict[str, object]:
-            return {"service_token": "abc"}
-
-        def _alive(_pid: int) -> bool:
-            return True
-
-        monkeypatch.setattr(_process, "_try_http_health", _probe_abc)
-        monkeypatch.setattr(cli, "_is_pid_alive", _alive)
         # Token mismatch is authoritative - return False regardless of
         # whether the executable-name check would have passed.
-        assert not cli._is_our_service(123, port=_UNSERVED_PORT, expected_token="xyz")
+        with _health_service({"service_token": "abc"}) as (port, _seen):
+            assert not cli._is_our_service(os.getpid(), port=port, expected_token="xyz")
 
     def test_token_absent_in_response_falls_back(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-    ):
-        """Pre-upgrade daemon (no token in response) → exe-name fallback."""
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Pre-upgrade daemon (no token in response) -> exe-name fallback."""
         from .. import cli
-        from ..cli import _process
 
-        def _probe_empty(_port: int) -> dict[str, object]:
-            return {}
-
-        def _alive(_pid: int) -> bool:
-            return True
-
-        monkeypatch.setattr(_process, "_try_http_health", _probe_empty)
-        monkeypatch.setattr(cli, "_is_pid_alive", _alive)
         # On Windows the exe-name check inspects the running pytest
         # process (always "python") so this hits the True branch.
         # No-swallow rule: the fallback must debug-log.
-        with caplog.at_level("DEBUG", logger="vaultspec_rag.cli"):
+        with (
+            _health_service({}) as (port, _seen),
+            caplog.at_level("DEBUG", logger="vaultspec_rag.cli"),
+        ):
             result = cli._is_our_service(
                 os.getpid(),
-                port=_UNSERVED_PORT,
+                port=port,
                 expected_token="abc",
             )
         # Result True or False is platform-dependent; the contract
@@ -424,59 +441,29 @@ class TestServiceTokenIdentity:
         # Sanity: a result was returned (didn't raise).
         assert isinstance(result, bool)
 
-    def test_no_token_in_status_skips_token_check(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """No expected_token (pre-upgrade service.json) → exe-name only."""
+    def test_no_token_in_status_skips_token_check(self) -> None:
+        """No expected_token (pre-upgrade service.json) -> exe-name only."""
         from .. import cli
-        from ..cli import _process
 
-        probe_called: dict[str, int] = {"n": 0}
+        # The negative is proved against a server that would have answered:
+        # it is bound and reachable for the whole call, so an empty request
+        # log means the probe was skipped, not that it failed.
+        with _health_service({"service_token": "irrelevant"}) as (port, seen):
+            cli._is_our_service(os.getpid(), port=port, expected_token=None)
+            assert seen == []
 
-        def _probe(_port: int) -> dict[str, str]:
-            probe_called["n"] += 1
-            return {"service_token": "irrelevant"}
-
-        def _alive_stub(_pid: int) -> bool:
-            return True
-
-        monkeypatch.setattr(_process, "_try_http_health", _probe)
-        monkeypatch.setattr(cli, "_is_pid_alive", _alive_stub)
-        # No expected_token → don't probe.
-        cli._is_our_service(os.getpid(), port=_UNSERVED_PORT, expected_token=None)
-        assert probe_called["n"] == 0
-
-    def test_health_probe_failure_falls_back(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Network failure on /health → exe-name fallback, no exception."""
+    def test_health_probe_failure_falls_back(self) -> None:
+        """Network failure on /health -> exe-name fallback, no exception."""
         from .. import cli
-        from ..cli import _process
 
-        def _probe_none(_port: int) -> None:
-            return None
-
-        def _alive_stub2(_pid: int) -> bool:
-            return True
-
-        monkeypatch.setattr(_process, "_try_http_health", _probe_none)
-        monkeypatch.setattr(cli, "_is_pid_alive", _alive_stub2)
-        # Should fall back without raising.
+        # Nothing is bound on this port, so the probe fails for the reason
+        # production fails: there is no daemon, not a function returning None.
         result = cli._is_our_service(
             os.getpid(),
             port=_UNSERVED_PORT,
             expected_token="abc",
         )
         assert isinstance(result, bool)
-
-
-class TestWarmingStatusState:
-    """The daemon-stamped ``phase`` field turns the warmup window into a
-    distinct ``warming`` state (exit 5) instead of "stopped"/"crashed".
-
-    Pure-function coverage: the state computers and the phase reader are
-    exercised directly (a live-and-ours pid cannot be faked without mocks).
-    """
 
     def test_service_phase_reads_the_field(self):
         from ..cli._service_status import _service_phase
