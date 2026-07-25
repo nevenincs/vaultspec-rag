@@ -1,4 +1,4 @@
-"""Code Stands Alone citation gate for ``src/vaultspec_rag``.
+"""Code Stands Alone citation gate for ``src/vaultspec_rag`` and ``tools``.
 
 Fails when tracked source or test code cites a development record - a dated
 vault stem, a plan container identifier, a decision-enumeration token, a
@@ -70,16 +70,21 @@ ALLOWLIST: frozenset[tuple[str, int]] = frozenset(
 # entry here would re-open a tolerated hole, so it stays empty.
 DEFERRED_PENDING_FOLLOWUP: frozenset[str] = frozenset()
 
-_VAULT_TYPES = "adr|plan|audit|research|reference|exec"
-
 #: Each pattern is one class of citation. Bare ``.vault/adr/`` and the product's
-#: domain use of "ADR"/"vault" are deliberately NOT matched: only a DATED stem
-#: under a vault type, a plan coordinate, a parenthesised decision token, a
-#: typed ``.vault/<type>/`` path, or the literal codification-candidate phrase.
+#: domain use of "ADR"/"vault" are deliberately NOT matched: only a DATED stem,
+#: a plan coordinate, a parenthesised decision token, a typed ``.vault/<type>/``
+#: path, or the literal codification-candidate phrase.
 PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
+        # A dated kebab stem in ANY form. The trailing document-type segment
+        # (``-adr``, ``-plan``, ...) is NOT required: a feature is cited far
+        # more often by its bare dated stem - the exec-folder form, and the way
+        # a document is abbreviated in prose - than by its full filename, and
+        # requiring the type suffix let every such citation through while the
+        # gate reported clean. The tail must contain a letter, so a numeric date
+        # range does not read as a stem.
         "dated-vault-stem",
-        re.compile(rf"\b\d{{4}}-\d{{2}}-\d{{2}}-[a-z0-9-]+-(?:{_VAULT_TYPES})\b"),
+        re.compile(r"\b\d{4}-\d{2}-\d{2}-[a-z0-9-]*[a-z][a-z0-9-]*"),
     ),
     (
         "plan-container-id",
@@ -220,8 +225,15 @@ def _iter_prose(path: Path) -> list[tuple[int, str]]:
     return prose
 
 
-def scan_file(path: Path) -> list[Finding]:
-    rel = path.relative_to(REPO_ROOT).as_posix()
+def scan_file(path: Path, *, repo_root: Path = REPO_ROOT) -> list[Finding]:
+    """Return every citation in the prose of *path*, reported relative to a root.
+
+    *repo_root* is a parameter rather than the module constant so the scan can
+    be exercised against a throwaway tree. A gate whose detection can only be
+    run against the live checkout can only be confirmed green, never proven
+    able to go red.
+    """
+    rel = path.relative_to(repo_root).as_posix()
     findings: list[Finding] = []
     for line, text in _iter_prose(path):
         if (rel, line) in ALLOWLIST:
@@ -270,31 +282,38 @@ def _match_patterns(
     return findings
 
 
-def scan_file_paths(path: Path) -> tuple[list[Finding], list[Finding]]:
+def scan_file_paths(
+    path: Path, *, repo_root: Path = REPO_ROOT
+) -> tuple[list[Finding], list[Finding]]:
     """Return (hard identity leaks, soft absolute-path smells) for a Python file."""
-    rel = path.relative_to(REPO_ROOT).as_posix()
+    rel = path.relative_to(repo_root).as_posix()
     items = _iter_values_and_comments(path)
     return _match_patterns(items, rel, PATH_PATTERNS), _match_patterns(
         items, rel, PATH_SMELL_PATTERNS
     )
 
 
-def scan_text_paths(path: Path) -> tuple[list[Finding], list[Finding]]:
+def scan_text_paths(
+    path: Path, *, repo_root: Path = REPO_ROOT
+) -> tuple[list[Finding], list[Finding]]:
     """Return (hard leaks, soft smells) for a non-Python tracked file (TOML)."""
-    rel = path.relative_to(REPO_ROOT).as_posix()
+    rel = path.relative_to(repo_root).as_posix()
     items = list(enumerate(path.read_text(encoding="utf-8").splitlines(), start=1))
     return _match_patterns(items, rel, PATH_PATTERNS), _match_patterns(
         items, rel, PATH_SMELL_PATTERNS
     )
 
 
-def _is_excluded(path: Path) -> bool:
-    rel = path.relative_to(PACKAGE_DIR).as_posix()
+def _is_excluded(path: Path, package_dir: Path) -> bool:
+    rel = path.relative_to(package_dir).as_posix()
     return any(rel.startswith(f"{d}/") for d in EXCLUDED_DIRS)
 
 
 def collect_findings(
     root: Path,
+    *,
+    repo_root: Path = REPO_ROOT,
+    tools_root: Path | None = None,
 ) -> tuple[list[Finding], list[Finding], list[Finding], list[Finding]]:
     """Return (active citations, deferred citations, path leaks, path smells).
 
@@ -302,32 +321,41 @@ def collect_findings(
     Deferred citations and soft path smells (generic absolute paths) are
     reported but do not fail - the smell surfaces a tmp_path-conversion backlog
     without blocking on non-leaking synthetic values.
+
+    *repo_root* and *tools_root* default to the live checkout and exist so the
+    walk itself can be pointed at a throwaway tree: which surfaces are reached
+    is as much a part of the gate as which patterns match, and an unreachable
+    surface is invisible from a green run.
     """
+    tools_root = repo_root / "tools" if tools_root is None else tools_root
     active: list[Finding] = []
     deferred: list[Finding] = []
     leaks: list[Finding] = []
     smells: list[Finding] = []
     for path in sorted(root.rglob("*.py")):
-        if "__pycache__" in path.parts or _is_excluded(path):
+        if "__pycache__" in path.parts or _is_excluded(path, root):
             continue
-        rel = path.relative_to(REPO_ROOT).as_posix()
+        rel = path.relative_to(repo_root).as_posix()
         target = deferred if rel in DEFERRED_PENDING_FOLLOWUP else active
-        target.extend(scan_file(path))
-        f_leaks, f_smells = scan_file_paths(path)
+        target.extend(scan_file(path, repo_root=repo_root))
+        f_leaks, f_smells = scan_file_paths(path, repo_root=repo_root)
         leaks.extend(f_leaks)
         smells.extend(f_smells)
-    # Also scan the build/tooling surface and config for path leaks. This gate's
-    # own file is skipped - it defines the patterns as literals and in docstrings.
-    for extra in sorted((REPO_ROOT / "tools").rglob("*.py")):
+    # The build/tooling surface is tracked source and gates on citations on the
+    # same terms as the package. This gate's own file is the sole exemption: it
+    # spells every citation shape out as a pattern literal and again in prose to
+    # explain it, so scanning itself reports its own definitions as findings.
+    for extra in sorted(tools_root.rglob("*.py")):
         if "__pycache__" in extra.parts or extra.resolve() == Path(__file__).resolve():
             continue
-        e_leaks, e_smells = scan_file_paths(extra)
+        active.extend(scan_file(extra, repo_root=repo_root))
+        e_leaks, e_smells = scan_file_paths(extra, repo_root=repo_root)
         leaks.extend(e_leaks)
         smells.extend(e_smells)
     for cfg in ("pyproject.toml",):
-        cfg_path = REPO_ROOT / cfg
+        cfg_path = repo_root / cfg
         if cfg_path.is_file():
-            c_leaks, c_smells = scan_text_paths(cfg_path)
+            c_leaks, c_smells = scan_text_paths(cfg_path, repo_root=repo_root)
             leaks.extend(c_leaks)
             smells.extend(c_smells)
     for bucket in (active, deferred, leaks, smells):
