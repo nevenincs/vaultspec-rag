@@ -7,11 +7,13 @@ exclusive province of the single in-process consumer. Workers that initialise
 CUDA reintroduce the fork/spawn CUDA-context crash class. The pool is always
 created with the ``spawn`` start method so no parent CUDA context is inherited.
 
-The chunking logic here is the byte-for-byte equivalent of the former
-``CodebaseIndexer._chunk_file`` / ``_chunk_with_ast`` / ``_chunk_with_splitter``
-methods, relocated to module scope so the worker callable is picklable and so
-the in-process fallback shares the exact same code path (guaranteeing
-chunk-identity parity between serial and parallel runs).
+This module is the single home of the chunking logic. It lives at module scope
+so the worker callable is picklable, and the in-process serial fallback calls
+the very same functions the pool workers do - that shared code path is what
+guarantees chunk-identity parity between serial and parallel runs. Never
+reintroduce a second chunking implementation on the indexer to serve a caller
+that cannot reach these functions; a parallel copy drifts silently and any
+parity assertion against it stops meaning anything.
 """
 
 from __future__ import annotations

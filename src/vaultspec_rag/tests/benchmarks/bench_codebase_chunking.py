@@ -22,7 +22,7 @@ import pytest
 
 from ... import CodebaseIndexer
 from ...config import EnvVar, get_config, reset_config
-from ...progress import NullProgressReporter
+from .._chunk_production import produce_chunks
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -132,7 +132,7 @@ def _chunk_with_workers(
     reset_config()
     try:
         start = time.perf_counter()
-        chunks = indexer._chunk_paths(paths, reporter=NullProgressReporter())
+        chunks = produce_chunks(indexer, paths)
         elapsed = time.perf_counter() - start
     finally:
         if prev is None:
