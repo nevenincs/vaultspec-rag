@@ -492,7 +492,7 @@ class TestWorkerGating:
         if (os.cpu_count() or 1) < 2:
             # No parallelism is possible; auto must be serial regardless.
             with _Workers(0):
-                assert indexer._plan_chunk_workers(paths) == 1
+                assert indexer._producer.plan_workers(paths) == 1
             return
 
         # Multi-core: the SAME small tree is serial under the default gate but
@@ -500,9 +500,9 @@ class TestWorkerGating:
         # count, is what forced serial. This contrast is the non-tautological
         # proof that the gate logic actually runs.
         with _Workers(0):
-            assert indexer._plan_chunk_workers(paths) == 1
+            assert indexer._producer.plan_workers(paths) == 1
             with _MinBytes(0):
-                assert indexer._plan_chunk_workers(paths) > 1
+                assert indexer._producer.plan_workers(paths) > 1
 
     def test_explicit_workers_bypass_gate(self, tmp_path: Path) -> None:
         _make_code_tree(tmp_path, 20)
@@ -511,7 +511,7 @@ class TestWorkerGating:
         # An explicit request resolves to min(request, n_paths) regardless of
         # core count or the byte gate.
         with _Workers(3):
-            assert indexer._plan_chunk_workers(paths) == 3
+            assert indexer._producer.plan_workers(paths) == 3
 
 
 def test_worker_import_does_not_load_torch() -> None:
