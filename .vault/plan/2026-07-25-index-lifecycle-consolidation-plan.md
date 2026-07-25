@@ -42,7 +42,6 @@ related:
      DO NOT add fields beyond those scaffolded; metadata lives
      only in the frontmatter. -->
 
-
 <!-- HIERARCHY AND TIERS:
      Epic > Wave > Phase > Step. Step is the canonical leaf-row
      noun. Execution Record artifact: <Step Record>.
@@ -104,6 +103,7 @@ related:
 - [ ] `S02` - Route the codebase and vault entry points through the shared lifecycle, preserving event fields, ordering, and emitting logger identity; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [ ] `S03` - Extract the document run bodies and route both document entry points through the shared lifecycle so the stamp and the events arrive by construction; `src/vaultspec_rag/indexer/_document_indexer.py`.
 - [ ] `S04` - Add the cross-indexer parity test binding every entry point to the shared lifecycle, and mutation-prove each guard can fail; `src/vaultspec_rag/tests/test_index_lifecycle_parity.py`.
+
 <!-- One-line headline summary plan. -->
 
 ## Description

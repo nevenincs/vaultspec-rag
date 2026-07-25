@@ -42,7 +42,6 @@ related:
      DO NOT add fields beyond those scaffolded; metadata lives
      only in the frontmatter. -->
 
-
 <!-- HIERARCHY AND TIERS:
      Epic > Wave > Phase > Step. Step is the canonical leaf-row
      noun. Execution Record artifact: <Step Record>.
@@ -103,6 +102,7 @@ related:
 - [x] `S01` - Add a single dispatch-root seam on the MCP adapter and forward every delegation site through it; `src/vaultspec_rag/mcp/_tools.py`.
 - [ ] `S02` - Route the vault document resource through the same seam, since a resource URI carries no root; `src/vaultspec_rag/mcp/_resources.py`.
 - [ ] `S03` - Assert against a recording daemon that an omitting caller sends a concrete root and an explicit root still wins; `src/vaultspec_rag/tests/test_mcp_conformance_surface.py`.
+
 <!-- One-line headline summary plan. -->
 
 ## Description
