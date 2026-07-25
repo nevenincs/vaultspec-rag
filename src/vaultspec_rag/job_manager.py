@@ -98,6 +98,7 @@ class JobExecutionResult:
     preprocess_skipped: int = 0
     preprocess_failures: tuple[str, ...] = ()
     reuse: dict[str, object] | None = None
+    drift: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)

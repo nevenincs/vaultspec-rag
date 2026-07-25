@@ -86,6 +86,12 @@ class IndexResult:
             hit rate, estimated GPU seconds saved, donor availability), or
             ``None`` when reuse is disabled or the run never reached the
             encode pipeline.
+        drift: Source-drift telemetry for this run: the paths whose source
+            moved while the run was recording them and had to be superseded,
+            and any left stale for the next generation. Reported so drift
+            volume is visible in its own right, because a run that remediates
+            drift succeeds and therefore tells the circuit breaker nothing.
+            ``None`` when the run never opened a generation.
     """
 
     total: int
@@ -99,6 +105,7 @@ class IndexResult:
     preprocess_skipped: int = 0
     preprocess_failures: list[str] = field(default_factory=list)
     reuse: dict[str, object] | None = None
+    drift: dict[str, object] | None = None
 
 
 def _first_h1(body: str) -> str:

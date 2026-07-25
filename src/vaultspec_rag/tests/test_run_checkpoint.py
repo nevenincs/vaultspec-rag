@@ -576,3 +576,44 @@ def test_the_retry_budget_must_be_positive(
     """A zero budget defers every drifted path without ever repairing one."""
     with pytest.raises(ValueError, match="retry_budget must be a positive integer"):
         CodeDriftOwner(_open(tmp_path), drift_store, retry_budget=0)
+
+
+def test_drift_telemetry_reports_volume_the_breaker_cannot_see(
+    tmp_path: Path,
+    drift_store: VaultStore,
+) -> None:
+    """A remediated run succeeds, so this block is the only drift signal.
+
+    The breaker counts faults, and remediated drift is not one, so it never
+    increments. That makes the telemetry block the sole place drift volume
+    surfaces, and a deferred path has to be nameable rather than merely
+    counted, because it is stale index content someone has to find.
+    """
+    checkpoint = _open(tmp_path)
+    _index_path(checkpoint, "src/moving.py", _digest("first content"))
+    _interrupt(checkpoint, "interrupted after one path was indexed")
+
+    resumed = _open(tmp_path)
+    owner = CodeDriftOwner(resumed, drift_store, retry_budget=1)
+    assert owner.snapshot() == {
+        "superseded_paths": 0,
+        "deferred_paths": [],
+        "collisions_observed": 0,
+        "retry_budget": 1,
+    }
+
+    owner.record_segments(
+        _segments("src/moving.py", marker="_second"),
+        {"src/moving.py": _digest("second content")},
+    )
+    owner.record_segments(
+        _segments("src/moving.py", marker="_third"),
+        {"src/moving.py": _digest("third content")},
+    )
+
+    assert owner.snapshot() == {
+        "superseded_paths": 1,
+        "deferred_paths": ["src/moving.py"],
+        "collisions_observed": 0,
+        "retry_budget": 1,
+    }

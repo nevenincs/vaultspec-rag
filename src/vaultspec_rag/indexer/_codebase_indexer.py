@@ -587,6 +587,11 @@ class CodebaseIndexer:
         stats = self._reuse_stats
         return stats.snapshot() if stats is not None else None
 
+    def _drift_snapshot(self) -> dict[str, object] | None:
+        """Return this run's drift telemetry, or ``None`` before a generation."""
+        owner = self._drift_owner
+        return owner.snapshot() if owner is not None else None
+
     def _classify_config_drift(self, membership: str, content: str) -> str:
         """Classify config drift against the stored epochs.
 
@@ -1749,6 +1754,7 @@ class CodebaseIndexer:
             preprocess_skipped=len(self._prep_skips),
             preprocess_failures=list(self._prep_skips),
             reuse=self._reuse_snapshot(),
+            drift=self._drift_snapshot(),
         )
 
     def _unchanged_incremental_result(self, *, started_at: float) -> IndexResult:
@@ -1765,6 +1771,7 @@ class CodebaseIndexer:
             preprocess_skipped=len(self._prep_skips),
             preprocess_failures=list(self._prep_skips),
             reuse=self._reuse_snapshot(),
+            drift=self._drift_snapshot(),
         )
 
     @staticmethod
@@ -2689,6 +2696,7 @@ class CodebaseIndexer:
             preprocess_skipped=len(self._prep_skips),
             preprocess_failures=list(self._prep_skips),
             reuse=self._reuse_snapshot(),
+            drift=self._drift_snapshot(),
         )
 
     def incremental_index(
@@ -2926,6 +2934,7 @@ class CodebaseIndexer:
             preprocess_skipped=len(self._prep_skips),
             preprocess_failures=list(self._prep_skips),
             reuse=self._reuse_snapshot(),
+            drift=self._drift_snapshot(),
         )
 
     def _scan_changed_paths(
@@ -3138,6 +3147,7 @@ class CodebaseIndexer:
             preprocess_skipped=len(self._prep_skips),
             preprocess_failures=list(self._prep_skips),
             reuse=self._reuse_snapshot(),
+            drift=self._drift_snapshot(),
         )
 
     def _get_chunk_ids_for_files(

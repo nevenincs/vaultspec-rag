@@ -295,6 +295,13 @@ class JobSnapshot:
     #: the served job view reports it; the legacy activity record is
     #: shadowed by this snapshot for every manager-owned job.
     reuse: dict[str, object] | None = None
+    #: Source-drift telemetry from the finished attempt: how many paths moved
+    #: while the run was recording them and had to be superseded, and any left
+    #: stale for the next generation. Carried here because a run that
+    #: remediates drift succeeds, so the circuit breaker - which counts faults
+    #: only - is deliberately blind to it, and this is where drift volume
+    #: becomes visible instead.
+    drift: dict[str, object] | None = None
     #: Seconds the finished (or in-flight, at last publication) attempt
     #: spent waiting to acquire the process GPU lock, accumulated across
     #: every timed acquisition. ``None`` until the attempt first publishes
@@ -355,6 +362,7 @@ class JobSnapshot:
             "resources": _resources_to_dict(self.resources),
             "resilience": _resilience_to_dict(self.resilience),
             "reuse": dict(self.reuse) if self.reuse is not None else None,
+            "drift": dict(self.drift) if self.drift is not None else None,
         }
 
 
