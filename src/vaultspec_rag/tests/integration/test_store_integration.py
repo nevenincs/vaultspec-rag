@@ -459,3 +459,61 @@ class TestServedCodeCollectionPointer:
         )
 
         assert admission.required_mb > served / (1024.0 * 1024.0)
+
+    def test_a_served_generation_is_never_reclaimed(self) -> None:
+        """Dropping what a pointer names is the destructive publication itself.
+
+        This is the assertion that matters most in the whole reclamation
+        path: a served collection surviving maintenance is the difference
+        between a swap and an outage.
+
+        Proven able to fail: removing the ``name not in served_names`` term
+        from ``reclaimable_generation_collections`` returns the served name
+        and fails the first assertion.
+        """
+        from ..._store_models import reclaimable_generation_collections
+
+        reclaimable = reclaimable_generation_collections(
+            existing=["codebase_docs_gaaa", "codebase_docs_gbbb"],
+            served=["codebase_docs_gaaa"],
+        )
+
+        assert "codebase_docs_gaaa" not in reclaimable
+        assert reclaimable == ("codebase_docs_gbbb",)
+
+    def test_a_derived_base_name_is_never_reclaimed(self) -> None:
+        """A root between publications is served by its derived name.
+
+        No pointer names it, so a reference-only rule would drop it and take
+        the index with it.
+
+        Proven able to fail: dropping the ``_is_generation_collection`` term
+        returns the derived name and fails the assertion below.
+        """
+        from ..._store_models import reclaimable_generation_collections
+
+        reclaimable = reclaimable_generation_collections(
+            existing=["codebase_docs", "vault_docs", "codebase_docs_gccc"],
+            served=[],
+        )
+
+        assert reclaimable == ("codebase_docs_gccc",)
+
+    def test_an_interrupted_build_leaves_a_reclaimable_collection(self) -> None:
+        """The fragment an interrupted build leaves is unreferenced, not serving.
+
+        That is the intended outcome of building beside the served collection
+        rather than into it, and reclamation is what eventually clears it.
+        """
+        from ..._store_models import (
+            generation_code_collection,
+            reclaimable_generation_collections,
+        )
+
+        abandoned = generation_code_collection("codebase_docs", "e" * 32)
+        reclaimable = reclaimable_generation_collections(
+            existing=["codebase_docs", abandoned],
+            served=["codebase_docs"],
+        )
+
+        assert reclaimable == (abandoned,)

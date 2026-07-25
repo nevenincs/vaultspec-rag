@@ -22,7 +22,7 @@ from ._domain import classify_domain
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
     from . import store_schema
 
@@ -560,3 +560,39 @@ def admit_generation_build(
         required_mb=required_mb,
         available_mb=available_mb,
     )
+
+
+def reclaimable_generation_collections(
+    *,
+    existing: Iterable[str],
+    served: Iterable[str],
+) -> tuple[str, ...]:
+    """Return generation collections no root's pointer names any more.
+
+    Reclamation is decided by reference, not by age: a collection is safe to
+    drop precisely when nothing points at it. An interrupted build leaves one
+    of these behind, which is the intended outcome - the fragment is
+    unreferenced rather than serving.
+
+    Two exclusions carry the safety. A served name is never returned, however
+    old it looks, because dropping what a pointer names is the destructive
+    publication this design removes. A name without a generation suffix is
+    never returned either: those are the derived base names, and a root
+    between publications is served by one.
+
+    The caller supplies both sets, so this decides nothing about what exists -
+    it only says which of the names it was given have lost their last
+    reference.
+    """
+    served_names = set(served)
+    return tuple(
+        name
+        for name in existing
+        if name not in served_names and _is_generation_collection(name)
+    )
+
+
+def _is_generation_collection(name: str) -> bool:
+    """Return whether *name* was minted for one generation rather than derived."""
+    base, separator, token = name.rpartition("_g")
+    return bool(base) and bool(separator) and bool(token) and token.isalnum()
