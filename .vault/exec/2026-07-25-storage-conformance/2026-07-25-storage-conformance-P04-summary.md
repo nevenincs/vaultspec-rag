@@ -42,10 +42,12 @@ names and restored green in one uninterrupted sequence. Two proofs were rejected
 on first pass and the tests tightened to assert presence before reading, so a
 lost record fails as an assertion rather than a `KeyError`.
 
-One gate regression was found and fixed. The cognitive-complexity gate had been
-failing since this feature's first commit, where identity parsing was added
-inline to the manifest loader; the closing gate run recorded all gates clean
-without it. The per-record parse is now extracted and the gate is green.
+One gate regression was found. The cognitive-complexity gate had been failing
+since this feature's first commit, where identity parsing was added inline to the
+manifest loader; the closing gate run recorded all gates clean without it. An
+extraction written here turned out to duplicate one already landed on the trunk,
+written concurrently from the same red gate, and was collapsed onto the trunk's
+better-factored version rather than carried across the merge.
 
 - Modified: `src/vaultspec_rag/storage_ops.py`
 - Modified: `src/vaultspec_rag/storage_manifest.py`
