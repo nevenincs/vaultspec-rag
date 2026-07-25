@@ -431,3 +431,113 @@ def test_doctor_ignores_the_release_when_no_daemon_was_observed() -> None:
     absent: dict[str, object] = {"present": False, "live": False}
 
     assert _doctor_exit_code(absent, None) == 0
+
+
+# ---------------------------------------------------------------------------
+# The CLI data-plane verbs refuse the daemon the MCP refuses
+# ---------------------------------------------------------------------------
+
+
+def _record_foreign_daemon(port: int) -> None:
+    """Publish a discovery file naming a live daemon of another release."""
+    from ..cli._service_status import _status_file, _write_service_status
+
+    _write_service_status(os.getpid(), port)
+    status_path = _status_file()
+    document = json.loads(status_path.read_text(encoding="utf-8"))
+    document[SERVICE_VERSION_FIELD] = _FOREIGN_RELEASE
+    status_path.write_text(json.dumps(document), encoding="utf-8")
+
+
+def test_the_data_plane_seam_pairs_the_address_with_the_verdict() -> None:
+    """One seam answers both questions, so no caller can gate only one.
+
+    The CLI shipped gating neither while the MCP gated both, because the address
+    and the release were resolved at different places. Asserting the pairing is
+    what keeps them from separating again.
+    """
+    from ..serviceclient._compat import DataPlaneService
+
+    unusable = DataPlaneService(
+        port=8766,
+        version=classify_service_version({SERVICE_VERSION_FIELD: _FOREIGN_RELEASE}),
+    )
+    down = DataPlaneService(port=None, version=classify_service_version(None))
+
+    assert unusable.reachable and not unusable.usable
+    assert not down.reachable and not down.usable
+
+
+@pytest.mark.usefixtures("isolated_singleton_dirs")
+def test_cli_search_refuses_a_foreign_release_rather_than_answering(
+    health_service: Any,
+) -> None:
+    """A CLI search must not silently answer over a foreign daemon's results.
+
+    This was the adapter drift: the MCP refused and the CLI did not, so one
+    condition had two contracts. Asserted on the exact error code the MCP
+    raises, which is what pins the two adapters to one diagnosis.
+    """
+    _record_foreign_daemon(health_service.port)
+
+    result = runner.invoke(app, ["search", "anything", "--json"])
+
+    assert result.exit_code == 1
+    envelope = json.loads(result.stdout)
+    assert envelope["ok"] is False
+    assert envelope["error"] == VERSION_ERROR_MISMATCH
+    assert envelope["version"]["service_version"] == _FOREIGN_RELEASE
+
+
+@pytest.mark.usefixtures("isolated_singleton_dirs")
+def test_cli_search_refusal_is_actionable_in_human_mode(
+    health_service: Any,
+) -> None:
+    """Human mode fails too, and names the one action that resolves it."""
+    _record_foreign_daemon(health_service.port)
+
+    result = runner.invoke(app, ["search", "anything"])
+
+    assert result.exit_code == 1
+    assert _FOREIGN_RELEASE in result.stdout
+    assert "vaultspec-rag server stop" in result.stdout
+
+
+@pytest.mark.usefixtures("isolated_singleton_dirs")
+def test_cli_index_refuses_rather_than_indexing_around_a_foreign_daemon(
+    health_service: Any,
+) -> None:
+    """Index refuses instead of falling through to the in-process path.
+
+    Falling through would be worse than stopping: the foreign daemon still owns
+    the store and the writer lock, so an in-process run would contend with a
+    process this build cannot speak to.
+    """
+    _record_foreign_daemon(health_service.port)
+
+    result = runner.invoke(app, ["index", "--json"])
+
+    assert result.exit_code == 1
+    envelope = json.loads(result.stdout)
+    assert envelope["ok"] is False
+    assert envelope["error"] == VERSION_ERROR_MISMATCH
+
+
+@pytest.mark.usefixtures("isolated_singleton_dirs")
+def test_stop_is_not_gated_because_it_is_the_remediation() -> None:
+    """The verb that resolves the mismatch must never be blocked by it.
+
+    A gate on `stop` would leave the operator holding a verdict they cannot act
+    on. Asserted as a source property of the shared seam rather than by driving
+    a daemon, because the point is that the lifecycle modules never consult it.
+    """
+    from pathlib import Path as _Path
+
+    cli_dir = _Path(__file__).resolve().parent.parent / "cli"
+    gated = sorted(
+        module.name
+        for module in cli_dir.glob("_service_*.py")
+        if "resolve_data_plane_service" in module.read_text(encoding="utf-8")
+    )
+
+    assert gated == []
