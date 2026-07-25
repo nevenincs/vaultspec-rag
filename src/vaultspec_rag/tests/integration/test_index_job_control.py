@@ -1280,7 +1280,7 @@ class _CancelAfterCheckpoints:
         return contextlib.nullcontext()
 
 
-def test_unattended_gate_reconciles_without_emptying_the_served_collection(
+def test_an_unattended_gate_publishes_a_generation_without_emptying_the_served_one(
     tmp_path: Path,
     cpu_embedding_model: EmbeddingModel,
 ) -> None:
@@ -1340,16 +1340,32 @@ def test_unattended_gate_reconciles_without_emptying_the_served_collection(
                 run_control=_CancelAfterCheckpoints(40),
             )
 
-        # The point of the whole change: the gate reconciled rather than
-        # dropped, so an interruption leaves the corpus readable instead of a
-        # fragment for the completeness predicate to chase.
+        # The point of the whole change: the gate published a new generation
+        # rather than dropping the served collection, so an interruption leaves
+        # the corpus readable instead of a fragment for the completeness
+        # predicate to chase.
         assert store.count_code() >= published.added
+
+        # Give the next run real work, so it publishes rather than returning
+        # the unchanged-tree early result. An unchanged incremental never
+        # rewrites the sidecar, which is what made the first two placements of
+        # the assertion below vacuous.
+        paths = _write_code_files(tmp_path, 24, "unattended-gate-republish")
 
         indexer.incremental_index(
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )
-        _assert_current_code_state(indexer, store, paths, "unattended-gate")
+        _assert_current_code_state(indexer, store, paths, "unattended-gate-republish")
+        # Asserted after a run that actually republishes the sidecar. Placed
+        # after the cancelled run above it proved nothing: a cancelled run
+        # never rewrites the sidecar, so the marker could not have appeared
+        # there whether the mitigation existed or not.
+        #
+        # The gate reaches the non-destructive publication path, not the
+        # interim compromise that left superseded points searchable beside the
+        # re-encoded ones.
+        assert "__code_superseded_regime__" not in indexer._read_meta_raw()
 
         # An operator asking for a rebuild still gets one; only the unattended
         # path is barred from destroying data.
