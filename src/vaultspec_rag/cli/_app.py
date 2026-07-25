@@ -14,12 +14,16 @@ from pathlib import Path
 from typing import Annotated, Any, cast
 
 import typer
+from vaultspec_core.config.workspace import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+    WorkspaceError,
+    WorkspaceLayout,
+    resolve_workspace,
+)
 
 import vaultspec_rag.cli as _cli
 
 from ..config import EnvVar
 from ..logging_config import configure_logging
-from ..workspace import WorkspaceError, WorkspaceLayout, resolve_workspace
 from ._render import _plain
 
 __all__ = [
