@@ -42,6 +42,7 @@ __all__ = [
     "_fail_start",
     "_fail_stop",
     "_initiator_fields",
+    "_lifecycle_success",
     "_print_detail_line",
     "_print_lifecycle_lines",
     "_print_lifecycle_next_actions",
@@ -115,6 +116,33 @@ def _fail_lifecycle(
         if next_actions:
             _print_lifecycle_next_actions(*next_actions)
     return typer.Exit(code=1)
+
+
+def _lifecycle_success(
+    json_mode: bool,
+    *,
+    command: str,
+    status: str,
+    human_title: str,
+    human_lines: tuple[str, ...] = (),
+    **data: object,
+) -> None:
+    """Emit a successful lifecycle outcome. The caller returns after this.
+
+    The success twin of :func:`_fail_lifecycle`, and one renderer for every
+    terminal success of every lifecycle verb. The envelope-versus-human-lines
+    branch exists once for the same reason it does on the failure side: a
+    second copy is free to drift into emitting two envelopes, or none, on some
+    path nobody re-checked.
+
+    An already-satisfied request is a success and reaches here with an
+    already-done ``status``, so a supervising broker reads the idempotent case
+    as satisfied rather than as a fault.
+    """
+    if json_mode:
+        _emit_json(True, command, data={"status": status, **data})
+    else:
+        _print_lifecycle_lines(human_title, *human_lines)
 
 
 def _process_line(pid: object) -> str:

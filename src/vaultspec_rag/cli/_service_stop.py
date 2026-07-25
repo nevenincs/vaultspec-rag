@@ -26,10 +26,9 @@ from ._process import (
     _DEFAULT_GRACEFUL_DRAIN_SECONDS,
     _port_is_listening,
 )
-from ._render import _emit_json
 from ._service_lifecycle import (
     _fail_lifecycle,
-    _print_lifecycle_lines,
+    _lifecycle_success,
     _process_line,
     _should_unlink_discovery_file,
 )
@@ -273,15 +272,19 @@ def _stop_success(
 ) -> None:
     """Emit a successful stop outcome (``stopped`` / ``already_stopped`` / ...).
 
-    In ``--json`` mode emits one ``{ok, command, data:{status, ...}}`` envelope;
-    otherwise the bespoke human lines. The caller returns after this (exit 0).
+    Binds the stop command name to the one shared lifecycle success renderer.
     An already-stopped service is a success so a supervising broker treats the
-    idempotent case as satisfied rather than as a fault.
+    idempotent case as satisfied rather than as a fault; that rule lives in the
+    shared renderer alongside the envelope-versus-human decision.
     """
-    if json_mode:
-        _emit_json(True, _STOP_COMMAND, data={"status": status, **data})
-    else:
-        _print_lifecycle_lines(human_title, *human_lines)
+    _lifecycle_success(
+        json_mode,
+        command=_STOP_COMMAND,
+        status=status,
+        human_title=human_title,
+        human_lines=human_lines,
+        **data,
+    )
 
 
 def _fail_stop(
