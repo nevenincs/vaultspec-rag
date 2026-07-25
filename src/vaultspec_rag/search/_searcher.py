@@ -530,10 +530,13 @@ class VaultSearcher:
         function_name: str | None,
         class_name: str | None,
     ) -> dict[str, str]:
+        # No inline marker maps to ``path``: an in-query ``path:`` token is a
+        # pattern and joins the include patterns instead, so the exact-path
+        # filter arrives only as an explicit argument.
         store_filters = {
             k: v
             for k, v in parsed.filters.items()
-            if k in ("language", "path", "node_type", "function_name", "class_name")
+            if k in ("language", "node_type", "function_name", "class_name")
         }
         for k, v in (
             ("language", language),

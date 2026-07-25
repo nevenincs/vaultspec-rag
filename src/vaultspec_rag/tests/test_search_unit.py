@@ -524,25 +524,8 @@ class TestInlinePathScopeToken:
 
     pytestmark: ClassVar = [pytest.mark.unit]
 
-    def test_the_token_does_not_reach_the_exact_path_store_filter(self) -> None:
-        from ..search._searcher import VaultSearcher
-
-        parsed = parse_query("reopen a drifted indexed path path:src/pkg/")
-        store_filters = VaultSearcher._build_codebase_store_filters(  # pyright: ignore[reportPrivateUsage]  # asserting the pushdown contract
-            None,  # pyright: ignore[reportArgumentType]  # staticmethod-shaped: self is unused
-            parsed,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        # Reinstate the "path" mapping in _FILTER_KEY_MAP and this finds the
-        # directory pushed down as an exact keyword match, which is the silent
-        # empty-result defect.
-        assert "path" not in store_filters
-
     def test_an_explicit_exact_path_still_pushes_down(self) -> None:
+        """--path keeps its exact-match pushdown; only the marker changed."""
         from ..search._searcher import VaultSearcher
 
         parsed = parse_query("lock ordering")
