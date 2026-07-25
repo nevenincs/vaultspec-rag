@@ -42,11 +42,6 @@ from __future__ import annotations
 # import keeps resolving.
 from ..capabilities import BackendCapabilities
 
-# 2a. Leaf helper imported as a submodule (not by-name): the in-flight
-#     jobs registry. The reindex tools and watcher write through
-#     ``_jobs.record_*`` and tests reach it via ``server._jobs``.
-from . import _jobs
-
 # 2. Leaf helpers (no decorators).
 from ._lifecycle import (
     _DiscoveryPublisher,

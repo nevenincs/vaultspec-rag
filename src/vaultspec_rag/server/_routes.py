@@ -35,6 +35,7 @@ from starlette.routing import Route
 
 import vaultspec_rag.server as _m
 
+from .. import jobs as _jobs
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from ..concurrency import get_search_limiter
 from ..job_models import JobOutcome
@@ -46,7 +47,6 @@ from ..logging_config import (
 )
 from ..service import RegistryFullError
 from ..store import VaultStoreLockedError
-from . import _jobs
 from ._routes_jobs import (
     _clamp_limit,
     _job_matches,
