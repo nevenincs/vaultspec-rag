@@ -368,6 +368,14 @@ class TestChunkIdentityParity:
     spawn pool, one worker takes the in-process serial producer. Comparing
     ids element-wise (not as sets) also binds the per-file emission order,
     which a set comparison would let drift silently.
+
+    Proven able to fail: giving the pooled branch a different root than the
+    serial branch (so its relative paths, and therefore its chunk ids, must
+    diverge) fails this test on the id comparison itself - not on a setup or
+    import error - and restoring the root returns it to green. Drive both
+    sides through the shipped producers or that proof is worthless: an
+    earlier version of this test compared two helpers that production had
+    stopped calling, and passed while proving nothing about what ships.
     """
 
     def test_parallel_matches_serial(self, tmp_path: Path) -> None:

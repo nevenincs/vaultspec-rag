@@ -28,6 +28,7 @@ from concurrent.futures.process import BrokenProcessPool
 from functools import partial
 from typing import TYPE_CHECKING, NamedTuple
 
+from .._index_breadth import PUBLISHED_POINTS_KEY, parse_published_points
 from .._job_errors import JobError, JobErrorKind
 from ..index_profiles import (
     SupportMeasurement,
@@ -1645,18 +1646,61 @@ class CodebaseIndexer:
         return has_evidence and not self.store.code_collection_exists()
 
     def _published_evidence_lost(self) -> bool:
-        """Return whether carried incremental evidence points at nothing.
+        """Return whether the store fails to back the carried incremental evidence.
 
-        External destruction (a storage delete) drops the code collection
-        but leaves the per-root metadata sidecar and run ledger behind. An
-        incremental diff against that carried metadata classifies every
+        Carried metadata and the run ledger outlive the points they describe.
+        Destruction drops the collection or part of it and leaves the sidecar
+        behind; an incremental diff against that metadata then classifies every
         surviving file as unchanged, skips all encoding, and publishes a
-        "successful" result over a collection whose points no longer exist
-        anywhere, so published evidence for an absent collection must
-        escalate to a full failure-safe reconciliation instead of being
+        "successful" result over points that are no longer there. Such evidence
+        must escalate to full failure-safe reconciliation instead of being
         trusted.
+
+        Destruction is rarely total. A clean rebuild drops the collection and
+        then repopulates it incrementally, so an interrupted one leaves a
+        fragment - present, non-empty, and describing itself as whole. Asking
+        only whether the collection exists therefore misses the common case,
+        which is why the point count published alongside the sidecar is compared
+        as well: it is the only record of how much breadth the metadata claims.
+
+        A shortfall is any deficit. Publication happens after storage
+        reconciliation at every call site, so a complete index reads back
+        exactly what it published, and a legitimate shrink travels the
+        incremental path and republishes. Escalation is failure-safe and
+        republishes the count, so even a spurious one self-corrects on the next
+        run rather than latching.
+
+        A sidecar with no published count, or a store that cannot be counted,
+        yields "cannot tell" and keeps the existence-only behaviour: neither is
+        evidence of loss, and escalating on ignorance would rebuild every root
+        written by an older build.
         """
-        return bool(self._load_meta()) and not self.store.code_collection_exists()
+        if not self._load_meta():
+            return False
+        if not self.store.code_collection_exists():
+            return True
+        claimed = parse_published_points(self._read_meta_raw())
+        if claimed is None:
+            return False
+        try:
+            live = self.store.count_code()
+        except (OSError, RuntimeError):
+            logger.warning(
+                "Could not count the code collection to verify published "
+                "breadth; trusting the carried evidence for this run",
+                exc_info=True,
+            )
+            return False
+        if live >= claimed:
+            return False
+        logger.warning(
+            "Code collection holds %d of the %d points its published metadata "
+            "describes; escalating to a full failure-safe reconciliation "
+            "instead of trusting the carried evidence",
+            live,
+            claimed,
+        )
+        return True
 
     def _resume_pending_finalization(
         self,
@@ -1676,7 +1720,10 @@ class CodebaseIndexer:
                 checkpoint.policy,
                 ContentKind.CODE,
             )
-            checkpoint.publish_metadata(self._meta_path)
+            checkpoint.publish_metadata(
+                self._meta_path,
+                published_points=self.store.count_code(),
+            )
             checkpoint.publish_generation()
             reporter.advance(1)
         finally:
@@ -2330,7 +2377,11 @@ class CodebaseIndexer:
                 reporter.phase_start("write metadata", 1)
                 try:
                     if checkpoint is None:
-                        self._write_meta(metadata, policy=policy)
+                        self._write_meta(
+                            metadata,
+                            policy=policy,
+                            published_points=self.store.count_code(),
+                        )
                     else:
                         reconcile_generation_storage(
                             self.store,
@@ -2338,7 +2389,10 @@ class CodebaseIndexer:
                             policy,
                             ContentKind.CODE,
                         )
-                        checkpoint.publish_metadata(self._meta_path)
+                        checkpoint.publish_metadata(
+                            self._meta_path,
+                            published_points=self.store.count_code(),
+                        )
                         checkpoint.publish_generation()
                     reporter.advance(1)
                 finally:
@@ -2685,7 +2739,10 @@ class CodebaseIndexer:
                     policy,
                     ContentKind.CODE,
                 )
-                checkpoint.publish_metadata(self._meta_path)
+                checkpoint.publish_metadata(
+                    self._meta_path,
+                    published_points=self.store.count_code(),
+                )
                 checkpoint.publish_generation()
                 reporter.advance(1)
             finally:
@@ -3236,6 +3293,7 @@ class CodebaseIndexer:
         meta: dict[str, str],
         *,
         policy: ResolvedIndexPolicy,
+        published_points: int | None = None,
     ) -> None:
         """Atomically write content-hash metadata to the sidecar JSON file.
 
@@ -3248,6 +3306,11 @@ class CodebaseIndexer:
             meta: Mapping of relative file path to blake2b hex digest.
             policy: Exact snapshot whose identity governs publication. Direct
                 callers must resolve and supply it explicitly.
+            published_points: Collection point count observed after storage
+                reconciliation, recording how much breadth this sidecar
+                describes. Omitted where the caller has no reconciled count to
+                offer, which leaves the sidecar silent on breadth rather than
+                stamping a figure nothing verified.
 
         Raises:
             OSError: If the metadata directory cannot be created or the
@@ -3259,6 +3322,8 @@ class CodebaseIndexer:
         stamped = {**meta, EMBED_SCHEMA_KEY: CODE_EMBED_SCHEMA}
         stamped[MEMBERSHIP_EPOCH_KEY] = membership
         stamped[CONTENT_EPOCH_KEY] = content
+        if published_points is not None:
+            stamped[PUBLISHED_POINTS_KEY] = str(published_points)
         tmp_path.write_text(json.dumps(stamped, indent=2), encoding="utf-8")
         os.replace(tmp_path, self._meta_path)
 

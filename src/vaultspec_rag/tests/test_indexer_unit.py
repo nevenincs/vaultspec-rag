@@ -169,8 +169,8 @@ class TestASTChunkerPython:
     def test_empty_source(self):
         chunker = ASTChunker(chunk_size=500)
         chunks = chunker.chunk("", "python")
-        # tree-sitter may emit a root node for empty input; the caller
-        # The chunk worker filters empty chunks via `if not text.strip()`.
+        # tree-sitter may emit a root node for empty input; the chunk
+        # worker filters empty chunks via `if not text.strip()`.
         meaningful = [c for c in chunks if c[0].strip()]
         assert meaningful == []
 
@@ -1385,3 +1385,187 @@ class TestVaultragignore:
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
         assert "main.py" in rel
         assert "vendor/lib.py" not in rel
+
+
+class TestPublishedEvidenceRequiresStoredBreadth:
+    """Carried metadata is only trusted when the store still backs it.
+
+    Destruction is rarely total: a clean rebuild drops the code collection and
+    repopulates it incrementally, so an interrupted one leaves a non-empty
+    fragment that describes itself as whole. These tests pin the quantitative
+    half of the check - a present-but-short collection must be rejected, not
+    just an absent one - because an existence-only answer would let the
+    incremental diff conclude "nothing changed" and republish success over the
+    fragment, which is how a truncated index becomes permanent.
+
+    Each test here was proven able to fail, by mutating the one branch of
+    ``_published_evidence_lost`` it pins and observing the named assertion -
+    not a setup or import error - fail, then restoring and observing it pass:
+
+    - short-collection: relaxing the comparison to ``live >= 0`` (the
+      pre-fix existence-only behaviour) fails on ``is True``.
+    - no-published-count: returning ``True`` for an absent count, i.e.
+      reading "cannot tell" as loss, fails on ``is False``.
+    - absent-collection: returning ``False`` when the collection does not
+      exist fails on ``is True``.
+    - intact-collection: tightening the comparison to ``live > claimed``, so
+      equality reads as a deficit, fails on ``is False``.
+    - empty-sidecar: returning ``True`` for absent carried file evidence
+      fails on ``is False``.
+
+    Each asserts the branch, not a log message: the shortfall and absent
+    cases share one return value, so a message matcher would pass on
+    whichever branch fired. Drive them through a real ``VaultStore`` or the
+    proof is worthless - a stubbed count proves nothing about the store the
+    predicate actually questions.
+    """
+
+    @staticmethod
+    def _indexer(tmp_path: Path, store: Any) -> Any:
+        from ..indexer import CodebaseIndexer
+
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), store)
+        indexer._meta_path = tmp_path / "data" / "code_index_meta.json"
+        return indexer
+
+    @staticmethod
+    def _write_sidecar(
+        indexer: Any,
+        *,
+        files: dict[str, str],
+        published_points: int | None,
+    ) -> None:
+        import json
+
+        from .._index_breadth import PUBLISHED_POINTS_KEY
+        from ..indexer._code_meta import CODE_EMBED_SCHEMA, EMBED_SCHEMA_KEY
+
+        raw: dict[str, str] = {EMBED_SCHEMA_KEY: CODE_EMBED_SCHEMA, **files}
+        if published_points is not None:
+            raw[PUBLISHED_POINTS_KEY] = str(published_points)
+        indexer._meta_path.parent.mkdir(parents=True, exist_ok=True)
+        indexer._meta_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+
+    @staticmethod
+    def _store_chunks(store: Any, count: int) -> None:
+        """Upsert ``count`` real code points so the live count is non-zero."""
+        from .._store_models import CodeChunk
+        from ..store_schema import effective_dense_dim
+
+        dimension = effective_dense_dim()
+        chunks = [
+            CodeChunk(
+                id=f"src/mod.py:{ordinal}",
+                path="src/mod.py",
+                language="python",
+                content=f"x = {ordinal}\n",
+                line_start=ordinal,
+                line_end=ordinal,
+                vector=[0.0] * (dimension - 1) + [1.0],
+            )
+            for ordinal in range(count)
+        ]
+        store.upsert_code_chunks(chunks, write_policy=None)
+
+    def test_short_collection_is_rejected_though_it_exists(
+        self, tmp_path: Path
+    ) -> None:
+        """A present collection holding fewer points than published is lost.
+
+        This is the assertion that distinguishes the quantitative check from an
+        existence check: the collection exists and is non-empty, so an
+        existence-only guard returns False here and the truncation survives.
+        """
+        from ..store import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            store.ensure_code_table()
+            indexer = self._indexer(tmp_path, store)
+            self._store_chunks(store, 2)
+            self._write_sidecar(
+                indexer,
+                files={"src/mod.py": "a" * 128},
+                published_points=64,
+            )
+
+            assert store.code_collection_exists()
+            assert store.count_code() == 2
+            assert indexer._published_evidence_lost() is True
+        finally:
+            store.close()
+
+    def test_intact_collection_is_trusted(self, tmp_path: Path) -> None:
+        """A collection holding everything it published is not escalated."""
+        from ..store import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            store.ensure_code_table()
+            indexer = self._indexer(tmp_path, store)
+            self._store_chunks(store, 3)
+            self._write_sidecar(
+                indexer,
+                files={"src/mod.py": "a" * 128},
+                published_points=3,
+            )
+
+            assert indexer._published_evidence_lost() is False
+        finally:
+            store.close()
+
+    def test_sidecar_without_a_published_count_is_not_a_shortfall(
+        self, tmp_path: Path
+    ) -> None:
+        """An older sidecar claims no breadth, so ignorance must not escalate.
+
+        Escalating here would rebuild every root written before the count was
+        recorded, so the absent key has to read as "cannot tell".
+        """
+        from ..store import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            store.ensure_code_table()
+            indexer = self._indexer(tmp_path, store)
+            self._write_sidecar(
+                indexer,
+                files={"src/mod.py": "a" * 128},
+                published_points=None,
+            )
+
+            assert indexer._published_evidence_lost() is False
+        finally:
+            store.close()
+
+    def test_absent_collection_is_still_rejected(self, tmp_path: Path) -> None:
+        """The total-destruction case the check already covered must survive."""
+        from ..store import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            indexer = self._indexer(tmp_path, store)
+            self._write_sidecar(
+                indexer,
+                files={"src/mod.py": "a" * 128},
+                published_points=64,
+            )
+
+            assert not store.code_collection_exists()
+            assert indexer._published_evidence_lost() is True
+        finally:
+            store.close()
+
+    def test_empty_sidecar_is_never_a_shortfall(self, tmp_path: Path) -> None:
+        """With no carried file evidence there is nothing to be lost."""
+        from ..store import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            store.ensure_code_table()
+            indexer = self._indexer(tmp_path, store)
+            self._write_sidecar(indexer, files={}, published_points=64)
+
+            assert indexer._published_evidence_lost() is False
+        finally:
+            store.close()
