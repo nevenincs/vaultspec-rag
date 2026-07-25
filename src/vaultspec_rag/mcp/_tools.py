@@ -14,6 +14,7 @@ search/index tools on the shared :data:`mcp` instance.
 from __future__ import annotations
 
 from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from mcp.types import ToolAnnotations
@@ -167,6 +168,20 @@ def _require_port() -> int:
     return port
 
 
+def _dispatch_root(project_root: str | None = None) -> str:
+    """Return the concrete project root to send with a delegated call.
+
+    The daemon is machine-global and multi-root: it has no project of its own
+    and requires a concrete root on every request, so one root's query can never
+    resolve against another root's index. This surface can still take the
+    argument as optional, because a stdio MCP server is launched per project by
+    its host - its working directory *is* that project's root. An omitted or
+    blank root is filled in here, once, rather than restated on every call.
+    """
+    explicit = (project_root or "").strip()
+    return explicit or str(Path.cwd().resolve())
+
+
 def _unwrap[T](result: T | None) -> T:
     """Return *result*, mapping the unreachable sentinel to the service-down error.
 
@@ -223,7 +238,7 @@ async def search_vault(
             _canonical_tool_source("vault"),
             top_k,
             port,
-            project_root or "",
+            _dispatch_root(project_root),
             doc_type=doc_type,
             feature=feature,
             date=date,
@@ -279,7 +294,7 @@ async def search_codebase(
             _canonical_tool_source("codebase"),
             top_k,
             port,
-            project_root or "",
+            _dispatch_root(project_root),
             language=language,
             path=path,
             node_type=node_type,
@@ -315,7 +330,7 @@ async def search_documents(
             _canonical_tool_source("document"),
             top_k,
             port,
-            project_root or "",
+            _dispatch_root(project_root),
             document_filters={
                 "source_path": source_path,
                 "extractor_id": extractor_id,
@@ -368,7 +383,7 @@ async def search_combined(  # noqa: PLR0913 - MCP exposes each owned filter expl
             _canonical_tool_source("combined"),
             top_k,
             port,
-            project_root or "",
+            _dispatch_root(project_root),
             language=language,
             path=path,
             node_type=node_type,
@@ -401,7 +416,9 @@ async def get_code_file(
 ) -> str:
     """Retrieve the full content of a source file by path."""
     port = _require_port()
-    res = await _delegate(partial(_try_http_code_file, path, project_root or "", port))
+    res = await _delegate(
+        partial(_try_http_code_file, path, _dispatch_root(project_root), port)
+    )
     if "content" in res:
         return str(res["content"])
     if "error" in res:
@@ -437,7 +454,7 @@ async def _reindex_source(
             _canonical_tool_source(source),
             False,
             port,
-            project_root or "",
+            _dispatch_root(project_root),
             initiator_kind="mcp",
         )
     )
@@ -474,7 +491,7 @@ async def get_index_status(
         partial(
             _try_http_admin,
             "get_service_state",
-            {"project_root": project_root or ""},
+            {"project_root": _dispatch_root(project_root)},
             port,
         )
     )
@@ -496,7 +513,7 @@ async def _clean_source(
             _try_http_clean,
             _canonical_tool_source(source),
             port,
-            project_root or "",
+            _dispatch_root(project_root),
         )
     )
     if result.get("ok") is False and result.get("partial") is not True:
