@@ -114,7 +114,7 @@ Fix the behavioural oracle and prove the seams are not carrying duplicate implem
 
 - [x] `W01.P01.S01` - Capture the behavioural baseline: run the full suite and record the passing count and the per-module test inventory that the extractions must preserve; `src/vaultspec_rag/tests/`.
 - [x] `W01.P01.S02` - Sweep the indexer for duplicate behaviour with vaultspec-rag semantic search before any extraction, recording each duplicate pair so extraction collapses it rather than carrying both across the seam; `src/vaultspec_rag/indexer/`.
-- [ ] `W01.P01.S15` - Cover the drift-detection predicate with direct tests before it moves across a seam, since it currently has no test of its own and only its remedy is exercised; `src/vaultspec_rag/indexer/_run_checkpoint.py`.
+- [x] `W01.P01.S15` - Cover the drift-detection predicate with direct tests before it moves across a seam, since it currently has no test of its own and only its remedy is exercised; `src/vaultspec_rag/indexer/_run_checkpoint.py`.
 
 ### Phase `W01.P02` - Extract the collaborators
 
