@@ -270,11 +270,12 @@ def _search_index_state(
     indexed_count: int | float,
     requested_root: object,
     search_type: PublicSourceType | str,
+    published_points: float | None = None,
 ) -> dict[str, object]:
     requested_target = str(requested_root)
     source = parse_source_type(search_type, allow_aliases=True).value
     count = int(indexed_count)
-    return {
+    state: dict[str, object] = {
         "source": source,
         "indexed_count": count,
         "indexed_target_root": requested_target,
@@ -282,6 +283,17 @@ def _search_index_state(
         "target_matches": True,
         "status": "missing" if count == 0 else "available",
     }
+    # Present only over a demonstrated shortfall, and carrying the figures so an
+    # adapter names the deficit without comparing counts itself. Absence means
+    # complete or unknowable; a consumer must not read it as either one alone.
+    if published_points is not None:
+        published = int(published_points)
+        state["shortfall"] = {
+            "published_count": published,
+            "live_count": count,
+            "missing_count": published - count,
+        }
+    return state
 
 
 def _empty_search_diagnostics(
@@ -1253,6 +1265,7 @@ def _execute_search_request(
             indexed_count=indexed_count,
             requested_root=root,
             search_type=search_type,
+            published_points=phase_timing.get("published_points"),
         )
         index_state_seconds = time.perf_counter() - phase_started
         phase_started = time.perf_counter()
