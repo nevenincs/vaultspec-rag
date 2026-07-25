@@ -50,7 +50,10 @@ Gates green on the changed surface:
   unit).
 
 Decision record updated: the consequences section no longer projects. Each
-bullet is labelled MEASURED or NOT MEASURED, the admission-gate numbers
+bullet carries its status - observed, measured, or not measured - and the
+header states the provenance of the admission-gate figures, that no GPU window
+was taken, and that the staged arms stay unmeasured with their plan Steps open.
+The admission-gate numbers
 (exclusivity across 31,878 window pairs, in-run lock wait at p50 0.000 s,
 inflation 1.029x median against a pre-gate 2.3-5.0x, sub-second uncontended
 admission cost) and the ingest numbers (arm medians 80.1 s against 78.1 s,
