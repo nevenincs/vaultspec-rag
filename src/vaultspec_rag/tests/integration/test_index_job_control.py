@@ -9,6 +9,7 @@ implementations for any production indexing behavior.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import multiprocessing
 import threading
 import time
@@ -1234,4 +1235,107 @@ def test_incremental_reencodes_when_collection_vanished_under_published_metadata
         # mutation-free success while the store holds zero points.
         _assert_current_code_state(indexer, store, paths, "meta-stale")
         assert store.count_code() == published.added
+    _assert_code_resources_released()
+
+
+class _CancelAfterCheckpoints:
+    """Trip cooperative cancellation after a fixed number of safe checkpoints.
+
+    Implements the production ``RunControl`` protocol rather than standing in
+    for anything: this is the same surface a job's control token presents, and
+    the signal it raises is the one the indexer already handles.
+    """
+
+    def __init__(self, after: int) -> None:
+        self._remaining = after
+
+    def checkpoint(self) -> None:
+        if self._remaining <= 0:
+            raise CancelRequested
+        self._remaining -= 1
+
+    def protected(self) -> contextlib.AbstractContextManager[None]:
+        return contextlib.nullcontext()
+
+
+def test_unattended_gate_reconciles_without_emptying_the_served_collection(
+    tmp_path: Path,
+    cpu_embedding_model: EmbeddingModel,
+) -> None:
+    """A gate reached without an operator request must not destroy served data.
+
+    The embed-format and config-drift gates fire on a run the watcher asked
+    for, not one an operator asked for. Dropping the collection there empties
+    it for the whole repopulation, and an interruption in that window leaves a
+    fragment beneath a sidecar describing the whole corpus, which makes every
+    later run reconcile the entire tree. Reconciling instead keeps every
+    published point readable throughout.
+
+    The stale marker is written to the real sidecar, the same class of
+    out-of-band mutation as dropping the table above - real on-disk state, not
+    a substituted function.
+
+    Proven able to fail: restoring ``clean=True`` on the embed-format gate
+    empties the collection and fails the mid-run count assertion below.
+    """
+    import json as _json
+
+    from ..._index_breadth import code_meta_path
+    from ...indexer._code_meta import EMBED_SCHEMA_KEY
+
+    paths = _write_code_files(tmp_path, 24, "unattended-gate")
+
+    with VaultStore(tmp_path, embedding_dim=cpu_embedding_model.dimension) as store:
+        indexer = CodebaseIndexer(
+            tmp_path,
+            cpu_embedding_model,
+            store,
+            gpu_lock=threading.Lock(),
+        )
+        published = indexer.full_index(
+            clean=True,
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
+        assert published.added > 0
+
+        # Age the embed-format marker so the unattended gate fires on the next
+        # incremental, exactly as it would after a format change shipped.
+        meta_path = code_meta_path(tmp_path)
+        raw = _json.loads(meta_path.read_text(encoding="utf-8"))
+        raw[EMBED_SCHEMA_KEY] = "superseded-regime"
+        meta_path.write_text(_json.dumps(raw), encoding="utf-8")
+
+        # Interrupt the gate's run through the real cooperative-cancel path a
+        # job uses. The end state alone cannot tell the two branches apart: a
+        # destructive rebuild drops and then repopulates, so once it finishes
+        # the count is back where it started. What separates them is the
+        # window, and the window is exactly what production observes.
+        with contextlib.suppress(CancelRequested):
+            indexer.incremental_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+                run_control=_CancelAfterCheckpoints(40),
+            )
+
+        # The point of the whole change: the gate reconciled rather than
+        # dropped, so an interruption leaves the corpus readable instead of a
+        # fragment for the completeness predicate to chase.
+        assert store.count_code() >= published.added
+
+        indexer.incremental_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
+        _assert_current_code_state(indexer, store, paths, "unattended-gate")
+
+        # An operator asking for a rebuild still gets one; only the unattended
+        # path is barred from destroying data.
+        rebuilt = indexer.full_index(
+            clean=True,
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
+        assert rebuilt.added > 0
+        assert store.count_code() == rebuilt.added
     _assert_code_resources_released()
