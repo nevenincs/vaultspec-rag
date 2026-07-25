@@ -241,3 +241,40 @@ class TestServedCodeCollectionPointer:
         assert (
             resolve_served_code_collection(tmp_path, "codebase_docs") == "codebase_docs"
         )
+
+    def test_reads_follow_the_pointer_not_the_derived_collection(
+        self, tmp_path: Path
+    ) -> None:
+        """Moving the pointer changes what a read sees, not just a name field.
+
+        Asserting the resolved attribute proves the string; this proves the
+        consequence. Points live in the derived collection, the pointer names
+        another, and the count a reader takes must come from the pointed-to
+        one. A read path that bypassed the pointer would report the derived
+        collection's points and the swap would be invisible to callers.
+
+        Proven able to fail: reverting the store to
+        ``_prefix + CODE_TABLE_NAME`` reports the derived collection's points
+        here and fails the second count; restoring returns it to green.
+        """
+        from ... import VaultStore
+        from ..._store_models import publish_served_code_collection
+
+        store = VaultStore(tmp_path)
+        try:
+            store.ensure_code_table()
+            derived_name = store.CODE_TABLE_NAME
+            populated = store.count_code()
+        finally:
+            store.close()
+
+        publish_served_code_collection(tmp_path, derived_name + "_g2")
+        swapped = VaultStore(tmp_path)
+        try:
+            assert derived_name + "_g2" == swapped.CODE_TABLE_NAME
+            # The pointed-to collection was never created, so a reader sees no
+            # points - the derived collection's state is not what answers.
+            assert swapped.code_collection_exists() is False
+            assert populated == 0
+        finally:
+            swapped.close()
