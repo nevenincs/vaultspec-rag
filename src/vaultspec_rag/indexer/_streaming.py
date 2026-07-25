@@ -69,7 +69,7 @@ _WRITER_SHUTDOWN_TIMEOUT_S = 300.0
 # mapping, Qdrant model, and the small containers joining those objects.
 _DENSE_ELEMENT_LIFETIME_BYTES = 4 + 8 + 24
 _SPARSE_ENTRY_LIFETIME_BYTES = 8 + 4 + (2 * 8) + 28 + 24
-_CODE_POINT_FIXED_OVERHEAD_BYTES = 1024
+_POINT_FIXED_OVERHEAD_BYTES = 1024
 _DEFAULT_SPARSE_DIMENSION = 30_522
 
 
@@ -872,6 +872,44 @@ def _utf8_size(value: str | None) -> int:
     return len(value.encode("utf-8")) if value is not None else 0
 
 
+def _validate_estimator_dimensions(
+    *,
+    dense_dimension: int,
+    sparse_enabled: bool,
+    sparse_dimension: int,
+) -> None:
+    """Reject dimensions no chunk estimator can weigh."""
+    if dense_dimension <= 0:
+        raise ValueError(
+            f"dense_dimension must be a positive integer, got {dense_dimension}"
+        )
+    if sparse_enabled and (isinstance(sparse_dimension, bool) or sparse_dimension <= 0):
+        raise ValueError(
+            f"sparse_dimension must be a positive integer, got {sparse_dimension}"
+        )
+
+
+def _dense_lifetime_bytes(dense_dimension: int, vector_length: int) -> int:
+    """Return the dense bytes reserved for one point."""
+    return max(dense_dimension, vector_length) * _DENSE_ELEMENT_LIFETIME_BYTES
+
+
+def _sparse_lifetime_bytes(
+    sparse_dimension: int, index_count: int, value_count: int
+) -> int:
+    """Return the sparse bytes reserved for one point.
+
+    SPLADE applies ReLU and pooling across its vocabulary without a production
+    top-k. Any output dimension can therefore survive as a nonzero entry, so an
+    unpopulated chunk still reserves the loaded model's full output dimension
+    and a populated one uses whichever count is larger. Runtime memory probes
+    remain the authority for allocator overhead.
+    """
+    return (
+        max(sparse_dimension, index_count, value_count) * _SPARSE_ENTRY_LIFETIME_BYTES
+    )
+
+
 def estimate_code_chunk_bytes(
     chunk: CodeChunk,
     *,
@@ -890,14 +928,11 @@ def estimate_code_chunk_bytes(
     model variance. This weight drives both file segmentation here and the
     weighted queue introduced by the following orchestration steps.
     """
-    if dense_dimension <= 0:
-        raise ValueError(
-            f"dense_dimension must be a positive integer, got {dense_dimension}"
-        )
-    if sparse_enabled and (isinstance(sparse_dimension, bool) or sparse_dimension <= 0):
-        raise ValueError(
-            f"sparse_dimension must be a positive integer, got {sparse_dimension}"
-        )
+    _validate_estimator_dimensions(
+        dense_dimension=dense_dimension,
+        sparse_enabled=sparse_enabled,
+        sparse_dimension=sparse_dimension,
+    )
 
     source_bytes = _utf8_size(chunk.content)
     embed_bytes = _utf8_size(_code_embed_text(chunk))
@@ -920,24 +955,18 @@ def estimate_code_chunk_bytes(
         )
     )
 
-    dense_entries = max(dense_dimension, len(chunk.vector))
-    dense_bytes = dense_entries * _DENSE_ELEMENT_LIFETIME_BYTES
+    dense_bytes = _dense_lifetime_bytes(dense_dimension, len(chunk.vector))
 
     sparse_bytes = 0
     if sparse_enabled:
-        # SPLADE applies ReLU and pooling across its vocabulary without a
-        # production top-k. Any output dimension can therefore survive as a
-        # nonzero entry; reserve the loaded model's full output dimension.
-        # Runtime memory probes remain the authority for allocator overhead.
-        sparse_entries = max(
+        sparse_bytes = _sparse_lifetime_bytes(
             sparse_dimension,
             len(chunk.sparse_indices),
             len(chunk.sparse_values),
         )
-        sparse_bytes = sparse_entries * _SPARSE_ENTRY_LIFETIME_BYTES
 
     return (
-        _CODE_POINT_FIXED_OVERHEAD_BYTES
+        _POINT_FIXED_OVERHEAD_BYTES
         + source_bytes
         + embed_bytes
         + payload_bytes
@@ -954,14 +983,11 @@ def estimate_document_chunk_bytes(
     sparse_dimension: int = _DEFAULT_SPARSE_DIMENSION,
 ) -> int:
     """Estimate retained source, payload, dense, and sparse document bytes."""
-    if dense_dimension <= 0:
-        raise ValueError(
-            f"dense_dimension must be a positive integer, got {dense_dimension}"
-        )
-    if sparse_enabled and (isinstance(sparse_dimension, bool) or sparse_dimension <= 0):
-        raise ValueError(
-            f"sparse_dimension must be a positive integer, got {sparse_dimension}"
-        )
+    _validate_estimator_dimensions(
+        dense_dimension=dense_dimension,
+        sparse_enabled=sparse_enabled,
+        sparse_dimension=sparse_dimension,
+    )
     payload = chunk.payload
     locator = payload.locator
     payload_bytes = sum(
@@ -987,18 +1013,16 @@ def estimate_document_chunk_bytes(
             payload.extractor_version,
         )
     )
-    dense_entries = max(dense_dimension, len(chunk.vector))
-    dense_bytes = dense_entries * _DENSE_ELEMENT_LIFETIME_BYTES
+    dense_bytes = _dense_lifetime_bytes(dense_dimension, len(chunk.vector))
     sparse_bytes = 0
     if sparse_enabled:
-        sparse_entries = max(
+        sparse_bytes = _sparse_lifetime_bytes(
             sparse_dimension,
             len(chunk.sparse_indices),
             len(chunk.sparse_values),
         )
-        sparse_bytes = sparse_entries * _SPARSE_ENTRY_LIFETIME_BYTES
     return (
-        _CODE_POINT_FIXED_OVERHEAD_BYTES
+        _POINT_FIXED_OVERHEAD_BYTES
         + _utf8_size(payload.content)
         + _utf8_size(_document_embed_text(chunk))
         + payload_bytes
