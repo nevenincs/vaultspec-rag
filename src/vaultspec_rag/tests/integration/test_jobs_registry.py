@@ -24,6 +24,7 @@ import pytest
 
 import vaultspec_rag.mcp._tools as tools
 
+from ... import jobs as _jobs
 from ... import server
 from ...job_control import RunControlToken
 from ...jobs import (
@@ -36,8 +37,8 @@ from ...jobs import (
     JobSpec,
     JobState,
 )
-from ...server import _jobs
-from ...serviceclient import _default_service_port, _try_http_admin
+from ...serviceclient._discovery import _default_service_port
+from ...serviceclient._transport import _try_http_admin
 from ._helpers import _make_root
 
 if TYPE_CHECKING:
