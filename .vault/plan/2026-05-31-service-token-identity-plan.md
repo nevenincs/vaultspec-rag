@@ -17,7 +17,28 @@ A uuid4 token generated at daemon startup is written to
 from `/health`. The CLI's `_is_our_service` validates the
 round-trip; mismatch reports the service as not-ours.
 
-## Proposed Changes
+### Phase `P01` - Daemon-side token generation and publication
+
+Generate a per-process identity token at daemon startup, publish it into the status file through the existing heartbeat tick, and return it from the health endpoint.
+
+- [x] `P01.S01` - Generate a per-process identity token at daemon startup and merge it into the status file on the existing heartbeat tick so a reader can compare it without a probe; `src/vaultspec_rag/server/_lifespan.py`.
+- [x] `P01.S02` - Carry the identity token on the health response model and return it from the health endpoint so the round-trip has a live side; `src/vaultspec_rag/server/_models.py`.
+
+### Phase `P02` - CLI-side round-trip validation
+
+Make the token round-trip the primary ownership check, preserving the executable-name path for a service predating the token, and surface the match as an operator signal.
+
+- [x] `P02.S03` - Make the token round-trip the primary service-ownership check, keeping the executable-name comparison as the fallback for a service that reports no token, and log rather than swallow a failed health probe; `src/vaultspec_rag/cli/_process.py`.
+- [x] `P02.S04` - Surface the token match as an operator signal in the service status output and carry the same key in the JSON envelope; `src/vaultspec_rag/cli/_service_status.py`.
+
+### Phase `P03` - Tests and smoke
+
+Cover the token default, the heartbeat write, and all three round-trip outcomes, then confirm the token end-to-end against a live service.
+
+- [x] `P03.S05` - Cover the health-model token default, the heartbeat writing the token to the status file, and the match, mismatch and absent-token fallback outcomes of the ownership check; `src/vaultspec_rag/tests/`.
+- [x] `P03.S06` - Confirm against a live service that the status file carries the token, that the health endpoint returns the same value, and that the service stops cleanly; `src/vaultspec_rag/tests/integration/`.
+
+## Description
 
 - Daemon: module global `_SERVICE_TOKEN`, generated in
   `service_lifespan`, merged into `service.json` via the
@@ -32,7 +53,7 @@ round-trip; mismatch reports the service as not-ours.
   (no-swallow rule, partial down-payment on #130).
 - Tests + smoke.
 
-## Tasks
+## Steps
 
 ### Phase 1 — daemon side (mcp_server.py)
 

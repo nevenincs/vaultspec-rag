@@ -2,7 +2,7 @@
 tags:
   - '#research'
   - '#project-hardening'
-date: 2026-05-03
+date: '2026-05-03'
 modified: '2026-06-30'
 related: []
 ---

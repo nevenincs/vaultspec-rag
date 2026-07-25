@@ -2,7 +2,7 @@
 tags:
   - '#plan'
   - '#test-and-paths'
-date: 2026-04-04
+date: '2026-04-04'
 modified: '2026-06-30'
 related:
   - '[[2026-04-04-test-and-paths-adr]]'
@@ -16,6 +16,29 @@ the static `test-project/` corpus with a synthetic generator. Clean break —
 no backwards compatibility. `.vault/data/` is the shared project data
 namespace (owned by vaultspec-core); RAG owns only the `search-data/`
 subtree.
+
+### Phase `P01` - Centralised path configuration
+
+Move every path default into one configuration module, make each overridable by both an argument and an environment variable under one prefix, and remove direct environment reads from production code.
+
+- [x] `P01.S01` - Define every data-path default in the single configuration module, each overridable by an explicit argument and by an environment variable under one project prefix; `src/vaultspec_rag/config.py`.
+- [x] `P01.S02` - Add the corresponding path arguments to the top-level command callback so every default has an argument-side override; `src/vaultspec_rag/cli/_app.py`.
+- [x] `P01.S03` - Route the store and both indexers through the centralised configuration rather than resolving paths themselves; `src/vaultspec_rag/store.py`.
+- [x] `P01.S04` - Remove every direct environment read from production code so configuration is the only reader, and settle the environment prefix on one project-scoped name throughout; `src/vaultspec_rag/config.py`.
+
+### Phase `P02` - Synthetic corpus
+
+Replace the checked-in fixture corpus with a generator, and repoint every fixture at it so no test depends on a static tree.
+
+- [x] `P02.S05` - Add the synthetic corpus generator producing a deterministic tree of vault documents and source files for tests to build against; `src/vaultspec_rag/tests/corpus.py`.
+- [x] `P02.S06` - Repoint every fixture and shared test configuration at the generated corpus and the centralised paths, removing the checked-in static corpus; `src/vaultspec_rag/tests/conftest.py`.
+
+### Phase `P03` - Audit and verification
+
+Confirm no stale path literal or bare environment read survives anywhere in the tree, and that the data namespace is ignored by version control.
+
+- [x] `P03.S07` - Audit every module for a stale path literal, a hardcoded directory or a bare environment read, and confirm none survives in production or test code; `src/vaultspec_rag/`.
+- [x] `P03.S08` - Ignore the generated data namespace in version control and confirm both override channels take effect for every declared path; `.gitignore`.
 
 ## Mandates
 
@@ -159,7 +182,7 @@ Every path MUST have both columns filled before the step is complete.
 
 Resolution order: CLI arg > env var > config default.
 
-## Tasks
+## Steps
 
 - Phase 1 — Centralize data paths (#33)
 
@@ -306,3 +329,7 @@ at least one test per setting that exercises the override chain
 - `.env.example` documents every `VAULTSPEC_RAG_*` variable
 - `test-project/` directory no longer exists
 - Needle-based search assertions confirm precision@K is deterministic
+
+## Description
+
+See the summary above.

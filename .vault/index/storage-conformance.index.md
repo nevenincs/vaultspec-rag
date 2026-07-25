@@ -24,8 +24,16 @@ related:
   - '[[2026-07-25-storage-conformance-P03-S14]]'
   - '[[2026-07-25-storage-conformance-P03-S15]]'
   - '[[2026-07-25-storage-conformance-P03-S16]]'
+  - '[[2026-07-25-storage-conformance-P04-S17]]'
+  - '[[2026-07-25-storage-conformance-P04-S18]]'
+  - '[[2026-07-25-storage-conformance-P04-S19]]'
+  - '[[2026-07-25-storage-conformance-P04-S20]]'
+  - '[[2026-07-25-storage-conformance-P04-summary]]'
   - '[[2026-07-25-storage-conformance-P05-S21]]'
+  - '[[2026-07-25-storage-conformance-P05-S22]]'
+  - '[[2026-07-25-storage-conformance-P05-summary]]'
   - '[[2026-07-25-storage-conformance-adr]]'
+  - '[[2026-07-25-storage-conformance-closing-review-audit]]'
   - '[[2026-07-25-storage-conformance-plan]]'
   - '[[2026-07-25-storage-conformance-research]]'
 ---
@@ -39,6 +47,10 @@ Auto-generated index of all documents tagged with `#storage-conformance`.
 ### adr
 
 - `2026-07-25-storage-conformance-adr` - `storage-conformance` adr: `prove a collection was built by the models the code expects` | (**status:** `accepted`)
+
+### audit
+
+- `2026-07-25-storage-conformance-closing-review-audit` - `storage-conformance` audit: `closing review`
 
 ### exec
 
@@ -60,7 +72,14 @@ Auto-generated index of all documents tagged with `#storage-conformance`.
 - `2026-07-25-storage-conformance-P03-S14` - Report the per-collection verdict and stamped identity in the storage survey payload
 - `2026-07-25-storage-conformance-P03-S15` - Render the survey verdict and stamped models in the storage CLI view
 - `2026-07-25-storage-conformance-P03-S16` - Cover the degradation surfacing with a guard test, and prove it fails when the reason is dropped
+- `2026-07-25-storage-conformance-P04-S17` - Carry the source identity through a namespace copy instead of stamping current values onto the destination
+- `2026-07-25-storage-conformance-P04-S18` - Record the stamped identity in the archive snapshot manifest so a restore can be judged
+- `2026-07-25-storage-conformance-P04-S19` - Keep an unverifiable namespace out of automated reclamation candidacy
+- `2026-07-25-storage-conformance-P04-S20` - Cover the copy carry and the reclamation exclusion with guard tests, and prove each fails when its carry is reverted
+- `2026-07-25-storage-conformance-P04-summary` - `storage-conformance` `P04` summary
 - `2026-07-25-storage-conformance-P05-S21` - Run the full suite, lint, type, and citation gates and reconcile the result against the recorded baseline
+- `2026-07-25-storage-conformance-P05-S22` - Review the delivered feature against the authorizing decision and record the audit
+- `2026-07-25-storage-conformance-P05-summary` - `storage-conformance` `P05` summary
 
 ### plan
 
