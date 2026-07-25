@@ -25,7 +25,6 @@ from concurrent.futures import (
     wait,
 )
 from concurrent.futures.process import BrokenProcessPool
-from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -37,17 +36,24 @@ from ..index_profiles import (
 )
 from ..job_control import NO_RUN_CONTROL, RunControlSignal
 from ..logging_config import log_event
-from . import _chunk_worker, _code_meta, _ignore_specs, _preprocess_glue
-from ._chunking import _MAX_FILE_SIZE, _is_binary
+from . import _chunk_worker, _code_meta, _preprocess_glue
 from ._code_meta import (
     CODE_EMBED_SCHEMA,
     CONTENT_EPOCH_KEY,
     EMBED_SCHEMA_KEY,
     MEMBERSHIP_EPOCH_KEY,
 )
+from ._content_discovery import (
+    DEFAULT_SCAN_SAMPLE_LIMIT as _DEFAULT_SCAN_SAMPLE_LIMIT,
+)
+from ._content_discovery import (
+    CodeContentDiscovery,
+    CodeExecutionPreflight,
+    CodeIndexPreflight,
+    CodeScopedPreflight,
+    ContentScanResult,
+)
 from ._content_policy import (
-    AdmissionDisposition,
-    AdmissionReason,
     ClassifiedContent,
     ContentKind,
     RootContentPolicy,
@@ -80,9 +86,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
     from multiprocessing.context import BaseContext
 
-    import pathspec
-
-    from ..config import PreprocessMode
     from ..embeddings import EmbeddingModel
     from ..job_control import RunControl
     from ..memory_probe import MemoryBudget, MemoryBudgetSnapshot, MemoryProbe
@@ -125,70 +128,10 @@ BATCH_SIZE = 64
 # potentially one completed chunk result) per source path on large trees.
 _CHUNK_FUTURE_WINDOW_PER_WORKER = 2
 
-_DEFAULT_SCAN_SAMPLE_LIMIT = 100
-
 # The digest a zero-byte source hashes to. Comparing against it identifies an
 # empty read exactly, from the hash the chunk worker already returned, without
 # re-reading a file that may still be mid-write.
 _EMPTY_SOURCE_DIGEST = hashlib.blake2b(b"").hexdigest()
-
-
-@dataclass(frozen=True, slots=True)
-class AdmissionCount:
-    """One stable content-kind/disposition count from a structured scan."""
-
-    kind: ContentKind | None
-    admitted: bool
-    reason: AdmissionReason
-    count: int
-
-
-@dataclass(frozen=True, slots=True)
-class AdmissionSample:
-    """One bounded, project-relative example from a structured scan."""
-
-    path: str
-    kind: ContentKind | None
-    admitted: bool
-    reason: AdmissionReason
-
-
-@dataclass(frozen=True, slots=True)
-class ContentScanResult:
-    """Structured discovery result and path-list compatibility authority."""
-
-    files: tuple[pathlib.Path, ...]
-    counts: tuple[AdmissionCount, ...]
-    samples: tuple[AdmissionSample, ...]
-    policy_fingerprint: str
-    preprocess_mode: PreprocessMode
-    preprocess_rule_count: int
-    hooks_will_run: bool
-    measurement: SupportMeasurement
-
-
-@dataclass(frozen=True, slots=True)
-class CodeIndexPreflight:
-    """Read-only policy and discovery authority for one code operation."""
-
-    root_dir: pathlib.Path
-    policy: ResolvedIndexPolicy
-    scan: ContentScanResult
-
-
-@dataclass(frozen=True, slots=True)
-class CodeScopedPreflight:
-    """Read-only policy and exact changed-path authority for scoped work."""
-
-    root_dir: pathlib.Path
-    policy: ResolvedIndexPolicy
-    changed_paths: tuple[pathlib.Path, ...]
-    measurement: SupportMeasurement = field(
-        default_factory=lambda: SupportMeasurement(0, 0)
-    )
-
-
-type CodeExecutionPreflight = CodeIndexPreflight | CodeScopedPreflight
 
 
 class _UnsettledCodeConsumerError(RuntimeError):
@@ -582,27 +525,29 @@ class CodebaseIndexer:
             )
             yield segment
 
-    def _resolve_operation_policy(self) -> ResolvedIndexPolicy:
-        """Resolve and validate one immutable snapshot before mutation authority.
+    @property
+    def _discovery(self) -> CodeContentDiscovery:
+        """Build the discovery collaborator from this indexer's live inputs.
 
-        Policy resolution performs only configuration and ignore-file reads. In
-        particular, it does not acquire the writer lock or touch collection,
-        manifest, metadata, preprocessing-cache, or embedding resources.
+        Rebuilt per access rather than captured at construction: the three
+        inputs that decide admission (root, content policy, extra excludes)
+        are plain attributes that lightweight consumers assign directly onto
+        an instance they never ran ``__init__`` on, so a value frozen in the
+        constructor would be absent or stale for them.
         """
-        from ._resolved_policy import resolve_index_policy
-
-        content_policy = getattr(self, "_content_policy", None) or RootContentPolicy(
-            SourceProfileVersion.CONVENTIONAL_V1
-        )
-        return resolve_index_policy(
+        return CodeContentDiscovery(
             self.root_dir,
-            content_policy=content_policy,
+            content_policy=getattr(self, "_content_policy", None),
             extra_excludes=getattr(self, "_extra_excludes", ()),
         )
 
+    def _resolve_operation_policy(self) -> ResolvedIndexPolicy:
+        """Resolve and validate one immutable snapshot before mutation authority."""
+        return self._discovery.resolve_policy()
+
     def resolve_policy_snapshot(self) -> ResolvedIndexPolicy:
         """Resolve immutable watcher/preflight authority without mutation."""
-        return self._resolve_operation_policy()
+        return self._discovery.resolve_policy()
 
     def preflight_content(
         self,
@@ -610,49 +555,14 @@ class CodebaseIndexer:
         sample_limit: int = _DEFAULT_SCAN_SAMPLE_LIMIT,
     ) -> CodeIndexPreflight:
         """Resolve and discover once before any mutable index resource."""
-        policy = self.resolve_policy_snapshot()
-        scan = self._scan_content(policy, sample_limit=sample_limit)
-        return CodeIndexPreflight(
-            root_dir=self.root_dir.resolve(),
-            policy=policy,
-            scan=scan,
-        )
+        return self._discovery.preflight_content(sample_limit=sample_limit)
 
     def preflight_changed_paths(
         self,
         changed_paths: Iterable[pathlib.Path],
     ) -> CodeScopedPreflight:
         """Resolve policy and classify one exact normalized changed-path scope."""
-        policy = self.resolve_policy_snapshot()
-        normalized = self._normalize_changed_paths(changed_paths)
-        source_files = 0
-        source_bytes = 0
-        for path in normalized:
-            rel = path.relative_to(self.root_dir).as_posix()
-            policy.classify(rel)
-            if path.is_file():
-                classified = self._classify_file(path, rel, policy)
-                disposition = classified.disposition
-                if disposition.admitted and disposition.kind is ContentKind.CODE:
-                    source_files += 1
-                    source_bytes += path.stat().st_size
-        return CodeScopedPreflight(
-            root_dir=self.root_dir.resolve(),
-            policy=policy,
-            changed_paths=normalized,
-            measurement=SupportMeasurement(source_files, source_bytes),
-        )
-
-    def _normalize_changed_paths(
-        self,
-        changed_paths: Iterable[pathlib.Path],
-    ) -> tuple[pathlib.Path, ...]:
-        """Return deterministic canonical paths wholly contained by this root."""
-        root = self.root_dir.resolve()
-        normalized = {path.resolve() for path in changed_paths}
-        if any(not path.is_relative_to(root) for path in normalized):
-            raise ValueError("code index scope contains a path outside its root")
-        return tuple(sorted(normalized, key=lambda path: path.as_posix()))
+        return self._discovery.preflight_changed_paths(changed_paths)
 
     def _accept_preflight(
         self,
@@ -661,71 +571,9 @@ class CodebaseIndexer:
         changed_paths: Iterable[pathlib.Path] | None,
     ) -> tuple[ResolvedIndexPolicy, tuple[pathlib.Path, ...] | None]:
         """Verify and return one exact caller-owned execution authority."""
-        if preflight.root_dir != self.root_dir.resolve():
-            raise ValueError(
-                "code index preflight root does not match the indexer root"
-            )
-        if preflight.policy.root_dir != preflight.root_dir:
-            raise ValueError("code index preflight policy belongs to another root")
-        if isinstance(preflight, CodeIndexPreflight):
-            if changed_paths is not None:
-                raise ValueError("full code preflight cannot authorize scoped work")
-            if (
-                preflight.scan.policy_fingerprint
-                != preflight.policy.fingerprints.snapshot
-            ):
-                raise ValueError(
-                    "code index preflight policy fingerprint is inconsistent"
-                )
-            root = preflight.root_dir
-            if any(
-                not path.resolve().is_relative_to(root) for path in preflight.scan.files
-            ):
-                raise ValueError(
-                    "code index preflight contains a path outside its root"
-                )
-            for path in preflight.scan.files:
-                rel = path.relative_to(root).as_posix()
-                disposition = preflight.policy.classify(rel).disposition
-                if not (disposition.admitted and disposition.kind is ContentKind.CODE):
-                    raise ValueError(
-                        "code index preflight contains a path not admitted as code"
-                    )
-            return preflight.policy, preflight.scan.files
-        if changed_paths is None:
-            raise ValueError("scoped code preflight requires changed paths")
-        normalized = self._normalize_changed_paths(changed_paths)
-        if normalized != preflight.changed_paths:
-            raise ValueError("code index scope does not match its validated preflight")
-        for path in normalized:
-            rel = path.relative_to(preflight.root_dir).as_posix()
-            preflight.policy.classify(rel)
-        return preflight.policy, None
-
-    def _collect_gitignore_patterns(self) -> list[str]:
-        """Collect the hardcoded and ``.gitignore``-sourced exclusion patterns.
-
-        Delegates to :func:`_ignore_specs.collect_gitignore_patterns`; kept as
-        a method so callers (and tests) can monkeypatch the single tree walk.
-        """
-        return _ignore_specs.collect_gitignore_patterns(self.root_dir)
-
-    def _process_gitignore_lines(
-        self,
-        lines: list[str],
-        rel_dir: pathlib.Path,
-        patterns: list[str],
-    ) -> None:
-        _ignore_specs.process_gitignore_lines(lines, rel_dir, patterns)
-
-    def _collect_vaultragignore_patterns(self) -> list[str]:
-        """Collect the root ``.vaultragignore`` patterns (excluding ``--exclude``)."""
-        return _ignore_specs.collect_vaultragignore_patterns(self.root_dir)
-
-    def _build_vaultragignore_spec(self) -> pathspec.GitIgnoreSpec | None:
-        """Build a pathspec from ``.vaultragignore`` and CLI ``--exclude`` patterns."""
-        return _ignore_specs.build_vaultragignore_spec(
-            self.root_dir, self._extra_excludes
+        return self._discovery.accept_preflight(
+            preflight,
+            changed_paths=changed_paths,
         )
 
     def _compute_code_epochs(
@@ -951,28 +799,7 @@ class CodebaseIndexer:
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> list[pathlib.Path]:
         """Project structured policy discovery to admitted code paths."""
-        resolved = policy or self._resolve_operation_policy()
-        return list(
-            self._scan_content(
-                resolved,
-                sample_limit=0,
-                run_control=run_control,
-            ).files
-        )
-
-    @staticmethod
-    def _is_ignored(policy: ResolvedIndexPolicy, rel_path: str) -> bool:
-        """Return ignore precedence from the resolved classifier snapshot."""
-        classified = policy.classify(rel_path)
-        return classified.disposition.reason is AdmissionReason.IGNORED
-
-    @staticmethod
-    def _has_transform(
-        policy: ResolvedIndexPolicy,
-        rel_path: str,
-    ) -> bool:
-        """Return whether ownership includes a matched transform."""
-        return policy.match_preprocess(rel_path) is not None
+        return self._discovery.scan_codebase(policy, run_control=run_control)
 
     def _classify_file(
         self,
@@ -981,123 +808,7 @@ class CodebaseIndexer:
         policy: ResolvedIndexPolicy,
     ) -> ClassifiedContent:
         """Apply ownership first, then raw-code size and binary capability."""
-        classified = policy.classify(rel_path)
-        disposition = classified.disposition
-        if not (
-            disposition.admitted and disposition.kind is ContentKind.CODE
-        ) or self._has_transform(policy, rel_path):
-            return classified
-        try:
-            if path.stat().st_size > _MAX_FILE_SIZE:
-                return ClassifiedContent(
-                    AdmissionDisposition(
-                        ContentKind.CODE,
-                        False,
-                        AdmissionReason.SOURCE_TOO_LARGE,
-                    )
-                )
-            if _is_binary(path):
-                return ClassifiedContent(
-                    AdmissionDisposition(
-                        ContentKind.CODE,
-                        False,
-                        AdmissionReason.SOURCE_BINARY,
-                    )
-                )
-        except OSError:
-            return ClassifiedContent(
-                AdmissionDisposition(
-                    ContentKind.CODE,
-                    False,
-                    AdmissionReason.SOURCE_PROBE_FAILED,
-                )
-            )
-        return classified
-
-    def _scan_content(
-        self,
-        policy: ResolvedIndexPolicy,
-        *,
-        sample_limit: int,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> ContentScanResult:
-        """Scan through one immutable policy with bounded disposition samples.
-
-        Walks the project tree using ``os.walk``, pruning directories
-        rejected by the snapshot's ignore rules. Every visited file is
-        classified by that same snapshot; only admitted code paths enter the
-        compatibility projection.
-
-        Args:
-            policy: Exact operation snapshot used for every disposition.
-            sample_limit: Maximum number of deterministic path samples.
-
-        Returns:
-            Structured counts, bounded samples, and admitted code paths.
-
-        Raises:
-            OSError: If the root directory cannot be traversed.
-            ValueError: If ``sample_limit`` is negative.
-        """
-        if sample_limit < 0:
-            raise ValueError("sample_limit must be non-negative")
-
-        result: list[pathlib.Path] = []
-        source_files = 0
-        source_bytes = 0
-        counts: dict[tuple[ContentKind | None, bool, AdmissionReason], int] = {}
-        samples: list[AdmissionSample] = []
-        root_str = str(self.root_dir)
-        for dirpath, dirs, files in os.walk(self.root_dir, topdown=True):
-            run_control.checkpoint()
-            # Prune ignored directories in-place to avoid traversal
-            rel_dir = os.path.relpath(dirpath, root_str).replace("\\", "/")
-            if rel_dir == ".":
-                dirs[:] = [d for d in dirs if not self._is_ignored(policy, f"{d}/")]
-            else:
-                dirs[:] = [
-                    d for d in dirs if not self._is_ignored(policy, f"{rel_dir}/{d}/")
-                ]
-            admitted_files, admitted_bytes = self._process_scan_files(
-                dirpath,
-                files,
-                rel_dir,
-                policy,
-                result,
-                counts,
-                samples,
-                sample_limit,
-                run_control=run_control,
-            )
-            source_files += admitted_files
-            source_bytes += admitted_bytes
-            run_control.checkpoint()
-        ordered_counts = tuple(
-            AdmissionCount(kind, admitted, reason, count)
-            for (kind, admitted, reason), count in sorted(
-                counts.items(),
-                key=lambda item: (
-                    item[0][0].value if item[0][0] is not None else "",
-                    item[0][1],
-                    item[0][2].value,
-                ),
-            )
-        )
-        return ContentScanResult(
-            files=tuple(result),
-            counts=ordered_counts,
-            samples=tuple(samples),
-            policy_fingerprint=policy.fingerprints.snapshot,
-            preprocess_mode=policy.execution_mode,
-            preprocess_rule_count=len(policy.preprocess_rules),
-            hooks_will_run=(
-                policy.execution_mode != "off" and bool(policy.preprocess_rules)
-            ),
-            measurement=SupportMeasurement(
-                source_files=source_files,
-                source_bytes=source_bytes,
-            ),
-        )
+        return self._discovery.classify_file(path, rel_path, policy)
 
     def _matches_preprocess_rule(self, rel: str) -> bool:
         """Return whether a preprocess rule matches this project-relative path.
@@ -1111,65 +822,13 @@ class CodebaseIndexer:
             getattr(self, "_prep_ctx", None), rel
         )
 
-    def _process_scan_files(
-        self,
-        dirpath: str,
-        files: list[str],
-        rel_dir: str,
-        policy: ResolvedIndexPolicy,
-        result: list[pathlib.Path],
-        counts: dict[tuple[ContentKind | None, bool, AdmissionReason], int],
-        samples: list[AdmissionSample],
-        sample_limit: int,
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> tuple[int, int]:
-        admitted_files = 0
-        admitted_bytes = 0
-        for fname in files:
-            run_control.checkpoint()
-            p = pathlib.Path(dirpath) / fname
-            rel = fname if rel_dir == "." else f"{rel_dir}/{fname}"
-            classified = self._classify_file(p, rel, policy)
-            disposition = classified.disposition
-            source_size = 0
-            if disposition.admitted and disposition.kind is ContentKind.CODE:
-                try:
-                    source_size = p.stat().st_size
-                except OSError:
-                    classified = ClassifiedContent(
-                        AdmissionDisposition(
-                            ContentKind.CODE,
-                            False,
-                            AdmissionReason.SOURCE_PROBE_FAILED,
-                        )
-                    )
-                    disposition = classified.disposition
-            key = (disposition.kind, disposition.admitted, disposition.reason)
-            counts[key] = counts.get(key, 0) + 1
-            if len(samples) < sample_limit:
-                samples.append(
-                    AdmissionSample(
-                        rel,
-                        disposition.kind,
-                        disposition.admitted,
-                        disposition.reason,
-                    )
-                )
-            if disposition.admitted and disposition.kind is ContentKind.CODE:
-                result.append(p)
-                admitted_files += 1
-                admitted_bytes += source_size
-            run_control.checkpoint()
-        return admitted_files, admitted_bytes
-
     def scan_content(
         self,
         *,
         sample_limit: int = _DEFAULT_SCAN_SAMPLE_LIMIT,
     ) -> ContentScanResult:
         """Return structured admission from one freshly resolved snapshot."""
-        return self.preflight_content(sample_limit=sample_limit).scan
+        return self._discovery.scan_admission(sample_limit=sample_limit)
 
     def scan_files(self) -> list[pathlib.Path]:
         """Return the list of files that would be indexed.
@@ -1180,7 +839,7 @@ class CodebaseIndexer:
         Returns:
             List of absolute paths to indexable source files.
         """
-        return list(self.scan_content(sample_limit=0).files)
+        return self._discovery.scan_files()
 
     def _chunk_file(self, path: pathlib.Path) -> list[CodeChunk]:
         """Read a file and split it into AST-aware ``CodeChunk``s.
