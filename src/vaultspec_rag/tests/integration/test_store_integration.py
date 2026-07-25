@@ -497,3 +497,43 @@ class TestServedCodeCollectionPointer:
             assert store.code_collection_exists() is True
         finally:
             store.close()
+
+    def test_an_unreadable_pointer_is_not_reported_as_absent(
+        self, tmp_path: Path
+    ) -> None:
+        """ "Could not read" and "never published" must stay distinguishable.
+
+        A reader may conflate them - both fall back to the derived name, which
+        is safe. A deletion decision may not: treating an unreadable pointer as
+        "nothing points here" takes a live served collection for an
+        unreferenced one. The storage rules require the grace clock to reset on
+        an unverifiable observation, which is only possible if the observation
+        can be recognised as unverifiable.
+
+        Proven able to fail: returning ``verifiable=True`` from the OSError
+        branch of ``read_served_pointer`` fails the unreadable case below;
+        returning ``verifiable=False`` from the FileNotFoundError branch fails
+        the never-published case. Neither direction alone is enough.
+        """
+        from ..._store_models import read_served_pointer, served_code_pointer_path
+
+        # Never published: absence is an observed fact.
+        absent = read_served_pointer(tmp_path)
+        assert absent.collection is None
+        assert absent.verifiable is True
+
+        # Present but unparseable bytes: the file was read, so what it fails to
+        # say is still an observation.
+        path = served_code_pointer_path(tmp_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{ not json", encoding="utf-8")
+        unreadable = read_served_pointer(tmp_path)
+        assert unreadable.collection is None
+        assert unreadable.verifiable is False
+
+        # And the read path is unchanged by the distinction.
+        from ..._store_models import resolve_served_code_collection
+
+        assert (
+            resolve_served_code_collection(tmp_path, "codebase_docs") == "codebase_docs"
+        )
