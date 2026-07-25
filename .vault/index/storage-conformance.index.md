@@ -30,7 +30,10 @@ related:
   - '[[2026-07-25-storage-conformance-P04-S20]]'
   - '[[2026-07-25-storage-conformance-P04-summary]]'
   - '[[2026-07-25-storage-conformance-P05-S21]]'
+  - '[[2026-07-25-storage-conformance-P05-S22]]'
+  - '[[2026-07-25-storage-conformance-P05-summary]]'
   - '[[2026-07-25-storage-conformance-adr]]'
+  - '[[2026-07-25-storage-conformance-closing-review-audit]]'
   - '[[2026-07-25-storage-conformance-plan]]'
   - '[[2026-07-25-storage-conformance-research]]'
 ---
@@ -44,6 +47,10 @@ Auto-generated index of all documents tagged with `#storage-conformance`.
 ### adr
 
 - `2026-07-25-storage-conformance-adr` - `storage-conformance` adr: `prove a collection was built by the models the code expects` | (**status:** `accepted`)
+
+### audit
+
+- `2026-07-25-storage-conformance-closing-review-audit` - `storage-conformance` audit: `closing review`
 
 ### exec
 
@@ -71,6 +78,8 @@ Auto-generated index of all documents tagged with `#storage-conformance`.
 - `2026-07-25-storage-conformance-P04-S20` - Cover the copy carry and the reclamation exclusion with guard tests, and prove each fails when its carry is reverted
 - `2026-07-25-storage-conformance-P04-summary` - `storage-conformance` `P04` summary
 - `2026-07-25-storage-conformance-P05-S21` - Run the full suite, lint, type, and citation gates and reconcile the result against the recorded baseline
+- `2026-07-25-storage-conformance-P05-S22` - Review the delivered feature against the authorizing decision and record the audit
+- `2026-07-25-storage-conformance-P05-summary` - `storage-conformance` `P05` summary
 
 ### plan
 
