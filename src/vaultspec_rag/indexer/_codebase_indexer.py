@@ -67,6 +67,7 @@ from ._content_policy import (
 from ._drift_owner import CodeDriftOwner
 from ._file_state import FileStateKind
 from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
+from ._pool_guard import spawn_pool
 from ._preprocess_runner import PreprocessAbortError
 from ._route_migration import reconcile_generation_storage
 from ._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
@@ -983,7 +984,7 @@ class CodebaseIndexer:
         completed = 0
         ctx = multiprocessing.get_context("spawn")
         try:
-            with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+            with spawn_pool(max_workers=workers, mp_context=ctx) as pool:
                 group_iter = iter(batch_groups)
                 futures: dict[Future[list[FileChunkResult]], int] = {}
 
@@ -1189,7 +1190,7 @@ class CodebaseIndexer:
         consumer_died = False
         advanced = 0
         try:
-            with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+            with spawn_pool(max_workers=workers, mp_context=ctx) as pool:
                 pending: set[Future[FileChunkResult]] = set()
                 try:
                     for path in itertools.islice(paths_iter, window):
