@@ -24,9 +24,9 @@ Persist what a code-index publication actually wrote, then replace the existence
 
 Compute the published-versus-live comparison once in the service domain and carry it to the CLI and MCP adapters so a search over a demonstrably incomplete index cannot present itself as authoritative.
 
-- [ ] `P02.S04` - Compute the published-versus-live completeness fact once on the code search path and carry it on the result envelope beside the indexed count; `src/vaultspec_rag/api.py, src/vaultspec_rag/service.py`.
-- [ ] `P02.S05` - Render the shortfall as a CLI warning naming the deficit and the remedy, and carry the same field through the MCP code search tool without recomputing it; `src/vaultspec_rag/cli/_search.py, src/vaultspec_rag/mcp/_tools.py`.
-- [ ] `P02.S06` - Prove the completeness warning can fail by suppressing the signal over a truncated index, observing the intended failure, restoring, and observing the pass; `src/vaultspec_rag/tests/test_cli_search_safety.py`.
+- [x] `P02.S04` - Compute the published-versus-live completeness fact once on the code search path and carry it on the result envelope beside the indexed count; `src/vaultspec_rag/_index_breadth.py, src/vaultspec_rag/api.py, src/vaultspec_rag/server/_routes.py`.
+- [x] `P02.S05` - Render the shortfall as a CLI warning naming the deficit and the remedy on both the service and local search paths, and confirm the MCP code search tool already carries the field without recomputing it; `src/vaultspec_rag/cli/_search.py`.
+- [x] `P02.S06` - Prove the completeness warning can fail by suppressing the signal over a truncated index, observing the intended failure, restoring, and observing the pass; `src/vaultspec_rag/tests/test_cli_search_safety.py, src/vaultspec_rag/tests/test_service_search_diagnostics.py`.
 
 ### Phase `P03` - validate and close
 
