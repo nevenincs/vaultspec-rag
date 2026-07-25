@@ -36,7 +36,6 @@ from ..index_profiles import (
     get_index_support_profile,
 )
 from ..job_control import NO_RUN_CONTROL, RunControlSignal
-from ..logging_config import log_event
 from . import _chunk_worker, _code_meta, _preprocess_glue
 from ._code_meta import (
     CODE_EMBED_SCHEMA,
@@ -60,7 +59,9 @@ from ._content_policy import (
     RootContentPolicy,
     SourceProfileVersion,
 )
+from ._drift_owner import CodeDriftOwner
 from ._file_state import FileStateKind
+from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
 from ._preprocess_runner import PreprocessAbortError
 from ._route_migration import reconcile_generation_storage
 from ._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
@@ -290,11 +291,6 @@ class CodebaseIndexer:
     hashing to skip unchanged files.
     """
 
-    # Immutable compatibility default for lightweight ``__new__`` consumers.
-    # Normal construction and every indexing operation replace this on the
-    # instance with the exact resolved snapshot semantics.
-    _chunk_execution_policy = _chunk_worker.ChunkExecutionPolicy()
-
     def __init__(
         self,
         root_dir: pathlib.Path,
@@ -327,6 +323,13 @@ class CodebaseIndexer:
         self._extra_excludes = extra_excludes or []
         self._content_policy = content_policy or RootContentPolicy(
             SourceProfileVersion.CONVENTIONAL_V1
+        )
+        # Discovery is fully determined by the three inputs above and holds no
+        # per-run state, so one instance serves every operation on this root.
+        self._discovery = CodeContentDiscovery(
+            self.root_dir,
+            content_policy=self._content_policy,
+            extra_excludes=self._extra_excludes,
         )
         # Indexer-level writer lock that serializes full_index and
         # incremental_index against each other on the same instance,
@@ -368,21 +371,24 @@ class CodebaseIndexer:
         self._support_profile_name: str | None = None
         self._last_checkpoint: CodeRunCheckpoint | None = None
         self._memory_budget: MemoryBudget | None = None
+        # Bound to the generation once a run opens its checkpoint, because
+        # superseding evidence is meaningless without one to supersede in.
+        self._drift_owner: CodeDriftOwner | None = None
 
     @property
     def support_measurement(self) -> SupportMeasurement:
         """Return the latest immutable code workload measurement snapshot."""
-        return getattr(self, "_support_measurement", SupportMeasurement(0, 0))
+        return self._support_measurement
 
     @property
     def last_checkpoint(self) -> CodeRunCheckpoint | None:
         """Return the latest run authority for service-domain projection."""
-        return getattr(self, "_last_checkpoint", None)
+        return self._last_checkpoint
 
     @property
     def memory_budget_snapshot(self) -> MemoryBudgetSnapshot | None:
         """Return the latest immutable enforced-memory observation."""
-        budget = getattr(self, "_memory_budget", None)
+        budget = self._memory_budget
         return budget.snapshot if budget is not None else None
 
     def _begin_memory_budget(self) -> None:
@@ -402,7 +408,7 @@ class CodebaseIndexer:
         """Route this thread's forward-peak captures into the job budget."""
         from ..memory_probe import record_forward_peaks
 
-        budget = getattr(self, "_memory_budget", None)
+        budget = self._memory_budget
         if budget is None:
             return contextlib.nullcontext()
         return record_forward_peaks(budget.record_forward_peak_mb)
@@ -526,21 +532,6 @@ class CodebaseIndexer:
             )
             yield segment
 
-    @property
-    def _discovery(self) -> CodeContentDiscovery:
-        """Build the discovery collaborator from this indexer's live inputs.
-
-        Rebuilt per access rather than captured at construction: the three
-        inputs that decide admission (root, content policy, extra excludes)
-        are plain attributes that lightweight consumers assign directly onto
-        an instance they never ran ``__init__`` on, so a value frozen in the
-        constructor would be absent or stale for them.
-        """
-        return CodeContentDiscovery(
-            self.root_dir,
-            content_policy=getattr(self, "_content_policy", None),
-            extra_excludes=getattr(self, "_extra_excludes", ()),
-        )
 
     def _resolve_operation_policy(self) -> ResolvedIndexPolicy:
         """Resolve and validate one immutable snapshot before mutation authority."""
@@ -586,9 +577,10 @@ class CodebaseIndexer:
         return fingerprints.membership, fingerprints.content
 
     def _reset_reuse_state(self) -> None:
-        """Clear per-run donor reuse state at the start of a public run."""
+        """Clear per-run donor reuse and drift state at the start of a run."""
         self._reuse_stats = None
         self._donor_reuse = None
+        self._drift_owner = None
 
     def _reuse_snapshot(self) -> dict[str, object] | None:
         """Return this run's reuse telemetry block, or ``None`` when off."""
@@ -689,7 +681,7 @@ class CodebaseIndexer:
         return getattr(
             self,
             "_prep_rule_total",
-            _preprocess_glue.prep_rule_count(getattr(self, "_prep_ctx", None)),
+            _preprocess_glue.prep_rule_count(self._prep_ctx),
         )
 
     @staticmethod
@@ -819,9 +811,7 @@ class CodebaseIndexer:
         extension is unsupported, it exceeds ``_MAX_FILE_SIZE``, or it is binary,
         because the preprocessor extracts indexable text from it.
         """
-        return _preprocess_glue.matches_preprocess_rule(
-            getattr(self, "_prep_ctx", None), rel
-        )
+        return _preprocess_glue.matches_preprocess_rule(self._prep_ctx, rel)
 
     def scan_content(
         self,
@@ -917,7 +907,7 @@ class CodebaseIndexer:
             ``(batch_groups, singles)``: batch groups as ``(rule, paths)`` pairs
             and the single-file paths, together covering every input path.
         """
-        prep = getattr(self, "_prep_ctx", None)
+        prep = self._prep_ctx
         if prep is None or not any(rule.batch for rule in prep.config.rules):
             # No batch rule configured: every file keeps the per-file flow and
             # pays zero extra per-path match cost.
@@ -960,7 +950,7 @@ class CodebaseIndexer:
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> None:
         """Run batch groups through a bounded spawned-worker window."""
-        prep = getattr(self, "_prep_ctx", None)
+        prep = self._prep_ctx
         if not batch_groups or prep is None:
             return
         workers = self._resolve_chunk_workers(len(batch_groups))
@@ -1066,7 +1056,7 @@ class CodebaseIndexer:
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> None:
         """Run batch groups serially in-process."""
-        prep = getattr(self, "_prep_ctx", None)
+        prep = self._prep_ctx
         if prep is None:
             return
         for rule, group in batch_groups:
@@ -1292,14 +1282,19 @@ class CodebaseIndexer:
                 return
             yield segment
 
-    @staticmethod
     def _record_confirmed_slice(
-        checkpoint: CodeRunCheckpoint,
+        self,
         segments: tuple[CodeFileSegment, ...],
         metadata: dict[str, str],
     ) -> None:
-        """Persist the file units covered by one confirmed store mutation."""
-        checkpoint.record_confirmed_segments(segments, metadata)
+        """Persist the file units covered by one confirmed store mutation.
+
+        Routed through the drift owner rather than straight at the checkpoint:
+        the store write has already been confirmed here, so a path that moved
+        since its digest was observed must be superseded and re-recorded, not
+        allowed to fail a run that has otherwise succeeded.
+        """
+        self.drift_owner.record_segments(segments, metadata)
 
     def _consume_weighted_slice(
         self,
@@ -1328,7 +1323,6 @@ class CodebaseIndexer:
             on_storage_confirmed = (
                 partial(
                     self._record_confirmed_slice,
-                    checkpoint,
                     weighted_slice.segments,
                     metadata,
                 )
@@ -1627,7 +1621,22 @@ class CodebaseIndexer:
             )
             checkpoint = _open()
         self._last_checkpoint = checkpoint
+        self._drift_owner = CodeDriftOwner(checkpoint, self.store)
         return checkpoint
+
+    @property
+    def drift_owner(self) -> CodeDriftOwner:
+        """Return the open generation's drift owner.
+
+        Reaching this before a checkpoint is open means a caller is trying to
+        supersede evidence in a generation that does not exist yet.
+        """
+        owner = self._drift_owner
+        if owner is None:
+            raise RuntimeError(
+                "code drift ownership requires an open run checkpoint"
+            )
+        return owner
 
     def _checkpoint_evidence_lost(self, checkpoint: CodeRunCheckpoint) -> bool:
         """Return whether resumed storage-confirmed evidence points at nothing.
@@ -2226,53 +2235,6 @@ class CodebaseIndexer:
                 result[unit.rel_path].update(unit.point_ids)
         return result
 
-    def _reopen_digest_drifted_paths(
-        self,
-        checkpoint: CodeRunCheckpoint,
-        current_digests: dict[str, str],
-    ) -> int:
-        """Supersede resumed indexed evidence for paths that changed since.
-
-        A resumed generation carries the indexed paths of the attempt that
-        failed. Any of those whose source changed in the meantime cannot be
-        recognised as already committed, because commit-unit identity binds
-        the source digest, and cannot be written over an indexed path either.
-        Superseding them here - before any segment is dispatched - is what
-        turns a resumed attempt over a moving tree into an ordinary one.
-
-        Deleting the published points is not optional. Chunk identity embeds
-        the line span and a content hash, so re-ingesting changed content
-        mints new identities rather than overwriting the old ones; leaving
-        them would replace a visible failure with silently duplicated
-        content.
-
-        The points are dropped from storage first and the units that claim
-        them are removed immediately after. No separate deletion unit is
-        recorded, because a point identity may belong to only one commit
-        unit: while the superseded upsert still claims these points, nothing
-        else can, and once it is gone the ledger holds no claim on them at
-        all - which is exactly what their removal from storage means. An
-        interruption between the two steps replays cleanly, because the path
-        is still recorded indexed under the old digest and is simply
-        re-opened again, finding no points left to drop.
-
-        Returns:
-            The number of paths re-opened.
-        """
-        drifted = checkpoint.drifted_indexed_paths(current_digests)
-        for rel_path, superseded_digest in sorted(drifted.items()):
-            stale_ids = sorted(self._get_chunk_ids_for_files({rel_path}))
-            if stale_ids:
-                self.store.delete_code_chunks(stale_ids)
-            checkpoint.reopen_drifted_path(rel_path, superseded_digest)
-        if drifted:
-            logger.info(
-                "Re-opened %d resumed code path(s) whose source changed since "
-                "the interrupted attempt indexed them",
-                len(drifted),
-            )
-        return len(drifted)
-
     def _incremental_prior_ids_by_path(
         self,
         checkpoint: CodeRunCheckpoint,
@@ -2513,67 +2475,29 @@ class CodebaseIndexer:
         with self._writer_lock:
             self._resolved_policy = resolved_policy
             self._reset_reuse_state()
-            run_control.checkpoint()
-            log_event(
-                logger,
-                "service.index",
-                "started",
-                source="code",
-                mode="full",
-                clean=clean,
-                root=self.root_dir,
-            )
-            try:
-                # Stamp the activity clock at run START as well as at
-                # completion: a long run spanning a maintenance tick must
-                # advance the ephemeral idle clock before any reclaim
-                # evaluation can see a stale stamp mid-write.
-                run_control.checkpoint()
-                self.store.touch_manifest_last_indexed()
-                run_control.checkpoint()
-                result = self._full_index_locked(
+            return run_index_lifecycle(
+                lambda: self._full_index_locked(
                     clean=clean,
                     policy=resolved_policy,
                     discovered_paths=discovered_paths,
                     reporter=reporter,
                     run_control=run_control,
-                )
-                run_control.checkpoint()
-                self.store.touch_manifest_last_indexed()
-                run_control.checkpoint()
-            except Exception as exc:
-                log_event(
-                    logger,
-                    "service.index",
-                    "failed",
-                    severity=logging.ERROR,
-                    exc_info=True,
-                    source="code",
-                    mode="full",
-                    clean=clean,
-                    root=self.root_dir,
-                    error=exc,
-                )
-                raise
-            log_event(
-                logger,
-                "service.index",
-                "completed",
+                ),
+                event_logger=logger,
+                store=self.store,
                 source="code",
                 mode="full",
                 clean=clean,
                 root=self.root_dir,
-                total=result.total,
-                added=result.added,
-                updated=result.updated,
-                removed=result.removed,
-                duration_ms=result.duration_ms,
-                files=result.files,
-                preprocess_rules=self._prep_rule_count(),
-                preprocess_ok=result.preprocess_ok,
-                preprocess_skipped=result.preprocess_skipped,
+                run_control=run_control,
+                completion_fields=self._completed_event_fields,
             )
-            return result
+
+    def _completed_event_fields(self, result: IndexResult) -> dict[str, object]:
+        """Code-domain extras carried by this run's ``completed`` event."""
+        fields = preprocess_completion_fields(result)
+        fields["preprocess_rules"] = self._prep_rule_count()
+        return fields
 
     def _full_index_locked(
         self,
@@ -2797,26 +2721,8 @@ class CodebaseIndexer:
         with self._writer_lock:
             self._resolved_policy = resolved_policy
             self._reset_reuse_state()
-            run_control.checkpoint()
-            mode = "scoped_incremental" if changed_paths is not None else "incremental"
-            log_event(
-                logger,
-                "service.index",
-                "started",
-                source="code",
-                mode=mode,
-                clean=False,
-                root=self.root_dir,
-            )
-            try:
-                # Stamp the activity clock at run START as well as at
-                # completion: a long run spanning a maintenance tick must
-                # advance the ephemeral idle clock before any reclaim
-                # evaluation can see a stale stamp mid-write.
-                run_control.checkpoint()
-                self.store.touch_manifest_last_indexed()
-                run_control.checkpoint()
-                result = self._incremental_index_locked(
+            return run_index_lifecycle(
+                lambda: self._incremental_index_locked(
                     policy=resolved_policy,
                     reporter=reporter,
                     changed_paths=changed_paths,
@@ -2824,43 +2730,18 @@ class CodebaseIndexer:
                         discovered_paths if changed_paths is None else None
                     ),
                     run_control=run_control,
-                )
-                run_control.checkpoint()
-                self.store.touch_manifest_last_indexed()
-                run_control.checkpoint()
-            except Exception as exc:
-                log_event(
-                    logger,
-                    "service.index",
-                    "failed",
-                    severity=logging.ERROR,
-                    exc_info=True,
-                    source="code",
-                    mode=mode,
-                    clean=False,
-                    root=self.root_dir,
-                    error=exc,
-                )
-                raise
-            log_event(
-                logger,
-                "service.index",
-                "completed",
+                ),
+                event_logger=logger,
+                store=self.store,
                 source="code",
-                mode=mode,
+                mode=(
+                    "scoped_incremental" if changed_paths is not None else "incremental"
+                ),
                 clean=False,
                 root=self.root_dir,
-                total=result.total,
-                added=result.added,
-                updated=result.updated,
-                removed=result.removed,
-                duration_ms=result.duration_ms,
-                files=result.files,
-                preprocess_rules=self._prep_rule_count(),
-                preprocess_ok=result.preprocess_ok,
-                preprocess_skipped=result.preprocess_skipped,
+                run_control=run_control,
+                completion_fields=self._completed_event_fields,
             )
-            return result
 
     def _incremental_index_locked(
         self,
@@ -2874,11 +2755,13 @@ class CodebaseIndexer:
         """Locked implementation of cooperative incremental indexing."""
         run_control.checkpoint()
         if self._published_evidence_lost():
+            # The predicate has already logged which branch fired and, for a
+            # shortfall, both counts. Naming only the absent-collection case
+            # here would contradict it on the commoner path.
             logger.warning(
-                "code collection is missing from storage but published index "
-                "metadata still describes committed files; running a full "
-                "failure-safe reconciliation instead of trusting the carried "
-                "evidence"
+                "storage no longer backs the published code index metadata; "
+                "running a full failure-safe reconciliation instead of "
+                "trusting the carried evidence"
             )
             return self._full_index_locked(
                 clean=False,
@@ -2992,9 +2875,8 @@ class CodebaseIndexer:
         run_control.checkpoint()
         # Scoped to the paths this run re-ingests: re-opening anything else
         # would drop its points without republishing them.
-        self._reopen_digest_drifted_paths(
-            checkpoint,
-            {rel: current_hashes[rel] for rel in to_index},
+        self.drift_owner.supersede_snapshot(
+            {rel: current_hashes[rel] for rel in to_index}
         )
         run_control.checkpoint()
         prior_ids_by_path = self._incremental_prior_ids_by_path(
@@ -3202,9 +3084,8 @@ class CodebaseIndexer:
         run_control.checkpoint()
         # Scoped to the paths this run re-ingests: re-opening anything else
         # would drop its points without republishing them.
-        self._reopen_digest_drifted_paths(
-            checkpoint,
-            {rel: changed_hashes[rel] for rel in to_index},
+        self.drift_owner.supersede_snapshot(
+            {rel: changed_hashes[rel] for rel in to_index}
         )
         run_control.checkpoint()
         prior_ids_by_path = self._incremental_prior_ids_by_path(

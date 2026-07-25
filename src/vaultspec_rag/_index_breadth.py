@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     import pathlib
@@ -33,10 +33,29 @@ PUBLISHED_POINTS_KEY = "__code_published_points__"
 
 __all__ = [
     "PUBLISHED_POINTS_KEY",
+    "BreadthShortfall",
+    "code_breadth_shortfall",
     "code_meta_path",
     "parse_published_points",
     "read_published_points",
 ]
+
+
+class BreadthShortfall(NamedTuple):
+    """A code collection holding fewer points than its publication claimed.
+
+    Carries the figures rather than a bare flag so a renderer can name the
+    deficit without re-deriving it. Only ever constructed for a real shortfall,
+    so its existence is the conclusion and no consumer compares counts again.
+    """
+
+    published: int
+    live: int
+
+    @property
+    def missing(self) -> int:
+        """Points the publication claimed that the collection no longer holds."""
+        return self.published - self.live
 
 
 def parse_published_points(raw: Mapping[str, str]) -> int | None:
@@ -81,3 +100,25 @@ def read_published_points(root: pathlib.Path) -> int | None:
     if not isinstance(raw, dict):
         return None
     return parse_published_points(raw)
+
+
+def code_breadth_shortfall(
+    root: pathlib.Path,
+    live_count: int,
+) -> BreadthShortfall | None:
+    """Return the shortfall *root*'s code collection is in, or ``None``.
+
+    ``None`` covers both "complete" and "cannot tell": a sidecar silent on
+    breadth yields no shortfall, because a root written by an older build has
+    nothing to compare against and must not be reported as incomplete on that
+    account. A caller therefore reads a returned value as demonstrated
+    incompleteness and nothing else.
+
+    ``live_count`` is supplied by the caller rather than counted here, so a
+    search path that has already counted the collection pays no second round
+    trip - which is the only reason this check is affordable on every query.
+    """
+    published = read_published_points(root)
+    if published is None or live_count >= published:
+        return None
+    return BreadthShortfall(published=published, live=live_count)

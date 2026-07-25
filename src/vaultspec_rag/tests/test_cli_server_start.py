@@ -24,6 +24,7 @@ from ..cli._service_lifecycle import (
     _start_success,
 )
 from ..config import EnvVar
+from ..serviceclient._compat import local_package_version
 from ._http_stubs import QuietHandler
 
 pytestmark = [pytest.mark.unit]
@@ -158,8 +159,15 @@ class TestStartReorderAndGuards:
         import http.server
         import threading
 
+        # The release must match this client's or the start verb refuses to
+        # attach at all, which is a different outcome than the degraded-health
+        # one under test here.
         payload = json.dumps(
-            {"status": "degraded", "service_token": "tok-live"}
+            {
+                "status": "degraded",
+                "service_token": "tok-live",
+                "package_version": local_package_version(),
+            }
         ).encode("utf-8")
 
         class _HealthHandler(QuietHandler):
@@ -183,8 +191,14 @@ class TestStartReorderAndGuards:
             doc["service_token"] = "tok-live"
             sf.write_text(json.dumps(doc), encoding="utf-8")
 
-            triple = _existing_service_running()
-            assert triple == (os.getpid(), port, "degraded")
+            candidate = _existing_service_running()
+            assert candidate is not None
+            assert (candidate.pid, candidate.port, candidate.health_status) == (
+                os.getpid(),
+                port,
+                "degraded",
+            )
+            assert candidate.version.is_compatible
 
             result = runner.invoke(app, ["server", "start", "--json"])
             assert result.exit_code == 0

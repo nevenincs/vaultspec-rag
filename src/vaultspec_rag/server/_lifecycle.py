@@ -163,6 +163,10 @@ def _daemon_discovery_snapshot(
     (``warming``/``running``) remains the authoritative machine-readable state,
     and a reader that ignores ``phase_detail`` sees unchanged behaviour.
     """
+    from ..serviceclient._compat import (
+        SERVICE_VERSION_FIELD,
+        local_package_version,
+    )
     from ..serviceclient._discovery import (
         SERVICE_PHASE_RUNNING,
         SERVICE_PHASE_WARMING,
@@ -195,6 +199,10 @@ def _daemon_discovery_snapshot(
         "base_prefix": sys.base_prefix,
         "virtual_env": os.environ.get("VIRTUAL_ENV"),
         "python_version": sys.version.split()[0],
+        # The package release, alongside the interpreter version that was
+        # already here. A consumer that reads this pointer can refuse an
+        # incompatible daemon without an HTTP probe.
+        SERVICE_VERSION_FIELD: local_package_version(),
     }
     if _m._launch_token:
         fields["launch_token"] = _m._launch_token

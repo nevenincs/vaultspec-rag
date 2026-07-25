@@ -52,14 +52,24 @@ If nothing comes back, the index may be empty or still building. Build it first;
 
 ## Narrow code results by path
 
-Use `--include-path` to keep only files matching a glob, and `--exclude-path` to drop matching files. Both flags are repeatable and accept standard globs:
+Use `--include-path` to keep only files matching a pattern, and `--exclude-path` to drop matching files. Both flags are repeatable and accept standard globs:
 
 ```
 uv run vaultspec-rag search "lock ordering" --type code \
   --include-path "src/**" --exclude-path "**/tests/**"
 ```
 
-These two flags apply to code only. Passing them with a vault search is a usage error.
+A pattern with no glob character names a location, and matches that path and everything beneath it, so `--include-path src/vaultspec_rag/indexer` and `--include-path "src/vaultspec_rag/indexer/**"` select the same subtree. Repeating a pattern unions the selections.
+
+The same narrowing is available inside the query string as a `path:` token, which is the form to reach for when the search travels as one string - through an agent, or the MCP tools:
+
+```
+uv run vaultspec-rag search "reopen a drifted indexed path path:src/vaultspec_rag/indexer/" --type code
+```
+
+Patterns are matched against indexed project-relative paths, not against files on disk. When a pattern excludes every candidate the query matched, the empty result says so and names the pattern rather than reporting a plain no-match.
+
+These flags apply to code only. Passing them with a vault search is a usage error.
 
 ## Narrow by language, structure, or symbol
 
@@ -84,7 +94,7 @@ uv run vaultspec-rag search "encode" --type code --function-name encode_query
 uv run vaultspec-rag search "store" --type code --class-name VaultStore
 ```
 
-Target one exact project-relative path with `--path`:
+Target one exact project-relative path with `--path`. Unlike `--include-path`, it matches that one file and nothing under it:
 
 ```
 uv run vaultspec-rag search "lock" --type code --path src/vaultspec_rag/store.py
@@ -188,8 +198,8 @@ uv run vaultspec-rag search "encode batch" --type code --prefer production
 | `--type vault\|code\|document\|combined`    | all        | Chooses one domain or all three; defaults to vault         |
 | `--max-results` / `--limit`                 | all        | Sets how many results return; defaults to 10               |
 | `--scores`                                  | all        | Shows numeric relevance scores beside each record          |
-| `--include-path`                            | code       | Keeps only files matching a glob; repeatable               |
-| `--exclude-path`                            | code       | Drops files matching a glob; repeatable                    |
+| `--include-path`                            | code       | Keeps only paths matching a pattern; repeatable            |
+| `--exclude-path`                            | code       | Drops paths matching a pattern; repeatable                 |
 | `--language`                                | code       | Keeps results in one programming language                  |
 | `--structure`                               | code       | Keeps results matching one parse-tree node type            |
 | `--function-name`                           | code       | Keeps results in a function of this name                   |

@@ -750,9 +750,7 @@ class TestGitignoreNegationPatterns:
         (sub / "debug.log").write_text("ignore me", encoding="utf-8")
         (sub / "code.py").write_text("x = 1\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
         paths = indexer._scan_codebase()
         rel_paths = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in paths}
         # code.py should always be found
@@ -817,9 +815,7 @@ class TestGitignoreNegationPatterns:
         source.parent.mkdir()
         source.write_text("kept = True\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
         scanned = indexer._scan_codebase()
 
         assert source in scanned
@@ -994,7 +990,7 @@ class TestCodebaseMetaRoundTrip:
         from ..indexer import CodebaseIndexer
 
         meta_path: Path = tmp_path / ".rag" / "codebase_meta.json"
-        indexer = object.__new__(CodebaseIndexer)
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
         indexer._meta_path = meta_path
 
         assert indexer._load_meta() == {}
@@ -1126,9 +1122,7 @@ class TestR10MinorAnchoredPattern:
         # Create a file that should NOT be ignored
         (sub / "main.py").write_text("y = 2\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = root
-        indexer._extra_excludes = []
+        indexer = CodebaseIndexer(root, cast("Any", None), cast("Any", None))
 
         paths = indexer._scan_codebase()
         rel_paths = {str(p.relative_to(root)).replace("\\", "/") for p in paths}
@@ -1155,9 +1149,7 @@ class TestCodebaseInternalDirectoryExclusions:
             encoding="utf-8",
         )
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
 
         paths = indexer._scan_codebase()
         rel_paths = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in paths}
@@ -1174,9 +1166,7 @@ class TestCodebaseInternalDirectoryExclusions:
         clone.mkdir(parents=True)
         (clone / "app.py").write_text("REAL = True\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
 
         paths = indexer._scan_codebase()
         rel_paths = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in paths}
@@ -1244,9 +1234,7 @@ class TestVaultragignore:
         (tmp_path / "generated.py").write_text("y = 2\n", encoding="utf-8")
         (tmp_path / ".vaultragignore").write_text("generated.py\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
 
         files = indexer.scan_files()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
@@ -1260,9 +1248,7 @@ class TestVaultragignore:
 
         (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
 
         files = indexer.scan_files()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
@@ -1276,9 +1262,12 @@ class TestVaultragignore:
         (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
         (tmp_path / "temp.py").write_text("y = 2\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = ["temp.py"]
+        indexer = CodebaseIndexer(
+            tmp_path,
+            cast("Any", None),
+            cast("Any", None),
+            extra_excludes=["temp.py"],
+        )
 
         files = indexer.scan_files()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
@@ -1296,9 +1285,7 @@ class TestVaultragignore:
         # Attempt to un-ignore secret.py from .vaultragignore - must fail
         (tmp_path / ".vaultragignore").write_text("!secret.py\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
 
         files = indexer.scan_files()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
@@ -1322,9 +1309,7 @@ class TestVaultragignore:
             "*.test.py\n!important.test.py\n", encoding="utf-8"
         )
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
 
         files = indexer.scan_files()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
@@ -1343,9 +1328,7 @@ class TestVaultragignore:
         (tmp_path / ".gitignore").write_text("build_output.py\n", encoding="utf-8")
         (tmp_path / ".vaultragignore").write_text("vendor_lib.py\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
 
         files = indexer.scan_files()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
@@ -1360,9 +1343,7 @@ class TestVaultragignore:
 
         (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
 
         assert indexer.scan_files() == indexer._scan_codebase()
 
@@ -1377,9 +1358,7 @@ class TestVaultragignore:
         (vendor / "lib.py").write_text("y = 2\n", encoding="utf-8")
         (tmp_path / ".vaultragignore").write_text("vendor/\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
 
         files = indexer.scan_files()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}

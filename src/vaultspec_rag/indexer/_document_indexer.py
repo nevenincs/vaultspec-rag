@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import pathlib
 import threading
@@ -20,11 +21,13 @@ from ._content_policy import ContentKind, RootContentPolicy, SourceProfileVersio
 from ._document_checkpoint import DocumentRunCheckpoint, DocumentRunConfiguration
 from ._document_meta import (
     DocumentFileMetadata,
+    DocumentIndexMetadata,
     document_meta_compatible,
     document_metadata_path,
     read_document_meta,
 )
 from ._file_state import FileStateKind
+from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
 from ._route_migration import reconcile_generation_storage
 from ._run_ledger import FinalizationPhase, RunOperation
 from ._run_policy import RunPolicy
@@ -49,6 +52,8 @@ if TYPE_CHECKING:
     from ._resolved_policy import ResolvedIndexPolicy
     from ._reuse import DonorReuseContext, ReuseStats
     from ._run_ledger import CommitUnit
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["DocumentIndexPreflight", "DocumentIndexer", "DocumentScopedPreflight"]
 
@@ -977,6 +982,43 @@ class DocumentIndexer:
         )
         with checkpoint.preserve_incomplete_generation():
             budget = self._begin_resource_budget(limits)
+        with self._writer_lock:
+            return run_index_lifecycle(
+                lambda: self._full_index_locked(
+                    paths,
+                    started=started,
+                    effective_clean=effective_clean,
+                    policy=policy,
+                    prep=prep,
+                    budget=budget,
+                    checkpoint=checkpoint,
+                    reporter=reporter,
+                    run_control=run_control,
+                ),
+                event_logger=logger,
+                store=self.store,
+                source="document",
+                mode="full",
+                clean=clean,
+                root=self.root_dir,
+                run_control=run_control,
+                completion_fields=preprocess_completion_fields,
+            )
+
+    def _full_index_locked(
+        self,
+        paths: tuple[pathlib.Path, ...],
+        *,
+        started: float,
+        effective_clean: bool,
+        policy: ResolvedIndexPolicy,
+        prep: PreprocessContext | None,
+        budget: _DocumentResourceBudget,
+        checkpoint: DocumentRunCheckpoint,
+        reporter: ProgressReporter,
+        run_control: RunControl,
+    ) -> IndexResult:
+        """Locked implementation of :meth:`full_index`."""
         resumed = self._resume_pending_finalization(
             checkpoint,
             reporter=reporter,
@@ -984,63 +1026,62 @@ class DocumentIndexer:
         )
         if resumed is not None:
             return resumed
-        with self._writer_lock:
-            previous = read_document_meta(self._meta_path)
-            previous_files = self._checkpoint_files(checkpoint)
-            if not previous_files and previous is not None:
-                previous_files = {item.source_path: item for item in previous.files}
-            clean_has_confirmed_units = (
-                effective_clean
-                and next(
-                    checkpoint.ledger.iter_units(checkpoint.generation_id),
-                    None,
-                )
-                is not None
+        previous = read_document_meta(self._meta_path)
+        previous_files = self._checkpoint_files(checkpoint)
+        if not previous_files and previous is not None:
+            previous_files = {item.source_path: item for item in previous.files}
+        clean_has_confirmed_units = (
+            effective_clean
+            and next(
+                checkpoint.ledger.iter_units(checkpoint.generation_id),
+                None,
             )
-            publication_span = (
-                checkpoint.run_policy.protected("clean document publication")
-                if effective_clean
-                else contextlib.nullcontext()
+            is not None
+        )
+        publication_span = (
+            checkpoint.run_policy.protected("clean document publication")
+            if effective_clean
+            else contextlib.nullcontext()
+        )
+        with checkpoint.preserve_incomplete_generation(), publication_span:
+            if effective_clean and not clean_has_confirmed_units:
+                self.store.drop_document_table()
+            self.store.ensure_document_table()
+            published, counts, failures = self._publish_full_paths(
+                paths,
+                policy=policy,
+                prep=prep,
+                budget=budget,
+                checkpoint=checkpoint,
+                previous_files=previous_files,
+                reporter=reporter,
+                run_control=run_control,
             )
-            with checkpoint.preserve_incomplete_generation(), publication_span:
-                if effective_clean and not clean_has_confirmed_units:
-                    self.store.drop_document_table()
-                self.store.ensure_document_table()
-                published, counts, failures = self._publish_full_paths(
-                    paths,
-                    policy=policy,
-                    prep=prep,
-                    budget=budget,
-                    checkpoint=checkpoint,
-                    previous_files=previous_files,
-                    reporter=reporter,
-                    run_control=run_control,
-                )
-                removed = self._reconcile_full_stale(
-                    previous_files,
-                    published,
+            removed = self._reconcile_full_stale(
+                previous_files,
+                published,
+                checkpoint,
+            )
+            if failures:
+                checkpoint.mark_failed("; ".join(failures))
+            else:
+                reconcile_generation_storage(
+                    self.store,
                     checkpoint,
+                    policy,
+                    ContentKind.DOCUMENT,
                 )
-                if failures:
-                    checkpoint.mark_failed("; ".join(failures))
-                else:
-                    reconcile_generation_storage(
-                        self.store,
-                        checkpoint,
-                        policy,
-                        ContentKind.DOCUMENT,
-                    )
-                    checkpoint.publish_metadata(self._meta_path)
-                    checkpoint.publish_generation()
-            return self._finish_result(
-                started=started,
-                added=counts.added,
-                updated=counts.updated,
-                removed=removed,
-                files=len(paths),
-                preprocess_ok=counts.preprocess_ok,
-                failures=failures,
-            )
+                checkpoint.publish_metadata(self._meta_path)
+                checkpoint.publish_generation()
+        return self._finish_result(
+            started=started,
+            added=counts.added,
+            updated=counts.updated,
+            removed=removed,
+            files=len(paths),
+            preprocess_ok=counts.preprocess_ok,
+            failures=failures,
+        )
 
     def incremental_index(
         self,
@@ -1094,6 +1135,47 @@ class DocumentIndexer:
         )
         with checkpoint.preserve_incomplete_generation():
             budget = self._begin_resource_budget(limits)
+        with self._writer_lock:
+            return run_index_lifecycle(
+                lambda: self._incremental_index_locked(
+                    authorized_paths,
+                    started=started,
+                    scoped=changed_paths is not None,
+                    policy=policy,
+                    prep=prep,
+                    budget=budget,
+                    checkpoint=checkpoint,
+                    previous=previous,
+                    reporter=reporter,
+                    run_control=run_control,
+                ),
+                event_logger=logger,
+                store=self.store,
+                source="document",
+                mode=(
+                    "scoped_incremental" if changed_paths is not None else "incremental"
+                ),
+                clean=False,
+                root=self.root_dir,
+                run_control=run_control,
+                completion_fields=preprocess_completion_fields,
+            )
+
+    def _incremental_index_locked(
+        self,
+        authorized_paths: tuple[pathlib.Path, ...],
+        *,
+        started: float,
+        scoped: bool,
+        policy: ResolvedIndexPolicy,
+        prep: PreprocessContext | None,
+        budget: _DocumentResourceBudget,
+        checkpoint: DocumentRunCheckpoint,
+        previous: DocumentIndexMetadata,
+        reporter: ProgressReporter,
+        run_control: RunControl,
+    ) -> IndexResult:
+        """Locked implementation of :meth:`incremental_index`."""
         resumed = self._resume_pending_finalization(
             checkpoint,
             reporter=reporter,
@@ -1107,10 +1189,10 @@ class DocumentIndexer:
         selected = self._select_incremental_paths(
             authorized_paths,
             previous_files,
-            scoped=changed_paths is not None,
+            scoped=scoped,
         )
 
-        with self._writer_lock, checkpoint.preserve_incomplete_generation():
+        with checkpoint.preserve_incomplete_generation():
             _current, counts, failures = self._reconcile_incremental_paths(
                 selected,
                 policy=policy,

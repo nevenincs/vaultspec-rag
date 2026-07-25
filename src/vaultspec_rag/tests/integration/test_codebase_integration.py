@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, TypedDict, cast
 
 import pytest
 
@@ -1053,6 +1053,141 @@ class TestCodebaseSearch:
             assert p.startswith("src/"), (
                 f"include_paths=['src/**'] kept non-src/ path: {p}"
             )
+
+    @pytest.mark.timeout(120)
+    def test_search_codebase_include_path_without_a_glob_selects_the_subtree(
+        self, code_project: _CodeProject
+    ) -> None:
+        """A plain --include-path names a location, not one literal path.
+
+        This is the form an operator types. A directory is never itself an
+        indexed path, so matching it literally returned nothing at all while
+        reading as a working narrow.
+        """
+        from ... import VaultSearcher
+
+        tests_dir = code_project["src_dir"].parent / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_sample.py").write_text(SAMPLE_PYTHON, encoding="utf-8")
+        code_project["code_indexer"].full_index(
+            reporter=NullProgressReporter(),
+            preflight=code_project["code_indexer"].preflight_content(),
+        )
+
+        searcher = VaultSearcher(
+            code_project["root"],
+            code_project["model"],
+            code_project["store"],
+        )
+
+        results = searcher.search_codebase(
+            "calculator",
+            top_k=10,
+            include_paths=["src"],
+        )
+        paths = {r.path for r in results}
+        # Drop the subtree expansion from expand_path_pattern and this is empty.
+        assert paths, "include_paths=['src'] matched nothing under src/"
+        for p in paths:
+            assert p.startswith("src/"), f"include_paths=['src'] kept {p}"
+
+    @pytest.mark.timeout(120)
+    def test_search_codebase_inline_path_token_narrows_by_location(
+        self, code_project: _CodeProject
+    ) -> None:
+        """``path:`` in the query narrows the same way --include-path does.
+
+        Routed to the exact-path store filter, the token pushed a directory
+        into a keyword equality match no indexed path can satisfy, so the
+        search returned nothing and reported a plain no-match.
+        """
+        from ... import VaultSearcher
+
+        tests_dir = code_project["src_dir"].parent / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_sample.py").write_text(SAMPLE_PYTHON, encoding="utf-8")
+        code_project["code_indexer"].full_index(
+            reporter=NullProgressReporter(),
+            preflight=code_project["code_indexer"].preflight_content(),
+        )
+
+        searcher = VaultSearcher(
+            code_project["root"],
+            code_project["model"],
+            code_project["store"],
+        )
+
+        results = searcher.search_codebase("calculator path:src/", top_k=10)
+        paths = {r.path for r in results}
+        assert paths, "path:src/ matched nothing under src/"
+        for p in paths:
+            assert p.startswith("src/"), f"path:src/ kept {p}"
+
+    @pytest.mark.timeout(120)
+    def test_a_path_filter_that_excludes_everything_is_reported(
+        self, code_project: _CodeProject
+    ) -> None:
+        """An emptied page must carry the evidence that the filter emptied it.
+
+        Nothing else distinguishes it from a query that matched nothing, and
+        the adapters render the difference to the operator.
+        """
+        from ... import VaultSearcher
+
+        code_project["code_indexer"].full_index(
+            reporter=NullProgressReporter(),
+            preflight=code_project["code_indexer"].preflight_content(),
+        )
+
+        searcher = VaultSearcher(
+            code_project["root"],
+            code_project["model"],
+            code_project["store"],
+        )
+
+        notes: dict[str, object] = {}
+        results = searcher.search_codebase(
+            "calculator",
+            top_k=10,
+            include_paths=["does/not/exist"],
+            notes=notes,
+        )
+
+        assert not results
+        recorded = notes["path_filter"]
+        assert isinstance(recorded, dict)
+        detail = cast("dict[str, object]", recorded)
+        assert detail["patterns"] == ["does/not/exist"]
+        assert cast("int", detail["candidates_before_filter"]) > 0
+
+    @pytest.mark.timeout(120)
+    def test_a_path_filter_that_keeps_results_is_not_reported(
+        self, code_project: _CodeProject
+    ) -> None:
+        """The evidence is absent when the filter narrowed rather than emptied."""
+        from ... import VaultSearcher
+
+        code_project["code_indexer"].full_index(
+            reporter=NullProgressReporter(),
+            preflight=code_project["code_indexer"].preflight_content(),
+        )
+
+        searcher = VaultSearcher(
+            code_project["root"],
+            code_project["model"],
+            code_project["store"],
+        )
+
+        notes: dict[str, object] = {}
+        results = searcher.search_codebase(
+            "calculator",
+            top_k=10,
+            include_paths=["src"],
+            notes=notes,
+        )
+
+        assert results
+        assert "path_filter" not in notes
 
     @pytest.mark.timeout(120)
     def test_search_codebase_with_language_filter(

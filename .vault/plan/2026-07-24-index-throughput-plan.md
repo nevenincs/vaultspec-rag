@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#index-throughput'
 date: '2026-07-24'
-modified: '2026-07-24'
+modified: '2026-07-25'
 tier: L2
 related:
   - '[[2026-07-24-index-throughput-research]]'
@@ -26,7 +26,7 @@ Non-blocking upsert semantics on the rebuild path with a completion barrier befo
 
 - [x] `P02.S03` - pass explicit non-blocking wait semantics on rebuild-path upserts and add the completion barrier before stale-purge and metadata publish; `src/vaultspec_rag/store.py`; indexer terminal paths\`.
 - [x] `P02.S04` - add ingest-barrier tests including the mutation proof: remove the barrier, the terminal-state-precedes-applied-points assertion goes red, restore green, both directions recorded; `src/vaultspec_rag/tests/` store/indexer suites\`.
-- [ ] `P02.S05` - measure ingest wall-clock before and after the wait-policy change on a rebuild-class corpus and record the numbers; `measured run; Step Record`.
+- [x] `P02.S05` - measure ingest wall-clock before and after the wait-policy change on a rebuild-class corpus and record the numbers; `measured run; Step Record`.
 - [ ] `P02.S15` - switch the server-mode store client to gRPC transport and record the measured per-batch upsert delta; `src/vaultspec_rag/store.py`.
 
 ### Phase `P03` - vault and document pipeline overlap
@@ -45,7 +45,7 @@ Move vault parsing into the spawn-safe CPU worker pool and adopt the code path's
 
 Before/after wall-clock measurement of a contended window and a rebuild-class job, full quality gates, and the commit-and-push landing.
 
-- [ ] `P04.S11` - run the before/after measurement: a contended multi-job window and a solo rebuild-class job, comparing wall-clock and queue-wait telemetry against the research baselines; `measured runs; Step Record`.
+- [x] `P04.S11` - run the before/after measurement: a contended multi-job window and a solo rebuild-class job, comparing wall-clock and queue-wait telemetry against the research baselines; `measured runs; Step Record`.
 - [ ] `P04.S12` - run the full quality gates on the changed surface and fold measured numbers into the ADR consequences; `repository quality gates;`.vault/adr/2026-07-24-index-throughput-adr.md\`.
 - [x] `P04.S13` - commit the throughput work with a why-focused message and push to origin main; `git`.
 - [x] `P04.S18` - cap requires-python below 3.14 so the published metadata matches the runtime interpreter guard that already rejects 3.14, and add a .python-version pin so fresh worktree venvs resolve a supported interpreter; `pyproject.toml`; `.python-version`.

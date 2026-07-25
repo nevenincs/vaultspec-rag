@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from typing import cast
 
+from .. import jobs as _jobs
 from .._job_errors import STALL_THRESHOLD_SECONDS, remediation
 from ..job_models import JobState
-from . import _jobs
 
 __all__ = [
     "_clamp_limit",

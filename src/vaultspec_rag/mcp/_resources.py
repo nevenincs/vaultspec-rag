@@ -12,6 +12,7 @@ from functools import partial
 
 from ..serviceclient import _try_http_vault_document
 from ._mcp import mcp
+from ._roots import _resolve_project_root
 from ._tools import (
     _delegate,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
     _require_port,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
@@ -37,7 +38,14 @@ async def get_vault_document(doc_id: str) -> str:
             fails.
     """
     port = _require_port()
-    res = await _delegate(partial(_try_http_vault_document, doc_id, "", port))
+    res = await _delegate(
+        partial(
+            _try_http_vault_document,
+            doc_id,
+            _resolve_project_root(None),
+            port,
+        )
+    )
     if "content" in res:
         return str(res["content"])
     if res.get("error") == "not_found":

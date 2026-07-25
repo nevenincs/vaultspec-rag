@@ -35,6 +35,12 @@ from ._constants import (
     QDRANT_SERVER_VERSION,
     QdrantRuntimeState,
 )
+from ._store_format import (
+    QUARANTINE_DIRNAME,
+    judge_store_format,
+    list_quarantined_collections,
+    write_store_format,
+)
 
 if TYPE_CHECKING:
     from typing import Any, BinaryIO
@@ -175,7 +181,7 @@ def _quarantine_collection(storage_dir: Path, name: str) -> Path:
     Returns the quarantine destination.
     """
     src = storage_dir / "collections" / name
-    quarantine_dir = storage_dir / "quarantine"
+    quarantine_dir = storage_dir / QUARANTINE_DIRNAME
     quarantine_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     dest = quarantine_dir / f"{name}.{stamp}"
@@ -830,7 +836,15 @@ class QdrantSupervisor:
         return True
 
     def state(self) -> QdrantRuntimeState:
-        """Service-domain snapshot for operability surfaces."""
+        """Service-domain snapshot for operability surfaces.
+
+        Carries the quarantine listing because a quarantined collection is
+        invisible to every other signal here: the server is alive, ready, and
+        answering, and the data that was moved out of its active set is simply
+        absent from results. A live directory read rather than a cached one, so
+        an operator who restores or clears an entry sees that immediately - it
+        is one small local listing, not a backend call.
+        """
         return QdrantRuntimeState(
             mode="server",
             url=self.url,
@@ -839,6 +853,7 @@ class QdrantSupervisor:
             port=self.http_port,
             version=QDRANT_SERVER_VERSION,
             restarts=self.restart_count,
+            extra={"quarantined": list_quarantined_collections(self.storage_dir)},
         )
 
     def server_version(self) -> str:
@@ -1148,6 +1163,34 @@ def start_supervised_from_config() -> QdrantSupervisor:
             remedy,
         )
 
+    # Judge the on-disk storage format against the binary about to open it.
+    # The version gate on the attach path only fires when a server is already
+    # listening, which is never the case right after an upgrade - so without
+    # this the first start on a newly pinned binary performs no version
+    # comparison at all, and an incompatible-format abort is misread by the
+    # load-failure parser as a run of independently corrupt collections.
+    store_format = judge_store_format(
+        storage_dir,
+        spawning_version=resolved.version or QDRANT_SERVER_VERSION,
+        identity=identity,
+    )
+    if not store_format.may_spawn:
+        raise RuntimeError(
+            f"refusing to start qdrant on {storage_dir}: {store_format.reason}. "
+            "Nothing has been moved or deleted. Either reinstall the version "
+            "that wrote the store (vaultspec-rag server qdrant install "
+            f"--upgrade, pinned at {store_format.stored_version}), or discard "
+            "and rebuild it (vaultspec-rag server qdrant clean, then re-index). "
+            "Local-only option: vaultspec-rag server start --local-only"
+        )
+    if not store_format.may_auto_quarantine:
+        logger.warning(
+            "qdrant store format at %s is unverified (%s); a load failure will "
+            "be reported rather than blamed on one collection",
+            storage_dir,
+            store_format.reason,
+        )
+
     supervisor = QdrantSupervisor(
         resolved.path,
         http_port=qport,
@@ -1158,7 +1201,7 @@ def start_supervised_from_config() -> QdrantSupervisor:
     )
     logger.info("Starting qdrant server (%s binary %s)", resolved.source, resolved.path)
     try:
-        supervisor.start()
+        supervisor.start(auto_quarantine=store_format.may_auto_quarantine)
     except RuntimeError as exc:
         raise RuntimeError(
             f"{exc}. The qdrant server backing the default server mode "
@@ -1174,6 +1217,12 @@ def start_supervised_from_config() -> QdrantSupervisor:
         owner_pid=os.getpid(),
         http_port=qport,
         qdrant_pid=supervisor.pid or 0,
+    )
+    # Stamp the store with the version that just opened it successfully. This
+    # lives inside the storage dir, so it travels with the data and is what a
+    # later start compares against before spawning.
+    write_store_format(
+        storage_dir, supervisor.server_version() or QDRANT_SERVER_VERSION
     )
     return supervisor
 

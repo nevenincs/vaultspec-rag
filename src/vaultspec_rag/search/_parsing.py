@@ -17,6 +17,12 @@ from ._models import ParsedQuery
 # func:encode, class:Foo, nodetype:function_definition, intent:orientation,
 # and the code-search noise-domain tokens exclude:tests / only:prod /
 # include:docs (each value may be a comma-separated set).
+#
+# ``path:`` is the in-query spelling of an include-path pattern, so it carries
+# the same location-or-subtree reading and accepts a glob. It deliberately does
+# not map to the exact-path filter its flag counterpart drives: a location like
+# ``src/`` is never itself an indexed path, so an exact match on it returns
+# nothing while looking like a working narrow.
 _FILTER_PATTERN = re.compile(
     r"\b(type|feature|date|tag|lang|path|func|class|nodetype|intent|status"
     r"|exclude|only|include):(\S+)",
@@ -27,7 +33,7 @@ _FILTER_KEY_MAP = {
     "feature": "feature",
     "date": "date",
     "lang": "language",
-    "path": "path",
+    "path": "path_scope",
     "func": "function_name",
     "class": "class_name",
     "nodetype": "node_type",

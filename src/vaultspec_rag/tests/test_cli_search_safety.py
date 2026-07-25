@@ -642,3 +642,181 @@ class TestSearchSafetyContract:
         )
         assert diagnostics["health"]["status"] == "ready"
         assert diagnostics["jobs"]["running_count"] == 0
+
+
+def _shortfall_contract_server(
+    *, shortfall: dict[str, object] | None, results: bool
+) -> tuple[typing.Any, typing.Any]:
+    """Start a service returning one code search envelope.
+
+    ``shortfall`` is placed on ``index_state`` exactly as the daemon places it,
+    so the CLI under test reads a real wire payload rather than a hand-built
+    object, and ``None`` reproduces a complete index.
+    """
+    import http.server
+    import threading
+
+    from ._http_stubs import QuietHandler
+
+    index_state: dict[str, object] = {
+        "source": "code",
+        "indexed_count": 4,
+        "indexed_target_root": "",
+        "requested_target_root": "",
+        "target_matches": True,
+        "status": "available",
+    }
+    if shortfall is not None:
+        index_state["shortfall"] = shortfall
+
+    class _ShortfallHandler(QuietHandler):
+        def do_POST(self):
+            if self.path != "/search":
+                self.send_response(404)
+                self.end_headers()
+                return
+            length = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(length)
+            payload: dict[str, object] = {
+                "ok": True,
+                "results": (
+                    [
+                        {
+                            "path": "src/only_survivor.py",
+                            "line_start": 3,
+                            "score": 0.9,
+                            "snippet": "def survivor",
+                        }
+                    ]
+                    if results
+                    else []
+                ),
+                "index_state": index_state,
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _ShortfallHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
+
+
+class TestIncompleteIndexCannotAnswerSilently:
+    """A search over a demonstrably truncated index must say so.
+
+    The latch this guards against is a code collection holding a fraction of
+    its corpus while answering normally: well-formed results, a plausible
+    count, no error. Because semantic search is the grounding step before code
+    is written, a confident answer over that fraction is a false negative to
+    "does this already exist?", which is how duplicate implementations get
+    written. These tests pin that the warning appears whenever the service
+    reports a shortfall - with results and without - and never otherwise.
+
+    Proven able to fail. Suppressing the CLI's shortfall branch (making
+    ``_render_breadth_shortfall`` return before printing) fails
+    ``test_shortfall_warns_over_returned_results`` and
+    ``test_shortfall_warns_over_an_empty_answer`` on the missing-warning
+    assertion each names, not on a setup or transport error; restoring returns
+    both to green. Under that mutation the empty answer reads "No source code
+    results found ... Indexed source code sections: 4", which is precisely the
+    silent false negative these tests exist to prevent.
+
+    The assertions name the figures, not just the word "warning": a bare
+    substring match would pass on a warning that omitted the deficit, and the
+    deficit is the part an operator acts on.
+    """
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    _SHORTFALL: typing.ClassVar[dict[str, object]] = {
+        "published_count": 421,
+        "live_count": 4,
+        "missing_count": 417,
+    }
+
+    def test_shortfall_warns_over_returned_results(self, tmp_path: Path) -> None:
+        """Results plus a shortfall must carry the warning and the figures."""
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread = _shortfall_contract_server(
+            shortfall=self._SHORTFALL, results=True
+        )
+        try:
+            result = _invoke_search_contract(tmp_path, server.server_port)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert result.exit_code == 0, result.output
+        normalized = " ".join(_plain_lines(result.output))
+        assert "holds 4 of the 421 sections it published" in normalized, normalized
+        assert "417 are missing" in normalized, normalized
+        assert "not evidence that no such code exists" in normalized, normalized
+        assert "vaultspec-rag index --type code --full" in normalized, normalized
+
+    def test_shortfall_warns_over_an_empty_answer(self, tmp_path: Path) -> None:
+        """An empty answer over a truncated index is the dangerous case.
+
+        A confident "no results" is exactly what a caller reads as proof of
+        absence, so the warning matters more here than alongside results.
+        """
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread = _shortfall_contract_server(
+            shortfall=self._SHORTFALL, results=False
+        )
+        try:
+            result = _invoke_search_contract(tmp_path, server.server_port)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert result.exit_code == 0, result.output
+        normalized = " ".join(_plain_lines(result.output))
+        assert "holds 4 of the 421 sections it published" in normalized, normalized
+        assert "417 are missing" in normalized, normalized
+
+    def test_complete_index_is_not_warned_about(self, tmp_path: Path) -> None:
+        """No shortfall on the envelope means no warning.
+
+        A sidecar silent on breadth also arrives as no shortfall, so warning
+        here would fire on every root written by an older build and train the
+        reader to ignore the warning entirely.
+        """
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread = _shortfall_contract_server(shortfall=None, results=True)
+        try:
+            result = _invoke_search_contract(tmp_path, server.server_port)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert result.exit_code == 0, result.output
+        normalized = " ".join(_plain_lines(result.output))
+        assert "sections it published" not in normalized, normalized
+        assert "are missing" not in normalized, normalized
+
+    def test_json_mode_carries_the_shortfall_verbatim(self, tmp_path: Path) -> None:
+        """JSON mode must carry the service's figures, not a rendered sentence.
+
+        This is the field the MCP adapter passes through, so a JSON consumer
+        has to receive the same conclusion the human warning is built from.
+        """
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread = _shortfall_contract_server(
+            shortfall=self._SHORTFALL, results=True
+        )
+        try:
+            result = _invoke_search_contract(tmp_path, server.server_port, "--json")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert result.exit_code == 0, result.output
+        envelope = json.loads(result.output)
+        assert envelope["data"]["index_state"]["shortfall"] == self._SHORTFALL

@@ -80,6 +80,10 @@ DISCOVERY_REASON_POINTER_INVALID = "pointer_invalid"
 DISCOVERY_REASON_POINTER_STALE = "pointer_stale"
 DISCOVERY_REASON_POINTER_FOREIGN = "pointer_foreign"
 DISCOVERY_REASON_PROBE_FAILED = "probe_failed"
+#: The pointer names a schema or schema version this build does not understand.
+#: The schema document has always instructed consumers to pin on the pair and
+#: refuse a file they do not understand; this is that refusal.
+DISCOVERY_REASON_POINTER_INCOMPATIBLE = "pointer_incompatible"
 
 #: Which view supplied the resolved address.
 DISCOVERY_SOURCE_MACHINE_POINTER = "machine_pointer"
@@ -88,6 +92,7 @@ DISCOVERY_SOURCE_NONE = "none"
 
 __all__ = [
     "DISCOVERY_REASON_POINTER_FOREIGN",
+    "DISCOVERY_REASON_POINTER_INCOMPATIBLE",
     "DISCOVERY_REASON_POINTER_INVALID",
     "DISCOVERY_REASON_POINTER_MISSING",
     "DISCOVERY_REASON_POINTER_STALE",
@@ -455,6 +460,22 @@ def _staleness_window_seconds(payload: dict[str, Any]) -> float:
     )
 
 
+def _discovery_pair_understood(payload: Mapping[str, Any]) -> bool:
+    """Whether this build understands *payload*'s declared schema pair.
+
+    A payload carrying neither field predates the discriminator and is accepted
+    on its other evidence, which is the only backward-compatible reading. Once
+    either field is present both must match: a file that declares a shape and
+    declares a different one than this build implements is a file whose other
+    fields cannot be trusted to mean what this reader thinks they mean.
+    """
+    schema = payload.get("schema")
+    version = payload.get("version")
+    if schema is None and version is None:
+        return True
+    return schema == SERVICE_DISCOVERY_SCHEMA and version == SERVICE_DISCOVERY_VERSION
+
+
 @dataclass(frozen=True, slots=True)
 class MachineResolution:
     """One resolution of the machine singleton, with the evidence behind it.
@@ -577,6 +598,8 @@ def resolve_machine_service() -> MachineResolution:
             payload=payload,
         )
 
+    if not _discovery_pair_understood(payload):
+        return degraded(DISCOVERY_REASON_POINTER_INCOMPATIBLE)
     if port is None:
         return degraded(DISCOVERY_REASON_POINTER_INVALID)
     # The publisher refuses to write a payload whose pid is not the lease
@@ -620,6 +643,17 @@ def _status_file_resolution() -> MachineResolution:
         return MachineResolution(
             state=DISCOVERY_STATE_ABSENT,
             source=DISCOVERY_SOURCE_NONE,
+        )
+    if not _discovery_pair_understood(data):
+        # Degraded, not absent: a file this build cannot read may still describe
+        # a running service, and reporting absence would invite a caller to
+        # start a second daemon that must then lose the machine race.
+        return MachineResolution(
+            state=DISCOVERY_STATE_DEGRADED,
+            source=DISCOVERY_SOURCE_STATUS_FILE,
+            port=port,
+            reason=DISCOVERY_REASON_POINTER_INCOMPATIBLE,
+            payload=data,
         )
     raw_pid = data.get("pid")
     token = data.get("service_token")

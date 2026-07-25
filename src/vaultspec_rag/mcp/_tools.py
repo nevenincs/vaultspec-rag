@@ -7,6 +7,11 @@ wire call to a worker thread, and maps an unreachable service to one clear
 "service not running" error. There is no local fallback - when the daemon is
 down the MCP is intentionally dysfunctional.
 
+``project_root`` is optional on every tool because this adapter resolves it -
+see :mod:`vaultspec_rag.mcp._roots`. The daemon's routes require an explicit
+root and always will; the optionality advertised here is the adapter's promise
+to fill it, not a default the service supplies.
+
 Importing this module runs the ``@mcp.tool()`` decorators, registering the
 search/index tools on the shared :data:`mcp` instance.
 """
@@ -21,7 +26,6 @@ from pydantic import BaseModel, ConfigDict
 
 from .._source_types import SourceTypeParseError, parse_source_type
 from ..serviceclient import (
-    _default_service_port,
     _try_http_admin,
     _try_http_clean,
     _try_http_code_file,
@@ -29,6 +33,7 @@ from ..serviceclient import (
     _try_http_search,
 )
 from ._mcp import mcp
+from ._roots import _resolve_project_root
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -156,15 +161,32 @@ def _with_domain_tokens(
 
 
 def _require_port() -> int:
-    """Return the running service port or raise the one service-down error.
+    """Return the port of a reachable, release-compatible service.
 
-    The unreachable condition is mapped to a single ``RuntimeError`` here so
-    the no-local-fallback contract lives in exactly one place.
+    Two preconditions for every tool call, both mapped to a single
+    ``RuntimeError`` here so neither contract is restated per tool: the daemon
+    must be reachable (the no-local-fallback rule), and it must be the same
+    release as this client. The version travels in the discovery pointer this
+    call already reads, so confirming it costs no extra round trip.
+
+    Driving a foreign release is exactly the silent-degradation this refuses: an
+    unrecognised request field is dropped rather than rejected, so a newer
+    client's filters would be ignored and the answer computed against a
+    different candidate set, with a 200 and no indication anything was lost.
     """
-    port = _default_service_port()
-    if port is None:
+    from ..serviceclient._compat import classify_service_version
+    from ..serviceclient._discovery import resolve_machine_service
+
+    resolution = resolve_machine_service()
+    if not resolution.is_ready or resolution.port is None:
         raise RuntimeError(_SERVICE_DOWN_MESSAGE)
-    return port
+    verdict = classify_service_version(resolution.payload)
+    if not verdict.is_compatible:
+        raise RuntimeError(
+            f"{verdict.error_code()}: {verdict.reason()}. "
+            f"{' '.join(verdict.remediation())}"
+        )
+    return resolution.port
 
 
 def _unwrap[T](result: T | None) -> T:
@@ -223,7 +245,7 @@ async def search_vault(
             _canonical_tool_source("vault"),
             top_k,
             port,
-            project_root or "",
+            _resolve_project_root(project_root),
             doc_type=doc_type,
             feature=feature,
             date=date,
@@ -279,7 +301,7 @@ async def search_codebase(
             _canonical_tool_source("codebase"),
             top_k,
             port,
-            project_root or "",
+            _resolve_project_root(project_root),
             language=language,
             path=path,
             node_type=node_type,
@@ -315,7 +337,7 @@ async def search_documents(
             _canonical_tool_source("document"),
             top_k,
             port,
-            project_root or "",
+            _resolve_project_root(project_root),
             document_filters={
                 "source_path": source_path,
                 "extractor_id": extractor_id,
@@ -368,7 +390,7 @@ async def search_combined(  # noqa: PLR0913 - MCP exposes each owned filter expl
             _canonical_tool_source("combined"),
             top_k,
             port,
-            project_root or "",
+            _resolve_project_root(project_root),
             language=language,
             path=path,
             node_type=node_type,
@@ -401,7 +423,14 @@ async def get_code_file(
 ) -> str:
     """Retrieve the full content of a source file by path."""
     port = _require_port()
-    res = await _delegate(partial(_try_http_code_file, path, project_root or "", port))
+    res = await _delegate(
+        partial(
+            _try_http_code_file,
+            path,
+            _resolve_project_root(project_root),
+            port,
+        )
+    )
     if "content" in res:
         return str(res["content"])
     if "error" in res:
@@ -437,7 +466,7 @@ async def _reindex_source(
             _canonical_tool_source(source),
             False,
             port,
-            project_root or "",
+            _resolve_project_root(project_root),
             initiator_kind="mcp",
         )
     )
@@ -474,7 +503,7 @@ async def get_index_status(
         partial(
             _try_http_admin,
             "get_service_state",
-            {"project_root": project_root or ""},
+            {"project_root": _resolve_project_root(project_root)},
             port,
         )
     )
@@ -496,7 +525,7 @@ async def _clean_source(
             _try_http_clean,
             _canonical_tool_source(source),
             port,
-            project_root or "",
+            _resolve_project_root(project_root),
         )
     )
     if result.get("ok") is False and result.get("partial") is not True:
