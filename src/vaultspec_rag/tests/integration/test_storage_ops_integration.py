@@ -688,3 +688,136 @@ def test_reconcile_cap_defers_remaining_collections(
         assert batch.drifted_remaining == 1
     finally:
         client.close()
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+def test_archive_manifest_carries_identity_from_the_real_manifest(
+    ops_qdrant: QdrantSupervisor,
+    tmp_path: Path,
+) -> None:
+    """A real archive preserves what produced the vectors it snapshots.
+
+    The drop that follows a successful data-tier archive destroys the live
+    manifest entry the record lived in, so this is the only copy a restore
+    could ever be judged against.
+
+    Mutation it catches: building the snapshot manifest's collection entries
+    without reading ``collection_identity``, which archives point counts and
+    loses provenance.
+    """
+    import json
+
+    from qdrant_client import QdrantClient
+
+    from ...storage_manifest import record_collection_identity, snapshot_manifest_path
+    from ...storage_ops import archive_prefix
+    from ...store_schema import STORAGE_SCHEMA_VERSION, CollectionIdentity
+
+    client = QdrantClient(url=ops_qdrant.url)
+    try:
+        root = tmp_path / "archived"
+        root.mkdir()
+        prefix = root_collection_prefix(root)
+        name = f"{prefix}vault_docs"
+        record_root(root, backend="server")
+        _make_collection(client, name)
+        record_collection_identity(
+            root,
+            backend="server",
+            collection=name,
+            identity=CollectionIdentity(
+                dense_model="superseded/dense",
+                sparse_model=None,
+                dense_dim=4,
+                distance="Cosine",
+                dense_vector_name="dense",
+                sparse_vector_name="sparse",
+                storage_schema_version=STORAGE_SCHEMA_VERSION,
+            ),
+        )
+
+        archive_dir = tmp_path / "archive"
+        archive_prefix(
+            client,
+            prefix,
+            snapshots_dir=ops_qdrant.storage_dir.parent / "snapshots",
+            archive_dir=archive_dir,
+        )
+
+        payload = json.loads(
+            snapshot_manifest_path(archive_dir / prefix.rstrip("_")).read_text(
+                encoding="utf-8"
+            )
+        )
+        entry = next(item for item in payload["collections"] if item["name"] == name)
+        # Asserted present before it is read, so losing the record fails here
+        # rather than raising on a null lookup further down.
+        assert entry.get("identity") is not None
+        assert entry["identity"]["dense_model"] == "superseded/dense"
+        assert entry["identity"]["sparse_model"] is None
+    finally:
+        client.close()
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+def test_real_migrate_then_carry_stamps_the_remapped_target(
+    ops_qdrant: QdrantSupervisor,
+    tmp_path: Path,
+) -> None:
+    """The copy and the carry compose over real, remapped collection names.
+
+    The migrate creates its target through the raw client, which stamps
+    nothing, so without the carry a genuinely copied namespace reads
+    unverifiable. Asserted against the real remap because the identity homes
+    are keyed by collection name and the names differ across the move - the
+    failure this closes is a record carried under a key nothing looks up.
+    """
+    from qdrant_client import QdrantClient
+
+    from ...storage_identity import load_identity, record_identity
+    from ...storage_ops import carry_migrated_identity
+    from ...store_schema import STORAGE_SCHEMA_VERSION, CollectionIdentity
+
+    client = QdrantClient(url=ops_qdrant.url)
+    try:
+        root = tmp_path / "moved"
+        local_dir = root / ".vaultspec-rag" / "qdrant"
+        local_dir.mkdir(parents=True)
+        prefix = root_collection_prefix(root)
+        target = f"{prefix}vault_docs"
+        _make_collection(client, "vault_docs")
+        record_identity(
+            root,
+            backend="local",
+            collection="vault_docs",
+            identity=CollectionIdentity(
+                dense_model="superseded/dense",
+                sparse_model=None,
+                dense_dim=4,
+                distance="Cosine",
+                dense_vector_name="dense",
+                sparse_vector_name="sparse",
+                storage_schema_version=STORAGE_SCHEMA_VERSION,
+            ),
+            local_dir=local_dir,
+        )
+
+        name_map = {"vault_docs": target}
+        results = migrate_collections(client, client, name_map, dry_run=False)
+        assert results[0].status == "migrated"
+        assert load_identity(root, backend="server", collection=target) is None
+
+        carried = carry_migrated_identity(
+            root,
+            name_map=name_map,
+            to_backend="server",
+            local_dir=local_dir,
+            results=results,
+        )
+
+        assert carried == [target]
+        got = load_identity(root, backend="server", collection=target)
+        assert got is not None
+        assert got.dense_model == "superseded/dense"
+    finally:
+        client.close()
