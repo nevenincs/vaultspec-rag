@@ -332,3 +332,70 @@ class TestServedCodeCollectionPointer:
 
         served = resolve_served_code_collection(tmp_path, "codebase_docs")
         assert generation_code_collection("codebase_docs", "d" * 32) != served
+
+    def test_breadth_is_recorded_before_the_pointer_moves(self, tmp_path: Path) -> None:
+        """A reader must never resolve a generation whose breadth is unrecorded.
+
+        The completeness predicate compares a live count against the published
+        figure. A pointer moved ahead of that record names a collection whose
+        figure is missing or belongs to its predecessor, so a correct and
+        complete generation reads as truncated and drives a reconcile on every
+        later run.
+
+        The order is observed rather than asserted after the fact: the
+        recorder captures whether the pointer had already moved at the moment
+        it ran.
+
+        Proven able to fail: swapping the two statements in
+        ``publish_generation_as_served`` makes the recorder observe a moved
+        pointer and fails the assertion below.
+        """
+        from ..._store_models import (
+            publish_generation_as_served,
+            read_served_code_collection,
+        )
+
+        root = tmp_path
+        observed: list[str | None] = []
+
+        def _record() -> None:
+            observed.append(read_served_code_collection(root))
+
+        publish_generation_as_served(
+            root, collection="codebase_docs_gaaa", record_breadth=_record
+        )
+
+        assert observed == [None]
+        assert read_served_code_collection(root) == "codebase_docs_gaaa"
+
+    def test_a_failed_breadth_record_leaves_the_previous_generation_serving(
+        self, tmp_path: Path
+    ) -> None:
+        """An unverified build must not take over from a complete one.
+
+        A build whose breadth could not be recorded has not proven what it
+        holds. Serving the older complete collection is the safe direction;
+        moving the pointer anyway would publish an unverified generation.
+
+        Proven able to fail: wrapping the ``record_breadth()`` call in a
+        suppressing try/except lets the pointer move and fails the assertion
+        below.
+        """
+        from ..._store_models import (
+            publish_generation_as_served,
+            publish_served_code_collection,
+            read_served_code_collection,
+        )
+
+        root = tmp_path
+        publish_served_code_collection(root, "codebase_docs_gold")
+
+        def _fail() -> None:
+            raise OSError("breadth could not be recorded")
+
+        with pytest.raises(OSError, match="breadth could not be recorded"):
+            publish_generation_as_served(
+                root, collection="codebase_docs_gnew", record_breadth=_fail
+            )
+
+        assert read_served_code_collection(root) == "codebase_docs_gold"
