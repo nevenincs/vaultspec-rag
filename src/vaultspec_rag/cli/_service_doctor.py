@@ -98,9 +98,13 @@ def _doctor_exit_code(
     dead_daemon = bool(service.get("present")) and not service.get("live")
     below_floor = mode is not None and mode.get("version_floor") == "below"
     mismatch = mode is not None and mode.get("mode_mismatch") == "mismatch"
+    # A running daemon from another release is actionable in the same way the
+    # other warnings are: the operator must replace it. False only when a daemon
+    # was actually observed, so a pre-install run is unaffected.
+    foreign_release = service.get("version_compatible") is False
     if below_floor:
         return 2
-    if dead_daemon or mismatch:
+    if dead_daemon or mismatch or foreign_release:
         return 1
     return 0
 
@@ -120,6 +124,7 @@ def _live_service_axis() -> dict[str, object]:
     cleans a confirmed-dead stale ``service.json`` as a side effect, matching
     ``server status`` behaviour exactly.
     """
+    from ..serviceclient._compat import classify_service_version
     from ..serviceclient._discovery import resolve_machine_service
     from ..serviceclient._status import STATUS_STOPPED, compose_discovery_status
     from ._service_lifecycle import _evaluate_service_signals
@@ -144,6 +149,7 @@ def _live_service_axis() -> dict[str, object]:
                 "state": "not_started",
                 "label": "no service has been started (no discovery file)",
             }
+        version = classify_service_version(resolution.payload)
         return {
             "present": True,
             "live": verdict.exit_code == 0,
@@ -157,6 +163,8 @@ def _live_service_axis() -> dict[str, object]:
             "heartbeat_age_seconds": verdict.signals.heartbeat_age_s,
             "heartbeat_stale": verdict.signals.heartbeat_stale,
             "discovery_evidence": resolution.evidence(),
+            "version": version.to_dict(),
+            "version_compatible": version.is_compatible,
         }
 
     (
@@ -175,6 +183,7 @@ def _live_service_axis() -> dict[str, object]:
     ) = _evaluate_service_signals(status)
 
     live = exit_code == 0
+    status_version = classify_service_version(status)
     return {
         "present": True,
         "live": live,
@@ -187,6 +196,8 @@ def _live_service_axis() -> dict[str, object]:
         "port_listening": port_listening,
         "heartbeat_age_seconds": heartbeat_age,
         "heartbeat_stale": heartbeat_stale,
+        "version": status_version.to_dict(),
+        "version_compatible": status_version.is_compatible,
     }
 
 
@@ -341,6 +352,11 @@ def _render_live_service_axis(service: dict[str, object]) -> None:
         _plain(f"  heartbeat: {heartbeat_age:.0f}s ago{suffix}")
     else:
         _plain("  heartbeat: absent")
+    version = service.get("version")
+    if isinstance(version, dict):
+        reported = version.get("service_version") or "not reported"
+        state = "matches this client" if version.get("compatible") else "INCOMPATIBLE"
+        _plain(f"  release: {reported} ({state})")
 
 
 def _render_dependency_axis(report: dict[str, object]) -> None:
