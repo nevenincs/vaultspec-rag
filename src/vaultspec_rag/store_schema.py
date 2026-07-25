@@ -20,6 +20,7 @@ model or touching the GPU.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, NotRequired, TypedDict, cast
 
 __all__ = [
@@ -40,14 +41,18 @@ __all__ = [
     "VAULT_INTEGER_INDEXES",
     "VAULT_KEYWORD_INDEXES",
     "CodeChunkPayload",
+    "CollectionIdentity",
+    "ConformanceVerdict",
     "DocumentChunkPayload",
     "SchemaCompatibility",
     "VaultChunkPayload",
     "VaultDocPayload",
     "assert_compatible",
     "collection_names",
+    "current_identity",
     "describe_storage_schema",
     "effective_dense_dim",
+    "evaluate_conformance",
 ]
 
 # Version of the on-disk Qdrant shape. Bump ONLY on a breaking change: a vector
@@ -452,3 +457,223 @@ def assert_compatible(
                 ),
             }
     return {"compatible": True, "reason": ""}
+
+
+# Conformance verdicts. Three, not two: the absence of evidence is its own
+# answer. A namespace written before identity was stamped cannot be scored as
+# passing (that reintroduces the silent mismatch this record exists to remove)
+# nor as failing (that degrades every host on first upgrade), so it is reported
+# as the unknown it is and is never grounds to refuse a read or to destroy data.
+CONFORMING = "conforming"
+NONCONFORMING = "nonconforming"
+UNVERIFIABLE = "unverifiable"
+
+
+@dataclass(frozen=True)
+class CollectionIdentity:
+    """What actually produced one collection's vectors.
+
+    The fact the descriptor cannot supply. ``describe_storage_schema`` reads the
+    effective model and width from live config, so it reports what this process
+    is configured with and never what the stored vectors were built with -
+    comparing it against the config it came from always succeeds. This record is
+    stamped once, at collection-create, and is the only durable statement of
+    provenance a later reader can compare against.
+
+    ``sparse_model`` is ``None`` when sparse was disabled at create time, which
+    is a real difference from a collection built with sparse enabled and must
+    not be conflated with an absent record.
+    """
+
+    dense_model: str
+    sparse_model: str | None
+    dense_dim: int
+    distance: str
+    dense_vector_name: str
+    sparse_vector_name: str
+    storage_schema_version: int
+
+    def to_payload(self) -> dict[str, Any]:
+        """Return the JSON-serialisable form persisted in either home."""
+        return {
+            "dense_model": self.dense_model,
+            "sparse_model": self.sparse_model,
+            "dense_dim": self.dense_dim,
+            "distance": self.distance,
+            "dense_vector_name": self.dense_vector_name,
+            "sparse_vector_name": self.sparse_vector_name,
+            "storage_schema_version": self.storage_schema_version,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: object) -> CollectionIdentity | None:
+        """Rebuild from a persisted payload, or ``None`` if it is unusable.
+
+        Returns ``None`` rather than raising or substituting defaults: a
+        malformed record is missing evidence, and the caller's correct response
+        is ``unverifiable``. Defaulting any field here would manufacture the
+        provenance this type exists to prove.
+        """
+        if not isinstance(payload, dict):
+            return None
+        raw = cast("dict[str, Any]", payload)
+        dense_model = raw.get("dense_model")
+        dense_dim = raw.get("dense_dim")
+        if not isinstance(dense_model, str) or not dense_model:
+            return None
+        if not isinstance(dense_dim, int) or isinstance(dense_dim, bool):
+            return None
+        sparse_model = raw.get("sparse_model")
+        if sparse_model is not None and not isinstance(sparse_model, str):
+            return None
+        version = raw.get("storage_schema_version")
+        if not isinstance(version, int) or isinstance(version, bool):
+            return None
+        return cls(
+            dense_model=dense_model,
+            sparse_model=sparse_model,
+            dense_dim=dense_dim,
+            distance=str(raw.get("distance", DENSE_DISTANCE)),
+            dense_vector_name=str(raw.get("dense_vector_name", DENSE_VECTOR_NAME)),
+            sparse_vector_name=str(raw.get("sparse_vector_name", SPARSE_VECTOR_NAME)),
+            storage_schema_version=version,
+        )
+
+
+def current_identity() -> CollectionIdentity:
+    """Build the identity this process would stamp on a collection it creates.
+
+    Reads the effective model names and dense width from config the same way
+    the descriptor does, so a collection's stamp always matches the process that
+    actually wrote its vectors rather than the module defaults.
+    """
+    models = _effective_models()
+    sparse = models["sparse"]
+    return CollectionIdentity(
+        dense_model=str(models["dense"]),
+        sparse_model=str(sparse) if sparse is not None else None,
+        dense_dim=effective_dense_dim(),
+        distance=DENSE_DISTANCE,
+        dense_vector_name=DENSE_VECTOR_NAME,
+        sparse_vector_name=SPARSE_VECTOR_NAME,
+        storage_schema_version=STORAGE_SCHEMA_VERSION,
+    )
+
+
+@dataclass(frozen=True)
+class ConformanceVerdict:
+    """Whether a collection may be trusted, and why.
+
+    ``geometry_fatal`` separates the two failure modes that share the
+    ``nonconforming`` verdict. A width, distance, or vector-name disagreement
+    makes the stored vectors unscorable, so the caller refuses. A model
+    disagreement at matching geometry leaves the collection readable and merely
+    meaningless to rank by, so the caller degrades and lets a rebuild fix it -
+    refusing there would remove search for the duration of the rebuild that is
+    the remedy.
+    """
+
+    verdict: str
+    reason: str
+    geometry_fatal: bool = False
+
+    @property
+    def is_conforming(self) -> bool:
+        """Whether the collection matched on every compared field."""
+        return self.verdict == CONFORMING
+
+
+def _identity_descriptor(identity: CollectionIdentity) -> dict[str, Any]:
+    """Shape one identity as a descriptor ``assert_compatible`` can judge."""
+    return {
+        "version": identity.storage_schema_version,
+        "vault": {
+            "vectors": {
+                "dense": {
+                    "name": identity.dense_vector_name,
+                    "dim": identity.dense_dim,
+                    "distance": identity.distance,
+                },
+                "sparse": {"name": identity.sparse_vector_name},
+            },
+        },
+    }
+
+
+def evaluate_conformance(
+    stamped: CollectionIdentity | None,
+    *,
+    expected: CollectionIdentity,
+    live_dense_dim: int | None,
+) -> ConformanceVerdict:
+    """Judge one collection against the identity the running code expects.
+
+    Routes the version, dense-width, and vector-name rules through
+    :func:`assert_compatible` rather than restating them, so the two callers
+    cannot drift apart. The model comparison is this function's own, because it
+    is the fact the descriptor could never carry.
+
+    Args:
+        stamped: The identity recorded when the collection was created, or
+            ``None`` when the collection predates stamping.
+        expected: What this process would stamp today - see
+            :func:`current_identity`.
+        live_dense_dim: The dense width read back from the live collection, or
+            ``None`` when it could not be read.
+
+    Returns:
+        A :class:`ConformanceVerdict`.
+    """
+    if stamped is None:
+        return ConformanceVerdict(
+            UNVERIFIABLE,
+            "the collection carries no stamped identity, so what produced its "
+            "vectors cannot be established",
+        )
+    if live_dense_dim is None:
+        return ConformanceVerdict(
+            UNVERIFIABLE,
+            "the live collection geometry could not be read, so the stamped "
+            "identity could not be confirmed against it",
+        )
+
+    compatibility = assert_compatible(
+        _identity_descriptor(stamped),
+        known_version=expected.storage_schema_version,
+        expected_dense_dim=expected.dense_dim,
+        dense_vector_name=expected.dense_vector_name,
+    )
+    if not compatibility["compatible"]:
+        return ConformanceVerdict(
+            NONCONFORMING, compatibility["reason"], geometry_fatal=True
+        )
+    if live_dense_dim != expected.dense_dim:
+        return ConformanceVerdict(
+            NONCONFORMING,
+            f"the live collection's dense width {live_dense_dim} does not match "
+            f"the configured {expected.dense_dim}",
+            geometry_fatal=True,
+        )
+    if stamped.distance != expected.distance:
+        return ConformanceVerdict(
+            NONCONFORMING,
+            f"the collection was built with {stamped.distance} distance but "
+            f"{expected.distance} is configured",
+            geometry_fatal=True,
+        )
+    if stamped.dense_model != expected.dense_model:
+        return ConformanceVerdict(
+            NONCONFORMING,
+            f"the collection's vectors were produced by {stamped.dense_model} "
+            f"but {expected.dense_model} is configured; equal width makes the "
+            "mismatch invisible to scoring, so ranking is meaningless until a "
+            "rebuild",
+        )
+    if stamped.sparse_model != expected.sparse_model:
+        return ConformanceVerdict(
+            NONCONFORMING,
+            f"the collection's sparse vectors were produced by "
+            f"{stamped.sparse_model or 'no sparse model'} but "
+            f"{expected.sparse_model or 'no sparse model'} is configured",
+        )
+    return ConformanceVerdict(CONFORMING, "")

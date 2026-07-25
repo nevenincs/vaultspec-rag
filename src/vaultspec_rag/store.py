@@ -666,7 +666,34 @@ class VaultStore(_VaultSearchMixin):
                 },
                 **kwargs,
             )
+            # Stamped here, inside the create, because this is the only moment
+            # the process writing the vectors and the record of what wrote them
+            # are guaranteed to agree. Anywhere later and the configuration may
+            # already have moved.
+            self._stamp_identity(name)
         logger.info("Created collection '%s' at %s", name, self.db_path)
+
+    def _stamp_identity(self, collection: str) -> None:
+        """Record what this process used to build ``collection``.
+
+        The width comes from ``self._embedding_dim`` - the value the collection
+        was actually created with - rather than from config, which the store may
+        have been constructed to override. A stamp that recorded the config
+        instead would describe a collection nobody built.
+        """
+        import dataclasses
+
+        from .storage_identity import record_identity
+
+        record_identity(
+            self.root_dir,
+            backend="server" if self._server_mode else "local",
+            collection=collection,
+            identity=dataclasses.replace(
+                store_schema.current_identity(), dense_dim=self._embedding_dim
+            ),
+            local_dir=None if self._server_mode else self.db_path,
+        )
 
     def _delete_collection_hard(self, name: str) -> None:
         """Delete a collection so a same-name recreate cannot resurrect points.
