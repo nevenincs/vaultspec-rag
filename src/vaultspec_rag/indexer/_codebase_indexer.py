@@ -59,6 +59,7 @@ from ._content_policy import (
     RootContentPolicy,
     SourceProfileVersion,
 )
+from ._drift_owner import CodeDriftOwner
 from ._file_state import FileStateKind
 from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
 from ._preprocess_runner import PreprocessAbortError
@@ -370,6 +371,9 @@ class CodebaseIndexer:
         self._support_profile_name: str | None = None
         self._last_checkpoint: CodeRunCheckpoint | None = None
         self._memory_budget: MemoryBudget | None = None
+        # Bound to the generation once a run opens its checkpoint, because
+        # superseding evidence is meaningless without one to supersede in.
+        self._drift_owner: CodeDriftOwner | None = None
 
     @property
     def support_measurement(self) -> SupportMeasurement:
@@ -573,9 +577,10 @@ class CodebaseIndexer:
         return fingerprints.membership, fingerprints.content
 
     def _reset_reuse_state(self) -> None:
-        """Clear per-run donor reuse state at the start of a public run."""
+        """Clear per-run donor reuse and drift state at the start of a run."""
         self._reuse_stats = None
         self._donor_reuse = None
+        self._drift_owner = None
 
     def _reuse_snapshot(self) -> dict[str, object] | None:
         """Return this run's reuse telemetry block, or ``None`` when off."""
@@ -1277,14 +1282,19 @@ class CodebaseIndexer:
                 return
             yield segment
 
-    @staticmethod
     def _record_confirmed_slice(
-        checkpoint: CodeRunCheckpoint,
+        self,
         segments: tuple[CodeFileSegment, ...],
         metadata: dict[str, str],
     ) -> None:
-        """Persist the file units covered by one confirmed store mutation."""
-        checkpoint.record_confirmed_segments(segments, metadata)
+        """Persist the file units covered by one confirmed store mutation.
+
+        Routed through the drift owner rather than straight at the checkpoint:
+        the store write has already been confirmed here, so a path that moved
+        since its digest was observed must be superseded and re-recorded, not
+        allowed to fail a run that has otherwise succeeded.
+        """
+        self.drift_owner.record_segments(segments, metadata)
 
     def _consume_weighted_slice(
         self,
@@ -1313,7 +1323,6 @@ class CodebaseIndexer:
             on_storage_confirmed = (
                 partial(
                     self._record_confirmed_slice,
-                    checkpoint,
                     weighted_slice.segments,
                     metadata,
                 )
@@ -1612,7 +1621,22 @@ class CodebaseIndexer:
             )
             checkpoint = _open()
         self._last_checkpoint = checkpoint
+        self._drift_owner = CodeDriftOwner(checkpoint, self.store)
         return checkpoint
+
+    @property
+    def drift_owner(self) -> CodeDriftOwner:
+        """Return the open generation's drift owner.
+
+        Reaching this before a checkpoint is open means a caller is trying to
+        supersede evidence in a generation that does not exist yet.
+        """
+        owner = self._drift_owner
+        if owner is None:
+            raise RuntimeError(
+                "code drift ownership requires an open run checkpoint"
+            )
+        return owner
 
     def _checkpoint_evidence_lost(self, checkpoint: CodeRunCheckpoint) -> bool:
         """Return whether resumed storage-confirmed evidence points at nothing.
@@ -2210,53 +2234,6 @@ class CodebaseIndexer:
             if unit.kind is CommitUnitKind.UPSERT and unit.rel_path in result:
                 result[unit.rel_path].update(unit.point_ids)
         return result
-
-    def _reopen_digest_drifted_paths(
-        self,
-        checkpoint: CodeRunCheckpoint,
-        current_digests: dict[str, str],
-    ) -> int:
-        """Supersede resumed indexed evidence for paths that changed since.
-
-        A resumed generation carries the indexed paths of the attempt that
-        failed. Any of those whose source changed in the meantime cannot be
-        recognised as already committed, because commit-unit identity binds
-        the source digest, and cannot be written over an indexed path either.
-        Superseding them here - before any segment is dispatched - is what
-        turns a resumed attempt over a moving tree into an ordinary one.
-
-        Deleting the published points is not optional. Chunk identity embeds
-        the line span and a content hash, so re-ingesting changed content
-        mints new identities rather than overwriting the old ones; leaving
-        them would replace a visible failure with silently duplicated
-        content.
-
-        The points are dropped from storage first and the units that claim
-        them are removed immediately after. No separate deletion unit is
-        recorded, because a point identity may belong to only one commit
-        unit: while the superseded upsert still claims these points, nothing
-        else can, and once it is gone the ledger holds no claim on them at
-        all - which is exactly what their removal from storage means. An
-        interruption between the two steps replays cleanly, because the path
-        is still recorded indexed under the old digest and is simply
-        re-opened again, finding no points left to drop.
-
-        Returns:
-            The number of paths re-opened.
-        """
-        drifted = checkpoint.drifted_indexed_paths(current_digests)
-        for rel_path, superseded_digest in sorted(drifted.items()):
-            stale_ids = sorted(self._get_chunk_ids_for_files({rel_path}))
-            if stale_ids:
-                self.store.delete_code_chunks(stale_ids)
-            checkpoint.reopen_drifted_path(rel_path, superseded_digest)
-        if drifted:
-            logger.info(
-                "Re-opened %d resumed code path(s) whose source changed since "
-                "the interrupted attempt indexed them",
-                len(drifted),
-            )
-        return len(drifted)
 
     def _incremental_prior_ids_by_path(
         self,
@@ -2898,9 +2875,8 @@ class CodebaseIndexer:
         run_control.checkpoint()
         # Scoped to the paths this run re-ingests: re-opening anything else
         # would drop its points without republishing them.
-        self._reopen_digest_drifted_paths(
-            checkpoint,
-            {rel: current_hashes[rel] for rel in to_index},
+        self.drift_owner.supersede_snapshot(
+            {rel: current_hashes[rel] for rel in to_index}
         )
         run_control.checkpoint()
         prior_ids_by_path = self._incremental_prior_ids_by_path(
@@ -3108,9 +3084,8 @@ class CodebaseIndexer:
         run_control.checkpoint()
         # Scoped to the paths this run re-ingests: re-opening anything else
         # would drop its points without republishing them.
-        self._reopen_digest_drifted_paths(
-            checkpoint,
-            {rel: changed_hashes[rel] for rel in to_index},
+        self.drift_owner.supersede_snapshot(
+            {rel: changed_hashes[rel] for rel in to_index}
         )
         run_control.checkpoint()
         prior_ids_by_path = self._incremental_prior_ids_by_path(
