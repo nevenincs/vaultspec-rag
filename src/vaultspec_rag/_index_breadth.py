@@ -31,21 +31,12 @@ logger = logging.getLogger(__name__)
 #: as one during set arithmetic over the sidecar's file entries.
 PUBLISHED_POINTS_KEY = "__code_published_points__"
 
-#: Reserved sidecar key marking that the collection still holds points encoded
-#: under a regime the current configuration no longer produces. Set when a gate
-#: reconciles rather than rebuilding destructively, and cleared only by a
-#: rebuild an operator asked for, which is the one thing that removes them.
-SUPERSEDED_REGIME_KEY = "__code_superseded_regime__"
-
 __all__ = [
     "PUBLISHED_POINTS_KEY",
-    "SUPERSEDED_REGIME_KEY",
     "BreadthShortfall",
     "code_breadth_shortfall",
     "code_meta_path",
-    "code_regime_superseded",
     "parse_published_points",
-    "parse_superseded_regime",
     "read_published_points",
 ]
 
@@ -97,29 +88,6 @@ def parse_published_points(raw: Mapping[str, str]) -> int | None:
         logger.debug("unusable published point count %r in code sidecar", value)
         return None
     return count if count >= 0 else None
-
-
-def parse_superseded_regime(raw: Mapping[str, str]) -> bool:
-    """Return whether a sidecar mapping marks the collection's regime superseded.
-
-    Absence is "no", not "cannot tell": a sidecar written before the key
-    existed describes an index no gate has reconciled in place, and warning
-    over every such root would train the reader to skip the warning.
-    """
-    return raw.get(SUPERSEDED_REGIME_KEY) == "1"
-
-
-def code_regime_superseded(root: pathlib.Path) -> bool:
-    """Return whether *root*'s code collection still holds superseded points."""
-    path = code_meta_path(root)
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        logger.debug("code sidecar %s unreadable: %s", path, exc)
-        return False
-    if not isinstance(raw, dict):
-        return False
-    return parse_superseded_regime(raw)
 
 
 def code_meta_path(root: pathlib.Path) -> pathlib.Path:

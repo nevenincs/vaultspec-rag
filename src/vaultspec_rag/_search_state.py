@@ -33,7 +33,6 @@ def search_index_state(
     requested_root: object,
     search_type: PublicSourceType | str,
     shortfall: BreadthShortfall | None = None,
-    superseded_regime: bool = False,
 ) -> dict[str, object]:
     """Return the canonical ``index_state`` block for one search response.
 
@@ -55,9 +54,4 @@ def search_index_state(
     }
     if shortfall is not None:
         state["shortfall"] = shortfall.as_index_state_block()
-    # Distinct from a shortfall: the collection holds everything it published
-    # and more, but some of it was encoded under a regime the current
-    # configuration no longer produces, so ranking mixes two regimes.
-    if superseded_regime:
-        state["superseded_regime"] = True
     return state
