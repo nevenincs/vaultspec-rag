@@ -217,6 +217,71 @@ def manifest_path() -> Path:
     return _status_dir_path() / _MANIFEST_FILENAME
 
 
+def _decode_collections(
+    record: dict[str, object], prefix: str, backend: str
+) -> tuple[str, ...]:
+    """Read a record's collection names, falling back to the legacy shape."""
+    raw = record.get("collections")
+    if not isinstance(raw, list):
+        return _legacy_collections(prefix, backend)
+    return tuple(value for value in cast("list[object]", raw) if isinstance(value, str))
+
+
+def _decode_schema_version(record: dict[str, object]) -> int:
+    """Read a record's storage schema version, defaulting to the first."""
+    raw = record.get("storage_schema_version", 1)
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return 1
+    return raw
+
+
+def _decode_identity(
+    record: dict[str, object],
+) -> dict[str, store_schema.CollectionIdentity]:
+    """Read a record's per-collection identity claims.
+
+    A malformed claim is dropped rather than defaulted, so it reads as absent
+    evidence (unverifiable) instead of a claim this loader invented.
+    """
+    raw = record.get("collection_identity")
+    if not isinstance(raw, dict):
+        return {}
+    identity: dict[str, store_schema.CollectionIdentity] = {}
+    for name, payload in cast("dict[str, object]", raw).items():
+        claim = store_schema.CollectionIdentity.from_payload(payload)
+        if claim is not None:
+            identity[name] = claim
+    return identity
+
+
+def _entry_from_record(prefix: str, record_obj: object) -> ManifestEntry | None:
+    """Build one entry from a raw manifest record, or ``None`` if unusable.
+
+    A record without a string ``root`` carries no locatable namespace, so it
+    is dropped rather than defaulted.
+    """
+    if not isinstance(record_obj, dict):
+        return None
+    record = cast("dict[str, object]", record_obj)
+    root = record.get("root")
+    if not isinstance(root, str):
+        return None
+    backend = str(record.get("backend", ""))
+    return ManifestEntry(
+        prefix=prefix,
+        root=root,
+        backend=backend,
+        last_indexed=str(record.get("last_indexed", "")),
+        # Lenient: pre-upgrade manifests lack the field; absent means
+        # "never observed orphaned", so the first reclaim can happen no
+        # earlier than one full grace window after upgrade.
+        first_seen_orphaned=str(record.get("first_seen_orphaned", "")),
+        storage_schema_version=_decode_schema_version(record),
+        collections=_decode_collections(record, prefix, backend),
+        collection_identity=_decode_identity(record),
+    )
+
+
 def load_manifest() -> dict[str, ManifestEntry]:
     """Load the manifest as a mapping of prefix to entry.
 
@@ -248,53 +313,9 @@ def load_manifest() -> dict[str, ManifestEntry]:
     roots = cast("dict[str, object]", roots_obj)
     entries: dict[str, ManifestEntry] = {}
     for prefix, record_obj in roots.items():
-        if not isinstance(record_obj, dict):
-            continue
-        record = cast("dict[str, object]", record_obj)
-        root = record.get("root")
-        if not isinstance(root, str):
-            continue
-        backend = str(record.get("backend", ""))
-        raw_collections = record.get("collections")
-        collections = (
-            tuple(
-                value
-                for value in cast("list[object]", raw_collections)
-                if isinstance(value, str)
-            )
-            if isinstance(raw_collections, list)
-            else _legacy_collections(prefix, backend)
-        )
-        raw_schema_version = record.get("storage_schema_version", 1)
-        schema_version = (
-            raw_schema_version
-            if isinstance(raw_schema_version, int)
-            and not isinstance(raw_schema_version, bool)
-            else 1
-        )
-        raw_identity = record.get("collection_identity")
-        identity: dict[str, store_schema.CollectionIdentity] = {}
-        if isinstance(raw_identity, dict):
-            for name, payload in cast("dict[str, object]", raw_identity).items():
-                # A malformed record is dropped rather than defaulted, so it
-                # reads as absent evidence (unverifiable) instead of a claim
-                # this loader invented.
-                parsed = store_schema.CollectionIdentity.from_payload(payload)
-                if parsed is not None:
-                    identity[name] = parsed
-        entries[prefix] = ManifestEntry(
-            prefix=prefix,
-            root=root,
-            backend=backend,
-            last_indexed=str(record.get("last_indexed", "")),
-            # Lenient: pre-upgrade manifests lack the field; absent means
-            # "never observed orphaned", so the first reclaim can happen no
-            # earlier than one full grace window after upgrade.
-            first_seen_orphaned=str(record.get("first_seen_orphaned", "")),
-            storage_schema_version=schema_version,
-            collections=collections,
-            collection_identity=identity,
-        )
+        entry = _entry_from_record(prefix, record_obj)
+        if entry is not None:
+            entries[prefix] = entry
     return entries
 
 
