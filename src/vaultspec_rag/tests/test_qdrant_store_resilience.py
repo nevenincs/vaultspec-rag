@@ -33,7 +33,9 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-pytestmark = [pytest.mark.unit]
+# Tiers are declared per class rather than for the module: TestBoundedRetry
+# holds one case needing real infrastructure, and a module-level default would
+# be ADDED to its `integration` mark rather than overridden by it.
 
 
 def _make_collection(storage: Path, name: str) -> Path:
@@ -44,6 +46,7 @@ def _make_collection(storage: Path, name: str) -> Path:
     return col
 
 
+@pytest.mark.unit
 class TestQuarantine:
     """The quarantine primitive moves a collection aside reversibly."""
 
@@ -69,6 +72,7 @@ class TestQuarantine:
         assert "collections" not in dest.relative_to(tmp_path).parts
 
 
+@pytest.mark.unit
 class TestDetection:
     """Detection keys on the on-disk set, and abstains when unsure."""
 
@@ -172,6 +176,7 @@ def _fake_binary(tmp_path: Path, source: str, name: str = "fake_qdrant") -> Path
 class TestBoundedRetry:
     """The supervised start quarantines under its bound, then fails loudly."""
 
+    @pytest.mark.unit
     def test_perpetually_corrupt_store_quarantines_up_to_the_bound_then_raises(
         self, tmp_path: Path
     ) -> None:
@@ -199,6 +204,7 @@ class TestBoundedRetry:
         remaining = _list_on_disk_collections(storage)
         assert len(remaining) == 2  # the two beyond the bound are untouched
 
+    @pytest.mark.unit
     def test_dead_child_naming_no_collection_abstains_with_zero_quarantines(
         self, tmp_path: Path
     ) -> None:
@@ -248,6 +254,7 @@ class TestBoundedRetry:
         assert not (storage / "quarantine").exists()
         assert _list_on_disk_collections(storage) == {"r0000_vault_docs"}
 
+    @pytest.mark.unit
     def test_auto_quarantine_disabled_never_touches_the_store(
         self, tmp_path: Path
     ) -> None:
@@ -290,6 +297,7 @@ def isolated_storage(tmp_path: Path) -> Iterator[Path]:
         reset_config()
 
 
+@pytest.mark.unit
 class TestQuarantineCli:
     """The `server qdrant quarantine` escape-hatch verb lists and moves."""
 

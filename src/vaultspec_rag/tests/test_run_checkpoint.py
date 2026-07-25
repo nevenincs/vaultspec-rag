@@ -35,6 +35,8 @@ if TYPE_CHECKING:
 
     from ..store import VaultStore
 
+pytestmark = [pytest.mark.unit]
+
 
 def _digest(value: str) -> str:
     return hashlib.blake2b(value.encode("utf-8")).hexdigest()

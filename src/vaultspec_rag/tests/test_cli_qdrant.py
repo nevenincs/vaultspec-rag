@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+import pytest
 from typer.testing import CliRunner
 
 from ..cli import app
@@ -14,6 +15,8 @@ from ..qdrant_runtime._resolve import binary_filename
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+pytestmark = [pytest.mark.unit]
 
 runner = CliRunner()
 

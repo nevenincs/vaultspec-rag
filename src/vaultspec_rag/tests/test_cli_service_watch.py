@@ -8,9 +8,13 @@ no subprocess, no mocks.
 
 from __future__ import annotations
 
+import pytest
+
 from ..cli import _service_child_env
 from ..config import EnvVar
 from ._scaffold import restore_env, set_env
+
+pytestmark = [pytest.mark.unit]
 
 
 def test_unset_flags_add_no_watch_env() -> None:
