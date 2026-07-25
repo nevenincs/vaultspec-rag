@@ -2778,11 +2778,13 @@ class CodebaseIndexer:
         """Locked implementation of cooperative incremental indexing."""
         run_control.checkpoint()
         if self._published_evidence_lost():
+            # The predicate has already logged which branch fired and, for a
+            # shortfall, both counts. Naming only the absent-collection case
+            # here would contradict it on the commoner path.
             logger.warning(
-                "code collection is missing from storage but published index "
-                "metadata still describes committed files; running a full "
-                "failure-safe reconciliation instead of trusting the carried "
-                "evidence"
+                "storage no longer backs the published code index metadata; "
+                "running a full failure-safe reconciliation instead of "
+                "trusting the carried evidence"
             )
             return self._full_index_locked(
                 clean=False,
