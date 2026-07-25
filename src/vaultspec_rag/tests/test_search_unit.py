@@ -91,7 +91,7 @@ class TestParseQuery:
             ("date:2026-02 recent docs", "recent docs", {"date": "2026-02"}),
             ("tag:#research my query", "my query", {"tag": "research"}),
             ("lang:python search codebase", "search codebase", {"language": "python"}),
-            ("path:src/ search code", "search code", {"path": "src/"}),
+            ("path:src/ search code", "search code", {"path_scope": "src/"}),
             (
                 "func:encode_query authentication",
                 "authentication",
@@ -452,3 +452,107 @@ class TestFilterValidation:
         assert excinfo.value.filter_kind == "vault"
         assert "--doc-type" in excinfo.value.offending_filters
         assert "vault-search filters" in str(excinfo.value)
+
+
+class TestPathPatternMatching:
+    """A supplied path pattern narrows to a location, not to one literal path.
+
+    A plain pattern is the form an operator types - ``src/vaultspec_rag/indexer``
+    or ``src/`` - and a directory is never itself an indexed path, so matching
+    it literally returns nothing while looking like a working narrow.
+    """
+
+    pytestmark: ClassVar = [pytest.mark.unit]
+
+    @staticmethod
+    def _rows(*paths: str) -> list[dict[str, object]]:
+        return [{"path": p, "id": p} for p in paths]
+
+    @staticmethod
+    def _kept(
+        rows: list[dict[str, object]],
+        include: list[str] | None = None,
+        exclude: list[str] | None = None,
+    ) -> set[str]:
+        from ..search._result_shaping import filter_raw_codebase_results
+
+        return {
+            str(r["path"])
+            for r in filter_raw_codebase_results(rows, include or [], exclude or [])
+        }
+
+    # Each row is a pattern shape an operator types, paired with the subtree it
+    # must select. Drop the subtree expansion from expand_path_pattern and every
+    # plain-pattern row fails on an empty survivor set, while the glob rows keep
+    # passing - which is why both shapes are asserted here together.
+    @pytest.mark.parametrize(
+        ("pattern", "expected"),
+        [
+            ("src/pkg", {"src/pkg/a.py", "src/pkg/sub/b.py"}),
+            ("src/pkg/", {"src/pkg/a.py", "src/pkg/sub/b.py"}),
+            ("src/pkg/**", {"src/pkg/a.py", "src/pkg/sub/b.py"}),
+            ("src/pkg/*", {"src/pkg/a.py", "src/pkg/sub/b.py"}),
+            ("src/pkg/a.py", {"src/pkg/a.py"}),
+            ("src", {"src/pkg/a.py", "src/pkg/sub/b.py"}),
+        ],
+        ids=["bare-dir", "trailing-slash", "double-star", "star", "exact-file", "top"],
+    )
+    def test_an_include_pattern_selects_the_location_and_its_subtree(
+        self,
+        pattern: str,
+        expected: set[str],
+    ) -> None:
+        rows = self._rows("src/pkg/a.py", "src/pkg/sub/b.py", "tests/test_a.py")
+        assert self._kept(rows, include=[pattern]) == expected
+
+    def test_an_exclude_pattern_drops_the_location_and_its_subtree(self) -> None:
+        rows = self._rows("src/pkg/a.py", "tests/test_a.py", "tests/deep/test_b.py")
+        assert self._kept(rows, exclude=["tests"]) == {"src/pkg/a.py"}
+
+    def test_a_pattern_matching_no_indexed_path_keeps_nothing(self) -> None:
+        rows = self._rows("src/pkg/a.py", "tests/test_a.py")
+        assert self._kept(rows, include=["does/not/exist"]) == set()
+
+
+class TestInlinePathScopeToken:
+    """``path:`` narrows by pattern rather than by exact identity.
+
+    Routing the token to the exact-path filter pushed a directory into a
+    keyword equality match, which no indexed path can satisfy: the search
+    returned nothing and reported it as a plain no-match.
+    """
+
+    pytestmark: ClassVar = [pytest.mark.unit]
+
+    def test_the_token_does_not_reach_the_exact_path_store_filter(self) -> None:
+        from ..search._searcher import VaultSearcher
+
+        parsed = parse_query("reopen a drifted indexed path path:src/pkg/")
+        store_filters = VaultSearcher._build_codebase_store_filters(  # pyright: ignore[reportPrivateUsage]  # asserting the pushdown contract
+            None,  # pyright: ignore[reportArgumentType]  # staticmethod-shaped: self is unused
+            parsed,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        # Reinstate the "path" mapping in _FILTER_KEY_MAP and this finds the
+        # directory pushed down as an exact keyword match, which is the silent
+        # empty-result defect.
+        assert "path" not in store_filters
+
+    def test_an_explicit_exact_path_still_pushes_down(self) -> None:
+        from ..search._searcher import VaultSearcher
+
+        parsed = parse_query("lock ordering")
+        store_filters = VaultSearcher._build_codebase_store_filters(  # pyright: ignore[reportPrivateUsage]  # asserting the pushdown contract
+            None,  # pyright: ignore[reportArgumentType]  # staticmethod-shaped: self is unused
+            parsed,
+            None,
+            "src/pkg/a.py",
+            None,
+            None,
+            None,
+        )
+        assert store_filters["path"] == "src/pkg/a.py"

@@ -300,24 +300,45 @@ def _empty_search_diagnostics(
     index_state: dict[str, object],
     *,
     port: int | None,
+    path_filter: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    source = index_state["source"]
+    port_suffix = f" --port {port}" if port is not None else ""
+    remediation = [
+        f"vaultspec-rag index --type {source}{port_suffix}",
+        "vaultspec-rag server status",
+        f"vaultspec-rag server jobs --state active{port_suffix}",
+    ]
     if index_state["indexed_count"] == 0:
         reason = "index_missing"
-        message = f"No indexed {index_state['source']} items are available."
+        message = f"No indexed {source} items are available."
+    elif path_filter is not None:
+        # The search proved this: candidates matched the query and the path
+        # patterns removed every one. Saying so, with the patterns, is the
+        # difference between a fixable typo and an operator concluding the
+        # filter is unsupported.
+        patterns = ", ".join(
+            str(p) for p in cast("list[object]", path_filter["patterns"])
+        )
+        reason = "no_match_path_filter"
+        message = (
+            f"{path_filter['candidates_before_filter']} indexed items matched "
+            f"the query, and the path filter ({patterns}) excluded every one. "
+            "Patterns match project-relative paths; a plain pattern matches "
+            "that path and everything under it."
+        )
+        remediation = [
+            "rerun without the path filter to see what the query matches",
+            "widen the pattern, or check it against a path from an unfiltered result",
+        ]
     else:
         reason = "no_match"
         message = "The index is available, but no indexed item matched the query."
 
-    source = index_state["source"]
-    port_suffix = f" --port {port}" if port is not None else ""
     return {
         "reason": reason,
         "message": message,
-        "remediation": [
-            f"vaultspec-rag index --type {source}{port_suffix}",
-            "vaultspec-rag server status",
-            f"vaultspec-rag server jobs --state active{port_suffix}",
-        ],
+        "remediation": remediation,
     }
 
 
@@ -343,9 +364,13 @@ def _classify_search_result(
         port=port,
     )
     if classification.status_code == 200 and not classification.response["results"]:
+        raw_path_filter = classification.response.get("path_filter")
         classification.response["empty"] = _empty_search_diagnostics(
             index_state,
             port=port,
+            path_filter=cast("dict[str, object]", raw_path_filter)
+            if isinstance(raw_path_filter, dict)
+            else None,
         )
     return classification
 
@@ -1282,6 +1307,7 @@ def _execute_search_request(
             "results": items,
             "summary": f"Found {len(results)} relevant items.",
             "filtered": notes.get("dropped_domains"),
+            "path_filter": notes.get("path_filter"),
             "timing": {
                 "index_state_seconds": index_state_seconds,
                 "search_seconds": search_seconds,
