@@ -59,7 +59,7 @@ Stops a copied or archived namespace from inheriting conformance it never establ
 Proves the whole surface green, records the guard failure proofs, and reviews the delivered feature.
 
 - [x] `P05.S21` - Run the full suite, lint, type, and citation gates and reconcile the result against the recorded baseline; `src/vaultspec_rag/`.
-- [ ] `P05.S22` - Review the delivered feature against the authorizing decision and record the audit; `src/vaultspec_rag/`.
+- [x] `P05.S22` - Review the delivered feature against the authorizing decision and record the audit; `src/vaultspec_rag/`.
 
 ## Description
 
