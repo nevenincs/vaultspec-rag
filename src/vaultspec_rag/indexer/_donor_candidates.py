@@ -346,6 +346,26 @@ def _family_rank(
     return 2
 
 
+def _served_donor_collection(
+    root: str | None,
+    kind: CollectionKind,
+    derived: str,
+) -> str:
+    """Return the collection a donor root serves for *kind*.
+
+    Falls back to *derived* when the donor's root is unrecorded or its pointer
+    cannot be read. That is the safe direction: an unreadable pointer yields a
+    name that either appears in the donor's recorded collections, in which case
+    reuse proceeds against real data, or does not, in which case the donor is
+    skipped. Neither outcome invents a collection.
+    """
+    if kind is not CollectionKind.CODE or not root:
+        return derived
+    from .._store_models import resolve_served_code_collection
+
+    return resolve_served_code_collection(root, derived)
+
+
 def discover_donor_candidates(
     root: Path | str,
     kind: CollectionKind,
@@ -393,11 +413,17 @@ def discover_donor_candidates(
             continue
         if entry.backend != backend:
             continue
-        collection = (
+        derived = (
             prefix + kind.collection_suffix
             if entry.backend == "server"
             else kind.collection_suffix
         )
+        # A donor that has published a rebuild serves
+        # ``<derived>_g<generation>``, so the derived name is either a
+        # collection it has superseded or one that never existed. Reading the
+        # donor's own pointer is what makes reuse consult what that root
+        # actually serves rather than a name this process guessed for it.
+        collection = _served_donor_collection(entry.root, kind, derived)
         if collection not in entry.collections:
             continue
         candidates.append(

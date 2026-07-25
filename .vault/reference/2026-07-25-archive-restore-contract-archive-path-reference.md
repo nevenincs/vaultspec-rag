@@ -6,6 +6,7 @@ date: '2026-07-25'
 modified: '2026-07-25'
 related: []
 ---
+
 # `archive-restore-contract` reference: `what the archive path writes, keeps, and offers a reader today`
 
 Grounding read of the archive-and-destroy path as it stands, taken to decide

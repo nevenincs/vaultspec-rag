@@ -127,9 +127,37 @@ native alias; local mode backs it with the persisted pointer the resolution
 already consults. The reader-visible contract is identical, which is what keeps
 one behaviour across both backends.
 
-**Reclamation.** The superseded collection is dropped after the pointer moves and
-no in-flight reader holds it. Reclamation is ordinary maintenance, read-and-drop
+**Reclamation.** The superseded collection is dropped after the pointer moves
+and no reader still holds it. Reclamation is ordinary maintenance, read-and-drop
 only, and never runs in the same path as the swap.
+
+"No reader still holds it" was originally left undefined here, which made the
+precondition unimplementable: nothing tracks readers, and a store resolves its
+collection name once at construction, so a store opened before a swap keeps
+using the superseded name for its whole life. The definition is therefore two
+conditions, and both must hold:
+
+- *In this process*, the project registry knows its live leases, so a root with
+  any outstanding lease has a reader that may still be resolving the old name.
+  A superseded collection under such a root is not a candidate.
+- *In any other process*, nothing is observable, so time substitutes for
+  evidence: the pointer must have continuously not named the collection for a
+  persisted grace window, on the same reset-on-contrary-observation rule the
+  existing orphan reclamation uses. A window that has not been continuously
+  held is not a window.
+
+Detection is separable from removal and lands first. A read-only report of what
+each root serves and what it has left behind is useful on its own, needs neither
+condition above, and is what makes the accumulated debt visible while removal is
+still unspecified. A root whose pointer cannot be read is omitted from that
+report rather than listed: an illegible pointer is not evidence that nothing
+points anywhere, and the two must stay distinguishable at the source.
+
+Removal additionally needs a granularity the current maintenance verbs lack. The
+namespace survey carries one status per root prefix, and the prefix-scoped
+delete takes every collection beneath it, so neither can express "this
+collection and not its sibling". Reclamation therefore cannot simply reuse them,
+which is the reason it is scoped after detection rather than beside it.
 
 **Admission.** Before a shadow build begins, available headroom is checked
 against the estimated duplicate. A root that cannot afford it does not silently
@@ -171,6 +199,10 @@ named defect rather than a design, so it cannot quietly become the destination.
   operator-visible refusal that does not exist today.
 - Reclamation becomes a state a reader can observe: an unreferenced collection
   may exist between a failed build and the next maintenance pass.
+- Until removal lands, that state is reported and not acted on, so a long-lived
+  root accumulates superseded generations. Their cost is storage, and the
+  detection report is what stops it being invisible - but it is a real cost and
+  an operator may need to drop one by hand.
 - The interim mitigation ships a knowingly-degraded retrieval regime for the
   period it is in place. It must be removed when generation-scoped publication
   lands, and leaving it is a defect, not a fallback.

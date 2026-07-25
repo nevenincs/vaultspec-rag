@@ -4,7 +4,7 @@ tags:
   - '#cli-service-operability-hardening'
 date: '2026-06-11'
 tier: L3
-modified: '2026-06-30'
+modified: '2026-07-25'
 related:
   - '[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]'
   - '[[2026-06-11-service-status-convergence-adr]]'
