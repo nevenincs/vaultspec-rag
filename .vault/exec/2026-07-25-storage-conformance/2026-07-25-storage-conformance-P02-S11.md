@@ -65,15 +65,14 @@ storage.
 
 Mutation proofs:
 
-| Mutation | Observed failure |
-| --- | --- |
-| geometry never refuses | `DID NOT RAISE StorageGeometryError` |
-| any nonconforming refuses | `StorageGeometryError` on the model-swap case |
-| missing stamp scores conforming | `assert 'conforming' == 'unverifiable'` |
+| Mutation                        | Observed failure                              |
+| ------------------------------- | --------------------------------------------- |
+| geometry never refuses          | `DID NOT RAISE StorageGeometryError`          |
+| any nonconforming refuses       | `StorageGeometryError` on the model-swap case |
+| missing stamp scores conforming | `assert 'conforming' == 'unverifiable'`       |
 
 Restored: `14 passed`. Regression check across the store-dependent modules -
-store, preprocess store, index reuse, storage ops, donor candidates - `138
-passed`.
+store, preprocess store, index reuse, storage ops, donor candidates - `138 passed`.
 
 ## Notes
 

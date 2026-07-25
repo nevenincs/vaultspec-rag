@@ -11,32 +11,6 @@ related:
   - '[[2026-07-25-document-index-drift-parity-adr]]'
 ---
 
-<!-- FRONTMATTER RULES:
-     tags: one directory tag (hardcoded #research) and one feature tag.
-     Replace index-resume-drift-race with a kebab-case feature tag, e.g. #foo-bar.
-     Additional tags may be appended below the required pair.
-
-     Related: use wiki-links as '[[yyyy-mm-dd-foo-bar]]'.
-
-     modified: CLI-maintained last-modified stamp; set at scaffold time,
-     refreshed by mutating CLI verbs and vault check fix; never hand-edit.
-
-     DO NOT add fields beyond those scaffolded; metadata lives
-     only in the frontmatter. -->
-
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the related: field above.
-     - NEVER use [[wiki-links]] or markdown [label](path) links in the document body.
-     - Cite external sources as bare URLs. Cite code, commits, packages, and
-       standards as inline backtick locators: `src/module.py:42`, commit
-       `abc1234`, `package@1.2.3`, RFC 9110. -->
-
-<!-- DOCUMENT BOUNDARY:
-     Research grounds; the ADR decides. Frame the option space with evidence
-     and trade-offs; at most name the option the evidence favors and what
-     the ADR must settle. Never record the decision here - a decision
-     outside the ADR forks and goes stale when the ADR chooses otherwise. -->
-
 # `index-resume-drift-race` research: `resumed index over a moving tree aborts on the indexed-path upsert guard`
 
 A resumed code-index generation that runs over a tree someone is still editing
