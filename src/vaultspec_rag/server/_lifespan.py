@@ -44,7 +44,8 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
     from ..job_manager import JobManager, JobShutdownResult
-    from ..qdrant_runtime import QdrantRuntimeState, QdrantSupervisor
+    from ..qdrant_runtime._constants import QdrantRuntimeState
+    from ..qdrant_runtime._supervise import QdrantSupervisor
     from ..service import ServiceHealth
 
 logger = logging.getLogger("vaultspec_rag.server")

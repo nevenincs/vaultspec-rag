@@ -211,7 +211,7 @@ def _survey_from_service(
     With ``root``, the route narrows to that root's namespace and its
     ``queried_root`` (the service-computed prefix) is returned alongside.
     """
-    from ..serviceclient import _try_http_admin
+    from ..serviceclient._transport import _try_http_admin
     from ..storage_survey import NamespaceSurvey
     from ._service_status import _default_service_port
 
