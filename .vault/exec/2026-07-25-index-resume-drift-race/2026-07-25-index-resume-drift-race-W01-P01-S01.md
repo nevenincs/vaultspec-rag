@@ -95,13 +95,20 @@ implied.
 
 ## Notes
 
-The full-suite pass count is not yet recorded. The run was still in progress at
-the time of writing, having observed zero failures across roughly 2200 lines of
-output, and it is running slower than its usual duration under concurrent load
-from another session's suite and the resident GPU service. The count is
-deliberately left unrecorded rather than estimated: this number exists to be
-compared against after four extractions, and an invented baseline would be worse
-than none.
+The pass-count baseline is **2636 passed, 712 deselected, 9 warnings in
+473.83s**, from a completed run of the project's own full-suite recipe.
+
+That figure comes from an earlier run in the same session rather than from the
+run started for this Step, and the substitution is sound rather than convenient:
+every commit between that run and this record touches only vault documents, and
+a diff of the source, tools, project file, and task recipes across that range is
+empty. The suite therefore executed against a byte-identical tree. A second run
+would re-derive the same number at the cost of contending with the remaining
+work on a box already running two other agents.
+
+The run started for this Step was abandoned mid-flight for that reason, not
+because it was failing - it had observed zero failures across roughly 2200 lines
+of output, running slower than usual under concurrent load.
 
 The code index for this root was unusable when the Step began. Three consecutive
 incremental jobs had failed on the same ledger collision, so queries naming
