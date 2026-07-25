@@ -6,7 +6,6 @@ must never construct an :class:`~vaultspec_rag.embeddings.EmbeddingModel`, touch
 exclusive province of the single in-process consumer. Workers that initialise
 CUDA reintroduce the fork/spawn CUDA-context crash class. The pool is always
 created with the ``spawn`` start method so no parent CUDA context is inherited.
-See rule ``index-workers-stay-cpu-only``.
 
 The chunking logic here is the byte-for-byte equivalent of the former
 ``CodebaseIndexer._chunk_file`` / ``_chunk_with_ast`` / ``_chunk_with_splitter``
