@@ -202,6 +202,7 @@ _TOKEN_CLASSES: tuple[tuple[str, str], ...] = (
     ("research-finding-ref", "research O3"),
     ("quality-review-token", "QR4"),
     ("feature-named-adr", "index-gpu-pipeline ADR"),
+    ("rule-citation", "per the time-confirmed-danglingness rule"),
 )
 
 
@@ -240,6 +241,117 @@ def test_a_rule_name_is_a_citation_wherever_the_prose_sits(
 
     assert _slugs(findings) == ["codified-rule-name"]
     assert _texts(findings) == ["storage-discipline"]
+
+
+def test_a_citation_wrapped_across_a_line_break_is_seen(
+    gate: ModuleType, tmp_path: Path
+) -> None:
+    """Prose is hard-wrapped, and a citation does not respect the wrap.
+
+    Matching each line alone makes every multi-word pattern blind to a citation
+    whose phrase straddles the break - "per the" ending one line and the record
+    it names beginning the next. A real citation escaped exactly that way, in a
+    function docstring, after the single-line cases were already covered. The
+    reported line is where the citation STARTS, not the top of the docstring.
+
+    Mutation proving this can fail: match per line instead of per joined block.
+    """
+    source = _write(
+        tmp_path,
+        "module.py",
+        "def f() -> None:\n"
+        '    """Head.\n\n'
+        "    The flag is report-only; it never feeds a destructive path, per the\n"
+        "    time-confirmed-danglingness rule.\n"
+        '    """\n',
+    )
+
+    findings = gate.scan_file(source, repo_root=tmp_path)
+
+    assert [(line, slug) for _rel, line, slug, _text in findings] == [
+        (4, "rule-citation")
+    ]
+
+
+def test_joining_never_splices_two_separate_paragraphs(
+    gate: ModuleType, tmp_path: Path
+) -> None:
+    """A paragraph boundary ends a block, so joining cannot invent a phrase.
+
+    Joining is what makes a wrapped citation visible, and it is also the one way
+    this gate could start inventing findings: a paragraph ending "per the" and an
+    unrelated next paragraph opening with a kebab noun would fabricate a citation
+    nobody wrote. A gate that cries wolf is abandoned as fast as one that misses.
+
+    Markdown is where this bites, and the only place it can. A Python comment
+    carries its own ``#`` into the joined text, which blocks a phrase from
+    forming across the boundary whether the run is broken or not - so the
+    equivalent comment case would pass with the guard removed and prove nothing.
+
+    Mutation proving this can fail: stop breaking a text block at a blank line,
+    so the whole file joins into one paragraph.
+    """
+    source = _write(
+        tmp_path,
+        "guide.md",
+        "Fall back to trust, per the\n\nmanaged-singleton rule lives elsewhere.\n",
+    )
+
+    citations, _leaks, _smells = gate.scan_text(source, repo_root=tmp_path)
+
+    assert citations == []
+
+
+def test_product_rule_vocabulary_is_not_a_rule_citation(
+    gate: ModuleType, tmp_path: Path
+) -> None:
+    """This product ships rules, indexes rules, and wraps linters that have rules.
+
+    So the word cannot be the signal. A citation is distinguished by POINTING at
+    a governing record - "per the X rule", "(the X rule)", "project X rule", a
+    quoted identifier after the word. An indefinite or possessive rule is the
+    product's own subject matter. A looser pattern lit up ten legitimate lines in
+    this tree, and a pattern that cries wolf ten times is one the next person
+    deletes, which costs more than the miss it was meant to fix.
+
+    Mutation proving this can fail: match a bare kebab name followed by "rule".
+    """
+    source = _write(
+        tmp_path,
+        "module.py",
+        '"""Head.\n\n'
+        "Count files a document-preprocessing rule fed into the worker.\n"
+        "A pre-existing user-authored rule must not be touched.\n"
+        "basedpyright's uppercase-is-constant rule does not model this.\n"
+        "Ruff has no module-length rule, so this script provides the signal.\n"
+        '"""\n',
+    )
+
+    assert gate.scan_file(source, repo_root=tmp_path) == []
+
+
+def test_a_retired_rule_name_is_still_a_citation(
+    gate: ModuleType, tmp_path: Path
+) -> None:
+    """The stem list knows today's rules; citations outlive the rules they name.
+
+    This project collapsed fifteen rules into seven, so a pointer at a rule that
+    no longer exists is the common case rather than a hypothetical - and a
+    list-driven pattern is blind to every one of them by construction. Asserted
+    on a name that is deliberately not on disk.
+
+    Mutation proving this can fail: delete the ``rule-citation`` pattern and rely
+    on ``RULE_STEMS`` alone.
+    """
+    source = _write(
+        tmp_path,
+        "module.py",
+        'def f() -> None:\n    """Doc. Logged at debug per the no-swallow rule."""\n',
+    )
+
+    findings = gate.scan_file(source, repo_root=tmp_path)
+
+    assert _slugs(findings) == ["rule-citation"]
 
 
 def test_the_rule_stem_list_still_matches_the_rules_on_disk(gate: ModuleType) -> None:
