@@ -33,6 +33,7 @@ __all__ = [
     "app",
     "main",
     "preprocess_app",
+    "run_cli",
     "server_app",
     "server_job_app",
     "server_projects_app",
@@ -41,6 +42,7 @@ __all__ = [
     "server_watcher_app",
     "version_callback",
 ]
+
 
 class _LiteralArgvGroup(TyperGroup):
     """Root command group that hands ``sys.argv`` to the parser verbatim.
@@ -353,3 +355,29 @@ def _global_target(ctx: typer.Context) -> Path | None:
         if isinstance(value, Path):
             return value
     return None
+
+
+def run_cli() -> None:
+    """Run the CLI over the process command line.
+
+    Every program invocation of the application goes through here, because
+    the command line reaches the parser verbatim only when it is invoked this
+    way.
+
+    Click emulates a POSIX shell on Windows: unless disabled, it applies user
+    expansion, environment-variable expansion and a recursive glob to every
+    argument it reads from ``sys.argv``. An argument that matches nothing
+    survives, so the damage is invisible until an operator passes something
+    that does match. A pattern option is then replaced by the files it matched
+    at the time - one match silently narrows the filter to a single file, and
+    several turn the remainder into stray positionals. The same pass rewrites
+    a query carrying ``~`` or a variable reference into a filesystem path.
+
+    None of that is wanted here. The interactive shells this runs under expand
+    their own arguments already, so the pass is at best a second expansion of
+    something the user deliberately quoted, and the arguments it corrupts are
+    exactly the pattern options whose value must reach the search service
+    verbatim - the same value the non-shell callers of that service already
+    send. Turning it off is what keeps the two on one contract.
+    """
+    app(windows_expand_args=False)

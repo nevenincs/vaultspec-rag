@@ -13,18 +13,15 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  
 
 from .. import IndexResult, prepare_document
 from ..config import reset_config as reset_rag_config
-from ..indexer import (
+from ..indexer import LANGUAGE_MAP, SUPPORTED_EXTENSIONS, ASTChunker
+from ..indexer._chunking import (
     _CLASS_LIKE_NODES,
     _CONTAINER_NODES,
     _FUNCTION_LIKE_NODES,
     _MAX_FILE_SIZE,
-    LANGUAGE_MAP,
-    SUPPORTED_EXTENSIONS,
-    ASTChunker,
-    _extract_feature,
-    _extract_title,
     _is_binary,
 )
+from ..indexer._vault_prep import _extract_feature, _extract_title
 from .corpus import CorpusManifest
 
 pytestmark = [pytest.mark.unit]
@@ -730,7 +727,7 @@ class TestTextSplitterRobustness:
 
 
 class TestGitignoreNegationPatterns:
-    """R9-M4: Negation patterns in subdirectory .gitignore files must keep
+    """Negation patterns in subdirectory .gitignore files must keep
     the ! prefix at the start, not prepend the directory before it."""
 
     def test_negation_pattern_not_mangled(self, tmp_path: Path):
@@ -823,7 +820,7 @@ class TestGitignoreNegationPatterns:
 
 
 class TestHashingPermissionError:
-    """R9-M6: read_bytes() in hashing loops must handle permission errors."""
+    """read_bytes() in hashing loops must handle permission errors."""
 
     def test_full_index_meta_skips_unreadable_file(self, tmp_path: Path):
         """Metadata hashing in full_index skips files that raise OSError."""
@@ -865,7 +862,7 @@ class TestHashingPermissionError:
 
 
 class TestMergeSmallCrossType:
-    """R9-m1: _merge_small must produce node_type=None when merging
+    """_merge_small must produce node_type=None when merging
     chunks with different node types."""
 
     def test_same_type_preserved(self):
@@ -902,7 +899,7 @@ class TestMergeSmallCrossType:
 
 
 class TestForceSplitNonAscii:
-    """R9-M2: Force-split in _collect_chunks must handle non-ASCII correctly.
+    """Force-split in _collect_chunks must handle non-ASCII correctly.
     The old code used node.start_byte + i (byte offset) as a character index
     into source, giving wrong line numbers for non-ASCII source."""
 
@@ -947,7 +944,7 @@ class TestForceSplitNonAscii:
 
 
 class TestCodebaseMetaRoundTrip:
-    """R10-M1/M2: _write_meta and _load_meta correctly persist hash metadata."""
+    """_write_meta and _load_meta correctly persist hash metadata."""
 
     def test_write_meta_persists_hashes_to_disk(self, tmp_path: Path) -> None:
         """_write_meta writes a JSON file that _load_meta can read back."""
@@ -997,7 +994,7 @@ class TestCodebaseMetaRoundTrip:
 
 
 class TestExtractNameNonAscii:
-    """R10-M3: _extract_name must use byte offsets correctly for non-ASCII."""
+    """_extract_name must use byte offsets correctly for non-ASCII."""
 
     def test_non_ascii_identifier_extracted(self):
         """Function with non-ASCII name is extracted correctly."""
@@ -1029,7 +1026,7 @@ class TestExtractNameNonAscii:
 
 
 class TestDecoratedDefinitionClassification:
-    """R10-M4: @dataclass class Foo must get class_name='Foo', not function_name."""
+    """@dataclass class Foo must get class_name='Foo', not function_name."""
 
     def test_dataclass_gets_class_name(self):
         source = (
@@ -1073,8 +1070,8 @@ class TestDecoratedDefinitionClassification:
         assert "decorated_definition" not in _FUNCTION_LIKE_NODES
 
 
-class TestR10MinorNodeTypes:
-    """R10-m1/m2: Extended node type sets."""
+class TestExtendedNodeTypeSets:
+    """Extended node type sets."""
 
     def test_function_like_has_arrow_function(self):
         assert "arrow_function" in _FUNCTION_LIKE_NODES
@@ -1092,8 +1089,8 @@ class TestR10MinorNodeTypes:
         assert "union_item" in _CLASS_LIKE_NODES
 
 
-class TestR10MinorContainerConstant:
-    """R10-m4: _CONTAINER_NODES is a module-level constant."""
+class TestContainerNodesConstant:
+    """_CONTAINER_NODES is a module-level constant."""
 
     def test_container_nodes_exists(self):
         assert isinstance(_CONTAINER_NODES, set)
@@ -1101,8 +1098,8 @@ class TestR10MinorContainerConstant:
         assert "program" in _CONTAINER_NODES
 
 
-class TestR10MinorAnchoredPattern:
-    """R10-m3: Anchored patterns in subdirectory .gitignore avoid double slash."""
+class TestAnchoredGitignorePatterns:
+    """Anchored patterns in subdirectory .gitignore avoid double slash."""
 
     def test_anchored_pattern_no_double_slash(self, tmp_path: Path):
         from ..indexer import CodebaseIndexer
@@ -1174,8 +1171,8 @@ class TestCodebaseInternalDirectoryExclusions:
         assert rel_paths == {"src/app.py"}
 
 
-class TestR10MinorBufferFunctionName:
-    """R10-m5: Buffer flush preserves function_name from parent."""
+class TestBufferFlushFunctionName:
+    """Buffer flush preserves function_name from parent."""
 
     def test_buffer_inherits_function_name(self):
         """Chunks from function body statements should carry the function name."""
@@ -1198,8 +1195,8 @@ class TestR10MinorBufferFunctionName:
             )
 
 
-class TestR11M1NonAsciiChunkText:
-    """R11-M1: chunk text uses byte offsets on source_bytes, not str."""
+class TestNonAsciiChunkText:
+    """chunk text uses byte offsets on source_bytes, not str."""
 
     def test_non_ascii_chunk_text_preserved(self):
         """Multi-byte UTF-8 characters in source survive AST chunking."""
