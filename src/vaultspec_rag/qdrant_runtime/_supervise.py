@@ -39,7 +39,7 @@ from ._constants import (
 if TYPE_CHECKING:
     from typing import Any, BinaryIO
 
-    from ._resolve import QdrantIdentity
+    from ._resolve import QdrantIdentity, StoreFormatVerdict
 
 logger = logging.getLogger(__name__)
 
@@ -347,6 +347,11 @@ class QdrantSupervisor:
         storage_dir: Shared multi-root storage directory.
         log_path: File qdrant stdout/stderr is appended to.
         restart_count: Heartbeat-initiated restarts performed so far.
+        binary_version: The server version ``binary`` is known to be, or ``""``
+            when it carries no verified version (an operator-supplied or
+            PATH-resolved binary). Compared against the store's own record
+            before spawning, so a load failure under a changed server version is
+            never mistaken for one collection going bad.
     """
 
     def __init__(
@@ -359,11 +364,13 @@ class QdrantSupervisor:
         log_path: Path | None = None,
         log_max_bytes: int = _MANAGED_LOG_MAX_BYTES_DEFAULT,
         log_backup_count: int = _MANAGED_LOG_BACKUP_COUNT_DEFAULT,
+        binary_version: str = "",
     ) -> None:
         self.binary = binary
         self.http_port = int(http_port)
         self.grpc_port = int(grpc_port) if grpc_port is not None else self.http_port - 1
         self.storage_dir = storage_dir
+        self.binary_version = binary_version
         self.log_path = log_path
         self.log_max_bytes = int(log_max_bytes)
         self.log_backup_count = int(log_backup_count)
@@ -380,6 +387,12 @@ class QdrantSupervisor:
         # Attached mode: this supervisor points at an already-running managed
         # Qdrant it did NOT spawn, so it must never terminate it on stop().
         self._attached = False
+        # What the last start could prove about the on-disk format, and every
+        # collection this supervisor moved out of the load set. Both are read by
+        # the operability surfaces: a quarantine that only reached the log is a
+        # data loss no operator is told about.
+        self._store_format: StoreFormatVerdict | None = None
+        self._quarantined: list[str] = []
         # The Windows kill-on-close job handle is deliberately held for
         # the supervisor's whole lifetime and never explicitly closed:
         # the OS kills the child exactly when the last handle closes
@@ -640,6 +653,13 @@ class QdrantSupervisor:
         identified (or the bound is reached) the start fails loudly with the
         captured panic rather than guessing.
 
+        Recovery is additionally gated on the store proving it was written by
+        the server version about to open it. Without that proof a whole-store
+        format incompatibility is indistinguishable from per-collection
+        corruption - it panics the same way, naming the collection it choked
+        on - and quarantining would work through the store one healthy
+        collection at a time. Unproven stores fail loudly instead.
+
         Args:
             timeout: Seconds to wait for readiness; ``None`` resolves the
                 env-overridable default via :func:`_ready_timeout_seconds`.
@@ -651,12 +671,25 @@ class QdrantSupervisor:
             RuntimeError: If the server does not become ready and no corrupt
                 collection can be recovered (the child is terminated first).
         """
+        from ._resolve import STORE_FORMAT_SKEW, evaluate_store_format
+
         if timeout is None:
             timeout = _ready_timeout_seconds()
+        self._quarantined = []
+        verdict = evaluate_store_format(self.storage_dir, self.binary_version)
+        self._store_format = verdict
+        if verdict.status == STORE_FORMAT_SKEW:
+            logger.warning(
+                "qdrant server version changed for this store: %s. The on-disk "
+                "format has not been proven compatible, so a failed load will "
+                "not be attributed to any single collection.",
+                verdict.reason,
+            )
         quarantined = 0
         while True:
             self.spawn()
             if self.wait_ready(timeout):
+                self._record_store_format()
                 return
             # Distinguish a dead child (a real load abort) from a still-alive one
             # (a readiness timeout on a healthy-but-slow store). Only a dead child
@@ -673,15 +706,24 @@ class QdrantSupervisor:
                     "refusing recovery while the prior child or log writer survives"
                 )
             tail = self.recent_output_tail()
-            culprit = (
+            named = (
                 _corrupt_collection_from_output(tail, self.storage_dir)
-                if (
-                    auto_quarantine
-                    and child_died
-                    and quarantined < _MAX_QUARANTINES_PER_START
-                )
+                if (auto_quarantine and child_died)
                 else None
             )
+            if named is not None and not verdict.quarantine_trustworthy:
+                raise RuntimeError(
+                    f"qdrant could not open its store and named collection "
+                    f"{named!r}, but {verdict.reason}. A server version this "
+                    "store was not written by fails the same way on a healthy "
+                    "collection, so that collection is NOT being quarantined. "
+                    f"Restore the qdrant {verdict.recorded or 'server'} binary "
+                    "this store was written by, or archive the store and "
+                    "re-index. Inspect a genuinely corrupt collection with: "
+                    f"vaultspec-rag server qdrant quarantine {named}. "
+                    f"See {self.log_path}.\n{tail}"
+                )
+            culprit = named if quarantined < _MAX_QUARANTINES_PER_START else None
             if culprit is None:
                 cause = (
                     f" Last child output:\n{tail}"
@@ -701,6 +743,7 @@ class QdrantSupervisor:
                     f"run `vaultspec-rag server qdrant quarantine {culprit}`."
                 ) from exc
             quarantined += 1
+            self._quarantined.append(culprit)
             logger.warning(
                 "qdrant failed to load collection %r; quarantined it to %s and "
                 "retrying start (%d/%d). That root re-indexes on its next touch.",
@@ -709,6 +752,57 @@ class QdrantSupervisor:
                 quarantined,
                 _MAX_QUARANTINES_PER_START,
             )
+
+    def _record_store_format(self) -> None:
+        """Record the server version that just opened this store, and re-judge.
+
+        Runs only after the server answered ready, so the recorded version
+        provably read the on-disk format. A skew that then opened successfully
+        is relabelled ``migrated``: the store has been carried forward and the
+        previously recorded binary can no longer be trusted to read it, which is
+        a fact the operator has to be told rather than one to overwrite quietly.
+        """
+        from ._resolve import (
+            STORE_FORMAT_MATCH,
+            STORE_FORMAT_MIGRATED,
+            STORE_FORMAT_SKEW,
+            StoreFormatVerdict,
+            write_store_format,
+        )
+
+        running = self.server_version() or self.binary_version
+        previous = self._store_format
+        if running:
+            write_store_format(self.storage_dir, qdrant_version=running)
+        if previous is None:
+            return
+        if previous.status == STORE_FORMAT_SKEW:
+            self._store_format = StoreFormatVerdict(
+                status=STORE_FORMAT_MIGRATED,
+                recorded=previous.recorded,
+                running=running or previous.running,
+                reason=(
+                    f"the store was last written by qdrant {previous.recorded} "
+                    f"and has now been opened by qdrant "
+                    f"{running or previous.running}"
+                ),
+            )
+            return
+        if running and previous.status != STORE_FORMAT_MATCH:
+            self._store_format = StoreFormatVerdict(
+                status=STORE_FORMAT_MATCH,
+                recorded=running,
+                running=running,
+                reason=f"the storage directory was written by qdrant {running}",
+            )
+
+    def store_format_verdict(self) -> StoreFormatVerdict | None:
+        """What the last start could prove about this store's on-disk format."""
+        return self._store_format
+
+    def quarantined_collections(self) -> list[str]:
+        """Collections this supervisor moved out of the load set, in order."""
+        return list(self._quarantined)
 
     def restart(self, timeout: float | None = None) -> bool:
         """One supervised restart attempt; increments the counter.
@@ -735,6 +829,7 @@ class QdrantSupervisor:
             return False
         ready = self.wait_ready(timeout)
         if ready:
+            self._record_store_format()
             from ._constants import QDRANT_SERVER_VERSION
             from ._resolve import write_qdrant_identity
 
@@ -831,6 +926,11 @@ class QdrantSupervisor:
 
     def state(self) -> QdrantRuntimeState:
         """Service-domain snapshot for operability surfaces."""
+        extra: dict[str, object] = {}
+        if self._store_format is not None:
+            extra["store_format"] = self._store_format.to_dict()
+        if self._quarantined:
+            extra["quarantined_collections"] = list(self._quarantined)
         return QdrantRuntimeState(
             mode="server",
             url=self.url,
@@ -839,6 +939,7 @@ class QdrantSupervisor:
             port=self.http_port,
             version=QDRANT_SERVER_VERSION,
             restarts=self.restart_count,
+            extra=extra,
         )
 
     def server_version(self) -> str:
@@ -1155,6 +1256,10 @@ def start_supervised_from_config() -> QdrantSupervisor:
         log_path=log_path,
         log_max_bytes=log_max_bytes,
         log_backup_count=log_backup_count,
+        # Only a provisioned binary carries a verified version. An env or PATH
+        # binary reports none, which leaves the store unverifiable rather than
+        # asserting a match the pin cannot back.
+        binary_version=resolved.version,
     )
     logger.info("Starting qdrant server (%s binary %s)", resolved.source, resolved.path)
     try:
