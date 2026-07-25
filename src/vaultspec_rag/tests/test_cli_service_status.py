@@ -628,6 +628,7 @@ class TestServiceDaemonHelpers:
                 "pid",
                 "port",
                 "started_at",
+                "package_version",
             }
 
     def test_read_status_missing_file(self, tmp_path: Path):
