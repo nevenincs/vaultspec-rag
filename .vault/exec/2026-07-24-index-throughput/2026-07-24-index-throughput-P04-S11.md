@@ -76,6 +76,45 @@ reaches p95 1,308 s and max 1,986 s, and up to 8 jobs were queued behind one
 admitted job. The same 8-job pile the research found running concurrently now
 queues honestly, one holder at a time.
 
+SOLO ARM NOW MEASURED, in a later coordinated window. The open half of this
+Step has numbers. Automatic updates were stopped for the one watched root and
+the admitted queue was allowed to drain first; cells ran as fresh interpreters
+driving the production index entry points directly, against a worktree whose
+content equals the tree the research baselines were taken on.
+
+Solo, device quiet:
+
+- code rebuild: 60.7 s of run-reported work (83.9 s wall including model load),
+  444 files and 7,450 chunks, peak CUDA reserved 7,484 MB, peak allocated
+  5,208 MB.
+- vault rebuild: 108.1 s of work (128.6 s wall), 1,965 documents, peak reserved
+  3,622 MB, peak allocated 3,568 MB.
+
+Against the pre-gate solo baselines measured on this machine during research -
+157 s code and 337 s vault - neither path regressed, which is the narrow
+acceptance question this arm exists to answer. The margin is large enough to
+look like a win and is deliberately not claimed as one: the baseline records
+neither their corpus size nor how quiet the machine was when they were taken,
+so "not regressed" is what the evidence supports and "2.6x faster" is not.
+
+Contended, same corpus, same harness: a second vault rebuild overlapping
+restarted watcher jobs took 299.1 s of work against the quiet run's 108.1 s for
+byte-identical output - 2.77x inflation. This is UNGATED contention and must not
+be read as a gate measurement: these cells drive the indexer in their own
+process and never pass through the daemon's admission gate, so nothing mediated
+them. The figure sits between the research's pre-gate 4-6x and the gated
+production population's 1.029x p50 above, and is consistent with both.
+
+One cell failed and the failure is kept here rather than dropped. The first code
+rebuild died at `slice-6-after-dense-forward` with a CUDA allocated high-water
+of 2,895.9 MiB above a 3,520.1 MiB resident baseline against a 2,667.6 MiB
+ceiling. The cause is substantially the harness: an out-of-process cell loads a
+second model copy while the daemon keeps its own resident, so the
+capacity-derived ceiling is roughly halved against production, where the daemon
+encodes in the process that already holds the model. The same rebuild fit once
+the queue had drained. Read it as a property of two encoding processes sharing
+one device, not as a defect in the rebuild path.
+
 ## Notes
 
 - What this measurement is NOT: a controlled A/B of one corpus with the gate
@@ -117,3 +156,36 @@ What the open half needs, so a later run does not re-derive it:
   module constant precisely so nobody can widen it at runtime. That is why the
   pre-gate side of any staged comparison can only come from the historical
   records.
+
+Conditions and defects of the solo arm above, so its numbers are read for what
+they are:
+
+- Encode-seam vector reuse had to be turned off, and leaving it on would have
+  voided the measurement silently. The measured worktree is a fork of an
+  already-indexed tree, so with reuse at its default the run adopts donor
+  vectors and skips the encode: a vault pass finished in 12 s against the same
+  corpus that takes 108 s encoding, and never moved the allocator past model
+  weights. A cadence or throughput number taken in that regime measures nothing
+  and reads as an enormous win. Every cell here set the reuse off-switch.
+- The runs carry no admission-wait or in-run GPU-lock telemetry. Driving the
+  indexer in-process bypasses the daemon's job records, which are where those
+  two figures live, so this arm answers wall-clock and memory only. The
+  telemetry half is not left unanswered: it is answered above from the 239-job
+  terminal population, whose largest run - 1,685.3 s of incremental code - paid
+  0.1 s of admission wait and 0.0017 s of lock wait, wall equal to work. That is
+  a solo rebuild-class telemetry observation from production, and it is stronger
+  evidence than one staged run would be.
+- A daemon-routed re-run is the better harness for wall-clock AND telemetry
+  together, but it carries a trap worth naming before someone reaches for it: a
+  service-routed job runs under the daemon's own configuration, where encode
+  seam reuse is on by default. Rebuilding a forked worktree that way adopts
+  donor vectors and returns in seconds with perfect telemetry and a meaningless
+  wall-clock. Either disable reuse for the daemon's lifetime or route the run at
+  a root that has no donor namespace.
+- The daemon stayed up throughout with its models resident, so the device was
+  never bare. Peak-memory figures here are therefore lower-bounded by a shared
+  card, not by a private one.
+- Conditions shifted mid-batch: the watched root's automatic updates were
+  restarted externally partway through, which is what the contended vault cell
+  captured. Cells are reported individually and no arm is averaged across that
+  boundary.
