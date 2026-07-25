@@ -531,7 +531,8 @@ def _job_snapshot_from_dict(value: object) -> JobSnapshot:
         runtime=_job_runtime_from_dict(raw.get("runtime")),
         resources=_job_resources_from_dict(raw.get("resources")),
         resilience=_job_resilience_from_dict(raw.get("resilience")),
-        reuse=_job_reuse_from_dict(raw.get("reuse")),
+        reuse=_optional_telemetry_block(raw.get("reuse"), "job reuse"),
+        drift=_optional_telemetry_block(raw.get("drift"), "job drift"),
         gpu_lock_wait_seconds=_optional_float(
             raw.get("gpu_lock_wait_seconds"), "gpu_lock_wait_seconds"
         ),
@@ -707,11 +708,11 @@ def _job_resilience_from_dict(value: object) -> IndexResilienceSnapshot | None:
     )
 
 
-def _job_reuse_from_dict(value: object) -> dict[str, object] | None:
-    """Read the optional donor-reuse telemetry block (absent on old state)."""
+def _optional_telemetry_block(value: object, name: str) -> dict[str, object] | None:
+    """Read one optional run-telemetry block, absent on older persisted state."""
     if value is None:
         return None
-    return dict(_required_mapping(value, "job reuse"))
+    return dict(_required_mapping(value, name))
 
 
 def _required_mapping(value: object, name: str) -> dict[str, object]:

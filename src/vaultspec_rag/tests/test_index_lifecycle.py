@@ -34,6 +34,7 @@ from ..store import root_collection_prefix
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from pathlib import Path
+    from types import FunctionType
 
     from ..store import VaultStore
 
@@ -260,13 +261,17 @@ class TestIndexEvents:
         assert "chunker died" in str(events[1][1]["error"])
 
 
-def _indexer_run_entry_points() -> list[tuple[str, Callable[..., object]]]:
+def _indexer_run_entry_points() -> list[tuple[str, FunctionType]]:
     """Every ``full_index`` / ``incremental_index`` the indexer package defines.
 
     Enumerated rather than listed: a fourth content domain has to be
     discovered by this test, not remembered by whoever adds it.
+
+    Typed as :class:`FunctionType` rather than a bare callable because
+    ``inspect.isfunction`` narrows to exactly that, and the callers read
+    ``__code__`` - which a plain ``Callable`` is not guaranteed to have.
     """
-    found: list[tuple[str, Callable[..., object]]] = []
+    found: list[tuple[str, FunctionType]] = []
     for info in pkgutil.iter_modules(indexer_package.__path__):
         module = importlib.import_module(f"{indexer_package.__name__}.{info.name}")
         for class_name, candidate in vars(module).items():
@@ -295,7 +300,18 @@ class TestNoIndexerCarriesItsOwnCopy:
         } <= names
 
     def test_every_run_entry_point_routes_through_the_shared_lifecycle(self) -> None:
-        """The wrapper is the only way in, so parity is structural."""
+        """The wrapper is the only way in, so parity is structural.
+
+        Deliberately a code-shape check, not a behavioural one: the
+        invariant is about a content domain that does not exist yet, and
+        no behavioural test can drive an indexer nobody has written. The
+        cost is that it reads the name out of the bytecode, so it would
+        pass on a call that is present but unreachable. That gap is
+        covered by the behavioural tests above and by the end-to-end
+        document run, which observe the clock actually stamped through
+        the store; an unreachable call fails those. Structural here,
+        behavioural there, on purpose.
+        """
         off_path = [
             name
             for name, method in _indexer_run_entry_points()
