@@ -17,4 +17,4 @@ Auto-generated index of all documents tagged with `#index-drift-circuit-accounti
 
 ### adr
 
-- `2026-07-25-index-drift-circuit-accounting-adr` - `index-drift-circuit-accounting` adr: `the circuit breaker counts faults, not superseded paths` | (**status:** `{proposed|accepted|rejected|superseded|deprecated}`)
+- `2026-07-25-index-drift-circuit-accounting-adr` - `index-drift-circuit-accounting` adr: `the circuit breaker counts faults, not superseded paths` | (**status:** `accepted`)

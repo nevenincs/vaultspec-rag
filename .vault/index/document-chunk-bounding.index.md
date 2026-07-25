@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#document-chunk-bounding'
-date: '2026-07-24'
-modified: '2026-07-24'
+date: '2026-07-25'
+modified: '2026-07-25'
 related:
   - '[[2026-07-23-document-chunk-bounding-P01-S01]]'
   - '[[2026-07-23-document-chunk-bounding-P01-S02]]'
