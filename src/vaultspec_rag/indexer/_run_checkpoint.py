@@ -294,13 +294,20 @@ class CodeRunCheckpoint:
         self,
         current_digests: Mapping[str, str],
     ) -> dict[str, str]:
-        """Return resumed indexed paths whose source has since changed.
+        """Return indexed paths whose content differs from the given digests.
 
         Maps each affected path to the digest recorded when it was indexed,
         which is the evidence the caller must supersede. A path is reported
-        only when this generation recorded it indexed and the digest observed
-        now differs, so a fresh generation reports nothing and a faithful
-        resume reports only what actually moved.
+        only when this generation recorded it indexed and the supplied digest
+        differs, so a fresh generation reports nothing and a faithful resume
+        reports only what actually moved.
+
+        The comparison is deliberately indifferent to where the digests come
+        from. Passing what a scan just observed on disk answers "what moved
+        while the interrupted attempt was down"; passing the digests of units
+        about to be recorded answers "what moved since dispatch". Both are the
+        same question about the same evidence, and one predicate answering
+        both is what keeps the two from drifting apart.
         """
         recorded = self.ledger.indexed_digests_for_paths(
             self.generation_id,
