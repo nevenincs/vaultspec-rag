@@ -150,6 +150,7 @@ def _emit_survey_json(
                 "collections": s.collections,
                 "points": s.points,
                 "footprint_bytes": s.footprint_bytes,
+                "models": s.models,
                 "temp_rooted": is_temp_rooted(s.root),
             }
             for s in surveys
@@ -188,6 +189,19 @@ def _print_survey(surveys: list[NamespaceSurvey]) -> None:
         typer.echo(
             f"  {s.status:<8} {s.prefix}  {s.points:>8} pts  "
             f"{_human_size(s.footprint_bytes):>9}  {root}{marker}"
+        )
+        # Named only when the namespace holds more than one distinct model,
+        # which is the state worth an operator's attention: the collections
+        # under one root disagree about what built them. A single model, or
+        # none recorded, adds a line per namespace that says nothing.
+        distinct = sorted(set(s.models.values()))
+        if len(distinct) > 1:
+            typer.echo(f"           mixed embedding models: {', '.join(distinct)}")
+    unstamped = sum(1 for s in surveys if not s.models)
+    if unstamped:
+        typer.echo(
+            f"{unstamped} namespace(s) predate model stamping; what produced "
+            "them is unknown until they are next rebuilt"
         )
     if temp_count:
         typer.echo(

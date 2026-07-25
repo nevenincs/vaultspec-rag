@@ -40,6 +40,7 @@ def _registry_health(*, model_loaded: bool) -> ServiceHealth:
         cuda=True,
         project_count=1,
         projects=["main"],
+        nonconforming=[],
     )
 
 
