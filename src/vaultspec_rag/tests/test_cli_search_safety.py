@@ -731,7 +731,7 @@ class TestIncompleteIndexCannotAnswerSilently:
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    _SHORTFALL: typing.ClassVar = {
+    _SHORTFALL: typing.ClassVar[dict[str, object]] = {
         "published_count": 421,
         "live_count": 4,
         "missing_count": 417,
