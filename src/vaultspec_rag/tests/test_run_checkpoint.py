@@ -14,12 +14,14 @@ from ..indexer._content_policy import (
     RootContentPolicy,
     SourceProfileVersion,
 )
+from ..indexer._drift_owner import CodeDriftOwner
 from ..indexer._file_state import FileState, FileStateKind
 from ..indexer._resolved_policy import resolve_index_policy
 from ..indexer._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
 from ..indexer._run_ledger import (
     FinalizationPhase,
     RunLedgerCompatibilityError,
+    RunLedgerIndexedPathCollisionError,
     RunLedgerStateError,
     RunOperation,
     RunTerminalState,
@@ -28,7 +30,10 @@ from ..indexer._run_policy import RunPolicy
 from ..indexer._streaming import CodeFileSegment
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
+
+    from ..store import VaultStore
 
 
 def _digest(value: str) -> str:
@@ -46,12 +51,14 @@ def _chunk(path: str, identity: str) -> CodeChunk:
     )
 
 
-def _segments(path: str) -> tuple[CodeFileSegment, CodeFileSegment]:
+def _segments(path: str, *, marker: str = "") -> tuple[CodeFileSegment, ...]:
     # Point identities are unique per generation, so scope them to the path to
-    # keep segments for two paths from claiming the same points.
+    # keep segments for two paths from claiming the same points. ``marker``
+    # stands in for rewritten content: chunk identity embeds a content hash, so
+    # a real edit mints fresh point identities rather than reusing the old ones.
     stem = path.rpartition("/")[2].partition(".")[0]
-    first = _chunk(path, f"{stem}_first")
-    second = _chunk(path, f"{stem}_second")
+    first = _chunk(path, f"{stem}{marker}_first")
+    second = _chunk(path, f"{stem}{marker}_second")
     return (
         CodeFileSegment(path, 0, (first,), 128, False),
         CodeFileSegment(path, 1, (second,), 128, True),
@@ -362,3 +369,210 @@ def test_checkpoint_resumes_each_publication_phase(
         resumed.generation_id,
         resumed.unit_for(segment, digest),
     )
+
+
+# ---------------------------------------------------------------------------
+# Drift ownership: a path whose source moves while the run records it.
+# ---------------------------------------------------------------------------
+
+#: Narrow enough to keep the real collection cheap, wide enough to be a vector.
+_DENSE_DIM = 8
+
+
+@pytest.fixture
+def drift_store(
+    isolated_singleton_dirs: Path,
+    tmp_path: Path,
+) -> Iterator[VaultStore]:
+    """A real on-disk store the drift owner drops superseded points from.
+
+    Nothing here is stubbed. A supersede has to actually remove the superseded
+    points and actually leave the replacements behind, and only a real
+    collection can tell those two outcomes apart.
+    """
+    del isolated_singleton_dirs
+    from ..config import reset_config
+    from ..store import VaultStore
+
+    reset_config()
+    store = VaultStore(tmp_path / "store", embedding_dim=_DENSE_DIM)
+    try:
+        yield store
+    finally:
+        store.close()
+        reset_config()
+
+
+def _publish(store: VaultStore, segments: tuple[CodeFileSegment, ...]) -> None:
+    """Put a path's chunks in the store the way a confirmed slice would."""
+    store.upsert_code_chunks(
+        [
+            replace(chunk, vector=[0.125] * _DENSE_DIM)
+            for segment in segments
+            for chunk in segment.chunks
+        ],
+        write_policy=None,
+    )
+
+
+def _stored(store: VaultStore, rel_path: str) -> set[str]:
+    return set(store.get_code_ids_by_paths({rel_path}))
+
+
+def _identities(segments: tuple[CodeFileSegment, ...]) -> set[str]:
+    return {chunk.id for segment in segments for chunk in segment.chunks}
+
+
+def test_a_path_rewritten_mid_run_is_superseded_not_fatal(
+    tmp_path: Path,
+    drift_store: VaultStore,
+) -> None:
+    """The record-time collision is repaired instead of failing the run.
+
+    This is the defect itself: a resumed generation over a tree that keeps
+    moving reaches the indexed-path upsert guard and, with nothing owning the
+    repair, loses the entire run to one racing file.
+    """
+    checkpoint = _open(tmp_path)
+    indexed_digest = _digest("before the edit")
+    original = _segments("src/racing.py")
+    _index_path(checkpoint, "src/racing.py", indexed_digest)
+    _publish(drift_store, original)
+    _interrupt(checkpoint, "interrupted after one path was indexed")
+
+    resumed = _open(tmp_path)
+    owner = CodeDriftOwner(resumed, drift_store)
+
+    # The pre-dispatch snapshot observed this path unchanged, so nothing
+    # re-opened it. The source is rewritten while the run encodes, and the
+    # fresh content reaches storage before the ledger is told about it.
+    moved_digest = _digest("after the edit")
+    moved = _segments("src/racing.py", marker="_moved")
+    _publish(drift_store, moved)
+
+    assert owner.record_segments(moved, {"src/racing.py": moved_digest}) == 2
+
+    assert owner.superseded_paths == ("src/racing.py",)
+    assert owner.deferred_paths == ()
+    assert owner.remediated is True
+    # The generation now claims the replacement units and no longer claims the
+    # superseded ones.
+    assert all(
+        resumed.ledger.unit_committed(
+            resumed.generation_id,
+            resumed.unit_for(segment, moved_digest),
+        )
+        for segment in moved
+    )
+    assert not resumed.ledger.unit_committed(
+        resumed.generation_id,
+        resumed.unit_for(original[1], indexed_digest),
+    )
+    # Storage holds the replacement content alone. Dropping every point the
+    # path owns - the union of both digests - would have deleted exactly what
+    # the re-record just claimed.
+    assert _stored(drift_store, "src/racing.py") == _identities(moved)
+
+
+def test_the_pre_record_check_keeps_visible_drift_off_the_signal_path(
+    tmp_path: Path,
+    drift_store: VaultStore,
+) -> None:
+    """Drift the ledger can already see never reaches the collision branch."""
+    checkpoint = _open(tmp_path)
+    _index_path(checkpoint, "src/known.py", _digest("before the edit"))
+    _publish(drift_store, _segments("src/known.py"))
+    _interrupt(checkpoint, "interrupted after one path was indexed")
+
+    resumed = _open(tmp_path)
+    owner = CodeDriftOwner(resumed, drift_store)
+    moved = _segments("src/known.py", marker="_moved")
+    _publish(drift_store, moved)
+
+    assert owner.record_segments(moved, {"src/known.py": _digest("after")}) == 2
+
+    assert owner.superseded_paths == ("src/known.py",)
+    # The point of the cheap re-check: the ledger never had to refuse a write.
+    assert owner.collisions_observed == 0
+
+
+def test_a_resubmission_under_the_same_digest_stays_fatal(
+    tmp_path: Path,
+    drift_store: VaultStore,
+) -> None:
+    """Equal digests are a caller defect, not a moving tree, and must not heal.
+
+    Superseding here would drop published content to cover for a caller that
+    submitted content the generation already committed under fresh identities.
+    """
+    checkpoint = _open(tmp_path)
+    digest = _digest("committed content")
+    _index_path(checkpoint, "src/settled.py", digest)
+    owner = CodeDriftOwner(checkpoint, drift_store)
+
+    resubmitted = _segments("src/settled.py", marker="_again")
+    with pytest.raises(RunLedgerIndexedPathCollisionError) as caught:
+        owner.record_segments(resubmitted, {"src/settled.py": digest})
+
+    assert caught.value.is_drift is False
+    assert owner.superseded_paths == ()
+    assert owner.collisions_observed == 1
+
+
+def test_a_path_that_keeps_moving_is_deferred_and_says_so(
+    tmp_path: Path,
+    drift_store: VaultStore,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An exhausted path leaves the mutation; its siblings still record."""
+    checkpoint = _open(tmp_path)
+    hot = "src/hot.py"
+    calm = "src/calm.py"
+    _index_path(checkpoint, hot, _digest("first content"))
+    _interrupt(checkpoint, "interrupted after one path was indexed")
+
+    resumed = _open(tmp_path)
+    owner = CodeDriftOwner(resumed, drift_store, retry_budget=1)
+
+    # One supersede is all this path gets, and it spends it here.
+    second = _segments(hot, marker="_second")
+    assert owner.record_segments(second, {hot: _digest("second content")}) == 2
+    assert owner.superseded_paths == (hot,)
+    assert owner.deferred_paths == ()
+
+    # It moves again with the budget spent, so it is deferred. The calm path
+    # travelling in the same mutation is still recorded.
+    third = _segments(hot, marker="_third")
+    calm_segments = _segments(calm)
+    calm_digest = _digest("calm content")
+    caplog.set_level("WARNING")
+    inserted = owner.record_segments(
+        (*third, *calm_segments),
+        {hot: _digest("third content"), calm: calm_digest},
+    )
+
+    assert inserted == 2
+    assert owner.deferred_paths == (hot,)
+    assert all(
+        resumed.ledger.unit_committed(
+            resumed.generation_id,
+            resumed.unit_for(segment, calm_digest),
+        )
+        for segment in calm_segments
+    )
+    # Silent deferral is not acceptable: the warning names the path and the
+    # budget it exhausted.
+    assert any(
+        hot in record.getMessage() and "budget of 1" in record.getMessage()
+        for record in caplog.records
+        if record.levelname == "WARNING"
+    )
+
+
+def test_the_retry_budget_must_be_positive(
+    tmp_path: Path,
+    drift_store: VaultStore,
+) -> None:
+    """A zero budget defers every drifted path without ever repairing one."""
+    with pytest.raises(ValueError, match="retry_budget must be a positive integer"):
+        CodeDriftOwner(_open(tmp_path), drift_store, retry_budget=0)
