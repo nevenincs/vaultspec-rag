@@ -40,6 +40,8 @@ from ..indexer._run_ledger import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+pytestmark = [pytest.mark.unit]
+
 
 def _digest(value: str) -> str:
     return hashlib.blake2b(value.encode("utf-8")).hexdigest()

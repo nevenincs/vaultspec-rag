@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+import pytest
+
 if TYPE_CHECKING:
     from pathlib import Path
+
+pytestmark = [pytest.mark.unit]
 
 
 def test_search_index_state_uses_selected_source_preflight_count() -> None:

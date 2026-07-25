@@ -37,6 +37,8 @@ _REQUIRED_DIRECTIVE_TOKENS = [
     "DO NOT manually reindex",
 ]
 
+pytestmark = [pytest.mark.unit]
+
 
 def test_builtin_rule_source_exists() -> None:
     assert _RULE_PATH.is_file(), f"built-in rule missing at {_RULE_PATH}"

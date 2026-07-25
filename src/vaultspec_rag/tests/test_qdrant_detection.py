@@ -25,6 +25,10 @@ from ..qdrant_runtime._resolve import (
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+import pytest
+
+pytestmark = [pytest.mark.unit]
+
 
 class _FakeQdrantHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # stdlib handler contract

@@ -50,6 +50,8 @@ if TYPE_CHECKING:
 
     from ..store import CodeChunk
 
+pytestmark = [pytest.mark.unit]
+
 _MODULE_TEMPLATE = '''"""Synthetic module {i}."""
 
 

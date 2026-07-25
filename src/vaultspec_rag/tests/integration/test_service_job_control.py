@@ -10,6 +10,7 @@ import time
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, cast
 
+import pytest
 import uvicorn
 from starlette.applications import Starlette
 from typer.testing import CliRunner
@@ -40,6 +41,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 runner = CliRunner()
+
+pytestmark = [pytest.mark.unit]
 
 
 @contextmanager

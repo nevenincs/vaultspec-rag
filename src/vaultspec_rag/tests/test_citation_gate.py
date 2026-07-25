@@ -38,6 +38,8 @@ import pytest
 if TYPE_CHECKING:
     from types import ModuleType
 
+pytestmark = [pytest.mark.unit]
+
 # repo-root/src/vaultspec_rag/tests/<this file> -> parents[3] is the repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _GATE_PATH = _REPO_ROOT / "tools" / "citation_gate.py"

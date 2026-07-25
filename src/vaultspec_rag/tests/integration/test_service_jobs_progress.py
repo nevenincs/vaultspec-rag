@@ -9,10 +9,13 @@ import threading
 import time
 from typing import ClassVar
 
+import pytest
 from typer.testing import CliRunner
 
 from ...cli import app
 from .._http_stubs import QuietHandler
+
+pytestmark = [pytest.mark.unit]
 
 runner = CliRunner()
 

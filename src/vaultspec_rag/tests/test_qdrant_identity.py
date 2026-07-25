@@ -32,6 +32,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
+pytestmark = [pytest.mark.unit]
+
 
 @pytest.fixture
 def temp_storage(tmp_path: Path) -> Iterator[Path]:
