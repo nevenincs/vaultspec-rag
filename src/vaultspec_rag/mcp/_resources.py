@@ -14,6 +14,7 @@ from ..serviceclient import _try_http_vault_document
 from ._mcp import mcp
 from ._tools import (
     _delegate,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
+    _dispatch_root,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
     _require_port,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
 )
 
@@ -22,7 +23,9 @@ from ._tools import (
 async def get_vault_document(doc_id: str) -> str:
     """Retrieve the full content of a vault document by its stem ID.
 
-    Delegates to the daemon's ``/vault-document`` REST endpoint.
+    Delegates to the daemon's ``/vault-document`` REST endpoint. A resource URI
+    carries no project root, so the request resolves against the one this
+    server process was launched for.
 
     Args:
         doc_id: Relative path without extension (e.g.,
@@ -37,7 +40,9 @@ async def get_vault_document(doc_id: str) -> str:
             fails.
     """
     port = _require_port()
-    res = await _delegate(partial(_try_http_vault_document, doc_id, "", port))
+    res = await _delegate(
+        partial(_try_http_vault_document, doc_id, _dispatch_root(), port)
+    )
     if "content" in res:
         return str(res["content"])
     if res.get("error") == "not_found":
