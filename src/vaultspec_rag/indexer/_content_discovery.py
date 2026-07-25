@@ -73,9 +73,7 @@ class InspectedSource:
 
 def _rejected_code(reason: AdmissionReason) -> ClassifiedContent:
     """Return a non-admitted code disposition for one probe outcome."""
-    return ClassifiedContent(
-        AdmissionDisposition(ContentKind.CODE, False, reason)
-    )
+    return ClassifiedContent(AdmissionDisposition(ContentKind.CODE, False, reason))
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,15 +262,6 @@ class CodeContentDiscovery:
     def collect_gitignore_patterns(self) -> list[str]:
         """Collect the hardcoded and ``.gitignore``-sourced exclusion patterns."""
         return _ignore_specs.collect_gitignore_patterns(self.root_dir)
-
-    def process_gitignore_lines(
-        self,
-        lines: list[str],
-        rel_dir: pathlib.Path,
-        patterns: list[str],
-    ) -> None:
-        """Append one ignore file's lines, re-anchored to its directory."""
-        _ignore_specs.process_gitignore_lines(lines, rel_dir, patterns)
 
     def collect_vaultragignore_patterns(self) -> list[str]:
         """Collect the root ``.vaultragignore`` patterns (excluding ``--exclude``)."""

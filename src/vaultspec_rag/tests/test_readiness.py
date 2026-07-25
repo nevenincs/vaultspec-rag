@@ -232,7 +232,7 @@ class TestQdrantDimension:
         # managed dir holds no provisioned binary. Unless an operator env
         # binary or a PATH qdrant resolves on this host, the dimension is
         # NOT_READY with an actionable remediation.
-        from ..qdrant_runtime import resolve_binary
+        from ..qdrant_runtime._resolve import resolve_binary
 
         report = compute_readiness()
         qdrant = report.dimension("qdrant")

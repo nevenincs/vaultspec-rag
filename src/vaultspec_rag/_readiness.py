@@ -218,7 +218,8 @@ def _torch_readiness() -> DependencyReadiness:
             info={"installed": False, "cuda_available": False},
         )
 
-    from .torch_config import TorchDiagnosis, diagnose_torch
+    from .torch_config._constants import TorchDiagnosis
+    from .torch_config._diagnose import diagnose_torch
 
     cuda_build = getattr(torch.version, "cuda", None)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]  # torch.version is loosely typed
     available = bool(torch.cuda.is_available())
@@ -330,7 +331,8 @@ def _qdrant_readiness(*, server_mode: bool) -> DependencyReadiness:
     binary is not required, so an absent binary is ``READY`` (the
     on-disk store needs no server).
     """
-    from .qdrant_runtime import resolve_binary, runtime_state
+    from .qdrant_runtime._resolve import resolve_binary
+    from .qdrant_runtime._supervise import runtime_state
 
     state = runtime_state()
     resolved = resolve_binary()

@@ -515,24 +515,27 @@ class TestStartPathProvisionProgress:
         real manifest are written into the isolated managed dir, so it is the
         real ``resolve_binary`` that confirms the install afterwards.
 
-        The substitution binds to ``vaultspec_rag.qdrant_runtime.provision``,
+        The substitution binds to ``provision`` on the module that DEFINES it,
         and it works only because ``_ensure_qdrant_binary`` imports that name
         INSIDE the function and so resolves it once per call. Moving that
         import to module scope would leave this interception inert while the
         real network download ran; the call-time test below is what catches
-        that, and it must not be deleted as redundant.
+        that, and it must not be deleted as redundant. The patch target must
+        stay the defining module and match the consumer's import: patching a
+        re-exporting package while the consumer imports from the definition
+        (or the reverse) silently intercepts nothing.
 
         Returns:
             A list appended to on each call, so a test can assert the
             interception was actually reached.
         """
-        from .. import qdrant_runtime
-        from ..qdrant_runtime import (
+        from ..qdrant_runtime import _provision as _provision_module
+        from ..qdrant_runtime._constants import (
+            MANIFEST_FILENAME,
             QDRANT_SERVER_VERSION,
             ProvisionReport,
             QdrantProvisionAction,
         )
-        from ..qdrant_runtime._constants import MANIFEST_FILENAME
         from ..qdrant_runtime._provision import _download_line, _no_progress
         from ..qdrant_runtime._resolve import binary_filename, qdrant_bin_dir
 
@@ -572,7 +575,7 @@ class TestStartPathProvisionProgress:
             )
             return ProvisionReport(action=QdrantProvisionAction.CREATED, binary=target)
 
-        monkeypatch.setattr(qdrant_runtime, "provision", _provision)
+        monkeypatch.setattr(_provision_module, "provision", _provision)
         return calls
 
     def test_the_provision_symbol_is_resolved_at_call_time(self):
@@ -597,7 +600,7 @@ class TestStartPathProvisionProgress:
         import vaultspec_rag.cli as _cli
 
         from ..cli._service_start import _ensure_qdrant_binary
-        from ..qdrant_runtime import resolve_binary
+        from ..qdrant_runtime._resolve import resolve_binary
 
         del isolated_status_dir
         assert resolve_binary() is None, (
@@ -630,7 +633,7 @@ class TestStartPathProvisionProgress:
     ):
         """The broker channel carries the fault, and no progress beside it."""
         from ..cli._service_start import _ensure_qdrant_binary
-        from ..qdrant_runtime import resolve_binary
+        from ..qdrant_runtime._resolve import resolve_binary
 
         del isolated_status_dir
         assert resolve_binary() is None, "premise: nothing is installed yet"

@@ -383,7 +383,7 @@ def _spawn_posix_qdrant_owner() -> tuple[subprocess.Popen[str], int, int]:
             "-c",
             (
                 "import signal,time;"
-                "from vaultspec_rag.qdrant_runtime import "
+                "from vaultspec_rag.qdrant_runtime._supervise import "
                 "start_supervised_from_config;"
                 "supervisor=start_supervised_from_config();"
                 "signal.signal(signal.SIGTERM,lambda *_:None);"
@@ -910,13 +910,13 @@ def test_attached_qdrant_requires_complete_live_incarnation_witness(
     expected_reason: str,
 ) -> None:
     """A real ready Qdrant is never attached through a missing/recycled witness."""
-    from ...qdrant_runtime import (
-        set_active_supervisor,
-        start_supervised_from_config,
-    )
     from ...qdrant_runtime._resolve import (
         qdrant_identity_path,
         read_qdrant_identity,
+    )
+    from ...qdrant_runtime._supervise import (
+        set_active_supervisor,
+        start_supervised_from_config,
     )
 
     with _service_env(tmp_path):
@@ -965,7 +965,7 @@ if sys.platform != "win32":
             acquire_machine_lock_lease,
             release_machine_lock_lease,
         )
-        from ...qdrant_runtime import (
+        from ...qdrant_runtime._supervise import (
             set_active_supervisor,
             start_supervised_from_config,
         )
@@ -1011,11 +1011,11 @@ if sys.platform != "win32":
                 set_active_supervisor(None)
 
     def test_posix_restart_identity_failure_stops_new_child(tmp_path: Path) -> None:
-        from ...qdrant_runtime import (
+        from ...qdrant_runtime._resolve import qdrant_identity_path
+        from ...qdrant_runtime._supervise import (
             set_active_supervisor,
             start_supervised_from_config,
         )
-        from ...qdrant_runtime._resolve import qdrant_identity_path
 
         with _service_env(tmp_path):
             supervisor = start_supervised_from_config()
@@ -1032,12 +1032,12 @@ if sys.platform != "win32":
     def test_posix_ordinary_orphan_reap_revalidates_live_owner(
         tmp_path: Path,
     ) -> None:
-        from ...qdrant_runtime import (
+        from ...qdrant_runtime._resolve import read_qdrant_identity
+        from ...qdrant_runtime._supervise import (
+            _reap_orphan_before_spawn,
             set_active_supervisor,
             start_supervised_from_config,
         )
-        from ...qdrant_runtime._resolve import read_qdrant_identity
-        from ...qdrant_runtime._supervise import _reap_orphan_before_spawn
 
         with _service_env(tmp_path):
             supervisor = start_supervised_from_config()

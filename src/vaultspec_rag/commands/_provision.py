@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ..qdrant_runtime import QdrantProvisionAction
+    from ..qdrant_runtime._constants import QdrantProvisionAction
     from ._models import ConfirmFn, InstallReport
 
 logger = logging.getLogger(__name__)
@@ -279,7 +279,7 @@ def _provision_torch(
             detail=detail,
         )
 
-    from ..torch_config import TorchConfigAction
+    from ..torch_config._constants import TorchConfigAction
     from ._models import InstallReport
     from ._torch_flow import _run_torch_config_install
 
@@ -491,7 +491,7 @@ def _provision_qdrant(
             detail="qdrant binary provisioning opted out",
         )
 
-    from ..qdrant_runtime import provision
+    from ..qdrant_runtime._provision import provision
 
     report = provision(dry_run=dry_run)
     return ProvisionStepResult(
@@ -508,7 +508,7 @@ def _map_qdrant_action(action: QdrantProvisionAction) -> ProvisionAction:
     so this is a direct value translation that keeps the front door's
     enum the single contract surface callers filter on.
     """
-    from ..qdrant_runtime import QdrantProvisionAction
+    from ..qdrant_runtime._constants import QdrantProvisionAction
 
     mapping = {
         QdrantProvisionAction.CREATED: ProvisionAction.CREATED,
@@ -523,7 +523,7 @@ def _map_qdrant_action(action: QdrantProvisionAction) -> ProvisionAction:
 
 def _qdrant_default_detail(action: QdrantProvisionAction) -> str:
     """Provide a detail line when the provisioner left ``message`` empty."""
-    from ..qdrant_runtime import QdrantProvisionAction
+    from ..qdrant_runtime._constants import QdrantProvisionAction
 
     if action == QdrantProvisionAction.CREATED:
         return "downloaded and verified the pinned qdrant binary"

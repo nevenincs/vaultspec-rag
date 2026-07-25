@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from pytest import TempPathFactory
 
     from ...job_manager import JobManager
-    from ...qdrant_runtime import QdrantSupervisor
+    from ...qdrant_runtime._supervise import QdrantSupervisor
     from ...service import ServiceRegistry
 
 pytestmark = [pytest.mark.integration]
