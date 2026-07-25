@@ -144,6 +144,37 @@ def add_seconds(
         timings[key] = timings.get(key, 0.0) + seconds
 
 
+_GLOB_METACHARACTERS = ("*", "?", "[")
+
+
+def expand_path_pattern(pattern: str) -> tuple[str, ...]:
+    """Return the ``fnmatch`` patterns one supplied path pattern stands for.
+
+    A pattern carrying glob metacharacters is its own single pattern. A plain
+    one names a location, and matches that path and everything beneath it -
+    ``src/api.py`` still selects only that file, while ``src`` and ``src/``
+    both select the subtree. Without the subtree reading, the paths an operator
+    naturally types match nothing at all: a directory is never itself an
+    indexed path, so the filter silently emptied the result set instead of
+    narrowing it.
+    """
+    if any(char in pattern for char in _GLOB_METACHARACTERS):
+        return (pattern,)
+    trimmed = pattern.rstrip("/")
+    if not trimmed:
+        return ("*",)
+    return (trimmed, f"{trimmed}/*")
+
+
+def path_matches_any(path_value: str, patterns: list[str]) -> bool:
+    """Report whether *path_value* satisfies at least one supplied pattern."""
+    return any(
+        fnmatch.fnmatch(path_value, expanded)
+        for pattern in patterns
+        for expanded in expand_path_pattern(pattern)
+    )
+
+
 def filter_raw_codebase_results(
     raw_results: list[dict[str, object]],
     include_norm: list[str],
@@ -154,13 +185,9 @@ def filter_raw_codebase_results(
     filtered: list[dict[str, object]] = []
     for r in raw_results:
         path_value = str(r.get("path", ""))
-        if include_norm and not any(
-            fnmatch.fnmatch(path_value, pat) for pat in include_norm
-        ):
+        if include_norm and not path_matches_any(path_value, include_norm):
             continue
-        if exclude_norm and any(
-            fnmatch.fnmatch(path_value, pat) for pat in exclude_norm
-        ):
+        if exclude_norm and path_matches_any(path_value, exclude_norm):
             continue
         filtered.append(r)
     return filtered

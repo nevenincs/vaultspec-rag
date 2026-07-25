@@ -54,7 +54,6 @@ readme-assets out_dir='assets':
 #   audit     supply-chain / security checks (uv audit)
 #   test      pytest
 #   build     uv build
-#   precommit pre-commit hook management (install, upgrade, run)
 #   health    aggregate code-health report (complexity, LOC, MI, strict types)
 #
 # Examples:
@@ -81,11 +80,10 @@ dev target *args='':
     "audit" { just _dev-audit {{args}} ; break } \
     "test" { just _dev-test {{args}} ; break } \
     "build" { just _dev-build {{args}} ; break } \
-    "precommit" { just _dev-precommit {{args}} ; break } \
     "health" { just _dev-health {{args}} ; break } \
     default { \
       Write-Host "unknown dev target: {{target}}" -ForegroundColor Red ; \
-      Write-Host "  targets: deps lint fix audit test build precommit health" -ForegroundColor Red ; \
+      Write-Host "  targets: deps lint fix audit test build health" -ForegroundColor Red ; \
       exit 1 \
     } \
   }
@@ -349,15 +347,3 @@ _dev-build target:
 # Measurement only — always exits 0. Pass --fast to skip basedpyright.
 _dev-health *args='':
   {{uvr}} python tools/health_report.py {{args}}
-
-_dev-precommit target='run':
-  switch ("{{target}}") { \
-    "install" { {{uvr}} prek install ; break } \
-    "upgrade" { {{uvr}} prek auto-update ; break } \
-    "run" { {{uvr}} prek run --all-files ; break } \
-    default { \
-      Write-Host "unknown dev precommit target: {{target}}" -ForegroundColor Red ; \
-      Write-Host "  targets: install upgrade run" -ForegroundColor Red ; \
-      exit 1 \
-    } \
-  }

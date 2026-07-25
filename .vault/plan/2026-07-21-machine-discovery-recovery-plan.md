@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#machine-discovery-recovery'
 date: '2026-07-21'
-modified: '2026-07-23'
+modified: '2026-07-25'
 tier: L3
 related:
   - '[[2026-07-21-machine-discovery-recovery-adr]]'
@@ -118,7 +118,7 @@ Prove the complete discovery lifecycle with real processes and finish with the m
 Exercise repair, mismatch, fallback, status, transport, reconcile, and loser behavior through production entry points.
 
 - [x] `W04.P10.S24` - Run the focused discovery, status, doctor, transport, lifecycle, and singleton regression suites; `src/vaultspec_rag/tests`.
-- [ ] `W04.P10.S25` - Exercise isolated end-to-end start, corruption, heartbeat repair, reconcile, search resolution, and clean shutdown; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
+- [x] `W04.P10.S25` - Exercise isolated end-to-end start, corruption, heartbeat repair, reconcile, search resolution, and clean shutdown; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
 - [x] `W04.P10.S27` - Bound the late-spawn cleanup process-control waits so the cleanup honours its timeout: bound the process-table discovery scan by the caller's remaining deadline, and stop sending a Windows console-group break to arbitrary discovered pids that are not process-group leaders; `src/vaultspec_rag/cli/_process.py`.
 - [x] `W04.P10.S28` - Bound the daemon shutdown store teardown so a wedged consumer's writer lock cannot hold the daemon in an unbounded shutdown: acquire the store's collection locks under a finite deadline at shutdown and force-close the client past a lock still held past that deadline; `src/vaultspec_rag/store.py, src/vaultspec_rag/_store_locks.py, src/vaultspec_rag/service.py`.
 - [x] `W04.P10.S29` - Backstop the daemon shutdown with a gated os.\_exit so a wedged periodic to_thread worker cannot hang the interpreter-exit executor join; `server/_lifespan.py, server/_main.py, server/_state.py, server/__init__.py`.

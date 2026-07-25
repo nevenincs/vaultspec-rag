@@ -312,6 +312,18 @@ class CodeRunCheckpoint:
             if current_digests[rel_path] != digest
         }
 
+    def superseded_point_ids(
+        self,
+        rel_path: str,
+        superseded_digest: str,
+    ) -> tuple[str, ...]:
+        """Return the points this generation's stale units for a path claim."""
+        return self.ledger.superseded_point_ids(
+            self.generation_id,
+            rel_path,
+            source_digest=superseded_digest,
+        )
+
     def reopen_drifted_path(self, rel_path: str, superseded_digest: str) -> int:
         """Clear stale indexed evidence so one path can be ingested again."""
         removed = self.ledger.reopen_drifted_path(

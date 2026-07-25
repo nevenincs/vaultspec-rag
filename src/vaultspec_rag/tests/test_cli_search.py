@@ -629,3 +629,114 @@ class TestSearchResultRendering:
         assert "running work status unknown" not in out
         assert "unknown" not in out
         assert "health check" not in out
+
+
+class TestArgvPathPatterns:
+    """A quoted path pattern must reach the parser exactly as typed.
+
+    Click and Typer simulate Unix shell expansion on Windows: arguments read
+    from ``sys.argv`` pass through ``glob``, ``expanduser``, and
+    ``expandvars`` before parsing. These filters match indexed
+    project-relative paths, not files on disk, so that expansion turns one
+    pattern into a run of filenames, and every match past the first reaches
+    the parser as an unexpected positional argument.
+
+    Both tests drive the real command object over a patched ``sys.argv``,
+    because the expansion runs only on the ``sys.argv`` branch: a runner that
+    hands ``main`` an explicit argument list never reaches it, and so cannot
+    observe this defect at all.
+    """
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    @staticmethod
+    def _run_over_argv(argv: list[str]) -> None:
+        import sys
+
+        import typer
+
+        from ..cli import app as root_app
+
+        command = typer.main.get_command(root_app)
+        original = sys.argv
+        sys.argv = argv
+        try:
+            command.main(args=None, prog_name="vaultspec-rag")
+        finally:
+            sys.argv = original
+
+    @staticmethod
+    def _require_expandable_cwd(pattern: str) -> None:
+        """Fail loudly when the working directory cannot exercise expansion.
+
+        Without this the guard could pass for the wrong reason: a pattern
+        matching nothing on disk survives argv untouched even with expansion
+        fully enabled, so the test would report success over a regressed CLI.
+        """
+        from click.utils import _expand_args
+
+        assert len(_expand_args([pattern])) > 1, (
+            f"{pattern!r} must match several files in the working directory "
+            "for this guard to exercise filesystem expansion"
+        )
+
+    @pytest.mark.parametrize("flag", ["--include-path", "--exclude-path"])
+    def test_a_path_pattern_is_not_filesystem_expanded(
+        self,
+        flag: str,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import json
+
+        self._require_expandable_cwd("src/**")
+
+        # Reaching the dead port proves the pattern parsed as a single option
+        # value. Restore the expansion - drop windows_expand_args=False from
+        # the root command group - and this exits 2 from the extra-argument
+        # check instead, on the "Unexpected search options" branch.
+        with pytest.raises(SystemExit) as exit_info:
+            self._run_over_argv(
+                [
+                    "vaultspec-rag",
+                    "search",
+                    "reopen a drifted indexed path",
+                    "--type",
+                    "code",
+                    flag,
+                    "src/**",
+                    "--port",
+                    "1",
+                    "--json",
+                ]
+            )
+
+        assert exit_info.value.code == 1
+        payload = json.loads(capsys.readouterr().out.strip())
+        assert payload["error"] == "port_unreachable"
+
+    def test_the_query_argument_is_not_filesystem_expanded(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The expansion was argv-wide, so the query text was exposed too."""
+        import json
+
+        self._require_expandable_cwd("*.toml")
+
+        with pytest.raises(SystemExit) as exit_info:
+            self._run_over_argv(
+                [
+                    "vaultspec-rag",
+                    "search",
+                    "*.toml",
+                    "--type",
+                    "code",
+                    "--port",
+                    "1",
+                    "--json",
+                ]
+            )
+
+        assert exit_info.value.code == 1
+        payload = json.loads(capsys.readouterr().out.strip())
+        assert payload["error"] == "port_unreachable"

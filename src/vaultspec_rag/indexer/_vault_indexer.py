@@ -22,8 +22,8 @@ from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs
 )
 
 from ..job_control import NO_RUN_CONTROL
-from ..logging_config import log_event
 from . import _config_epoch
+from ._index_lifecycle import run_index_lifecycle
 from ._streaming import _stream_encode_and_upsert_vault
 from ._vault_prep import IndexResult, prepare_document
 
@@ -199,61 +199,20 @@ class VaultIndexer:
         """
         run_control.checkpoint()
         with self._writer_lock:
-            run_control.checkpoint()
-            log_event(
-                logger,
-                "service.index",
-                "started",
-                source="vault",
-                mode="full",
-                clean=clean,
-                root=self.root_dir,
-            )
-            try:
-                # Stamp the activity clock at run START as well as at
-                # completion: a long run spanning a maintenance tick must
-                # advance the ephemeral idle clock before any reclaim
-                # evaluation can see a stale stamp mid-write.
-                run_control.checkpoint()
-                self.store.touch_manifest_last_indexed()
-                run_control.checkpoint()
-                result = self._full_index_locked(
+            return run_index_lifecycle(
+                lambda: self._full_index_locked(
                     clean=clean,
                     reporter=reporter,
                     run_control=run_control,
-                )
-                run_control.checkpoint()
-                self.store.touch_manifest_last_indexed()
-                run_control.checkpoint()
-            except Exception as exc:
-                log_event(
-                    logger,
-                    "service.index",
-                    "failed",
-                    severity=logging.ERROR,
-                    exc_info=True,
-                    source="vault",
-                    mode="full",
-                    clean=clean,
-                    root=self.root_dir,
-                    error=exc,
-                )
-                raise
-            log_event(
-                logger,
-                "service.index",
-                "completed",
+                ),
+                event_logger=logger,
+                store=self.store,
                 source="vault",
                 mode="full",
                 clean=clean,
                 root=self.root_dir,
-                total=result.total,
-                added=result.added,
-                updated=result.updated,
-                removed=result.removed,
-                duration_ms=result.duration_ms,
+                run_control=run_control,
             )
-            return result
 
     def _full_index_locked(
         self,
@@ -468,62 +427,22 @@ class VaultIndexer:
         """
         run_control.checkpoint()
         with self._writer_lock:
-            run_control.checkpoint()
-            mode = "scoped_incremental" if changed_paths is not None else "incremental"
-            log_event(
-                logger,
-                "service.index",
-                "started",
-                source="vault",
-                mode=mode,
-                clean=False,
-                root=self.root_dir,
-            )
-            try:
-                # Stamp the activity clock at run START as well as at
-                # completion: a long run spanning a maintenance tick must
-                # advance the ephemeral idle clock before any reclaim
-                # evaluation can see a stale stamp mid-write.
-                run_control.checkpoint()
-                self.store.touch_manifest_last_indexed()
-                run_control.checkpoint()
-                result = self._incremental_index_locked(
+            return run_index_lifecycle(
+                lambda: self._incremental_index_locked(
                     reporter=reporter,
                     changed_paths=changed_paths,
                     run_control=run_control,
-                )
-                run_control.checkpoint()
-                self.store.touch_manifest_last_indexed()
-                run_control.checkpoint()
-            except Exception as exc:
-                log_event(
-                    logger,
-                    "service.index",
-                    "failed",
-                    severity=logging.ERROR,
-                    exc_info=True,
-                    source="vault",
-                    mode=mode,
-                    clean=False,
-                    root=self.root_dir,
-                    error=exc,
-                )
-                raise
-            log_event(
-                logger,
-                "service.index",
-                "completed",
+                ),
+                event_logger=logger,
+                store=self.store,
                 source="vault",
-                mode=mode,
+                mode=(
+                    "scoped_incremental" if changed_paths is not None else "incremental"
+                ),
                 clean=False,
                 root=self.root_dir,
-                total=result.total,
-                added=result.added,
-                updated=result.updated,
-                removed=result.removed,
-                duration_ms=result.duration_ms,
+                run_control=run_control,
             )
-            return result
 
     def _incremental_index_locked(
         self,

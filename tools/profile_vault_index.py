@@ -113,7 +113,7 @@ def main() -> int:
 
         # Pre-bind result so the post-with-block prints never raise
         # UnboundLocalError when the inner try fails before
-        # full_index returns. F6.5 in the rolling audit.
+        # full_index returns.
         result = None
 
         # The probe is used as a context manager so that any exception

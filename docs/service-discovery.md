@@ -94,6 +94,16 @@ you do not understand:
 `version` is bumped only on a breaking shape change, and this document is updated in the
 same change. Additive fields do not bump the version.
 
+A reader that does not understand the pair must refuse the file, and this project's own
+client now does: an unrecognised `schema` or `version` resolves `degraded` with reason
+`pointer_incompatible` rather than being parsed on the assumption that its other fields
+mean what this reader expects.
+
+Do not confuse this pair with `package_version`. The pair describes the *shape of this
+file*; `package_version` describes the *release of the daemon that wrote it*. A client
+compares the pair to decide whether it can read the file at all, and `package_version` to
+decide whether it may drive the service it points at.
+
 ## Interface fields
 
 | Field                  | Type            | Format / meaning                                                                                                                                 |
@@ -107,6 +117,8 @@ same change. Additive fields do not bump the version.
 | `heartbeat_interval_s` | integer         | Seconds between heartbeat writes.                                                                                                                |
 | `stale_after_s`        | integer         | Age in seconds past which `last_heartbeat` is considered stale.                                                                                  |
 | `service_token`        | string          | Per-process identity token; also echoed by the ungated `/health` route for identity verification.                                                |
+| `package_version`      | string          | `vaultspec-rag` release of the writing process. Also on `/health` and `/readiness`. A client compares it to its own and refuses a mismatch.      |
+| `python_version`       | string          | Interpreter version of the writing process (e.g. `3.13.11`). Informational; not a compatibility gate.                                            |
 | `phase`                | string          | Daemon lifecycle phase: `warming` before readiness or `running` after startup completes (`src/vaultspec_rag/serviceclient/_discovery.py:42-44`). |
 | `qdrant_pid`           | integer or null | PID of the witnessed managed Qdrant child. Null means no witnessed managed child is available.                                                   |
 | `qdrant_alive`         | boolean or null | Whether the supervised Qdrant child is alive.                                                                                                    |
@@ -163,13 +175,14 @@ three values (`src/vaultspec_rag/serviceclient/_discovery.py:57-59`):
 A `degraded` verdict carries a `reason` naming the specific disagreement
 (`src/vaultspec_rag/serviceclient/_discovery.py:63-67`):
 
-| `reason`          | Meaning                                                                                  |
-| ----------------- | ---------------------------------------------------------------------------------------- |
-| `pointer_missing` | Live holder, but no pointer file.                                                        |
-| `pointer_invalid` | Pointer present but its port is unreadable/malformed.                                    |
-| `pointer_stale`   | Pointer's `last_heartbeat` is older than its staleness window.                           |
-| `pointer_foreign` | Pointer names a PID other than the live holder — a leftover from a previous incarnation. |
-| `probe_failed`    | The machine lock or pointer could not be inspected at all.                               |
+| `reason`               | Meaning                                                                                  |
+| ---------------------- | ---------------------------------------------------------------------------------------- |
+| `pointer_missing`      | Live holder, but no pointer file.                                                        |
+| `pointer_invalid`      | Pointer present but its port is unreadable/malformed.                                    |
+| `pointer_stale`        | Pointer's `last_heartbeat` is older than its staleness window.                           |
+| `pointer_foreign`      | Pointer names a PID other than the live holder — a leftover from a previous incarnation. |
+| `probe_failed`         | The machine lock or pointer could not be inspected at all.                               |
+| `pointer_incompatible` | Pointer declares a `schema`/`version` pair this build does not implement.                |
 
 The verdict also preserves `holder_pid`, `pointer_pid`, `port`, `service_token`,
 `heartbeat_age_s`, and `stale_after_s` as evidence, and `source` records which view

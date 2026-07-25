@@ -150,6 +150,10 @@ class ReadinessReport:
         from . import store_schema
         from .config import get_config
         from .index_profiles import index_support_profile_status
+        from .serviceclient._compat import (
+            SERVICE_VERSION_FIELD,
+            local_package_version,
+        )
 
         degraded_reasons = [
             dep.detail
@@ -166,6 +170,7 @@ class ReadinessReport:
                 get_config().index_support_profile
             ),
             "schema": store_schema.describe_storage_schema(),
+            SERVICE_VERSION_FIELD: local_package_version(),
         }
 
 

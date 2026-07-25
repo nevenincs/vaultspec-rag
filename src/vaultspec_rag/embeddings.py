@@ -298,10 +298,10 @@ class EmbeddingModel:
         ``optimum`` / ``onnxruntime-gpu``, export error, or a GPU provider that
         cannot load (e.g. the onnxruntime CUDA-12 vs torch CUDA-13 mismatch) -
         logs a warning and falls back to the torch construction, so a
-        misconfigured backend never breaks indexing or search (rule
-        ``embedding-backend-falls-back-to-torch``). The ONNX path is experimental and
-        opt-in: selecting it requires ``sentence-transformers[onnx-gpu]`` in an
-        onnxruntime-compatible CUDA environment.
+        misconfigured backend never breaks indexing or search. The ONNX path is
+        experimental and opt-in: selecting it requires
+        ``sentence-transformers[onnx-gpu]`` in an onnxruntime-compatible CUDA
+        environment.
         """
         from sentence_transformers import SentenceTransformer
 

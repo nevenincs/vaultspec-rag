@@ -35,6 +35,7 @@ from starlette.routing import Route
 
 import vaultspec_rag.server as _m
 
+from .. import jobs as _jobs
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from ..concurrency import get_search_limiter
 from ..job_models import JobOutcome
@@ -46,7 +47,6 @@ from ..logging_config import (
 )
 from ..service import RegistryFullError
 from ..store import VaultStoreLockedError
-from . import _jobs
 from ._routes_jobs import (
     _clamp_limit,
     _job_matches,
@@ -270,11 +270,12 @@ def _search_index_state(
     indexed_count: int | float,
     requested_root: object,
     search_type: PublicSourceType | str,
+    published_points: float | None = None,
 ) -> dict[str, object]:
     requested_target = str(requested_root)
     source = parse_source_type(search_type, allow_aliases=True).value
     count = int(indexed_count)
-    return {
+    state: dict[str, object] = {
         "source": source,
         "indexed_count": count,
         "indexed_target_root": requested_target,
@@ -282,30 +283,62 @@ def _search_index_state(
         "target_matches": True,
         "status": "missing" if count == 0 else "available",
     }
+    # Present only over a demonstrated shortfall, and carrying the figures so an
+    # adapter names the deficit without comparing counts itself. Absence means
+    # complete or unknowable; a consumer must not read it as either one alone.
+    if published_points is not None:
+        published = int(published_points)
+        state["shortfall"] = {
+            "published_count": published,
+            "live_count": count,
+            "missing_count": published - count,
+        }
+    return state
 
 
 def _empty_search_diagnostics(
     index_state: dict[str, object],
     *,
     port: int | None,
+    path_filter: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    source = index_state["source"]
+    port_suffix = f" --port {port}" if port is not None else ""
+    remediation = [
+        f"vaultspec-rag index --type {source}{port_suffix}",
+        "vaultspec-rag server status",
+        f"vaultspec-rag server jobs --state active{port_suffix}",
+    ]
     if index_state["indexed_count"] == 0:
         reason = "index_missing"
-        message = f"No indexed {index_state['source']} items are available."
+        message = f"No indexed {source} items are available."
+    elif path_filter is not None:
+        # The search proved this: candidates matched the query and the path
+        # patterns removed every one. Saying so, with the patterns, is the
+        # difference between a fixable typo and an operator concluding the
+        # filter is unsupported.
+        patterns = ", ".join(
+            str(p) for p in cast("list[object]", path_filter["patterns"])
+        )
+        reason = "no_match_path_filter"
+        message = (
+            f"{path_filter['candidates_before_filter']} indexed items matched "
+            f"the query, and the path filter ({patterns}) excluded every one. "
+            "Patterns match project-relative paths; a plain pattern matches "
+            "that path and everything under it."
+        )
+        remediation = [
+            "rerun without the path filter to see what the query matches",
+            "widen the pattern, or check it against a path from an unfiltered result",
+        ]
     else:
         reason = "no_match"
         message = "The index is available, but no indexed item matched the query."
 
-    source = index_state["source"]
-    port_suffix = f" --port {port}" if port is not None else ""
     return {
         "reason": reason,
         "message": message,
-        "remediation": [
-            f"vaultspec-rag index --type {source}{port_suffix}",
-            "vaultspec-rag server status",
-            f"vaultspec-rag server jobs --state active{port_suffix}",
-        ],
+        "remediation": remediation,
     }
 
 
@@ -331,9 +364,13 @@ def _classify_search_result(
         port=port,
     )
     if classification.status_code == 200 and not classification.response["results"]:
+        raw_path_filter = classification.response.get("path_filter")
         classification.response["empty"] = _empty_search_diagnostics(
             index_state,
             port=port,
+            path_filter=cast("dict[str, object]", raw_path_filter)
+            if isinstance(raw_path_filter, dict)
+            else None,
         )
     return classification
 
@@ -1253,6 +1290,7 @@ def _execute_search_request(
             indexed_count=indexed_count,
             requested_root=root,
             search_type=search_type,
+            published_points=phase_timing.get("published_points"),
         )
         index_state_seconds = time.perf_counter() - phase_started
         phase_started = time.perf_counter()
@@ -1269,6 +1307,7 @@ def _execute_search_request(
             "results": items,
             "summary": f"Found {len(results)} relevant items.",
             "filtered": notes.get("dropped_domains"),
+            "path_filter": notes.get("path_filter"),
             "timing": {
                 "index_state_seconds": index_state_seconds,
                 "search_seconds": search_seconds,

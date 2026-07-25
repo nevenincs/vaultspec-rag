@@ -129,6 +129,7 @@ def _handle_service_success(
         return
     if not results:
         _render_empty_service_results(payload, query, search_type)
+        _render_breadth_shortfall(payload)
         _render_partial_domain_failures(payload)
         return
     _display_search_results(
@@ -138,7 +139,39 @@ def _handle_service_success(
         show_scores=show_scores,
         root=target,
     )
+    _render_breadth_shortfall(payload)
     _render_partial_domain_failures(payload)
+
+
+def _render_breadth_shortfall(payload: dict[str, object]) -> None:
+    """Warn that the index answering this search is demonstrably incomplete.
+
+    The service settles whether a shortfall exists and carries the figures, so
+    this renders what it was given and compares nothing. A missing field means
+    complete or unknowable, and warning on either would train the reader to
+    ignore the warning.
+    """
+    index_state = payload.get("index_state")
+    if not isinstance(index_state, dict):
+        return
+    shortfall = cast("dict[str, object]", index_state).get("shortfall")
+    if not isinstance(shortfall, dict):
+        return
+    figures = cast("dict[str, object]", shortfall)
+    live = figures.get("live_count")
+    published = figures.get("published_count")
+    missing = figures.get("missing_count")
+    _plain(
+        f"Warning: this index holds {live} of the {published} sections it "
+        f"published; {missing} are missing.",
+        soft_wrap=True,
+    )
+    _plain(
+        "  These results are drawn from an incomplete index, so an absent "
+        "result is not evidence that no such code exists.",
+        soft_wrap=True,
+    )
+    _plain("  Next action: vaultspec-rag index --type code --full")
 
 
 def _render_partial_domain_failures(payload: dict[str, object]) -> None:
@@ -300,7 +333,17 @@ def _try_in_process_search(
     extractor_version: str | None,
     locator_kind: str | None,
     json_mode: bool,
+    *,
+    envelope: dict[str, object] | None = None,
 ) -> list[SearchResult | DocumentSearchResult] | CombinedSearchOutcome:
+    """Run one search in this process.
+
+    ``envelope`` collects the same ``index_state`` block the service puts on its
+    response, so the local path and the service path hand the renderer one
+    shape. It is filled from the counts this function already takes, never from
+    a fresh count, so the local path pays no store round trip the service does
+    not.
+    """
     import vaultspec_rag
 
     from .._public_search import (
@@ -324,6 +367,21 @@ def _try_in_process_search(
         if search_type is PublicSourceType.COMBINED
         else counts[search_type] > 0
     )
+    if envelope is not None and search_type in (
+        PublicSourceType.CODE,
+        PublicSourceType.COMBINED,
+    ):
+        from .._index_breadth import code_breadth_shortfall
+
+        shortfall = code_breadth_shortfall(target, counts[PublicSourceType.CODE])
+        if shortfall is not None:
+            envelope["index_state"] = {
+                "shortfall": {
+                    "published_count": shortfall.published,
+                    "live_count": shortfall.live,
+                    "missing_count": shortfall.missing,
+                }
+            }
     try:
         status_ctx = (
             _cli.console.status(f"Searching {search_type.value}...")
@@ -531,8 +589,11 @@ def _render_in_process_results(
     json_mode: bool,
     show_scores: bool,
     target: pathlib.Path,
+    envelope: dict[str, object] | None = None,
 ) -> None:
     from dataclasses import asdict
+
+    breadth = envelope or {}
 
     if search_type is PublicSourceType.COMBINED:
         outcome = cast("CombinedSearchOutcome", results)
@@ -581,6 +642,7 @@ def _render_in_process_results(
         if domains is not None:
             data["partial"] = cast("CombinedSearchOutcome", results).partial
             data["domains"] = domains
+        data.update(breadth)
         _emit_json(
             True,
             "search",
@@ -590,6 +652,7 @@ def _render_in_process_results(
 
     if not result_items:
         _render_empty_in_process_results(query, search_type.value, target)
+        _render_breadth_shortfall(breadth)
         if domains is not None:
             _render_partial_domain_failures(
                 {
@@ -606,6 +669,7 @@ def _render_in_process_results(
         show_scores=show_scores,
         root=target,
     )
+    _render_breadth_shortfall(breadth)
     if domains is not None:
         _render_partial_domain_failures(
             {
@@ -790,6 +854,10 @@ def _local_search_deadline(
         "they have no --flag equivalent. Comma-separated sets accumulate "
         "when repeated.\n"
         "\n"
+        "path: is the in-query spelling of --include-path: it takes a path "
+        "pattern, where a plain one matches that path and everything under "
+        "it. --path is the different, exact-path filter.\n"
+        "\n"
         "\b\n"
         "Examples:\n"
         '  vaultspec-rag search "auth token validation only:prod" --type code\n'
@@ -836,7 +904,11 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
         str | None,
         typer.Option(
             "--path",
-            help="Only show code results from this exact project-relative path.",
+            help=(
+                "Only show code results from this one exact "
+                "project-relative path. Use --include-path to select a "
+                "subtree or a glob."
+            ),
         ),
     ] = None,
     include_paths: Annotated[
@@ -845,7 +917,8 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             "--include-path",
             help=(
                 "Only show code results whose project-relative path matches "
-                "this glob. Repeat for multiple globs."
+                "this pattern. A plain pattern matches that path and "
+                "everything under it; globs are accepted. Repeatable."
             ),
         ),
     ] = None,
@@ -855,7 +928,8 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             "--exclude-path",
             help=(
                 "Hide code results whose project-relative path matches this "
-                "glob. Repeat for multiple globs."
+                "pattern. A plain pattern matches that path and everything "
+                "under it; globs are accepted. Repeatable."
             ),
         ),
     ] = None,
@@ -1095,6 +1169,7 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
     # holding the index lock.
     deadline = _get_search_timeout(timeout)
     with _local_search_deadline(deadline, json_mode=json_mode):
+        envelope: dict[str, object] = {}
         try:
             results = _try_in_process_search(
                 target,
@@ -1119,6 +1194,7 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
                 extractor_version,
                 locator_kind,
                 json_mode,
+                envelope=envelope,
             )
 
             _render_in_process_results(
@@ -1128,6 +1204,7 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
                 json_mode,
                 show_scores,
                 target,
+                envelope,
             )
         finally:
             from ..registry import get_registry

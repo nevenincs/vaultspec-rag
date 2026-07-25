@@ -1132,6 +1132,46 @@ class RunLedger:
                 (generation_id, rel_path),
             )
 
+    def superseded_point_ids(
+        self,
+        generation_id: str,
+        rel_path: str,
+        *,
+        source_digest: str,
+    ) -> tuple[str, ...]:
+        """Return the points claimed by one path's units at a given digest.
+
+        This is the exact set :meth:`reopen_drifted_path` is about to stop
+        claiming, so it is what the caller must drop from storage first. Taken
+        from the ledger rather than by asking storage which points a path
+        holds, because the two answers differ once the fresh content has
+        already been written: a storage query returns the superseded points and
+        the replacement points together, and dropping that union would delete
+        the very content the re-record is about to claim.
+        """
+        _validate_rel_path(rel_path)
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT points.point_id
+                FROM commit_point_ids AS points
+                JOIN commit_units AS units
+                  ON units.generation_id = points.generation_id
+                 AND units.unit_id = points.unit_id
+                WHERE units.generation_id = ? AND units.rel_path = ?
+                  AND units.unit_kind = ? AND units.source_digest = ?
+                ORDER BY units.segment_ordinal, points.point_ordinal,
+                         points.point_id
+                """,
+                (
+                    generation_id,
+                    rel_path,
+                    CommitUnitKind.UPSERT.value,
+                    source_digest,
+                ),
+            ).fetchall()
+        return tuple(str(row["point_id"]) for row in rows)
+
     def reopen_drifted_path(
         self,
         generation_id: str,

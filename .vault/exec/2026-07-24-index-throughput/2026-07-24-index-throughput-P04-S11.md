@@ -1,0 +1,85 @@
+---
+tags:
+  - '#exec'
+  - '#index-throughput'
+date: '2026-07-25'
+modified: '2026-07-25'
+step_id: 'S11'
+related:
+  - "[[2026-07-24-index-throughput-plan]]"
+---
+
+# run the before/after measurement: a contended multi-job window and a solo rebuild-class job, comparing wall-clock and queue-wait telemetry against the research baselines
+
+## Scope
+
+- `measured runs`
+- `Step Record`
+
+## Description
+
+- Measure the gated system from the resident daemon's own persisted job
+  records rather than by staging a synthetic contended window: the daemon has
+  been running the gated build for hours across four watched roots, so the
+  contended window the Step asks for already happened, repeatedly, on real
+  corpora. Read-only analysis; no live state was touched.
+- Decompose every terminal index job carrying an admission stamp into
+  admission wait (start to admission), post-admission run window (admission
+  to finish), the run's own internal work timer, and the accumulated in-run
+  GPU-lock wait the telemetry Step added.
+- Check encode-slot exclusivity directly: pairwise overlap of every
+  [admission, finish] hold window.
+- Compare against the pre-gate baselines measured on this same machine during
+  research.
+
+## Outcome
+
+Measured. Population: 253 terminal gated index jobs (239 succeeded, 11
+failed, 3 interrupted) across four watched roots.
+
+Encode-slot exclusivity: 0 overlapping hold windows out of 31,878 pairs. At
+most one encode-bearing index job was ever in flight - in production, not
+only under test.
+
+In-run GPU-lock wait, the sink the gate exists to remove: p50 0.000 s, p95
+0.000 s over 239 jobs (typical values are single-digit microseconds), with
+one 251.6 s outlier. Pre-gate baseline for comparison: individual jobs
+blocked 2,489 s, 2,456 s and 2,139 s inside their own run windows. The
+outlier is expected and is not a gate failure - interactive searches take the
+same process-wide GPU lock and are deliberately not gated, so a job that
+overlaps a busy search window still waits.
+
+Per-job wall inflation, run window divided by the run's own work timer
+(193 jobs whose work exceeded 1 s): p50 1.029x, p95 1.427x, max 1.975x.
+Pre-gate baseline: 5.0x (622 s work against 3,110 s wall, incremental code),
+3.7x (796 s against 2,935 s, incremental vault), 2.3x (1,892 s against
+4,348 s, incremental document). Post-admission wall-clock now tracks the work
+the job actually did.
+
+Solo behaviour is not penalised: admission wait is p50 0.178 s and min
+0.063 s, so an uncontended job pays sub-second gate cost. The largest run in
+the population (1,685.3 s incremental code) took 0.1 s of admission wait,
+1,683.7 s of work and 0.0017 s of lock wait - wall equals work.
+
+Waiting became visible instead of disappearing into "running": admission wait
+reaches p95 1,308 s and max 1,986 s, and up to 8 jobs were queued behind one
+admitted job. The same 8-job pile the research found running concurrently now
+queues honestly, one holder at a time.
+
+## Notes
+
+- What this measurement is NOT: a controlled A/B of one corpus with the gate
+  on and off. The before numbers come from the pre-gate records of this
+  machine, and the two job populations differ in corpus mix and mode, so the
+  inflation comparison is population-to-population. The exclusivity result and
+  the near-zero in-run lock wait are direct observations of the gated system
+  and need no comparison.
+- Aggregate machine throughput (indexed chunks per hour before against after)
+  was not measured and cannot be inferred from these records. The gate adds no
+  GPU capacity; it removes per-job latency inflation and makes the wait
+  visible.
+- A full rebuild-class job does not appear in the measured population; the
+  largest observations are long incremental runs. Staging a full rebuild needs
+  an exclusive GPU window, which this machine did not have.
+- The CUDA cache-flush cadence re-tune is a separate Step and stays unmeasured
+  for the same reason: it needs an idle device.

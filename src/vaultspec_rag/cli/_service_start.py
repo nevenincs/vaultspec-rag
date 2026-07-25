@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal, cast
 
@@ -20,6 +21,11 @@ import typer
 import vaultspec_rag.cli as _cli
 
 from ..config import EnvVar, get_config
+from ..serviceclient._compat import (
+    VERSION_ERROR_MISMATCH,
+    ServiceVersionVerdict,
+    classify_service_version,
+)
 from ._app import _global_target, server_app
 from ._core import logger
 from ._gpu_errors import (
@@ -38,10 +44,10 @@ from ._process import (
     _spawn_service,
 )
 from ._progress import StartupStatusReporter
-from ._render import _emit_json
 from ._service_lifecycle import (
     _address_line,
     _fail_lifecycle,
+    _lifecycle_success,
     _print_lifecycle_lines,
     _process_line,
     _should_unlink_discovery_file,
@@ -86,7 +92,9 @@ def _ensure_qdrant_binary(
     the exact install command and exits non-zero. In ``--json`` mode the absent/
     failed outcomes are emitted as start envelopes so a broker reads one document.
     """
-    from ..qdrant_runtime import QdrantProvisionAction, provision, resolve_binary
+    from ..qdrant_runtime._constants import QdrantProvisionAction
+    from ..qdrant_runtime._provision import provision
+    from ..qdrant_runtime._resolve import resolve_binary
 
     if resolve_binary() is not None:
         return
@@ -170,8 +178,23 @@ def _tail_daemon_log(log_path: Path, max_lines: int = 6) -> list[str]:
     return lines[-max_lines:]
 
 
-def _existing_service_running() -> tuple[int, int, str] | None:
-    """Return ``(pid, port, health_status)`` of an owned serving daemon, else ``None``.
+@dataclass(frozen=True, slots=True)
+class _AttachCandidate:
+    """A live owned daemon this start verb could attach to, and its identity.
+
+    Carries the release verdict alongside the health status because attaching is
+    two decisions, not one: whether the daemon can serve at all, and whether it
+    is this install's daemon. Both are read from one ``/health`` response.
+    """
+
+    pid: int
+    port: int
+    health_status: str
+    version: ServiceVersionVerdict
+
+
+def _existing_service_running() -> _AttachCandidate | None:
+    """Return the owned serving daemon this verb could attach to, else ``None``.
 
     Detection only - it no longer prints, so the caller renders the human
     "already running" lines or the JSON envelope from one shared detection path
@@ -179,6 +202,9 @@ def _existing_service_running() -> tuple[int, int, str] | None:
     ``/health`` status (``ready`` / ``degraded`` / ``error``) so the caller can
     distinguish a serving-and-healthy daemon from one that answers but cannot
     serve yet (issue #237) instead of calling every response "running".
+    ``version`` classifies the release the daemon reports against this client's,
+    so the caller can refuse to report an idempotent success for a daemon
+    belonging to another install (issue #270).
     Removes the status file only when its recorded PID is confirmed dead; an
     ambiguous identity/health miss on a *live* PID leaves the file untouched so
     a transient probe failure cannot erase a running daemon's discovery file
@@ -202,7 +228,12 @@ def _existing_service_running() -> tuple[int, int, str] | None:
             health_status = (
                 raw_status if isinstance(raw_status, str) and raw_status else "error"
             )
-            return (existing_pid, existing_port, health_status)
+            return _AttachCandidate(
+                pid=existing_pid,
+                port=existing_port,
+                health_status=health_status,
+                version=classify_service_version(health),
+            )
     # Identity or health did not confirm a live service we own. Remove the
     # status file only when the recorded PID is confirmed dead; leave it in
     # place on an ambiguous miss against a live PID (issue #204).
@@ -221,13 +252,17 @@ def _start_success(
 ) -> None:
     """Emit a successful start outcome (``already_running`` / ``started``).
 
-    In ``--json`` mode emits one ``{ok, command, data:{status, ...}}`` envelope;
-    otherwise the bespoke human lines. The caller returns after this (exit 0).
+    Binds the start command name to the one shared lifecycle success renderer;
+    the envelope-versus-human decision lives there.
     """
-    if json_mode:
-        _emit_json(True, _START_COMMAND, data={"status": status, **data})
-    else:
-        _print_lifecycle_lines(human_title, *human_lines)
+    _lifecycle_success(
+        json_mode,
+        command=_START_COMMAND,
+        status=status,
+        human_title=human_title,
+        human_lines=human_lines,
+        **data,
+    )
 
 
 def _fail_start(
@@ -415,7 +450,30 @@ def _attach_existing_service(
     attach_extra: dict[str, object] = (
         {"warnings": list(caller_warnings)} if caller_warnings else {}
     )
-    existing_pid, existing_port, health_status = existing
+    existing_pid = existing.pid
+    existing_port = existing.port
+    health_status = existing.health_status
+    # A daemon from another release is not the service this verb was asked to
+    # provide, so `already_running` would tell a broker the requested state was
+    # reached when it was not. The operator's install is running only once the
+    # foreign daemon is replaced, so this is a failure carrying that action.
+    if not existing.version.is_compatible:
+        raise _fail_start(
+            json_mode,
+            error=existing.version.error_code() or VERSION_ERROR_MISMATCH,
+            message=(
+                f"Cannot attach to the running service: {existing.version.reason()}."
+            ),
+            human_lines=(
+                _process_line(existing_pid),
+                _address_line(existing_port),
+            ),
+            next_actions=existing.version.remediation(),
+            pid=existing_pid,
+            port=existing_port,
+            version=existing.version.to_dict(),
+            **attach_extra,
+        )
     if health_status == "ready":
         _start_success(
             json_mode,

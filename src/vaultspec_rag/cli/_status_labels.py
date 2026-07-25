@@ -262,6 +262,7 @@ STALLED_JOBS_FAMILY = "stalled_jobs"
 VECTOR_SERVICE_FAMILY = "vector_service"
 MODELS_FAMILY = "models"
 CONFORMANCE_FAMILY = "conformance"
+QUARANTINE_FAMILY = "quarantine"
 DOMAIN_INDEX_FAMILY = "domain_index"
 
 #: Families whose signal records something that HAPPENED, not something that
@@ -435,6 +436,31 @@ def _conformance_finding(
     )
 
 
+def _quarantine_finding(
+    health: dict[str, object] | None,
+    now: float,
+) -> DegradedFinding | None:
+    _ = now
+    if not isinstance(health, dict):
+        return None
+    qdrant = health.get("qdrant")
+    if not isinstance(qdrant, dict):
+        return None
+    entries = cast("dict[str, object]", qdrant).get("quarantined")
+    if not isinstance(entries, list) or not entries:
+        return None
+    return DegradedFinding(
+        cause="collections are quarantined out of the vector store",
+        detail=(
+            "they failed to load and were moved aside, so the roots that own "
+            "them answer with incomplete results until they are re-indexed; "
+            "nothing was deleted"
+        ),
+        command="vaultspec-rag server qdrant quarantine",
+        family=QUARANTINE_FAMILY,
+    )
+
+
 #: Degradation families in resolution order, each pairing the distinctive stem
 #: of the prose it explains with the structured signal that proves it. Reasons
 #: are claimed on one stem rather than a whole sentence so that rewording a
@@ -449,12 +475,18 @@ def _conformance_finding(
 #: ordering here is what keeps that true if either reason is ever reworded or
 #: reordered - it is deliberately not relied upon by a test, because no
 #: reachable input distinguishes it today.
+#:
+#: Quarantine precedes the vector service for the same defensive reason: its
+#: reason names the vector store, so the broader stem would be eligible to
+#: claim it. Today it cannot, because a claimed stem is popped and the vector
+#: reason is emitted first, so the two never compete for one entry.
 _DEGRADED_FAMILIES: tuple[
     tuple[str, Callable[[dict[str, object] | None, float], DegradedFinding | None]],
     ...,
 ] = (
     ("stall", _stalled_jobs_finding),
     ("fail", _failed_job_finding),
+    ("quarantined", _quarantine_finding),
     ("vector", _vector_service_finding),
     ("different embedding model", _conformance_finding),
     ("model", _models_finding),
