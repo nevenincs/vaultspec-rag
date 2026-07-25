@@ -38,10 +38,10 @@ from ._process import (
     _spawn_service,
 )
 from ._progress import StartupStatusReporter
-from ._render import _emit_json
 from ._service_lifecycle import (
     _address_line,
     _fail_lifecycle,
+    _lifecycle_success,
     _print_lifecycle_lines,
     _process_line,
     _should_unlink_discovery_file,
@@ -86,7 +86,9 @@ def _ensure_qdrant_binary(
     the exact install command and exits non-zero. In ``--json`` mode the absent/
     failed outcomes are emitted as start envelopes so a broker reads one document.
     """
-    from ..qdrant_runtime import QdrantProvisionAction, provision, resolve_binary
+    from ..qdrant_runtime._constants import QdrantProvisionAction
+    from ..qdrant_runtime._provision import provision
+    from ..qdrant_runtime._resolve import resolve_binary
 
     if resolve_binary() is not None:
         return
@@ -221,13 +223,17 @@ def _start_success(
 ) -> None:
     """Emit a successful start outcome (``already_running`` / ``started``).
 
-    In ``--json`` mode emits one ``{ok, command, data:{status, ...}}`` envelope;
-    otherwise the bespoke human lines. The caller returns after this (exit 0).
+    Binds the start command name to the one shared lifecycle success renderer;
+    the envelope-versus-human decision lives there.
     """
-    if json_mode:
-        _emit_json(True, _START_COMMAND, data={"status": status, **data})
-    else:
-        _print_lifecycle_lines(human_title, *human_lines)
+    _lifecycle_success(
+        json_mode,
+        command=_START_COMMAND,
+        status=status,
+        human_title=human_title,
+        human_lines=human_lines,
+        **data,
+    )
 
 
 def _fail_start(
