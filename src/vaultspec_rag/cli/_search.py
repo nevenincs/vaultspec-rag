@@ -368,15 +368,27 @@ def _try_in_process_search(
         if search_type is PublicSourceType.COMBINED
         else counts[search_type] > 0
     )
-    if envelope is not None and search_type in (
-        PublicSourceType.CODE,
-        PublicSourceType.COMBINED,
-    ):
+    if envelope is not None:
         from .._index_breadth import code_breadth_shortfall
+        from .._search_state import search_index_state
 
-        shortfall = code_breadth_shortfall(target, counts[PublicSourceType.CODE])
-        if shortfall is not None:
-            envelope["index_state"] = {"shortfall": shortfall.as_index_state_block()}
+        # Breadth is published for the code index alone, so a vault- or
+        # document-only search has no claim to fall short of.
+        shortfall = (
+            code_breadth_shortfall(target, counts[PublicSourceType.CODE])
+            if search_type in (PublicSourceType.CODE, PublicSourceType.COMBINED)
+            else None
+        )
+        envelope["index_state"] = search_index_state(
+            indexed_count=(
+                sum(counts.values())
+                if search_type is PublicSourceType.COMBINED
+                else counts[search_type]
+            ),
+            requested_root=target,
+            search_type=search_type,
+            shortfall=shortfall,
+        )
     try:
         status_ctx = (
             _cli.console.status(f"Searching {search_type.value}...")
