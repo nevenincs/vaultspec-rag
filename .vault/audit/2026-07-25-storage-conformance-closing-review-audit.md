@@ -96,6 +96,22 @@ tests were tightened rather than accepted. The fixtures name models no running
 configuration produces, so a mutation that substitutes current values cannot
 accidentally satisfy them.
 
+### timing-sensitive-integration-under-load | medium | the second closeout in a row settled a load-induced integration failure
+
+An unwaited-reconcile test failed twice with an HTTP read timeout when its whole
+file ran on a machine saturated by concurrent work, and passed alone in four
+seconds and as its own six-test group in a minute. Its code path reads no
+manifest, and the test predates this branch, so nothing in this phase's diff is
+reachable from it. Settled as load-induced.
+
+The finding is not that test. It is that this is the second consecutive closeout
+of this feature to spend effort distinguishing a load-induced integration failure
+from a regression, on a different test each time. The suite spawns a real server
+per integration test, and several assertions are about timing rather than about
+values, so the failure mode is structural and will recur. Each occurrence costs a
+full investigation, and the cheap wrong answer - calling it a flake without
+evidence - is how a real intermittent defect eventually gets buried.
+
 ## Recommendations
 
 Join the daemon's cached conformance verdicts into the storage survey payload,
@@ -117,3 +133,10 @@ subset, so a gate absent from the list cannot be reported clean by omission.
 Reconcile the plan's reclamation verification criterion with the decision it
 implements, so the plan stops asking for behaviour the decision does not
 authorise and a later reader does not implement the criterion as written.
+
+Give the timing-sensitive integration assertions a tolerance that holds under
+concurrent load, or mark them so they run on a quiet machine, so the next
+closeout does not spend a third investigation on the same structural failure
+mode. This needs its own decision: whether the project treats a saturated
+developer machine as a supported test environment, and if so which assertions are
+allowed to be about timing at all.
