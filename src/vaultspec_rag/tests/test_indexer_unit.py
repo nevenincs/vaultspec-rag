@@ -30,6 +30,31 @@ from .corpus import CorpusManifest
 pytestmark = [pytest.mark.unit]
 
 
+def scan_only_indexer(
+    root: Path,
+    *,
+    extra_excludes: list[str] | None = None,
+) -> Any:
+    """Build a real indexer for tests that only exercise discovery.
+
+    Scanning and admission need no model and no store, but they do need
+    every attribute the constructor establishes. Bypassing ``__init__``
+    and assigning a hand-picked subset leaves the object unable to hold
+    collaborator state, because a value captured at construction would
+    simply be missing. Constructing for real and leaving the two GPU and
+    storage dependencies unbound keeps the tests honest about what they
+    touch without constraining how the indexer stores its parts.
+    """
+    from ..indexer import CodebaseIndexer
+
+    return CodebaseIndexer(
+        root,
+        cast("Any", None),
+        cast("Any", None),
+        extra_excludes=extra_excludes,
+    )
+
+
 @pytest.fixture(autouse=True)
 def _reset_cfg(  # pyright: ignore[reportUnusedFunction]
 ) -> Generator[None]:
@@ -734,7 +759,6 @@ class TestGitignoreNegationPatterns:
     the ! prefix at the start, not prepend the directory before it."""
 
     def test_negation_pattern_not_mangled(self, tmp_path: Path):
-        from ..indexer import CodebaseIndexer
 
         # Create project structure:
         #   subdir/.gitignore with "*.log\n!important.log"
@@ -750,9 +774,7 @@ class TestGitignoreNegationPatterns:
         (sub / "debug.log").write_text("ignore me", encoding="utf-8")
         (sub / "code.py").write_text("x = 1\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = scan_only_indexer(tmp_path)
         paths = indexer._scan_codebase()
         rel_paths = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in paths}
         # code.py should always be found
@@ -805,7 +827,6 @@ class TestGitignoreNegationPatterns:
     def test_root_negation_cannot_reopen_always_excluded_tree(
         self, tmp_path: Path
     ) -> None:
-        from ..indexer import CodebaseIndexer
 
         (tmp_path / ".gitignore").write_text("!node_modules/\n", encoding="utf-8")
         dependency = tmp_path / "node_modules" / "dependency"
@@ -817,9 +838,7 @@ class TestGitignoreNegationPatterns:
         source.parent.mkdir()
         source.write_text("kept = True\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = scan_only_indexer(tmp_path)
         scanned = indexer._scan_codebase()
 
         assert source in scanned
@@ -994,7 +1013,7 @@ class TestCodebaseMetaRoundTrip:
         from ..indexer import CodebaseIndexer
 
         meta_path: Path = tmp_path / ".rag" / "codebase_meta.json"
-        indexer = object.__new__(CodebaseIndexer)
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
         indexer._meta_path = meta_path
 
         assert indexer._load_meta() == {}
@@ -1109,7 +1128,6 @@ class TestR10MinorAnchoredPattern:
     """R10-m3: Anchored patterns in subdirectory .gitignore avoid double slash."""
 
     def test_anchored_pattern_no_double_slash(self, tmp_path: Path):
-        from ..indexer import CodebaseIndexer
 
         root = tmp_path / "proj"
         root.mkdir()
@@ -1126,9 +1144,7 @@ class TestR10MinorAnchoredPattern:
         # Create a file that should NOT be ignored
         (sub / "main.py").write_text("y = 2\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = root
-        indexer._extra_excludes = []
+        indexer = scan_only_indexer(root)
 
         paths = indexer._scan_codebase()
         rel_paths = {str(p.relative_to(root)).replace("\\", "/") for p in paths}
@@ -1140,7 +1156,6 @@ class TestCodebaseInternalDirectoryExclusions:
     """Codebase indexing must not index vaultspec internal document trees."""
 
     def test_scan_codebase_excludes_vault_and_vaultspec(self, tmp_path: Path):
-        from ..indexer import CodebaseIndexer
 
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "app.py").write_text("TODO = True\n", encoding="utf-8")
@@ -1155,9 +1170,7 @@ class TestCodebaseInternalDirectoryExclusions:
             encoding="utf-8",
         )
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = scan_only_indexer(tmp_path)
 
         paths = indexer._scan_codebase()
         rel_paths = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in paths}
@@ -1166,7 +1179,6 @@ class TestCodebaseInternalDirectoryExclusions:
 
     def test_scan_codebase_excludes_claude_worktree_clones(self, tmp_path: Path):
         """Agent worktree clones under .claude/worktrees/ are never indexed."""
-        from ..indexer import CodebaseIndexer
 
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "app.py").write_text("REAL = True\n", encoding="utf-8")
@@ -1174,9 +1186,7 @@ class TestCodebaseInternalDirectoryExclusions:
         clone.mkdir(parents=True)
         (clone / "app.py").write_text("REAL = True\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = scan_only_indexer(tmp_path)
 
         paths = indexer._scan_codebase()
         rel_paths = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in paths}
@@ -1238,15 +1248,12 @@ class TestVaultragignore:
     @pytest.mark.unit
     def test_vaultragignore_excludes_matching_files(self, tmp_path: Path):
         """Files matching .vaultragignore patterns are excluded from scan."""
-        from ..indexer import CodebaseIndexer
 
         (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
         (tmp_path / "generated.py").write_text("y = 2\n", encoding="utf-8")
         (tmp_path / ".vaultragignore").write_text("generated.py\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = scan_only_indexer(tmp_path)
 
         files = indexer.scan_files()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
@@ -1256,13 +1263,10 @@ class TestVaultragignore:
     @pytest.mark.unit
     def test_missing_vaultragignore_no_error(self, tmp_path: Path):
         """Missing .vaultragignore is silently ignored."""
-        from ..indexer import CodebaseIndexer
 
         (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = scan_only_indexer(tmp_path)
 
         files = indexer.scan_files()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
@@ -1271,14 +1275,14 @@ class TestVaultragignore:
     @pytest.mark.unit
     def test_extra_excludes_applied(self, tmp_path: Path):
         """CLI --exclude patterns are applied via extra_excludes."""
-        from ..indexer import CodebaseIndexer
 
         (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
         (tmp_path / "temp.py").write_text("y = 2\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = ["temp.py"]
+        indexer = scan_only_indexer(
+            tmp_path,
+            extra_excludes=["temp.py"],
+        )
 
         files = indexer.scan_files()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
@@ -1288,7 +1292,6 @@ class TestVaultragignore:
     @pytest.mark.unit
     def test_vaultragignore_negation_cannot_override_gitignore(self, tmp_path: Path):
         """Negation in .vaultragignore cannot un-ignore .gitignore entries."""
-        from ..indexer import CodebaseIndexer
 
         (tmp_path / "secret.py").write_text("x = 1\n", encoding="utf-8")
         (tmp_path / "main.py").write_text("y = 2\n", encoding="utf-8")
@@ -1296,9 +1299,7 @@ class TestVaultragignore:
         # Attempt to un-ignore secret.py from .vaultragignore - must fail
         (tmp_path / ".vaultragignore").write_text("!secret.py\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = scan_only_indexer(tmp_path)
 
         files = indexer.scan_files()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
@@ -1313,7 +1314,6 @@ class TestVaultragignore:
 
         *.test.py is excluded, but !important.test.py brings it back.
         """
-        from ..indexer import CodebaseIndexer
 
         (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
         (tmp_path / "foo.test.py").write_text("y = 2\n", encoding="utf-8")
@@ -1322,9 +1322,7 @@ class TestVaultragignore:
             "*.test.py\n!important.test.py\n", encoding="utf-8"
         )
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = scan_only_indexer(tmp_path)
 
         files = indexer.scan_files()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
@@ -1335,7 +1333,6 @@ class TestVaultragignore:
     @pytest.mark.unit
     def test_gitignore_still_respected_alongside_vaultragignore(self, tmp_path: Path):
         """Both .gitignore and .vaultragignore exclusions are applied."""
-        from ..indexer import CodebaseIndexer
 
         (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
         (tmp_path / "build_output.py").write_text("y = 2\n", encoding="utf-8")
@@ -1343,9 +1340,7 @@ class TestVaultragignore:
         (tmp_path / ".gitignore").write_text("build_output.py\n", encoding="utf-8")
         (tmp_path / ".vaultragignore").write_text("vendor_lib.py\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = scan_only_indexer(tmp_path)
 
         files = indexer.scan_files()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
@@ -1356,20 +1351,16 @@ class TestVaultragignore:
     @pytest.mark.unit
     def test_scan_files_matches_scan_codebase(self, tmp_path: Path):
         """scan_files() returns the same result as _scan_codebase()."""
-        from ..indexer import CodebaseIndexer
 
         (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = scan_only_indexer(tmp_path)
 
         assert indexer.scan_files() == indexer._scan_codebase()
 
     @pytest.mark.unit
     def test_vaultragignore_directory_exclusion(self, tmp_path: Path):
         """Directory patterns in .vaultragignore prune entire subtrees."""
-        from ..indexer import CodebaseIndexer
 
         (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
         vendor = tmp_path / "vendor"
@@ -1377,9 +1368,7 @@ class TestVaultragignore:
         (vendor / "lib.py").write_text("y = 2\n", encoding="utf-8")
         (tmp_path / ".vaultragignore").write_text("vendor/\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        indexer._extra_excludes = []
+        indexer = scan_only_indexer(tmp_path)
 
         files = indexer.scan_files()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}

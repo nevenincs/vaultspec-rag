@@ -21,6 +21,7 @@ import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -580,15 +581,12 @@ def _flatten(results: list[_chunk_worker.FileChunkResult]) -> list[CodeChunk]:
 def _batch_indexer(root: Path, ctx: PreprocessContext) -> CodebaseIndexer:
     """Build a chunk-only indexer wired with a batch preprocess context.
 
-    Mirrors the established ``__new__`` + manual attribute pattern: the chunk
-    dispatch never touches the embedding model or vector store.
+    The chunk dispatch never touches the embedding model or vector store, so
+    those two stay unbound; the rest comes from the real constructor, and only
+    the per-run preprocess context is overridden afterwards.
     """
-    indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-    indexer.root_dir = root
-    indexer._extra_excludes = []
+    indexer = CodebaseIndexer(root, cast("Any", None), cast("Any", None))
     indexer._prep_ctx = ctx
-    indexer._prep_skips = []
-    indexer._prep_ok = 0
     return indexer
 
 
