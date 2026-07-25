@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#index-throughput'
 date: '2026-07-24'
-modified: '2026-07-24'
+modified: '2026-07-25'
 step_id: 'S15'
 related:
   - "[[2026-07-24-index-throughput-plan]]"
@@ -28,3 +28,5 @@ REPORT-SKIP. `prefer_grpc=True` on the current client would target the qdrant de
 ## Notes
 
 The measured 20-25% per-upsert transport win recorded in the decision record remains unharvested; the follow-up must add the gRPC-port knob before flipping the client flag.
+
+Re-examined during the plan closeout; the skip stands and gains a second reason. The store's error handling is written against the REST exception surface: the donor read in `src/vaultspec_rag/store.py` branches on `UnexpectedResponse.status_code == 404` to treat a vanished donor collection as a miss, and the write classifier in `src/vaultspec_rag/_store_writes.py` separates unrecoverable storage exhaustion from transient failure by walking the exception chain for a wrapped ENOSPC and for the HTTP 500 whose body names a WAL buffer overflow. Under gRPC those become status codes on a different exception type, so a transport flip silently reclassifies a full disk as transient and would retry writes that can never land - while burning GPU upstream. The switch therefore needs the port knob AND a mapped classification for the gRPC error surface, with its own tests. It is a decision record of its own, not a Step of this plan.

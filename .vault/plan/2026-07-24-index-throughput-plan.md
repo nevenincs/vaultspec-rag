@@ -46,7 +46,7 @@ Move vault parsing into the spawn-safe CPU worker pool and adopt the code path's
 Before/after wall-clock measurement of a contended window and a rebuild-class job, full quality gates, and the commit-and-push landing.
 
 - [x] `P04.S11` - run the before/after measurement: a contended multi-job window and a solo rebuild-class job, comparing wall-clock and queue-wait telemetry against the research baselines; `measured runs; Step Record`.
-- [ ] `P04.S12` - run the full quality gates on the changed surface and fold measured numbers into the ADR consequences; `repository quality gates;`.vault/adr/2026-07-24-index-throughput-adr.md\`.
+- [x] `P04.S12` - run the full quality gates on the changed surface and fold measured numbers into the ADR consequences; `repository quality gates;`.vault/adr/2026-07-24-index-throughput-adr.md\`.
 - [x] `P04.S13` - commit the throughput work with a why-focused message and push to origin main; `git`.
 - [x] `P04.S18` - cap requires-python below 3.14 so the published metadata matches the runtime interpreter guard that already rejects 3.14, and add a .python-version pin so fresh worktree venvs resolve a supported interpreter; `pyproject.toml`; `.python-version`.
 
