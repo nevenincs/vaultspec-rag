@@ -21,6 +21,7 @@ related:
   - '[[2026-07-24-index-throughput-P03-S16]]'
   - '[[2026-07-24-index-throughput-P03-S17]]'
   - '[[2026-07-24-index-throughput-P04-S11]]'
+  - '[[2026-07-24-index-throughput-P04-S12]]'
   - '[[2026-07-24-index-throughput-P04-S13]]'
   - '[[2026-07-24-index-throughput-P04-S18]]'
   - '[[2026-07-24-index-throughput-adr]]'
@@ -56,6 +57,7 @@ Auto-generated index of all documents tagged with `#index-throughput`.
 - `2026-07-24-index-throughput-P03-S08` - adopt the bounded-queue producer/consumer pattern for the document encode path with sentinel shutdown and time-bounded joins
 - `2026-07-24-index-throughput-P03-S09` - re-tune the CUDA cache flush cadence under overlap and record the measured effect
 - `2026-07-24-index-throughput-P04-S11` - run the before/after measurement: a contended multi-job window and a solo rebuild-class job, comparing wall-clock and queue-wait telemetry against the research baselines
+- `2026-07-24-index-throughput-P04-S12` - run the full quality gates on the changed surface and fold measured numbers into the ADR consequences
 - `2026-07-24-index-throughput-P04-S13` - commit the throughput work with a why-focused message and push to origin main
 
 ### plan
