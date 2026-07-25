@@ -216,11 +216,13 @@ class TestIncrementalPublicationRecovery:
         store.upsert_code_chunks([chunk], write_policy=None)
         policy = indexer.resolve_policy_snapshot()
         limits = indexer._resolve_code_pipeline_limits()  # pyright: ignore[reportPrivateUsage]
-        checkpoint = indexer._open_run_checkpoint(  # pyright: ignore[reportPrivateUsage]
+        checkpoint = indexer._lifecycle.open_checkpoint(  # pyright: ignore[reportPrivateUsage]
             policy=policy,
             operation=RunOperation.INCREMENTAL,
             clean=False,
-            limits=limits,
+            configuration=limits.run_configuration,
+            dense_dimensions=limits.dense_dimension,
+            sparse_enabled=limits.sparse_enabled,
             run_control=RunControlToken(),
         )
         digest = hashlib.blake2b(chunk.content.encode("utf-8")).hexdigest()
@@ -274,11 +276,13 @@ class TestIncrementalPublicationRecovery:
         preflight = indexer.preflight_content()
         policy = preflight.policy
         limits = indexer._resolve_code_pipeline_limits()  # pyright: ignore[reportPrivateUsage]
-        checkpoint = indexer._open_run_checkpoint(  # pyright: ignore[reportPrivateUsage]
+        checkpoint = indexer._lifecycle.open_checkpoint(  # pyright: ignore[reportPrivateUsage]
             policy=policy,
             operation=RunOperation.FULL,
             clean=True,
-            limits=limits,
+            configuration=limits.run_configuration,
+            dense_dimensions=limits.dense_dimension,
+            sparse_enabled=limits.sparse_enabled,
             run_control=RunControlToken(),
         )
 
