@@ -14,6 +14,7 @@ import pytest
 import tomlkit
 
 from .. import torch_config as tc
+from ..torch_config._direct_dep import _is_torch_requirement
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -861,16 +862,16 @@ def test_is_torch_requirement_predicate(entry: str, expected: bool) -> None:
     """
     # Access the private helper directly; behaviour is part of the
     # module's contract because ``has_direct_torch_dep`` delegates.
-    assert tc._is_torch_requirement(entry) is expected
+    assert _is_torch_requirement(entry) is expected
 
 
 def test_is_torch_requirement_rejects_non_strings() -> None:
     """tomlkit can yield non-string entries (e.g. nested tables for
     PEP 508 dict-form deps in some tooling). Predicate must be total.
     """
-    assert tc._is_torch_requirement(None) is False
-    assert tc._is_torch_requirement(42) is False
-    assert tc._is_torch_requirement({"name": "torch"}) is False
+    assert _is_torch_requirement(None) is False
+    assert _is_torch_requirement(42) is False
+    assert _is_torch_requirement({"name": "torch"}) is False
 
 
 # ---------------------------------------------------------------------------

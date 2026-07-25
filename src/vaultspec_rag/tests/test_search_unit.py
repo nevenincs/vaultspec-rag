@@ -250,7 +250,7 @@ class TestLocaleVariantKey:
 
     def test_shape_a_lang_basename(self):
         """``locales/en.yml`` + ``locales/es.yml`` share a key."""
-        from ..search import _locale_variant_key
+        from ..search._postprocess import _locale_variant_key
 
         a = _locale_variant_key("locales/en.yml")
         b = _locale_variant_key("locales/es.yml")
@@ -259,7 +259,7 @@ class TestLocaleVariantKey:
 
     def test_shape_b_lang_directory(self):
         """``i18n/en/messages.po`` + ``i18n/es/messages.po`` share a key."""
-        from ..search import _locale_variant_key
+        from ..search._postprocess import _locale_variant_key
 
         a = _locale_variant_key("i18n/en/messages.po")
         b = _locale_variant_key("i18n/es/messages.po")
@@ -268,7 +268,7 @@ class TestLocaleVariantKey:
 
     def test_shape_c_dotted_lang(self):
         """``messages.en.po`` + ``messages.es.po`` share a key."""
-        from ..search import _locale_variant_key
+        from ..search._postprocess import _locale_variant_key
 
         a = _locale_variant_key("messages.en.po")
         b = _locale_variant_key("messages.es.po")
@@ -277,7 +277,7 @@ class TestLocaleVariantKey:
 
     def test_non_locale_path_returns_none(self):
         """``src/foo.py`` is not a locale variant."""
-        from ..search import _locale_variant_key
+        from ..search._postprocess import _locale_variant_key
 
         assert _locale_variant_key("src/foo.py") is None
         assert _locale_variant_key("README.md") is None
@@ -285,13 +285,13 @@ class TestLocaleVariantKey:
 
     def test_extension_must_be_in_allow_list(self):
         """``locales/en.py`` is not a locale file (wrong ext)."""
-        from ..search import _locale_variant_key
+        from ..search._postprocess import _locale_variant_key
 
         assert _locale_variant_key("locales/en.py") is None
 
     def test_lang_code_must_be_two_letters(self):
         """``locales/eng.yml`` doesn't match the 2-letter rule."""
-        from ..search import _locale_variant_key
+        from ..search._postprocess import _locale_variant_key
 
         assert _locale_variant_key("locales/eng.yml") is None
 
@@ -303,35 +303,35 @@ class TestClassifyChunkType:
 
     def test_tests_precedence_over_docs(self):
         """``tests/docs/foo.py`` is tests (precedence rule)."""
-        from ..search import _classify_chunk_type
+        from ..search._postprocess import _classify_chunk_type
 
         assert _classify_chunk_type("tests/docs/foo.py") == "tests"
 
     def test_test_prefix_python(self):
-        from ..search import _classify_chunk_type
+        from ..search._postprocess import _classify_chunk_type
 
         assert _classify_chunk_type("test_foo.py") == "tests"
         assert _classify_chunk_type("src/pkg/test_bar.py") == "tests"
 
     def test_test_suffix_python(self):
-        from ..search import _classify_chunk_type
+        from ..search._postprocess import _classify_chunk_type
 
         assert _classify_chunk_type("foo_test.py") == "tests"
 
     def test_specs_directory(self):
-        from ..search import _classify_chunk_type
+        from ..search._postprocess import _classify_chunk_type
 
         assert _classify_chunk_type("spec/parser_spec.rb") == "tests"
 
     def test_docs_directory(self):
-        from ..search import _classify_chunk_type
+        from ..search._postprocess import _classify_chunk_type
 
         assert _classify_chunk_type("docs/intro.md") == "docs"
         assert _classify_chunk_type("README.md") == "docs"
         assert _classify_chunk_type("guide.rst") == "docs"
 
     def test_prod_default(self):
-        from ..search import _classify_chunk_type
+        from ..search._postprocess import _classify_chunk_type
 
         assert _classify_chunk_type("src/pkg/module.py") == "prod"
         assert _classify_chunk_type("lib/util.rs") == "prod"
@@ -354,7 +354,7 @@ class TestCollapseLocaleVariants:
 
     def test_near_tie_variants_collapse(self):
         """Two same-key results within window collapse to the winner."""
-        from ..search import _collapse_locale_variants
+        from ..search._postprocess import _collapse_locale_variants
 
         winner = self._mk("locales/en.yml", 0.90)
         loser = self._mk("locales/es.yml", 0.88)
@@ -365,7 +365,7 @@ class TestCollapseLocaleVariants:
 
     def test_wide_gap_variants_survive(self):
         """Same-key results outside the window stay separate."""
-        from ..search import _collapse_locale_variants
+        from ..search._postprocess import _collapse_locale_variants
 
         a = self._mk("locales/en.yml", 0.90)
         b = self._mk("locales/es.yml", 0.50)
@@ -374,7 +374,7 @@ class TestCollapseLocaleVariants:
 
     def test_non_locale_passes_through(self):
         """Non-locale paths are never touched."""
-        from ..search import _collapse_locale_variants
+        from ..search._postprocess import _collapse_locale_variants
 
         a = self._mk("src/foo.py", 0.95)
         b = self._mk("src/bar.py", 0.94)
@@ -382,7 +382,7 @@ class TestCollapseLocaleVariants:
         assert len(out) == 2
 
     def test_empty_input(self):
-        from ..search import _collapse_locale_variants
+        from ..search._postprocess import _collapse_locale_variants
 
         assert _collapse_locale_variants([]) == []
 

@@ -20,10 +20,8 @@ monolith: shared constants / enums / report
 dataclasses in ``_constants``, TOML inspection + classification in
 ``_inspect``, mutation + the canonical-snippet builder in ``_mutate``,
 direct-dep management in ``_direct_dep``, and install diagnosis in
-``_diagnose``. The verbatim public surface - plus the
-``_is_torch_requirement`` helper tests import directly via the module
-alias - is re-exported here unchanged so no caller or test edit is
-required.
+``_diagnose``. The verbatim public surface is re-exported here
+unchanged so no caller edit is required.
 """
 
 from __future__ import annotations
@@ -43,7 +41,6 @@ from ._constants import (
 )
 from ._diagnose import diagnose_torch
 from ._direct_dep import (
-    _is_torch_requirement,  # pyright: ignore[reportPrivateUsage]  # test-facing re-export of intra-package helper
     ensure_direct_torch_dep,
     has_direct_torch_dep,
     remove_managed_direct_torch_dep,
@@ -68,7 +65,6 @@ __all__ = [
     "TorchConfigAction",
     "TorchConfigState",
     "TorchDiagnosis",
-    "_is_torch_requirement",
     "apply_patch",
     "detect_state",
     "diagnose_torch",

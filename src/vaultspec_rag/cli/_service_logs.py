@@ -15,7 +15,6 @@ import typer
 from ..logging_config import (
     DEFAULT_MANAGED_LOG_LINES,
     ManagedLogGroup,
-    ManagedLogSource,
     clamp_managed_log_lines,
     managed_log_filters,
     query_managed_logs,
@@ -28,46 +27,6 @@ from ._render import _emit_json, _emit_json_error_and_exit, _plain
 from ._service_status import _default_service_port
 
 _LOGS_COMMAND = "server.logs"
-
-
-def _cli_log_filters(
-    *,
-    job_id: str | None,
-    contains: str | None,
-) -> dict[str, str]:
-    """Return the non-empty, trimmed filters forwarded by the CLI adapter."""
-    return managed_log_filters(job_id=job_id, contains=contains)
-
-
-def _local_log_payload(
-    *,
-    lines: int,
-    source: ManagedLogSource,
-    filters: dict[str, str],
-) -> dict[str, object]:
-    """Read and shape retained logs through the production contract."""
-    return query_managed_logs(
-        lines,
-        source=source,
-        job_id=filters.get("job_id"),
-        contains=filters.get("contains"),
-    )
-
-
-def _payload_groups(
-    payload: dict[str, object],
-    *,
-    source: ManagedLogSource,
-    limit: int,
-    filters: dict[str, str],
-) -> list[ManagedLogGroup] | None:
-    """Validate and return groups from a live managed-log payload."""
-    return validate_managed_log_payload(
-        payload,
-        source=source,
-        limit=limit,
-        filters=filters,
-    )
 
 
 def _exit_live_log_error(
@@ -130,7 +89,7 @@ def service_logs(
     ] = False,
 ) -> None:
     """Show grouped raw service and Qdrant logs live or offline."""
-    filters = _cli_log_filters(job_id=job_id, contains=contains)
+    filters = managed_log_filters(job_id=job_id, contains=contains)
     limit = clamp_managed_log_lines(lines)
     resolved_port = port if port is not None else _default_service_port()
     result: dict[str, object] | None = None
@@ -142,13 +101,18 @@ def service_logs(
         )
 
     if result is None:
-        payload = _local_log_payload(lines=lines, source=source, filters=filters)
+        payload = query_managed_logs(
+            lines,
+            source=source,
+            job_id=filters.get("job_id"),
+            contains=filters.get("contains"),
+        )
         groups = cast("list[ManagedLogGroup]", payload["groups"])
     else:
         if result.get("ok") is False:
             _exit_live_log_error(result, json_mode=json_mode)
             return
-        groups = _payload_groups(
+        groups = validate_managed_log_payload(
             result,
             source=source,
             limit=limit,
