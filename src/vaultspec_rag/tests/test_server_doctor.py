@@ -32,7 +32,7 @@ from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissin
 
 from ..api import get_readiness
 from ..cli import app
-from ..commands import install_run
+from ..commands._install import install_run
 
 if TYPE_CHECKING:
     from pathlib import Path

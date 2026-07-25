@@ -236,7 +236,7 @@ def handle_install(
 
     from rich.prompt import Confirm
 
-    from ..commands import install_run
+    from ..commands._install import install_run
 
     # Honour the global ``--target`` from the root callback. Click
     # consumes group options before subcommand options, so the user
@@ -322,7 +322,7 @@ def handle_install(
     # ``CONFLICT`` is by-definition the user's own customised state -
     # keep that 0 too (the warning is the signal). ``ABSENT`` and
     # ``DISABLED`` are intentional opt-outs; both 0.
-    from ..torch_config import TorchConfigAction
+    from ..torch_config._constants import TorchConfigAction
 
     if (
         report.mcp_extra_action == "error"
@@ -400,7 +400,7 @@ def handle_uninstall(
     Without --force, this only previews what would be removed. Vault
     documents and index data are preserved unless --remove-data is set.
     """
-    from ..commands import uninstall_run
+    from ..commands._uninstall import uninstall_run
 
     # Honour the global ``--target`` from the root callback (see
     # handle_install for the rationale).

@@ -50,7 +50,7 @@ from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissin
 )
 
 from ..builtins import seed_builtins
-from ..commands import install_run
+from ..commands._install import install_run
 from ..commands._mode import (
     RAG_DISTRIBUTION_NAME,
     RAG_MCP_MODULE,
@@ -594,7 +594,7 @@ def test_dependency_install_leaves_no_rag_runtime_noise_in_worktree(
 
 def test_uninstall_removes_obsolete_runtime_sentinels(tmp_path: Path) -> None:
     """Uninstall clears sentinels an older rag may have left in the repo."""
-    from ..commands import uninstall_run
+    from ..commands._uninstall import uninstall_run
 
     ws = _workspace(tmp_path, _PROJECT_WITH_RAG)
     _install(ws, mode=InstallMode.DEPENDENCY)
@@ -615,7 +615,7 @@ def test_uninstall_dry_run_previews_sentinels_without_removing(
     tmp_path: Path,
 ) -> None:
     """Without --force the sentinels are reported but left untouched."""
-    from ..commands import uninstall_run
+    from ..commands._uninstall import uninstall_run
 
     ws = _workspace(tmp_path, _PROJECT_WITH_RAG)
     _install(ws, mode=InstallMode.DEPENDENCY)

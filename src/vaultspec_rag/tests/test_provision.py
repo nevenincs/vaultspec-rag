@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ..commands import (
+from ..commands._provision import (
     ProvisionAction,
     ProvisionOutcome,
     ProvisionStep,
@@ -28,15 +28,15 @@ from ..commands import (
     provision_dependencies,
     provision_models,
 )
-from ..qdrant_runtime import (
-    QDRANT_ASSET_SHA256,
-    QDRANT_SERVER_VERSION,
+from ..qdrant_runtime._constants import QDRANT_ASSET_SHA256, QDRANT_SERVER_VERSION
+from ..qdrant_runtime._provision import file_sha256
+from ..qdrant_runtime._resolve import (
     asset_for_platform,
     binary_filename,
-    file_sha256,
     qdrant_bin_dir,
 )
-from ..torch_config import TorchConfigState, detect_state
+from ..torch_config._constants import TorchConfigState
+from ..torch_config._inspect import detect_state
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -67,7 +67,8 @@ def test_operator_symlink_binary_is_refused(
     # Security: an operator-supplied binary path that is a symlink must be
     # refused, never followed - copying it would dereference the link and could
     # register attacker content (TOCTOU) under an operator-blessed manifest.
-    from ..qdrant_runtime import QdrantProvisionAction, provision
+    from ..qdrant_runtime._constants import QdrantProvisionAction
+    from ..qdrant_runtime._provision import provision
 
     real = tmp_path / "real_qdrant"
     real.write_bytes(b"#!/bin/sh\necho real\n")

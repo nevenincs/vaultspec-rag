@@ -15,8 +15,9 @@ from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStub
     InstallMode,
 )
 
-from ..commands import install_run, uninstall_run
+from ..commands._install import install_run
 from ..commands._mcp_extra import reconcile_mcp_extra
+from ..commands._uninstall import uninstall_run
 
 if TYPE_CHECKING:
     from pathlib import Path

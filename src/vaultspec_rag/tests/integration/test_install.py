@@ -41,7 +41,8 @@ from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissin
 )
 
 from ...builtins import list_builtins
-from ...commands import install_run, uninstall_run
+from ...commands._install import install_run
+from ...commands._uninstall import uninstall_run
 
 pytestmark = [pytest.mark.integration]
 
@@ -3338,7 +3339,7 @@ class TestProvisioningReport:
     def test_torch_enrollment_step_reports_configured_sync_pending(
         self, provisioned_report: Any
     ) -> None:
-        from ...torch_config import TorchConfigAction
+        from ...torch_config._constants import TorchConfigAction
 
         # The enrollment torch step actually patched the consumer
         # pyproject; its honest two-phase state is the headline the
@@ -3375,7 +3376,7 @@ class TestProvisioningReport:
     def test_dry_run_provisioning_previews_without_writing(
         self, fresh_workspace: Path, isolated_status_dir: Path
     ) -> None:
-        from ...commands import ProvisionAction, ProvisionStep
+        from ...commands._provision import ProvisionAction, ProvisionStep
 
         (fresh_workspace / "pyproject.toml").write_text(
             _CONSUMER_PYPROJECT, encoding="utf-8", newline=""
