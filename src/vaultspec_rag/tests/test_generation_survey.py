@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -289,3 +290,122 @@ class TestGenerationDebtInTheSurveyPayload:
 
         assert namespace["served_code_collection"] is None
         assert namespace["unreferenced_generations"] is None
+
+
+class TestGenerationReclaimGates:
+    """Every gate on dropping a superseded generation fails closed."""
+
+    _NOW = datetime(2026, 7, 26, 12, 0, tzinfo=UTC)
+    _LONG_AGO = "2026-07-01T00:00:00+00:00"
+
+    def _decide(self, **overrides: object) -> object:
+        from ..generation_survey import decide_generation_reclaim
+
+        kwargs: dict[str, object] = {
+            "stamps": {"c_gold": self._LONG_AGO},
+            "now": self._NOW,
+            "grace_hours": 24.0,
+            "reader_present": False,
+            "pointer_verifiable": True,
+        }
+        kwargs.update(overrides)
+        return decide_generation_reclaim("c_gold", **kwargs)  # type: ignore[arg-type]
+
+    def test_an_elapsed_window_with_nothing_contrary_is_droppable(self) -> None:
+        """The only path to a drop: every gate passed and time has elapsed."""
+        decision = self._decide()
+
+        assert decision.droppable is True
+        assert decision.reason == "grace_elapsed"
+
+    def test_an_unverifiable_pointer_holds_however_old_the_stamp(self) -> None:
+        """An unreadable pointer is not evidence that nothing points here.
+
+        Proven able to fail: dropping the ``pointer_verifiable`` gate makes
+        this collection droppable on an elapsed window and fails the assertion,
+        which is the offline-share deletion the storage rules forbid.
+        """
+        decision = self._decide(pointer_verifiable=False)
+
+        assert decision.droppable is False
+        assert decision.reason == "pointer_unverifiable"
+
+    def test_a_live_reader_lease_holds_however_old_the_stamp(self) -> None:
+        """A store binds its collection once and keeps it for its whole life.
+
+        Proven able to fail: dropping the ``reader_present`` gate makes this
+        droppable while a reader in this process may still resolve the old
+        name.
+        """
+        decision = self._decide(reader_present=True)
+
+        assert decision.droppable is False
+        assert decision.reason == "reader_lease_held"
+
+    def test_a_fresh_observation_starts_the_window_rather_than_dropping(
+        self,
+    ) -> None:
+        """First sighting is never a drop; a single scan is not a window.
+
+        Proven able to fail: treating a missing stamp as an elapsed window
+        drops on first observation and fails this.
+        """
+        decision = self._decide(stamps={})
+
+        assert decision.droppable is False
+        assert decision.reason == "grace_started"
+
+    def test_an_unelapsed_window_reports_what_remains(self) -> None:
+        from ..generation_survey import decide_generation_reclaim
+
+        decision = decide_generation_reclaim(
+            "c_gold",
+            stamps={"c_gold": "2026-07-26T11:00:00+00:00"},
+            now=self._NOW,
+            grace_hours=24.0,
+            reader_present=False,
+            pointer_verifiable=True,
+        )
+
+        assert decision.droppable is False
+        assert decision.reason.startswith("grace_remaining_h=")
+
+
+class TestGenerationStampAdvance:
+    """The clock measures continuous unreferenced-ness, not cumulative."""
+
+    def test_an_existing_stamp_survives_a_restart(self) -> None:
+        """Preserving the stamp is what makes the window continuous.
+
+        Proven able to fail: overwriting instead of setdefault restarts the
+        clock on every cycle, so the window never elapses and nothing is ever
+        reclaimed.
+        """
+        from ..generation_survey import advance_generation_stamps
+
+        advanced = advance_generation_stamps(
+            {"c_gold": "2026-07-01T00:00:00+00:00"},
+            unreferenced=["c_gold"],
+            held=[],
+            now_iso="2026-07-26T12:00:00+00:00",
+        )
+
+        assert advanced["c_gold"] == "2026-07-01T00:00:00+00:00"
+
+    def test_a_contrary_observation_clears_the_clock(self) -> None:
+        """Served again, a live reader, or an unreadable pointer restarts it.
+
+        Proven able to fail: leaving held stamps in place lets a window
+        accumulate across gaps in which the collection was not unreferenced at
+        all.
+        """
+        from ..generation_survey import advance_generation_stamps
+
+        advanced = advance_generation_stamps(
+            {"c_gold": "2026-07-01T00:00:00+00:00"},
+            unreferenced=[],
+            held=["c_gold"],
+            now_iso="2026-07-26T12:00:00+00:00",
+        )
+
+        assert "c_gold" not in advanced

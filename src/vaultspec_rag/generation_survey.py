@@ -20,6 +20,8 @@ that implied otherwise would be the first step toward deleting a live index.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, NamedTuple
 
 from ._store_models import read_served_pointer
@@ -27,7 +29,13 @@ from ._store_models import read_served_pointer
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
-__all__ = ["RootGenerations", "survey_generations"]
+__all__ = [
+    "GenerationReclaim",
+    "RootGenerations",
+    "advance_generation_stamps",
+    "decide_generation_reclaim",
+    "survey_generations",
+]
 
 
 class RootGenerations(NamedTuple):
@@ -89,3 +97,95 @@ def survey_generations(
             RootGenerations(root=str(root), served=served, unreferenced=unreferenced)
         )
     return tuple(reports)
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationReclaim:
+    """What may happen to one superseded generation, and why.
+
+    ``action`` is ``reclaim`` (droppable now), ``pending`` (grace window still
+    running), or ``held`` (something observed that forbids acting at all).
+    ``reason`` names the gate, so an operator reading a deferral learns which
+    one it was rather than only that nothing happened.
+    """
+
+    collection: str
+    action: str
+    reason: str
+
+    @property
+    def droppable(self) -> bool:
+        """Whether every gate passed and this collection may be dropped now."""
+        return self.action == "reclaim"
+
+
+def decide_generation_reclaim(
+    collection: str,
+    *,
+    stamps: Mapping[str, str],
+    now: datetime,
+    grace_hours: float,
+    reader_present: bool,
+    pointer_verifiable: bool,
+) -> GenerationReclaim:
+    """Decide whether one superseded generation may be dropped now.
+
+    Three gates, and every one of them fails closed. An unreadable pointer is
+    not evidence that nothing points at this collection, so it holds. A live
+    lease means a reader in this process may still be resolving the old name,
+    because a store binds its collection once at construction and keeps it for
+    its whole life. Neither can be waited out, so both reset the clock rather
+    than merely pausing it - the window measures continuous unreferenced-ness,
+    and a single contrary observation means it has not been continuous.
+
+    Only when nothing contradicts it does time substitute for evidence about
+    other processes, which cannot be observed at all.
+
+    The caller must resolve the pointer at the moment it decides, not from a
+    survey gathered earlier in the cycle: a collection can become the served
+    one between gather and drop, and a stale snapshot would step past every
+    gate here while naming a live index.
+    """
+    if not pointer_verifiable:
+        return GenerationReclaim(collection, "held", "pointer_unverifiable")
+    if reader_present:
+        return GenerationReclaim(collection, "held", "reader_lease_held")
+    first_seen = stamps.get(collection)
+    if not first_seen:
+        return GenerationReclaim(collection, "pending", "grace_started")
+    try:
+        seen_at = datetime.fromisoformat(first_seen)
+    except ValueError:
+        return GenerationReclaim(collection, "pending", "grace_restarted")
+    if seen_at.tzinfo is None:
+        seen_at = seen_at.replace(tzinfo=UTC)
+    age_hours = (now - seen_at).total_seconds() / 3600.0
+    if age_hours < grace_hours:
+        remaining = grace_hours - age_hours
+        return GenerationReclaim(
+            collection, "pending", f"grace_remaining_h={remaining:.1f}"
+        )
+    return GenerationReclaim(collection, "reclaim", "grace_elapsed")
+
+
+def advance_generation_stamps(
+    stamps: Mapping[str, str],
+    *,
+    unreferenced: Iterable[str],
+    held: Iterable[str],
+    now_iso: str,
+) -> dict[str, str]:
+    """Advance the per-collection grace clocks from one observation.
+
+    A collection observed unreferenced keeps an existing stamp, because the
+    window measures CONTINUOUS unreferenced-ness and a daemon restart must not
+    reset it. Anything in ``held`` - served again, a live reader, an unreadable
+    pointer - has its stamp cleared, so a contrary observation restarts the
+    window from zero rather than letting it accumulate across a gap.
+    """
+    advanced = dict(stamps)
+    for collection in held:
+        advanced.pop(collection, None)
+    for collection in unreferenced:
+        advanced.setdefault(collection, now_iso)
+    return advanced
