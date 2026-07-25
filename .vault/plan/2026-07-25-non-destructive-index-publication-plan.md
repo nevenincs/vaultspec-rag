@@ -46,10 +46,10 @@ Close the production window first. The two escalation gates reachable from a wat
 
 Readers stop deriving the served collection name from the root and resolve it through a single per-root pointer instead. Introduced while the pointer still resolves to today's name, so the indirection lands and is proven under the existing suite before any generation-scoped write depends on it.
 
-- [ ] `P02.S05` - Introduce a per-root served-collection pointer in the store, persisted alongside the existing per-root identity, defaulting to today's derived name where absent; `src/vaultspec_rag/store.py`.
+- [x] `P02.S05` - Introduce a per-root served-collection pointer in the store, persisted alongside the existing per-root identity, defaulting to today's derived name where absent; `src/vaultspec_rag/store.py`.
 - [ ] `P02.S06` - Resolve every read path's collection name through the pointer rather than deriving it from the root, leaving write paths on the derived name for now; `src/vaultspec_rag/store.py, src/vaultspec_rag/_store_search.py`.
 - [ ] `P02.S07` - Route the survey and storage-operation surfaces at the pointer so no caller outside the store derives a collection name for itself; `src/vaultspec_rag/cli/_service_storage.py, src/vaultspec_rag/server/_routes_storage.py`.
-- [ ] `P02.S08` - Prove by real-storage test that a root whose pointer is absent resolves to the derived name unchanged, and that a root whose pointer names another collection is read from that collection; `src/vaultspec_rag/tests/integration/test_store_integration.py`.
+- [x] `P02.S08` - Prove by real-storage test that a root whose pointer is absent resolves to the derived name unchanged, and that a root whose pointer names another collection is read from that collection; `src/vaultspec_rag/tests/integration/test_store_integration.py`.
 
 ### Phase `P03` - build a generation into its own collection and swap
 
