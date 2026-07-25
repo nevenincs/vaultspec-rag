@@ -49,13 +49,21 @@ __all__ = [
 
 
 class ServiceHealth(TypedDict):
-    """Diagnostic status returned by :meth:`ServiceRegistry.health`."""
+    """Diagnostic status returned by :meth:`ServiceRegistry.health`.
+
+    ``nonconforming`` names each warm collection whose stored vectors were not
+    produced by the models this process is configured with. It reports only
+    what the ensure path already judged, so a health poll never probes the
+    backend; collections nobody has opened, and those judged unverifiable, are
+    absent rather than listed as problems.
+    """
 
     model_loaded: bool
     reranker_loaded: bool
     cuda: bool
     project_count: int
     projects: list[str]
+    nonconforming: list[str]
 
 
 class RegistryFullError(Exception):
@@ -899,9 +907,20 @@ class ServiceRegistry:
             A dict with ``model_loaded``, ``project_count``, and
             ``projects`` (list of resolved root path strings).
         """
+        from . import store_schema
+
         with self._lock:
             project_list = [str(r) for r in self._projects]
             count = len(self._projects)
+            # Read the verdicts the ensure path already recorded. No backend
+            # call happens here: a health poll must stay cheap, and a store
+            # nobody has opened has nothing to report either way.
+            nonconforming = sorted(
+                f"{root}:{collection}"
+                for root, slot in self._projects.items()
+                for collection, verdict in slot.store.conformance_verdicts().items()
+                if verdict.verdict == store_schema.NONCONFORMING
+            )
         return {
             "model_loaded": self._model is not None,
             "reranker_loaded": self._reranker is not None,
@@ -911,4 +930,5 @@ class ServiceRegistry:
             ),
             "project_count": count,
             "projects": project_list,
+            "nonconforming": nonconforming,
         }

@@ -888,6 +888,20 @@ def _service_health_status(
         degraded_reasons.append("the configured vector service is not live")
         if status == "ready":
             status = "degraded"
+    # A collection whose vectors were built by a different model still answers
+    # every query and still looks healthy by every other signal, which is
+    # exactly why it has to be said here: this is the only place live-service
+    # degradation is authored, so a reason added here is the one that reaches
+    # status, start warnings, and the MCP surface without a second renderer.
+    nonconforming = reg_health.get("nonconforming") or []
+    if nonconforming:
+        degraded_reasons.append(
+            f"{len(nonconforming)} indexed collection(s) were built by a "
+            f"different embedding model than the one configured, so their "
+            f"search ranking is unreliable: {', '.join(nonconforming[:3])}"
+        )
+        if status == "ready":
+            status = "degraded"
     return status, degraded_reasons
 
 
@@ -1091,6 +1105,11 @@ async def health_handler(_request: Request) -> object:
             "models_loaded": reg_health["model_loaded"],
             "reranker_loaded": reg_health["reranker_loaded"],
             "project_count": reg_health["project_count"],
+            # The structured signal behind the conformance degradation reason.
+            # The CLI derives its remediation from this rather than parsing the
+            # prose, so rewording the reason costs its pairing, never its
+            # visibility.
+            "nonconforming": reg_health.get("nonconforming") or [],
             "uptime_s": round(uptime, 2),
             "backend_capabilities": backend_capabilities_dict(),
             "degraded_reasons": degraded_reasons,
