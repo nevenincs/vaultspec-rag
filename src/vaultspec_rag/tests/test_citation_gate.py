@@ -16,10 +16,13 @@ its detection asserted without ever mutating the checkout. The final case is the
 only one pointed at the live tree, and it is a regression guard on the tree
 rather than evidence about the gate.
 
-Each assertion below names the mutation it catches. Those mutations were run -
-the gate broken one way at a time, the test run alone, observed to fail on the
-named assertion, restored, observed to pass. An unexplained matcher is one the
-next reader loosens, so the mutation is recorded beside the assertion it defends.
+Each assertion below names the mutation it catches. Every one of those mutations
+was run: the gate broken one way at a time, the named tests run alone, observed
+to fail on the assertion they name, the gate restored from a copy held outside
+the repository, the tests re-run and observed to pass. One uninterrupted
+sequence, restoring in a ``finally`` so no mutation could outlive it on disk. An
+unexplained matcher is one the next reader loosens, so each mutation is recorded
+beside the assertion it defends rather than in a message somewhere else.
 """
 
 from __future__ import annotations
