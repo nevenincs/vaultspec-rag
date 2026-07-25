@@ -36,7 +36,6 @@ from ..index_profiles import (
     get_index_support_profile,
 )
 from ..job_control import NO_RUN_CONTROL, RunControlSignal
-from ..logging_config import log_event
 from . import _chunk_worker, _code_meta, _preprocess_glue
 from ._code_meta import (
     CODE_EMBED_SCHEMA,
@@ -61,6 +60,7 @@ from ._content_policy import (
     SourceProfileVersion,
 )
 from ._file_state import FileStateKind
+from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
 from ._preprocess_runner import PreprocessAbortError
 from ._route_migration import reconcile_generation_storage
 from ._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
@@ -2513,67 +2513,29 @@ class CodebaseIndexer:
         with self._writer_lock:
             self._resolved_policy = resolved_policy
             self._reset_reuse_state()
-            run_control.checkpoint()
-            log_event(
-                logger,
-                "service.index",
-                "started",
-                source="code",
-                mode="full",
-                clean=clean,
-                root=self.root_dir,
-            )
-            try:
-                # Stamp the activity clock at run START as well as at
-                # completion: a long run spanning a maintenance tick must
-                # advance the ephemeral idle clock before any reclaim
-                # evaluation can see a stale stamp mid-write.
-                run_control.checkpoint()
-                self.store.touch_manifest_last_indexed()
-                run_control.checkpoint()
-                result = self._full_index_locked(
+            return run_index_lifecycle(
+                lambda: self._full_index_locked(
                     clean=clean,
                     policy=resolved_policy,
                     discovered_paths=discovered_paths,
                     reporter=reporter,
                     run_control=run_control,
-                )
-                run_control.checkpoint()
-                self.store.touch_manifest_last_indexed()
-                run_control.checkpoint()
-            except Exception as exc:
-                log_event(
-                    logger,
-                    "service.index",
-                    "failed",
-                    severity=logging.ERROR,
-                    exc_info=True,
-                    source="code",
-                    mode="full",
-                    clean=clean,
-                    root=self.root_dir,
-                    error=exc,
-                )
-                raise
-            log_event(
-                logger,
-                "service.index",
-                "completed",
+                ),
+                event_logger=logger,
+                store=self.store,
                 source="code",
                 mode="full",
                 clean=clean,
                 root=self.root_dir,
-                total=result.total,
-                added=result.added,
-                updated=result.updated,
-                removed=result.removed,
-                duration_ms=result.duration_ms,
-                files=result.files,
-                preprocess_rules=self._prep_rule_count(),
-                preprocess_ok=result.preprocess_ok,
-                preprocess_skipped=result.preprocess_skipped,
+                run_control=run_control,
+                completion_fields=self._completed_event_fields,
             )
-            return result
+
+    def _completed_event_fields(self, result: IndexResult) -> dict[str, object]:
+        """Code-domain extras carried by this run's ``completed`` event."""
+        fields = preprocess_completion_fields(result)
+        fields["preprocess_rules"] = self._prep_rule_count()
+        return fields
 
     def _full_index_locked(
         self,
@@ -2797,26 +2759,8 @@ class CodebaseIndexer:
         with self._writer_lock:
             self._resolved_policy = resolved_policy
             self._reset_reuse_state()
-            run_control.checkpoint()
-            mode = "scoped_incremental" if changed_paths is not None else "incremental"
-            log_event(
-                logger,
-                "service.index",
-                "started",
-                source="code",
-                mode=mode,
-                clean=False,
-                root=self.root_dir,
-            )
-            try:
-                # Stamp the activity clock at run START as well as at
-                # completion: a long run spanning a maintenance tick must
-                # advance the ephemeral idle clock before any reclaim
-                # evaluation can see a stale stamp mid-write.
-                run_control.checkpoint()
-                self.store.touch_manifest_last_indexed()
-                run_control.checkpoint()
-                result = self._incremental_index_locked(
+            return run_index_lifecycle(
+                lambda: self._incremental_index_locked(
                     policy=resolved_policy,
                     reporter=reporter,
                     changed_paths=changed_paths,
@@ -2824,43 +2768,18 @@ class CodebaseIndexer:
                         discovered_paths if changed_paths is None else None
                     ),
                     run_control=run_control,
-                )
-                run_control.checkpoint()
-                self.store.touch_manifest_last_indexed()
-                run_control.checkpoint()
-            except Exception as exc:
-                log_event(
-                    logger,
-                    "service.index",
-                    "failed",
-                    severity=logging.ERROR,
-                    exc_info=True,
-                    source="code",
-                    mode=mode,
-                    clean=False,
-                    root=self.root_dir,
-                    error=exc,
-                )
-                raise
-            log_event(
-                logger,
-                "service.index",
-                "completed",
+                ),
+                event_logger=logger,
+                store=self.store,
                 source="code",
-                mode=mode,
+                mode=(
+                    "scoped_incremental" if changed_paths is not None else "incremental"
+                ),
                 clean=False,
                 root=self.root_dir,
-                total=result.total,
-                added=result.added,
-                updated=result.updated,
-                removed=result.removed,
-                duration_ms=result.duration_ms,
-                files=result.files,
-                preprocess_rules=self._prep_rule_count(),
-                preprocess_ok=result.preprocess_ok,
-                preprocess_skipped=result.preprocess_skipped,
+                run_control=run_control,
+                completion_fields=self._completed_event_fields,
             )
-            return result
 
     def _incremental_index_locked(
         self,
