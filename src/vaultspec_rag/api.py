@@ -560,6 +560,26 @@ def search_codebase(
         )
 
 
+def _code_breadth_timings(
+    root: pathlib.Path,
+    indexed_count: int,
+) -> dict[str, float]:
+    """Return the carried completeness fields for *root*, empty when complete.
+
+    An empty mapping means the collection holds everything its publication
+    claimed, or that there is no claim to compare against. The two are
+    deliberately indistinguishable to a consumer: neither is a shortfall, and a
+    root written by a build that recorded no breadth must not be reported as
+    incomplete for want of evidence.
+    """
+    from ._index_breadth import code_breadth_shortfall
+
+    shortfall = code_breadth_shortfall(root, indexed_count)
+    if shortfall is None:
+        return {}
+    return {"published_points": float(shortfall.published)}
+
+
 def search_codebase_timed(
     root_dir: pathlib.Path,
     query: str,
@@ -603,11 +623,16 @@ def search_codebase_timed(
     registry = get_registry()
     # Empty/unbuilt code index: return an empty result without loading the model.
     indexed_count = registry.code_chunk_count(root)
+    # The completeness fact is settled here, once, from the count this path
+    # already takes - so it costs no extra store round trip and every adapter
+    # reads one conclusion rather than comparing figures for itself.
+    breadth = _code_breadth_timings(root, indexed_count)
     if indexed_count == 0:
         return [], {
             "indexed_count": indexed_count,
             "model_load_seconds": 0.0,
             "project_lease_seconds": 0.0,
+            **breadth,
         }
     phase_started = time.perf_counter()
     registry.load_model()
@@ -637,6 +662,7 @@ def search_codebase_timed(
     timings["model_load_seconds"] = model_load_seconds
     timings["project_lease_seconds"] = project_lease_seconds
     timings["indexed_count"] = indexed_count
+    timings.update(breadth)
     return results, timings
 
 
