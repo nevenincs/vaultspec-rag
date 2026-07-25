@@ -49,11 +49,11 @@ Adds the three-verdict conformance check where every read and write already pass
 
 Makes a non-conforming namespace legible where degradation is already authored and where storage is already surveyed, each with a remedy attached.
 
-- [ ] `P03.S12` - Author the nonconforming verdict as a live-service degraded reason where degradation is already authored; `src/vaultspec_rag/server/_lifespan.py`.
-- [ ] `P03.S13` - Pair the conformance degradation with its rebuild remediation command in the existing degraded-family registry; `src/vaultspec_rag/cli/_status_labels.py`.
-- [ ] `P03.S14` - Report the per-collection verdict and stamped identity in the storage survey payload; `src/vaultspec_rag/storage_survey.py`.
-- [ ] `P03.S15` - Render the survey verdict and stamped models in the storage CLI view; `src/vaultspec_rag/cli/_service_storage.py`.
-- [ ] `P03.S16` - Cover the degradation surfacing with a guard test, and prove it fails when the reason is dropped; `src/vaultspec_rag/tests/test_server_routes.py`.
+- [x] `P03.S12` - Author the nonconforming verdict as a live-service degraded reason where degradation is already authored; `src/vaultspec_rag/server/_lifespan.py`.
+- [x] `P03.S13` - Pair the conformance degradation with its rebuild remediation command in the existing degraded-family registry; `src/vaultspec_rag/cli/_status_labels.py`.
+- [x] `P03.S14` - Report the per-collection verdict and stamped identity in the storage survey payload; `src/vaultspec_rag/storage_survey.py`.
+- [x] `P03.S15` - Render the survey verdict and stamped models in the storage CLI view; `src/vaultspec_rag/cli/_service_storage.py`.
+- [x] `P03.S16` - Cover the degradation surfacing with a guard test, and prove it fails when the reason is dropped; `src/vaultspec_rag/tests/test_server_routes.py`.
 
 ### Phase `P04` - close the propagation holes
 
