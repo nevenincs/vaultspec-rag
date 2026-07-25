@@ -18,6 +18,26 @@ and vaultspec-core 0.1.7. All upstream blockers (core#36, core#43, core#50,
 core#51) have been resolved. Scope expanded from phase-1-only to full
 delivery of #54, #47, #48, #55.
 
+### Phase `P01` - Companion-package enrollment
+
+Ship the discovery rule and the MCP server definition through the companion registry, and confirm the sync propagates both into every provider directory.
+
+- [x] `P01.S01` - Author the shipped discovery rule describing the search surface, and confirm it is propagated into every provider directory by the companion sync; `.vaultspec/rules/vaultspec-rag.builtin.md`.
+- [x] `P01.S02` - Register the MCP server through the companion registry so enrollment is declarative rather than hand-configured per provider; `.vaultspec/mcps/vaultspec-rag.builtin.json`.
+
+### Phase `P02` - Repository hygiene
+
+Complete the line-ending declarations and renormalise the tree, and move the hook invocation onto the companion canonical pattern.
+
+- [x] `P02.S03` - Complete the line-ending declarations across every text type and renormalise the tree so a checkout is stable across platforms; `.gitattributes`.
+- [x] `P02.S04` - Move the hook invocation onto the companion canonical pattern and clean the ignore rules and markdown configuration that had drifted alongside it; `.gitignore`.
+
+### Phase `P03` - Verification
+
+Confirm the rule content matches the shipped surface and that enrollment reaches every provider directory.
+
+- [x] `P03.S05` - Confirm by review that the rule content matches the shipped search and service surface, and that enrollment and the MCP definition reach every provider directory; `.vaultspec/`.
+
 ## Scope
 
 **Delivered (this PR):**
@@ -32,13 +52,13 @@ delivery of #54, #47, #48, #55.
 - #54 (install/uninstall CLI): deferred — requires further design
 - #59 (workspace.py re-implementation): technical debt, pre-beta
 
-## Proposed Changes
+## Description
 
 Deliver four integration channels between RAG and core: rule enrollment
 via sync pipeline, MCP server registration via registry, pre-commit hook
 standardization via canonical patterns, and git config normalization.
 
-## Tasks
+## Steps
 
 ### Task 1: create `vaultspec-rag.builtin.md` (DONE)
 

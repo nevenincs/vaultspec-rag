@@ -18,7 +18,34 @@ per-document progress bar driving the long embed phase — without coupling
 the indexer or embeddings modules to Rich. Grounded in the accepted ADR and
 the reference audit linked above.
 
-## Proposed Changes
+### Phase `P01` - Progress reporting protocol
+
+Own progress behind a protocol with a silent implementation and a terminal-aware adapter, so the indexer and the embedding layer never depend on the rendering library.
+
+- [x] `P01.S01` - Define the progress-reporter protocol with a silent implementation for non-interactive callers and a terminal-aware adapter driven only from the CLI, keeping the rendering library out of the indexing and embedding modules; `src/vaultspec_rag/progress.py`.
+
+### Phase `P02` - Indexer re-implementation
+
+Take the reporter as a required argument on both indexer entry points and slice the long embedding phase at the indexer layer so progress advances per document.
+
+- [x] `P02.S02` - Take the reporter as a required keyword argument on the vault indexer entry points and emit a phase transition for each pipeline stage, with no default and no compatibility shim; `src/vaultspec_rag/indexer/_vault_indexer.py`.
+- [x] `P02.S03` - Take the reporter as a required keyword argument on the codebase indexer entry points and slice the embedding phase at the indexer layer so the bar advances per document rather than per batch; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+
+### Phase `P03` - CLI wiring and call-site lockstep
+
+Construct the terminal-aware reporter in the index command, fall back to the silent one when output is not a terminal, and update every in-tree call site in the same change.
+
+- [x] `P03.S04` - Construct the terminal-aware reporter in the index command and pass the silent one when standard output is not a terminal, so a piped run emits no control sequences; `src/vaultspec_rag/cli/_index.py`.
+- [x] `P03.S05` - Update every in-tree call site of the two indexer entry points to pass a reporter in the same change, leaving no caller relying on a default; `src/vaultspec_rag/`.
+
+### Phase `P04` - Tests
+
+Cover the protocol implementations and prove through a counting reporter that every phase and per-document tick is observed.
+
+- [x] `P04.S06` - Cover the silent and terminal-aware implementations, and assert through a counting reporter driven by a real index run that every phase transition and per-document tick is observed; `src/vaultspec_rag/tests/`.
+- [x] `P04.S07` - Confirm a piped run emits no control sequences while an interactive run renders the bar; `src/vaultspec_rag/tests/`.
+
+## Description
 
 The accepted ADR commits to a `ProgressReporter` Protocol owned by a new
 `src/vaultspec_rag/progress.py` module, with a Null implementation for
@@ -36,7 +63,7 @@ fallback guarded by a `threading.Lock` counter. No new dependencies, no
 new CLI flags, no change to indexing semantics or batch sizes beyond the
 unavoidable slicing overhead.
 
-## Tasks
+## Steps
 
 - `Phase 1 — progress module`
 

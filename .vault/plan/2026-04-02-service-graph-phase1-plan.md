@@ -20,7 +20,39 @@ creating a global resident service with multi-project routing, unified
 graph ownership, FastMCP lifespan for eager model loading, and
 dmypy-style CLI service commands.
 
-## Proposed Changes
+### Phase `P01` - Graph cache unification
+
+Give the vault graph one owner with a time-to-live and a lock, injected into the searcher, so a concurrent rebuild can no longer race.
+
+- [x] `P01.S01` - Promote the private graph cache to a shared owner carrying a time-to-live and a lock, so concurrent readers at the expiry boundary rebuild once rather than racing; `src/vaultspec_rag/api.py`.
+- [x] `P01.S02` - Inject the graph provider into the searcher rather than letting it build its own, and remove the external rebuild poke that worked around the missing ownership; `src/vaultspec_rag/search/_searcher.py`.
+- [x] `P01.S03` - Prove with a concurrent test at the expiry boundary that many threads produce exactly one rebuild; `src/vaultspec_rag/tests/`.
+
+### Phase `P02` - Service registry
+
+Introduce the registry that owns one shared embedding model and a per-project slot holding that project's store, searcher, indexers, graph cache and watcher.
+
+- [x] `P02.S04` - Introduce the service registry owning one shared embedding model and a per-project slot for the store, searcher, indexers, graph cache and watcher, with explicit project-open, project-close and health entry points; `src/vaultspec_rag/service.py`.
+- [x] `P02.S05` - Delegate the module-level engine accessor to the registry so a single resident instance backs every caller; `src/vaultspec_rag/api.py`.
+- [x] `P02.S06` - Prove two project roots share one embedding model by object identity while keeping independent stores and caches; `src/vaultspec_rag/tests/`.
+
+### Phase `P03` - Lifespan, health and multi-project tools
+
+Load the model eagerly at startup behind a lifespan, expose a health endpoint reporting readiness, and let every tool address a project explicitly.
+
+- [x] `P03.S07` - Load the embedding model eagerly during the server lifespan so the first request does not pay startup cost, and report load timing where an operator can see it; `src/vaultspec_rag/server/_lifespan.py`.
+- [x] `P03.S08` - Expose a health endpoint reporting readiness and the resident project state, served from an explicit application rather than the framework default runner; `src/vaultspec_rag/server/_routes.py`.
+- [x] `P03.S09` - Let every tool address a project explicitly so one resident service can serve several roots concurrently; `src/vaultspec_rag/mcp/_tools.py`.
+
+### Phase `P04` - Service control verbs
+
+Add the start, stop, status and warmup verbs over a status file recording the port and process, each verifying liveness before acting.
+
+- [x] `P04.S10` - Add the service spawn helper and the status-file read and write helpers recording the port and process identity; `src/vaultspec_rag/cli/_process.py`.
+- [x] `P04.S11` - Implement the start, stop and status verbs, each probing the port and verifying process liveness before acting, and tolerating a stale status file; `src/vaultspec_rag/cli/_service_start.py`.
+- [x] `P04.S12` - Add the warmup verb reporting device availability and model cache state, and cover the start and stop lifecycle over an ephemeral port including the stale-status recovery; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
+
+## Description
 
 The ADR specifies 8 decisions (D1-D8), of which D7 (Rust Windows
 Service) and D8 (Granian) are deferred to beta. The remaining 6
@@ -35,7 +67,7 @@ The plan introduces one new file (`service.py`) and modifies existing
 modules (`api.py`, `search.py`, `mcp_server.py`, `embeddings.py`,
 `cli.py`).
 
-## Tasks
+## Steps
 
 - Phase 1: Graph cache unification (D3 -- fixes R36-C1)
 

@@ -16,7 +16,29 @@ Integration tests for service daemon lifecycle functions — closes
 TESTGAP-001/002/003/004/005/009 from the service-graph audit. All tests
 exercise real subprocesses, real GPU, real Qdrant. No mocks.
 
-## Proposed Changes
+### Phase `P01` - Integration fixtures
+
+Provide the ephemeral-port, health-polling, isolated-environment and process-exit helpers every lifecycle test needs, driving real subprocesses with no mocks.
+
+- [x] `P01.S01` - Add the integration test module under its own marker with the ephemeral-port allocator and the bounded health poller backing off between attempts; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
+- [x] `P01.S02` - Add the isolated-environment context manager pointing every path at a temporary tree, and the bounded process-exit waiter, so a test never touches the operator installation; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
+
+### Phase `P02` - Core lifecycle coverage
+
+Cover the full start, health, stop cycle and each degenerate entry point against real subprocesses.
+
+- [x] `P02.S03` - Cover the full start, health and stop cycle against a real spawned service on an ephemeral port; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
+- [x] `P02.S04` - Cover starting against an already-running service and recovering from a status file naming a dead process; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
+- [x] `P02.S05` - Cover stopping when nothing is running and stopping a genuinely running service, and cover the status verb against a running service; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
+
+### Phase `P03` - Multi-project isolation and validation
+
+Prove one resident service keeps two project roots isolated, and confirm the new module passes lint and leaves the suite green.
+
+- [x] `P03.S06` - Prove one resident service serves two project roots with isolated results, so a search against one never returns the other corpus; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
+- [x] `P03.S07` - Confirm the new module passes lint and the full suite stays green with no regressions; `src/vaultspec_rag/tests/integration/`.
+
+## Description
 
 Create `src/vaultspec_rag/tests/integration/test_service_lifecycle.py` with
 7 integration tests and supporting fixtures per ADR decisions D1-D6. Inline
@@ -28,7 +50,7 @@ Typer CLI runner note: commands are nested at
 `CliRunner().invoke(app, ["server", "service", "<cmd>", ...])` or invoke
 the `service_app` sub-app directly.
 
-## Tasks
+## Steps
 
 - Phase 1: Infrastructure and fixtures
 
