@@ -10,17 +10,29 @@ related:
   - '[[2026-07-25-storage-conformance-research]]'
 ---
 
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
+
 # `storage-conformance` plan
 
 ### Phase `P01` - establish the durable identity record
 
 Creates the per-collection identity the rest of the plan compares against, and stops the manifest from overwriting the record a verifier would read.
 
-- [ ] `P01.S01` - Record the pre-change suite baseline and the current manifest record shape so later regressions stay attributable; `src/vaultspec_rag/tests/`.
-- [ ] `P01.S02` - Add the per-collection identity record type and its manifest serialization, defaulting absent identity to unknown rather than to current values; `src/vaultspec_rag/storage_manifest.py`.
-- [ ] `P01.S03` - Stamp the effective dense model, sparse model, dense width, distance, vector names, and schema generation when a collection is created; `src/vaultspec_rag/store.py`.
-- [ ] `P01.S04` - Preserve a stored schema generation and identity when recording a root instead of overwriting them with current values; `src/vaultspec_rag/storage_manifest.py`.
-- [ ] `P01.S05` - Cover the preserve with a guard test, and prove it fails when the overwrite is restored; `src/vaultspec_rag/tests/test_storage_manifest.py`.
+- [x] `P01.S01` - Record the pre-change suite baseline and the current manifest record shape so later regressions stay attributable; `src/vaultspec_rag/tests/`.
+- [x] `P01.S02` - Add the per-collection identity record type and its manifest serialization, defaulting absent identity to unknown rather than to current values; `src/vaultspec_rag/storage_manifest.py`.
+- [x] `P01.S23` - Add the local-mode identity sidecar under the per-root storage directory, and the backend-dispatching accessor pair every caller uses instead of either home; `src/vaultspec_rag/storage_identity.py`.
+- [x] `P01.S03` - Stamp the effective dense model, sparse model, dense width, distance, vector names, and schema generation when a collection is created; `src/vaultspec_rag/store.py`.
+- [x] `P01.S04` - Preserve a stored schema generation and identity when recording a root instead of overwriting them with current values; `src/vaultspec_rag/storage_manifest.py`.
+- [x] `P01.S05` - Cover the preserve with a guard test, and prove it fails when the overwrite is restored; `src/vaultspec_rag/tests/test_storage_manifest.py`.
+- [x] `P01.S24` - Cover the local sidecar round-trip and confirm a local root records no manifest entry; `src/vaultspec_rag/tests/test_storage_identity.py`.
 
 ### Phase `P02` - verify on the ensure seam
 
