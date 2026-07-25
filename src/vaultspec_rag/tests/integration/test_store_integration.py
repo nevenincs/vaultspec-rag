@@ -399,3 +399,63 @@ class TestServedCodeCollectionPointer:
             )
 
         assert read_served_code_collection(root) == "codebase_docs_gold"
+
+    def test_a_root_with_headroom_admits_a_generation_build(self) -> None:
+        """Ample free storage admits the duplicate.
+
+        Proven able to fail: inverting the comparison to
+        ``required_mb > available_mb`` refuses this and fails the assertion.
+        """
+        from ..._store_models import admit_generation_build
+
+        admission = admit_generation_build(
+            served_bytes=100 * 1024 * 1024,
+            available_bytes=1024 * 1024 * 1024,
+        )
+
+        assert admission.admitted is True
+        assert admission.shortfall_mb == 0.0
+
+    def test_a_root_without_headroom_is_refused_and_named(self) -> None:
+        """A refusal must carry the deficit, not just a no.
+
+        The operator's next action depends on how much storage is missing, so
+        a bare flag tells them nothing they can act on. This is the branch that
+        must never fall back to rebuilding in place: doing so would restore the
+        destructive window on exactly the machines least able to recover from
+        it.
+
+        Proven able to fail: making ``admitted`` unconditionally True fails the
+        first assertion; dropping the safety factor to 1.0 admits this build
+        and fails it too.
+        """
+        from ..._store_models import admit_generation_build
+
+        admission = admit_generation_build(
+            served_bytes=900 * 1024 * 1024,
+            available_bytes=1024 * 1024 * 1024,
+        )
+
+        assert admission.admitted is False
+        assert admission.shortfall_mb > 0.0
+        assert admission.required_mb > admission.available_mb
+
+    def test_the_estimate_exceeds_the_served_size(self) -> None:
+        """A generation is not assumed byte-identical to its predecessor.
+
+        A tree that grew since the last publication needs more than the
+        current collection occupies, so an estimate equal to the served size
+        would admit builds that then run out part-way - which leaves exactly
+        the unreferenced fragment this design exists to avoid.
+
+        Proven able to fail: setting the default safety factor to 1.0 makes
+        the estimate equal the served size and fails the inequality.
+        """
+        from ..._store_models import admit_generation_build
+
+        served = 500 * 1024 * 1024
+        admission = admit_generation_build(
+            served_bytes=served, available_bytes=10 * 1024 * 1024 * 1024
+        )
+
+        assert admission.required_mb > served / (1024.0 * 1024.0)
