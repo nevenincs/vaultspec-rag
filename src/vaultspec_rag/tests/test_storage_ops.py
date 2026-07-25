@@ -13,21 +13,29 @@ from __future__ import annotations
 import os
 import time
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from ..storage_manifest import load_manifest, record_root, update_orphan_stamps
+from ..job_models import JobOutcomeStatus
+from ..storage_manifest import (
+    load_manifest,
+    record_root,
+    update_activity_stamps,
+    update_orphan_stamps,
+)
 from ..storage_ops import (
     GeometryEntry,
     ReclaimPolicy,
     ReconcileResult,
     evaluate_reclaim,
     plan_reconcile,
+    run_maintenance_cycle,
     sweep_archive,
 )
-from ..storage_survey import NamespaceSurvey
-from ..store_schema import SERVER_SEGMENT_NUMBER
+from ..storage_survey import NamespaceSurvey, is_temp_rooted
+from ..store_schema import SERVER_SEGMENT_NUMBER, VAULT_COLLECTION
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -955,3 +963,388 @@ class TestGeometryScope:
 
         assert selected == []
         assert remaining == 0
+
+
+class _CycleClient:
+    """Qdrant stand-in exercising the maintenance cycle's destruction path.
+
+    Real enough for the gates under test: it enumerates collections, counts
+    points, writes an actual snapshot file where ``archive_prefix`` expects
+    one, and records every delete. The two count-switching hooks model the
+    races the gates exist to catch - ``counts_after_survey`` is a writer
+    landing points between the survey and the drop, ``counts_after_snapshot``
+    is one landing points during the archive, tearing it.
+    """
+
+    def __init__(
+        self,
+        counts: dict[str, int],
+        *,
+        snapshots_dir: Path | None = None,
+        counts_after_survey: dict[str, int] | None = None,
+        counts_after_snapshot: dict[str, int] | None = None,
+        uncountable: bool = False,
+    ) -> None:
+        self._counts = dict(counts)
+        self._snapshots_dir = snapshots_dir
+        self._after_survey = counts_after_survey
+        self._after_snapshot = counts_after_snapshot
+        self._uncountable = uncountable
+        self._survey_calls = len(counts)
+        self._count_calls = 0
+        self.deleted: list[str] = []
+        self.snapshotted: list[str] = []
+
+    def get_collections(self) -> object:
+        return SimpleNamespace(
+            collections=[SimpleNamespace(name=name) for name in sorted(self._counts)]
+        )
+
+    def count(self, *, collection_name: str) -> object:
+        if self._uncountable:
+            raise RuntimeError("collection count unavailable")
+        value = self._counts[collection_name]
+        self._count_calls += 1
+        # The survey counts once per collection; anything after that is a
+        # pre-drop re-count, which is where the switched values must land.
+        if self._after_survey is not None and self._count_calls >= self._survey_calls:
+            self._counts = dict(self._after_survey)
+            self._after_survey = None
+        return SimpleNamespace(count=value)
+
+    def create_snapshot(self, *, collection_name: str, wait: bool = True) -> object:
+        del wait
+        assert self._snapshots_dir is not None, "snapshots_dir required to archive"
+        self.snapshotted.append(collection_name)
+        name = f"{collection_name}.snapshot"
+        holder = self._snapshots_dir / collection_name
+        holder.mkdir(parents=True, exist_ok=True)
+        (holder / name).write_bytes(b"snapshot")
+        if self._after_snapshot is not None:
+            self._counts = dict(self._after_snapshot)
+            self._after_snapshot = None
+        return SimpleNamespace(name=name)
+
+    def delete_collection(self, *, collection_name: str) -> None:
+        self.deleted.append(collection_name)
+        self._counts.pop(collection_name, None)
+
+
+def _collection_of(prefix: str) -> str:
+    """Return one canonically-named collection for *prefix*."""
+    return prefix + VAULT_COLLECTION
+
+
+def _orphaned_namespace(tmp_path: Path, *, now: datetime) -> str:
+    """Record a root, remove it, and age its orphan clock past both windows.
+
+    Uses the orphan tier rather than the ephemeral one so the pre-drop gates
+    can be exercised without also depending on temp-rootedness.
+    """
+    root = tmp_path / "vanished-root"
+    root.mkdir()
+    entry = record_root(root, backend="server")
+    root.rmdir()
+    update_orphan_stamps(
+        {entry.prefix: "orphaned"},
+        now_iso=(now - timedelta(hours=1000)).isoformat(),
+    )
+    return entry.prefix
+
+
+def _run_cycle(
+    client: _CycleClient,
+    tmp_path: Path,
+    *,
+    now: datetime = _NOW,
+    active: frozenset[str] = frozenset(),
+    policy: ReclaimPolicy | None = None,
+):
+    """Run one real maintenance cycle against *client*, reconcile disabled."""
+    return run_maintenance_cycle(
+        cast("QdrantClient", client),
+        now=now,
+        policy=policy or ReclaimPolicy(reconcile=False),
+        storage_dir=None,
+        snapshots_dir=tmp_path / "snapshots",
+        archive_dir=tmp_path / "archive",
+        active_prefixes=lambda: active,
+    )
+
+
+class TestPreDropRecount:
+    """Both tiers re-count immediately before destroying anything.
+
+    An archive makes loss recoverable, never prevented, so the data tier
+    needs this check at least as much as the empty tier - and a snapshot torn
+    by a concurrent write cannot even offer recovery of the delta it missed.
+    """
+
+    def test_data_tier_defers_when_points_moved_since_the_survey(
+        self, tmp_path: Path
+    ) -> None:
+        prefix = _orphaned_namespace(tmp_path, now=_NOW)
+        collection = _collection_of(prefix)
+        client = _CycleClient(
+            {collection: 10},
+            snapshots_dir=tmp_path / "snapshots",
+            counts_after_survey={collection: 25},
+        )
+        result = _run_cycle(client, tmp_path)
+        decision = next(d for d in result.decisions if d.prefix == prefix)
+        assert decision.action == "deferred"
+        assert decision.reason == "points_changed_since_survey"
+        # The gate must precede the archive, not merely the delete: a torn
+        # snapshot of a live namespace is not a safety net.
+        assert client.snapshotted == []
+        assert client.deleted == []
+
+    def test_data_tier_defers_when_the_archive_is_torn(self, tmp_path: Path) -> None:
+        prefix = _orphaned_namespace(tmp_path, now=_NOW)
+        collection = _collection_of(prefix)
+        client = _CycleClient(
+            {collection: 10},
+            snapshots_dir=tmp_path / "snapshots",
+            counts_after_snapshot={collection: 40},
+        )
+        result = _run_cycle(client, tmp_path)
+        decision = next(d for d in result.decisions if d.prefix == prefix)
+        assert decision.action == "deferred"
+        assert decision.reason == "points_changed_during_archive"
+        assert client.snapshotted == [collection]
+        assert client.deleted == []
+
+    def test_uncountable_namespace_defers_rather_than_dropping(
+        self, tmp_path: Path
+    ) -> None:
+        prefix = _orphaned_namespace(tmp_path, now=_NOW)
+        collection = _collection_of(prefix)
+        client = _CycleClient({collection: 10}, uncountable=True)
+        result = _run_cycle(client, tmp_path)
+        decision = next(d for d in result.decisions if d.prefix == prefix)
+        assert decision.action == "deferred"
+        assert decision.reason == "points_unverifiable"
+        assert client.deleted == []
+
+    def test_a_settled_data_namespace_is_still_archived_and_removed(
+        self, tmp_path: Path
+    ) -> None:
+        """Positive control: the gates must not disable reclamation itself."""
+        prefix = _orphaned_namespace(tmp_path, now=_NOW)
+        collection = _collection_of(prefix)
+        client = _CycleClient(
+            {collection: 10},
+            snapshots_dir=tmp_path / "snapshots",
+        )
+        result = _run_cycle(client, tmp_path)
+        decision = next(d for d in result.decisions if d.prefix == prefix)
+        assert decision.action == "archived_removed"
+        assert client.snapshotted == [collection]
+        assert client.deleted == [collection]
+
+
+class TestLivenessGate:
+    """An active index job's namespace is never destroyed under it."""
+
+    def test_active_index_job_defers_before_the_archive(self, tmp_path: Path) -> None:
+        prefix = _orphaned_namespace(tmp_path, now=_NOW)
+        collection = _collection_of(prefix)
+        client = _CycleClient(
+            {collection: 10},
+            snapshots_dir=tmp_path / "snapshots",
+        )
+        result = _run_cycle(client, tmp_path, active=frozenset({prefix}))
+        decision = next(d for d in result.decisions if d.prefix == prefix)
+        assert decision.action == "deferred"
+        assert decision.reason == "active_index_job"
+        assert client.snapshotted == []
+        assert client.deleted == []
+
+    def test_an_unrelated_active_job_does_not_shield_the_namespace(
+        self, tmp_path: Path
+    ) -> None:
+        """The gate must key on the prefix, not on any job existing at all."""
+        prefix = _orphaned_namespace(tmp_path, now=_NOW)
+        collection = _collection_of(prefix)
+        client = _CycleClient(
+            {collection: 10},
+            snapshots_dir=tmp_path / "snapshots",
+        )
+        result = _run_cycle(client, tmp_path, active=frozenset({"rffffffffffff_"}))
+        decision = next(d for d in result.decisions if d.prefix == prefix)
+        assert decision.action == "archived_removed"
+
+
+class TestActiveIndexPrefixes:
+    """The liveness probe reads the real job registry, not a parallel view."""
+
+    def test_an_admitted_index_job_reports_its_namespace_prefix(
+        self, tmp_path: Path
+    ) -> None:
+        from .. import jobs
+        from ..job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
+        from ..storage_ops import _active_index_prefixes
+        from ..store import root_collection_prefix
+
+        jobs.reset()
+        try:
+            root = tmp_path / "indexing-root"
+            root.mkdir()
+            assert _active_index_prefixes() == frozenset()
+            outcome = jobs.get_job_manager().create(
+                JobSpec(
+                    operation=JobOperation.INDEX,
+                    source=JobSource.DOCUMENT,
+                    project_root=str(root),
+                    mode=JobMode.INCREMENTAL,
+                ),
+                JobInitiator(
+                    kind="cli",
+                    command="reindex_documents",
+                    project_root=str(root),
+                ),
+            )
+            assert outcome.status is not JobOutcomeStatus.ERROR, outcome.message
+            assert _active_index_prefixes() == frozenset({root_collection_prefix(root)})
+        finally:
+            jobs.reset()
+
+
+class TestActivityClock:
+    """The ephemeral idle clock advances on observation, not only on stamps."""
+
+    def _record(self, tmp_path: Path, *, stale_hours: float) -> str:
+        root = tmp_path / "harness-root"
+        root.mkdir(exist_ok=True)
+        entry = record_root(
+            root,
+            backend="server",
+            last_indexed=(_NOW - timedelta(hours=stale_hours)).isoformat(),
+        )
+        return entry.prefix
+
+    def test_a_moved_point_count_resets_the_clock(self, tmp_path: Path) -> None:
+        prefix = self._record(tmp_path, stale_hours=1000)
+        update_activity_stamps({prefix: ("live", 10)}, now_iso=_NOW.isoformat())
+        later = (_NOW + timedelta(hours=1)).isoformat()
+        stamps = update_activity_stamps({prefix: ("live", 11)}, now_iso=later)
+        assert stamps[prefix] == later
+        assert load_manifest()[prefix].last_indexed == later
+
+    def test_a_settled_point_count_leaves_the_clock_alone(self, tmp_path: Path) -> None:
+        """Without this the tier could never fire: every cycle would reset it."""
+        prefix = self._record(tmp_path, stale_hours=1000)
+        stale = load_manifest()[prefix].last_indexed
+        update_activity_stamps({prefix: ("live", 10)}, now_iso=_NOW.isoformat())
+        stamps = update_activity_stamps(
+            {prefix: ("live", 10)},
+            now_iso=(_NOW + timedelta(hours=1)).isoformat(),
+        )
+        assert stamps[prefix] == _NOW.isoformat()
+        assert stamps[prefix] != stale
+
+    def test_a_first_observation_resets_the_clock(self, tmp_path: Path) -> None:
+        # One reading confirms nothing held still - there is no earlier
+        # reading it could have agreed with - so it restarts the window.
+        prefix = self._record(tmp_path, stale_hours=1000)
+        stamps = update_activity_stamps(
+            {prefix: ("live", 10)}, now_iso=_NOW.isoformat()
+        )
+        assert stamps[prefix] == _NOW.isoformat()
+        assert load_manifest()[prefix].observed_points == 10
+
+    def test_an_unverifiable_observation_resets_the_clock(self, tmp_path: Path) -> None:
+        prefix = self._record(tmp_path, stale_hours=1000)
+        update_activity_stamps({prefix: ("live", 10)}, now_iso=_NOW.isoformat())
+        later = (_NOW + timedelta(hours=1)).isoformat()
+        stamps = update_activity_stamps({prefix: ("unverifiable", 10)}, now_iso=later)
+        assert stamps[prefix] == later
+
+    def test_the_observed_count_persists_across_a_reload(self, tmp_path: Path) -> None:
+        prefix = self._record(tmp_path, stale_hours=1000)
+        update_activity_stamps({prefix: ("live", 7)}, now_iso=_NOW.isoformat())
+        # A fresh load is what a restarted daemon sees; the clock must not
+        # restart just because the process did.
+        assert load_manifest()[prefix].observed_points == 7
+
+    def test_an_unknown_prefix_is_ignored(self) -> None:
+        assert (
+            update_activity_stamps(
+                {"rdeadbeef0000_": ("live", 5)}, now_iso=_NOW.isoformat()
+            )
+            == {}
+        )
+
+
+class TestEphemeralTierNeedsObservedStability:
+    """A temp-rooted namespace survives until observations agree for a TTL."""
+
+    def _live_temp_namespace(self, tmp_path: Path) -> str:
+        root = tmp_path / "temp-harness-root"
+        root.mkdir()
+        assert is_temp_rooted(str(root)), (
+            "this suite needs pytest's tmp_path to be OS-temp-rooted; "
+            "the ephemeral tier only considers temp-rooted namespaces"
+        )
+        entry = record_root(
+            root,
+            backend="server",
+            last_indexed=(_NOW - timedelta(hours=1000)).isoformat(),
+        )
+        return entry.prefix
+
+    def test_a_stale_stamp_alone_no_longer_reclaims(self, tmp_path: Path) -> None:
+        """The defect: a stale stamp plus points was enough to archive and drop.
+
+        An indexer that writes without stamping leaves exactly this state, so
+        the first cycle to see the namespace must restart the window rather
+        than destroy it.
+        """
+        prefix = self._live_temp_namespace(tmp_path)
+        collection = _collection_of(prefix)
+        client = _CycleClient(
+            {collection: 10},
+            snapshots_dir=tmp_path / "snapshots",
+        )
+        result = _run_cycle(client, tmp_path)
+        decision = next(d for d in result.decisions if d.prefix == prefix)
+        assert decision.action == "pending"
+        assert decision.reason is not None
+        assert decision.reason.startswith("ephemeral_idle_remaining_h=")
+        assert client.snapshotted == []
+        assert client.deleted == []
+
+    def test_the_tier_still_reclaims_once_observations_agree_for_a_ttl(
+        self, tmp_path: Path
+    ) -> None:
+        """Positive control: the protection must not neuter the tier."""
+        prefix = self._live_temp_namespace(tmp_path)
+        collection = _collection_of(prefix)
+        policy = ReclaimPolicy(reconcile=False, ephemeral_idle_hours=72.0)
+        first = _CycleClient({collection: 10}, snapshots_dir=tmp_path / "snapshots")
+        _run_cycle(first, tmp_path, now=_NOW, policy=policy)
+        # A whole TTL later, with the count never having moved, the namespace
+        # is genuinely idle and the tier acts.
+        settled = _NOW + timedelta(hours=100)
+        second = _CycleClient({collection: 10}, snapshots_dir=tmp_path / "snapshots")
+        result = _run_cycle(second, tmp_path, now=settled, policy=policy)
+        decision = next(d for d in result.decisions if d.prefix == prefix)
+        assert decision.action == "archived_removed"
+        assert second.deleted == [collection]
+
+    def test_a_write_between_cycles_restarts_the_window(self, tmp_path: Path) -> None:
+        prefix = self._live_temp_namespace(tmp_path)
+        collection = _collection_of(prefix)
+        policy = ReclaimPolicy(reconcile=False, ephemeral_idle_hours=72.0)
+        first = _CycleClient({collection: 10}, snapshots_dir=tmp_path / "snapshots")
+        _run_cycle(first, tmp_path, now=_NOW, policy=policy)
+        # A TTL passes, but an unstamped indexer wrote in the meantime, so the
+        # count disagrees with the last observation and the window restarts.
+        settled = _NOW + timedelta(hours=100)
+        second = _CycleClient({collection: 60}, snapshots_dir=tmp_path / "snapshots")
+        result = _run_cycle(second, tmp_path, now=settled, policy=policy)
+        decision = next(d for d in result.decisions if d.prefix == prefix)
+        assert decision.action == "pending"
+        assert decision.reason is not None
+        assert decision.reason.startswith("ephemeral_idle_remaining_h=")
+        assert second.deleted == []
