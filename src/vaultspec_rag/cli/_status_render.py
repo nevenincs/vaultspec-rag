@@ -468,6 +468,24 @@ def _degraded_findings_for_render(
     ]
 
 
+def _service_release_lines(health: dict[str, object]) -> list[str]:
+    """Render the running service's release, and the mismatch when there is one.
+
+    The release is shown unconditionally - an operator diagnosing odd behaviour
+    should not have to guess which build answered - and an incompatible one adds
+    the reason and its remediation, because a version the operator cannot act on
+    is one more number on the screen.
+    """
+    from ..serviceclient._compat import classify_service_version
+
+    verdict = classify_service_version(health)
+    lines = [f"Service release: {verdict.service_version or NOT_REPORTED}"]
+    if not verdict.is_compatible:
+        lines.append(f"Incompatible: {verdict.reason()}.")
+        lines.extend(verdict.remediation())
+    return lines
+
+
 def _degraded_lines(
     operational: dict[str, object] | None,
     health: dict[str, object] | None,
@@ -519,6 +537,7 @@ def _print_health_detail(
         env_exe = health.get("executable")
         if isinstance(env_exe, str) and env_exe:
             _print_detail_line("Service env", env_exe)
+        _print_status_lines(_service_release_lines(health))
         _print_detail_line(
             "Search models", _model_ready_label(health.get("models_loaded"))
         )

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 import vaultspec_rag.cli as _cli
 
+from ..serviceclient._compat import SERVICE_VERSION_FIELD, local_package_version
 from ..serviceclient._discovery import (
     SERVICE_DISCOVERY_SCHEMA,
     SERVICE_DISCOVERY_VERSION,
@@ -127,6 +128,11 @@ def _write_service_status(pid: int, port: int, *, timeout: float = 1.0) -> None:
         "pid": pid,
         "port": port,
         "started_at": _discovery_timestamp(),
+        # This writer is the spawning parent, so the release recorded here is
+        # the one that launched the daemon. The daemon's own snapshot replaces
+        # it once it publishes, which is why the two must agree on the field
+        # name and not on who writes last.
+        SERVICE_VERSION_FIELD: local_package_version(),
     }
     _merge_service_status(
         data,

@@ -26,7 +26,6 @@ from pydantic import BaseModel, ConfigDict
 
 from .._source_types import SourceTypeParseError, parse_source_type
 from ..serviceclient import (
-    _default_service_port,
     _try_http_admin,
     _try_http_clean,
     _try_http_code_file,
@@ -162,15 +161,32 @@ def _with_domain_tokens(
 
 
 def _require_port() -> int:
-    """Return the running service port or raise the one service-down error.
+    """Return the port of a reachable, release-compatible service.
 
-    The unreachable condition is mapped to a single ``RuntimeError`` here so
-    the no-local-fallback contract lives in exactly one place.
+    Two preconditions for every tool call, both mapped to a single
+    ``RuntimeError`` here so neither contract is restated per tool: the daemon
+    must be reachable (the no-local-fallback rule), and it must be the same
+    release as this client. The version travels in the discovery pointer this
+    call already reads, so confirming it costs no extra round trip.
+
+    Driving a foreign release is exactly the silent-degradation this refuses: an
+    unrecognised request field is dropped rather than rejected, so a newer
+    client's filters would be ignored and the answer computed against a
+    different candidate set, with a 200 and no indication anything was lost.
     """
-    port = _default_service_port()
-    if port is None:
+    from ..serviceclient._compat import classify_service_version
+    from ..serviceclient._discovery import resolve_machine_service
+
+    resolution = resolve_machine_service()
+    if not resolution.is_ready or resolution.port is None:
         raise RuntimeError(_SERVICE_DOWN_MESSAGE)
-    return port
+    verdict = classify_service_version(resolution.payload)
+    if not verdict.is_compatible:
+        raise RuntimeError(
+            f"{verdict.error_code()}: {verdict.reason()}. "
+            f"{' '.join(verdict.remediation())}"
+        )
+    return resolution.port
 
 
 def _unwrap[T](result: T | None) -> T:
