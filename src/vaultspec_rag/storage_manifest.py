@@ -131,11 +131,26 @@ class ManifestEntry:
 
 @dataclass(frozen=True)
 class SnapshotCollection:
-    """One collection artifact recorded in an archive snapshot."""
+    """One collection artifact recorded in an archive snapshot.
+
+    Attributes:
+        name: The exact collection name that was snapshotted.
+        snapshot_file: The archived snapshot filename.
+        points: Point count at archive time.
+        identity: What produced the archived vectors, or ``None`` when the
+            collection carried no stamp. Recorded here because an archive
+            outlives the manifest entry that described it: the namespace is
+            dropped straight after a successful archive, so provenance not
+            captured in the snapshot is provenance no restore can ever
+            recover. ``None`` is preserved as an honest absence rather than
+            being filled with current values, which would let a restored
+            namespace claim provenance it never had.
+    """
 
     name: str
     snapshot_file: str
     points: int
+    identity: store_schema.CollectionIdentity | None = None
 
 
 @dataclass(frozen=True)
@@ -171,6 +186,9 @@ def write_snapshot_manifest(
                 "name": item.name,
                 "snapshot_file": item.snapshot_file,
                 "points": item.points,
+                "identity": (
+                    item.identity.to_payload() if item.identity is not None else None
+                ),
             }
             for item in manifest.collections
         ],
