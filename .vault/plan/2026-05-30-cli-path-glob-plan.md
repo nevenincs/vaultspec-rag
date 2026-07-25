@@ -17,7 +17,39 @@ repeatable, fnmatch syntax) to `vaultspec-rag search --type code`,
 applied post-query in Python against the POSIX-normalised `path`
 payload. No backend schema change. See related ADR for rationale.
 
-## Proposed Changes
+### Phase `P01` - Backend post-query fnmatch filter
+
+Accept the two pattern lists on the encoded code-search path, normalise them once to POSIX separators, over-fetch when either is active, and filter raw results before result construction.
+
+- [x] `P01.S01` - Accept include and exclude pattern lists on the encoded code-search path, normalise the patterns to POSIX separators once at entry, raise the fetch limit while either list is active, and apply the fnmatch filter to the raw results before result construction; `src/vaultspec_rag/search/_searcher.py`.
+
+### Phase `P02` - Facade and MCP forwarding
+
+Forward both pattern lists through the searcher facade, the public API, and the MCP code-search tool so every caller reaches the same filter.
+
+- [x] `P02.S02` - Forward both pattern lists through the searcher facade and the public code-search API so an in-process caller reaches the same filter; `src/vaultspec_rag/api.py`.
+- [x] `P02.S03` - Declare both pattern lists on the MCP code-search tool signature and forward them to the searcher so MCP clients can narrow by path; `src/vaultspec_rag/mcp/_tools.py`.
+
+### Phase `P03` - CLI surface
+
+Add the two repeatable flags, reject them against a vault-type search with the existing usage-error contract, and forward them on both the in-process and service fast paths.
+
+- [x] `P03.S04` - Add the repeatable include-path and exclude-path flags to the search command, reject them against a vault-type search with the same usage error the code filters use, and forward them on both the in-process and service fast paths; `src/vaultspec_rag/cli/_search.py`.
+
+### Phase `P04` - Documentation
+
+Document both flags, the fnmatch syntax, and the over-fetch tradeoff across the project README, the package README, and the shipped discovery rule.
+
+- [x] `P04.S05` - Document both flags, their fnmatch syntax, and the over-fetch tradeoff in the project README, the package README, and the shipped search-discovery rule; `README.md`.
+
+### Phase `P05` - Tests and live smoke
+
+Cover the filter, the CLI forwarding, the vault-type rejection, and the MCP parameter exposure, then confirm exclusion against a live service.
+
+- [x] `P05.S06` - Cover the fnmatch filter, the CLI flag forwarding, the vault-type rejection, and the MCP parameter exposure with unit tests, and add an integration test asserting exclusion prunes locale-style and test-style files from a real corpus; `src/vaultspec_rag/tests/test_cli_search.py`.
+- [x] `P05.S07` - Confirm against a live indexed service that a code search returns the expected hits and that adding an exclude pattern visibly prunes them; `src/vaultspec_rag/tests/integration/`.
+
+## Description
 
 - `search.VaultSearcher._search_codebase_encoded`: accept the two
   list params, normalise patterns once (`\\` → `/`), apply
@@ -42,7 +74,7 @@ payload. No backend schema change. See related ADR for rationale.
   forwarding.
 - Smoke test against a live service.
 
-## Tasks
+## Steps
 
 ### Phase 1 — backend post-filter
 
