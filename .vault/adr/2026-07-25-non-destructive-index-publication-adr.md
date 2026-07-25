@@ -13,7 +13,7 @@ related:
   - "[[2026-07-25-index-resume-drift-race-adr]]"
 ---
 
-# `non-destructive-index-publication` adr: `publish a rebuilt index without destroying the served one` | (**status:** `proposed`)
+# `non-destructive-index-publication` adr: `publish a rebuilt index without destroying the served one` | (**status:** `accepted`)
 
 ## Problem Statement
 
