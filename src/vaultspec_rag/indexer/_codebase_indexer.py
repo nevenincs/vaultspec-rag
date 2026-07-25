@@ -532,7 +532,6 @@ class CodebaseIndexer:
             )
             yield segment
 
-
     def _resolve_operation_policy(self) -> ResolvedIndexPolicy:
         """Resolve and validate one immutable snapshot before mutation authority."""
         return self._discovery.resolve_policy()
@@ -1638,9 +1637,7 @@ class CodebaseIndexer:
         """
         owner = self._drift_owner
         if owner is None:
-            raise RuntimeError(
-                "code drift ownership requires an open run checkpoint"
-            )
+            raise RuntimeError("code drift ownership requires an open run checkpoint")
         return owner
 
     def _checkpoint_evidence_lost(self, checkpoint: CodeRunCheckpoint) -> bool:
@@ -1658,6 +1655,30 @@ class CodebaseIndexer:
             or checkpoint.ledger.committed_unit_count(checkpoint.generation_id) > 0
         )
         return has_evidence and not self.store.code_collection_exists()
+
+    def _reconcile_superseded_regime(self, cause: str) -> None:
+        """Note that a gate is reconciling instead of rebuilding destructively.
+
+        These gates fire because stored vectors were produced under a regime
+        the current configuration no longer uses. A destructive rebuild would
+        clear them, at the cost of emptying the collection for the whole
+        repopulation - and nothing in this path carries an operator request to
+        destroy anything, because the caller is a file-change reconcile.
+
+        Reconciling instead keeps every published point readable throughout.
+        The cost is that superseded points are not removed: chunk identity
+        embeds a content hash, so re-encoding writes new points beside the old
+        ones rather than over them, and both regimes are searchable until a
+        rebuild the operator asks for clears them. That is a real retrieval
+        defect and is logged as one, not as routine progress.
+        """
+        logger.warning(
+            "%s; reconciling without dropping the code collection so search "
+            "keeps serving. Points encoded under the superseded regime remain "
+            "searchable alongside the re-encoded ones until an explicit "
+            "rebuild clears them",
+            cause,
+        )
 
     def _published_evidence_lost(self) -> bool:
         """Return whether the store fails to back the carried incremental evidence.
@@ -2781,12 +2802,9 @@ class CodebaseIndexer:
         needs_embed_rebuild = self._needs_embed_rebuild()
         run_control.checkpoint()
         if needs_embed_rebuild:
-            logger.info(
-                "Codebase embedding input format changed; running a "
-                "one-time clean rebuild of the code collection"
-            )
+            self._reconcile_superseded_regime("Codebase embedding input format changed")
             return self._full_index_locked(
-                clean=True,
+                clean=False,
                 policy=policy,
                 discovered_paths=discovered_paths,
                 reporter=reporter,
@@ -2798,12 +2816,9 @@ class CodebaseIndexer:
             run_control=run_control,
         )
         if escalate_clean:
-            logger.info(
-                "Codebase content-shaping config changed; running a "
-                "one-time clean rebuild of the code collection"
-            )
+            self._reconcile_superseded_regime("Codebase content-shaping config changed")
             return self._full_index_locked(
-                clean=True,
+                clean=False,
                 policy=policy,
                 discovered_paths=discovered_paths,
                 reporter=reporter,
