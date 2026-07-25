@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, cast
 
 import typer
 
+from .._units import human_bytes
 from ._app import server_storage_app
 from ._progress import StartupStatusReporter
 from ._render import _emit_json, _emit_json_error_and_exit, _plain
@@ -40,12 +41,6 @@ _DELETE_CMD = "server.storage.delete"
 _PRUNE_CMD = "server.storage.prune"
 _MIGRATE_CMD = "server.storage.migrate"
 _RECONCILE_CMD = "server.storage.reconcile"
-
-
-def _human_size(num_bytes: int) -> str:
-    from .._units import human_bytes
-
-    return human_bytes(num_bytes)
 
 
 def _echo_fault(message: str) -> None:
@@ -174,7 +169,7 @@ def _print_survey(surveys: list[NamespaceSurvey]) -> None:
         for status in ("orphaned", "unknown", "unverifiable", "live")
     }
     temp_count = sum(1 for s in surveys if is_temp_rooted(s.root))
-    total = _human_size(sum(s.footprint_bytes for s in surveys))
+    total = human_bytes(sum(s.footprint_bytes for s in surveys))
     summary = (
         f"{len(surveys)} namespaces  (orphaned={counts['orphaned']} "
         f"unknown={counts['unknown']} unverifiable={counts['unverifiable']} "
@@ -188,7 +183,7 @@ def _print_survey(surveys: list[NamespaceSurvey]) -> None:
         marker = "  [temp]" if is_temp_rooted(s.root) else ""
         typer.echo(
             f"  {s.status:<8} {s.prefix}  {s.points:>8} pts  "
-            f"{_human_size(s.footprint_bytes):>9}  {root}{marker}"
+            f"{human_bytes(s.footprint_bytes):>9}  {root}{marker}"
         )
         # Named only when the namespace holds more than one distinct model,
         # which is the state worth an operator's attention: the collections
@@ -521,7 +516,7 @@ def _render_prune(
     verb = "Would reclaim" if result.dry_run else "Reclaimed"
     typer.echo(
         f"{verb} {len(result.results)} orphaned namespaces "
-        f"({_human_size(result.reclaimed_bytes)}); "
+        f"({human_bytes(result.reclaimed_bytes)}); "
         f"{len(result.skipped_unknown)} unknown left untouched."
     )
     for r in result.results:
@@ -529,7 +524,7 @@ def _render_prune(
     if debris_result is not None:
         typer.echo(
             f"{verb} {len(debris_result.results)} debris collection dirs "
-            f"({_human_size(debris_result.reclaimed_bytes)})."
+            f"({human_bytes(debris_result.reclaimed_bytes)})."
         )
         for r in debris_result.results:
             typer.echo(f"  {r.status:<12} {r.prefix}")
@@ -653,7 +648,7 @@ def _render_reconcile(result: ReconcileBatch, json_mode: bool) -> None:
         verb = "Started reconcile on"
     typer.echo(
         f"{verb} {len(result.results)} collections "
-        f"({_human_size(result.reclaimed_bytes)} reclaimed); "
+        f"({human_bytes(result.reclaimed_bytes)} reclaimed); "
         f"{result.drifted_remaining} still converging."
     )
     for r in result.results:
@@ -661,7 +656,7 @@ def _render_reconcile(result: ReconcileBatch, json_mode: bool) -> None:
         if r.status == "reconciled":
             detail = (
                 f"{r.segments_before}->{r.segments_after} segments, "
-                f"{_human_size(r.reclaimed_bytes)} freed"
+                f"{human_bytes(r.reclaimed_bytes)} freed"
             )
         elif r.reason:
             detail = r.reason
