@@ -904,3 +904,51 @@ class TestWinShutdownLog:
             assert "initiator_cwd" in content
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
+
+
+class TestPlatformDrainBudget:
+    """The drain window a stop funds is decided by platform, not by host.
+
+    A daemon that can act on the termination signal cleans up after itself,
+    which is the better outcome, so POSIX funds a real wait. Windows spawns
+    the daemon console-detached and a console control event only reaches
+    processes sharing the sender's console, so the signal never arrives and
+    waiting buys latency before the forced kill and nothing else.
+
+    Both branches are stated here because a host can only ever run one of
+    them. Simulating the other by reassigning ``sys.platform`` proved that a
+    module read a string someone had just written, and would keep passing if
+    the rule moved somewhere the reassignment no longer reached.
+
+    Proven able to fail: returning the POSIX window unconditionally from
+    ``graceful_drain_seconds_for`` fails the Windows assertion below;
+    returning the Windows window unconditionally fails the POSIX one.
+    Restoring the branch returns both to green.
+    """
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_windows_does_not_fund_a_drain_it_cannot_use(self) -> None:
+        from ..cli._process import _DEFAULT_GRACEFUL_DRAIN_SECONDS
+        from ..cli._service_stop import graceful_drain_seconds_for
+
+        assert graceful_drain_seconds_for("win32") == _DEFAULT_GRACEFUL_DRAIN_SECONDS
+
+    def test_posix_funds_the_full_drain(self) -> None:
+        from ..cli._service_stop import (
+            _STOP_GRACEFUL_DRAIN_SECONDS,
+            graceful_drain_seconds_for,
+        )
+
+        for platform in ("linux", "darwin"):
+            assert graceful_drain_seconds_for(platform) == _STOP_GRACEFUL_DRAIN_SECONDS
+
+    def test_the_two_platforms_fund_different_windows(self) -> None:
+        # The rule is only meaningful if the branches differ; a refactor that
+        # collapsed them would leave both assertions above passing on one
+        # constant.
+        from ..cli._service_stop import graceful_drain_seconds_for
+
+        assert graceful_drain_seconds_for("win32") != graceful_drain_seconds_for(
+            "linux"
+        )
