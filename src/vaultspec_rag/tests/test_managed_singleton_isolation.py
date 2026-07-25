@@ -55,7 +55,9 @@ from ..serviceclient._discovery import (
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-pytestmark = [pytest.mark.unit]
+# Tiers are declared per test rather than for the module: the live-supervised
+# case needs real infrastructure, and a module-level default would be ADDED to
+# its `integration` mark rather than overridden by it, leaving it in the fast lane.
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _SINGLETON_ENV_NAMES = (
@@ -209,6 +211,7 @@ def _free_adjacent_qdrant_ports() -> int:
     raise RuntimeError("could not reserve adjacent Qdrant test ports")
 
 
+@pytest.mark.unit
 def test_hostile_ambient_paths_cannot_redirect_exec_child_writers() -> None:
     """An activated exec child rejects unsafe paths present before import."""
     with _outside_session_trap() as trap:
@@ -247,6 +250,7 @@ def test_hostile_ambient_paths_cannot_redirect_exec_child_writers() -> None:
             safe_root.rmdir()
 
 
+@pytest.mark.unit
 def test_in_test_path_changes_cannot_redirect_singleton_writers() -> None:
     """Pinned process authority rejects re-anchoring and every writer trap."""
     with _outside_session_trap() as trap:
@@ -282,6 +286,7 @@ def test_in_test_path_changes_cannot_redirect_singleton_writers() -> None:
         assert list(trap.iterdir()) == []
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("redirect_status", "redirect_storage"),
     ((True, False), (False, True)),
@@ -305,6 +310,7 @@ def test_each_configured_anchor_fails_closed_independently(
         assert list(trap.iterdir()) == []
 
 
+@pytest.mark.unit
 def test_in_test_path_changes_cannot_delete_singleton_records() -> None:
     """Status and pointer deletion fail before touching an unsafe target."""
     with _outside_session_trap() as trap:
@@ -327,6 +333,7 @@ def test_in_test_path_changes_cannot_delete_singleton_records() -> None:
         assert pointer.read_text(encoding="utf-8") == "pointer-owned-by-test"
 
 
+@pytest.mark.unit
 def test_in_test_path_changes_cannot_control_processes() -> None:
     """A real child remains alive when managed process control is uncontained."""
     creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0

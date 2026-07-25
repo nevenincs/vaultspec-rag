@@ -26,7 +26,9 @@ import pytest
 
 _PKG_ROOT = Path(__file__).resolve().parents[1]
 
-pytestmark = [pytest.mark.unit]
+# Tiers are declared per test rather than for the module: the allocator-fraction
+# test needs a real device, and a module-level default would be ADDED to its
+# `cuda` mark rather than overridden by it, leaving it selected by the fast lane.
 
 # Local-mode modules that legitimately use torch - all must keep the import
 # function-local so importing the module loads no torch.
@@ -50,6 +52,7 @@ _COMPUTE_MODULE_FILES = (
 _HEAVY_LIBS = ("torch", "sentence_transformers")
 
 
+@pytest.mark.unit
 def test_importing_local_mode_modules_loads_no_torch() -> None:
     """A fresh interpreter importing the local-mode modules must not load torch.
 
@@ -72,6 +75,7 @@ def test_importing_local_mode_modules_loads_no_torch() -> None:
     assert proc.returncode == 0, proc.stderr
 
 
+@pytest.mark.unit
 def test_compute_modules_have_no_module_scope_torch_import() -> None:
     """No compute module may declare ``import torch`` at module scope."""
     for path in _COMPUTE_MODULE_FILES:
@@ -88,6 +92,7 @@ def test_compute_modules_have_no_module_scope_torch_import() -> None:
                 raise AssertionError(msg)
 
 
+@pytest.mark.unit
 def test_load_torch_contract_holds_for_the_real_interpreter() -> None:
     """``load_torch`` returns torch under CUDA, else fails hard - no mocks.
 

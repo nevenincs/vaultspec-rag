@@ -34,13 +34,11 @@ _singleton_prior_env: dict[str, str | None] | None = None
 _singleton_root: Path | None = None
 _singleton_root_owned = False
 
-# Markers whose tests require exclusive GPU access
-_GPU_MARKERS = frozenset({"integration", "quality", "performance", "robustness"})
-
-# Marker for CLI subprocess tests that load their own GPU models.
-# These must NOT co-schedule with _GPU_MARKERS tests — combined VRAM
-# exceeds 16 GB on RTX 4080.
-_SUBPROCESS_GPU = "subprocess_gpu"
+# The tier vocabulary and its collection-time gate live in the package, at
+# vaultspec_rag.tests._tier_gate, so they can be exercised by ordinary tests.
+# They are imported inside the hooks below rather than here: this module runs
+# before the pytest session pins its root, and the guarded effects above must
+# stay the first thing that happens.
 
 
 def _load_dotenv_if_available() -> None:
@@ -215,12 +213,16 @@ def _has_hf_token() -> bool:
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Auto-apply GPU xdist grouping to GPU-bound tests."""
-    gpu_group = pytest.mark.xdist_group("gpu")
-    for item in items:
-        item_markers = {m.name for m in item.iter_markers()}
-        if item_markers & _GPU_MARKERS:
-            item.add_marker(gpu_group)
+    """Group GPU-bound tests for xdist, and refuse any test with a bad tier.
+
+    Raises:
+        pytest.UsageError: When a collected test declares no tier, or declares
+            the fast tier alongside a slow one.
+    """
+    from vaultspec_rag.tests._tier_gate import enforce_tiers, group_gpu_items
+
+    group_gpu_items(items)
+    enforce_tiers(items)
 
 
 def pytest_runtestloop(session: pytest.Session) -> None:
@@ -229,7 +231,9 @@ def pytest_runtestloop(session: pytest.Session) -> None:
     Runs after deselection so only *selected* items are checked.
     This avoids blocking unit-only runs that don't need GPU access.
     """
-    needs_token = _GPU_MARKERS | {_SUBPROCESS_GPU}
+    from vaultspec_rag.tests._tier_gate import GPU_MARKERS, SUBPROCESS_GPU
+
+    needs_token = GPU_MARKERS | {SUBPROCESS_GPU}
     for item in session.items:
         item_markers = {m.name for m in item.iter_markers()}
         if item_markers & needs_token:

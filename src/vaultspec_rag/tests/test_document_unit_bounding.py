@@ -16,6 +16,8 @@ was never retrievable. These tests lock down the repaired contract:
 
 from __future__ import annotations
 
+import pytest
+
 from .._store_models import DocumentLocator
 from ..indexer._chunk_worker import (
     ChunkExecutionPolicy,
@@ -23,6 +25,8 @@ from ..indexer._chunk_worker import (
 )
 from ..indexer._document_identity import document_point_id
 from ..indexer._preprocess_schema import Locator, PreprocOutput, PreprocUnit
+
+pytestmark = [pytest.mark.unit]
 
 _POLICY = ChunkExecutionPolicy()
 _BOUND = _POLICY.document_chunk_chars

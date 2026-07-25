@@ -33,6 +33,8 @@ from ..indexer._streaming import (
 from ..progress import NullProgressReporter
 from ..store import VaultStore
 
+pytestmark = [pytest.mark.unit]
+
 _DIM = 8
 
 

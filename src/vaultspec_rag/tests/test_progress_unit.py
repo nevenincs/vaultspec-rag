@@ -14,6 +14,8 @@ from ..progress import (
     RichProgressReporter,
 )
 
+pytestmark = [pytest.mark.unit]
+
 
 class CountingProgressReporter:
     """Reporter that records every event for test assertions."""

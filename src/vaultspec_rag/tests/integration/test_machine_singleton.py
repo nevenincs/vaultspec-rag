@@ -36,6 +36,8 @@ from ._machine_lock_holder import spawn_foreign_machine_lock_holder
 if TYPE_CHECKING:
     from pathlib import Path
 
+pytestmark = [pytest.mark.unit]
+
 
 def _assert_windows_singleton_refusal(output: str, holder_pid: int) -> None:
     """Assert the Windows loser's singleton-claim refusal diagnostics.

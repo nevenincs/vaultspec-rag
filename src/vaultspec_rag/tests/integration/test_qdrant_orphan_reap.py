@@ -12,6 +12,8 @@ import subprocess
 import sys
 import time
 
+import pytest
+
 from ...qdrant_runtime._resolve import (
     QdrantEndpointProbe,
     QdrantIdentity,
@@ -21,6 +23,8 @@ from ...qdrant_runtime._resolve import (
     pid_start_time,
     reap_qdrant_orphan,
 )
+
+pytestmark = [pytest.mark.unit]
 
 _SLEEP = "import time; time.sleep(60)"
 

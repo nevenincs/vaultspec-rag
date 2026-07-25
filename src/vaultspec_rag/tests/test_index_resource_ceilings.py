@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 
     from ..memory_probe import MemoryBudget
 
+pytestmark = [pytest.mark.unit]
+
 # Every ceiling here sits far above a test process's real RSS, because
 # admission samples the live process once the budget is frozen: a ceiling
 # chosen low enough to be crossed would fail on enforcement and never reach

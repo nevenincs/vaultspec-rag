@@ -9,13 +9,13 @@ metadata line.
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import TYPE_CHECKING
+
+import pytest
 
 from ...cli._render import _display_search_results, _search_result_meta_line
 from ...search import SearchResult
 
-if TYPE_CHECKING:
-    import pytest
+pytestmark = [pytest.mark.unit]
 
 
 class TestResultShape:

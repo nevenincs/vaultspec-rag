@@ -45,6 +45,8 @@ from .conftest import managed_env
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+pytestmark = [pytest.mark.unit]
+
 
 @pytest.fixture
 def isolated_status_dir(

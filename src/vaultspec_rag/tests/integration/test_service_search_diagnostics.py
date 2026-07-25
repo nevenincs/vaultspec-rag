@@ -1493,6 +1493,7 @@ def test_service_search_short_timeout_reports_operational_diagnostics(
     assert any("server jobs --state active" in str(item) for item in remediation)
 
 
+@pytest.mark.unit
 def test_timeout_diagnostics_survive_unavailable_probe_port() -> None:
     result = _timeout_diagnostics(free_loopback_port(), 0.01)
 
