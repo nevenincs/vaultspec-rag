@@ -272,27 +272,27 @@ def _search_index_state(
     search_type: PublicSourceType | str,
     published_points: float | None = None,
 ) -> dict[str, object]:
-    requested_target = str(requested_root)
-    source = parse_source_type(search_type, allow_aliases=True).value
-    count = int(indexed_count)
-    state: dict[str, object] = {
-        "source": source,
-        "indexed_count": count,
-        "indexed_target_root": requested_target,
-        "requested_target_root": requested_target,
-        "target_matches": True,
-        "status": "missing" if count == 0 else "available",
-    }
-    # Present only over a demonstrated shortfall, and carrying the figures so an
-    # adapter names the deficit without comparing counts itself. Absence means
-    # complete or unknowable; a consumer must not read it as either one alone.
-    if published_points is not None:
-        from .._index_breadth import BreadthShortfall
+    """Adapt this route's carried figures onto the service-domain block.
 
-        state["shortfall"] = BreadthShortfall(
-            published=int(published_points), live=count
-        ).as_index_state_block()
-    return state
+    The route owns no part of the shape. It converts the published-point
+    figure it carries on the timing channel back into the shortfall the
+    domain builder expects, and renders whatever that returns.
+    """
+    from .._index_breadth import BreadthShortfall
+    from .._search_state import search_index_state
+
+    count = int(indexed_count)
+    shortfall = (
+        None
+        if published_points is None
+        else BreadthShortfall(published=int(published_points), live=count)
+    )
+    return search_index_state(
+        indexed_count=count,
+        requested_root=requested_root,
+        search_type=search_type,
+        shortfall=shortfall,
+    )
 
 
 def _search_summary(count: int, index_state: dict[str, object]) -> str:

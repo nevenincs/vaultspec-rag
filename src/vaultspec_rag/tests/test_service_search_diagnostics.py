@@ -194,6 +194,49 @@ def test_one_projection_backs_the_shortfall_block_on_both_search_paths() -> None
     assert block == daemon_state["shortfall"]
 
 
+def test_the_daemon_route_renders_the_service_domain_index_state() -> None:
+    """The route must own no part of the index-state shape.
+
+    The block describes the service, not a rendering, so one builder settles
+    it and every surface renders what it returns. A route that assembled its
+    own would drift from the in-process path the moment either gained a
+    field, and a renderer looking up that field would go quiet on whichever
+    surface lacked it.
+
+    Proven able to fail: having the route return a hand-built dict without
+    ``status`` fails this test on the equality below; restoring the
+    delegation returns it to green. The literal assertion is what carries the
+    proof - comparing the two builders alone would stay true under a
+    respelling that moved both.
+    """
+    from .._index_breadth import BreadthShortfall
+    from .._search_state import search_index_state
+    from ..server._routes import _search_index_state
+
+    routed = _search_index_state(
+        indexed_count=4,
+        requested_root="C:/work/project",
+        search_type="codebase",
+        published_points=421.0,
+    )
+
+    assert routed == search_index_state(
+        indexed_count=4,
+        requested_root="C:/work/project",
+        search_type="codebase",
+        shortfall=BreadthShortfall(published=421, live=4),
+    )
+    assert set(routed) == {
+        "source",
+        "indexed_count",
+        "indexed_target_root",
+        "requested_target_root",
+        "target_matches",
+        "status",
+        "shortfall",
+    }
+
+
 def test_the_search_summary_names_a_demonstrated_shortfall() -> None:
     """An adapter reading only the summary must still learn the index is short.
 
