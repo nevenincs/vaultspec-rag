@@ -14,11 +14,11 @@ import numpy as np
 import pytest
 
 from .._store_models import CodeChunk, VaultChunk
-from ..indexer._codebase_indexer import (
-    CodebaseIndexer,
-    _drain_code_chunks,
-    _WeightedCodeSegmentQueue,
+from ..indexer._chunk_producer import (
+    WeightedCodeSegmentQueue,
+    drain_code_chunks,
 )
+from ..indexer._codebase_indexer import CodebaseIndexer
 from ..indexer._run_policy import DurableProgressKind, RunPolicy
 from ..indexer._streaming import (
     CodeFileSegment,
@@ -185,7 +185,7 @@ def test_file_chunk_drain_preserves_order_and_releases_source_list() -> None:
     chunks = [_chunk(f"chunk-{index}") for index in range(4)]
     expected = list(chunks)
 
-    drained = list(_drain_code_chunks(chunks))
+    drained = list(drain_code_chunks(chunks))
 
     assert drained == expected
     assert chunks == []
@@ -203,7 +203,7 @@ def test_weighted_queue_backpressure_releases_on_consumer_transfer() -> None:
         )
     )
     queue_bytes = max(segment.estimated_bytes for segment in segments)
-    segment_q = _WeightedCodeSegmentQueue(max_chunks=1, max_bytes=queue_bytes)
+    segment_q = WeightedCodeSegmentQueue(max_chunks=1, max_bytes=queue_bytes)
     producer_released = threading.Event()
 
     segment_q.put(segments[0])
@@ -241,7 +241,7 @@ def test_weighted_queue_rejects_a_segment_above_its_byte_budget() -> None:
             sparse_enabled=False,
         )
     )
-    segment_q = _WeightedCodeSegmentQueue(
+    segment_q = WeightedCodeSegmentQueue(
         max_chunks=1,
         max_bytes=segment.estimated_bytes - 1,
     )
@@ -262,7 +262,7 @@ def test_normal_consumer_drain_extends_while_storage_progress_continues() -> Non
         )
     )
     queue_bytes = sum(segment.estimated_bytes for segment in segments)
-    segment_q = _WeightedCodeSegmentQueue(
+    segment_q = WeightedCodeSegmentQueue(
         max_chunks=len(segments),
         max_bytes=queue_bytes,
     )

@@ -68,11 +68,12 @@ def produce_file_results(
         collected.append(result)
         return True
 
-    batch_groups, singles = indexer._partition_batch_work(paths)  # pyright: ignore[reportPrivateUsage]
+    producer = indexer._producer  # pyright: ignore[reportPrivateUsage]
+    batch_groups, singles = producer.partition_batch_work(paths)
     if batch_groups:
-        indexer._produce_batch_groups(batch_groups, _publish, progress)  # pyright: ignore[reportPrivateUsage]
+        producer.produce_batch_groups(batch_groups, _publish, progress)
     if singles:
-        indexer._produce_code_singles(  # pyright: ignore[reportPrivateUsage]
+        producer.produce_singles(
             singles,
             publish_result=_publish,
             consumer_failed=lambda: False,

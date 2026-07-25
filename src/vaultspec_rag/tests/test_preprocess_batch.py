@@ -633,7 +633,7 @@ def test_production_path_multi_worker_pool_over_batch_groups(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Two batch rules give two groups; forcing two workers routes them through
-    # the real process-pool (as_completed) branch of _run_batch_groups, not the
+    # the real process-pool (as_completed) branch of run_batch_groups, not the
     # serial fallback.
     monkeypatch.setenv(EnvVar.INDEX_CHUNK_WORKERS.value, "2")
     reset_config()
@@ -750,7 +750,7 @@ def test_batch_pool_retains_only_one_worker_window(tmp_path: Path) -> None:
             path.write_bytes(path.name.encode())
 
         indexer = _batch_indexer(tmp_path, ctx)
-        batch_groups, singles = indexer._partition_batch_work(files)
+        batch_groups, singles = indexer._producer.partition_batch_work(files)
         assert singles == []
         assert len(batch_groups) == 6
 
@@ -766,7 +766,7 @@ def test_batch_pool_retains_only_one_worker_window(tmp_path: Path) -> None:
 
         def _run() -> None:
             try:
-                indexer._run_batch_groups(
+                indexer._producer.run_batch_groups(
                     batch_groups,
                     NullProgressReporter(),
                     _observe_window,

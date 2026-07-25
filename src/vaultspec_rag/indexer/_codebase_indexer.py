@@ -9,22 +9,12 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
-import itertools
 import json
 import logging
-import multiprocessing
 import os
 import pathlib
 import queue
 import time
-from collections import deque
-from concurrent.futures import (
-    FIRST_COMPLETED,
-    Future,
-    ProcessPoolExecutor,
-    wait,
-)
-from concurrent.futures.process import BrokenProcessPool
 from functools import partial
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -41,6 +31,12 @@ from ..index_profiles import (
 )
 from ..job_control import NO_RUN_CONTROL, RunControlSignal
 from . import _chunk_worker, _code_meta, _preprocess_glue
+from ._chunk_producer import (
+    CONTROL_POLL_SECONDS,
+    CodeChunkProducer,
+    WeightedCodeSegmentQueue,
+    drain_code_chunks,
+)
 from ._code_meta import (
     CODE_EMBED_SCHEMA,
     CONTENT_EPOCH_KEY,
@@ -66,8 +62,6 @@ from ._content_policy import (
 from ._drift_owner import CodeDriftOwner
 from ._file_state import FileStateKind
 from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
-from ._pool_guard import spawn_pool
-from ._preprocess_runner import PreprocessAbortError
 from ._route_migration import reconcile_generation_storage
 from ._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
 from ._run_ledger import (
@@ -91,18 +85,16 @@ from ._vault_prep import IndexResult
 if TYPE_CHECKING:
     import threading
     from collections.abc import Callable, Iterable, Iterator
-    from multiprocessing.context import BaseContext
 
     from ..embeddings import EmbeddingModel
     from ..job_control import RunControl
     from ..memory_probe import MemoryBudget, MemoryBudgetSnapshot, MemoryProbe
     from ..progress import ProgressReporter
-    from ..store import CodeChunk, VaultStore
+    from ..store import VaultStore
     from ._chunk_worker import FileChunkResult
     from ._preprocess_config import (
         PreprocessConfig,
         PreprocessContext,
-        PreprocessRule,
     )
     from ._resolved_policy import ResolvedIndexPolicy
     from ._reuse import DonorReuseContext, ReuseStats
@@ -116,24 +108,9 @@ logger = logging.getLogger(__name__)
 # indexer's writer lock forever (#155).
 _CONSUMER_SHUTDOWN_TIMEOUT_S = 300.0
 
-# Polling bound for cooperative control while the parent waits on CPU workers
-# or either pipeline side waits on the bounded producer/consumer queue.
-_CONTROL_POLL_SECONDS = 0.1
-
 #: Conservative chunks-per-file factor for the pre-pool disk pre-flight;
 #: a measured large mixed-language tree averaged ~12 chunks per source file.
 _CHUNKS_PER_FILE_ESTIMATE = 12
-
-# Maximum number of source paths handed to one batch preprocess spawn (#241).
-# A batch rule's matched files are grouped into manifests of at most this many
-# paths, each group running as a single pool task, so the hook's spawn cost is
-# amortised across the group instead of paid per file.
-BATCH_SIZE = 64
-
-# Keep one queued single-file task behind each active worker. This absorbs the
-# coordinator's result/accounting latency without retaining one Future (and
-# potentially one completed chunk result) per source path on large trees.
-_CHUNK_FUTURE_WINDOW_PER_WORKER = 2
 
 # The digest a zero-byte source hashes to. Comparing against it identifies an
 # empty read exactly, from the hash the chunk worker already returned, without
@@ -159,130 +136,6 @@ class _CodePipelineLimits(NamedTuple):
     sparse_dimension: int
     encode_batch_size: int
     flush_slices: int
-
-
-class _WeightedCodeSegmentQueue:
-    """Thread-safe queue bounded by queued chunk and byte weights."""
-
-    __slots__ = (
-        "_condition",
-        "_items",
-        "_max_bytes",
-        "_max_chunks",
-        "_queued_bytes",
-        "_queued_chunks",
-    )
-
-    def __init__(self, *, max_chunks: int, max_bytes: int) -> None:
-        import threading
-
-        if isinstance(max_chunks, bool) or max_chunks <= 0:
-            raise ValueError("max_chunks must be a positive integer")
-        if isinstance(max_bytes, bool) or max_bytes <= 0:
-            raise ValueError("max_bytes must be a positive integer")
-        self._max_chunks = max_chunks
-        self._max_bytes = max_bytes
-        self._queued_chunks = 0
-        self._queued_bytes = 0
-        self._items: deque[CodeFileSegment | None] = deque()
-        self._condition = threading.Condition()
-
-    @property
-    def queued_chunks(self) -> int:
-        """Return the number of chunks waiting in the queue."""
-        with self._condition:
-            return self._queued_chunks
-
-    @property
-    def queued_bytes(self) -> int:
-        """Return the estimated bytes waiting in the queue."""
-        with self._condition:
-            return self._queued_bytes
-
-    def _can_admit(self, segment: CodeFileSegment) -> bool:
-        return (
-            self._queued_chunks + len(segment.chunks) <= self._max_chunks
-            and self._queued_bytes + segment.estimated_bytes <= self._max_bytes
-        )
-
-    def _wait_until_admitted(
-        self,
-        segment: CodeFileSegment,
-        *,
-        block: bool,
-        timeout: float | None,
-    ) -> None:
-        if self._can_admit(segment):
-            return
-        if not block:
-            raise queue.Full
-        if timeout is None:
-            while not self._can_admit(segment):
-                self._condition.wait()
-            return
-        deadline = time.monotonic() + timeout
-        while not self._can_admit(segment):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise queue.Full
-            self._condition.wait(remaining)
-
-    def put(
-        self,
-        item: CodeFileSegment | None,
-        block: bool = True,
-        timeout: float | None = None,
-    ) -> None:
-        if timeout is not None and timeout < 0:
-            raise ValueError("timeout must be a non-negative number")
-        if item is not None and (
-            len(item.chunks) > self._max_chunks
-            or item.estimated_bytes > self._max_bytes
-        ):
-            raise ValueError(
-                f"segment {item.path!r}#{item.ordinal} exceeds queue capacity"
-            )
-        with self._condition:
-            if item is not None:
-                self._wait_until_admitted(item, block=block, timeout=timeout)
-                self._queued_chunks += len(item.chunks)
-                self._queued_bytes += item.estimated_bytes
-            self._items.append(item)
-            self._condition.notify_all()
-
-    def get(
-        self,
-        block: bool = True,
-        timeout: float | None = None,
-    ) -> CodeFileSegment | None:
-        if timeout is not None and timeout < 0:
-            raise ValueError("timeout must be a non-negative number")
-        with self._condition:
-            if not block and not self._items:
-                raise queue.Empty
-            if timeout is None:
-                while not self._items:
-                    self._condition.wait()
-            else:
-                deadline = time.monotonic() + timeout
-                while not self._items:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise queue.Empty
-                    self._condition.wait(remaining)
-            item = self._items.popleft()
-            if item is not None:
-                self._queued_chunks -= len(item.chunks)
-                self._queued_bytes -= item.estimated_bytes
-            self._condition.notify_all()
-            return item
-
-
-def _drain_code_chunks(chunks: list[CodeChunk]) -> Iterator[CodeChunk]:
-    """Yield a file's chunks in order while releasing its source list."""
-    chunks.reverse()
-    while chunks:
-        yield chunks.pop()
 
 
 class CodebaseIndexer:
@@ -355,6 +208,14 @@ class CodebaseIndexer:
         # files, both surfaced in the run's IndexResult.
         self._prep_ctx: PreprocessContext | None = None
         self._chunk_execution_policy = _chunk_worker.ChunkExecutionPolicy()
+        # Production reads the preprocess context through a callable because
+        # ``_prep_ctx`` is rebound per run; capturing the value here would pin
+        # every run to whatever the first one resolved.
+        self._producer = CodeChunkProducer(
+            self.root_dir,
+            chunk_execution_policy=self._chunk_execution_policy,
+            prep_ctx=lambda: self._prep_ctx,
+        )
         self._prep_skips: list[str] = []
         self._prep_stale_paths: set[str] = set()
         self._prep_rule_total: int = 0
@@ -792,16 +653,6 @@ class CodebaseIndexer:
             res, self._prep_skips
         )
 
-    def _record_scoped_preprocess(
-        self,
-        path: pathlib.Path,
-        result: _chunk_worker.ScopedChunkResult,
-    ) -> None:
-        """Accumulate a scoped-path preprocess disposition."""
-        self._prep_ok += _preprocess_glue.record_scoped_preprocess(
-            self.root_dir, path, result, self._prep_skips
-        )
-
     def _scan_codebase(
         self,
         policy: ResolvedIndexPolicy | None = None,
@@ -849,440 +700,9 @@ class CodebaseIndexer:
         """
         return self._discovery.scan_files()
 
-    def _resolve_chunk_workers(self, n_paths: int) -> int:
-        """Resolve the number of chunk worker processes to use.
-
-        Reads the ``index_chunk_workers`` config knob: ``0`` means auto
-        (``os.process_cpu_count()``); any positive value is honoured verbatim.
-        The result is clamped to ``[1, n_paths]`` so a tiny change set never
-        spawns more workers than there are files.
-
-        Args:
-            n_paths: Number of files about to be chunked.
-
-        Returns:
-            Worker count, at least 1.
-        """
-        from ..config import get_config
-
-        configured = int(get_config().index_chunk_workers)
-        workers = configured if configured > 0 else (os.process_cpu_count() or 1)
-        return max(1, min(workers, n_paths))
-
-    def _plan_chunk_workers(self, paths: list[pathlib.Path]) -> int:
-        """Decide the worker count for *paths*, gating auto mode on workload.
-
-        Spawn workers cost ~0.3s each to start, so on small or medium trees the
-        process pool loses to serial chunking (#155 benchmark). In AUTO mode
-        (``index_chunk_workers=0``) the pool engages only once the total source
-        size crosses ``index_parallel_min_bytes``; below that the path stays
-        serial. An explicit ``index_chunk_workers`` >= 1 bypasses the gate so a
-        caller can force parallelism (or serial) regardless of size.
-
-        Args:
-            paths: Files about to be chunked.
-
-        Returns:
-            Worker count; ``1`` means run the serial in-process path.
-        """
-        from ..config import get_config
-
-        cfg = get_config()
-        workers = self._resolve_chunk_workers(len(paths))
-        if workers <= 1:
-            return 1
-        if int(cfg.index_chunk_workers) > 0:
-            return workers  # explicit request bypasses the byte gate
-
-        min_bytes = int(cfg.index_parallel_min_bytes)
-        total = 0
-        for p in paths:
-            try:
-                total += p.stat().st_size
-            except OSError:
-                continue
-            if total >= min_bytes:
-                return workers
-        return 1
-
-    def _partition_batch_work(
-        self,
-        paths: list[pathlib.Path],
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> tuple[list[tuple[PreprocessRule, list[pathlib.Path]]], list[pathlib.Path]]:
-        """Split paths into batch-rule groups and everything else (#241).
-
-        Files matched by a ``batch = true`` rule are grouped per rule (keyed by
-        rule identity - :meth:`PreprocessConfig.match` returns the same rule
-        object each time) and chunked into manifests of at most
-        :data:`BATCH_SIZE`, so each group runs as one batch spawn. Every other
-        file - unmatched, or matched by a non-batch rule - stays a single, so
-        the existing per-file flow is untouched.
-
-        Returns:
-            ``(batch_groups, singles)``: batch groups as ``(rule, paths)`` pairs
-            and the single-file paths, together covering every input path.
-        """
-        prep = self._prep_ctx
-        if prep is None or not any(rule.batch for rule in prep.config.rules):
-            # No batch rule configured: every file keeps the per-file flow and
-            # pays zero extra per-path match cost.
-            return [], list(paths)
-
-        groups: dict[int, list[pathlib.Path]] = {}
-        rules: dict[int, PreprocessRule] = {}
-        singles: list[pathlib.Path] = []
-        for p in paths:
-            run_control.checkpoint()
-            try:
-                rel = str(p.relative_to(self.root_dir)).replace("\\", "/")
-            except ValueError:
-                singles.append(p)
-                continue
-            rule = prep.config.match(rel)
-            if rule is not None and rule.batch and rule.command is not None:
-                rid = id(rule)
-                groups.setdefault(rid, []).append(p)
-                rules[rid] = rule
-            else:
-                singles.append(p)
-            run_control.checkpoint()
-
-        batch_groups: list[tuple[PreprocessRule, list[pathlib.Path]]] = []
-        for rid, group in groups.items():
-            run_control.checkpoint()
-            rule = rules[rid]
-            for start in range(0, len(group), BATCH_SIZE):
-                batch_groups.append((rule, group[start : start + BATCH_SIZE]))
-            run_control.checkpoint()
-        return batch_groups, singles
-
-    def _run_batch_groups(
-        self,
-        batch_groups: list[tuple[PreprocessRule, list[pathlib.Path]]],
-        reporter: ProgressReporter,
-        handle_group: Callable[[list[FileChunkResult]], None],
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> None:
-        """Run batch groups through a bounded spawned-worker window."""
-        prep = self._prep_ctx
-        if not batch_groups or prep is None:
-            return
-        workers = self._resolve_chunk_workers(len(batch_groups))
-        if workers <= 1:
-            self._run_batch_groups_serial(
-                batch_groups, reporter, handle_group, run_control=run_control
-            )
-            return
-
-        completed = 0
-        ctx = multiprocessing.get_context("spawn")
-        try:
-            with spawn_pool(max_workers=workers, mp_context=ctx) as pool:
-                group_iter = iter(batch_groups)
-                futures: dict[Future[list[FileChunkResult]], int] = {}
-
-                def _submit_one() -> bool:
-                    run_control.checkpoint()
-                    try:
-                        rule, group = next(group_iter)
-                    except StopIteration:
-                        return False
-                    future = pool.submit(
-                        _chunk_worker.chunk_batch_files,
-                        group,
-                        self.root_dir,
-                        rule,
-                        prep,
-                        self._chunk_execution_policy,
-                    )
-                    futures[future] = len(group)
-                    run_control.checkpoint()
-                    return True
-
-                try:
-                    for _ in range(min(len(batch_groups), workers)):
-                        _submit_one()
-                    while futures:
-                        run_control.checkpoint()
-                        done, _pending = wait(
-                            set(futures),
-                            timeout=_CONTROL_POLL_SECONDS,
-                            return_when=FIRST_COMPLETED,
-                        )
-                        run_control.checkpoint()
-                        while done:
-                            completed += self._process_batch_future(
-                                done.pop(), futures, reporter, handle_group
-                            )
-                            run_control.checkpoint()
-                            _submit_one()
-                except BaseException:
-                    for future in futures:
-                        future.cancel()
-                    raise
-        except BrokenProcessPool:
-            if completed:
-                logger.error(
-                    "Batch process pool broke after %d files; aborting",
-                    completed,
-                )
-                raise
-            logger.warning(
-                "Batch process pool could not start; running batch groups serially"
-            )
-            self._run_batch_groups_serial(
-                batch_groups, reporter, handle_group, run_control=run_control
-            )
-
-    def _process_batch_future(
-        self,
-        future: Future[list[FileChunkResult]],
-        futures: dict[Future[list[FileChunkResult]], int],
-        reporter: ProgressReporter,
-        handle_group: Callable[[list[FileChunkResult]], None],
-    ) -> int:
-        """Publish one completed worker group, propagating fatal failures."""
-        group_len = futures.pop(future)
-        try:
-            results = future.result()
-        except BrokenProcessPool:
-            raise
-        except PreprocessAbortError:
-            raise
-        except Exception:
-            logger.error(
-                "Batch worker failed for a group of %d files",
-                group_len,
-                exc_info=True,
-            )
-            raise
-        handle_group(results)
-        for _ in range(group_len):
-            reporter.advance()
-        return group_len
-
-    def _run_batch_groups_serial(
-        self,
-        batch_groups: list[tuple[PreprocessRule, list[pathlib.Path]]],
-        reporter: ProgressReporter,
-        handle_group: Callable[[list[FileChunkResult]], None],
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> None:
-        """Run batch groups serially in-process."""
-        prep = self._prep_ctx
-        if prep is None:
-            return
-        for rule, group in batch_groups:
-            run_control.checkpoint()
-            results = _chunk_worker.chunk_batch_files(
-                group,
-                self.root_dir,
-                rule,
-                prep,
-                self._chunk_execution_policy,
-            )
-            handle_group(results)
-            run_control.checkpoint()
-            for _ in range(len(group)):
-                reporter.advance()
-            run_control.checkpoint()
-
-    def _process_single_future(
-        self,
-        future: Future[_chunk_worker.ScopedChunkResult],
-        path: pathlib.Path,
-        all_chunks: list[CodeChunk],
-        reporter: ProgressReporter,
-    ) -> None:
-        """Publish one completed single-file result."""
-        try:
-            result = future.result()
-        except BrokenProcessPool:
-            raise
-        except PreprocessAbortError:
-            raise
-        except Exception:
-            logger.warning("Worker failed to chunk %s", path, exc_info=True)
-            raise
-        else:
-            self._record_scoped_preprocess(path, result)
-            all_chunks.extend(result.chunks)
-        finally:
-            reporter.advance()
-
-    def _run_serial_chunk_producer(
-        self,
-        paths: list[pathlib.Path],
-        publish_result: Callable[[FileChunkResult], bool],
-        reporter: ProgressReporter,
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> int:
-        """Produce file results serially into the bounded queue."""
-        advanced = 0
-        for path in paths:
-            run_control.checkpoint()
-            try:
-                result = _chunk_worker.chunk_and_hash_file(
-                    path,
-                    self.root_dir,
-                    self._prep_ctx,
-                    self._chunk_execution_policy,
-                )
-            except PreprocessAbortError:
-                raise
-            except Exception:
-                logger.warning("Failed to chunk %s", path, exc_info=True)
-                raise
-            run_control.checkpoint()
-            if not publish_result(result):
-                run_control.checkpoint()
-                raise RuntimeError("code-index segment consumer terminated")
-            advanced += 1
-            reporter.advance()
-            run_control.checkpoint()
-        return advanced
-
-    def _produce_batch_groups(
-        self,
-        batch_groups: list[tuple[PreprocessRule, list[pathlib.Path]]],
-        publish_result: Callable[[FileChunkResult], bool],
-        reporter: ProgressReporter,
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> None:
-        """Produce batch-preprocessed results into the weighted queue."""
-
-        def _publish_group(results: list[FileChunkResult]) -> None:
-            for result in results:
-                run_control.checkpoint()
-                if not publish_result(result):
-                    run_control.checkpoint()
-                    raise RuntimeError("code-index segment consumer terminated")
-                run_control.checkpoint()
-
-        self._run_batch_groups(
-            batch_groups, reporter, _publish_group, run_control=run_control
-        )
-
-    def _drain_pool(
-        self,
-        workers: int,
-        ctx: BaseContext,
-        paths_iter: Iterator[pathlib.Path],
-        window: int,
-        publish_result: Callable[[FileChunkResult], bool],
-        consumer_failed: Callable[[], bool],
-        reporter: ProgressReporter,
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> tuple[bool, bool, int]:
-        """Drain a bounded spawned-worker window into the consumer."""
-        broke = False
-        consumer_died = False
-        advanced = 0
-        try:
-            with spawn_pool(max_workers=workers, mp_context=ctx) as pool:
-                pending: set[Future[FileChunkResult]] = set()
-                try:
-                    for path in itertools.islice(paths_iter, window):
-                        run_control.checkpoint()
-                        pending.add(
-                            pool.submit(
-                                _chunk_worker.chunk_and_hash_file,
-                                path,
-                                self.root_dir,
-                                self._prep_ctx,
-                                self._chunk_execution_policy,
-                            )
-                        )
-                        run_control.checkpoint()
-                    while pending and not consumer_died:
-                        run_control.checkpoint()
-                        if consumer_failed():
-                            consumer_died = True
-                            break
-                        done, pending = wait(
-                            pending,
-                            timeout=_CONTROL_POLL_SECONDS,
-                            return_when=FIRST_COMPLETED,
-                        )
-                        run_control.checkpoint()
-                        for future in done:
-                            died, advanced_inc = self._process_future(
-                                future,
-                                pool,
-                                pending,
-                                paths_iter,
-                                publish_result,
-                                reporter,
-                                run_control=run_control,
-                            )
-                            advanced += advanced_inc
-                            if died:
-                                consumer_died = True
-                                break
-                    if consumer_died:
-                        for future in pending:
-                            future.cancel()
-                except BaseException:
-                    for future in pending:
-                        future.cancel()
-                    raise
-        except BrokenProcessPool:
-            broke = True
-        return broke, consumer_died, advanced
-
-    def _process_future(
-        self,
-        future: Future[FileChunkResult],
-        pool: ProcessPoolExecutor,
-        pending: set[Future[FileChunkResult]],
-        paths_iter: Iterator[pathlib.Path],
-        publish_result: Callable[[FileChunkResult], bool],
-        reporter: ProgressReporter,
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> tuple[bool, int]:
-        """Publish one worker result and refill its bounded slot."""
-        run_control.checkpoint()
-        try:
-            result = future.result()
-        except BrokenProcessPool:
-            raise
-        except PreprocessAbortError:
-            raise
-        except Exception:
-            logger.warning("Worker failed to chunk a file", exc_info=True)
-            raise
-        run_control.checkpoint()
-        died = not publish_result(result)
-        reporter.advance()
-        run_control.checkpoint()
-        if died:
-            return True, 1
-        next_path = next(paths_iter, None)
-        if next_path is not None:
-            run_control.checkpoint()
-            pending.add(
-                pool.submit(
-                    _chunk_worker.chunk_and_hash_file,
-                    next_path,
-                    self.root_dir,
-                    self._prep_ctx,
-                    self._chunk_execution_policy,
-                )
-            )
-            run_control.checkpoint()
-        return False, 1
-
     def _iter_consumer_segments(
         self,
-        segment_queue: _WeightedCodeSegmentQueue,
+        segment_queue: WeightedCodeSegmentQueue,
         *,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> Iterator[CodeFileSegment]:
@@ -1290,7 +710,7 @@ class CodebaseIndexer:
         while True:
             run_control.checkpoint()
             try:
-                segment = segment_queue.get(timeout=_CONTROL_POLL_SECONDS)
+                segment = segment_queue.get(timeout=CONTROL_POLL_SECONDS)
             except queue.Empty:
                 self._sample_memory_budget("code consumer queue wait")
                 continue
@@ -1411,7 +831,7 @@ class CodebaseIndexer:
 
     def _run_weighted_consumer(
         self,
-        segment_queue: _WeightedCodeSegmentQueue,
+        segment_queue: WeightedCodeSegmentQueue,
         consumer_exceptions: list[BaseException],
         limits: _CodePipelineLimits,
         new_ids: set[str],
@@ -1460,7 +880,7 @@ class CodebaseIndexer:
 
     def _spawn_weighted_consumer(
         self,
-        segment_queue: _WeightedCodeSegmentQueue,
+        segment_queue: WeightedCodeSegmentQueue,
         consumer_exceptions: list[BaseException],
         limits: _CodePipelineLimits,
         new_ids: set[str],
@@ -1500,7 +920,7 @@ class CodebaseIndexer:
     @staticmethod
     def _drain_consumer(
         consumer: threading.Thread,
-        segment_queue: _WeightedCodeSegmentQueue,
+        segment_queue: WeightedCodeSegmentQueue,
         run_policy: RunPolicy,
         sample_memory: Callable[[str], object] | None = None,
     ) -> None:
@@ -1509,7 +929,7 @@ class CodebaseIndexer:
         while consumer.is_alive() and not sentinel_delivered:
             run_policy.checkpoint("code consumer drain sentinel")
             timeout = min(
-                _CONTROL_POLL_SECONDS,
+                CONTROL_POLL_SECONDS,
                 run_policy.remaining_seconds(),
             )
             try:
@@ -1523,7 +943,7 @@ class CodebaseIndexer:
             run_policy.checkpoint("code consumer drain")
             consumer.join(
                 timeout=min(
-                    _CONTROL_POLL_SECONDS,
+                    CONTROL_POLL_SECONDS,
                     run_policy.remaining_seconds(),
                 )
             )
@@ -1533,13 +953,13 @@ class CodebaseIndexer:
     def _cleanup_consumer(
         self,
         consumer: threading.Thread,
-        segment_queue: _WeightedCodeSegmentQueue,
+        segment_queue: WeightedCodeSegmentQueue,
     ) -> bool:
         """Bound cleanup after a producer, control, or liveness failure."""
         deadline = time.monotonic() + _CONSUMER_SHUTDOWN_TIMEOUT_S
         while consumer.is_alive():
             try:
-                segment_queue.put(None, timeout=_CONTROL_POLL_SECONDS)
+                segment_queue.put(None, timeout=CONTROL_POLL_SECONDS)
                 break
             except queue.Full:
                 if time.monotonic() >= deadline:
@@ -1875,33 +1295,12 @@ class CodebaseIndexer:
             )
         raise JobError(failure_kind, detail)
 
-    def _enqueue_code_segment(
-        self,
-        segment: CodeFileSegment,
-        *,
-        segment_queue: _WeightedCodeSegmentQueue,
-        consumer: threading.Thread,
-        consumer_exceptions: list[BaseException],
-        run_control: RunControl,
-    ) -> bool:
-        """Place one segment on the bounded queue while the consumer is live."""
-        while not consumer_exceptions and consumer.is_alive():
-            run_control.checkpoint()
-            try:
-                segment_queue.put(segment, timeout=_CONTROL_POLL_SECONDS)
-            except queue.Full:
-                self._sample_memory_budget("code producer queue wait")
-                continue
-            run_control.checkpoint()
-            return True
-        return False
-
     def _enqueue_code_result(
         self,
         result: FileChunkResult,
         *,
         limits: _CodePipelineLimits,
-        segment_queue: _WeightedCodeSegmentQueue,
+        segment_queue: WeightedCodeSegmentQueue,
         consumer: threading.Thread,
         consumer_exceptions: list[BaseException],
         metadata: dict[str, str],
@@ -1918,7 +1317,7 @@ class CodebaseIndexer:
             )
         metadata[result.rel_path] = result.content_hash
         segments = iter_code_file_segments(
-            _drain_code_chunks(result.chunks),
+            drain_code_chunks(result.chunks),
             max_chunks=limits.segment_max_chunks,
             max_bytes=limits.segment_max_bytes,
             dense_dimension=limits.dense_dimension,
@@ -1932,69 +1331,19 @@ class CodebaseIndexer:
             if checkpoint is not None
             else measured_segments
         )
-        for segment in pending_segments:
-            if not self._enqueue_code_segment(
-                segment,
-                segment_queue=segment_queue,
-                consumer=consumer,
-                consumer_exceptions=consumer_exceptions,
-                run_control=run_control,
-            ):
-                return False
-        return True
-
-    def _produce_code_singles(
-        self,
-        singles: list[pathlib.Path],
-        *,
-        publish_result: Callable[[FileChunkResult], bool],
-        consumer_failed: Callable[[], bool],
-        reporter: ProgressReporter,
-        total: list[int],
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> int:
-        """Produce ordinary files serially or through the CPU pool."""
-        workers = self._plan_chunk_workers(singles)
-        if workers <= 1:
-            return self._run_serial_chunk_producer(
-                singles, publish_result, reporter, run_control=run_control
-            )
-        ctx = multiprocessing.get_context("spawn")
-        window = min(
-            len(singles),
-            max(1, _CHUNK_FUTURE_WINDOW_PER_WORKER * workers),
-        )
-        broke, _consumer_died, advanced = self._drain_pool(
-            workers,
-            ctx,
-            iter(singles),
-            window,
-            publish_result,
-            consumer_failed,
-            reporter,
+        return self._producer.submit_segments(
+            pending_segments,
+            segment_queue=segment_queue,
+            consumer=consumer,
+            consumer_exceptions=consumer_exceptions,
+            on_wait=self._sample_memory_budget,
             run_control=run_control,
-        )
-        if not broke:
-            return advanced
-        if advanced or total[0]:
-            logger.error(
-                "Chunk process pool broke after %d files (%d chunks embedded); "
-                "aborting. Set index_chunk_workers=1 to force the serial path.",
-                advanced,
-                total[0],
-            )
-            raise BrokenProcessPool("codebase chunk process pool broke mid-run")
-        logger.warning(
-            "Chunk process pool could not start; running chunk + embed serially"
-        )
-        return self._run_serial_chunk_producer(
-            singles, publish_result, reporter, run_control=run_control
         )
 
     def _finish_weighted_consumer(
         self,
         consumer: threading.Thread,
-        segment_queue: _WeightedCodeSegmentQueue,
+        segment_queue: WeightedCodeSegmentQueue,
         consumer_exceptions: list[BaseException],
         producer_exception: BaseException | None,
         checkpoint: CodeRunCheckpoint,
@@ -2091,7 +1440,7 @@ class CodebaseIndexer:
             if not paths:
                 return new_ids, total[0], metadata
             self._begin_memory_budget()
-            segment_queue = _WeightedCodeSegmentQueue(
+            segment_queue = WeightedCodeSegmentQueue(
                 max_chunks=limits.queue_max_chunks,
                 max_bytes=limits.queue_max_bytes,
             )
@@ -2122,18 +1471,18 @@ class CodebaseIndexer:
 
             producer_exception: BaseException | None = None
             try:
-                batch_groups, singles = self._partition_batch_work(
+                batch_groups, singles = self._producer.partition_batch_work(
                     paths, run_control=run_control
                 )
                 if batch_groups:
-                    self._produce_batch_groups(
+                    self._producer.produce_batch_groups(
                         batch_groups,
                         _publish_result,
                         reporter,
                         run_control=run_control,
                     )
                 if singles:
-                    self._produce_code_singles(
+                    self._producer.produce_singles(
                         singles,
                         publish_result=_publish_result,
                         consumer_failed=lambda: (
