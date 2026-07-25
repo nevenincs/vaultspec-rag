@@ -266,7 +266,6 @@ QUARANTINE_FAMILY = "quarantine"
 STORE_FORMAT_FAMILY = "store_format"
 DOMAIN_INDEX_FAMILY = "domain_index"
 QUARANTINED_COLLECTIONS_FAMILY = "quarantined_collections"
-STORE_FORMAT_FAMILY = "store_format"
 
 #: Families whose signal records something that HAPPENED, not something that
 #: IS. Such a signal explains a reason the service reported, but is never
@@ -421,29 +420,6 @@ def _quarantined_collections_finding(
         ),
         command="vaultspec-rag server qdrant quarantine",
         family=QUARANTINED_COLLECTIONS_FAMILY,
-    )
-
-
-def _store_format_finding(
-    health: dict[str, object] | None,
-    now: float,
-) -> DegradedFinding | None:
-    _ = now
-    record = _health_qdrant(health).get("store_format")
-    if not isinstance(record, dict):
-        return None
-    fields = cast("dict[str, object]", record)
-    if fields.get("status") != "migrated":
-        return None
-    return DegradedFinding(
-        cause="the store was opened by a different qdrant server version",
-        detail=(
-            f"written by {fields.get('recorded')}, now opened by "
-            f"{fields.get('running')}; confirm searches still answer before "
-            "relying on this store, and keep a copy before downgrading"
-        ),
-        command="vaultspec-rag server qdrant status",
-        family=STORE_FORMAT_FAMILY,
     )
 
 
