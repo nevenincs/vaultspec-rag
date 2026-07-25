@@ -109,6 +109,23 @@ class CodeDriftOwner:
         """Return whether this run repaired drift rather than only faulting."""
         return bool(self._superseded or self._deferred)
 
+    def snapshot(self) -> dict[str, object]:
+        """Return this run's drift telemetry for the job and status surfaces.
+
+        A remediated run succeeds, so the circuit breaker never hears about it
+        - which is the point, since a busy tree is not a fault. That makes this
+        the only channel on which drift volume is visible, so it carries the
+        deferred paths by name rather than only counting them: a path that
+        stays deferred is stale index content an operator has to be able to
+        find.
+        """
+        return {
+            "superseded_paths": len(self._superseded),
+            "deferred_paths": list(self.deferred_paths),
+            "collisions_observed": self._collisions,
+            "retry_budget": self._retry_budget,
+        }
+
     def supersede_snapshot(self, current_digests: Mapping[str, str]) -> int:
         """Supersede resumed evidence for paths a digest snapshot says moved.
 
