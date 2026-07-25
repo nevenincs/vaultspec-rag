@@ -7,24 +7,19 @@ and the dry-run discipline; ``status`` is a bounded operator view;
 preview.
 """
 
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Annotated, Any, NoReturn, cast
 
 import typer
 
-import vaultspec_rag.cli as _cli
-
 from ..config import get_config
-from ..qdrant_runtime import (
+from ..qdrant_runtime._constants import (
     QDRANT_SERVER_VERSION,
     ProvisionReport,
     QdrantProvisionAction,
-    provision,
-    provisioned_versions,
-    resolve_binary,
 )
+from ..qdrant_runtime._provision import provision, provisioned_versions
+from ..qdrant_runtime._resolve import probe_qdrant_endpoint, resolve_binary
 from ._app import server_qdrant_app
 from ._progress import StartupStatusReporter
 from ._render import _emit_json, _plain
@@ -33,18 +28,6 @@ from ._service_status import _read_service_status
 
 def _print_line(text: str) -> None:
     _plain(text, soft_wrap=True)
-
-
-def _readyz_probe(port: int) -> bool:
-    """True when a Qdrant server answers ready on the loopback port."""
-    try:
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/readyz", timeout=2.0
-        ) as resp:
-            return int(resp.status) == 200
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        _cli.logger.debug("qdrant readyz probe failed on port %d: %s", port, exc)
-        return False
 
 
 def _print_next_action(command: str) -> None:
@@ -172,7 +155,7 @@ def _qdrant_status_payload(port: int | None = None) -> dict[str, Any]:
         "pinned_version": QDRANT_SERVER_VERSION,
         "server_mode_default": bool(cfg.qdrant_server),
         "port": qdrant_port,
-        "ready": _readyz_probe(qdrant_port),
+        "ready": probe_qdrant_endpoint(qdrant_port).ready,
         "active_binary": (
             {
                 "path": str(resolved.path),
@@ -356,7 +339,7 @@ def _render_clean_preview(
 
 def _perform_clean(*, keep_current: bool, json_mode: bool) -> list[str]:
     """Run the destructive removal, converting OSError to exit 1."""
-    from ..qdrant_runtime import clean_provisioned
+    from ..qdrant_runtime._provision import clean_provisioned
 
     try:
         return clean_provisioned(keep_current=keep_current)
