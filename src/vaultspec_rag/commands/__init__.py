@@ -22,8 +22,7 @@ All such state changes flow through core.
 
 This module was split into a package (``commands/``) from a former monolith.
 The verbatim public surface - the two
-orchestrators, their report dataclasses, and the ``_classify_uv_sync_result``
-helper that tests import directly - is re-exported here unchanged.
+orchestrators and their report dataclasses - is re-exported here unchanged.
 """
 
 from __future__ import annotations
@@ -39,7 +38,6 @@ from ._provision import (
     provision_models,
 )
 from ._uninstall import uninstall_run
-from ._uv_sync import _classify_uv_sync_result
 
 __all__ = [
     "InstallReport",
@@ -48,7 +46,6 @@ __all__ = [
     "ProvisionStep",
     "ProvisionStepResult",
     "UninstallReport",
-    "_classify_uv_sync_result",
     "install_run",
     "provision_dependencies",
     "provision_models",

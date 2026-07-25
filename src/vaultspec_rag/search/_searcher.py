@@ -546,26 +546,6 @@ class VaultSearcher:
                 store_filters[k] = v
         return store_filters
 
-    def _filter_raw_codebase_results(
-        self,
-        raw_results: list[dict[str, object]],
-        include_norm: list[str],
-        exclude_norm: list[str],
-    ) -> list[dict[str, object]]:
-        return _filter_raw_codebase_results_impl(
-            raw_results, include_norm, exclude_norm
-        )
-
-    def _map_codebase_results(
-        self, raw_results: list[dict[str, object]]
-    ) -> list[SearchResult]:
-        return _map_codebase_results_impl(raw_results)
-
-    def _apply_prefer_nudge(
-        self, results: list[SearchResult], prefer: str | None
-    ) -> None:
-        _apply_prefer_nudge_impl(results, prefer)
-
     def _fetch_codebase_candidates(
         self,
         *,
@@ -624,7 +604,7 @@ class VaultSearcher:
                     only_domains=pushdown_only,
                 ),
             )
-            globbed = self._filter_raw_codebase_results(raw, include_norm, exclude_norm)
+            globbed = _filter_raw_codebase_results_impl(raw, include_norm, exclude_norm)
             kept, dropped = partition_hard_domains(globbed, policy)
             # Stop when the page is fillable, the index is exhausted for this
             # query (fewer raw rows than asked), or we hit the cap.
@@ -751,7 +731,7 @@ class VaultSearcher:
             notes["dropped_domains"] = dropped
 
         phase_started = time.perf_counter()
-        results = self._map_codebase_results(raw_results)
+        results = _map_codebase_results_impl(raw_results)
         _record_seconds(timings, "result_mapping_seconds", phase_started)
 
         # Rerank the FULL surviving window (not a top_k slice) so the
@@ -769,7 +749,7 @@ class VaultSearcher:
 
         # --prefer post-rerank score nudge (opt-in, layered over demote).
         phase_started = time.perf_counter()
-        self._apply_prefer_nudge(results, prefer)
+        _apply_prefer_nudge_impl(results, prefer)
         _record_seconds(timings, "prefer_seconds", phase_started)
 
         # Locale-variant collapse (default on via config; tri-state override).

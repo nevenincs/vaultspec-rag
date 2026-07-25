@@ -153,11 +153,6 @@ class JobError(RuntimeError):
         self.detail = detail
         super().__init__(f"{error_kind.value}: {detail}")
 
-    @property
-    def remediation(self) -> str | None:
-        """Return the shared operator action for this failure kind."""
-        return remediation(self.error_kind)
-
 
 # Marker sets are matched case-insensitively against the recorded error
 # text. Disk-full covers the raw OS error, qdrant's WAL guard and

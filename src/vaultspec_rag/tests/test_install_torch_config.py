@@ -969,14 +969,14 @@ class TestUvSyncTorchBranches:
     """
 
     def test_classify_succeeded_when_returncode_zero(self) -> None:
-        from ..commands import _classify_uv_sync_result
+        from ..commands._uv_sync import _classify_uv_sync_result
 
         action, warning = _classify_uv_sync_result(returncode=0, stdout="", stderr="")
         assert action == "succeeded"
         assert warning is None
 
     def test_classify_failed_with_stderr_tail(self) -> None:
-        from ..commands import _classify_uv_sync_result
+        from ..commands._uv_sync import _classify_uv_sync_result
 
         action, warning = _classify_uv_sync_result(
             returncode=1, stdout="", stderr="resolution failed\nmore detail"
@@ -991,7 +991,7 @@ class TestUvSyncTorchBranches:
         """INSTALL-03 regression: stderr empty, stdout populated → use
         stdout's tail. Pre-fix, the user got only the bare exit code.
         """
-        from ..commands import _classify_uv_sync_result
+        from ..commands._uv_sync import _classify_uv_sync_result
 
         action, warning = _classify_uv_sync_result(
             returncode=2, stdout="lockfile mismatch on torch", stderr=""
@@ -1006,7 +1006,7 @@ class TestUvSyncTorchBranches:
         carries only the exit code - but the action must still be
         ``failed`` so renderers colour it red.
         """
-        from ..commands import _classify_uv_sync_result
+        from ..commands._uv_sync import _classify_uv_sync_result
 
         action, warning = _classify_uv_sync_result(returncode=255, stdout="", stderr="")
         assert action == "failed"
@@ -1018,7 +1018,7 @@ class TestUvSyncTorchBranches:
 
     def test_classify_failed_tails_only_last_five_lines(self) -> None:
         """Long uv outputs must be tailed to keep warning readable."""
-        from ..commands import _classify_uv_sync_result
+        from ..commands._uv_sync import _classify_uv_sync_result
 
         many = "\n".join(f"line {i}" for i in range(1, 21))
         action, warning = _classify_uv_sync_result(returncode=1, stdout="", stderr=many)
