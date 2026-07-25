@@ -208,7 +208,8 @@ def _is_our_service(
         return "vaultspec_rag" in cmdline
     except (OSError, ValueError) as exc:
         # Non-procfs systems (BSD, macOS without /proc) - fall back
-        # to PID-alive trust. Debug-log per the no-swallow rule.
+        # to PID-alive trust. The exception is logged, never discarded
+        # silently.
         logger.debug(
             "cmdline read failed for pid=%d: %s; falling back to PID-alive trust",
             pid,

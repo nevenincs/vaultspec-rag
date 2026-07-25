@@ -110,18 +110,37 @@ ALLOWLIST: frozenset[tuple[str, int]] = frozenset(
     }
 )
 
-#: TEMPORARY deferral, not a permanent exemption. These files still carry
-#: citations because the Code Stands Alone remediation deliberately did not
-#: touch them: they hold in-flight index and dormant-effort work, so cleaning
-#: their citations waits for a follow-up sweep once that work settles, rather
-#: than colliding with it now. Each entry is a whole file, listed with the
-#: citations it still holds so the deferral is visible, never silent. When the
-#: follow-up sweep cleans a file, DELETE its entry here - an emptied deferral
-#: that lingers is a hole the gate can no longer see through.
-# The scrub cleared every previously-deferred file, so the follow-up set is
-# empty: every tracked file now gates on citations with no exceptions. A new
-# entry here would re-open a tolerated hole, so it stays empty.
-DEFERRED_PENDING_FOLLOWUP: frozenset[str] = frozenset()
+#: TEMPORARY deferral, not a permanent exemption. Each entry is a whole file
+#: holding a citation that this change surfaced but could not repair, because
+#: another effort is editing that file right now and a prose edit landing under
+#: someone mid-refactor costs more than the citation does. Every one is still
+#: REPORTED on every run, so the deferral is visible and never silent. When a
+#: file is cleaned, DELETE its entry - an emptied deferral that lingers is a hole
+#: the gate can no longer see through.
+#:
+#: The cost is stated plainly: deferral is per FILE, so a new citation added to
+#: one of these is also unreported until the entry goes. That is why the set is
+#: a handoff list with an owner, not a parking space.
+DEFERRED_PENDING_FOLLOWUP: frozenset[str] = frozenset(
+    {
+        # ``is_temp_rooted`` - points at a rule for the report-only guarantee.
+        # Owned by the consolidation effort, whose repair also has to correct the
+        # claim itself: the flag now does feed a destructive path.
+        "src/vaultspec_rag/storage_survey.py",
+        # ``_resolve_binary`` region - debug-logging pointer. Directory actively
+        # being split.
+        "src/vaultspec_rag/qdrant_runtime/_resolve.py",
+        # GPU error rendering - debug-logging pointer. Uncommitted work present.
+        "src/vaultspec_rag/cli/_gpu_errors.py",
+        # Service-reachability tool docstring - parenthesised rule pointer.
+        # Uncommitted work present, staged and unstaged both.
+        "src/vaultspec_rag/mcp/_tools.py",
+        # Install integration test - points at the no-mocks convention.
+        "src/vaultspec_rag/tests/integration/test_install.py",
+        # Install-mode test - points at the managed-singleton convention.
+        "src/vaultspec_rag/tests/test_install_mode.py",
+    }
+)
 
 #: The project's own codified rule stems. A rule name is an artefact of how the
 #: project is governed, not of how the code works, and the tree carrying it is
@@ -159,6 +178,32 @@ PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(r"\b\d{4}-\d{2}-\d{2}-[a-z0-9-]*[a-z][a-z0-9-]*"),
     ),
     ("codified-rule-name", re.compile(r"\b(?:" + "|".join(RULE_STEMS) + r")\b")),
+    (
+        # A rule citation by POSITION rather than by name. The list above only
+        # knows the rules that exist today, so it is blind to every citation of a
+        # rule since renamed or consolidated away - and this project collapsed
+        # fifteen rules into seven, so those citations are the common case, not a
+        # hypothetical. Matching the pointer phrasing instead needs no list.
+        #
+        # Only the pointer forms match, because "rule" is core product
+        # vocabulary here: this product ships built-in rules, indexes
+        # user-authored ones, and wraps linters that have their own. "a
+        # document-preprocessing rule", "basedpyright's uppercase-is-constant
+        # rule" and "Ruff has no module-length rule" are all legitimate and all
+        # stay legal. What distinguishes a citation is that it POINTS: "per the
+        # X rule", "(the X rule)", "project X rule", or a quoted identifier
+        # after the artefact word. Every one of those was checked against the
+        # tree; a looser pattern lit up ten legitimate lines, and a pattern that
+        # cries wolf ten times is one the next person deletes.
+        "rule-citation",
+        re.compile(
+            r"\b(?:per|under|see|violates?|breaks?|contrary to)\s+(?:the\s+)?"
+            r"[a-z0-9]+(?:-[a-z0-9]+)+\s+(?:rule|convention|mandate)\b"
+            r"|\(the\s+[a-z0-9]+(?:-[a-z0-9]+)+\s+(?:rule|convention|mandate)\)"
+            r"|\bproject\s+[a-z0-9]+(?:-[a-z0-9]+)+\s+(?:rule|convention|mandate)\b"
+            r"|\b(?:rule|convention|mandate)\s+[`'\"]{1,2}[a-z0-9]+(?:-[a-z0-9]+)+"
+        ),
+    ),
     (
         "plan-container-id",
         re.compile(
@@ -308,16 +353,53 @@ def _string_lines(node: ast.AST) -> list[tuple[int, str]]:
     return out
 
 
-def _iter_prose(path: Path) -> list[tuple[int, str]]:
-    """Return (line, text) for every prose surface in *path*.
+def _comment_blocks(source: str) -> list[list[tuple[int, str]]]:
+    """Group comment tokens into runs of consecutive lines.
+
+    A comment sentence wraps across several ``#`` lines, and a citation inside it
+    straddles the break. Grouping the run restores the sentence.
+
+    The run is broken where the lines stop being consecutive so that a finding is
+    attributed to the comment it actually sits in. Note what that break does NOT
+    do: it is not what stops a phrase forming across two unrelated comments. Each
+    token carries its own ``#`` into the joined text, and no pattern here matches
+    across one. The invented-phrase risk lives in ``_text_blocks``, where
+    markdown paragraphs have no such separator.
+    """
+    blocks: list[list[tuple[int, str]]] = []
+    run: list[tuple[int, str]] = []
+    previous = -2
+    for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+        if tok.type != tokenize.COMMENT:
+            continue
+        line = tok.start[0]
+        if line != previous + 1 and run:
+            blocks.append(run)
+            run = []
+        run.append((line, tok.string))
+        previous = line
+    if run:
+        blocks.append(run)
+    return blocks
+
+
+def _iter_prose(path: Path) -> list[list[tuple[int, str]]]:
+    """Return the prose of *path* as blocks of (line, text).
 
     Prose is a docstring at any position, a comment in any form, a documentary
     keyword argument, or an exception message. Every other string in the file is
     a value and is deliberately ignored - that is the distinction which keeps
     vault-shaped fixture data legitimate.
+
+    A BLOCK rather than a line is the unit, because prose is hard-wrapped and a
+    citation does not respect the wrap. "per the" can end one line and the record
+    it names begin the next, which every multi-word pattern misses when each line
+    is matched alone - a real citation escaped exactly that way. The block is
+    joined before matching and offsets are mapped back, so the finding still
+    reports the line the citation starts on.
     """
     source = path.read_text(encoding="utf-8")
-    prose: list[tuple[int, str]] = []
+    blocks: list[list[tuple[int, str]]] = []
 
     tree = ast.parse(source)
     for node in ast.walk(tree):
@@ -333,21 +415,18 @@ def _iter_prose(path: Path) -> list[tuple[int, str]]:
             if not isinstance(node.value, ast.Constant) or isinstance(
                 node.value.value, str
             ):
-                prose.extend(_string_lines(node.value))
+                blocks.append(_string_lines(node.value))
             continue
         if isinstance(node, ast.Call):
             for keyword in node.keywords:
                 if keyword.arg in DOC_KEYWORDS:
-                    prose.extend(_string_lines(keyword.value))
+                    blocks.append(_string_lines(keyword.value))
             continue
         if isinstance(node, ast.Raise) and node.exc is not None:
-            prose.extend(_string_lines(node.exc))
+            blocks.append(_string_lines(node.exc))
 
-    for tok in tokenize.generate_tokens(io.StringIO(source).readline):
-        if tok.type == tokenize.COMMENT:
-            prose.append((tok.start[0], tok.string))
-
-    return prose
+    blocks.extend(_comment_blocks(source))
+    return [block for block in blocks if block]
 
 
 def _iter_values_and_comments(path: Path) -> list[tuple[int, str]]:
@@ -397,9 +476,68 @@ def _match_patterns(
     return findings
 
 
+def _match_blocks(
+    blocks: list[list[tuple[int, str]]],
+    rel: str,
+    patterns: tuple[tuple[str, re.Pattern[str]], ...],
+    *,
+    allowed_lines: frozenset[tuple[str, int]] = frozenset(),
+) -> list[Finding]:
+    """Match *patterns* against each block's joined prose, reporting real lines.
+
+    Joining is what makes a wrapped citation visible; the offset-to-line map is
+    what keeps the finding useful once it is. Reporting the block's first line
+    instead would send every reader to the top of a long docstring.
+    """
+    findings: list[Finding] = []
+    for block in blocks:
+        joined = " ".join(text.strip() for _line, text in block)
+        # Character offset of the start of each piece within *joined*, so a match
+        # position can be resolved back to the line it began on.
+        starts: list[tuple[int, int]] = []
+        cursor = 0
+        for line, text in block:
+            starts.append((cursor, line))
+            cursor += len(text.strip()) + 1
+        for slug, pattern in patterns:
+            match = pattern.search(joined)
+            if not match:
+                continue
+            line = next(
+                (ln for offset, ln in reversed(starts) if offset <= match.start()),
+                block[0][0],
+            )
+            if (rel, line) in allowed_lines:
+                continue
+            if (rel, line, match.group(0)) in PATH_ALLOWLIST:
+                continue
+            findings.append(Finding((rel, line, slug, match.group(0))))
+    return findings
+
+
 def _text_lines(path: Path) -> list[tuple[int, str]]:
     """Return (line, text) for every raw line of a non-Python file."""
     return list(enumerate(path.read_text(encoding="utf-8").splitlines(), start=1))
+
+
+def _text_blocks(path: Path) -> list[list[tuple[int, str]]]:
+    """Return the paragraphs of a non-Python file as blocks of (line, text).
+
+    Markdown prose is hard-wrapped, so a paragraph is the unit for the same
+    reason a docstring is. A blank line ends a paragraph; joining across one
+    would splice two unrelated sentences together.
+    """
+    blocks: list[list[tuple[int, str]]] = []
+    run: list[tuple[int, str]] = []
+    for line, text in _text_lines(path):
+        if text.strip():
+            run.append((line, text))
+        elif run:
+            blocks.append(run)
+            run = []
+    if run:
+        blocks.append(run)
+    return blocks
 
 
 def scan_file(path: Path, *, repo_root: Path = REPO_ROOT) -> list[Finding]:
@@ -411,7 +549,7 @@ def scan_file(path: Path, *, repo_root: Path = REPO_ROOT) -> list[Finding]:
     at a throwaway tree is part of the gate, not test scaffolding.
     """
     rel = path.relative_to(repo_root).as_posix()
-    return _match_patterns(_iter_prose(path), rel, PATTERNS, allowed_lines=ALLOWLIST)
+    return _match_blocks(_iter_prose(path), rel, PATTERNS, allowed_lines=ALLOWLIST)
 
 
 def scan_file_paths(
@@ -438,7 +576,7 @@ def scan_text(
     rel = path.relative_to(repo_root).as_posix()
     items = _text_lines(path)
     return (
-        _match_patterns(items, rel, PATTERNS, allowed_lines=ALLOWLIST),
+        _match_blocks(_text_blocks(path), rel, PATTERNS, allowed_lines=ALLOWLIST),
         _match_patterns(items, rel, PATH_PATTERNS),
         _match_patterns(items, rel, PATH_SMELL_PATTERNS),
     )
