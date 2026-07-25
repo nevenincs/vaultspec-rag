@@ -150,7 +150,17 @@ def _stop_graceful_drain_seconds() -> float:
     console, so the signal is never delivered and waiting on it would buy
     nothing but latency before the forced kill.
     """
-    if sys.platform == "win32":
+    return graceful_drain_seconds_for(sys.platform)
+
+
+def graceful_drain_seconds_for(platform: str) -> float:
+    """Return the drain window worth funding on *platform*.
+
+    The platform is an argument because the rule is about the platform, not
+    about the host running the code: both branches are statable anywhere, and
+    a host can only ever exercise one of them.
+    """
+    if platform == "win32":
         return _DEFAULT_GRACEFUL_DRAIN_SECONDS
     return _STOP_GRACEFUL_DRAIN_SECONDS
 
