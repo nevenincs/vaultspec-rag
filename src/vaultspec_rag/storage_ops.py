@@ -43,7 +43,7 @@ from .storage_survey import NamespaceSurvey, classify_namespaces
 
 if TYPE_CHECKING:
     import threading
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from qdrant_client import QdrantClient
 
@@ -120,6 +120,7 @@ __all__ = [
     "prune_debris",
     "prune_orphaned",
     "read_geometry",
+    "reclaim_superseded_generations",
     "reconcile_collection",
     "reconcile_collections",
     "run_maintenance_cycle",
@@ -1942,3 +1943,110 @@ def run_maintenance_cycle(
         surveys=surveys,
         reconcile=reconcile,
     )
+
+
+def reclaim_superseded_generations(
+    client: QdrantClient,
+    *,
+    roots: Mapping[str, str],
+    stamps: Mapping[str, str],
+    now: datetime,
+    grace_hours: float,
+    reader_present: Callable[[str], bool],
+    dry_run: bool,
+) -> tuple[list[DeleteResult], dict[str, str]]:
+    """Drop code generations no root serves any more, and advance their clocks.
+
+    Read-and-drop only. Every gate lives in ``decide_generation_reclaim``; this
+    gathers the evidence that gate needs and acts on nothing it did not
+    approve.
+
+    The served pointer is resolved HERE, per root, at the moment of the
+    decision - never carried in from a survey gathered earlier in the cycle. A
+    collection can become the served one between a gather and a drop, and a
+    stale name would walk past every gate while pointing at a live index.
+
+    Returns the per-collection outcomes and the advanced stamp map. The caller
+    persists the stamps; nothing is written here beyond the drops themselves,
+    so a failure part-way leaves the clocks untouched rather than crediting a
+    window that did not run.
+
+    Args:
+        client: Qdrant client for the managed server.
+        roots: Root path to that root's derived code collection name.
+        stamps: Collection to ``first_seen_unreferenced`` ISO timestamp.
+        now: The evaluation clock (timezone-aware).
+        grace_hours: Continuous unreferenced hours before a drop is allowed.
+        reader_present: Predicate answering whether a root has a live lease.
+        dry_run: When True, plan and mutate nothing.
+    """
+    from .generation_survey import (
+        advance_generation_stamps,
+        decide_generation_reclaim,
+        survey_generations,
+    )
+
+    live = [c.name for c in client.get_collections().collections]
+    reports = survey_generations(roots, live)
+    results: list[DeleteResult] = []
+    droppable: list[str] = []
+    held: list[str] = []
+    unreferenced: list[str] = []
+
+    for report in reports:
+        has_reader = reader_present(report.root)
+        for collection in report.unreferenced:
+            unreferenced.append(collection)
+            decision = decide_generation_reclaim(
+                collection,
+                stamps=stamps,
+                now=now,
+                grace_hours=grace_hours,
+                reader_present=has_reader,
+                # survey_generations already omitted any root whose pointer it
+                # could not read, so every collection reaching here came from a
+                # root whose served name was legible at decision time.
+                pointer_verifiable=True,
+            )
+            if decision.action == "held":
+                held.append(collection)
+            if decision.droppable:
+                droppable.append(collection)
+            else:
+                results.append(
+                    DeleteResult(collection, "skipped", reason=decision.reason)
+                )
+
+    # A root omitted from the report had an unreadable pointer, so any
+    # generation of it that exists must have its clock reset rather than keep
+    # accumulating a window it did not continuously earn.
+    reported = {report.root for report in reports}
+    for root, derived in roots.items():
+        if root in reported:
+            continue
+        held.extend(name for name in live if name.startswith(derived))
+
+    dropped: set[str] = set()
+    for collection in droppable:
+        if dry_run:
+            results.append(DeleteResult(collection, "would_remove", [collection]))
+            continue
+        try:
+            client.delete_collection(collection_name=collection)
+        except (OSError, RuntimeError) as exc:
+            results.append(DeleteResult(collection, "failed", reason=str(exc)))
+            held.append(collection)
+            continue
+        results.append(DeleteResult(collection, "removed", [collection]))
+        dropped.add(collection)
+
+    # A dropped collection keeps no clock: it no longer exists, and a stamp for
+    # it would outlive it as debris that never expires. A failed drop is not
+    # dropped, so it stays in the held set and its window restarts.
+    advanced = advance_generation_stamps(
+        stamps,
+        unreferenced=(name for name in unreferenced if name not in dropped),
+        held=[*held, *dropped],
+        now_iso=now.isoformat(),
+    )
+    return results, advanced

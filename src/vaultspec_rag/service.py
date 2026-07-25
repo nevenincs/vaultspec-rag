@@ -802,6 +802,25 @@ class ServiceRegistry:
             graph_cache=graph_cache,
         )
 
+    def has_live_lease(self, root: Path) -> bool:
+        """Return whether any worker currently holds *root*'s project slot.
+
+        A store binds its collection name once at construction and keeps it for
+        its whole life, so a lease taken before a publication swap is still
+        resolving the collection that swap superseded. Maintenance asks this
+        before dropping one: a live lease means a reader in this process may
+        still be reading it, and no amount of waiting makes that observation
+        safe to ignore.
+
+        Answers only for this process. Readers elsewhere are unobservable,
+        which is why the caller pairs this with a persisted grace window rather
+        than treating a false here as proof that nothing holds the collection.
+        """
+        resolved = root.resolve()
+        with self._lock:
+            slot = self._projects.get(resolved)
+            return slot is not None and slot.ref_count > 0
+
     def close_project(self, root: Path) -> None:
         """Close and remove the project slot for *root*.
 
