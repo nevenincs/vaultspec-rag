@@ -847,10 +847,45 @@ def storage_migrate(
     finally:
         local.close()
         server.close()
+    # Provenance first, then attribution: the carry reads the source home, and
+    # the re-key rewrites it.
+    _carry_identity_on_migrate(root, to_backend, local_path, name_map, preview, results)
     _rekey_manifest_on_migrate(root, to_backend, preview, results)
     _render_migrate(results, json_mode)
     if not dry_run and not yes and any(r.status == "would_migrate" for r in results):
         raise typer.Exit(1)
+
+
+def _carry_identity_on_migrate(
+    root: str,
+    to_backend: str,
+    local_path: Path,
+    name_map: dict[str, str],
+    preview: bool,
+    results: list[MigrateResult],
+) -> None:
+    """Move each migrated collection's identity record onto its target name.
+
+    A migrate copies vectors through the raw client, which stamps nothing, so
+    without this the destination reads ``unverifiable`` despite the source's
+    provenance being known. Skipped on a preview; best-effort, so a bookkeeping
+    hiccup never fails an applied data move - a namespace that loses its record
+    degrades to ``unverifiable``, which is the safe direction.
+    """
+    if preview:
+        return
+    from ..storage_ops import carry_migrated_identity
+
+    try:
+        carry_migrated_identity(
+            root,
+            name_map=name_map,
+            to_backend=to_backend,
+            local_dir=local_path,
+            results=results,
+        )
+    except Exception as exc:  # best-effort provenance; never fail an applied move
+        typer.echo(f"Note: migrated data but could not carry its identity: {exc}")
 
 
 def _rekey_manifest_on_migrate(

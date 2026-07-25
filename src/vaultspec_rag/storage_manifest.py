@@ -131,11 +131,21 @@ class ManifestEntry:
 
 @dataclass(frozen=True)
 class SnapshotCollection:
-    """One collection artifact recorded in an archive snapshot."""
+    """One collection artifact recorded in an archive snapshot.
+
+    ``identity`` carries what produced the archived vectors. Reclamation
+    archives a point-bearing namespace before destroying it, and destroying it
+    also destroys the live manifest entry that held its identity; without the
+    record travelling into the archive, anything restored from that snapshot
+    could only ever be judged ``unverifiable``. ``None`` is the honest value for
+    a collection that predated stamping - the archive says the provenance was
+    unknown at archive time rather than inventing one.
+    """
 
     name: str
     snapshot_file: str
     points: int
+    identity: store_schema.CollectionIdentity | None = None
 
 
 @dataclass(frozen=True)
@@ -171,6 +181,13 @@ def write_snapshot_manifest(
                 "name": item.name,
                 "snapshot_file": item.snapshot_file,
                 "points": item.points,
+                # Written as an explicit null when absent rather than omitted,
+                # so a reader can tell "this archive predates stamping" from
+                # "this archive predates the field" and never defaults either
+                # into a provenance claim.
+                "identity": (
+                    item.identity.to_payload() if item.identity is not None else None
+                ),
             }
             for item in manifest.collections
         ],
@@ -217,6 +234,66 @@ def manifest_path() -> Path:
     return _status_dir_path() / _MANIFEST_FILENAME
 
 
+def _parse_identity_map(raw: object) -> dict[str, store_schema.CollectionIdentity]:
+    """Rebuild one record's per-collection identity map, dropping what is unusable.
+
+    A malformed entry is dropped rather than defaulted, so it reads as absent
+    evidence - ``unverifiable`` - instead of a provenance claim this loader
+    invented.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    identity: dict[str, store_schema.CollectionIdentity] = {}
+    for name, payload in cast("dict[str, object]", raw).items():
+        recovered = store_schema.CollectionIdentity.from_payload(payload)
+        if recovered is not None:
+            identity[name] = recovered
+    return identity
+
+
+def _entry_from_record(prefix: str, record: dict[str, object]) -> ManifestEntry | None:
+    """Rebuild one root's entry from its persisted record, or ``None`` if unusable.
+
+    Every field is parsed leniently because a pre-upgrade manifest legitimately
+    lacks the newer ones; only an unusable root path disqualifies the record,
+    because without it nothing can be attributed.
+    """
+    root = record.get("root")
+    if not isinstance(root, str):
+        return None
+    backend = str(record.get("backend", ""))
+    raw_collections = record.get("collections")
+    collections = (
+        tuple(
+            value
+            for value in cast("list[object]", raw_collections)
+            if isinstance(value, str)
+        )
+        if isinstance(raw_collections, list)
+        else _legacy_collections(prefix, backend)
+    )
+    raw_schema_version = record.get("storage_schema_version", 1)
+    schema_version = (
+        raw_schema_version
+        if isinstance(raw_schema_version, int)
+        and not isinstance(raw_schema_version, bool)
+        else 1
+    )
+    return ManifestEntry(
+        prefix=prefix,
+        root=root,
+        backend=backend,
+        last_indexed=str(record.get("last_indexed", "")),
+        # Lenient: pre-upgrade manifests lack the field; absent means
+        # "never observed orphaned", so the first reclaim can happen no
+        # earlier than one full grace window after upgrade.
+        first_seen_orphaned=str(record.get("first_seen_orphaned", "")),
+        storage_schema_version=schema_version,
+        collections=collections,
+        collection_identity=_parse_identity_map(record.get("collection_identity")),
+    )
+
+
 def load_manifest() -> dict[str, ManifestEntry]:
     """Load the manifest as a mapping of prefix to entry.
 
@@ -232,8 +309,6 @@ def load_manifest() -> dict[str, ManifestEntry]:
     path = manifest_path()
     try:
         raw = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return {}
     except OSError:
         return {}
     try:
@@ -245,56 +320,13 @@ def load_manifest() -> dict[str, ManifestEntry]:
     roots_obj = cast("dict[str, object]", parsed).get("roots")
     if not isinstance(roots_obj, dict):
         return {}
-    roots = cast("dict[str, object]", roots_obj)
     entries: dict[str, ManifestEntry] = {}
-    for prefix, record_obj in roots.items():
+    for prefix, record_obj in cast("dict[str, object]", roots_obj).items():
         if not isinstance(record_obj, dict):
             continue
-        record = cast("dict[str, object]", record_obj)
-        root = record.get("root")
-        if not isinstance(root, str):
-            continue
-        backend = str(record.get("backend", ""))
-        raw_collections = record.get("collections")
-        collections = (
-            tuple(
-                value
-                for value in cast("list[object]", raw_collections)
-                if isinstance(value, str)
-            )
-            if isinstance(raw_collections, list)
-            else _legacy_collections(prefix, backend)
-        )
-        raw_schema_version = record.get("storage_schema_version", 1)
-        schema_version = (
-            raw_schema_version
-            if isinstance(raw_schema_version, int)
-            and not isinstance(raw_schema_version, bool)
-            else 1
-        )
-        raw_identity = record.get("collection_identity")
-        identity: dict[str, store_schema.CollectionIdentity] = {}
-        if isinstance(raw_identity, dict):
-            for name, payload in cast("dict[str, object]", raw_identity).items():
-                # A malformed record is dropped rather than defaulted, so it
-                # reads as absent evidence (unverifiable) instead of a claim
-                # this loader invented.
-                parsed = store_schema.CollectionIdentity.from_payload(payload)
-                if parsed is not None:
-                    identity[name] = parsed
-        entries[prefix] = ManifestEntry(
-            prefix=prefix,
-            root=root,
-            backend=backend,
-            last_indexed=str(record.get("last_indexed", "")),
-            # Lenient: pre-upgrade manifests lack the field; absent means
-            # "never observed orphaned", so the first reclaim can happen no
-            # earlier than one full grace window after upgrade.
-            first_seen_orphaned=str(record.get("first_seen_orphaned", "")),
-            storage_schema_version=schema_version,
-            collections=collections,
-            collection_identity=identity,
-        )
+        entry = _entry_from_record(prefix, cast("dict[str, object]", record_obj))
+        if entry is not None:
+            entries[prefix] = entry
     return entries
 
 
