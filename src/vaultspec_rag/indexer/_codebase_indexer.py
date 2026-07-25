@@ -28,12 +28,7 @@ from concurrent.futures.process import BrokenProcessPool
 from functools import partial
 from typing import TYPE_CHECKING, NamedTuple
 
-from .._index_breadth import (
-    PUBLISHED_POINTS_KEY,
-    SUPERSEDED_REGIME_KEY,
-    parse_published_points,
-    parse_superseded_regime,
-)
+from .._index_breadth import PUBLISHED_POINTS_KEY, parse_published_points
 from .._job_errors import JobError, JobErrorKind
 from .._store_models import (
     generation_code_collection,
@@ -590,20 +585,9 @@ class CodebaseIndexer:
         self._reuse_stats = None
         self._donor_reuse = None
         self._drift_owner = None
-        self._superseded_cleared = False
         # Cleared per run so a generation target can never leak from a
         # finished rebuild into the next job on this indexer.
         self._code_build_target = None
-
-    #: Set when a gate reconciled in place instead of rebuilding destructively,
-    #: leaving points from a regime the current configuration no longer
-    #: produces. Instance-level default so a run that never trips a gate reads
-    #: the sidecar's carried value rather than an unset attribute.
-    _superseded_regime: bool = False
-
-    #: Set when this run dropped the collection, so the carried mark from
-    #: the outgoing sidecar must not survive into the one being written.
-    _superseded_cleared: bool = False
 
     #: Collection a clean rebuild is populating, or ``None`` outside one. Held
     #: on the indexer rather than the store because the store is shared with
@@ -1686,31 +1670,6 @@ class CodebaseIndexer:
         )
         return has_evidence and not self.store.code_collection_exists()
 
-    def _reconcile_superseded_regime(self, cause: str) -> None:
-        """Note that a gate is reconciling instead of rebuilding destructively.
-
-        These gates fire because stored vectors were produced under a regime
-        the current configuration no longer uses. A destructive rebuild would
-        clear them, at the cost of emptying the collection for the whole
-        repopulation - and nothing in this path carries an operator request to
-        destroy anything, because the caller is a file-change reconcile.
-
-        Reconciling instead keeps every published point readable throughout.
-        The cost is that superseded points are not removed: chunk identity
-        embeds a content hash, so re-encoding writes new points beside the old
-        ones rather than over them, and both regimes are searchable until a
-        rebuild the operator asks for clears them. That is a real retrieval
-        defect and is logged as one, not as routine progress.
-        """
-        logger.warning(
-            "%s; reconciling without dropping the code collection so search "
-            "keeps serving. Points encoded under the superseded regime remain "
-            "searchable alongside the re-encoded ones until an explicit "
-            "rebuild clears them",
-            cause,
-        )
-        self._superseded_regime = True
-
     def _published_evidence_lost(self) -> bool:
         """Return whether the store fails to back the carried incremental evidence.
 
@@ -2630,11 +2589,6 @@ class CodebaseIndexer:
         )
 
         if effective_clean:
-            # A generation build removes every superseded point by not carrying
-            # them into the new collection, so the mark this clears is
-            # genuinely no longer true.
-            self._superseded_regime = False
-            self._superseded_cleared = True
             # Build beside the served collection, never into it. The served one
             # keeps answering searches for the whole build, and an interrupted
             # build leaves this collection unreferenced rather than leaving the
@@ -2871,9 +2825,12 @@ class CodebaseIndexer:
         needs_embed_rebuild = self._needs_embed_rebuild()
         run_control.checkpoint()
         if needs_embed_rebuild:
-            self._reconcile_superseded_regime("Codebase embedding input format changed")
+            logger.info(
+                "Codebase embedding input format changed; rebuilding the code index "
+                "into a new generation",
+            )
             return self._full_index_locked(
-                clean=False,
+                clean=True,
                 policy=policy,
                 discovered_paths=discovered_paths,
                 reporter=reporter,
@@ -2885,9 +2842,12 @@ class CodebaseIndexer:
             run_control=run_control,
         )
         if escalate_clean:
-            self._reconcile_superseded_regime("Codebase content-shaping config changed")
+            logger.info(
+                "Codebase content-shaping config changed; rebuilding the code index "
+                "into a new generation",
+            )
             return self._full_index_locked(
-                clean=False,
+                clean=True,
                 policy=policy,
                 discovered_paths=discovered_paths,
                 reporter=reporter,
@@ -3299,15 +3259,6 @@ class CodebaseIndexer:
         stamped[CONTENT_EPOCH_KEY] = content
         if published_points is not None:
             stamped[PUBLISHED_POINTS_KEY] = str(published_points)
-        # Carried forward, not recomputed: a reconcile republishes the sidecar
-        # with the current format marker, so the gate that set this will not
-        # fire again even though the superseded points are still there. Only a
-        # rebuild an operator asked for removes them, and only that clears it.
-        carried = not self._superseded_cleared and parse_superseded_regime(
-            self._read_meta_raw()
-        )
-        if self._superseded_regime or carried:
-            stamped[SUPERSEDED_REGIME_KEY] = "1"
         tmp_path.write_text(json.dumps(stamped, indent=2), encoding="utf-8")
         os.replace(tmp_path, self._meta_path)
 

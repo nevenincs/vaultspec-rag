@@ -131,7 +131,6 @@ def _handle_service_success(
     if not results:
         _render_empty_service_results(payload, query, search_type)
         _render_breadth_shortfall(payload)
-        _render_superseded_regime(payload)
         _render_partial_domain_failures(payload)
         return
     _display_search_results(
@@ -142,7 +141,6 @@ def _handle_service_success(
         root=target,
     )
     _render_breadth_shortfall(payload)
-    _render_superseded_regime(payload)
     _render_partial_domain_failures(payload)
 
 
@@ -172,32 +170,6 @@ def _render_breadth_shortfall(payload: dict[str, object]) -> None:
     _plain(
         "  These results are drawn from an incomplete index, so an absent "
         "result is not evidence that no such code exists.",
-        soft_wrap=True,
-    )
-    _plain("  Next action: vaultspec-rag index --type code --full")
-
-
-def _render_superseded_regime(payload: dict[str, object]) -> None:
-    """Warn that the index answering this search mixes two encoding regimes.
-
-    Set when a gate reconciled in place rather than rebuilding destructively,
-    which keeps every point readable at the cost of leaving the superseded
-    ones searchable. The service settles the fact; this renders it and
-    compares nothing.
-    """
-    index_state = payload.get("index_state")
-    if not isinstance(index_state, dict):
-        return
-    if cast("dict[str, object]", index_state).get("superseded_regime") is not True:
-        return
-    _plain(
-        "Warning: this index still holds sections encoded under a superseded "
-        "format, so ranking mixes two regimes.",
-        soft_wrap=True,
-    )
-    _plain(
-        "  Results remain usable, but relevance ordering is degraded until "
-        "the superseded sections are cleared.",
         soft_wrap=True,
     )
     _plain("  Next action: vaultspec-rag index --type code --full")
@@ -397,7 +369,7 @@ def _try_in_process_search(
         else counts[search_type] > 0
     )
     if envelope is not None:
-        from .._index_breadth import code_breadth_shortfall, code_regime_superseded
+        from .._index_breadth import code_breadth_shortfall
         from .._search_state import search_index_state
 
         # Breadth is published for the code index alone, so a vault- or
@@ -416,10 +388,6 @@ def _try_in_process_search(
             requested_root=target,
             search_type=search_type,
             shortfall=shortfall,
-            superseded_regime=(
-                search_type in (PublicSourceType.CODE, PublicSourceType.COMBINED)
-                and code_regime_superseded(target)
-            ),
         )
     try:
         status_ctx = (
