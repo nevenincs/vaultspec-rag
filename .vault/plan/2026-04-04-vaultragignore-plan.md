@@ -18,6 +18,28 @@ root that excludes git-tracked files from codebase indexing. Plus CLI `--dry-run
 See `2026-04-04-vaultragignore-adr` for design decisions (D1–D9).
 See `2026-04-04-vaultragignore-research` for investigation.
 
+### Phase `P01` - Ignore-file support in the codebase indexer
+
+Recognise a root-level ignore file in gitignore syntax alongside the existing git ignore rules, combine the two specifications so either can exclude a path, and accept caller-supplied extra excludes.
+
+- [x] `P01.S01` - Accept caller-supplied extra exclude patterns on the codebase indexer and build the git ignore specification through its own extracted helper so a second specification can sit beside it; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `P01.S02` - Build the root-level ignore-file specification in gitignore syntax and apply it in the scan walk so a path excluded by either specification is skipped, including git-tracked files; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `P01.S03` - Expose the resolved file set as a public scan entry point so a caller can preview what would be indexed without indexing it; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+
+### Phase `P02` - CLI preview and exclude surface
+
+Add the preview and extra-exclude flags, returning the preview before any service delegation, and warn when an exclude cannot be honoured on the delegated path.
+
+- [x] `P02.S04` - Add the preview and repeatable exclude flags to the index command, returning the preview before the service-delegation branch so a preview never needs a running service; `src/vaultspec_rag/cli/_index.py`.
+- [x] `P02.S05` - Warn when an exclude is supplied against a delegated run without a preview, and forward the extra excludes on the in-process path; `src/vaultspec_rag/cli/_index.py`.
+
+### Phase `P03` - Tests
+
+Cover the combined specification, the root-only scope, the preview scoping and ordering, and prove end-to-end that the ignore file removes a git-tracked file from the index.
+
+- [x] `P03.S06` - Cover the two-specification combination, the root-only lookup, and the extra-exclude merge with unit tests over the scan; `src/vaultspec_rag/tests/`.
+- [x] `P03.S07` - Prove end-to-end against a real index that a path named by the ignore file is absent afterwards, and cover the preview scoping and its ordering ahead of delegation; `src/vaultspec_rag/tests/integration/`.
+
 ## Phase 1: Core — `indexer.py`
 
 ### 1.1 Add `extra_excludes` to constructor
@@ -214,3 +236,9 @@ depend on both Phase 1 and Phase 2.
 - Run `vaultspec-rag index --dry-run --exclude "*.py"` — verify Python files absent
 - Run `vaultspec-rag index --type code` with and without `.vaultragignore` — verify
   Qdrant chunk counts differ as expected
+
+## Description
+
+See the summary above.
+
+## Steps

@@ -20,7 +20,33 @@ sister core PR that teaches core's sync to reconcile (prune orphans)
 must land first, then the rag PR adds bundling, orchestration, CLI
 wiring, and integration tests.
 
-## Proposed Changes
+### Phase `P01` - Companion reconciling sync
+
+Land the companion-side reconciling sync that prunes orphaned managed entries, so an uninstall can be a true mirror of an install.
+
+- [x] `P01.S01` - Land the companion-side reconciling sync that tracks ownership of managed entries and prunes the orphans a previous install left behind, covered against real filesystem fixtures; `pyproject.toml`.
+
+### Phase `P02` - Bundling foundation
+
+Pin the companion version carrying the reconciling sync and bundle the shipped rule, skill and MCP definitions into the wheel.
+
+- [x] `P02.S02` - Pin the companion version carrying the reconciling sync and bundle the shipped rule, skill and MCP definitions into the built wheel, confirming the bundled tree by building locally; `pyproject.toml`.
+
+### Phase `P03` - Bundled asset module and orchestration
+
+Expose the bundled assets through their own module and orchestrate enrollment and removal through the companion public API, with no subprocess and no fallback path.
+
+- [x] `P03.S03` - Expose the bundled rule, skill and MCP definitions through their own module so the install path reads them from the installed distribution rather than the source tree; `src/vaultspec_rag/builtins/__init__.py`.
+- [x] `P03.S04` - Orchestrate enrollment and removal through the companion public API as exact mirrors of each other, calling it directly with no subprocess and no fallback path; `src/vaultspec_rag/commands/_install.py`.
+
+### Phase `P04` - CLI surface and tests
+
+Add the install and uninstall verbs reporting per-entry outcomes, and prove the round trip leaves the workspace as it started.
+
+- [x] `P04.S05` - Add the install and uninstall verbs reporting the per-entry outcome vocabulary for each managed entry, in both human and structured output; `src/vaultspec_rag/cli/_install.py`.
+- [x] `P04.S06` - Prove against a real workspace that install then uninstall returns it to its starting state with no orphaned managed entry, and that a repeated install is a successful no-op; `src/vaultspec_rag/tests/test_cli_install.py`.
+
+## Description
 
 The work follows the architectural decisions in the related ADR. Two
 non-trivial constraints shape the plan:
@@ -50,7 +76,7 @@ A future repo-level refactor toward a layered `cli/` + `core/`
 subpackage shape is filed as a separate follow-up issue and is
 explicitly out of scope here.
 
-## Tasks
+## Steps
 
 The plan is split into six phases. Phases 2–6 cannot start until
 Phase 1 lands and rag's dependency pin is bumped to the new core
