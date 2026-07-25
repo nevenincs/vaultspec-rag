@@ -25,7 +25,7 @@ uv run vaultspec-rag --version
 <!-- x-release-please-start-version -->
 
 ```
-vaultspec-rag v0.3.8
+vaultspec-rag v0.3.9
 ```
 
 <!-- x-release-please-end -->
