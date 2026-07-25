@@ -43,6 +43,7 @@ __all__ = [
     "version_callback",
 ]
 
+
 class _LiteralArgvGroup(TyperGroup):
     """Root command group that hands ``sys.argv`` to the parser verbatim.
 
