@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import pathlib
 import threading
@@ -25,6 +26,7 @@ from ._document_meta import (
     read_document_meta,
 )
 from ._file_state import FileStateKind
+from ._index_lifecycle import incremental_mode, run_index_lifecycle
 from ._route_migration import reconcile_generation_storage
 from ._run_ledger import FinalizationPhase, RunOperation
 from ._run_policy import RunPolicy
@@ -36,7 +38,7 @@ from ._streaming import (
 from ._vault_prep import IndexResult
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable, Sequence
 
     from .._store_models import DocumentChunk
     from ..embeddings import EmbeddingModel
@@ -51,6 +53,8 @@ if TYPE_CHECKING:
     from ._run_ledger import CommitUnit
 
 __all__ = ["DocumentIndexPreflight", "DocumentIndexer", "DocumentScopedPreflight"]
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -944,6 +948,22 @@ class DocumentIndexer:
         else:
             counts.updated += chunk_count
 
+    @staticmethod
+    def _completion_fields(
+        prep: PreprocessContext | None,
+    ) -> Callable[[IndexResult], dict[str, object]]:
+        """Return the file and preprocess counters this kind reports on success."""
+
+        def fields(result: IndexResult) -> dict[str, object]:
+            return {
+                "files": result.files,
+                "preprocess_rules": _preprocess_glue.prep_rule_count(prep),
+                "preprocess_ok": result.preprocess_ok,
+                "preprocess_skipped": result.preprocess_skipped,
+            }
+
+        return fields
+
     def full_index(
         self,
         *,
@@ -962,6 +982,45 @@ class DocumentIndexer:
         self._resolve_reuse(policy)
         limits = self._support_limits()
         prep = self._preprocess_context(policy, limits)
+        return run_index_lifecycle(
+            clock=self.store,
+            event_logger=logger,
+            source="document",
+            mode="full",
+            clean=clean,
+            root=self.root_dir,
+            run_control=run_control,
+            body=lambda: self._full_index_run(
+                started=started,
+                clean=clean,
+                policy=policy,
+                paths=paths,
+                limits=limits,
+                prep=prep,
+                reporter=reporter,
+                run_control=run_control,
+            ),
+            completion_fields=self._completion_fields(prep),
+        )
+
+    def _full_index_run(
+        self,
+        *,
+        started: float,
+        clean: bool,
+        policy: ResolvedIndexPolicy,
+        paths: tuple[pathlib.Path, ...],
+        limits: SupportProfileLimits,
+        prep: PreprocessContext | None,
+        reporter: ProgressReporter,
+        run_control: RunControl,
+    ) -> IndexResult:
+        """Full document reconciliation, inside the shared run lifecycle.
+
+        Takes the writer lock itself rather than under it, because the
+        checkpoint it opens and the pending finalization it may resume must
+        be reachable before any exclusive span begins.
+        """
         preprocessing_disabled = policy.execution_mode == "off" and any(
             policy.match_preprocess(path.relative_to(self.root_dir).as_posix())
             is not None
@@ -1070,6 +1129,9 @@ class DocumentIndexer:
             ):
                 previous = None
         if previous is None:
+            # Incompatible metadata means this run is genuinely a full one.
+            # Delegating to the public entry point keeps it inside exactly one
+            # lifecycle, reported under the mode it actually ran.
             return self.full_index(
                 reporter=reporter,
                 preflight=DocumentIndexPreflight(
@@ -1080,6 +1142,42 @@ class DocumentIndexer:
                 run_control=run_control,
             )
 
+        return run_index_lifecycle(
+            clock=self.store,
+            event_logger=logger,
+            source="document",
+            mode=incremental_mode(changed_paths),
+            clean=False,
+            root=self.root_dir,
+            run_control=run_control,
+            body=lambda: self._incremental_index_run(
+                started=started,
+                policy=policy,
+                prep=prep,
+                limits=limits,
+                changed_paths=changed_paths,
+                authorized_paths=authorized_paths,
+                previous_meta_files=previous.files,
+                reporter=reporter,
+                run_control=run_control,
+            ),
+            completion_fields=self._completion_fields(prep),
+        )
+
+    def _incremental_index_run(
+        self,
+        *,
+        started: float,
+        policy: ResolvedIndexPolicy,
+        prep: PreprocessContext | None,
+        limits: SupportProfileLimits,
+        changed_paths: Iterable[pathlib.Path] | None,
+        authorized_paths: tuple[pathlib.Path, ...],
+        previous_meta_files: Sequence[DocumentFileMetadata],
+        reporter: ProgressReporter,
+        run_control: RunControl,
+    ) -> IndexResult:
+        """Incremental document reconciliation, inside the shared run lifecycle."""
         operation = (
             RunOperation.SCOPED_INCREMENTAL
             if changed_paths is not None
@@ -1103,7 +1201,7 @@ class DocumentIndexer:
             return resumed
         previous_files = self._checkpoint_files(checkpoint)
         if not previous_files:
-            previous_files = {item.source_path: item for item in previous.files}
+            previous_files = {item.source_path: item for item in previous_meta_files}
         selected = self._select_incremental_paths(
             authorized_paths,
             previous_files,
