@@ -7,6 +7,8 @@ modified: '2026-07-25'
 related:
   - "[[2026-07-21-large-index-resilience-adr]]"
   - "[[2026-07-23-chunk-id-uniqueness-adr]]"
+  - '[[2026-07-25-index-drift-circuit-accounting-adr]]'
+  - '[[2026-07-25-document-index-drift-parity-adr]]'
 ---
 
 <!-- FRONTMATTER RULES:

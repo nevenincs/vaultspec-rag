@@ -8,6 +8,8 @@ related:
   - "[[2026-07-25-index-resume-drift-race-research]]"
   - "[[2026-07-21-large-index-resilience-adr]]"
   - "[[2026-07-23-chunk-id-uniqueness-adr]]"
+  - '[[2026-07-25-index-drift-circuit-accounting-adr]]'
+  - '[[2026-07-25-document-index-drift-parity-adr]]'
 ---
 
 <!-- FRONTMATTER RULES:
@@ -41,7 +43,7 @@ related:
      - NEVER reference file paths in the body. If you must name a source file,
        class, or function, use inline backtick code: `src/module.py`. -->
 
-# `index-resume-drift-race` adr: `seam the codebase indexer and give drift a single owner` | (**status:** `proposed`)
+# `index-resume-drift-race` adr: `seam the codebase indexer and give drift a single owner` | (**status:** `accepted`)
 
 <!-- DOCUMENT BOUNDARY:
      This record owns the decision and only the decision. Grounding evidence
@@ -189,11 +191,14 @@ some call sites to become less direct.
 The bounded retry introduces a new failure mode: a pathologically hot path can
 exhaust its budget every generation and stay stale indefinitely. Deferral makes
 that visible as a stale path rather than a failed run, which is the better
-failure, but it is a failure and should be observable.
+failure. A deferred path emits a warning naming the path and the exhausted
+budget; silent deferral is not acceptable.
 
 Turning the length gate to failing will surface other modules over threshold.
 That is the point, and it will cost work this record does not scope.
 
-Left open: whether the document index path shares this shape, and whether the
-circuit breaker should distinguish drift-induced failure from genuine fault.
-Both are recorded as uninvestigated in the grounding research.
+This record decides the seam and the drift owner for the code index path. The
+circuit-breaker accounting for drift outcomes is decided by
+`2026-07-25-index-drift-circuit-accounting-adr`, and the document index path's
+resume semantics by `2026-07-25-document-index-drift-parity-adr`. Each is a
+decision in its own right and carries its own record.
