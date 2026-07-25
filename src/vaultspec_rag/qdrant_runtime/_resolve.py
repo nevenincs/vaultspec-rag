@@ -23,7 +23,6 @@ import sys
 import time
 import urllib.error
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -42,19 +41,13 @@ from ._constants import (
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "STORE_FORMAT_MATCH",
-    "STORE_FORMAT_MIGRATED",
-    "STORE_FORMAT_SKEW",
-    "STORE_FORMAT_UNVERIFIABLE",
     "QdrantEndpointProbe",
     "QdrantIdentity",
-    "StoreFormatVerdict",
     "_bounded_call",
     "asset_for_platform",
     "binary_filename",
     "classify_qdrant_state",
     "decide_qdrant_action",
-    "evaluate_store_format",
     "has_provisioned_binary",
     "owner_pid_is_live_owner",
     "owner_pid_witness_state",
@@ -68,13 +61,10 @@ __all__ = [
     "qdrant_identity_path",
     "read_manifest",
     "read_qdrant_identity",
-    "read_store_format",
     "reap_qdrant_orphan",
     "resolve_binary",
-    "store_format_path",
     "verify_attachable",
     "write_qdrant_identity",
-    "write_store_format",
 ]
 
 _START_TIME_TOLERANCE_SECONDS = 1e-6
@@ -734,186 +724,6 @@ def write_qdrant_identity(
     os.replace(tmp, path)
     logger.debug("wrote qdrant identity sidecar at %s (owner pid %d)", path, owner_pid)
     return path
-
-
-#: Name of the store-format record, written INSIDE the storage directory it
-#: describes. It has to travel with the data rather than sit beside it: the
-#: identity sidecar is a sibling of the storage dir and describes the running
-#: process, so it says nothing about a store that was moved, restored from a
-#: copy, or opened by a binary this machine never recorded. A leading dot keeps
-#: it out of every collection enumeration.
-_STORE_FORMAT_FILENAME = ".vaultspec-store-format.json"
-
-#: The recorded server version equals the one about to run: this exact binary
-#: wrote this store, so a load failure is about the data, not the format.
-STORE_FORMAT_MATCH = "match"
-#: The store was last written by a different server version than the one about
-#: to run. A load failure here is indistinguishable from format incompatibility.
-STORE_FORMAT_SKEW = "skew"
-#: A skew whose store then opened successfully: the on-disk format has been
-#: carried forward by the new binary and the older one can no longer read it.
-STORE_FORMAT_MIGRATED = "migrated"
-#: Nothing to compare - the store carries no record, or the version about to run
-#: is unknown (an operator-supplied binary). Never a pass, never a failure.
-STORE_FORMAT_UNVERIFIABLE = "unverifiable"
-
-
-@dataclass(frozen=True)
-class StoreFormatVerdict:
-    """Whether the server about to run is the one that wrote this store.
-
-    Attributes:
-        status: One of :data:`STORE_FORMAT_MATCH`, :data:`STORE_FORMAT_SKEW`,
-            :data:`STORE_FORMAT_MIGRATED`, :data:`STORE_FORMAT_UNVERIFIABLE`.
-        recorded: The server version the store records, or ``""``.
-        running: The server version about to run (or now running), or ``""``.
-        reason: Operator-facing prose naming what could or could not be proven.
-    """
-
-    status: str
-    recorded: str
-    running: str
-    reason: str
-
-    @property
-    def quarantine_trustworthy(self) -> bool:
-        """Whether a load failure may be attributed to one collection.
-
-        Only a proven match earns that attribution. Under any other verdict a
-        panic naming a collection is equally explained by the whole store being
-        unreadable by this binary, and quarantining on it would move a healthy
-        index out of the load set - a silent loss that no later signal recovers.
-        """
-        return self.status == STORE_FORMAT_MATCH
-
-    def to_dict(self) -> dict[str, object]:
-        """Return a JSON-serialisable view for the operability surfaces."""
-        return {
-            "status": self.status,
-            "recorded": self.recorded or None,
-            "running": self.running or None,
-            "reason": self.reason,
-        }
-
-
-def store_format_path(storage_dir: Path) -> Path:
-    """Path of the store-format record inside *storage_dir*."""
-    return storage_dir / _STORE_FORMAT_FILENAME
-
-
-def read_store_format(storage_dir: Path) -> str:
-    """Return the server version recorded inside *storage_dir*, or ``""``.
-
-    An absent, unreadable, or malformed record reads as "no record" rather than
-    raising: the caller's contract is that an unproven store is unverifiable,
-    and unverifiable is already the safe verdict.
-    """
-    path = store_format_path(storage_dir)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return ""
-    except (OSError, ValueError) as exc:
-        logger.debug("qdrant store-format record unreadable at %s: %s", path, exc)
-        return ""
-    if not isinstance(data, dict):
-        return ""
-    version = cast("dict[str, object]", data).get("qdrant_version")
-    return version if isinstance(version, str) else ""
-
-
-def write_store_format(storage_dir: Path, *, qdrant_version: str) -> Path | None:
-    """Record *qdrant_version* as the server that opened *storage_dir*.
-
-    Called only once the server has answered ready on this store, so the
-    recorded version is one that provably read the on-disk format. An unknown
-    version is not recorded: an empty stamp would read back as "no record" and a
-    placeholder one would assert a match that was never proven.
-
-    Returns:
-        The record path, or ``None`` when nothing was written.
-    """
-    if not qdrant_version:
-        logger.debug("no qdrant server version to record for %s", storage_dir)
-        return None
-    path = store_format_path(storage_dir)
-    if read_store_format(storage_dir) == qdrant_version:
-        return path
-    from .._test_isolation import enforce_pytest_managed_singleton_containment
-
-    enforce_pytest_managed_singleton_containment(
-        operation="write the qdrant store-format record",
-        targets=(path,),
-    )
-    payload = {
-        "qdrant_version": qdrant_version,
-        "recorded_at": datetime.now(UTC).isoformat(timespec="seconds"),
-    }
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(json.dumps(payload), encoding="utf-8")
-        os.replace(tmp, path)
-    except OSError as exc:
-        # A store that cannot be stamped stays unverifiable, which only ever
-        # withholds the automatic quarantine. Failing the start over it would
-        # trade a conservative degradation for an outage.
-        logger.warning("could not record the qdrant store format at %s: %s", path, exc)
-        with contextlib.suppress(OSError):
-            tmp.unlink()
-        return None
-    logger.debug("recorded qdrant store format %s at %s", qdrant_version, path)
-    return path
-
-
-def evaluate_store_format(
-    storage_dir: Path,
-    running_version: str,
-) -> StoreFormatVerdict:
-    """Judge *running_version* against the version recorded in *storage_dir*.
-
-    Pure observation, safe to call before spawning anything. The pinned server
-    version tracks the wire API of the locked client, which says nothing about
-    on-disk format compatibility across binary versions - so the store has to
-    carry its own record, and this is where it is read.
-    """
-    recorded = read_store_format(storage_dir)
-    if not recorded:
-        return StoreFormatVerdict(
-            status=STORE_FORMAT_UNVERIFIABLE,
-            recorded="",
-            running=running_version,
-            reason=(
-                "the storage directory carries no record of the qdrant server "
-                "version that wrote it"
-            ),
-        )
-    if not running_version:
-        return StoreFormatVerdict(
-            status=STORE_FORMAT_UNVERIFIABLE,
-            recorded=recorded,
-            running="",
-            reason=(
-                "the qdrant binary about to run carries no known version, so it "
-                f"cannot be compared against the recorded {recorded}"
-            ),
-        )
-    if recorded == running_version:
-        return StoreFormatVerdict(
-            status=STORE_FORMAT_MATCH,
-            recorded=recorded,
-            running=running_version,
-            reason=f"the storage directory was written by qdrant {recorded}",
-        )
-    return StoreFormatVerdict(
-        status=STORE_FORMAT_SKEW,
-        recorded=recorded,
-        running=running_version,
-        reason=(
-            f"the storage directory was last written by qdrant {recorded}, but "
-            f"qdrant {running_version} is about to open it"
-        ),
-    )
 
 
 def verify_attachable(
