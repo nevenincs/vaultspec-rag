@@ -100,6 +100,7 @@ _CANONICAL_PREFIX_RE = re.compile(r"^r[0-9a-f]{12}_$")
 __all__ = [
     "DeleteResult",
     "GeometryEntry",
+    "IdentityCarry",
     "MaintenanceResult",
     "MigrateResult",
     "PruneResult",
@@ -1066,6 +1067,69 @@ def _copy_collection(
     return int(dst_client.count(collection_name=target).count)
 
 
+@dataclass(frozen=True)
+class IdentityCarry:
+    """Where a migrated collection's provenance is read and re-recorded.
+
+    A migrate moves one root's index between the two backends, so the root
+    is the same on both sides and only the home of its identity record
+    changes. Bundled rather than spread across three parameters because the
+    three values are meaningless apart: reading from one backend and writing
+    to the same one would overwrite the source record in place.
+
+    Attributes:
+        root: The workspace root owning both sides of the copy.
+        to_backend: ``"server"`` or ``"local"`` - the destination backend.
+        local_dir: The root's own local store directory, which is where the
+            local-mode identity sidecar lives whichever way the copy runs.
+    """
+
+    root: str
+    to_backend: str
+    local_dir: Path
+
+    @property
+    def from_backend(self) -> str:
+        """The backend being copied from, the complement of the destination."""
+        return "local" if self.to_backend == "server" else "server"
+
+
+def _carry_identity(carry: IdentityCarry, *, source: str, target: str) -> None:
+    """Re-record the source collection's provenance against the copied one.
+
+    A copy replays the source's vector geometry verbatim, so the destination
+    holds vectors that the source's models produced. Leaving the destination
+    unstamped, or stamping it with whatever this process is configured with,
+    would both manufacture a namespace claiming a provenance it never
+    established - the second silently, because a later reader would compare
+    current configuration against itself and score a real model swap as a
+    match.
+
+    An unstamped source carries nothing, and the destination stays unstamped:
+    absent evidence propagates as absent evidence rather than being upgraded
+    to a claim. Best-effort, in step with the stamp at collection-create: a
+    failed carry degrades a later verdict to an unknown and must not fail a
+    data move that has already succeeded.
+    """
+    from .storage_identity import load_identity, record_identity
+
+    stamped = load_identity(
+        carry.root,
+        backend=carry.from_backend,
+        collection=source,
+        local_dir=carry.local_dir,
+    )
+    if stamped is None:
+        return
+    record_identity(
+        carry.root,
+        backend=carry.to_backend,
+        collection=target,
+        identity=stamped,
+        local_dir=carry.local_dir,
+    )
+
+
 def migrate_collections(
     src_client: QdrantClient,
     dst_client: QdrantClient,
@@ -1074,6 +1138,7 @@ def migrate_collections(
     dry_run: bool,
     batch_size: int = 256,
     on_progress: Callable[[str], None] = _no_progress,
+    identity_carry: IdentityCarry | None = None,
 ) -> list[MigrateResult]:
     """Migrate collections from one backend to another, remapping names.
 
@@ -1092,6 +1157,11 @@ def migrate_collections(
         on_progress: Sink for progress lines, one per mapped collection; a
             real copy moves every point across two backends and is the
             longest-running of the storage verbs.
+        identity_carry: Where to read each source collection's stamped
+            identity and re-record it against the copy. ``None`` copies the
+            vectors without their provenance, which leaves the destination
+            an unknown - correct only for a caller that has no root to
+            attribute the copy to.
 
     Returns:
         One :class:`MigrateResult` per mapped collection.
@@ -1122,6 +1192,16 @@ def migrate_collections(
             continue
         status = "migrated" if copied == expected else "failed"
         reason = None if copied == expected else f"count_mismatch:{copied}!={expected}"
+        if status == "migrated" and identity_carry is not None:
+            try:
+                _carry_identity(identity_carry, source=source, target=target)
+            except Exception:  # provenance is best-effort; the data has moved
+                logger.debug(
+                    "could not carry identity from %s to %s",
+                    source,
+                    target,
+                    exc_info=True,
+                )
         results.append(MigrateResult(source, target, status, copied, reason))
     return results
 
@@ -1307,10 +1387,12 @@ def evaluate_reclaim(
     considered (``unknown``/``unverifiable``/``live`` never appear in the
     output); a missing or unparsable grace stamp means the window has just
     started (``pending``); the window length is tiered by whether the
-    namespace holds points; and eligible prefixes beyond
-    ``policy.max_per_cycle`` are ``deferred`` to the next cycle. Empty
-    namespaces are ordered before point-bearing ones so the riskless tier
-    always reclaims first under a tight cap.
+    namespace holds points; a namespace whose collections cannot all be
+    attributed to what produced them is withheld from automated reclaim
+    entirely; and eligible prefixes beyond ``policy.max_per_cycle`` are
+    ``deferred`` to the next cycle. Empty namespaces are ordered before
+    point-bearing ones so the riskless tier always reclaims first under a
+    tight cap.
 
     Args:
         surveys: Classified namespaces from :func:`gather_survey`.
@@ -1328,12 +1410,15 @@ def evaluate_reclaim(
     """
     decisions: list[ReclaimDecision] = []
     eligible: list[ReclaimDecision] = []
+    by_prefix = {survey.prefix: survey for survey in surveys}
     orphaned = sorted(
         (s for s in surveys if s.status == "orphaned"),
         key=lambda s: (s.points > 0, s.prefix),
     )
     for survey in orphaned:
-        decision = _decide_orphan(survey, stamps, now=now, policy=policy)
+        decision = _withhold_unattributable(
+            _decide_orphan(survey, stamps, now=now, policy=policy), survey
+        )
         decisions.append(_apply_cycle_cap(decision, eligible, policy))
     if last_indexed is None:
         return decisions
@@ -1341,8 +1426,54 @@ def evaluate_reclaim(
     # activity clock expired. Orphans keep priority under the shared
     # per-cycle cap; an over-cap ephemeral reclaim defers to next cycle.
     for decision in _evaluate_ephemeral(surveys, last_indexed, now=now, policy=policy):
-        decisions.append(_apply_cycle_cap(decision, eligible, policy))
+        withheld = _withhold_unattributable(decision, by_prefix.get(decision.prefix))
+        decisions.append(_apply_cycle_cap(withheld, eligible, policy))
     return decisions
+
+
+def _provenance_is_established(survey: NamespaceSurvey | None) -> bool:
+    """Whether every collection of *survey* carries a stamp of what built it.
+
+    Every collection, not any: the three collections of one namespace are
+    indexed independently and can genuinely disagree about the model that
+    produced them, so one stamped collection says nothing about its
+    unstamped siblings. A survey that could not be resolved at all is the
+    same unknown and answers False.
+    """
+    if survey is None or not survey.collections:
+        return False
+    return all(name in survey.models for name in survey.collections)
+
+
+def _withhold_unattributable(
+    decision: ReclaimDecision, survey: NamespaceSurvey | None
+) -> ReclaimDecision:
+    """Convert a reclaim of unestablished provenance back to ``pending``.
+
+    Automated destruction acts without a human in the loop, so it may only
+    act on data it can account for. A namespace whose collections carry no
+    record of what produced them cannot be accounted for, and an unknown is
+    never grounds to destroy: the decision reverts to ``pending``, which
+    leaves the grace clock running and the data intact.
+
+    Applied to every tier rather than inside one, so a reclamation route
+    added later inherits the gate instead of having to remember it. This
+    withholds only the automated path - the operator prune, which has a
+    human as its confirmation, is unaffected and remains the way a namespace
+    predating the stamp is reclaimed.
+    """
+    if decision.action not in ("reclaim_empty", "reclaim_data"):
+        return decision
+    if _provenance_is_established(survey):
+        return decision
+    return ReclaimDecision(
+        decision.prefix,
+        "pending",
+        decision.tier,
+        reason=f"provenance_{store_schema.UNVERIFIABLE}",
+        points=decision.points,
+        footprint_bytes=decision.footprint_bytes,
+    )
 
 
 def _decide_orphan(
@@ -1443,6 +1574,11 @@ def archive_prefix(
     dest_dir.mkdir(parents=True, exist_ok=True)
     archived: list[Path] = []
     collection_artifacts: list[SnapshotCollection] = []
+    # Read the attribution once, before the snapshots: the namespace is
+    # dropped immediately after a successful archive, so provenance the
+    # snapshot does not carry is provenance no restore can recover.
+    entry = load_manifest().get(prefix)
+    identities = {} if entry is None else entry.collection_identity
     for name in targets:
         description = client.create_snapshot(collection_name=name, wait=True)
         if description is None or not description.name:
@@ -1458,9 +1594,9 @@ def archive_prefix(
                 name=name,
                 snapshot_file=dest.name,
                 points=int(client.count(collection_name=name).count),
+                identity=identities.get(name),
             )
         )
-    entry = load_manifest().get(prefix)
     metadata_files: list[str] = []
     if entry is not None:
         from shutil import copy2
