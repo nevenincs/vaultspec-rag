@@ -11,16 +11,6 @@ related:
   - '[[2026-07-25-index-completeness-guard-adr]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 # `non-destructive-index-publication` plan
 
 ## Description
@@ -75,7 +65,7 @@ A rebuild writes into a collection named for its generation and never reuses a n
 Bound the peak-storage cost the swap introduces. A root that cannot afford the duplicate is refused visibly rather than silently rebuilding in place, and the superseded collection is dropped by ordinary read-and-drop maintenance once no reader holds it.
 
 - [x] `P04.S13` - Estimate the duplicate a generation build needs and refuse the build with a stated reason when headroom cannot cover it, never falling back to rebuilding in place; `src/vaultspec_rag/indexer/_codebase_indexer.py, src/vaultspec_rag/store.py`.
-- [ ] `P04.S14` - Drop a superseded generation collection from read-and-drop maintenance once the pointer no longer names it and no reader holds it; `src/vaultspec_rag/storage_ops.py`.
+- [x] `P04.S14` - Drop a superseded generation collection from read-and-drop maintenance once the pointer no longer names it and no reader holds it; `src/vaultspec_rag/storage_ops.py`.
 - [x] `P04.S15` - Prove by real-storage test that a refused build leaves the served index intact and reports the refusal, and that maintenance drops only collections the pointer does not name; `src/vaultspec_rag/tests/integration/test_storage_survey_service.py`.
 
 ### Phase `P05` - retire the interim mitigation
