@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#machine-discovery-recovery'
-date: '2026-07-24'
-modified: '2026-07-24'
+date: '2026-07-25'
+modified: '2026-07-25'
 related:
   - '[[2026-07-21-machine-discovery-recovery-W01-P01-S01]]'
   - '[[2026-07-21-machine-discovery-recovery-W01-P01-S02]]'
@@ -30,6 +30,7 @@ related:
   - '[[2026-07-21-machine-discovery-recovery-W03-P08-S21]]'
   - '[[2026-07-21-machine-discovery-recovery-W03-P08-S22]]'
   - '[[2026-07-21-machine-discovery-recovery-W03-P09-S23]]'
+  - '[[2026-07-21-machine-discovery-recovery-W04-P10-S25]]'
   - '[[2026-07-21-machine-discovery-recovery-W04-P10-S27]]'
   - '[[2026-07-21-machine-discovery-recovery-W04-P10-S28]]'
   - '[[2026-07-21-machine-discovery-recovery-W04-P10-S29]]'
@@ -37,6 +38,7 @@ related:
   - '[[2026-07-21-machine-discovery-recovery-W04-P10-S31]]'
   - '[[2026-07-21-machine-discovery-recovery-W04-P10-S32]]'
   - '[[2026-07-21-machine-discovery-recovery-W04-P10-S33]]'
+  - '[[2026-07-21-machine-discovery-recovery-W04-P10-summary]]'
   - '[[2026-07-21-machine-discovery-recovery-adr]]'
   - '[[2026-07-21-machine-discovery-recovery-plan]]'
   - '[[2026-07-21-machine-discovery-recovery-reference]]'
@@ -105,6 +107,8 @@ Auto-generated index of all documents tagged with `#machine-discovery-recovery`.
 - `2026-07-21-machine-discovery-recovery-W04-P10-S31` - Make the authoritative RUNNING-phase publication fail-loud so a machine-singleton daemon that cannot record its running-owner claim rolls back instead of serving
 - `2026-07-21-machine-discovery-recovery-W04-P10-S32` - Correct the server stop path documentation to state that on Windows the stop degrades to a TerminateProcess force-kill because the daemon is spawned detached and cannot receive a cross-console CTRL_BREAK from a separate stop process, which is bounded and safe but not a graceful in-daemon shutdown
 - `2026-07-21-machine-discovery-recovery-W04-P10-S33` - Route the real-daemon test cleanup graceful signal to the spawned group-leader process rather than the discovered descendant daemon pid so a relaunched daemon receives the console break and shuts down gracefully, escalating to a pid-targeted force-kill on both when the graceful drain does not complete
+- `2026-07-21-machine-discovery-recovery-W04-P10-S25` - Exercise isolated end-to-end start, corruption, heartbeat repair, reconcile, search resolution, and clean shutdown
+- `2026-07-21-machine-discovery-recovery-W04-P10-summary` - `machine-discovery-recovery` `W04.P10` summary
 
 ### plan
 

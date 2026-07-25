@@ -26,7 +26,7 @@ from ._http_stubs import QuietHandler
 from ._scaffold import make_workspace
 
 if typing.TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
@@ -354,7 +354,7 @@ _UNSERVED_PORT = 9
 
 
 @contextlib.contextmanager
-def _health_service(payload: dict[str, object]) -> Iterator[tuple[int, list[str]]]:
+def _health_service(payload: dict[str, object]) -> Generator[tuple[int, list[str]]]:
     """Serve ``/health`` over real HTTP and record every path requested.
 
     Yields the bound port and the live request log. The log is what proves a

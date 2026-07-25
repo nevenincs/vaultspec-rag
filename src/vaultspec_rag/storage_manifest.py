@@ -131,11 +131,21 @@ class ManifestEntry:
 
 @dataclass(frozen=True)
 class SnapshotCollection:
-    """One collection artifact recorded in an archive snapshot."""
+    """One collection artifact recorded in an archive snapshot.
+
+    ``identity`` carries what produced the archived vectors. Reclamation
+    archives a point-bearing namespace before destroying it, and destroying it
+    also destroys the live manifest entry that held its identity; without the
+    record travelling into the archive, anything restored from that snapshot
+    could only ever be judged ``unverifiable``. ``None`` is the honest value for
+    a collection that predated stamping - the archive says the provenance was
+    unknown at archive time rather than inventing one.
+    """
 
     name: str
     snapshot_file: str
     points: int
+    identity: store_schema.CollectionIdentity | None = None
 
 
 @dataclass(frozen=True)
@@ -171,6 +181,13 @@ def write_snapshot_manifest(
                 "name": item.name,
                 "snapshot_file": item.snapshot_file,
                 "points": item.points,
+                # Written as an explicit null when absent rather than omitted,
+                # so a reader can tell "this archive predates stamping" from
+                # "this archive predates the field" and never defaults either
+                # into a provenance claim.
+                "identity": (
+                    item.identity.to_payload() if item.identity is not None else None
+                ),
             }
             for item in manifest.collections
         ],

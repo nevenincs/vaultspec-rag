@@ -109,8 +109,26 @@ class NamespaceSurvey:
 
 
 def _kind_points(names: list[str], counts: dict[str, int], suffix: str) -> int:
-    """Return the bounded integer count for one declared collection kind."""
-    return sum(counts.get(name, 0) for name in names if name.endswith(suffix))
+    """Return the bounded integer count for one declared collection kind.
+
+    A kind's collection is either the declared name or a generation of it,
+    named ``<declared>_g<token>`` while a rebuild publishes without destroying
+    what it serves. Matching on the declared suffix alone reported zero for
+    every root currently served by a generation - a healthy index reading as
+    empty on the one surface an operator checks.
+
+    The namespace total is unaffected: it sums every collection under the
+    prefix without a kind filter, so reclamation tiering never saw this.
+    """
+    return sum(counts.get(name, 0) for name in names if _belongs_to_kind(name, suffix))
+
+
+def _belongs_to_kind(collection_name: str, suffix: str) -> bool:
+    """Return whether *collection_name* is a kind's collection or a generation of it."""
+    if collection_name.endswith(suffix):
+        return True
+    base, separator, token = collection_name.rpartition("_g")
+    return bool(separator) and bool(token) and token.isalnum() and base.endswith(suffix)
 
 
 def _prefix_of(collection_name: str) -> str:

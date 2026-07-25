@@ -109,6 +109,7 @@ __all__ = [
     "ReconcileResult",
     "archive_prefix",
     "backend_totals",
+    "carry_migrated_identity",
     "collection_footprints",
     "debris_surveys",
     "delete_prefix",
@@ -1126,6 +1127,81 @@ def migrate_collections(
     return results
 
 
+def carry_migrated_identity(
+    root: Path | str,
+    *,
+    name_map: dict[str, str],
+    to_backend: str,
+    local_dir: Path | str,
+    results: list[MigrateResult],
+) -> list[str]:
+    """Carry each migrated collection's source identity onto its target name.
+
+    A migrate replays the source's vector geometry verbatim but creates the
+    target through the raw client, so nothing stamps it: the destination lands
+    with no identity at all and every later verdict on it reads
+    ``unverifiable`` even though the source's provenance was known. Re-stamping
+    it with current values would be worse - it would assert that this process
+    produced vectors it only copied - so the source's own record is what moves.
+
+    The two homes are keyed differently and the migrate remaps names, which is
+    why this cannot ride along on the manifest re-key: that carries the identity
+    map verbatim, under the *source* collection names, which nothing will ever
+    look up under the target's. Reads and writes both go through the
+    backend-dispatching accessors, so neither home is reached directly here.
+
+    Call before re-keying the manifest, so the source home is still intact.
+
+    Args:
+        root: The workspace root whose index moved; both homes are keyed by it.
+        name_map: The same source-to-target mapping the migrate ran on.
+        to_backend: ``"server"`` or ``"local"`` - the destination backend.
+        local_dir: The root's own local store directory. It is the source home
+            when migrating to server and the target home when migrating to
+            local; the server side needs no path.
+        results: The migrate's own results; only ``migrated`` pairs are carried,
+            so a skipped or failed copy never gains provenance.
+
+    Returns:
+        The target collection names whose identity is readable after the carry,
+        confirmed by reading it back rather than assumed - the stamp itself is
+        best-effort and swallows its failures.
+    """
+    from .storage_identity import load_identity, record_identity
+
+    from_backend = "local" if to_backend == "server" else "server"
+    from_local = local_dir if from_backend == "local" else None
+    to_local = local_dir if to_backend == "local" else None
+    moved = {r.source for r in results if r.status == "migrated"}
+    carried: list[str] = []
+    for source, target in name_map.items():
+        if source not in moved:
+            continue
+        identity = load_identity(
+            root, backend=from_backend, collection=source, local_dir=from_local
+        )
+        if identity is None:
+            # The source predates stamping. Recording nothing keeps the
+            # destination honestly unverifiable instead of manufacturing a
+            # provenance neither collection ever had.
+            continue
+        record_identity(
+            root,
+            backend=to_backend,
+            collection=target,
+            identity=identity,
+            local_dir=to_local,
+        )
+        if (
+            load_identity(
+                root, backend=to_backend, collection=target, local_dir=to_local
+            )
+            is not None
+        ):
+            carried.append(target)
+    return carried
+
+
 # -- scheduled reclamation ----------------------------------------------------
 
 
@@ -1312,6 +1388,19 @@ def evaluate_reclaim(
     namespaces are ordered before point-bearing ones so the riskless tier
     always reclaims first under a tight cap.
 
+    Reachability is the only classification this function reads, and a
+    collection's conformance verdict is deliberately not an input to it. The
+    two say different things and share a word: a namespace is ``unverifiable``
+    here when its root could not be confirmed to be gone, and separately
+    ``unverifiable`` as a collection when nothing records what produced its
+    vectors. Absent provenance neither authorises a reclaim nor blocks one.
+    Letting it authorise would destroy data on missing evidence. Letting it
+    block would exempt every namespace written before stamping existed - which
+    is every orphan whose root is already gone, so it can never be rebuilt into
+    a stamp - and turn a safety rule into an unbounded leak. Provenance is
+    carried into the archive that precedes a data-tier drop instead, so what is
+    reclaimed stays judgeable after the fact.
+
     Args:
         surveys: Classified namespaces from :func:`gather_survey`.
         stamps: Prefix to ``first_seen_orphaned`` mapping (from
@@ -1443,6 +1532,12 @@ def archive_prefix(
     dest_dir.mkdir(parents=True, exist_ok=True)
     archived: list[Path] = []
     collection_artifacts: list[SnapshotCollection] = []
+    # Read before the snapshots, because the drop that follows a successful
+    # archive removes the entry these records live in. Absent identity stays
+    # absent: an archive of an unstamped collection records no provenance
+    # rather than the current process's, which never touched those vectors.
+    entry = load_manifest().get(prefix)
+    identities = {} if entry is None else entry.collection_identity
     for name in targets:
         description = client.create_snapshot(collection_name=name, wait=True)
         if description is None or not description.name:
@@ -1458,9 +1553,9 @@ def archive_prefix(
                 name=name,
                 snapshot_file=dest.name,
                 points=int(client.count(collection_name=name).count),
+                identity=identities.get(name),
             )
         )
-    entry = load_manifest().get(prefix)
     metadata_files: list[str] = []
     if entry is not None:
         from shutil import copy2

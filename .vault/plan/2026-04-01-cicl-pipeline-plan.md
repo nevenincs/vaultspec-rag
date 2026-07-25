@@ -2,7 +2,7 @@
 tags:
   - '#plan'
   - '#cicl'
-date: 2026-04-01
+date: '2026-04-01'
 modified: '2026-07-23'
 related:
   - '[[2026-04-01-cicl-pipeline-adr]]'
@@ -15,12 +15,35 @@ Set up a complete CI/CD pipeline for vaultspec-rag: CI checks on PRs,
 automatic versioning via release-please, and PyPI publish pipeline with
 trusted publishing. Mirrors vaultspec-core's proven patterns.
 
-## Proposed Changes
+### Phase `P01` - Source preparation
+
+Make the package releasable: resolve the companion dependency from the index rather than a local path, expose a package version, and seed the release-automation configuration and manifest.
+
+- [x] `P01.S01` - Resolve the companion-package dependency from the package index rather than a local filesystem path, keeping the local editable source as a workspace-only override, and confirm the lock resolves; `pyproject.toml`.
+- [x] `P01.S02` - Expose a package version attribute sourced from the installed distribution metadata so the runtime and the release tooling agree; `src/vaultspec_rag/__init__.py`.
+- [x] `P01.S03` - Seed the release-automation configuration and its version manifest for a Python release type; `release-please-config.json`.
+
+### Phase `P02` - Workflow authoring
+
+Author the continuous-integration, release-automation and publish workflows, with the publish path using trusted publishing and guarded by a concurrency group.
+
+- [x] `P02.S04` - Author the continuous-integration workflow with its separate lint, type, test and audit jobs over one shared setup; `.github/workflows/ci.yml`.
+- [x] `P02.S05` - Author the release-automation workflow with the permissions its version-bump pull request requires; `.github/workflows/release-please.yml`.
+- [x] `P02.S06` - Author the publish workflow using trusted publishing, guarded by a concurrency group so two releases cannot publish at once; `.github/workflows/publish.yml`.
+
+### Phase `P03` - Release validation
+
+Add the post-install smoke check and confirm the workflows trigger and pass end to end on a real push.
+
+- [x] `P03.S07` - Add the post-install smoke check that imports the package and exercises its entry point outside the test suite; `tests/smoke_check.py`.
+- [x] `P03.S08` - Confirm on a real push that the integration and release workflows trigger, the checks pass, and the release pull request is opened; `.github/workflows/`.
+
+## Description
 
 Implement all 8 decisions from the accepted ADR. The work breaks into
 3 phases: source preparation, workflow authoring, and release validation.
 
-## Tasks
+## Steps
 
 - Phase 1: Source preparation
 

@@ -49,17 +49,17 @@ Makes a non-conforming namespace legible where degradation is already authored a
 
 Stops a copied or archived namespace from inheriting conformance it never established.
 
-- [ ] `P04.S17` - Carry the source identity through a namespace copy instead of stamping current values onto the destination; `src/vaultspec_rag/storage_ops.py`.
-- [ ] `P04.S18` - Record the stamped identity in the archive snapshot manifest so a restore can be judged; `src/vaultspec_rag/storage_manifest.py`.
-- [ ] `P04.S19` - Keep an unverifiable namespace out of automated reclamation candidacy; `src/vaultspec_rag/storage_ops.py`.
-- [ ] `P04.S20` - Cover the copy carry and the reclamation exclusion with guard tests, and prove each fails when its carry is reverted; `src/vaultspec_rag/tests/test_storage_ops.py`.
+- [x] `P04.S17` - Carry the source identity through a namespace copy instead of stamping current values onto the destination; `src/vaultspec_rag/storage_ops.py`.
+- [x] `P04.S18` - Record the stamped identity in the archive snapshot manifest so a restore can be judged; `src/vaultspec_rag/storage_manifest.py`.
+- [x] `P04.S19` - Keep an unverifiable namespace out of automated reclamation candidacy; `src/vaultspec_rag/storage_ops.py`.
+- [x] `P04.S20` - Cover the copy carry and the reclamation exclusion with guard tests, and prove each fails when its carry is reverted; `src/vaultspec_rag/tests/test_storage_ops.py`.
 
 ### Phase `P05` - close out
 
 Proves the whole surface green, records the guard failure proofs, and reviews the delivered feature.
 
 - [x] `P05.S21` - Run the full suite, lint, type, and citation gates and reconcile the result against the recorded baseline; `src/vaultspec_rag/`.
-- [ ] `P05.S22` - Review the delivered feature against the authorizing decision and record the audit; `src/vaultspec_rag/`.
+- [x] `P05.S22` - Review the delivered feature against the authorizing decision and record the audit; `src/vaultspec_rag/`.
 
 ## Description
 

@@ -16,7 +16,20 @@ bare `/mcp` with an in-process ASGI scope-rewrite wrapper so
 every MCP client (CLI, Claude Desktop, third-party harnesses)
 lands on the inner app directly.
 
-## Proposed Changes
+### Phase `P01` - ASGI scope-rewrite wrapper
+
+Promote a bare `/mcp` request path to the trailing-slash form inside an in-process ASGI wrapper so no client ever sees the mount redirect, keeping the daemon lifespan active behind the plain callable.
+
+- [x] `P01.S01` - Wrap the HTTP application in an in-process ASGI callable that promotes a bare `/mcp` scope path to the trailing-slash form before delegating, and hand the wrapper to the server with the lifespan explicitly enabled so the heartbeat and shutdown hooks still fire; `src/vaultspec_rag/mcp/_mcp.py`.
+
+### Phase `P02` - Tests and live smoke
+
+Cover the rewrite behaviour, guard against a refactor handing the bare application back to the server, and confirm against a live daemon that the redirect is gone.
+
+- [x] `P02.S02` - Cover the scope rewrite with unit tests asserting a bare path is promoted, a trailing-slash path passes through untouched, and an unrelated path is unaffected, plus a guard that the server is handed the wrapper rather than the bare application; `src/vaultspec_rag/tests/`.
+- [x] `P02.S03` - Confirm against a live daemon that a bare request returns no redirect status and no redirect location, and that a streaming client lists the expected tools without a redirect hop; `src/vaultspec_rag/tests/integration/`.
+
+## Description
 
 - `mcp_server.py main()` HTTP branch: define a small async
   function that promotes `scope["path"] == "/mcp"` to `"/mcp/"`
@@ -28,7 +41,7 @@ lands on the inner app directly.
   regression guard.
 - Live smoke verification documented in this plan.
 
-## Tasks
+## Steps
 
 ### Phase 1 — wrapper
 

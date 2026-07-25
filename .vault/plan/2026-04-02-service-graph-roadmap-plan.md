@@ -2,7 +2,7 @@
 tags:
   - '#plan'
   - '#service-graph'
-date: 2026-04-02
+date: '2026-04-02'
 modified: '2026-06-30'
 related:
   - '[[2026-04-02-service-graph-adr]]'
@@ -16,6 +16,31 @@ related:
 Roadmap for the service orchestration layer (issues #14, #16). Covers
 alpha delivery through beta production-readiness. Each milestone maps
 to a GitHub issue for tracking.
+
+### Phase `P01` - Alpha milestones
+
+The orchestration layer as originally scoped: one owned graph cache, the multi-project registry, an eager-loading lifespan behind a health endpoint, the daemon control verbs, and the warmup path.
+
+- [x] `P01.S01` - Unify graph ownership behind one cache carrying a time-to-live and a lock, closing the concurrent-rebuild race; `src/vaultspec_rag/graph_cache.py`.
+- [x] `P01.S02` - Introduce the multi-project registry owning one shared embedding model and a per-project slot for every derived resource; `src/vaultspec_rag/service.py`.
+- [x] `P01.S03` - Load the model eagerly during the server lifespan and expose readiness through a health endpoint; `src/vaultspec_rag/server/_lifespan.py`.
+- [x] `P01.S04` - Deliver the daemon control verbs over a status file recording port and process identity; `src/vaultspec_rag/cli/_service_start.py`.
+- [x] `P01.S05` - Deliver the warmup path reporting device availability and model cache state ahead of first use; `src/vaultspec_rag/cli/_service_start.py`.
+
+### Phase `P02` - Pre-beta hardening milestones
+
+The four hardening milestones raised against the alpha layer: search throughput under the device semaphore, per-project watching, real-subprocess lifecycle coverage, and the boundary and disclosure fixes.
+
+- [x] `P02.S06` - Narrow the device semaphore to the compute section so concurrent searches are no longer serialised by work that does not touch the device; `src/vaultspec_rag/search/_searcher.py`.
+- [x] `P02.S07` - Give each resident project its own filesystem watcher so a change in one root cannot reindex another; `src/vaultspec_rag/watcher.py`.
+- [x] `P02.S08` - Cover the daemon lifecycle against real subprocesses rather than in-process doubles; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
+- [x] `P02.S09` - Validate the project boundary on root resolution and reduce disclosure on the health and status surfaces; `src/vaultspec_rag/server/_utils.py`.
+
+### Phase `P03` - Beta milestone
+
+The one deferred beta milestone that was subsequently delivered: bounded project slots with a rotated daemon log.
+
+- [x] `P03.S10` - Bound the resident project slots by ceiling and idle age, and rotate the daemon log rather than appending without limit; `src/vaultspec_rag/service.py`.
 
 ## Alpha milestones (current PR: feature/service-graph)
 
@@ -142,7 +167,9 @@ to a GitHub issue for tracking.
 - Distribute via maturin `--bindings bin` as separate wheel
 
 **Dependencies:** M4 (daemon commands provide the Python side)
-**Status:** deferred to beta
+**Status:** not pursued. The service acquired its own supervision, quiesce and
+orphan-reaping behaviour in Python instead, so a separate native service wrapper
+was never revisited. No issue tracks it.
 
 ### M7: Granian evaluation (ADR D8)
 
@@ -153,6 +180,9 @@ to a GitHub issue for tracking.
 - Test ASGI compatibility with FastMCP Starlette app
 - Benchmark: worker respawn, memory limits, signal handling
 - Decision: adopt or keep uvicorn
+
+**Status:** not pursued. The existing server was retained and hardened rather
+than replaced, so the evaluation was never run. No issue tracks it.
 
 **Dependencies:** M3 (Starlette app must be stable first)
 **Status:** deferred to beta
@@ -194,3 +224,9 @@ M4 and M5 can run in parallel after M3 completes.
 | M6        | deferred     | —                |
 | M7        | deferred     | —                |
 | M8        | deferred     | —                |
+
+## Description
+
+See the summary above.
+
+## Steps

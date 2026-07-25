@@ -17,4 +17,4 @@ Auto-generated index of all documents tagged with `#document-index-drift-parity`
 
 ### adr
 
-- `2026-07-25-document-index-drift-parity-adr` - `document-index-drift-parity` adr: `the document index keeps its resume semantics and does not adopt the drift signal` | (**status:** `{proposed|accepted|rejected|superseded|deprecated}`)
+- `2026-07-25-document-index-drift-parity-adr` - `document-index-drift-parity` adr: `the document index keeps its resume semantics and does not adopt the drift signal` | (**status:** `accepted`)
