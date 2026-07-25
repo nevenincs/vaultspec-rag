@@ -298,8 +298,9 @@ def split_documents(
         return _split_documents_serial(docs, chunk_chars, run_control)
 
     import multiprocessing
-    from concurrent.futures import ProcessPoolExecutor
     from concurrent.futures.process import BrokenProcessPool
+
+    from ._pool_guard import spawn_pool
 
     batch_size = max(
         1,
@@ -311,7 +312,7 @@ def split_documents(
     ctx = multiprocessing.get_context("spawn")
     chunks: list[VaultChunk] = []
     try:
-        with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+        with spawn_pool(max_workers=workers, mp_context=ctx) as pool:
             for batch_chunks in pool.map(
                 _split_document_batch,
                 batches,
