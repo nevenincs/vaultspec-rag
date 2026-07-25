@@ -127,9 +127,6 @@ DEFERRED_PENDING_FOLLOWUP: frozenset[str] = frozenset(
         # Owned by the consolidation effort, whose repair also has to correct the
         # claim itself: the flag now does feed a destructive path.
         "src/vaultspec_rag/storage_survey.py",
-        # ``_resolve_binary`` region - debug-logging pointer. Directory actively
-        # being split.
-        "src/vaultspec_rag/qdrant_runtime/_resolve.py",
         # GPU error rendering - debug-logging pointer. Uncommitted work present.
         "src/vaultspec_rag/cli/_gpu_errors.py",
         # Service-reachability tool docstring - parenthesised rule pointer.
@@ -152,6 +149,7 @@ DEFERRED_PENDING_FOLLOWUP: frozenset[str] = frozenset(
 #: matching them would fire on the product's own vocabulary.
 RULE_STEMS: tuple[str, ...] = (
     "canonical-code",
+    "gates-run-explicitly",
     "gpu-discipline",
     "guard-tests-prove-they-can-fail",
     "no-dev-metadata-in-code",

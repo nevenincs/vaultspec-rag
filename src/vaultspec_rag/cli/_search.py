@@ -12,6 +12,7 @@ import typer
 import vaultspec_rag.cli as _cli
 
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
+from ..serviceclient._compat import resolve_data_plane_service
 from ..store import VaultStoreLockedError
 from ._app import CLIState, app
 from ._gpu_errors import _handle_gpu_error
@@ -20,11 +21,11 @@ from ._render import (
     _display_port_unreachable_error,
     _display_search_results,
     _display_service_error,
+    _display_service_version_error,
     _emit_json,
     _emit_json_error_and_exit,
     _plain,
 )
-from ._service_status import _default_service_port
 
 if TYPE_CHECKING:
     import pathlib
@@ -1114,7 +1115,22 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
     mandate = _local_search_mandated(allow_fallback)
 
     if port is None:
-        port = _default_service_port()
+        service = resolve_data_plane_service()
+        if service.reachable and not service.version.is_compatible:
+            # A discovered daemon of another release cannot answer this search
+            # faithfully - it drops filter fields it does not know rather than
+            # rejecting them. With a local mandate the operator has already
+            # authorised the in-process path, so the foreign daemon is left
+            # alone; without one this is a refusal, never a silent local run.
+            if not mandate:
+                _display_service_version_error(
+                    service.version,
+                    command="search",
+                    json_mode=json_mode,
+                )
+                raise typer.Exit(code=1)
+        else:
+            port = service.port
 
     if port is not None:
         service_results = _try_http_search(

@@ -64,6 +64,21 @@ class AdmissionSample:
 
 
 @dataclass(frozen=True, slots=True)
+class InspectedSource:
+    """One classified file and the size observed by the same probe."""
+
+    classified: ClassifiedContent
+    source_bytes: int
+
+
+def _rejected_code(reason: AdmissionReason) -> ClassifiedContent:
+    """Return a non-admitted code disposition for one probe outcome."""
+    return ClassifiedContent(
+        AdmissionDisposition(ContentKind.CODE, False, reason)
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class ContentScanResult:
     """Structured discovery result and path-list compatibility authority."""
 
@@ -175,11 +190,11 @@ class CodeContentDiscovery:
             rel = path.relative_to(self.root_dir).as_posix()
             policy.classify(rel)
             if path.is_file():
-                classified = self.classify_file(path, rel, policy)
-                disposition = classified.disposition
+                inspected = self.inspect_file(path, rel, policy)
+                disposition = inspected.classified.disposition
                 if disposition.admitted and disposition.kind is ContentKind.CODE:
                     source_files += 1
-                    source_bytes += path.stat().st_size
+                    source_bytes += inspected.source_bytes
         return CodeScopedPreflight(
             root_dir=self.root_dir.resolve(),
             policy=policy,
@@ -299,45 +314,51 @@ class CodeContentDiscovery:
         """Return whether ownership includes a matched transform."""
         return policy.match_preprocess(rel_path) is not None
 
-    def classify_file(
+    def inspect_file(
         self,
         path: pathlib.Path,
         rel_path: str,
         policy: ResolvedIndexPolicy,
-    ) -> ClassifiedContent:
-        """Apply ownership first, then raw-code size and binary capability."""
+    ) -> InspectedSource:
+        """Classify one file and report the size observed while doing it.
+
+        The size is returned rather than left for the caller to fetch because
+        every caller needs it and the classification cannot be made without
+        it. Statting twice was not merely wasteful: the two probes could
+        disagree on a tree being written, so a file could be admitted against
+        one observation and measured against another, and each site carried
+        its own copy of the "a failed probe is not admissible" rule.
+
+        A rejected file, and any file whose probe fails, reports zero bytes:
+        nothing is admitted, so there is no admitted breadth to account for.
+        """
         classified = policy.classify(rel_path)
         disposition = classified.disposition
-        if not (
-            disposition.admitted and disposition.kind is ContentKind.CODE
-        ) or self.has_transform(policy, rel_path):
-            return classified
+        if not (disposition.admitted and disposition.kind is ContentKind.CODE):
+            return InspectedSource(classified, 0)
+        # A matched transform expands the indexable set past the raw-code size
+        # and binary limits, so those two checks are skipped - but the file is
+        # still measured, because it is still admitted.
+        transformed = self.has_transform(policy, rel_path)
         try:
-            if path.stat().st_size > _MAX_FILE_SIZE:
-                return ClassifiedContent(
-                    AdmissionDisposition(
-                        ContentKind.CODE,
-                        False,
-                        AdmissionReason.SOURCE_TOO_LARGE,
+            source_bytes = path.stat().st_size
+            if not transformed:
+                if source_bytes > _MAX_FILE_SIZE:
+                    return InspectedSource(
+                        _rejected_code(AdmissionReason.SOURCE_TOO_LARGE),
+                        0,
                     )
-                )
-            if _is_binary(path):
-                return ClassifiedContent(
-                    AdmissionDisposition(
-                        ContentKind.CODE,
-                        False,
-                        AdmissionReason.SOURCE_BINARY,
+                if _is_binary(path):
+                    return InspectedSource(
+                        _rejected_code(AdmissionReason.SOURCE_BINARY),
+                        0,
                     )
-                )
         except OSError:
-            return ClassifiedContent(
-                AdmissionDisposition(
-                    ContentKind.CODE,
-                    False,
-                    AdmissionReason.SOURCE_PROBE_FAILED,
-                )
+            return InspectedSource(
+                _rejected_code(AdmissionReason.SOURCE_PROBE_FAILED),
+                0,
             )
-        return classified
+        return InspectedSource(classified, source_bytes)
 
     def scan_content(
         self,
@@ -445,21 +466,9 @@ class CodeContentDiscovery:
             run_control.checkpoint()
             p = pathlib.Path(dirpath) / fname
             rel = fname if rel_dir == "." else f"{rel_dir}/{fname}"
-            classified = self.classify_file(p, rel, policy)
-            disposition = classified.disposition
-            source_size = 0
-            if disposition.admitted and disposition.kind is ContentKind.CODE:
-                try:
-                    source_size = p.stat().st_size
-                except OSError:
-                    classified = ClassifiedContent(
-                        AdmissionDisposition(
-                            ContentKind.CODE,
-                            False,
-                            AdmissionReason.SOURCE_PROBE_FAILED,
-                        )
-                    )
-                    disposition = classified.disposition
+            inspected = self.inspect_file(p, rel, policy)
+            disposition = inspected.classified.disposition
+            source_size = inspected.source_bytes
             key = (disposition.kind, disposition.admitted, disposition.reason)
             counts[key] = counts.get(key, 0) + 1
             if len(samples) < sample_limit:

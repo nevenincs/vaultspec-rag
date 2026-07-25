@@ -59,9 +59,11 @@ __all__ = [
     "VERSION_STATE_MATCH",
     "VERSION_STATE_MISMATCH",
     "VERSION_STATE_UNREPORTED",
+    "DataPlaneService",
     "ServiceVersionVerdict",
     "classify_service_version",
     "local_package_version",
+    "resolve_data_plane_service",
 ]
 
 
@@ -178,4 +180,53 @@ def classify_service_version(
         state=VERSION_STATE_MISMATCH,
         client_version=client,
         service_version=service,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class DataPlaneService:
+    """A daemon a client is about to drive, and whether it may.
+
+    Pairs the address with the release verdict because the two questions a
+    data-plane caller has are always asked together, and answering them at
+    separate seams is how the CLI ended up gating neither while the MCP gated
+    both.
+    """
+
+    port: int | None
+    version: ServiceVersionVerdict
+
+    @property
+    def reachable(self) -> bool:
+        """Whether a usable address was resolved at all."""
+        return self.port is not None
+
+    @property
+    def usable(self) -> bool:
+        """Whether this client may send data-plane work to this daemon."""
+        return self.port is not None and self.version.is_compatible
+
+
+def resolve_data_plane_service() -> DataPlaneService:
+    """Resolve the daemon for data-plane work, with its release verdict.
+
+    The one seam every data-plane caller passes through - search, retrieval,
+    index refresh, clean - on both the CLI and the MCP, so one rule decides for
+    both rather than each adapter deciding for itself.
+
+    Deliberately not used by the lifecycle and observability verbs. ``stop``,
+    ``status``, ``doctor``, ``logs`` and ``jobs`` must keep working against a
+    daemon of any release, because they are how an operator observes the
+    mismatch and how they resolve it; gating them would leave the verdict
+    unactionable.
+
+    The version comes from the discovery payload this call already reads for the
+    port, so the verdict costs no extra round trip.
+    """
+    from ._discovery import resolve_machine_service
+
+    resolution = resolve_machine_service()
+    return DataPlaneService(
+        port=resolution.port if resolution.is_ready else None,
+        version=classify_service_version(resolution.payload),
     )

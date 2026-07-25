@@ -806,7 +806,7 @@ class CodebaseIndexer:
         policy: ResolvedIndexPolicy,
     ) -> ClassifiedContent:
         """Apply ownership first, then raw-code size and binary capability."""
-        return self._discovery.classify_file(path, rel_path, policy)
+        return self._discovery.inspect_file(path, rel_path, policy).classified
 
     def _matches_preprocess_rule(self, rel: str) -> bool:
         """Return whether a preprocess rule matches this project-relative path.
