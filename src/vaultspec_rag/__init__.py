@@ -24,13 +24,11 @@ the models, or the store through this top-level init.
 from __future__ import annotations
 
 from importlib import import_module
-from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any
 
-try:
-    __version__: str = version("vaultspec-rag")
-except PackageNotFoundError:
-    __version__ = "0.0.0.dev0"
+if TYPE_CHECKING:
+    #: Resolved lazily at runtime; declared here so type checkers and IDEs see it.
+    __version__: str
 
 if TYPE_CHECKING:
     # Eager view for static type checkers and IDEs; never executed at runtime,
@@ -194,6 +192,19 @@ def __getattr__(name: str) -> Any:
     Importing ``vaultspec_rag`` no longer eager-loads the heavy facade; the
     owning submodule is imported only when one of its names is first accessed.
     """
+    if name == "__version__":
+        # Reading installed package metadata costs ~98ms of this package's
+        # ~106ms import, and every spawn worker re-imports this module in its
+        # own interpreter, so paying it eagerly taxed each one for a string
+        # almost nothing reads. Resolved on first access and cached below.
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            resolved = version("vaultspec-rag")
+        except PackageNotFoundError:
+            resolved = "0.0.0.dev0"
+        globals()[name] = resolved
+        return resolved
     module_name = _LAZY_EXPORTS.get(name)
     if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
