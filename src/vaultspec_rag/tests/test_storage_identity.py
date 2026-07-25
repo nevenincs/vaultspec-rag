@@ -264,6 +264,113 @@ def test_same_width_model_swap_is_nonconforming_but_not_fatal() -> None:
     assert "old/model" in verdict.reason
 
 
+class TestStoreVerifiesOnEnsure:
+    """End-to-end verification against a real local-mode collection.
+
+    Local Qdrant runs in-process, so these exercise the real create, the real
+    stamp, and the real geometry read-back without a service or a network.
+    """
+
+    @staticmethod
+    def _open(root: Path, dim: int = 64) -> object:
+        from ..store import VaultStore
+
+        return VaultStore(root, embedding_dim=dim)
+
+    def test_created_collection_is_conforming(self, tmp_path: Path) -> None:
+        store = self._open(tmp_path)
+        try:
+            store.ensure_table()  # type: ignore[attr-defined]
+            verdicts = store.conformance_verdicts()  # type: ignore[attr-defined]
+        finally:
+            store.close()  # type: ignore[attr-defined]
+
+        assert verdicts["vault_docs"].verdict == store_schema.CONFORMING
+
+    def test_width_change_refuses_at_ensure(self, tmp_path: Path) -> None:
+        """A reopen at a different width must refuse before any write.
+
+        Mutation it catches: not raising on ``geometry_fatal``. Without the
+        raise the store proceeds and the disagreement resurfaces much later as
+        a rejected upsert that burns the full retry budget labelled transient.
+        """
+        from ..store import StorageGeometryError
+
+        store = self._open(tmp_path, dim=64)
+        try:
+            store.ensure_table()  # type: ignore[attr-defined]
+        finally:
+            store.close()  # type: ignore[attr-defined]
+
+        reopened = self._open(tmp_path, dim=128)
+        try:
+            with pytest.raises(StorageGeometryError, match="128"):
+                reopened.ensure_table()  # type: ignore[attr-defined]
+        finally:
+            reopened.close()  # type: ignore[attr-defined]
+
+    def test_model_swap_is_nonconforming_and_does_not_raise(
+        self, tmp_path: Path
+    ) -> None:
+        """The silent case, end to end: readable, reported, not refused.
+
+        Mutation it catches: raising on any nonconforming verdict rather than
+        only on the geometry-fatal ones, which would take search down for the
+        duration of the rebuild that is the remedy.
+        """
+        store = self._open(tmp_path)
+        local_dir = store.db_path  # type: ignore[attr-defined]
+        try:
+            store.ensure_table()  # type: ignore[attr-defined]
+        finally:
+            store.close()  # type: ignore[attr-defined]
+
+        # Rewrite the stamp as an older model of identical width - the exact
+        # shape that no epoch, digest, or dimension check can see.
+        path = sidecar_path(local_dir)
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw["collections"]["vault_docs"]["dense_model"] = "superseded/model"
+        path.write_text(json.dumps(raw), encoding="utf-8")
+
+        reopened = self._open(tmp_path)
+        try:
+            reopened.ensure_table()  # type: ignore[attr-defined]
+            verdict = reopened.conformance_verdicts()["vault_docs"]  # type: ignore[attr-defined]
+        finally:
+            reopened.close()  # type: ignore[attr-defined]
+
+        assert verdict.verdict == store_schema.NONCONFORMING
+        assert not verdict.geometry_fatal
+        assert "superseded/model" in verdict.reason
+
+    def test_missing_stamp_is_unverifiable_and_does_not_raise(
+        self, tmp_path: Path
+    ) -> None:
+        """A pre-upgrade collection must not degrade or block.
+
+        Mutation it catches: treating a missing stamp as nonconforming, which
+        would degrade every host on first upgrade, or as conforming, which
+        restores the silent pass.
+        """
+        store = self._open(tmp_path)
+        local_dir = store.db_path  # type: ignore[attr-defined]
+        try:
+            store.ensure_table()  # type: ignore[attr-defined]
+        finally:
+            store.close()  # type: ignore[attr-defined]
+
+        sidecar_path(local_dir).unlink()
+
+        reopened = self._open(tmp_path)
+        try:
+            reopened.ensure_table()  # type: ignore[attr-defined]
+            verdict = reopened.conformance_verdicts()["vault_docs"]  # type: ignore[attr-defined]
+        finally:
+            reopened.close()  # type: ignore[attr-defined]
+
+        assert verdict.verdict == store_schema.UNVERIFIABLE
+
+
 def test_width_disagreement_is_fatal() -> None:
     """A width mismatch makes vectors unscorable, so it refuses.
 

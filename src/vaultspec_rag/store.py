@@ -112,6 +112,22 @@ class IngestVerificationError(RuntimeError):
     """
 
 
+class StorageGeometryError(RuntimeError):
+    """A collection's vector geometry cannot carry this process's vectors.
+
+    Raised when the width, distance, or dense vector name of an existing
+    collection disagrees with what the running configuration would produce.
+    Such vectors cannot be scored at all, so this refuses at the ensure step
+    rather than letting the disagreement surface later as a rejected upsert
+    that burns the whole retry budget under a "transient" label, or as a
+    hybrid-search fallback that blames the wrong subsystem.
+
+    Deliberately NOT raised for a model disagreement at matching geometry:
+    that collection is readable, and refusing would remove search for exactly
+    the duration of the rebuild that is the remedy.
+    """
+
+
 @contextmanager
 def _suppress_local_qdrant_warnings() -> Generator[None]:
     """Suppress Qdrant local-mode warnings that are not actionable per call."""
@@ -307,6 +323,9 @@ class VaultStore(_VaultSearchMixin):
         # create-once fast path is identical for all three, and three parallel
         # booleans invite a drop that clears the wrong one.
         self._ensured: dict[str, bool] = {}
+        # Verdict per collection, populated by the ensure path and read by the
+        # health surface so a health poll never re-probes the backend.
+        self._conformance: dict[str, store_schema.ConformanceVerdict] = {}
         # Best-effort storage-manifest attribution is recorded at most once per
         # store instance (server mode only) so it never re-enters the hot path.
         self._manifest_recorded = False
@@ -867,7 +886,85 @@ class VaultStore(_VaultSearchMixin):
             if not self._collection_exists(collection):
                 self._ensure_collection(collection)
             self._ensure_payload_indexes(collection, keyword_fields, integer_fields)
+            # Verified here, behind the same once-per-collection marker the
+            # index reconcile sits behind, so the live geometry read never
+            # reaches the query path. Ordered after the reconcile because a
+            # collection this process just created must be judged against the
+            # stamp that creation wrote, not against a half-built state.
+            self._verify_conformance(collection)
             self._ensured[collection] = True
+
+    def _live_dense_dim(self, collection: str) -> int | None:
+        """Return the live collection's dense width, or ``None`` if unreadable.
+
+        Unreadable is a real answer, not a failure: it yields an
+        ``unverifiable`` verdict rather than an exception, because a backend
+        that cannot answer a config question must not take down a store open.
+        """
+        try:
+            info = self.client.get_collection(collection)
+            vectors = info.config.params.vectors
+        except Exception:  # an unanswerable probe is unverifiable, not fatal
+            logger.debug("could not read geometry for %s", collection, exc_info=True)
+            return None
+        if not isinstance(vectors, dict):
+            # Every collection this code creates uses named vectors; an
+            # unnamed one is a shape we did not write and cannot judge.
+            return None
+        dense = cast("dict[str, Any]", vectors).get(store_schema.DENSE_VECTOR_NAME)
+        size = getattr(dense, "size", None)
+        return int(size) if isinstance(size, int) else None
+
+    def _expected_identity(self) -> store_schema.CollectionIdentity:
+        """Return the identity this store would stamp on a fresh collection."""
+        import dataclasses
+
+        return dataclasses.replace(
+            store_schema.current_identity(), dense_dim=self._embedding_dim
+        )
+
+    def _verify_conformance(self, collection: str) -> None:
+        """Judge one collection against what this process expects, and record it.
+
+        Raises on a geometry disagreement and only on a geometry disagreement.
+        A model disagreement is recorded and logged so the health surface can
+        report it with a rebuild command; the collection stays readable because
+        a rebuild is the remedy and refusing would remove search for its
+        duration.
+        """
+        from .storage_identity import load_identity
+
+        backend = "server" if self._server_mode else "local"
+        stamped = load_identity(
+            self.root_dir,
+            backend=backend,
+            collection=collection,
+            local_dir=None if self._server_mode else self.db_path,
+        )
+        verdict = store_schema.evaluate_conformance(
+            stamped,
+            expected=self._expected_identity(),
+            live_dense_dim=self._live_dense_dim(collection),
+        )
+        self._conformance[collection] = verdict
+        if verdict.geometry_fatal:
+            raise StorageGeometryError(
+                f"collection {collection!r} cannot hold this configuration's "
+                f"vectors: {verdict.reason}"
+            )
+        if verdict.verdict == store_schema.NONCONFORMING:
+            logger.warning(
+                "collection %s is nonconforming: %s", collection, verdict.reason
+            )
+
+    def conformance_verdicts(self) -> dict[str, store_schema.ConformanceVerdict]:
+        """Return the verdict recorded for every collection ensured so far.
+
+        Read by the health surface, which must report a nonconforming namespace
+        without re-probing the backend on every health poll.
+        """
+        with self._lifecycle_lock:
+            return dict(self._conformance)
 
     def ensure_table(self) -> None:
         """Create the vault_docs collection and its declared payload indexes.
