@@ -15,7 +15,28 @@ Implements gh #121 (locale dedup) + gh #122 (chunk-type
 weighting) as one PR. Both opt-in, both run post-rerank in
 `search.py:_search_codebase_encoded`. Plumbing mirrors PR #114.
 
-## Proposed Changes
+### Phase `P01` - Post-rerank locale dedup and chunk-type preference
+
+Add the locale-variant recogniser and the chunk-type classifier, then apply the preference nudge and the locale collapse after reranking so neither disturbs the ranking model.
+
+- [x] `P01.S01` - Add the locale-variant key recogniser covering the directory-per-language, language-directory and infix-language file shapes, and the chunk-type classifier resolving a path to production, tests or docs with tests taking precedence; `src/vaultspec_rag/search/_postprocess.py`.
+- [x] `P01.S02` - Apply the chunk-type preference as a bounded score nudge and re-sort, then collapse locale variants within the score window keeping the best of each group, both after reranking so the ranking model output is never disturbed; `src/vaultspec_rag/search/_postprocess.py`.
+
+### Phase `P02` - Public surface
+
+Forward both options through the searcher, the public API, the MCP tool and the CLI, guarding them against a vault-type search.
+
+- [x] `P02.S03` - Forward both options through the searcher facade and the public code-search API; `src/vaultspec_rag/api.py`.
+- [x] `P02.S04` - Expose both options on the MCP code-search tool and as the two CLI flags, rejecting either against a vault-type search with the shared usage error; `src/vaultspec_rag/cli/_search.py`.
+
+### Phase `P03` - Tests, documentation and smoke
+
+Cover both post-processors and their forwarding, and document that each is opt-in.
+
+- [x] `P03.S05` - Cover the locale recogniser across its three path shapes, the classifier precedence, the bounded nudge, the collapse within the score window, and the forwarding from every caller; `src/vaultspec_rag/tests/`.
+- [x] `P03.S06` - Document both flags as opt-in post-rerank steps across the project README, the package README, and the shipped discovery rule; `README.md`.
+
+## Description
 
 - Two pure helpers + two module constants in `search.py`.
 - Two new kwargs on `_search_codebase_encoded` /
@@ -26,7 +47,7 @@ weighting) as one PR. Both opt-in, both run post-rerank in
   guard against `--type vault`.
 - Tests + docs + smoke.
 
-## Tasks
+## Steps
 
 ### Phase 1 — backend (search.py)
 

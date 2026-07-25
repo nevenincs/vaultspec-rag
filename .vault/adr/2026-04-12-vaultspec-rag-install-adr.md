@@ -2,7 +2,7 @@
 tags:
   - '#adr'
   - '#install-command'
-date: 2026-04-12
+date: '2026-04-12'
 modified: '2026-06-30'
 related:
   - '[[2026-04-12-vaultspec-rag-install-research]]'
