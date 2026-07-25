@@ -271,6 +271,7 @@ def _search_index_state(
     requested_root: object,
     search_type: PublicSourceType | str,
     published_points: float | None = None,
+    superseded_regime: float | None = None,
 ) -> dict[str, object]:
     """Adapt this route's carried figures onto the service-domain block.
 
@@ -292,6 +293,7 @@ def _search_index_state(
         requested_root=requested_root,
         search_type=search_type,
         shortfall=shortfall,
+        superseded_regime=bool(superseded_regime),
     )
 
 
@@ -304,15 +306,23 @@ def _search_summary(count: int, index_state: dict[str, object]) -> str:
     nested field they have to go looking for.
     """
     found = f"Found {count} relevant items."
+    notes: list[str] = []
     shortfall = index_state.get("shortfall")
-    if not isinstance(shortfall, dict):
+    if isinstance(shortfall, dict):
+        figures = cast("dict[str, object]", shortfall)
+        notes.append(
+            f"this index holds {figures['live_count']} of the "
+            f"{figures['published_count']} sections it published, so an absent "
+            "result is not evidence that no such item exists"
+        )
+    if index_state.get("superseded_regime") is True:
+        notes.append(
+            "this index still holds sections encoded under a superseded "
+            "format, so ranking mixes two regimes until an explicit rebuild"
+        )
+    if not notes:
         return found
-    figures = cast("dict[str, object]", shortfall)
-    return (
-        f"{found} Warning: this index holds {figures['live_count']} of the "
-        f"{figures['published_count']} sections it published, so an absent "
-        "result is not evidence that no such item exists."
-    )
+    return f"{found} Warning: " + "; ".join(notes) + "."
 
 
 def _empty_search_diagnostics(
@@ -1310,6 +1320,7 @@ def _execute_search_request(
             requested_root=root,
             search_type=search_type,
             published_points=phase_timing.get("published_points"),
+            superseded_regime=phase_timing.get("superseded_regime"),
         )
         index_state_seconds = time.perf_counter() - phase_started
         phase_started = time.perf_counter()

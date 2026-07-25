@@ -28,7 +28,12 @@ from concurrent.futures.process import BrokenProcessPool
 from functools import partial
 from typing import TYPE_CHECKING, NamedTuple
 
-from .._index_breadth import PUBLISHED_POINTS_KEY, parse_published_points
+from .._index_breadth import (
+    PUBLISHED_POINTS_KEY,
+    SUPERSEDED_REGIME_KEY,
+    parse_published_points,
+    parse_superseded_regime,
+)
 from .._job_errors import JobError, JobErrorKind
 from ..index_profiles import (
     SupportMeasurement,
@@ -580,6 +585,17 @@ class CodebaseIndexer:
         self._reuse_stats = None
         self._donor_reuse = None
         self._drift_owner = None
+        self._superseded_cleared = False
+
+    #: Set when a gate reconciled in place instead of rebuilding destructively,
+    #: leaving points from a regime the current configuration no longer
+    #: produces. Instance-level default so a run that never trips a gate reads
+    #: the sidecar's carried value rather than an unset attribute.
+    _superseded_regime: bool = False
+
+    #: Set when this run dropped the collection, so the carried mark from
+    #: the outgoing sidecar must not survive into the one being written.
+    _superseded_cleared: bool = False
 
     def _reuse_snapshot(self) -> dict[str, object] | None:
         """Return this run's reuse telemetry block, or ``None`` when off."""
@@ -1679,6 +1695,7 @@ class CodebaseIndexer:
             "rebuild clears them",
             cause,
         )
+        self._superseded_regime = True
 
     def _published_evidence_lost(self) -> bool:
         """Return whether the store fails to back the carried incremental evidence.
@@ -2598,6 +2615,12 @@ class CodebaseIndexer:
             is not None
         )
 
+        if effective_clean:
+            # The drop below removes every superseded point, so the mark this
+            # clears is genuinely no longer true.
+            self._superseded_regime = False
+            self._superseded_cleared = True
+
         # Failure-safe rebuild (mirrors VaultIndexer.full_index): snapshot the
         # existing chunk ids BEFORE streaming, keep the old chunks live, and
         # purge only the ids absent from the new corpus afterwards. When
@@ -3230,6 +3253,15 @@ class CodebaseIndexer:
         stamped[CONTENT_EPOCH_KEY] = content
         if published_points is not None:
             stamped[PUBLISHED_POINTS_KEY] = str(published_points)
+        # Carried forward, not recomputed: a reconcile republishes the sidecar
+        # with the current format marker, so the gate that set this will not
+        # fire again even though the superseded points are still there. Only a
+        # rebuild an operator asked for removes them, and only that clears it.
+        carried = not self._superseded_cleared and parse_superseded_regime(
+            self._read_meta_raw()
+        )
+        if self._superseded_regime or carried:
+            stamped[SUPERSEDED_REGIME_KEY] = "1"
         tmp_path.write_text(json.dumps(stamped, indent=2), encoding="utf-8")
         os.replace(tmp_path, self._meta_path)
 

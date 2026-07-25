@@ -396,3 +396,79 @@ def test_the_mcp_output_model_preserves_the_path_filter_diagnostic() -> None:
     assert empty["reason"] == "no_match_path_filter"
     path_filter = cast("dict[str, object]", validated["path_filter"])
     assert path_filter["patterns"] == ["src/vaultspec_rag/indexr/**"]
+
+
+def test_index_state_carries_a_superseded_encoding_regime() -> None:
+    """A mixed-regime index must reach the adapters as a settled fact.
+
+    Distinct from a shortfall: the collection holds everything it published,
+    so no count is short, but some of it was encoded under a format the
+    current configuration no longer produces. A surface reading only counts
+    cannot see that, which is why it travels as its own field.
+
+    Proven able to fail: dropping the ``superseded_regime`` emission from
+    ``search_index_state`` fails this test on the membership assertion below;
+    restoring returns it to green. Its companion pins the opposite direction.
+    """
+    from .._search_state import search_index_state
+
+    state = search_index_state(
+        indexed_count=421,
+        requested_root="C:/work/project",
+        search_type="codebase",
+        superseded_regime=True,
+    )
+
+    assert state["superseded_regime"] is True
+    assert "shortfall" not in state
+
+
+def test_index_state_omits_the_regime_flag_for_an_ordinary_index() -> None:
+    """An index no gate reconciled in place must carry no regime warning.
+
+    Emitting it unconditionally would warn on every root and train the reader
+    to skip the sentence that matters.
+
+    Proven able to fail: making the emission unconditional in
+    ``search_index_state`` fails this test on the assertion below.
+    """
+    from .._search_state import search_index_state
+
+    state = search_index_state(
+        indexed_count=421,
+        requested_root="C:/work/project",
+        search_type="codebase",
+    )
+
+    assert "superseded_regime" not in state
+
+
+def test_the_search_summary_names_a_superseded_regime() -> None:
+    """An adapter reading only the summary must learn the regime is mixed.
+
+    The Model Context Protocol surface has no renderer, so a fact left solely
+    in a nested field reaches the command line and not the agent. Both
+    warnings share one sentence so neither is dropped when both apply.
+
+    Proven able to fail: removing the regime branch from ``_search_summary``
+    fails this test on the regime-phrase assertion below.
+    """
+    from ..server._routes import _search_summary
+
+    both = _search_summary(
+        5,
+        {
+            "shortfall": {
+                "published_count": 421,
+                "live_count": 4,
+                "missing_count": 417,
+            },
+            "superseded_regime": True,
+        },
+    )
+
+    assert "4 of the 421 sections" in both
+    assert "superseded format" in both
+    assert _search_summary(5, {"superseded_regime": True}).startswith(
+        "Found 5 relevant items. Warning: this index still holds"
+    )
