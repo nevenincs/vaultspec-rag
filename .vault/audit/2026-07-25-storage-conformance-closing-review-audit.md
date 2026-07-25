@@ -69,9 +69,30 @@ Identity parsing was added inline to the manifest loader in this feature's first
 implementation commit, pushing its cognitive complexity past the gate threshold.
 The gate has failed on every commit since. The closing gate step recorded ruff,
 type, and citation gates clean and did not run the complexity gate, so the
-regression survived a step whose entire purpose was to catch it. The per-record
-parse is now extracted and the gate is green. The narrower lesson is that a
-closeout enumerating gates by name will keep missing the one it does not name.
+regression survived a step whose entire purpose was to catch it. The narrower
+lesson is that a closeout enumerating gates by name will keep missing the one it
+does not name.
+
+Correction, on a later reading of the trunk: this review first recorded the fix
+as its own. It is not. The same extraction had already landed on the trunk,
+diagnosed identically down to the 24-against-20 figure, and better factored -
+four named field decoders with the loop body reduced to the drop-or-keep
+decision, against the two helpers written here. Both were written from the same
+red gate without either seeing the other. The duplicate has been collapsed onto
+the trunk's version and this branch now carries none of it; what remains true is
+the finding, not the credit.
+
+### two-workers-one-fix | medium | the same refactor was written twice, independently, and only the merge would have shown it
+
+Two workers diagnosed one red gate and wrote one fix, concurrently, in the same
+function, with the same helper name. Neither could have found the other by
+searching: the work existed only in another worker's uncommitted tree at the time
+each began. Nothing in the process caught it, and it would have surfaced as a
+merge conflict in a file both had touched for unrelated reasons - the worst place
+to discover it, because the conflict looks like a content collision rather than
+one implementation too many. The cost here was small and the resolution
+mechanical. The general case is not: a duplicate settled by picking whichever
+side merges cleanly is how the copy that never gets the fix survives.
 
 ### reclamation-criterion-would-be-a-defect-if-honoured | medium | a verification criterion asks for behaviour that would leak disk without bound
 
@@ -129,6 +150,13 @@ model-degrades split is asserted rather than inferred.
 
 Make the closeout gate step run the project's gate set rather than an enumerated
 subset, so a gate absent from the list cannot be reported clean by omission.
+
+Give a red shared gate a single owner before anyone fixes it. A gate failing on
+every commit is visible to every concurrent worker at once and reads to each as
+theirs to clear, which is precisely the condition that produced one fix twice
+here. The cheap form is a claim recorded where the other workers will see it; the
+question of where that is belongs to whoever owns the concurrency model, not to
+this feature.
 
 Reconcile the plan's reclamation verification criterion with the decision it
 implements, so the plan stops asking for behaviour the decision does not

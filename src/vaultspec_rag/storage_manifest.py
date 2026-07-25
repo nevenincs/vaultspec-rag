@@ -234,51 +234,56 @@ def manifest_path() -> Path:
     return _status_dir_path() / _MANIFEST_FILENAME
 
 
-def _parse_identity_map(raw: object) -> dict[str, store_schema.CollectionIdentity]:
-    """Rebuild one record's per-collection identity map, dropping what is unusable.
+def _decode_collections(
+    record: dict[str, object], prefix: str, backend: str
+) -> tuple[str, ...]:
+    """Read a record's collection names, falling back to the legacy shape."""
+    raw = record.get("collections")
+    if not isinstance(raw, list):
+        return _legacy_collections(prefix, backend)
+    return tuple(value for value in cast("list[object]", raw) if isinstance(value, str))
 
-    A malformed entry is dropped rather than defaulted, so it reads as absent
-    evidence - ``unverifiable`` - instead of a provenance claim this loader
-    invented.
+
+def _decode_schema_version(record: dict[str, object]) -> int:
+    """Read a record's storage schema version, defaulting to the first."""
+    raw = record.get("storage_schema_version", 1)
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return 1
+    return raw
+
+
+def _decode_identity(
+    record: dict[str, object],
+) -> dict[str, store_schema.CollectionIdentity]:
+    """Read a record's per-collection identity claims.
+
+    A malformed claim is dropped rather than defaulted, so it reads as absent
+    evidence (unverifiable) instead of a claim this loader invented.
     """
+    raw = record.get("collection_identity")
     if not isinstance(raw, dict):
         return {}
     identity: dict[str, store_schema.CollectionIdentity] = {}
     for name, payload in cast("dict[str, object]", raw).items():
-        recovered = store_schema.CollectionIdentity.from_payload(payload)
-        if recovered is not None:
-            identity[name] = recovered
+        claim = store_schema.CollectionIdentity.from_payload(payload)
+        if claim is not None:
+            identity[name] = claim
     return identity
 
 
-def _entry_from_record(prefix: str, record: dict[str, object]) -> ManifestEntry | None:
-    """Rebuild one root's entry from its persisted record, or ``None`` if unusable.
+def _entry_from_record(prefix: str, record_obj: object) -> ManifestEntry | None:
+    """Build one entry from a raw manifest record, or ``None`` if unusable.
 
-    Every field is parsed leniently because a pre-upgrade manifest legitimately
-    lacks the newer ones; only an unusable root path disqualifies the record,
-    because without it nothing can be attributed.
+    A record without a string ``root`` carries no locatable namespace, so it
+    is dropped rather than defaulted.
     """
+    if not isinstance(record_obj, dict):
+        return None
+    record = cast("dict[str, object]", record_obj)
     root = record.get("root")
     if not isinstance(root, str):
         return None
     backend = str(record.get("backend", ""))
-    raw_collections = record.get("collections")
-    collections = (
-        tuple(
-            value
-            for value in cast("list[object]", raw_collections)
-            if isinstance(value, str)
-        )
-        if isinstance(raw_collections, list)
-        else _legacy_collections(prefix, backend)
-    )
-    raw_schema_version = record.get("storage_schema_version", 1)
-    schema_version = (
-        raw_schema_version
-        if isinstance(raw_schema_version, int)
-        and not isinstance(raw_schema_version, bool)
-        else 1
-    )
     return ManifestEntry(
         prefix=prefix,
         root=root,
@@ -288,9 +293,9 @@ def _entry_from_record(prefix: str, record: dict[str, object]) -> ManifestEntry 
         # "never observed orphaned", so the first reclaim can happen no
         # earlier than one full grace window after upgrade.
         first_seen_orphaned=str(record.get("first_seen_orphaned", "")),
-        storage_schema_version=schema_version,
-        collections=collections,
-        collection_identity=_parse_identity_map(record.get("collection_identity")),
+        storage_schema_version=_decode_schema_version(record),
+        collections=_decode_collections(record, prefix, backend),
+        collection_identity=_decode_identity(record),
     )
 
 
@@ -309,6 +314,8 @@ def load_manifest() -> dict[str, ManifestEntry]:
     path = manifest_path()
     try:
         raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
     except OSError:
         return {}
     try:
@@ -320,11 +327,10 @@ def load_manifest() -> dict[str, ManifestEntry]:
     roots_obj = cast("dict[str, object]", parsed).get("roots")
     if not isinstance(roots_obj, dict):
         return {}
+    roots = cast("dict[str, object]", roots_obj)
     entries: dict[str, ManifestEntry] = {}
-    for prefix, record_obj in cast("dict[str, object]", roots_obj).items():
-        if not isinstance(record_obj, dict):
-            continue
-        entry = _entry_from_record(prefix, cast("dict[str, object]", record_obj))
+    for prefix, record_obj in roots.items():
+        entry = _entry_from_record(prefix, record_obj)
         if entry is not None:
             entries[prefix] = entry
     return entries
