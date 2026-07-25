@@ -20,7 +20,7 @@ import pytest
 from typer.testing import CliRunner
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
     from typer.testing import Result
 
@@ -33,7 +33,7 @@ runner = CliRunner()
 
 
 @contextlib.contextmanager
-def _quiesce_service(envelope: dict[str, Any] | None) -> Iterator[int | None]:
+def _quiesce_service(envelope: dict[str, Any] | None) -> Generator[int | None]:
     """Serve one pause/resume envelope over real HTTP on a real port.
 
     The command under test resolves a port, opens a socket and parses a wire

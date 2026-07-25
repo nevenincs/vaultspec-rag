@@ -136,7 +136,6 @@ __all__ = [
     "_http_mode",
     "_install_daemon_shutdown_hooks",
     "_is_sensitive_path",
-    "_jobs",
     "_launch_token",
     "_lifecycle_log",
     "_local_store_locked_error_dict",

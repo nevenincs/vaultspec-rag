@@ -354,8 +354,10 @@ def _render_live_service_axis(service: dict[str, object]) -> None:
         _plain("  heartbeat: absent")
     version = service.get("version")
     if isinstance(version, dict):
-        reported = version.get("service_version") or "not reported"
-        state = "matches this client" if version.get("compatible") else "INCOMPATIBLE"
+        version_map = cast("dict[str, object]", version)
+        reported = version_map.get("service_version") or "not reported"
+        compatible = version_map.get("compatible")
+        state = "matches this client" if compatible else "INCOMPATIBLE"
         _plain(f"  release: {reported} ({state})")
 
 
