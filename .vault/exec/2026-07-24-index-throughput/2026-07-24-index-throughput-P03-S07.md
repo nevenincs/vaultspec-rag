@@ -35,10 +35,10 @@ related:
 ## Outcome
 
 Landed. The vault path overlaps encode with storage under one GPU consumer
-thread and one writer thread. The direction of the queue is inverted from
-the plan's wording - the writer side is queued rather than the producer side
-- because the vault path's producer is the CPU split that S06 moved into the
-worker pool; the contract the plan asked for (encode of slice N+1 overlapping
+thread and one writer thread. The direction of the queue is inverted from the
+plan's wording, in that the writer side is queued rather than the producer
+side, because the vault path's producer is the CPU split that S06 moved into
+the worker pool; the contract the plan asked for (encode of slice N+1 overlapping
 the storage of slice N, single GPU consumer, sentinel shutdown, time-bounded
 joins) is the one that shipped.
 

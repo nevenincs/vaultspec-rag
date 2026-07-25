@@ -11,13 +11,16 @@ related:
   - '[[2026-07-24-index-throughput-P01-S14]]'
   - '[[2026-07-24-index-throughput-P02-S03]]'
   - '[[2026-07-24-index-throughput-P02-S04]]'
+  - '[[2026-07-24-index-throughput-P02-S05]]'
   - '[[2026-07-24-index-throughput-P02-S15]]'
   - '[[2026-07-24-index-throughput-P03-S06]]'
   - '[[2026-07-24-index-throughput-P03-S07]]'
   - '[[2026-07-24-index-throughput-P03-S08]]'
+  - '[[2026-07-24-index-throughput-P03-S09]]'
   - '[[2026-07-24-index-throughput-P03-S10]]'
   - '[[2026-07-24-index-throughput-P03-S16]]'
   - '[[2026-07-24-index-throughput-P03-S17]]'
+  - '[[2026-07-24-index-throughput-P04-S11]]'
   - '[[2026-07-24-index-throughput-P04-S13]]'
   - '[[2026-07-24-index-throughput-P04-S18]]'
   - '[[2026-07-24-index-throughput-adr]]'
@@ -47,9 +50,12 @@ Auto-generated index of all documents tagged with `#index-throughput`.
 - `2026-07-24-index-throughput-P03-S16` - apply the existing flush-cadence throttle to the vault slice path, which currently empties the CUDA cache every slice
 - `2026-07-24-index-throughput-P03-S17` - throttle the document per-file loop's cache release, which currently syncs the device every slice by defaulting release-cache on
 - `2026-07-24-index-throughput-P04-S18` - cap requires-python below 3.14 so the published metadata matches the runtime interpreter guard that already rejects 3.14, and add a .python-version pin so fresh worktree venvs resolve a supported interpreter
+- `2026-07-24-index-throughput-P02-S05` - measure ingest wall-clock before and after the wait-policy change on a rebuild-class corpus and record the numbers
 - `2026-07-24-index-throughput-P03-S06` - move vault document parsing into the spawn-safe CPU worker pool keeping every worker torch-free
 - `2026-07-24-index-throughput-P03-S07` - adopt the bounded-queue producer/consumer pattern for the vault encode path with sentinel shutdown and time-bounded joins
 - `2026-07-24-index-throughput-P03-S08` - adopt the bounded-queue producer/consumer pattern for the document encode path with sentinel shutdown and time-bounded joins
+- `2026-07-24-index-throughput-P03-S09` - re-tune the CUDA cache flush cadence under overlap and record the measured effect
+- `2026-07-24-index-throughput-P04-S11` - run the before/after measurement: a contended multi-job window and a solo rebuild-class job, comparing wall-clock and queue-wait telemetry against the research baselines
 - `2026-07-24-index-throughput-P04-S13` - commit the throughput work with a why-focused message and push to origin main
 
 ### plan
