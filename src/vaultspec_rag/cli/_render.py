@@ -21,7 +21,8 @@ import vaultspec_rag.cli as _cli
 from ._cli_format import _counted_unit
 
 if TYPE_CHECKING:
-    from ..commands import ProvisionOutcome
+    from ..commands._provision import ProvisionOutcome
+    from ..serviceclient._compat import ServiceVersionVerdict
 
 __all__ = [
     "_display_port_unreachable_error",
@@ -461,6 +462,50 @@ def _display_port_unreachable_error(
         f"  2. Start service: vaultspec-rag server start\n"
         f"  3. Or run locally anyway: re-run with "
         f"--allow-fallback (one user only)."
+    )
+
+
+def _display_service_version_error(
+    verdict: ServiceVersionVerdict,
+    *,
+    command: str,
+    json_mode: bool,
+) -> None:
+    """Refuse to send *command* to a daemon of a different release.
+
+    The CLI half of the release gate the MCP applies in its port precondition.
+    Both read the same verdict, so the error code, the diagnosis and the
+    remediation are the verdict's - only the presentation differs, which is what
+    keeps one condition from acquiring two contracts.
+
+    Refusing rather than proceeding is the point: an unrecognised request field
+    is dropped by the daemon rather than rejected, so continuing would answer
+    over a different candidate set with no sign anything was lost.
+    """
+    remediation = [
+        *verdict.remediation(),
+        "vaultspec-rag server status",
+    ]
+    if json_mode:
+        _emit_json_error_and_exit(
+            command,
+            verdict.error_code() or "service_version_mismatch",
+            f"Refusing to {command} against the running service: {verdict.reason()}.",
+            1,
+            version=verdict.to_dict(),
+            remediation=remediation,
+        )
+        return
+    _plain(
+        f"Refusing to {command} against the running service.\n"
+        f"{verdict.reason().capitalize()}.\n"
+        f"A daemon from another release drops request fields it does not know "
+        f"rather than rejecting them, so the answer would be computed over a "
+        f"different candidate set with nothing to show it.\n"
+        f"Next actions:\n"
+        f"  1. Restart the service: vaultspec-rag server stop, then "
+        f"vaultspec-rag server start\n"
+        f"  2. Confirm the release:  vaultspec-rag server status"
     )
 
 

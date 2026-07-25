@@ -25,7 +25,7 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict
 
 from .._source_types import SourceTypeParseError, parse_source_type
-from ..serviceclient import (
+from ..serviceclient._transport import (
     _try_http_admin,
     _try_http_clean,
     _try_http_code_file,
@@ -174,19 +174,17 @@ def _require_port() -> int:
     client's filters would be ignored and the answer computed against a
     different candidate set, with a 200 and no indication anything was lost.
     """
-    from ..serviceclient._compat import classify_service_version
-    from ..serviceclient._discovery import resolve_machine_service
+    from ..serviceclient._compat import resolve_data_plane_service
 
-    resolution = resolve_machine_service()
-    if not resolution.is_ready or resolution.port is None:
+    service = resolve_data_plane_service()
+    if service.port is None:
         raise RuntimeError(_SERVICE_DOWN_MESSAGE)
-    verdict = classify_service_version(resolution.payload)
-    if not verdict.is_compatible:
+    if not service.version.is_compatible:
         raise RuntimeError(
-            f"{verdict.error_code()}: {verdict.reason()}. "
-            f"{' '.join(verdict.remediation())}"
+            f"{service.version.error_code()}: {service.version.reason()}. "
+            f"{' '.join(service.version.remediation())}"
         )
-    return resolution.port
+    return service.port
 
 
 def _unwrap[T](result: T | None) -> T:

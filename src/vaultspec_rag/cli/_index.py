@@ -24,6 +24,7 @@ import vaultspec_rag.cli as _cli
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from .._store_writes import InsufficientDiskSpaceError
 from ..config import EnvVar
+from ..serviceclient._compat import resolve_data_plane_service
 from ..store import VaultStoreLockedError
 from ._app import CLIState, app
 from ._cli_format import _counted_unit
@@ -33,12 +34,12 @@ from ._http_search import _try_http_reindex
 from ._render import (
     _display_port_unreachable_error,
     _display_service_error,
+    _display_service_version_error,
     _emit_json,
     _emit_json_error_and_exit,
     _format_local_index_busy_message,
     _plain,
 )
-from ._service_status import _default_service_port
 
 
 def _warn_preprocess_flag_ignored_when_delegating(json_mode: bool) -> None:
@@ -642,7 +643,19 @@ def handle_index(
         _validate_rebuild(ctx, json_mode)
 
     if port is None:
-        port = _default_service_port()
+        service = resolve_data_plane_service()
+        if service.reachable and not service.version.is_compatible:
+            # Refuse instead of falling through to the in-process path. A daemon
+            # of another release still owns the store and the writer lock, so
+            # indexing around it would contend with a process this build cannot
+            # speak to - a worse outcome than stopping.
+            _display_service_version_error(
+                service.version,
+                command="index",
+                json_mode=json_mode,
+            )
+            raise typer.Exit(code=1)
+        port = service.port
         if port is not None:
             # We detected a running service, so enable fallback automatically.
             allow_fallback = True
