@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 import os
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
@@ -46,6 +46,7 @@ __all__ = [
     "load_manifest",
     "manifest_path",
     "reconcile_manifest",
+    "record_collection_identity",
     "record_root",
     "rekey_prefix",
     "remove_prefix",
@@ -107,6 +108,13 @@ class ManifestEntry:
             the persisted grace clock: automated reclamation may only act
             once the stamp is old enough, a daemon restart must not reset
             it, and a reappearing root must.
+        collection_identity: Per-collection record of what produced that
+            collection's vectors, keyed by exact collection name. Keyed per
+            collection rather than per namespace because the three collections
+            of one root are indexed at different times and can genuinely
+            disagree about the model that built them. An absent key means the
+            collection predates stamping and is ``unverifiable`` - never that
+            it matches.
     """
 
     prefix: str
@@ -116,6 +124,9 @@ class ManifestEntry:
     first_seen_orphaned: str = ""
     storage_schema_version: int = store_schema.STORAGE_SCHEMA_VERSION
     collections: tuple[str, ...] = ()
+    collection_identity: dict[str, store_schema.CollectionIdentity] = field(
+        default_factory=dict
+    )
 
 
 @dataclass(frozen=True)
@@ -261,6 +272,16 @@ def load_manifest() -> dict[str, ManifestEntry]:
             and not isinstance(raw_schema_version, bool)
             else 1
         )
+        raw_identity = record.get("collection_identity")
+        identity: dict[str, store_schema.CollectionIdentity] = {}
+        if isinstance(raw_identity, dict):
+            for name, payload in cast("dict[str, object]", raw_identity).items():
+                # A malformed record is dropped rather than defaulted, so it
+                # reads as absent evidence (unverifiable) instead of a claim
+                # this loader invented.
+                parsed = store_schema.CollectionIdentity.from_payload(payload)
+                if parsed is not None:
+                    identity[name] = parsed
         entries[prefix] = ManifestEntry(
             prefix=prefix,
             root=root,
@@ -272,6 +293,7 @@ def load_manifest() -> dict[str, ManifestEntry]:
             first_seen_orphaned=str(record.get("first_seen_orphaned", "")),
             storage_schema_version=schema_version,
             collections=collections,
+            collection_identity=identity,
         )
     return entries
 
@@ -290,6 +312,10 @@ def _write_manifest(entries: dict[str, ManifestEntry]) -> Path:
                 "first_seen_orphaned": entry.first_seen_orphaned,
                 "storage_schema_version": entry.storage_schema_version,
                 "collections": list(entry.collections),
+                "collection_identity": {
+                    name: identity.to_payload()
+                    for name, identity in sorted(entry.collection_identity.items())
+                },
             }
             for entry in entries.values()
         },
@@ -321,17 +347,31 @@ def record_root(
     """
     resolved = str(Path(root).resolve())
     prefix = root_collection_prefix(root)
-    entry = ManifestEntry(
-        prefix=prefix,
-        root=resolved,
-        backend=backend,
-        last_indexed=last_indexed,
-        storage_schema_version=store_schema.STORAGE_SCHEMA_VERSION,
-        collections=_declared_collections(prefix, backend),
-    )
     with _LOCK:
         entries = load_manifest()
         existing = entries.get(prefix)
+        # Recording a root observes it; it does not rebuild it. The stored
+        # schema generation and per-collection identity therefore carry over
+        # untouched, and only a genuinely new namespace is stamped with current
+        # values. Overwriting them here would falsify the record before any
+        # verifier could read it: merely opening a store calls this, so a stale
+        # namespace would relabel itself as current and every conformance check
+        # downstream would be certifying this function's last write.
+        entry = ManifestEntry(
+            prefix=prefix,
+            root=resolved,
+            backend=backend,
+            last_indexed=last_indexed,
+            storage_schema_version=(
+                existing.storage_schema_version
+                if existing is not None
+                else store_schema.STORAGE_SCHEMA_VERSION
+            ),
+            collections=_declared_collections(prefix, backend),
+            collection_identity=(
+                dict(existing.collection_identity) if existing is not None else {}
+            ),
+        )
         # Idempotent: skip the disk write when nothing changed, so frequent
         # callers (e.g. a store-open hook) do not churn the manifest. A
         # caller stamping a fresh last_indexed always writes.
@@ -339,7 +379,6 @@ def record_root(
             existing is not None
             and existing.root == resolved
             and existing.backend == backend
-            and existing.storage_schema_version == entry.storage_schema_version
             and existing.collections == entry.collections
             and not last_indexed
         ):
@@ -347,6 +386,55 @@ def record_root(
         entries[prefix] = entry
         _write_manifest(entries)
     return entry
+
+
+def record_collection_identity(
+    root: Path | str,
+    *,
+    backend: str,
+    collection: str,
+    identity: store_schema.CollectionIdentity,
+) -> None:
+    """Stamp what produced one collection, in server mode.
+
+    Called once, when the collection is created, so the record describes the
+    process that actually wrote the vectors. Restamping an existing key is
+    deliberate and only reachable through a create - a rebuild drops the
+    collection first, so the stamp that follows belongs to the new data.
+
+    The namespace's schema generation is refreshed alongside the identity here
+    (and only here) because creating a collection genuinely produces the current
+    shape; see :func:`record_root`, which must not.
+
+    Args:
+        root: The workspace root owning the collection.
+        backend: ``"server"`` or ``"local"``; local mode keeps its record in a
+            per-root sidecar instead and is a no-op here.
+        collection: The exact collection name being stamped.
+        identity: What produced it.
+    """
+    if backend != "server":
+        return
+    resolved = str(Path(root).resolve())
+    prefix = root_collection_prefix(root)
+    with _LOCK:
+        entries = load_manifest()
+        existing = entries.get(prefix)
+        merged = dict(existing.collection_identity) if existing is not None else {}
+        merged[collection] = identity
+        entries[prefix] = ManifestEntry(
+            prefix=prefix,
+            root=resolved,
+            backend=backend,
+            last_indexed=existing.last_indexed if existing is not None else "",
+            first_seen_orphaned=(
+                existing.first_seen_orphaned if existing is not None else ""
+            ),
+            storage_schema_version=identity.storage_schema_version,
+            collections=_declared_collections(prefix, backend),
+            collection_identity=merged,
+        )
+        _write_manifest(entries)
 
 
 def remove_prefix(prefix: str) -> bool:
@@ -486,6 +574,7 @@ def update_orphan_stamps(statuses: dict[str, str], *, now_iso: str) -> dict[str,
                         first_seen_orphaned=now_iso,
                         storage_schema_version=entry.storage_schema_version,
                         collections=entry.collections,
+                        collection_identity=entry.collection_identity,
                     )
                     entries[prefix] = entry
                     changed = True
@@ -498,6 +587,7 @@ def update_orphan_stamps(statuses: dict[str, str], *, now_iso: str) -> dict[str,
                     first_seen_orphaned="",
                     storage_schema_version=entry.storage_schema_version,
                     collections=entry.collections,
+                    collection_identity=entry.collection_identity,
                 )
                 entries[prefix] = entry
                 changed = True
@@ -530,16 +620,29 @@ def rekey_prefix(
     """
     resolved = str(Path(root).resolve())
     new_prefix = root_collection_prefix(root)
-    entry = ManifestEntry(
-        prefix=new_prefix,
-        root=resolved,
-        backend=backend,
-        last_indexed=last_indexed,
-        storage_schema_version=store_schema.STORAGE_SCHEMA_VERSION,
-        collections=_declared_collections(new_prefix, backend),
-    )
     with _LOCK:
         entries = load_manifest()
+        # A rekey moves an entry; it does not rebuild the data. The schema
+        # generation and identity describe vectors that are unchanged by the
+        # move, so they carry across rather than being restamped with current
+        # values - restamping here would let a migrate launder a stale
+        # namespace into a conforming-looking one.
+        source = entries.get(old_prefix) or entries.get(new_prefix)
+        entry = ManifestEntry(
+            prefix=new_prefix,
+            root=resolved,
+            backend=backend,
+            last_indexed=last_indexed,
+            storage_schema_version=(
+                source.storage_schema_version
+                if source is not None
+                else store_schema.STORAGE_SCHEMA_VERSION
+            ),
+            collections=_declared_collections(new_prefix, backend),
+            collection_identity=(
+                dict(source.collection_identity) if source is not None else {}
+            ),
+        )
         if old_prefix != new_prefix:
             entries.pop(old_prefix, None)
         entries[new_prefix] = entry
