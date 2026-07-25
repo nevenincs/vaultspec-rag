@@ -4,235 +4,63 @@
 You MUST respect these rules at all times:
 
 ---
-name: automated-destruction-requires-time-confirmed-danglingness
+name: gpu-discipline
 trigger: always_on
 ---
 
-# Automated destruction requires time-confirmed danglingness
+# GPU discipline
 
 ## Rule
 
-Automated deletion of indexed data requires classification AND a persisted
-continuous grace window - a single-scan "root path does not exist"
-observation is never sufficient. Data-bearing namespaces additionally
-require a recoverable archive to have succeeded before destruction, and
-`unknown`/`unverifiable` namespaces are never auto-touched.
+- Load torch through the single centralised loader. Never import it directly on
+  a compute path.
+- Keep service call paths torch-free: MCP server, service client, CLI
+  service-control commands.
+- Provision the GPU build only. Never accept a CPU wheel silently.
+- Run GPU encoding on exactly one dedicated consumer thread that owns the GPU
+  lock.
+- Never add a second GPU consumer thread. Never use CUDA streams to parallelise
+  compute on one device. Never encode inline on the pool-draining thread.
+- Hold the GPU lock across forward calls only. Tokenisation, pair assembly,
+  tensor post-processing, score conversion and storage I/O go outside it.
+- Do CPU-only work in index workers. Never initialise CUDA in one.
+- Create the chunk worker pool with `spawn`.
+- Keep every `torch` import function-local in every module a worker can reach.
+- Bound and liveness-guard every wait that shuts the consumer down.
 
 ## Why
 
-A valid root can transiently not-exist: an unplugged drive, an offline
-share, a directory mid-rename, a worktree being re-created. The manual
-prune has a human as the confirmation; the scheduled auto-prune
-(`2026-07-14-storage-autoprune-safety-adr`) replaces that human with time -
-`first_seen_orphaned` persists in the storage manifest across daemon
-restarts, any live or unverifiable observation resets it to zero, so
-protection can only ever be extended by races, never shortened. The
-empty/data tier split matches the measured waste profile: the 167.9GB
-reclaimed on 2026-07-13 was entirely zero-point namespaces.
+- This project is GPU-only and never runs inference on CPU.
+- Two compute-bound kernels serialise on one device regardless of streams. The
+  only real parallelism is CPU-produce against GPU-consume.
+- There is one GPU lock per process. Every millisecond held beyond the forward
+  pass serialises every root.
+- A spawn worker re-imports its whole chain. A module-scope torch import there
+  initialises CUDA in every worker and reintroduces the subprocess CUDA crash
+  class.
+- Indexing holds the writer lock. An unbounded wait turns one stalled call into
+  a wedged indexer.
+- A bare install resolves torch from the public index, because the GPU pin is
+  workspace-scoped and absent from published wheel metadata.
 
 ## How
 
-- **Good:** `evaluate_reclaim` in `src/vaultspec_rag/storage_ops.py` -
-  orphaned-only input, per-tier grace windows (24h empty / 168h data),
-  riskless-empty-first under a per-cycle cap; `archive_prefix` raises on
-  any snapshot failure so `delete_prefix` is never reached for unarchived
-  data; the empty tier re-counts points immediately before the drop.
-- **Bad:** dropping a namespace because one survey said its root was
-  missing; destroying a point-bearing namespace after a failed archive;
-  resetting grace clocks on daemon restart; auto-deleting anything the
-  manifest cannot attribute.
-
----
-name: broker-facing-cli-outcomes-are-structured-and-idempotent
-trigger: always_on
----
-
-# Broker-facing CLI outcomes are structured and idempotent
-
-## Rule
-
-A lifecycle CLI verb a broker drives (`server start`, `server stop`) must, in
-`--json` mode, emit exactly ONE structured envelope on every exit path -
-success and each failure - and treat an already-satisfied request as a success
-(exit 0 with an `already_*` status), never a non-zero fault a broker would
-misread as a gateway error. An outcome that leaves the requested state
-unachieved (a stop that leaves the service running) is a failure and exits
-non-zero in BOTH human and json modes.
-
-## Why
-
-The `2026-06-27-rag-broker-affordances-adr` shipped `server start --json`
-after a supervising broker misread "already running" as an opaque 502; the
-`2026-07-13-control-plane-affordances-adr` completed the sibling
-`server stop --json`. The candidate held through both execution cycles: a
-broker can speculatively start (attach on `already_running`) and stop
-(no-op on `already_stopped`), and the one genuine stop failure
-(`identity_unconfirmed`, service left running) is a visible exit 1 instead
-of a silent success.
-
-## How
-
-- **Good:** `_start_success`/`_fail_start` and `_stop_success`/`_fail_stop`
-  in `src/vaultspec_rag/cli/_service_lifecycle.py` - every terminal branch
-  converges on exactly one helper; `{ok, command, data:{status,...}}` on
-  success, `{ok:false, command, error, message, data}` on failure.
-- **Good:** `server stop` with nothing to stop emits `already_stopped`
-  (exit 0); terminating outcomes carry initiator attribution fields.
-- **Bad:** printing human text on a `--json` path, emitting zero or two
-  envelopes on any exit, or exiting 0 from a stop that skipped a live
-  unconfirmed process.
-
----
-name: code-cites-nothing-in-the-vault
-trigger: always_on
----
-
-# Code cites nothing in the vault
-
-## Rule
-
-Tracked source, test, and configuration code must not name a development record.
-No dated vault stem, plan or step identifier, decision-enumeration token
-(`D7`, `QR4`, `Q5`), feature-named ADR reference ("the `mcp-search-scope` ADR"),
-`.vault/<type>/` document path, or codification-candidate name may appear in a
-docstring or comment. State the constraint the record decided directly, so a
-reader learns the rule rather than where it was decided.
-
-The reference direction is one-way: vault documents cite code by `path:line`
-locator, and code cites nothing in the vault. The `.vault/` corpus and the
-`.vaultspec/` harness are removable scaffolding; a citation pointing into them is
-a dangling reference the moment the scaffolding is gone.
-
-The product's own domain vocabulary is not a citation and stays: indexing
-`.vault/` markdown, parsing `adr/` doc ids, advertising `type:adr`, and naming a
-codified rule are code and behaviour, not prose pointing at a record. Vault-shaped
-test DATA - a synthetic `2026-01-01-x-adr.md` fixture filename, a real doc id in a
-ranking rubric - is a value in an expression, not a citation, and also stays.
-
-## Why
-
-A comment that reads "per the `2026-06-01-module-split-adr`" tells a reader where
-to go, not what to do, and the place it sends them is scaffolding that may not be
-present. The constraint the record actually carried - "this module is one half of
-a split; do not reintroduce the monolith" - is what the reader needs, and it is
-almost always already stated in the surrounding prose, with the citation a
-trailing provenance stamp. Removing the stamp loses nothing; keeping it couples
-the code to a document's identity that outlives its usefulness.
-
-The citation-gate lint check enforces the mechanical half of this. It walks
-docstrings and comment tokens (never string-literal values, which is what keeps
-the vault-shaped test data clean) and fails on any reintroduced citation token.
-Run it with `just dev lint citations`.
-
-## How
-
-- **Good:** when a comment cites a record, recover the constraint and state it in
-  place. Delete the trailing citation when the surrounding prose already states
-  the rule; state the rule directly when it does not.
-- **Good:** name a codified rule (`index-workers-stay-cpu-only`) instead of the
-  decision that produced it - the rule name is a constraint a reader can act on
-  without the vault open, not a document identifier.
-- **The grammar-integrity check the gate cannot make.** The gate enforces "no
-  citation token remains". It cannot enforce "the sentence still parses once the
-  token is gone" - that is a human or model read. Before removing a citation, ask
-  whether the token is the grammatical head or object of its clause. "See the
-  `mcp-service-client` ADR" and "the false positive QR4 forbids" are built AROUND
-  the citation: deleting it strands "See the" or "the false positive forbids".
-  Those need delete-and-repair - drop the whole clause or restate it. A trailing
-  "(QR2)." or "per the `...-adr`." is pure provenance: clean-delete. A reviewer
-  must read the surrounding sentence on every removal, because a citation removal
-  that breaks the grammar produces zero test signal and zero lint signal - only a
-  line-by-line diff read catches it.
-- **Bad:** "See the ADR for the decision", "(D7)", "per the
-  `2026-06-13-provisioning-setup-adr`", "plan W04.P07.S25", or a Sphinx `:doc:`
-  role into `.vault/` - all of which point a reader at removable scaffolding.
-- **Bad:** deleting a citation token blindly and leaving "the calls for" or "See
-  the a thin service client" - a grammatically broken fragment is worse than the
-  citation, and the gate will not catch it.
-
----
-name: gpu-consumer-single-thread
-trigger: always_on
----
-
-# Single dedicated GPU consumer thread for indexing
-
-Promoted from the `2026-06-02-index-gpu-pipeline` ADR codification candidate and its code
-review.
-
-## Rule
-
-GPU encoding in the indexing pipeline runs on exactly one dedicated consumer thread that
-owns `gpu_lock`. Never add a second GPU consumer thread or use CUDA streams to parallelise
-compute on the single device, and never run the encode inline on the thread that drains the
-process pool. Every wait involved in shutting that consumer down (the end-of-stream sentinel
-put and the join) must be liveness-guarded and time-bounded so a wedged CUDA/Qdrant call
-aborts the run rather than hanging it under the indexer's writer lock.
-
-## Why
-
-On a single GPU there is no compute/compute overlap to exploit: two compute-bound kernels
-serialise on the SMs regardless of CUDA streams (research A3). The only real parallelism is
-CPU-produce versus GPU-consume, captured by a process-pool producer feeding one consumer
-thread that the GIL-releasing async-CUDA path keeps busy (A1/A2) — the `DataLoader` pattern.
-Running the encode inline on the pool-draining thread idles the GPU during pool bookkeeping.
-A second consumer thread only serialises on GIL launch overhead and the SMs. And because the
-codebase index runs under `self._writer_lock`, any unbounded wait on the consumer escalates a
-single GPU/Qdrant stall into a permanently wedged indexer (review C1/H1/H2).
-
-## How
-
-- **Good:** one `threading.Thread` consumer drains a bounded `queue.Queue`, holds `gpu_lock`
-  across `encode_and_upsert_code_slice`, and is the only code that touches CUDA; the producer
-  refills the queue while the GPU runs.
-- **Good:** shutdown sends the `None` sentinel only while `consumer.is_alive()`, with a
-  timed `put`, and `join(timeout=...)`; if the thread does not terminate within the bound,
-  log and raise rather than block forever.
-- **Bad:** calling `encode` inline in the `wait()`/collect/submit loop (idles the GPU during
-  bookkeeping).
-- **Bad:** a second GPU consumer thread, or separate CUDA streams for dense and sparse, to
-  "parallelise" GPU work — they serialise on one saturated device.
-- **Bad:** an unguarded blocking `queue.put(sentinel)` or unbounded `join()` on shutdown —
-  a dead-without-draining or wedged consumer then hangs the producer and holds the writer
-  lock indefinitely.
-
-## Source
-
-ADR `2026-06-02-index-gpu-pipeline-adr` (codification candidate `gpu-consumer-single-thread`)
-and its code review (findings C1/H1/H2). Research `2026-06-02-index-gpu-pipeline-research`
-(A1 to A3). Related rule `index-workers-stay-cpu-only`.
-
----
-name: gpu-lock-wraps-forward-passes-only
-trigger: always_on
----
-
-# GPU lock wraps forward passes only
-
-## Rule
-
-Hold the global GPU lock only across model forward calls (encode, predict);
-tokenization-adjacent preparation, pair assembly, tensor post-processing, score
-conversion, and any storage I/O must run outside it.
-
-## Why
-
-The `2026-06-12-service-concurrency-adr` and its research measured that over half
-of warm search latency at concurrency 4 was queueing on the GPU lock while it was
-held across non-GPU work, and that an index slice's sparse-tensor conversion ran
-its per-row device syncs inside the lock. Every millisecond the lock is held
-beyond the forward pass serializes all roots of the multi-tenant service, because
-there is exactly one GPU lock per process.
-
-## How
-
-- Good: build CrossEncoder pairs and apply the character cap before entering the
-  GPU section; call `predict` inside it; convert raw scores to floats after
-  release (`src/vaultspec_rag/search/_searcher.py`).
-- Good: check the query-embedding cache before acquiring the lock so repeat
-  queries skip it entirely.
-- Bad: wrapping result mapping, sparse-tensor densification, or a Qdrant upsert
-  in the same `with gpu_lock:` block as the encode that produced the vectors.
+- Good: a compute site calls the loader and uses what it returns. The loader
+  raises on a CPU-only build, an absent GPU, or absent torch, with one message.
+- Good: read-only probes that must tolerate a torch-free host keep a guarded
+  function-local import and report no CUDA rather than raising. Only exception.
+- Good: one consumer thread drains a bounded queue and is the only code touching
+  CUDA; shutdown sends its sentinel only while the thread is alive, with a timed
+  put and a bounded join.
+- Good: build reranker pairs and apply the character cap before the lock; call
+  predict inside; convert scores after release.
+- Good: a fresh-interpreter test asserts importing the worker leaves `torch` out
+  of `sys.modules`.
+- Bad: a module-scope `import torch`, or a fresh inline CUDA-availability check
+  on a compute path.
+- Bad: wrapping result mapping, densification or an upsert in the locked block.
+- Bad: constructing an embedding model, calling `torch.cuda.*`, or opening the
+  store inside a worker.
 
 ---
 name: guard-tests-prove-they-can-fail
@@ -243,197 +71,66 @@ trigger: always_on
 
 ## Rule
 
-A test whose subject is a guard, an interception, or a negative assertion is not
-considered verified until someone has observed it fail for the intended reason.
-Break the thing it defends, watch it go red, restore, watch it go green - as one
-uninterrupted sequence - and record both directions where the test's reader will
-find them.
-
-This is a new obligation rather than a description of existing practice; most
-tests in this repository have never been through it.
+- Prove a guard test can fail before trusting it.
+- Break the guard, run the test alone, watch it fail on the assertion it names,
+  restore, watch it pass. One uninterrupted sequence.
+- Never leave a mutation on disk across a pause or a handoff.
+- Record both directions where the test's next reader will find them.
 
 ## Why
 
-A passing guard test tells you the guard did not crash. It does not tell you the
-guard is reachable, that the assertion binds to the property it names, or that an
-interception the test depends on still intercepts. Three failures of exactly this
-kind surfaced in a single day's work.
-
-A reranker's coverage passed while the code under test scored display snippets
-instead of real content: the tests exercised the regressed path and reported
-success. That is worse than absent coverage, because absent coverage invites
-someone to look, while false coverage consumes the attention that would have
-gone looking.
-
-A set of tests patched a helper by package attribute, which worked only because
-the code resolved that name at call time. Repointing the call to a bound import
-would have left every patch inert - the tests would have called the real
-implementation, taken an unreachable branch, and still passed, while no longer
-testing the comparison they existed for.
-
-An admission guard rendered three distinct refusals from one template. An
-assertion matching the shared part of the message passed whether or not the
-argument selecting the branch was still supplied; removing that argument left the
-rejection intact and changed only the wording, so the test that existed to defend
-the argument would not have noticed its removal.
-
-In all three the green tally was worth nothing on its own, and in each case the
-mutation took under a minute.
+- A passing guard test proves the guard did not crash. Nothing more.
+- It cannot tell a rejected forbidden thing from one that never reached the
+  check.
+- Coverage reporting success over a regressed path is worse than none. It
+  consumes the attention that would have gone looking.
 
 ## How
 
-- **Good:** before trusting a guard test, mutate the guard so the forbidden thing
-  is permitted, run the test alone, and require it to fail on the assertion you
-  expect rather than on any failure. Restore, re-run, require green. Do it in one
-  sequence and never leave the mutation across a pause or a handoff - a weakened
-  security check on disk is indistinguishable from a broken one to anyone who
-  walks in.
-- **Good:** record both directions in the artefact the test's future reader will
-  reach - an execution record, or the commit body when there is no record. A
-  proof that lives only in conversation is gone by the next reader.
-- **Good:** when the assertion depends on something narrow - a specific message
-  prefix, a patched symbol's binding site, an exact call count - say so in a
-  comment, naming the mutation it catches. Otherwise the next reader loosens it
-  as an over-specific match and silently restores the hole.
-- **Bad:** accepting a green run as verification for a negative test. It cannot
-  distinguish "the forbidden thing was rejected" from "the forbidden thing never
-  reached the check".
-- **Bad:** asserting only the shared part of a message that several branches
-  render, when the test's purpose is to distinguish one branch from another.
-- **Bad:** repointing, renaming, or reorganising a symbol that tests intercept,
-  and treating the suite staying green as evidence the interceptions survived.
-- **Bad:** adjusting an expected string or relaxing a matcher to make a guard
-  test pass. A guard test failing on its message rather than on a missing
-  rejection usually means the branch selector changed, which is the defect the
-  test was written to report.
-
-## Scope
-
-The obligation is on guards, interceptions, and negative assertions - tests whose
-subject is that something does not happen, or that a check fires. Ordinary
-positive tests are outside it: their subject occurs, so a green run already
-demonstrates the path was taken.
+- Require the failure to land on the intended assertion, not on an import or a
+  collection error.
+- Comment the mutation a narrow assertion catches. The next reader loosens an
+  unexplained matcher.
+- Assert the exact branch. A message shared by several branches passes whichever
+  fires.
+- Never relax a matcher or edit an expected string to make a guard test pass.
+- Applies to guards, interceptions and negative assertions only.
 
 ---
-name: index-workers-stay-cpu-only
+name: no-dev-metadata-in-code
 trigger: always_on
 ---
 
-# Index workers stay CPU-only
-
-Promoted from the `2026-06-02-index-perf-hardening` code review (finding L2) and the
-sibling ADR's codification candidate.
+# No dev metadata in code
 
 ## Rule
 
-Codebase-index worker processes must do CPU-only work and never initialise CUDA. The
-embedding GPU is touched exclusively by the single in-process consumer. The chunk worker
-pool must be created with the `spawn` start method, and **every module reachable from the
-worker's import chain must keep its `torch` import lazy** (inside functions, never at
-module scope).
+- State the constraint. Never state where it was decided.
+- Never write any of these in source, tests, config, comments or docstrings:
+  - a dated vault stem
+  - a wave, phase or step id
+  - a feature name taken from the vault
+  - a decision-enumeration token
+  - a `.vault/` path
+  - a codified rule name
+- Vault documents cite code by `path:line`. Code cites nothing.
 
 ## Why
 
-`vaultspec-rag`'s codebase indexer parallelises tree-sitter chunking across a
-`ProcessPoolExecutor` because tree-sitter holds the GIL for both parse and traverse, so
-threads give no speedup (`2026-06-02-index-perf-hardening` research O1). A spawn worker
-re-imports `vaultspec_rag.indexer._chunk_worker`, which transitively runs
-`vaultspec_rag/__init__.py`. That works today only because `embeddings.py` imports `torch`
-lazily, so importing the worker never loads CUDA. If any module on that chain moved
-`import torch` to module scope, every worker would initialise CUDA at startup and
-reintroduce the `Cannot re-initialize CUDA in forked subprocess` crash class (and, even
-under `spawn`, needless multi-second startup per worker). The single GPU consumer pattern
-also preserves the existing `gpu_lock` serialisation with search.
+- The vault and the harness are removable. A pointer into them dangles once they
+  are gone.
+- A pointer says where to go. A constraint says what to do.
 
 ## How
 
-- **Good:** the worker module (`_chunk_worker.py`) imports only `_ast_chunker`,
-  `_chunking`, and `store.CodeChunk`; the pool is built via
-  `multiprocessing.get_context("spawn")`; dense/sparse encoding happens only in the
-  consumer that owns the `EmbeddingModel`.
-- **Good:** a fresh-interpreter test asserts `import vaultspec_rag.indexer._chunk_worker`
-  leaves `torch` out of `sys.modules` (regression guard for the lazy-import invariant).
-- **Bad:** adding `import torch` (or `from torch import ...`) at module scope in
-  `embeddings.py`, `api.py`, `search.py`, `store.py`, or anything else the worker import
-  chain reaches. Keep torch behind function-local imports.
-- **Bad:** constructing an `EmbeddingModel`, calling `torch.cuda.*`, or opening the vector
-  store inside a worker. Workers receive plain paths and return plain dataclasses.
-
-## Source
-
-Audit/review `2026-06-02-index-perf-hardening` finding L2. Sibling decision ADR
-`2026-06-02-index-perf-hardening-adr` (codification candidate `index-workers-stay-cpu-only`).
-
----
-name: managed-singleton-paths-isolate-storage-dir-in-tests
-trigger: always_on
----
-
-# Managed-singleton paths isolate the storage dir in tests
-
-## Rule
-
-Any test or caller that exercises `write_qdrant_identity` or
-`acquire_machine_lock` must set `VAULTSPEC_RAG_QDRANT_STORAGE_DIR` to a temp path
-before invoking it, because the machine-global identity sidecar and the
-machine-scoped service lock both derive their location from that env knob, not
-from `VAULTSPEC_RAG_STATUS_DIR`.
-
-## Why
-
-The `2026-06-24-service-hardware-singleton-audit` recorded a leaked identity
-sidecar written to the real machine-global managed dir: an early test iteration
-isolated state with `config_override`, which does not reach
-`qdrant_storage_dir`, so the writer targeted the operator's real
-`~/.vaultspec-rag/qdrant-server/` instead of a temp dir. The machine lock shares
-that parent (`machine_lock_path()` is `storage.parent / "service.lock"`), so an
-unisolated test would also acquire the real machine singleton and collide with a
-live service or a sibling test. The constraint held across one full execution
-cycle: the leak, the `_service_env` fix that sets the storage dir, and the
-`W04.P09.S29` follow-up that mirrors the qdrant binary under the isolated dir and
-keeps the storage dir relocated.
-
-## How
-
-- **Good:** a fixture sets `VAULTSPEC_RAG_QDRANT_STORAGE_DIR` to
-  `tmp_path / "qdrant-server" / "storage"`, calls `reset_config()`, then runs the
-  identity write or lock acquire; teardown releases the lock and restores the
-  env. The integration `_service_env` helper does exactly this, and additionally
-  relocates the qdrant port off the shared default so a server-mode test daemon
-  never binds the real machine's port.
-- **Bad:** isolating only `VAULTSPEC_RAG_STATUS_DIR` (or only `config_override`)
-  and then calling `write_qdrant_identity` / `acquire_machine_lock`; the
-  machine-global paths still resolve to the real managed dir, leaking a sidecar
-  or contending for the real machine lock.
-
----
-name: operator-views-are-bounded
-trigger: always_on
----
-
-# Operator Views Are Bounded
-
-## Rule
-
-Always make operator list and tail commands bounded, filterable, and biased toward the
-current actionable state rather than unbounded history.
-
-## Why
-
-The `2026-06-11-cli-service-operability-hardening-code-review-audit` and
-`2026-06-11-service-jobs-operability-adr` showed that full history tables and unfiltered
-log tails hide running or relevant work behind stale noise. Operators need answers to
-what is running, failed, stale, or related to a specific job without dumping the whole
-service history.
-
-## How
-
-- Good: default `server jobs` to a bounded result set, expose `--state` (e.g.
-  `active`/`failed`), `--failed`, `--job-id`, and `--since`, and make
-  `server logs --job-id` search a bounded maximum log window before returning the
-  requested filtered tail.
-- Bad: render every recorded job by default or filter only the last N unfiltered log
-  lines so unrelated recent noise can hide the requested job.
+- Delete the pointer when the prose already states the constraint.
+- State the constraint first when it does not, then delete the pointer.
+- Repair the sentence. A pointer is usually the object of its clause; deleting
+  the token alone strands the sentence.
+- Read every removal in the diff. No linter and no gate sees broken prose.
+- Keep product vocabulary: indexing `.vault/` markdown, parsing `adr/` doc ids,
+  advertising `type:adr`.
+- Keep vault-shaped test data. A fixture filename is a value, not a citation.
 
 ---
 name: pinned-binaries-verify-before-execute
@@ -444,32 +141,29 @@ trigger: always_on
 
 ## Rule
 
-Any native binary the project provisions must be SHA256-verified against a committed
-pin before extraction, and re-verified before execution; never extract or run an
-unverified or operator-untrusted artifact.
+- Verify every provisioned native binary against a committed SHA256 pin before
+  extraction, and again before execution.
+- Never extract or run an unverified artifact.
+- Take the digest from a reviewed code constant, never from live release
+  metadata.
+- Download over HTTPS with a pinned host, and re-check the scheme across
+  redirects.
+- Discard archive-embedded paths on extraction.
 
 ## Why
 
-The `2026-06-12-qdrant-server-provisioning-adr` introduced first-use provisioning of
-the Qdrant server binary, and its code review made download-then-execute the load-
-bearing security boundary: a tampered archive or a corrupted managed binary must be
-refused before it can run. The pinned digests live as reviewed code constants (not
-trusted live from the release metadata), the download is HTTPS host-pinned with the
-scheme re-checked across redirects, and extraction discards archive-embedded paths
-so a malicious member cannot escape the destination.
+- Download-then-execute is the load-bearing security boundary.
+- A digest read from the same source as the artifact proves nothing.
+- Archive-embedded paths enable traversal outside the destination.
 
 ## How
 
-- Good: download host-pinned over HTTPS, hash the archive and compare to the
-  committed constant before extracting, flatten the member by basename into the
-  managed dir, then re-hash the extracted binary against its manifest digest
-  immediately before spawning it.
-- Good: an operator-supplied binary (air-gapped escape hatch) bypasses the download
-  but is still resolved through the same supervised path; a checksum mismatch is a
-  hard failure that deletes the partial artifact.
-- Bad: extracting an archive before verifying its digest, trusting the digest
-  embedded in live release metadata instead of a committed pin, or calling
-  `extractall` (which honours archive-embedded paths and enables traversal).
+- Good: hash the archive and compare to the constant before extracting; flatten
+  members by basename; re-hash the extracted binary immediately before spawning.
+- Good: resolve an operator-supplied binary through the same supervised path;
+  treat a mismatch as a hard failure and delete the partial artifact.
+- Bad: extracting before verifying.
+- Bad: an extract-all honouring archive-embedded paths.
 
 ---
 name: rerankers-score-real-content
@@ -480,186 +174,122 @@ trigger: always_on
 
 ## Rule
 
-Reranking inputs must be the token-bounded full candidate content, never a
-fixed-character snippet or any other display proxy.
+- Feed the reranker the token-bounded full candidate content.
+- Never feed it a display snippet, a title, or any fixed-width prefix.
 
 ## Why
 
-The `2026-06-12-service-concurrency-research` (finding F11) caught the
-CrossEncoder scoring 200-character display snippets while the full content sat
-in memory - the model's semantic capacity was discarded and ranking was biased
-toward candidates whose opening characters echoed the query. The
-`2026-06-12-service-concurrency-adr` made content reranking a decision: the
-reranker's own tokenizer enforces the token bound, and the display snippet is a
-rendering concern only.
+- A fixed-character snippet discards the model's semantic capacity and biases
+  ranking toward candidates whose opening characters echo the query.
+- It passes every test while silently degrading ranking quality.
 
 ## How
 
-- Good: carry the candidate's full content on the result object
-  (`rerank_text`), cap it at a generous multiple of the token bound to spare
-  tokenizer work, and let the CrossEncoder's `max_length` do the exact
-  truncation (`src/vaultspec_rag/search/_searcher.py`).
-- Bad: passing `result.snippet`, a title, or any fixed-width prefix as the
-  reranker's document side - it will pass every test while silently degrading
-  ranking quality.
+- Good: carry the full content on the result object, cap it at a generous
+  multiple of the token bound, and let the reranker's tokenizer truncate.
+- Bad: passing the display snippet as the document side.
 
 ---
-name: service-domain-owns-operability
+name: service-surface
 trigger: always_on
 ---
 
-# Service Domain Owns Operability
+# Service surface
 
 ## Rule
 
-Always implement service health, status, jobs, logs, and search diagnostics as
-service-domain behavior first; CLI and MCP entry points must adapt to that shared
-behavior rather than own or duplicate it.
+- Implement health, status, jobs, logs and search diagnostics as service-domain
+  behaviour. Adapt CLI and MCP to it. Never let an entry point own or duplicate
+  it.
+- Bound every operator list and tail command. Make them filterable. Bias them to
+  current actionable state, not full history.
+- Emit exactly one structured envelope on every exit path of a lifecycle verb in
+  JSON mode, success and failure alike.
+- Treat an already-satisfied request as success: exit zero with an already-done
+  status.
+- Exit non-zero in both human and JSON mode when the requested state is not
+  achieved.
 
 ## Why
 
-The `2026-06-11-cli-service-operability-hardening-code-review-audit` and the
-`2026-06-11-service-status-convergence-adr` showed that earlier MCP deconflation did
-not fully remove MCP-shaped business logic from CLI and service operations. When MCP,
-CLI, and localhost routes drift independently, operators see conflicting names, JSON
-contracts, and remediation commands.
+- Entry points that drift show operators conflicting names, contracts and
+  remediation for one condition.
+- Full history and unfiltered tails hide running work behind stale noise.
+- A broker misreads a non-zero already-running start as a gateway error, and
+  must be able to start or stop speculatively.
+- A stop that leaves the service running is a failure and must not report
+  success.
 
 ## How
 
-- Good: add a `/jobs` filter in the server route, pass the same query parameters through
-  `server jobs` and MCP `get_jobs`, and keep the JSON envelope stable across adapters.
-- Bad: add a CLI-only `server jobs --failed` path that computes different phases from
-  the server or an MCP-only admin helper that the CLI must call to understand service
-  state.
+- Good: filter in the service route, pass the same parameters through the CLI
+  verb and the MCP tool, keep the envelope stable across adapters.
+- Good: default the jobs view to a bounded set; expose state, failed, job-id and
+  since filters; search a bounded log window before returning a filtered tail.
+- Good: converge every terminal branch on one success or one failure helper per
+  verb, and carry initiator attribution on terminating outcomes.
+- Bad: a CLI-only path computing different phases from the service.
+- Bad: rendering every recorded job by default.
+- Bad: printing human text on a JSON path, or emitting zero or two envelopes.
 
 ---
-name: storage-locks-are-backend-aware
+name: storage-discipline
 trigger: always_on
 ---
 
-# Storage locks are backend-aware
+# Storage discipline
 
 ## Rule
 
-Store-layer locking must distinguish local mode (one reentrant lock per
-collection, plus a lifecycle lock for open/close and collection create/drop)
-from server mode (no point-operation locks at all); never reintroduce a single
-store-wide mutex across collections.
+- Local mode: one reentrant lock per collection, plus one lifecycle lock for
+  open, close, and collection create or drop.
+- Server mode: no point-operation locks.
+- Never reintroduce a store-wide mutex across collections.
+- Acquire the lifecycle lock before any collection lock, never the reverse.
+- Keep maintenance read-and-drop only. Never reach a stop, terminate or reclaim
+  helper from it. Never import the CLI from a maintenance module.
+- Require classification AND a persisted continuous grace window before any
+  automatic deletion.
+- Archive data-bearing namespaces successfully before destroying them.
+- Never auto-touch an unknown or unverifiable namespace.
+- Reset the grace clock on any live or unverifiable observation, and persist it
+  across restarts.
+- Point the Qdrant storage-dir environment variable at a temp path in any test
+  that writes the identity sidecar or takes the machine lock.
 
 ## Why
 
-The `2026-06-12-service-concurrency-adr` and the saturation baseline in its
-research showed one store-wide lock dragging 4-second vault searches to a
-95-second p50 purely because they shared a mutex with code-collection scans -
-the collections are independent inside the local engine, and a remote Qdrant
-server handles its own concurrency, so client-side locking there only caps
-throughput. Lock ordering is part of the contract: the lifecycle lock is always
-acquired before any collection lock, and collection locks stay reentrant
-because scan helpers re-enter them.
+- Collections are independent locally, and a remote server handles its own
+  concurrency; client-side locking there only caps throughput.
+- One store-wide lock dragged a four-second search to a ninety-five-second
+  median by sharing a mutex with unrelated scans.
+- Maintenance sharing a process with lifecycle verbs reads as the cause whenever
+  a daemon dies in the same window.
+- A valid root can transiently not exist: an unplugged drive, an offline share,
+  a rename, a worktree being recreated.
+- Resetting the clock on any contrary observation means races can only extend
+  protection, never shorten it.
+- The identity sidecar and the machine lock derive from the storage-dir knob,
+  not the status-dir knob. Isolating the wrong one writes into the operator's
+  real managed directory and contends for the real lock.
 
 ## How
 
-- Good: `_point_lock(collection)` returning the collection's own RLock in local
-  mode and a null context in server mode; `close()` taking the lifecycle lock
-  then every collection lock in fixed order
-  (`src/vaultspec_rag/store.py`).
-- Bad: adding a new store method that takes one global client lock around a
-  point operation, or acquiring the lifecycle lock while already holding a
-  collection lock.
-
----
-name: storage-maintenance-is-lifecycle-inert
-trigger: always_on
----
-
-# Storage maintenance is lifecycle-inert
-
-## Rule
-
-No storage-maintenance code path - survey, prune, delete, or the scheduled
-auto-prune - may reach a service stop, terminate, or machine-singleton
-reclaim helper. Maintenance is read/drop only, and the import graph is
-regression-tested: nothing reachable from the maintenance modules may import
-`vaultspec_rag.cli`.
-
-## Why
-
-The `2026-07-13` prune incident trace showed how a storage command that
-shares a process and config surface with the lifecycle verbs pattern-matches
-to "the prune killed the service" the moment anything terminates a daemon in
-the same window - and a maintenance actor that genuinely could reach a
-terminate flow would turn a routine reclamation into an outage. The
-`2026-07-14-storage-autoprune-safety-adr` made inertness a hard invariant
-when reclamation moved inside the daemon on a schedule.
-
-## How
-
-- **Good:** `TestStorageMaintenanceIsLifecycleInert` in
-  `src/vaultspec_rag/tests/test_adr_regression.py` - a fresh-interpreter
-  import of `storage_manifest`, `storage_ops`, and `server._lifecycle`
-  asserts no `vaultspec_rag.cli.*` module loads, and a source scan asserts
-  none of them names `_terminate_and_confirm`, `_reclaim_machine_singleton`,
-  `_stop_service_on_port`, or `_terminate_pid`.
-- **Bad:** importing a CLI lifecycle helper (even function-locally) from
-  `storage_ops.py` or the maintenance tick, or adding a "restart the
-  service if degraded" branch to a maintenance cycle.
-
----
-name: torch-loads-through-centralized-gpu-gate
-trigger: always_on
----
-
-# Torch loads through one centralized GPU gate
-
-## Rule
-
-Every local-mode path that needs torch for compute must obtain it through the single
-centralized loader `vaultspec_rag._gpu.load_torch()` - which imports torch, asserts a
-CUDA device, and raises hard on a CPU-only build - never a naked `import torch`; service
-call paths (the `mcp/` server, the `serviceclient/` client, and the CLI service-control
-commands) must stay torch-import-free; and if the installer provisions torch at all it
-must be the cu130 GPU build, never a CPU wheel accepted silently.
-
-## Why
-
-vaultspec-rag is GPU-only and never runs inference on CPU. The `2026-06-30` torch
-hardening found the hard CUDA gate duplicated across four sites (embeddings, the service
-reranker, the searcher reranker, and CLI warmup), each re-implementing
-`if not torch.cuda.is_available(): raise` - three with a copy-pasted message - so the
-"who, when, and how torch loads" was uncontrolled and a CPU-only build could only be
-caught wherever someone remembered to check. The same work found the installer reporting
-`PyTorch configuration: already configured` from pyproject text while the active
-interpreter carried a CPU-only torch wheel (a bare `uv tool` / `pip install` resolves
-torch from PyPI because the cu130 pin is workspace-scoped and absent from published wheel
-metadata, and `--torch-backend` is `uv pip`-only). Centralizing the load and probing the
-real wheel is what makes the GPU-only contract enforceable and legible rather than
-silently violated.
-
-## How
-
-- **Good:** a compute site calls `torch = load_torch()` and uses the returned module;
-  `load_torch()` raises `RuntimeError` (CPU-only or no GPU) or `ImportError` (absent) so
-  the failure is hard and loud, with one canonical message.
-- **Good:** read-only probes that must tolerate a CPU-only or torch-absent host (the
-  `/health` and `/metrics` reporters, readiness diagnosis, the memory probe) keep their
-  own guarded function-local import and report `cuda=False` rather than raise - they are
-  the deliberate exception and do not call `load_torch()`.
-- **Good:** the installer probes the active interpreter's wheel
-  (`warn_if_active_torch_not_gpu`) and, when torch was meant to be provisioned, warns
-  loudly on a CPU-only or absent wheel with topology-aware remediation; an explicit
-  torch opt-out is respected silently.
-- **Bad:** a naked module-scope `import torch`, or a fresh inline
-  `if not torch.cuda.is_available(): raise` on a compute path instead of routing through
-  `load_torch()`.
-- **Bad:** importing torch (or `sentence_transformers`) anywhere reachable from a service
-  call path, or reporting install success over a CPU-only torch wheel.
-
-## Source
-
-The `2026-06-30` torch import-discipline and install-provisioning audits and the
-GPU-only mandate they served. Sibling rules `index-workers-stay-cpu-only` (torch imports
-stay function-local so spawn workers never initialise CUDA) and
-`gpu-consumer-single-thread`.
+- Good: a per-collection lock accessor returning that collection's reentrant
+  lock locally and a null context in server mode.
+- Good: a fresh-interpreter test asserts no CLI module loads from the
+  maintenance modules; a source scan asserts none names a terminate, reclaim or
+  stop helper.
+- Good: orphaned-only input, per-tier grace windows, riskless empty namespaces
+  first under a per-cycle cap, points re-counted immediately before the drop.
+- Good: raise on any snapshot failure so the delete is never reached for
+  unarchived data.
+- Good: a fixture points the storage dir at a temp path, resets config, runs,
+  then releases the lock and restores the environment.
+- Bad: a store method taking a global lock around a point operation.
+- Bad: dropping a namespace on one survey saying its root was missing.
+- Bad: destroying a point-bearing namespace after a failed archive.
+- Bad: a restart-if-degraded branch in a maintenance cycle.
 
 ---
 name: vaultspec-cli.builtin
