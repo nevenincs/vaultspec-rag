@@ -146,8 +146,8 @@ class JobAttemptContext:
     def set_resources(
         self,
         *,
-        started: ProcessResourceSnapshot | None | object = ...,
-        finished: ProcessResourceSnapshot | None | object = ...,
+        started: ProcessResourceSnapshot | object | None = ...,
+        finished: ProcessResourceSnapshot | object | None = ...,
         index_capacity_held: bool | None = None,
         project_lease_held: bool | None = None,
         writer_lock_held: bool | None = None,
@@ -244,7 +244,7 @@ class JobManager:
         max_nonterminal: int | None = None,
         max_terminal_history: int = MAX_RECORDS,
         state_path: (
-            str | os.PathLike[str] | None | _ConfiguredStatePath
+            str | os.PathLike[str] | _ConfiguredStatePath | None
         ) = _CONFIGURED_STATE_PATH,
         quiesce_gate: QuiesceGate | None = None,
     ) -> None:
@@ -1506,8 +1506,8 @@ class JobManager:
         job_id: str,
         *,
         task: asyncio.Task[Any],
-        started: ProcessResourceSnapshot | None | object = ...,
-        finished: ProcessResourceSnapshot | None | object = ...,
+        started: ProcessResourceSnapshot | object | None = ...,
+        finished: ProcessResourceSnapshot | object | None = ...,
         index_capacity_held: bool | None = None,
         project_lease_held: bool | None = None,
         writer_lock_held: bool | None = None,
@@ -2694,13 +2694,13 @@ class JobManager:
         desired_state: DesiredJobState,
         now: float,
         attempt: JobAttempt | None = None,
-        started_at: float | None | object = ...,
-        control_requested_at: float | None | object = ...,
-        control_acknowledged_at: float | None | object = ...,
-        finished_at: float | None | object = ...,
-        result: str | None | object = ...,
-        error_kind: str | None | object = ...,
-        reuse: dict[str, object] | None | object = ...,
+        started_at: float | object | None = ...,
+        control_requested_at: float | object | None = ...,
+        control_acknowledged_at: float | object | None = ...,
+        finished_at: float | object | None = ...,
+        result: str | object | None = ...,
+        error_kind: str | object | None = ...,
+        reuse: dict[str, object] | object | None = ...,
     ) -> None:
         previous = managed.snapshot
         timestamps = previous.timestamps
