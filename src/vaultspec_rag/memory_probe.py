@@ -206,16 +206,43 @@ def resolve_index_cuda_ceiling_mb(
     ``profile_cuda_mb`` - the profile figure becomes a default rather than a
     hard cap.
     """
+    return cuda_ceiling_from_observation(
+        device_total_mb=cuda_device_total_mb(),
+        free_mb=cuda_free_memory_mb(),
+        configured_mb=configured_mb,
+        headroom_mb=headroom_mb,
+        profile_cuda_mb=profile_cuda_mb,
+        baseline_mb=baseline_mb,
+    )
+
+
+def cuda_ceiling_from_observation(
+    *,
+    device_total_mb: float | None,
+    free_mb: float | None,
+    configured_mb: float,
+    headroom_mb: float,
+    profile_cuda_mb: float,
+    baseline_mb: float,
+) -> float:
+    """Derive the ceiling from one device observation.
+
+    The arithmetic and the measurement are separate concerns: what a given
+    pair of readings should yield does not depend on how they were obtained.
+    Keeping them apart means the derivation can be exercised over the readings
+    that matter - an absent total, an absent free figure, a device smaller
+    than the profile - without a machine that happens to present them.
+
+    ``None`` means the corresponding probe had nothing to report.
+    """
     if configured_mb and configured_mb > 0:
         return float(configured_mb)
-    total = cuda_device_total_mb()
-    if total is None:
+    if device_total_mb is None:
         return float(profile_cuda_mb)
-    total_capped = max(0.0, total - headroom_mb)
-    free = cuda_free_memory_mb()
-    if free is None:
+    total_capped = max(0.0, device_total_mb - headroom_mb)
+    if free_mb is None:
         return total_capped
-    return max(0.0, min(baseline_mb + free - headroom_mb, total_capped))
+    return max(0.0, min(baseline_mb + free_mb - headroom_mb, total_capped))
 
 
 def current_cuda_mb() -> tuple[float, float]:
