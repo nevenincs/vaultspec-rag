@@ -4,9 +4,8 @@ Pure, GPU-free transforms over the :mod:`._jobs` registry snapshot: query
 filter normalisation, per-record liveness enrichment, predicate matching,
 aggregate summary, and the running-first ordering. The ``jobs_route`` handler
 in :mod:`._routes` composes these; they are factored out here to keep the route
-module bounded. Bounded/filterable operator-view semantics
-(``operator-views-are-bounded``) live in the handler, which applies the clamp
-and predicate this module provides.
+module bounded. Bounded/filterable operator-view semantics live in the
+handler, which applies the clamp and predicate this module provides.
 """
 
 from __future__ import annotations

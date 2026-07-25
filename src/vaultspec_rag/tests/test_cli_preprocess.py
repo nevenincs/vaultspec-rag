@@ -42,8 +42,7 @@ def _preprocess_env(  # pyright: ignore[reportUnusedFunction]
 ) -> Iterator[None]:
     """Isolate the status dir and resolve the ``default`` mode.
 
-    The managed status dir is isolated to a per-test tmp path
-    (``managed-singleton-paths-isolate-storage-dir-in-tests`` sibling). Clearing
+    The managed status dir is isolated to a per-test tmp path. Clearing
     the mode env var leaves the resolved mode at ``default``, so ``list`` /
     ``run-one`` see a root's rules for any root - no per-root trust act. The
     off-mode tests call :func:`_off_mode` to override.

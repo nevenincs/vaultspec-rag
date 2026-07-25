@@ -8,8 +8,7 @@ output. This module is the one shared source for both: the jobs registry
 stamps ``error_kind`` from :func:`classify_error_text`, the ``/jobs``
 route computes ``stalled`` against :data:`STALL_THRESHOLD_SECONDS`, and
 the CLI renders remediation from :func:`remediation` - every adapter
-derives the same answer from the same place
-(``service-domain-owns-operability``).
+derives the same answer from the same place.
 
 Torch-free, qdrant-free, and CLI-free by design: the CLI service
 commands and the maintenance import graph both reach it.

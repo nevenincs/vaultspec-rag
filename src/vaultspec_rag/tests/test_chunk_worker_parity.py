@@ -509,7 +509,7 @@ def test_worker_import_does_not_load_torch() -> None:
     reintroduce the fork/spawn CUDA-context crash class that keeping worker
     imports torch-free prevents.
     Checked in a fresh interpreter so the parent process's already-loaded torch
-    cannot mask a regression. See rule ``index-workers-stay-cpu-only``.
+    cannot mask a regression.
     """
     assert_fresh_import_excludes(
         import_probe_source("vaultspec_rag.indexer._chunk_worker")

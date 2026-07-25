@@ -8,7 +8,7 @@ transient worktree clones that echo the real source verbatim).
 
 This module is deliberately dependency-free - stdlib ``fnmatch``/``re`` only,
 no project imports, no ``torch`` - so it is safe to import from the codebase
-indexer's spawn-worker chain (``index-workers-stay-cpu-only``) and to call once
+indexer's spawn-worker chain and to call once
 per chunk at index time. The same function backs the query-time fallback when a
 chunk predates the ``domain`` payload, so the index-side and query-side labels
 can never drift.

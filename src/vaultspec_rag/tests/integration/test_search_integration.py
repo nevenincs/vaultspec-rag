@@ -467,7 +467,7 @@ class TestRerank:
     ):
         """The reranker must score ``rerank_text``, never the display ``snippet``.
 
-        The rule (rerankers-score-real-content): a CrossEncoder was once found
+        The rule: a CrossEncoder was once found
         scoring the 200-char display snippet while the real content sat unused
         in memory, silently degrading ranking quality with every functional
         test staying green. ``TestRerank``'s other cases never set

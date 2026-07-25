@@ -4,8 +4,8 @@ Exercises how a document-targeted rule runs through the document worker and
 turns its output into ``DocumentChunk``s with anchor/locator payload, the code
 worker refuses that same rule rather than storing the extraction as source, the
 ``PreprocessContext`` is picklable (so it can cross the process boundary), and
-the worker import chain stays torch-free with the preprocess modules wired in
-(``index-workers-stay-cpu-only``).
+the worker import chain stays torch-free with the preprocess modules wired
+in.
 """
 
 import pickle

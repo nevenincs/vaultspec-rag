@@ -99,7 +99,7 @@ def test_vault_prep_import_does_not_load_torch() -> None:
     chain eagerly imported torch, every worker would initialise CUDA on
     startup and reintroduce the fork/spawn CUDA-context crash class.
     Checked in a fresh interpreter so the parent process's already-loaded
-    torch cannot mask a regression. See rule ``index-workers-stay-cpu-only``.
+    torch cannot mask a regression.
     """
     assert_fresh_import_excludes(
         import_probe_source("vaultspec_rag.indexer._vault_prep")

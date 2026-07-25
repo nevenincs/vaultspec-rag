@@ -202,9 +202,9 @@ def _survey_from_service(
 ) -> tuple[list[NamespaceSurvey], dict[str, str] | None] | None:
     """Fetch the survey from a running service, or ``None`` if it is down.
 
-    The survey is the one read-only storage surface the service owns
-    (``service-domain-owns-operability``): when a daemon is up, the CLI reads
-    its ``/storage/survey`` route so operator and MCP see one classification.
+    The survey is the one read-only storage surface the service owns: when a
+    daemon is up, the CLI reads its ``/storage/survey`` route so operator and
+    MCP see one classification.
     A refused connection returns ``None`` so the caller falls back to the
     CLI-direct path; a live-but-error response (e.g. a non-server-mode 409)
     also returns ``None`` so the direct path renders the proper message.

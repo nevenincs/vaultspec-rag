@@ -5,7 +5,7 @@ managed-server survey walk, and the bounded/filterable payload shaper. The
 ``storage_survey_route`` handler and the snapshot-aware ``_gather_storage_survey``
 orchestrator in :mod:`._routes` compose these.
 
-Lifecycle-inert by construction (``storage-maintenance-is-lifecycle-inert``):
+Lifecycle-inert by construction:
 this module is read/drop-free and must never import :mod:`vaultspec_rag.cli` or
 any service-lifecycle helper. All heavy imports (qdrant client, config,
 storage ops, store) stay function-local so the routes layer stays off the torch
