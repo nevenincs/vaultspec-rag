@@ -1157,7 +1157,7 @@ def get_service_state(
     }
 
     from . import store_schema
-    from .qdrant_runtime import runtime_state
+    from .qdrant_runtime._supervise import runtime_state
 
     return {
         "index": index_data,

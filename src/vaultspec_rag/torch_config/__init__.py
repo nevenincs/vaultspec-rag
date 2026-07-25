@@ -20,58 +20,6 @@ monolith: shared constants / enums / report
 dataclasses in ``_constants``, TOML inspection + classification in
 ``_inspect``, mutation + the canonical-snippet builder in ``_mutate``,
 direct-dep management in ``_direct_dep``, and install diagnosis in
-``_diagnose``. The verbatim public surface is re-exported here
-unchanged so no caller edit is required.
+``_diagnose``. Import each name from the module that defines it; this
+package exports nothing itself.
 """
-
-from __future__ import annotations
-
-from ._constants import (
-    CU130_INDEX_NAME,
-    CU130_INDEX_URL,
-    CU130_MARKER,
-    DIRECT_TORCH_REQUIREMENT,
-    TORCH_MIN_VERSION,
-    TORCH_TOOL_PIN_VERSION,
-    DirectTorchDepReport,
-    PatchReport,
-    TorchConfigAction,
-    TorchConfigState,
-    TorchDiagnosis,
-)
-from ._diagnose import diagnose_torch
-from ._direct_dep import (
-    ensure_direct_torch_dep,
-    has_direct_torch_dep,
-    remove_managed_direct_torch_dep,
-)
-from ._inspect import detect_state
-from ._mutate import (
-    apply_patch,
-    manual_snippet,
-    preview_patch,
-    remove_patch,
-)
-
-__all__ = [
-    "CU130_INDEX_NAME",
-    "CU130_INDEX_URL",
-    "CU130_MARKER",
-    "DIRECT_TORCH_REQUIREMENT",
-    "TORCH_MIN_VERSION",
-    "TORCH_TOOL_PIN_VERSION",
-    "DirectTorchDepReport",
-    "PatchReport",
-    "TorchConfigAction",
-    "TorchConfigState",
-    "TorchDiagnosis",
-    "apply_patch",
-    "detect_state",
-    "diagnose_torch",
-    "ensure_direct_torch_dep",
-    "has_direct_torch_dep",
-    "manual_snippet",
-    "preview_patch",
-    "remove_managed_direct_torch_dep",
-    "remove_patch",
-]

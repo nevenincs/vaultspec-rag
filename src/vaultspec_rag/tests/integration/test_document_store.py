@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
     from pytest import TempPathFactory
 
-    from ...qdrant_runtime import QdrantSupervisor
+    from ...qdrant_runtime._supervise import QdrantSupervisor
 
 pytestmark = [pytest.mark.integration]
 

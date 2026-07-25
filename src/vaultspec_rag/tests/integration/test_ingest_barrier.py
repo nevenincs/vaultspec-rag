@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from pytest import TempPathFactory
 
     from ..._store_writes import StoreWritePolicy
-    from ...qdrant_runtime import QdrantSupervisor
+    from ...qdrant_runtime._supervise import QdrantSupervisor
     from ...store import CodeChunk, VaultChunk
 
 pytestmark = [pytest.mark.integration]

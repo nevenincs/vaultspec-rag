@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import NoReturn
 
-    from ..torch_config import TorchDiagnosis
+    from ..torch_config._constants import TorchDiagnosis
 
 __all__ = [
     "RuntimeEnvKind",
@@ -111,7 +111,7 @@ def gpu_escape_hatch_command(interpreter: str) -> str:
     (``--torch-backend`` is ``uv pip``-only); pair it with
     :func:`durable_tool_install_command` on tool envs.
     """
-    from ..torch_config import CU130_INDEX_URL
+    from ..torch_config._constants import CU130_INDEX_URL
 
     backend = CU130_INDEX_URL.rsplit("/", 1)[-1]
     return (
@@ -133,7 +133,7 @@ def durable_tool_install_command() -> str:
     """
     import sys
 
-    from ..torch_config import CU130_INDEX_URL, TORCH_TOOL_PIN_VERSION
+    from ..torch_config._constants import CU130_INDEX_URL, TORCH_TOOL_PIN_VERSION
 
     platform_tag = "win_amd64" if sys.platform == "win32" else "manylinux_2_28_x86_64"
     wheel = (
@@ -201,7 +201,8 @@ def _active_torch_diagnosis() -> TorchDiagnosis:
     reflects ``pyproject.toml`` text and says nothing about the wheel actually
     present in the interpreter that will run the service.
     """
-    from ..torch_config import TorchDiagnosis, diagnose_torch
+    from ..torch_config._constants import TorchDiagnosis
+    from ..torch_config._diagnose import diagnose_torch
 
     try:
         import torch
@@ -227,7 +228,7 @@ def warn_if_active_torch_not_gpu() -> None:
     """
     import sys
 
-    from ..torch_config import TorchDiagnosis
+    from ..torch_config._constants import TorchDiagnosis
 
     diag = _active_torch_diagnosis()
     if diag == TorchDiagnosis.WORKING:
@@ -302,11 +303,9 @@ def _handle_gpu_error(exc: Exception) -> NoReturn:
     Raises:
         typer.Exit: Always exits with code 1.
     """
-    from ..torch_config import (
-        TorchDiagnosis,
-        diagnose_torch,
-        manual_snippet,
-    )
+    from ..torch_config._constants import TorchDiagnosis
+    from ..torch_config._diagnose import diagnose_torch
+    from ..torch_config._mutate import manual_snippet
 
     diagnosis: TorchDiagnosis
     if isinstance(exc, ImportError):

@@ -4,6 +4,7 @@
 You MUST respect these rules at all times:
 
 @.codex/rules/canonical-code.md
+@.codex/rules/gates-run-explicitly.md
 @.codex/rules/gpu-discipline.md
 @.codex/rules/guard-tests-prove-they-can-fail.md
 @.codex/rules/no-dev-metadata-in-code.md
