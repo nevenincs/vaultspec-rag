@@ -324,6 +324,31 @@ def _indexed_path_ledger(tmp_path: Path, digest: str) -> tuple[RunLedger, str]:
     return ledger, generation.generation_id
 
 
+# Both guard tests below were proven able to fail, by deleting the indexed-path
+# branch of ``_record_storage_confirmed_unit`` outright, running them alone,
+# observing the failures recorded here, restoring, and observing them pass.
+#
+# What the removal does NOT produce is a permitted write, and a reader who
+# expects "DID NOT RAISE" will wrongly conclude these tests are vacuous. An
+# indexed file state is only accepted when storage-confirmed upsert units for
+# the same digest already exist (``record_file_state``), so a drifted upsert
+# onto an indexed path always also violates "segments for one path must share
+# one source digest". The two branches overlap on this input by construction,
+# and the indexed-path branch exists to win that race and answer with a *typed*
+# error the drift repair can act on.
+#
+# So the assertion that carries the guard is the type, and both directions land
+# there:
+#   - guard removed: the sibling-digest branch refuses instead, and
+#     ``RunLedgerStateError('segments for one path must share one source
+#     digest')`` escapes ``pytest.raises(RunLedgerIndexedPathCollisionError)``
+#     in the first test and fails ``isinstance`` - the second test's own named
+#     assertion - in the second.
+#   - guard restored: both pass.
+#
+# Never relax these to catch the base class or to match on the message. A
+# message-based matcher passes whichever branch fires, which is exactly the
+# distinction the dedicated type was introduced to make.
 def test_upsert_onto_an_indexed_path_raises_the_dedicated_collision(
     tmp_path: Path,
 ) -> None:
