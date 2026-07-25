@@ -1715,6 +1715,9 @@ class MaintenanceResult:
         surveys: The full classified survey the cycle ran on, handed back
             so the daemon can publish it as the survey snapshot instead of
             paying the footprint walk twice.
+        generations: Per-collection outcomes from the superseded-generation
+            pass. Empty when no root is carrying any, which is the normal
+            state for a tree nobody has rebuilt since publication changed.
         reconcile: The geometry-reconcile pass, or ``None`` when the stage
             is disabled. Its reclaimed bytes are tracked separately from
             ``reclaimed_bytes`` because reconcile releases preallocation
@@ -1731,6 +1734,7 @@ class MaintenanceResult:
     dangling_bytes: int
     surveys: list[NamespaceSurvey] = field(default_factory=list)
     reconcile: ReconcileBatch | None = None
+    generations: list[DeleteResult] = field(default_factory=list)
 
 
 def _apply_reclaim(
@@ -1816,6 +1820,62 @@ def _apply_reclaim(
     )
 
 
+def _reclaim_generations_for_cycle(
+    client: QdrantClient,
+    *,
+    surveys: list[NamespaceSurvey],
+    now: datetime,
+    policy: ReclaimPolicy,
+    dry_run: bool,
+) -> list[DeleteResult]:
+    """Run the superseded-generation pass for one maintenance cycle.
+
+    Separated from the orphan pass because the two answer different
+    questions. An orphan is a namespace whose root vanished; a superseded
+    generation belongs to a root that is alive and well and simply publishes
+    somewhere else now. They share a cycle, not a rule.
+
+    Reader liveness comes from the project registry when one exists in this
+    process. Where it does not - an operator running maintenance out of band -
+    every root reports a reader, so the pass defers rather than acting on an
+    absence of evidence it has no way to gather.
+    """
+    from . import store_schema
+    from .generation_stamps import load_generation_stamps, record_generation_stamps
+
+    roots = {
+        survey.root: f"{survey.prefix}{store_schema.CODE_COLLECTION}"
+        for survey in surveys
+        if survey.root
+    }
+    if not roots:
+        return []
+
+    def _reader_present(root: str) -> bool:
+        try:
+            from .registry import get_registry
+        except ImportError:  # pragma: no cover - registry always importable
+            return True
+        try:
+            return get_registry().has_live_lease(Path(root))
+        except (OSError, RuntimeError):
+            # Cannot establish that nothing holds it, so treat it as held.
+            return True
+
+    results, advanced = reclaim_superseded_generations(
+        client,
+        roots=roots,
+        stamps=load_generation_stamps(),
+        now=now,
+        grace_hours=policy.grace_hours_data,
+        reader_present=_reader_present,
+        dry_run=dry_run,
+    )
+    if not dry_run:
+        record_generation_stamps(advanced)
+    return results
+
+
 def run_maintenance_cycle(
     client: QdrantClient,
     *,
@@ -1887,6 +1947,13 @@ def run_maintenance_cycle(
         policy=policy,
         last_indexed=last_indexed,
     )
+    generations = _reclaim_generations_for_cycle(
+        client,
+        surveys=surveys,
+        now=now,
+        policy=policy,
+        dry_run=dry_run,
+    )
     applied: list[ReclaimDecision] = []
     archived: list[Path] = []
     reclaimed = 0
@@ -1942,6 +2009,7 @@ def run_maintenance_cycle(
         ),
         surveys=surveys,
         reconcile=reconcile,
+        generations=generations,
     )
 
 
