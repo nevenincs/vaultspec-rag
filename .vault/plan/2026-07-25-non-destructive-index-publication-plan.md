@@ -38,8 +38,8 @@ state, so the plan is not complete at any point before `P05` closes.
 Close the production window first. The two escalation gates reachable from a watcher-driven incremental stop calling the destructive rebuild and take failure-safe reconciliation instead, with the superseded-regime condition made visible rather than silent. This ships a knowingly-degraded retrieval regime whose defect the decision names; it is removed by the later phases, not retained as a fallback.
 
 - [x] `P01.S01` - Route the embed-format and config-drift escalation gates to failure-safe reconciliation so no watcher-driven run reaches a destructive rebuild; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
-- [ ] `P01.S02` - Record the superseded-regime condition when a gate escalates non-destructively, and carry it on the code search path beside the existing breadth shortfall; `src/vaultspec_rag/_index_breadth.py, src/vaultspec_rag/_search_state.py, src/vaultspec_rag/api.py`.
-- [ ] `P01.S03` - Render the superseded-regime warning on the command-line search surface and carry the same fact in the search summary so an adapter without a renderer reports it; `src/vaultspec_rag/cli/_search.py, src/vaultspec_rag/server/_routes.py`.
+- [x] `P01.S02` - Record the superseded-regime condition when a gate escalates non-destructively, and carry it on the code search path beside the existing breadth shortfall; `src/vaultspec_rag/_index_breadth.py, src/vaultspec_rag/_search_state.py, src/vaultspec_rag/api.py`.
+- [x] `P01.S03` - Render the superseded-regime warning on the command-line search surface and carry the same fact in the search summary so an adapter without a renderer reports it; `src/vaultspec_rag/cli/_search.py, src/vaultspec_rag/server/_routes.py`.
 - [x] `P01.S04` - Prove by real-storage test that an unattended incremental over a drifted config leaves the served point count intact, and that the same run under an explicit operator rebuild still drops the collection; `src/vaultspec_rag/tests/integration/test_index_job_control.py`.
 
 ### Phase `P02` - resolve served identity through one pointer
