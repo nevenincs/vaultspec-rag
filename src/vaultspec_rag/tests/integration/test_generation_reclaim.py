@@ -174,3 +174,60 @@ class TestGenerationReclaimAgainstRealStorage:
 
         assert superseded in live
         assert [r.status for r in results] == ["would_remove"]
+
+
+class TestTheCycleRunsTheGenerationPass:
+    """The scheduled cycle must actually reach the generation reclaim."""
+
+    def test_a_cycle_plans_the_drop_of_a_superseded_generation(
+        self, tmp_path: Path, isolated_status_dir: Path
+    ) -> None:
+        """Binding the wiring, not the gates - those are proven above.
+
+        Without this the pass could be implemented, gated, tested in isolation
+        and never invoked, which is precisely how two earlier steps on this
+        plan came to be marked done while nothing called them.
+
+        The root is recorded in the manifest so the survey attributes it, and
+        the pointer is published so the generation is genuinely superseded. A
+        weaker assertion - that ``generations`` is a list - passes with the
+        call removed, because the field defaults to empty; that version was
+        written, shown worthless by mutation, and replaced with this.
+
+        The status dir is relocated through the shared fixture rather than a
+        bare environment set: the manifest and the grace stamps both resolve
+        through it, and a raw set leaks into whichever test runs next.
+
+        Proven able to fail: removing the ``_reclaim_generations_for_cycle``
+        call from ``run_maintenance_cycle`` leaves ``generations`` empty and
+        fails the assertion below.
+        """
+        from ..._store_models import publish_served_code_collection
+        from ...storage_manifest import record_root
+        from ...storage_ops import ReclaimPolicy, run_maintenance_cycle
+
+        _ = isolated_status_dir
+        entry = record_root(tmp_path, backend="local")
+        served = f"{entry.prefix}{_DERIVED}_gnew"
+        superseded = f"{entry.prefix}{_DERIVED}_gold"
+        client = _client(tmp_path, served, superseded)
+        publish_served_code_collection(tmp_path, served)
+        try:
+            result = run_maintenance_cycle(
+                client,
+                now=_NOW,
+                policy=ReclaimPolicy(),
+                storage_dir=None,
+                snapshots_dir=tmp_path / "snapshots",
+                archive_dir=tmp_path / "archive",
+                dry_run=True,
+            )
+            live = _live(client)
+        finally:
+            client.close()
+
+        named = {r.prefix for r in result.generations}
+        assert superseded in named
+        assert served not in named
+        # Dry run: the cycle planned and mutated nothing.
+        assert superseded in live
