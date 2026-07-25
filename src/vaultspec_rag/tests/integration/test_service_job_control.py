@@ -24,6 +24,7 @@ from ...jobs import reset as reset_jobs
 from ...mcp._mcp import mcp
 from ...mcp._tools import reindex_vault
 from ...server._routes import ROUTES
+from ...serviceclient._compat import SERVICE_VERSION_FIELD, local_package_version
 from ...serviceclient._transport import (
     _try_http_create_job,
     _try_http_delete_job,
@@ -32,6 +33,7 @@ from ...serviceclient._transport import (
     _try_http_set_job_desired_state,
 )
 from .._ports import free_loopback_port
+from .._scaffold import make_workspace
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -65,6 +67,10 @@ def _real_job_control_server(tmp_path: Path) -> Generator[int]:
                     "pid": os.getpid(),
                     "port": port,
                     "service_token": token,
+                    # A real daemon stamps its release here, and a client
+                    # refuses a data-plane call to one that does not. Omitting
+                    # it would model a service this fixture never stands up.
+                    SERVICE_VERSION_FIELD: local_package_version(),
                 }
             ),
             encoding="utf-8",
@@ -372,7 +378,8 @@ def test_reindex_compatibility_keeps_mcp_refresh_distinct_from_clean(
     tmp_path: Path,
 ) -> None:
     project_root = tmp_path / "mcp-refresh"
-    (project_root / ".vault").mkdir(parents=True)
+    project_root.mkdir()
+    make_workspace(project_root)
 
     tools = asyncio.run(mcp.list_tools())
     assert {tool.name for tool in tools} == {

@@ -36,6 +36,7 @@ from ..cli._search import (
     _local_search_mandated,
 )
 from ..config import EnvVar, reset_config
+from ..serviceclient._compat import SERVICE_VERSION_FIELD, local_package_version
 from ._ports import free_loopback_port
 from .conftest import managed_env
 
@@ -220,6 +221,10 @@ class TestServiceFirstRouting:
                 "pid": 999_999,
                 "port": free_loopback_port(),
                 "service_token": "",
+                # This release, so the subject stays reachability: a record
+                # without it is refused on the release verdict and the dead
+                # socket is never probed.
+                SERVICE_VERSION_FIELD: local_package_version(),
             },
         )
         assert proc.returncode == 0, proc.stderr

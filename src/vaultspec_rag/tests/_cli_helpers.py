@@ -27,6 +27,7 @@ from ..cli import (
 from ..cli._http_search import DEFAULT_SEARCH_TIMEOUT_SECONDS, _get_search_timeout
 from ..config import EnvVar
 from ..config import reset_config as reset_rag_config
+from ..serviceclient._compat import DataPlaneService, classify_service_version
 from ..torch_config._constants import TorchConfigAction
 from ._http_stubs import QuietHandler
 
@@ -91,6 +92,18 @@ def _running_service_record(
             record.pop(key, None)
         record_path.write_text(json.dumps(record), encoding="utf-8")
         yield record_path
+
+
+def _no_service() -> DataPlaneService:
+    """Return the data-plane resolution a client sees when no daemon is up.
+
+    Stands in for ``resolve_data_plane_service`` in the tests whose subject is
+    the in-process path, which is only reached when nothing is discovered. Built
+    from the production classifier rather than a hand-written verdict, so it
+    stays the resolution an absent service actually produces - no address, and a
+    release that cannot be confirmed because there is nothing to ask.
+    """
+    return DataPlaneService(port=None, version=classify_service_version(None))
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mK]")
@@ -932,6 +945,7 @@ __all__ = [
     "_jobs_populated_contract_server",
     "_label_values",
     "_logs_contract_server",
+    "_no_service",
     "_plain_lines",
     "_projects_list_contract_server",
     "_projects_unload_contract_server",
