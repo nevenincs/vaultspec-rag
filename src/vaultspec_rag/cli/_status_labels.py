@@ -263,6 +263,7 @@ VECTOR_SERVICE_FAMILY = "vector_service"
 MODELS_FAMILY = "models"
 CONFORMANCE_FAMILY = "conformance"
 QUARANTINE_FAMILY = "quarantine"
+STORE_FORMAT_FAMILY = "store_format"
 DOMAIN_INDEX_FAMILY = "domain_index"
 
 #: Families whose signal records something that HAPPENED, not something that
@@ -461,6 +462,31 @@ def _quarantine_finding(
     )
 
 
+def _store_format_finding(
+    health: dict[str, object] | None,
+    now: float,
+) -> DegradedFinding | None:
+    _ = now
+    if not isinstance(health, dict):
+        return None
+    qdrant = health.get("qdrant")
+    if not isinstance(qdrant, dict):
+        return None
+    migrated_from = cast("dict[str, object]", qdrant).get("migrated_from")
+    if not isinstance(migrated_from, str) or not migrated_from:
+        return None
+    return DegradedFinding(
+        cause="the vector store was carried across a server version change",
+        detail=(
+            f"it was written by Qdrant {migrated_from} and has been migrated "
+            "forward by the version now running; the migration is irreversible, "
+            "so keep a copy before attempting to go back to the older binary"
+        ),
+        command="vaultspec-rag server status",
+        family=STORE_FORMAT_FAMILY,
+    )
+
+
 #: Degradation families in resolution order, each pairing the distinctive stem
 #: of the prose it explains with the structured signal that proves it. Reasons
 #: are claimed on one stem rather than a whole sentence so that rewording a
@@ -476,10 +502,11 @@ def _quarantine_finding(
 #: reordered - it is deliberately not relied upon by a test, because no
 #: reachable input distinguishes it today.
 #:
-#: Quarantine precedes the vector service for the same defensive reason: its
-#: reason names the vector store, so the broader stem would be eligible to
-#: claim it. Today it cannot, because a claimed stem is popped and the vector
-#: reason is emitted first, so the two never compete for one entry.
+#: Quarantine and store format both precede the vector service for the same
+#: defensive reason: their reasons name the vector store, so the broader stem
+#: would be eligible to claim either. Today it cannot, because a claimed stem is
+#: popped and the vector reason is emitted first, so they never compete for one
+#: entry.
 _DEGRADED_FAMILIES: tuple[
     tuple[str, Callable[[dict[str, object] | None, float], DegradedFinding | None]],
     ...,
@@ -487,6 +514,7 @@ _DEGRADED_FAMILIES: tuple[
     ("stall", _stalled_jobs_finding),
     ("fail", _failed_job_finding),
     ("quarantined", _quarantine_finding),
+    ("carried across", _store_format_finding),
     ("vector", _vector_service_finding),
     ("different embedding model", _conformance_finding),
     ("model", _models_finding),
