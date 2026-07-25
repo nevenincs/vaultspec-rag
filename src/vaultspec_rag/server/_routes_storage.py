@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from ..generation_survey import RootGenerations
     from ..storage_survey import NamespaceSurvey
 
 __all__ = [
@@ -65,6 +66,23 @@ def _fetch_surveys() -> list[NamespaceSurvey]:
         client.close()
 
 
+def _generation_fields(report: RootGenerations | None) -> dict[str, Any]:
+    """Shape one namespace's served-collection and generation-debt fields.
+
+    ``None`` - an unattributable namespace, or a root whose served pointer
+    could not be read - reports ``null`` for both rather than an empty debt
+    list. "Nothing is known about this root" and "this root is carrying
+    nothing" are different facts, and a consumer that flattened them would
+    read an offline share as a clean bill of health.
+    """
+    if report is None:
+        return {"served_code_collection": None, "unreferenced_generations": None}
+    return {
+        "served_code_collection": report.served,
+        "unreferenced_generations": list(report.unreferenced),
+    }
+
+
 def _shape_survey_payload(
     surveys: list[NamespaceSurvey],
     status_filter: str | None,
@@ -88,9 +106,21 @@ def _shape_survey_payload(
     hash. An unindexed root still gets its prefix, with an empty namespace
     list. ``total`` always counts the post-filter namespaces, so under a
     root (or status) filter it is not the server-wide count.
+
+    Each namespace also reports ``served_code_collection`` and
+    ``unreferenced_generations``. Both are ``null`` - never ``[]`` - for a
+    namespace with no attributed root, and for a root whose served pointer
+    could not be read. That distinction is part of the contract and an adapter
+    must carry it through rather than default it: ``null`` means nothing is
+    known about this root, ``[]`` means the root is known to be carrying
+    nothing. Coercing the first into the second reports an offline share or a
+    permissions blip as a clean bill of health, which is precisely the evidence
+    a later reclamation pass must never be handed.
     """
     import pathlib
 
+    from .. import store_schema
+    from ..generation_survey import survey_generations
     from ..storage_ops import backend_totals
     from ..storage_survey import is_temp_rooted
     from ..store import root_collection_prefix
@@ -111,6 +141,23 @@ def _shape_survey_payload(
         surveys = [s for s in surveys if s.prefix == prefix]
     total = len(surveys)
     bounded = surveys[:limit]
+    # Which code collection each returned root actually serves, and which
+    # earlier generations nothing points at any more. Reported only: dropping
+    # one needs a granularity the prefix-scoped delete does not have, and a
+    # definition of when no reader still holds it. A root whose pointer could
+    # not be read contributes no entry at all, so it surfaces as "nothing
+    # known" rather than as debt something might later act on.
+    generations: dict[str, RootGenerations] = {
+        report.root: report
+        for report in survey_generations(
+            {
+                s.root: f"{s.prefix}{store_schema.CODE_COLLECTION}"
+                for s in bounded
+                if s.root
+            },
+            [name for s in bounded for name in s.collections],
+        )
+    }
     payload: dict[str, Any] = {
         "namespaces": [
             {
@@ -130,6 +177,7 @@ def _shape_survey_payload(
                 # made it.
                 "models": s.models,
                 "temp_rooted": is_temp_rooted(s.root),
+                **_generation_fields(generations.get(s.root or "")),
             }
             for s in bounded
         ],
