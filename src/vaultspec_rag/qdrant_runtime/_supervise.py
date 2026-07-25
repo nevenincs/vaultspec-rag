@@ -353,6 +353,8 @@ class QdrantSupervisor:
         storage_dir: Shared multi-root storage directory.
         log_path: File qdrant stdout/stderr is appended to.
         restart_count: Heartbeat-initiated restarts performed so far.
+        migrated_from: The server version that wrote this store, when opening
+            it carries the store across a version change; empty otherwise.
     """
 
     def __init__(
@@ -365,6 +367,7 @@ class QdrantSupervisor:
         log_path: Path | None = None,
         log_max_bytes: int = _MANAGED_LOG_MAX_BYTES_DEFAULT,
         log_backup_count: int = _MANAGED_LOG_BACKUP_COUNT_DEFAULT,
+        migrated_from: str = "",
     ) -> None:
         self.binary = binary
         self.http_port = int(http_port)
@@ -373,6 +376,11 @@ class QdrantSupervisor:
         self.log_path = log_path
         self.log_max_bytes = int(log_max_bytes)
         self.log_backup_count = int(log_backup_count)
+        # Held rather than re-derived: the successful open rewrites the stamp
+        # to the running version, so after start() the store no longer records
+        # that it was carried across a change. The pre-spawn judgement is the
+        # only witness, and it is needed for as long as this daemon runs.
+        self.migrated_from = migrated_from
         if self.log_max_bytes <= 0:
             raise ValueError("log_max_bytes must be positive")
         if self.log_backup_count < 0:
@@ -844,6 +852,12 @@ class QdrantSupervisor:
         absent from results. A live directory read rather than a cached one, so
         an operator who restores or clears an entry sees that immediately - it
         is one small local listing, not a backend call.
+
+        Carries the version the store was migrated from for the same reason:
+        the server answers every probe and the store is simply no longer
+        readable by the binary that wrote it, which nothing else reports.
+        Unlike the quarantine listing this is a held value, because the stamp
+        it was derived from has already been rewritten by the open.
         """
         return QdrantRuntimeState(
             mode="server",
@@ -853,7 +867,10 @@ class QdrantSupervisor:
             port=self.http_port,
             version=QDRANT_SERVER_VERSION,
             restarts=self.restart_count,
-            extra={"quarantined": list_quarantined_collections(self.storage_dir)},
+            extra={
+                "quarantined": list_quarantined_collections(self.storage_dir),
+                "migrated_from": self.migrated_from,
+            },
         )
 
     def server_version(self) -> str:
@@ -1198,6 +1215,9 @@ def start_supervised_from_config() -> QdrantSupervisor:
         log_path=log_path,
         log_max_bytes=log_max_bytes,
         log_backup_count=log_backup_count,
+        migrated_from=(
+            store_format.stored_version if store_format.migrates_store else ""
+        ),
     )
     logger.info("Starting qdrant server (%s binary %s)", resolved.source, resolved.path)
     try:
