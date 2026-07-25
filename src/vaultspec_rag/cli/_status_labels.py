@@ -265,7 +265,6 @@ CONFORMANCE_FAMILY = "conformance"
 QUARANTINE_FAMILY = "quarantine"
 STORE_FORMAT_FAMILY = "store_format"
 DOMAIN_INDEX_FAMILY = "domain_index"
-QUARANTINED_COLLECTIONS_FAMILY = "quarantined_collections"
 
 #: Families whose signal records something that HAPPENED, not something that
 #: IS. Such a signal explains a reason the service reported, but is never
@@ -404,25 +403,6 @@ def _vector_service_finding(
     )
 
 
-def _quarantined_collections_finding(
-    health: dict[str, object] | None,
-    now: float,
-) -> DegradedFinding | None:
-    _ = now
-    names = _health_qdrant(health).get("quarantined_collections")
-    if not isinstance(names, list) or not names:
-        return None
-    return DegradedFinding(
-        cause="collections were quarantined out of the store at startup",
-        detail=(
-            "the roots behind them answer nothing until re-indexed; the moved "
-            "directories are preserved under the store's quarantine directory"
-        ),
-        command="vaultspec-rag server qdrant quarantine",
-        family=QUARANTINED_COLLECTIONS_FAMILY,
-    )
-
-
 def _models_finding(
     health: dict[str, object] | None,
     now: float,
@@ -464,12 +444,7 @@ def _quarantine_finding(
     now: float,
 ) -> DegradedFinding | None:
     _ = now
-    if not isinstance(health, dict):
-        return None
-    qdrant = health.get("qdrant")
-    if not isinstance(qdrant, dict):
-        return None
-    entries = cast("dict[str, object]", qdrant).get("quarantined")
+    entries = _health_qdrant(health).get("quarantined")
     if not isinstance(entries, list) or not entries:
         return None
     return DegradedFinding(
@@ -489,12 +464,7 @@ def _store_format_finding(
     now: float,
 ) -> DegradedFinding | None:
     _ = now
-    if not isinstance(health, dict):
-        return None
-    qdrant = health.get("qdrant")
-    if not isinstance(qdrant, dict):
-        return None
-    migrated_from = cast("dict[str, object]", qdrant).get("migrated_from")
+    migrated_from = _health_qdrant(health).get("migrated_from")
     if not isinstance(migrated_from, str) or not migrated_from:
         return None
     return DegradedFinding(
@@ -538,11 +508,6 @@ _DEGRADED_FAMILIES: tuple[
     ("quarantined", _quarantine_finding),
     ("carried across", _store_format_finding),
     ("vector", _vector_service_finding),
-    # Distinct stems no other reason contains, so their position is not
-    # load-bearing; they sit beside the vector service because all three
-    # explain the same component.
-    ("quarantined", _quarantined_collections_finding),
-    ("storage format", _store_format_finding),
     ("different embedding model", _conformance_finding),
     ("model", _models_finding),
 )

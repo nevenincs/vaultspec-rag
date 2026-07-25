@@ -1105,3 +1105,63 @@ class TestUnreachableStaysASentinelNotAnEscape:
         # traceback: the unreachable probe did not escape as an exception.
         assert isinstance(envelope, dict)
         assert "Traceback" not in result.output
+
+
+class TestDegradedFamilyRegistryHasOneEntryPerBehaviour:
+    """One remediation per behaviour, and every entry reachable.
+
+    A merge that lands two implementations of one signal is invisible here
+    otherwise: Python keeps the last definition, the shadowed one becomes dead
+    code, and the linter says nothing. Both duplicates then sit in the registry
+    pointing at whichever function survived.
+    """
+
+    def test_no_stem_is_claimed_twice(self) -> None:
+        """A stem resolved twice makes the second entry unreachable.
+
+        Mutation it catches: re-adding a duplicate stem to the registry. A
+        claimed stem is popped, so the later entry can never fire and its
+        remediation is silently unreachable.
+        """
+        from ..cli._status_labels import (
+            _DEGRADED_FAMILIES,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        stems = [stem for stem, _ in _DEGRADED_FAMILIES]
+
+        assert len(stems) == len(set(stems)), f"duplicate stems: {stems}"
+
+    def test_no_finding_function_is_registered_twice(self) -> None:
+        """Two stems on one function means one behaviour grew two names.
+
+        Mutation it catches: registering a second stem against an existing
+        finding, which is what a shadowed duplicate definition produces - both
+        registry entries bind to the surviving function.
+        """
+        from ..cli._status_labels import (
+            _DEGRADED_FAMILIES,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        names = [
+            getattr(finding, "__name__", repr(finding))
+            for _, finding in _DEGRADED_FAMILIES
+        ]
+
+        assert len(names) == len(set(names)), f"duplicate findings: {names}"
+
+    def test_every_family_label_is_distinct(self) -> None:
+        """Two families sharing a label cannot be told apart by a caller.
+
+        Mutation it catches: reusing an existing family constant for a new
+        finding. Callers filter findings by family, so a shared label silently
+        merges two different problems into one bucket.
+        """
+        from ..cli import _status_labels
+
+        labels = [
+            value
+            for name, value in vars(_status_labels).items()
+            if name.endswith("_FAMILY") and isinstance(value, str)
+        ]
+
+        assert len(labels) == len(set(labels)), f"duplicate family labels: {labels}"
