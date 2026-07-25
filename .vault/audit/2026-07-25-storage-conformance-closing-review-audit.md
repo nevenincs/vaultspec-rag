@@ -77,22 +77,34 @@ Correction, on a later reading of the trunk: this review first recorded the fix
 as its own. It is not. The same extraction had already landed on the trunk,
 diagnosed identically down to the 24-against-20 figure, and better factored -
 four named field decoders with the loop body reduced to the drop-or-keep
-decision, against the two helpers written here. Both were written from the same
-red gate without either seeing the other. The duplicate has been collapsed onto
-the trunk's version and this branch now carries none of it; what remains true is
-the finding, not the credit.
+decision, against the two helpers written here. The duplicate has been collapsed
+onto the trunk's version and this branch now carries none of it; what remains
+true is the finding, not the credit. The trunk's author is not identified here:
+every worker commits under one name, so authorship does not disambiguate, and
+naming a guess would be worse than naming nobody.
 
-### two-workers-one-fix | medium | the same refactor was written twice, independently, and only the merge would have shown it
+### duplicate-written-against-a-stale-trunk | medium | the fix was already public on the trunk twenty-five minutes before the duplicate was committed
 
-Two workers diagnosed one red gate and wrote one fix, concurrently, in the same
-function, with the same helper name. Neither could have found the other by
-searching: the work existed only in another worker's uncommitted tree at the time
-each began. Nothing in the process caught it, and it would have surfaced as a
-merge conflict in a file both had touched for unrelated reasons - the worst place
-to discover it, because the conflict looks like a content collision rather than
-one implementation too many. The cost here was small and the resolution
-mechanical. The general case is not: a duplicate settled by picking whichever
-side merges cleanly is how the copy that never gets the fix survives.
+The timestamps settle what this first looked like and what it actually was. The
+branch point is 08:59. The trunk's extraction landed at 09:57. The duplicate was
+committed here at 10:22. This was therefore not two workers invisible to each
+other, which is what the first version of this finding claimed: the work being
+duplicated was public, on the trunk, for twenty-five minutes beforehand, and one
+log of the file about to be edited would have surfaced it.
+
+The process failure is narrow and worth naming precisely. The trunk was read once
+at the start of the session, to rebase off a stale branch, and then never read
+again before code was added. On a trunk moving at this rate that snapshot was an
+hour stale by the time it was relied on. Searching before writing is the standing
+obligation, and it was honoured against the wrong revision, which is
+indistinguishable from not honouring it at all.
+
+The general case is worse than the cost here, which was one mechanical collapse.
+A duplicate found at the merge presents as a content conflict in a file both sides
+touched for unrelated reasons, and the side that merges cleanly wins - a question
+with nothing to do with which implementation is better. This one surfaced only
+because a concurrent worker was asked directly what they had built, and then only
+because they denied authorship and the timestamps were checked.
 
 ### reclamation-criterion-would-be-a-defect-if-honoured | medium | a verification criterion asks for behaviour that would leak disk without bound
 
@@ -133,6 +145,29 @@ values, so the failure mode is structural and will recur. Each occurrence costs 
 full investigation, and the cheap wrong answer - calling it a flake without
 evidence - is how a real intermittent defect eventually gets buried.
 
+### debris-prune-would-destroy-a-quarantine-dir | medium | one caller passing the storage root turns an archive-free delete loose on quarantined data
+
+Surfaced by a concurrent worker and verified here. The debris survey takes a
+directory argument and reports every child directory the live server does not
+list; the debris prune then removes each with a recursive filesystem delete and no
+archive, reasoning in its own docstring that unloadable debris cannot be
+snapshotted. Both are correct for the collections directory, which is what all
+four production callers pass today.
+
+They are wrong for the storage root. A quarantine directory sits at the root, has
+no collection config, and is never listed by the server, so it satisfies the
+debris predicate exactly. A caller passing the root - a plausible mistake, because
+the parameter is named for the storage directory and typed only as a path - would
+hand an archive-free recursive delete to the one directory whose entire purpose is
+to hold data set aside for an operator to inspect. That is a direct
+archive-before-destroy violation, against data the system deliberately preserved.
+
+Not reachable today: every production caller funnels through the collections-dir
+accessor, and the survey's own child filter skips files, which is what keeps the
+adjacent store-format stamp invisible to it. The hazard is that nothing in the
+signature or the tests holds that invariant, and concurrent work is making
+quarantine directories both more common and more visible.
+
 ## Recommendations
 
 Join the daemon's cached conformance verdicts into the storage survey payload,
@@ -153,10 +188,26 @@ subset, so a gate absent from the list cannot be reported clean by omission.
 
 Give a red shared gate a single owner before anyone fixes it. A gate failing on
 every commit is visible to every concurrent worker at once and reads to each as
-theirs to clear, which is precisely the condition that produced one fix twice
-here. The cheap form is a claim recorded where the other workers will see it; the
-question of where that is belongs to whoever owns the concurrency model, not to
-this feature.
+theirs to clear, which is one half of what produced a fix twice here. The cheap
+form is a claim recorded where the other workers will see it; where that is
+belongs to whoever owns the concurrency model, not to this feature.
+
+Re-read the trunk immediately before adding code to a file, not once at the start
+of a session. That is the other half, and it is the half that was in this
+feature's control: the duplicate was avoidable by one log of one file. A
+session-start rebase establishes a base to work from, not a licence to treat that
+revision as current for the session's duration.
+
+Constrain the debris survey so the storage root cannot be passed to it - either
+narrow the parameter to a collections directory the caller must obtain from the
+existing accessor, or have the survey refuse a directory containing a quarantine
+entry. Prefer whichever the module's current owner is not mid-refactor on. A name
+based skip of `quarantine` alone would be the cheapest change and the weakest,
+because it protects one known directory rather than the invariant that the
+argument is a collections directory. Deliberately not implemented here: the module
+is under concurrent edit, the path is unreachable today, and choosing between
+those two shapes is a decision about that function's contract rather than a fix
+belonging to this feature.
 
 Reconcile the plan's reclamation verification criterion with the decision it
 implements, so the plan stops asking for behaviour the decision does not

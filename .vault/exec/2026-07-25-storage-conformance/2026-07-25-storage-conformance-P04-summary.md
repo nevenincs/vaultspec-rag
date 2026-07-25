@@ -45,9 +45,9 @@ lost record fails as an assertion rather than a `KeyError`.
 One gate regression was found. The cognitive-complexity gate had been failing
 since this feature's first commit, where identity parsing was added inline to the
 manifest loader; the closing gate run recorded all gates clean without it. An
-extraction written here turned out to duplicate one already landed on the trunk,
-written concurrently from the same red gate, and was collapsed onto the trunk's
-better-factored version rather than carried across the merge.
+extraction written here turned out to duplicate one already on the trunk - landed
+twenty-five minutes before this one was committed, so findable - and was collapsed
+onto the trunk's better-factored version rather than carried across the merge.
 
 - Modified: `src/vaultspec_rag/storage_ops.py`
 - Modified: `src/vaultspec_rag/storage_manifest.py`
