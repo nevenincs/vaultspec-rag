@@ -903,7 +903,44 @@ def _service_health_status(
         )
         if status == "ready":
             status = "degraded"
+    for reason in _qdrant_storage_reasons(qdrant_state):
+        degraded_reasons.append(reason)
+        if status == "ready":
+            status = "degraded"
     return status, degraded_reasons
+
+
+def _qdrant_storage_reasons(qdrant_state: QdrantRuntimeState) -> list[str]:
+    """Author the reasons for what startup did to the vector store's data.
+
+    Both conditions are invisible to every other signal: the server answers,
+    every probe is green, and the store is simply smaller than it was. A
+    quarantined collection is one root silently returning nothing until it is
+    re-indexed, and a store carried across server versions can no longer be read
+    by the binary that wrote it. Neither may reach only the daemon log.
+    """
+    from ..qdrant_runtime._resolve import STORE_FORMAT_MIGRATED
+
+    reasons: list[str] = []
+    quarantined = qdrant_state.extra.get("quarantined_collections")
+    if isinstance(quarantined, list) and quarantined:
+        names = [str(name) for name in cast("list[object]", quarantined)]
+        reasons.append(
+            f"{len(names)} collection(s) were quarantined out of the store at "
+            f"startup and their roots answer nothing until re-indexed: "
+            f"{', '.join(names[:3])}"
+        )
+    store_format = qdrant_state.extra.get("store_format")
+    if isinstance(store_format, dict):
+        record = cast("dict[str, object]", store_format)
+        if record.get("status") == STORE_FORMAT_MIGRATED:
+            reasons.append(
+                f"the qdrant storage format was carried across a server version "
+                f"change (written by {record.get('recorded')}, now opened by "
+                f"{record.get('running')}), so the earlier binary can no longer "
+                f"read this store"
+            )
+    return reasons
 
 
 def _health_job_records() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
