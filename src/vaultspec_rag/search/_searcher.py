@@ -560,6 +560,7 @@ class VaultSearcher:
         like_ids: list[str | int] | None,
         unlike_ids: list[str | int] | None,
         timings: dict[str, float] | None,
+        notes: dict[str, object] | None,
     ) -> tuple[list[dict[str, object]], dict[str, int]]:
         """Fetch and hard-filter raw candidates, backfilling to fill ``top_k``.
 
@@ -570,6 +571,11 @@ class VaultSearcher:
         satisfy ``top_k``, the index is exhausted, or a hard cap is reached -
         never returning a silently depleted page when more candidates exist.
         Returns the surviving raw results and a per-domain drop count.
+
+        When the include patterns turn out to be what emptied the page, that is
+        recorded in ``notes`` so the caller can say so. An empty page is
+        otherwise indistinguishable from a query that matched nothing, and a
+        path pattern that matches no indexed path is the likelier mistake.
         """
         has_glob = bool(include_norm or exclude_norm)
         # Domain hide/only constraints are already pushed into Qdrant. Start
@@ -587,6 +593,8 @@ class VaultSearcher:
 
         started = time.perf_counter()
         limit = base
+        raw: list[dict[str, object]] = []
+        globbed: list[dict[str, object]] = []
         kept: list[dict[str, object]] = []
         dropped: dict[str, int] = {}
         while True:
@@ -612,6 +620,11 @@ class VaultSearcher:
                 break
             limit = min(limit * 2, cap)
         _record_seconds(timings, "qdrant_seconds", started)
+        if notes is not None and include_norm and raw and not globbed:
+            notes["path_filter"] = {
+                "patterns": list(include_norm),
+                "candidates_before_filter": len(raw),
+            }
         if dropped:
             logger.info("code search dropped noise-domain candidates: %s", dropped)
         return kept, dropped
@@ -706,10 +719,16 @@ class VaultSearcher:
         )
         # Normalise caller patterns once. The codebase indexer stores POSIX
         # paths on every platform, so glob matching is consistent when caller
-        # patterns carry the same convention.
-        include_norm = (
-            [p.replace("\\", "/") for p in include_paths] if include_paths else []
-        )
+        # patterns carry the same convention. An inline ``path:`` token is one
+        # more include pattern, matching how repeated patterns already union.
+        inline_scope = parsed.filters.get("path_scope")
+        include_norm = [
+            p.replace("\\", "/")
+            for p in [
+                *(include_paths or []),
+                *([inline_scope] if inline_scope else []),
+            ]
+        ]
         exclude_norm = (
             [p.replace("\\", "/") for p in exclude_paths] if exclude_paths else []
         )
@@ -726,6 +745,7 @@ class VaultSearcher:
             like_ids=like_ids,
             unlike_ids=unlike_ids,
             timings=timings,
+            notes=notes,
         )
         if notes is not None and dropped:
             notes["dropped_domains"] = dropped
