@@ -106,6 +106,16 @@ def _shape_survey_payload(
     hash. An unindexed root still gets its prefix, with an empty namespace
     list. ``total`` always counts the post-filter namespaces, so under a
     root (or status) filter it is not the server-wide count.
+
+    Each namespace also reports ``served_code_collection`` and
+    ``unreferenced_generations``. Both are ``null`` - never ``[]`` - for a
+    namespace with no attributed root, and for a root whose served pointer
+    could not be read. That distinction is part of the contract and an adapter
+    must carry it through rather than default it: ``null`` means nothing is
+    known about this root, ``[]`` means the root is known to be carrying
+    nothing. Coercing the first into the second reports an offline share or a
+    permissions blip as a clean bill of health, which is precisely the evidence
+    a later reclamation pass must never be handed.
     """
     import pathlib
 
