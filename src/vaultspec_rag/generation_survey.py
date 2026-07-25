@@ -68,7 +68,7 @@ def survey_generations(
         and reporting them as such invites exactly the deletion the separation
         of detection from removal exists to prevent.
     """
-    from ._store_models import _is_generation_collection
+    from ._store_models import reclaimable_generation_collections
 
     names = tuple(existing)
     reports: list[RootGenerations] = []
@@ -77,12 +77,13 @@ def survey_generations(
         if not pointer.verifiable:
             continue
         served = pointer.collection or derived
-        unreferenced = tuple(
-            name
-            for name in names
-            if name != served
-            and _is_generation_collection(name)
-            and name.startswith(derived)
+        # Scoped to this root, then handed to the function that owns what
+        # "reclaimable" means. Restating that rule here would be a second
+        # definition of the one question a drop depends on, and the two would
+        # answer differently the first time either moved.
+        unreferenced = reclaimable_generation_collections(
+            existing=(name for name in names if name.startswith(derived)),
+            served=(served,),
         )
         reports.append(
             RootGenerations(root=str(root), served=served, unreferenced=unreferenced)
