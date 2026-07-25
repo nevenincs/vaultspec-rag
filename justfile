@@ -293,11 +293,12 @@ _dev-audit target:
 # test slip through gateless and hard-abort this recipe on a GPU-less runner;
 # matching conftest's own needs-real-infra set here is the durable fix so a
 # newly-added GPU-marked test is excluded automatically, with no marker to
-# remember to also duplicate onto "integration". The registered "unit" marker
-# is not applied to every fast test (~500+ tests carry no marker at all and
-# are silently dropped by "-m unit"), so this full-exclusion expression, not
-# "-m unit", is the accurate full-population selector. No -x here: a
-# repo-health recipe must report every failure, not stop at the first one.
+# remember to also duplicate onto "integration". Every test now declares a
+# tier, enforced at collection time by the root conftest, so this exclusion
+# expression and "-m unit" select the same population; the exclusion is kept
+# because it stays correct when a new slow tier is added, where "-m unit" would
+# have to be taught about it. No -x here: a repo-health recipe must report every
+# failure, not stop at the first one.
 #
 # "gpu" is the real-GPU CORRECTNESS tier, run on a CUDA host, as two
 # invocations: the serialized integration/quality/robustness/cuda tests share

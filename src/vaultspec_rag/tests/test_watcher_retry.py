@@ -29,6 +29,8 @@ from ..watcher_retry import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+pytestmark = [pytest.mark.unit]
+
 
 def _policy(
     path: Path,

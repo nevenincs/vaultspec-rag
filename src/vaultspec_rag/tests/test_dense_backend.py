@@ -9,7 +9,11 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
 from ..config import EnvVar, get_config, reset_config
+
+pytestmark = [pytest.mark.unit]
 
 
 class TestDenseBackendConfig:

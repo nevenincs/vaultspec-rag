@@ -24,6 +24,8 @@ from ..qdrant_runtime._supervise import QdrantSupervisor
 if TYPE_CHECKING:
     from typing import BinaryIO
 
+pytestmark = [pytest.mark.unit]
+
 
 def _drain_process_output(supervisor: QdrantSupervisor, output: str) -> None:
     """Drain exact text emitted by a real child process."""

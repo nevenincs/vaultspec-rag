@@ -15,6 +15,8 @@ import os
 from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING
 
+import pytest
+
 from ..._machine_lock import (
     acquire_machine_lock,
     machine_lock_live_holder,
@@ -30,6 +32,8 @@ from ._machine_lock_holder import spawn_foreign_machine_lock_holder
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+pytestmark = [pytest.mark.unit]
 
 _STORAGE_ENV = EnvVar.QDRANT_STORAGE_DIR.value
 _VERSION = "1.18.2"

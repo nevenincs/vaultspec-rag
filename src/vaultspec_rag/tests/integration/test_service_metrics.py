@@ -58,6 +58,7 @@ def _clean_watchers(  # pyright: ignore[reportUnusedFunction]
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.unit
 def test_incr_accumulates_in_render(_clean_metrics: None) -> None:
     server.incr("search_total")
     server.incr("search_total")
@@ -68,6 +69,7 @@ def test_incr_accumulates_in_render(_clean_metrics: None) -> None:
     assert "vaultspec_rag_reindex_total 1" in text
 
 
+@pytest.mark.unit
 def test_render_emits_type_lines(_clean_metrics: None) -> None:
     text = server.render_prometheus()
     assert "# TYPE vaultspec_rag_search_total counter" in text
@@ -78,18 +80,21 @@ def test_render_emits_type_lines(_clean_metrics: None) -> None:
     assert text.endswith("\n")
 
 
+@pytest.mark.unit
 def test_observe_sets_gauge(_clean_metrics: None) -> None:
     server.observe("search_last_duration_seconds", 0.25)
     text = server.render_prometheus()
     assert "vaultspec_rag_search_last_duration_seconds 0.25" in text
 
 
+@pytest.mark.unit
 def test_incr_unknown_name_is_noop(_clean_metrics: None) -> None:
     server.incr("does_not_exist")
     text = server.render_prometheus()
     assert "does_not_exist" not in text
 
 
+@pytest.mark.unit
 def test_maintenance_reconcile_metrics_are_registered(_clean_metrics: None) -> None:
     # The scheduled geometry-reconcile pass emits these three keys; they must
     # be registered or ``incr``/``observe`` silently drop them (unknown names
@@ -104,6 +109,7 @@ def test_maintenance_reconcile_metrics_are_registered(_clean_metrics: None) -> N
     assert "vaultspec_rag_store_drifted_collections 2.0" in text
 
 
+@pytest.mark.unit
 def test_reset_zeroes_counters(_clean_metrics: None) -> None:
     server.incr("search_total", 5)
     server.reset_metrics()
@@ -229,6 +235,7 @@ def _routes_app(  # pyright: ignore[reportUnusedFunction]
         _m._SERVICE_TOKEN = prev_token
 
 
+@pytest.mark.unit
 def test_metrics_route_401_without_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
@@ -240,6 +247,7 @@ def test_metrics_route_401_without_token(
     assert payload["error"] == "unauthorized"
 
 
+@pytest.mark.unit
 def test_metrics_route_401_with_wrong_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
@@ -251,6 +259,7 @@ def test_metrics_route_401_with_wrong_token(
     assert response.status_code == 401
 
 
+@pytest.mark.unit
 def test_metrics_route_200_with_bearer_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
@@ -267,6 +276,7 @@ def test_metrics_route_200_with_bearer_token(
     assert "# TYPE vaultspec_rag_search_total counter" in body
 
 
+@pytest.mark.unit
 def test_metrics_route_200_with_query_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
