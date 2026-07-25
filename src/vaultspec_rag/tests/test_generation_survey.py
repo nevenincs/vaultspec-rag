@@ -101,3 +101,94 @@ class TestGenerationSurvey:
         )
 
         assert reports == ()
+
+
+class TestNamesResolveThroughThePointer:
+    """No caller may derive a code collection name the pointer has superseded."""
+
+    def test_migrate_reads_the_served_collection_not_the_derived_one(
+        self, tmp_path: Path
+    ) -> None:
+        """Migration must copy what the root serves, or it copies nothing.
+
+        A root that has published a rebuild serves ``<derived>_g<generation>``.
+        Keying the source map on the derived name copies a superseded
+        generation, or - when the base never existed - silently migrates no
+        code at all while reporting success.
+
+        Proven able to fail: returning ``derived`` unconditionally from the
+        ``_source`` helper restores the derived key and fails the source-name
+        assertion below.
+        """
+        from .._store_models import publish_served_code_collection
+        from ..cli._service_storage import _migrate_name_map
+        from ..store_schema import CODE_COLLECTION
+
+        publish_served_code_collection(tmp_path, f"{CODE_COLLECTION}_gserved")
+        name_map = _migrate_name_map(str(tmp_path), to_server=True)
+
+        assert f"{CODE_COLLECTION}_gserved" in name_map
+        assert CODE_COLLECTION not in name_map
+        # The target stays the derived base: the destination has no pointer, so
+        # landing there is served immediately without carrying generation
+        # history across.
+        assert name_map[f"{CODE_COLLECTION}_gserved"].endswith(CODE_COLLECTION)
+
+    def test_migrate_leaves_other_kinds_on_their_derived_names(
+        self, tmp_path: Path
+    ) -> None:
+        """Only the code kind has a pointer; the rest must be untouched.
+
+        Proven able to fail: dropping the kind check in ``_source`` resolves
+        every kind through the code pointer and fails this.
+        """
+        from .._store_models import publish_served_code_collection
+        from ..cli._service_storage import _migrate_name_map
+        from ..store_schema import VAULT_COLLECTION
+
+        publish_served_code_collection(tmp_path, "codebase_docs_gserved")
+        name_map = _migrate_name_map(str(tmp_path), to_server=True)
+
+        assert VAULT_COLLECTION in name_map
+
+    def test_a_donor_is_consulted_at_the_collection_it_serves(
+        self, tmp_path: Path
+    ) -> None:
+        """Reuse must read the donor's served collection, not a guessed name.
+
+        Proven able to fail: returning ``derived`` unconditionally from
+        ``_served_donor_collection`` fails the served-name assertion.
+        """
+        from .._store_models import publish_served_code_collection
+        from ..indexer._donor_candidates import (
+            CollectionKind,
+            _served_donor_collection,
+        )
+
+        publish_served_code_collection(tmp_path, "rabc_codebase_docs_gserved")
+
+        assert (
+            _served_donor_collection(
+                str(tmp_path), CollectionKind.CODE, "rabc_codebase_docs"
+            )
+            == "rabc_codebase_docs_gserved"
+        )
+
+    def test_a_donor_with_no_recorded_root_falls_back_to_the_derived_name(
+        self,
+    ) -> None:
+        """An unresolvable donor must not invent a collection.
+
+        The derived name either appears in that donor's recorded collections,
+        so reuse proceeds against real data, or it does not and the donor is
+        skipped. Neither outcome fabricates a target.
+        """
+        from ..indexer._donor_candidates import (
+            CollectionKind,
+            _served_donor_collection,
+        )
+
+        assert (
+            _served_donor_collection(None, CollectionKind.CODE, "rabc_codebase_docs")
+            == "rabc_codebase_docs"
+        )
