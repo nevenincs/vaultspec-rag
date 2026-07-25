@@ -24,6 +24,7 @@ import pytest
 
 from ..cli._status_labels import (
     QUARANTINE_FAMILY,
+    STORE_FORMAT_FAMILY,
     VECTOR_SERVICE_FAMILY,
     degradation_findings,
 )
@@ -532,3 +533,245 @@ class TestRuntimeStateCarriesQuarantine:
             "a_vault_code.20260725T101500Z",
             "b_vault_docs.20260725T101500Z",
         ]
+
+
+class TestPermittedUpgradeIsRecordedAsAMigration:
+    """A permitted upgrade is still a one-way door, and says so."""
+
+    def test_single_minor_upgrade_records_a_migration(self, tmp_path: Path) -> None:
+        """The permitted crossing has to be distinguishable from a plain open.
+
+        Mutation it catches: dropping ``migrates_store=True`` from the
+        conforming return in ``_judge_parsed``. The upgrade would still be
+        permitted and every other assertion here would still hold, but nothing
+        downstream could tell that the store had been carried forward, which is
+        the only fact this signal exists to carry.
+        """
+        storage = tmp_path / "storage"
+        _make_collection(storage, "r0abc_vault_docs")
+        write_store_format(storage, "1.15.4")
+
+        verdict = judge_store_format(storage, spawning_version="1.16.0")
+
+        assert verdict.verdict == CONFORMING
+        assert verdict.migrates_store is True
+        assert verdict.stored_version == "1.15.4"
+
+    def test_patch_upgrade_records_a_migration(self, tmp_path: Path) -> None:
+        storage = tmp_path / "storage"
+        _make_collection(storage, "r0abc_vault_docs")
+        write_store_format(storage, "1.15.4")
+
+        assert judge_store_format(storage, spawning_version="1.15.5").migrates_store
+
+    def test_same_version_is_not_a_migration(self, tmp_path: Path) -> None:
+        """Reopening a store must not be reported as carrying it forward.
+
+        Mutation it catches: deriving the signal from ``stored_version`` being
+        set rather than from the upgrade branch. Every ordinary restart would
+        then report a version change that never happened, and an operator who
+        sees that on every start stops reading it.
+        """
+        storage = tmp_path / "storage"
+        _make_collection(storage, "r0abc_vault_docs")
+        write_store_format(storage, "1.15.4")
+
+        verdict = judge_store_format(storage, spawning_version="1.15.4")
+
+        assert verdict.verdict == CONFORMING
+        assert verdict.migrates_store is False
+
+    def test_empty_store_is_not_a_migration(self, tmp_path: Path) -> None:
+        storage = tmp_path / "storage"
+        storage.mkdir(parents=True)
+
+        verdict = judge_store_format(storage, spawning_version="1.16.0")
+
+        assert verdict.migrates_store is False
+
+    def test_refusal_is_not_a_migration(self, tmp_path: Path) -> None:
+        """A refused start moved nothing, so it carried nothing forward.
+
+        Mutation it catches: setting the flag before the compatibility window is
+        applied. A downgrade would then be reported as a completed migration
+        while the start was actually refused - a degradation describing an event
+        that did not happen.
+        """
+        storage = tmp_path / "storage"
+        _make_collection(storage, "r0abc_vault_docs")
+        write_store_format(storage, "1.16.0")
+
+        verdict = judge_store_format(storage, spawning_version="1.15.4")
+
+        assert verdict.verdict == NONCONFORMING
+        assert verdict.migrates_store is False
+
+    def test_unverifiable_store_is_not_a_migration(self, tmp_path: Path) -> None:
+        storage = tmp_path / "storage"
+        _make_collection(storage, "r0abc_vault_docs")
+
+        verdict = judge_store_format(storage, spawning_version="1.16.0")
+
+        assert verdict.verdict == UNVERIFIABLE
+        assert verdict.migrates_store is False
+
+
+class TestMigrationReachesHealth:
+    """A migrated store must not sit silently behind a ready status."""
+
+    @staticmethod
+    def _health(**overrides: object) -> ServiceHealth:
+        base: dict[str, object] = {
+            "model_loaded": True,
+            "reranker_loaded": True,
+            "cuda": True,
+            "project_count": 1,
+            "projects": ["/proj"],
+            "nonconforming": [],
+        }
+        base.update(overrides)
+        return cast("ServiceHealth", base)
+
+    @staticmethod
+    def _server_qdrant(migrated_from: str) -> QdrantRuntimeState:
+        return QdrantRuntimeState(
+            mode="server",
+            alive=True,
+            port=6333,
+            version="1.16.0",
+            extra={"quarantined": [], "migrated_from": migrated_from},
+        )
+
+    def test_unmigrated_store_stays_ready(self) -> None:
+        status, reasons = _service_health_status(
+            self._health(), self._server_qdrant("")
+        )
+
+        assert status == "ready"
+        assert reasons == []
+
+    def test_migrated_store_degrades_the_service(self) -> None:
+        """The gap this closes: a one-way migration with no operator signal.
+
+        Mutation it catches: dropping the migration branch from
+        ``_service_health_status``. The upgrade is permitted, every probe stays
+        green, and nothing anywhere records that the binary which wrote the
+        store can no longer read it - which is what an operator needs before
+        attempting to go back.
+        """
+        status, reasons = _service_health_status(
+            self._health(), self._server_qdrant("1.15.4")
+        )
+
+        assert status == "degraded"
+        assert any("carried across" in reason for reason in reasons)
+
+    def test_reason_names_both_versions(self) -> None:
+        """Naming only one version leaves the operator unable to act.
+
+        Mutation it catches: dropping either version from the reason text. The
+        degradation would still fire and still be paired, but the operator could
+        not tell which binary to reinstall to read the store as it was.
+        """
+        _, reasons = _service_health_status(
+            self._health(), self._server_qdrant("1.15.4")
+        )
+        migration = [r for r in reasons if "carried across" in r]
+
+        assert len(migration) == 1
+        assert "1.15.4" in migration[0]
+        assert "1.16.0" in migration[0]
+
+    def test_migration_reason_is_paired_with_its_remediation(self) -> None:
+        """A cause with no next move leaves the operator stuck.
+
+        Mutation it catches: removing the store-format entry from the degraded
+        family registry. The cause would still reach the operator through the
+        unpaired sweep, so this asserts the family and the command specifically
+        - the parts that are actually lost.
+        """
+        status, reasons = _service_health_status(
+            self._health(), self._server_qdrant("1.15.4")
+        )
+        payload: dict[str, object] = {
+            "status": status,
+            "degraded_reasons": reasons,
+            "qdrant": {"alive": True, "quarantined": [], "migrated_from": "1.15.4"},
+        }
+
+        findings = degradation_findings(payload)
+        migration = [f for f in findings if f.family == STORE_FORMAT_FAMILY]
+
+        assert len(migration) == 1
+        assert migration[0].command == "vaultspec-rag server status"
+        assert "1.15.4" in migration[0].detail
+
+    def test_a_migration_and_a_quarantine_are_reported_separately(self) -> None:
+        """Coexistence coverage, not a guard: two problems, two findings.
+
+        Both reasons name the vector store, so both are eligible for the
+        broader ``vector`` stem. This pins the outcome rather than the
+        mechanism, and no single mutation distinguishes it from the pairing
+        tests above.
+        """
+        qdrant = QdrantRuntimeState(
+            mode="server",
+            alive=True,
+            port=6333,
+            version="1.16.0",
+            extra={
+                "quarantined": ["r0abc_vault_docs.20260725T101500Z"],
+                "migrated_from": "1.15.4",
+            },
+        )
+        status, reasons = _service_health_status(self._health(), qdrant)
+        payload: dict[str, object] = {
+            "status": status,
+            "degraded_reasons": reasons,
+            "qdrant": {
+                "alive": True,
+                "quarantined": ["r0abc_vault_docs.20260725T101500Z"],
+                "migrated_from": "1.15.4",
+            },
+        }
+
+        families = {f.family for f in degradation_findings(payload)}
+
+        assert QUARANTINE_FAMILY in families
+        assert STORE_FORMAT_FAMILY in families
+
+
+class TestRuntimeStateCarriesTheMigration:
+    """The supervisor is the one producer of the migration signal."""
+
+    def test_state_reports_the_version_migrated_from(self, tmp_path: Path) -> None:
+        """The signal has to survive the open that erases its evidence.
+
+        Mutation it catches: dropping ``migrated_from`` from ``state()``. The
+        successful open rewrites the stamp to the running version, so nothing
+        on disk records the crossing afterwards; without the held value the
+        health author sees nothing and the degradation can never fire in
+        production however well it tests in isolation.
+        """
+        supervisor = QdrantSupervisor(
+            tmp_path / "qdrant-stub",
+            http_port=6333,
+            storage_dir=tmp_path / "storage",
+            log_path=tmp_path / "qdrant.log",
+            migrated_from="1.15.4",
+        )
+
+        state = supervisor.state()
+
+        assert state.extra.get("migrated_from") == "1.15.4"
+        assert state.to_dict().get("migrated_from") == "1.15.4"
+
+    def test_state_reports_no_migration_by_default(self, tmp_path: Path) -> None:
+        supervisor = QdrantSupervisor(
+            tmp_path / "qdrant-stub",
+            http_port=6333,
+            storage_dir=tmp_path / "storage",
+            log_path=tmp_path / "qdrant.log",
+        )
+
+        assert supervisor.state().extra.get("migrated_from") == ""
