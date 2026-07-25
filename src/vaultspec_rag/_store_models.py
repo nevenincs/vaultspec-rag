@@ -514,54 +514,6 @@ def publish_generation_as_served(
     publish_served_code_collection(root_dir, collection)
 
 
-@dataclass(frozen=True, slots=True)
-class GenerationAdmission:
-    """Whether a generation build can be afforded, and what it would cost.
-
-    Carries the figures rather than a bare flag so a refusal names the
-    shortfall an operator has to act on. A refused build is a reported
-    outcome, never a silent fall back to rebuilding in place.
-    """
-
-    admitted: bool
-    required_mb: float
-    available_mb: float
-
-    @property
-    def shortfall_mb(self) -> float:
-        """Storage the build needs beyond what is available, zero when admitted."""
-        return max(0.0, self.required_mb - self.available_mb)
-
-
-def admit_generation_build(
-    *,
-    served_bytes: int,
-    available_bytes: int,
-    safety_factor: float = 1.2,
-) -> GenerationAdmission:
-    """Decide whether a root can afford to build a generation beside its served one.
-
-    Building into a fresh collection means both exist at once, so the peak is
-    roughly the served size again. The estimate is scaled because a generation
-    is rarely byte-identical to its predecessor - a tree that grew since the
-    last publication needs more than the current collection occupies.
-
-    Refusal is the point: a root that cannot afford the duplicate must be told
-    so and keep serving what it has. Falling back to an in-place rebuild would
-    reintroduce exactly the destructive window this design removes, and it
-    would do it precisely on the machines least able to recover.
-    """
-    if safety_factor <= 0:
-        raise ValueError("safety_factor must be positive")
-    required_mb = (served_bytes / (1024.0 * 1024.0)) * safety_factor
-    available_mb = available_bytes / (1024.0 * 1024.0)
-    return GenerationAdmission(
-        admitted=required_mb <= available_mb,
-        required_mb=required_mb,
-        available_mb=available_mb,
-    )
-
-
 def reclaimable_generation_collections(
     *,
     existing: Iterable[str],
