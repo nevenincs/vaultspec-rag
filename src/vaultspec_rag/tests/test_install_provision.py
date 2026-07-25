@@ -20,7 +20,8 @@ import pytest
 from typer.testing import CliRunner
 
 from ..cli import app
-from ..commands import ProvisionAction, ProvisionStep, install_run
+from ..commands._install import install_run
+from ..commands._provision import ProvisionAction, ProvisionStep
 from ..config import (
     EnvVar,
     get_config,
