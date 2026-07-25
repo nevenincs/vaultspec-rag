@@ -612,6 +612,7 @@ def test_metadata_publication_streams_only_converged_ledger_rows(
             generation_id=generation.generation_id,
             membership_epoch="membership-v1",
             content_epoch="content-v1",
+            published_points_count=1,
         )
         == 1
     )
@@ -639,6 +640,7 @@ def test_metadata_publication_streams_only_converged_ledger_rows(
             generation_id=generation.generation_id,
             membership_epoch="membership-v1",
             content_epoch="content-v1",
+            published_points_count=1,
         )
     assert meta_path.read_bytes() == before
 
@@ -665,6 +667,7 @@ def test_overlapping_metadata_publications_are_each_atomic(tmp_path: Path) -> No
                 generation_id=f"generation-{prefix}",
                 membership_epoch="membership-v1",
                 content_epoch="content-v1",
+                published_points_count=1,
             )
         except BaseException as exc:
             errors.append(exc)

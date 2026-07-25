@@ -129,7 +129,7 @@ def test_checkpoint_resumes_only_unconfirmed_segments(tmp_path: Path) -> None:
     assert tuple(resumed.pending_segments(segments, digest)) == ()
 
     meta_path = tmp_path / ".state" / "code_meta.json"
-    assert resumed.publish_metadata(meta_path) == 1
+    assert resumed.publish_metadata(meta_path, published_points=1) == 1
     published = resumed.publish_generation()
     assert published.complete
     assert meta_path.exists()
@@ -226,24 +226,30 @@ def test_paths_without_indexed_evidence_are_never_reported_as_drifted(
     # Only an indexed state is evidence a caller must supersede; a converged
     # rejection, a half-ingested path, and an unknown path carry none, so a
     # differing digest for any of them is an ordinary first ingestion.
-    assert resumed.drifted_indexed_paths(
-        {
-            "src/empty.py": _digest("no longer empty"),
-            "src/partial.py": _digest("a changed partial source"),
-            "src/unknown.py": _digest("never seen before"),
-        }
-    ) == {}
+    assert (
+        resumed.drifted_indexed_paths(
+            {
+                "src/empty.py": _digest("no longer empty"),
+                "src/partial.py": _digest("a changed partial source"),
+                "src/unknown.py": _digest("never seen before"),
+            }
+        )
+        == {}
+    )
 
 
 def test_fresh_generation_reports_no_drifted_paths(tmp_path: Path) -> None:
     checkpoint = _open(tmp_path)
 
-    assert checkpoint.drifted_indexed_paths(
-        {
-            "src/first.py": _digest("first source"),
-            "src/second.py": _digest("second source"),
-        }
-    ) == {}
+    assert (
+        checkpoint.drifted_indexed_paths(
+            {
+                "src/first.py": _digest("first source"),
+                "src/second.py": _digest("second source"),
+            }
+        )
+        == {}
+    )
 
 
 def test_indexed_path_outside_the_observed_digests_is_not_reported(
@@ -294,7 +300,7 @@ def test_checkpoint_metadata_refuses_unresolved_file_state(tmp_path: Path) -> No
 
     meta_path = tmp_path / ".state" / "code_meta.json"
     with pytest.raises(RunLedgerStateError, match="unresolved"):
-        checkpoint.publish_metadata(meta_path)
+        checkpoint.publish_metadata(meta_path, published_points=1)
     assert not meta_path.exists()
     generation = checkpoint.ledger.generation(checkpoint.generation_id)
     assert generation.finalization_phase is FinalizationPhase.INGESTING
@@ -332,7 +338,7 @@ def test_checkpoint_resumes_each_publication_phase(
         FinalizationPhase.METADATA_PUBLISHED,
         FinalizationPhase.GENERATION_PUBLISHED,
     ):
-        checkpoint.publish_metadata(meta_path)
+        checkpoint.publish_metadata(meta_path, published_points=1)
     if interrupted_phase is FinalizationPhase.GENERATION_PUBLISHED:
         checkpoint.ledger.advance_finalization(
             checkpoint.generation_id,
@@ -346,7 +352,7 @@ def test_checkpoint_resumes_each_publication_phase(
 
     resumed = _open(tmp_path)
     assert resumed.ingestion_complete
-    resumed.publish_metadata(meta_path)
+    resumed.publish_metadata(meta_path, published_points=1)
     published = resumed.publish_generation()
 
     assert published.complete

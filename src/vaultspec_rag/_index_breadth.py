@@ -1,0 +1,83 @@
+"""How much breadth a published code index claims, and where that claim lives.
+
+A neutral leaf shared by the indexer that writes the claim and the search path
+that checks it. It exists as its own module so neither side has to import the
+other: the writer lives behind the tree-sitter-bearing indexer package, while
+the reader sits on a search path that is deliberately model-free and must stay
+importable on a host with no GPU.
+
+The claim is a point count recorded when a code index publishes, taken after
+storage reconciliation so it is exactly the breadth the sidecar describes.
+Without it a truncated collection is indistinguishable from a small one - the
+file entries name which paths are indexed, but nothing says how many points
+that should amount to, so a collection holding a fraction of its corpus reads
+as intact and answers searches as though it were whole.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pathlib
+    from collections.abc import Mapping
+
+logger = logging.getLogger(__name__)
+
+#: Reserved sidecar key carrying the published point count. Reserved keys begin
+#: with ``__`` so they can never collide with a relative file path or be counted
+#: as one during set arithmetic over the sidecar's file entries.
+PUBLISHED_POINTS_KEY = "__code_published_points__"
+
+__all__ = [
+    "PUBLISHED_POINTS_KEY",
+    "code_meta_path",
+    "parse_published_points",
+    "read_published_points",
+]
+
+
+def parse_published_points(raw: Mapping[str, str]) -> int | None:
+    """Return the point count a sidecar mapping claims, or ``None`` for no claim.
+
+    ``None`` means the sidecar predates the key or carries an unusable value.
+    That is a "cannot tell" and must never be read as a shortfall: treating
+    ignorance as loss would escalate every root written by an older build.
+    """
+    value = raw.get(PUBLISHED_POINTS_KEY)
+    if value is None:
+        return None
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        logger.debug("unusable published point count %r in code sidecar", value)
+        return None
+    return count if count >= 0 else None
+
+
+def code_meta_path(root: pathlib.Path) -> pathlib.Path:
+    """Return the code index metadata sidecar path for *root*."""
+    from .config import get_config
+
+    cfg = get_config()
+    return root / cfg.data_dir / cfg.code_index_metadata_file
+
+
+def read_published_points(root: pathlib.Path) -> int | None:
+    """Return the point count *root*'s published code index claims.
+
+    ``None`` when the sidecar is absent, unreadable, or silent on breadth. Every
+    such case is a "cannot tell" rather than a claim of zero, so a caller cannot
+    mistake an unreadable sidecar for a destroyed index.
+    """
+    path = code_meta_path(root)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        logger.debug("code sidecar %s unreadable: %s", path, exc)
+        return None
+    if not isinstance(raw, dict):
+        return None
+    return parse_published_points(raw)

@@ -366,8 +366,13 @@ class CodeRunCheckpoint:
             ),
         )
 
-    def publish_metadata(self, meta_path: Path) -> int:
-        """Publish exact converged ledger rows and advance the durable phase."""
+    def publish_metadata(self, meta_path: Path, *, published_points: int) -> int:
+        """Publish exact converged ledger rows and advance the durable phase.
+
+        ``published_points`` is the collection point count as observed by the
+        caller after storage reconciliation, so the sidecar records the breadth
+        it actually describes rather than an estimate.
+        """
         phase = self.generation.finalization_phase
         if phase is FinalizationPhase.INGESTING:
             self.generation = self.ledger.advance_finalization(
@@ -384,6 +389,7 @@ class CodeRunCheckpoint:
             generation_id=self.generation_id,
             membership_epoch=fingerprints.membership,
             content_epoch=fingerprints.content,
+            published_points_count=published_points,
         )
         self.generation = self.ledger.advance_finalization(
             self.generation_id,
