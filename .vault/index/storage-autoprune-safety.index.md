@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#storage-autoprune-safety'
-date: '2026-07-24'
-modified: '2026-07-24'
+date: '2026-07-25'
+modified: '2026-07-25'
 related:
   - '[[2026-07-13-storage-autoprune-safety-research]]'
   - '[[2026-07-14-storage-autoprune-safety-P01-S01]]'

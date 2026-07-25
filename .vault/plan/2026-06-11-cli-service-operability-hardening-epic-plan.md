@@ -3,6 +3,7 @@ tags:
   - '#plan'
   - '#cli-service-operability-hardening'
 date: '2026-06-11'
+tier: L3
 modified: '2026-06-30'
 related:
   - '[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]'
@@ -148,7 +149,7 @@ Every wave uses the same embedded pipeline:
      actionable.
    - Update the audit or wave notes with any new testimonial findings.
 
-## Wave 00 - Baseline Reproduction And Decision Setup
+## Wave `W00` - Baseline Reproduction And Decision Setup
 
 Objective: Freeze the current failure evidence and create/update the ADRs needed to govern
 implementation.
@@ -211,7 +212,7 @@ Deliverables:
 - Updated epic plan if ADR decisions change scope.
 - Baseline CLI transcript or summarized wave note.
 
-## Wave 01 - Canonical Status Model And MCP Deconflation
+## Wave `W01` - Canonical Status Model And MCP Deconflation
 
 Objective: Define one canonical service status model and make CLI/server/MCP adapters use
 that model consistently.
@@ -287,7 +288,7 @@ Deliverables:
 - CLI/server/MCP adapter boundary clarified.
 - Manual persona transcript summarized.
 
-## Wave 02 - Jobs As An Operator Interface
+## Wave `W02` - Jobs As An Operator Interface
 
 Objective: Replace the simplistic jobs history table with an actionable job inspection
 surface.
@@ -376,7 +377,7 @@ Deliverables:
 - Job model extended with initiator/liveness/correlation fields.
 - Manual persona transcript summarized.
 
-## Wave 03 - Search Freshness, Empty Results, And Target Identity
+## Wave `W03` - Search Freshness, Empty Results, And Target Identity
 
 Objective: Make empty or poor search results actionable instead of ambiguous.
 
@@ -453,7 +454,7 @@ Deliverables:
 - Empty-result recovery guidance implemented.
 - Manual persona transcript summarized.
 
-## Wave 04 - Timeout, Backpressure, And Production Search Readiness
+## Wave `W04` - Timeout, Backpressure, And Production Search Readiness
 
 Objective: Make service-bound search latency understandable, tunable, and production
 credible.
@@ -537,7 +538,7 @@ Deliverables:
 - Performance regression notes produced.
 - Manual persona transcript summarized.
 
-## Wave 05 - Epic Integration, Review, And Pattern Codification
+## Wave `W05` - Epic Integration, Review, And Pattern Codification
 
 Objective: Verify the redesigned CLI/service operability model as one product and promote
 durable rules.
@@ -615,12 +616,12 @@ Deliverables:
 - Manual usage transcript summarized.
 - Audit updated with before/after user testimonial.
 
-## Wave 06 - Human Review Of Modified CLI Interface
+## Wave `W06` - Human Review Of Modified CLI Interface
 
 Objective: Walk a human reviewer through the modified CLI operation surface one command
 at a time, using the original audit and accepted ADRs as the comparison baseline.
 
-### Phase W06.P01 - Redesign `server status` Human Output
+### Phase `W06.P01` - Redesign `server status` Human Output
 
 Objective: Replace the fragile table-shaped default `server status` output with a
 plain, human-first operator summary while preserving advanced diagnostics behind explicit
@@ -628,7 +629,7 @@ flags.
 
 Progress tracking:
 
-- [x] Confirm the default output answers the human review questions:
+- [x] `W06.P01.S01` - Confirm the default output answers the human review questions; `src/vaultspec_rag/cli/_service_status.py`.
   - is the server running,
   - is it healthy,
   - is it currently processing a request,
@@ -637,21 +638,21 @@ Progress tracking:
   - what is the clickable service address,
   - what is the current job name and age when present,
   - how long has the service been running in short human-readable form.
-- [x] Move low-level process, token, model, and backend capability metadata behind
+- [x] `W06.P01.S02` - Move low-level process, token, model, and backend capability metadata behind; `src/vaultspec_rag/cli/_service_status.py`.
   `--verbose`, `--debug`, or `--json`.
-- [x] Remove Rich table rendering from the default `server status` human output.
-- [x] Keep `--json` stable and full-fidelity for agent/script use.
-- [x] Add or update real-behavior tests for the human output contract.
-- [x] Run manual CLI review and wait for human acceptance before closing the phase.
+- [x] `W06.P01.S03` - Remove Rich table rendering from the default `server status` human output; `src/vaultspec_rag/cli/_service_status.py`.
+- [x] `W06.P01.S04` - Keep `--json` stable and full-fidelity for agent/script use; `src/vaultspec_rag/cli/_service_status.py`.
+- [x] `W06.P01.S05` - Add or update real-behavior tests for the human output contract; `src/vaultspec_rag/cli/_service_status.py`.
+- [x] `W06.P01.S06` - Run manual CLI review and wait for human acceptance before closing the phase; `src/vaultspec_rag/cli/_service_status.py`.
 
 Status/health convergence cluster:
 
-- [x] Treat `server status` as the only default human-facing service-state command.
-- [x] Keep backend `/health` as a readiness endpoint for automation and adapters.
-- [x] Do not maintain a second rich human `server health` output that duplicates status.
-- [x] If CLI `server health` remains, make it minimal and automation-oriented; otherwise
+- [x] `W06.P01.S07` - Treat `server status` as the only default human-facing service-state command; `src/vaultspec_rag/cli/_service_status.py`.
+- [x] `W06.P01.S08` - Keep backend `/health` as a readiness endpoint for automation and adapters; `src/vaultspec_rag/cli/_service_status.py`.
+- [x] `W06.P01.S09` - Do not maintain a second rich human `server health` output that duplicates status; `src/vaultspec_rag/cli/_service_status.py`.
+- [x] `W06.P01.S10` - If CLI `server health` remains, make it minimal and automation-oriented; otherwise
   de-emphasize, alias, or remove it through an explicit compatibility path.
-- [x] Ensure help text tells users to call `server status` when they want to know whether
+- [x] `W06.P01.S11` - Ensure help text tells users to call `server status` when they want to know whether; `src/vaultspec_rag/cli/_service_status.py`.
   the service is working or what to check next.
 
 Agent brief:
@@ -677,7 +678,7 @@ Agent brief:
 - Do not change generated provider artifacts unless the project tooling requires it.
 - Use `uv run` or `uv run --no-sync` for project commands.
 
-### Phase W06.P02 - Redesign `server jobs` Human Output And Monitoring
+### Phase `W06.P02` - Redesign `server jobs` Human Output And Monitoring
 
 Objective: Replace the fragile table-shaped default `server jobs` output with a
 command-line-native operator feed that makes running, failed, and recent jobs readable,
@@ -685,25 +686,25 @@ project-scoped, and monitorable.
 
 Progress tracking:
 
-- [x] Remove table rendering from the default human `server jobs` output.
-- [x] Use common command-line notation for job state, including a simple prefix such as
+- [x] `W06.P02.S12` - Remove table rendering from the default human `server jobs` output; `src/vaultspec_rag/cli/_service_jobs.py`.
+- [x] `W06.P02.S13` - Use common command-line notation for job state, including a simple prefix such as; `src/vaultspec_rag/cli/_service_jobs.py`.
   `*` for running/current jobs.
-- [x] Keep a simple header or summary line, not a box/table layout.
-- [x] Include project or repository identity for each job so the user can tell which
+- [x] `W06.P02.S14` - Keep a simple header or summary line, not a box/table layout; `src/vaultspec_rag/cli/_service_jobs.py`.
+- [x] `W06.P02.S15` - Include project or repository identity for each job so the user can tell which; `src/vaultspec_rag/cli/_service_jobs.py`.
   project requested the operation.
-- [x] Reword implementation triggers into user-facing operation names, for example
+- [x] `W06.P02.S16` - Reword implementation triggers into user-facing operation names, for example; `src/vaultspec_rag/cli/_service_jobs.py`.
   `index update` instead of raw `watcher`.
-- [x] Show failed jobs clearly in the default or an obvious filtered view.
-- [x] Order output so the latest job is last in the default human stream, matching common
+- [x] `W06.P02.S17` - Show failed jobs clearly in the default or an obvious filtered view; `src/vaultspec_rag/cli/_service_jobs.py`.
+- [x] `W06.P02.S18` - Order output so the latest job is last in the default human stream, matching common; `src/vaultspec_rag/cli/_service_jobs.py`.
   terminal/log reading expectations.
-- [x] Translate compact internal results such as `+0 /1 -0 (22231ms)` into human-facing
+- [x] `W06.P02.S19` - Translate compact internal results such as `+0 /1 -0 (22231ms)` into human-facing; `src/vaultspec_rag/cli/_service_jobs.py`.
   language.
-- [x] Preserve `--json` as the full-fidelity agent/script format.
-- [x] Add continuous monitoring with auto-refresh and complete terminal content
+- [x] `W06.P02.S20` - Preserve `--json` as the full-fidelity agent/script format; `src/vaultspec_rag/cli/_service_jobs.py`.
+- [x] `W06.P02.S21` - Add continuous monitoring with auto-refresh and complete terminal content; `src/vaultspec_rag/cli/_service_jobs.py`.
   management for interactive monitoring.
-- [x] Add or update real-behavior tests for default output, filters, failed jobs, and
+- [x] `W06.P02.S22` - Add or update real-behavior tests for default output, filters, failed jobs, and; `src/vaultspec_rag/cli/_service_jobs.py`.
   monitoring behavior where feasible.
-- [x] Run manual CLI review and wait for human acceptance before closing the phase.
+- [x] `W06.P02.S23` - Run manual CLI review and wait for human acceptance before closing the phase; `src/vaultspec_rag/cli/_service_jobs.py`.
 
 Agent brief:
 
@@ -725,30 +726,30 @@ Agent brief:
 - Do not change generated provider artifacts unless the project tooling requires it.
 - Use `uv run` or `uv run --no-sync` for project commands.
 
-### Phase W06.P03 - Redesign `server logs` Human Activity Feed
+### Phase `W06.P03` - Redesign `server logs` Human Activity Feed
 
 Objective: Replace raw default `server logs` output with a human-facing activity feed
 while preserving raw log access and JSON output for diagnostics and automation.
 
 Progress tracking:
 
-- [x] Keep raw log access available through an explicit flag or mode.
-- [x] Make default human `server logs` output an activity feed, not raw implementation
+- [x] `W06.P03.S24` - Keep raw log access available through an explicit flag or mode; `src/vaultspec_rag/cli/_service_logs.py`.
+- [x] `W06.P03.S25` - Make default human `server logs` output an activity feed, not raw implementation; `src/vaultspec_rag/cli/_service_logs.py`.
   log lines.
-- [x] Collapse duplicate lifecycle/access-log entries where they describe the same
+- [x] `W06.P03.S26` - Collapse duplicate lifecycle/access-log entries where they describe the same; `src/vaultspec_rag/cli/_service_logs.py`.
   operation.
-- [x] Convert structured lifecycle lines into readable activity rows:
+- [x] `W06.P03.S27` - Convert structured lifecycle lines into readable activity rows; `src/vaultspec_rag/cli/_service_logs.py`.
   - time,
   - operation,
   - project/repository,
   - result count or job outcome,
   - duration,
   - request/job id when useful.
-- [x] Keep `--contains <request_id>` and `--job-id <id>` useful for correlation.
-- [x] Preserve `--json` as the full-fidelity machine-readable log-tail envelope.
-- [x] Avoid formatting that wraps badly in narrow terminals.
-- [x] Add or update real-behavior tests for activity formatting, raw mode, and filters.
-- [x] Run manual CLI review and wait for human acceptance before closing the phase.
+- [x] `W06.P03.S28` - Keep `--contains <request_id>` and `--job-id <id>` useful for correlation; `src/vaultspec_rag/cli/_service_logs.py`.
+- [x] `W06.P03.S29` - Preserve `--json` as the full-fidelity machine-readable log-tail envelope; `src/vaultspec_rag/cli/_service_logs.py`.
+- [x] `W06.P03.S30` - Avoid formatting that wraps badly in narrow terminals; `src/vaultspec_rag/cli/_service_logs.py`.
+- [x] `W06.P03.S31` - Add or update real-behavior tests for activity formatting, raw mode, and filters; `src/vaultspec_rag/cli/_service_logs.py`.
+- [x] `W06.P03.S32` - Run manual CLI review and wait for human acceptance before closing the phase; `src/vaultspec_rag/cli/_service_logs.py`.
 
 Agent brief:
 
@@ -763,7 +764,7 @@ Agent brief:
   W06.P04.
 - Use `uv run` or `uv run --no-sync` for project commands.
 
-### Phase W06.P04 - Standardize Centralized Logging Enrollment
+### Phase `W06.P04` - Standardize Centralized Logging Enrollment
 
 Objective: Standardize logging calls and message structure across the RAG codebase using
 the project's centralized, customizable logging interface, independent of CLI log-view
@@ -771,18 +772,18 @@ formatting.
 
 Progress tracking:
 
-- [x] Inventory current logger creation and direct logging calls across the codebase.
-- [x] Identify call sites that bypass or misuse the centralized logging interface.
-- [x] Standardize event names, severity levels, and structured fields for service
+- [x] `W06.P04.S33` - Inventory current logger creation and direct logging calls across the codebase; `src/vaultspec_rag/logging_config.py`.
+- [x] `W06.P04.S34` - Identify call sites that bypass or misuse the centralized logging interface; `src/vaultspec_rag/logging_config.py`.
+- [x] `W06.P04.S35` - Standardize event names, severity levels, and structured fields for service; `src/vaultspec_rag/logging_config.py`.
   lifecycle, search, jobs, watcher, indexing, and request correlation.
-- [x] Ensure normal lifecycle/activity events are not logged as warnings unless they are
+- [x] `W06.P04.S36` - Ensure normal lifecycle/activity events are not logged as warnings unless they are; `src/vaultspec_rag/logging_config.py`.
   actual warnings.
-- [x] Keep emitted messages suitable for downstream parsing by `server logs`, MCP, and
+- [x] `W06.P04.S37` - Keep emitted messages suitable for downstream parsing by `server logs`, MCP, and; `src/vaultspec_rag/logging_config.py`.
   external log collectors.
-- [x] Avoid changing the human CLI log renderer owned by W06.P03 except by agreed
+- [x] `W06.P04.S38` - Avoid changing the human CLI log renderer owned by W06.P03 except by agreed; `src/vaultspec_rag/logging_config.py`.
   contract fields.
-- [x] Add or update tests for normalized log emission where feasible.
-- [x] Produce an audit note for any broad call-site migration that should be staged
+- [x] `W06.P04.S39` - Add or update tests for normalized log emission where feasible; `src/vaultspec_rag/logging_config.py`.
+- [x] `W06.P04.S40` - Produce an audit note for any broad call-site migration that should be staged; `src/vaultspec_rag/logging_config.py`.
   separately.
 
 Agent brief:
@@ -798,18 +799,18 @@ Agent brief:
 - Coordinate with W06.P03 only through stable event fields, not display formatting.
 - Use `uv run` or `uv run --no-sync` for project commands.
 
-### Phase W06.P05 - Research Search Result Output In Mature CLI Tools
+### Phase `W06.P05` - Research Search Result Output In Mature CLI Tools
 
 Objective: Ground the `vaultspec-rag search` human output redesign in mature,
 respected command-line tools before changing the search result renderer.
 
 Progress tracking:
 
-- [x] Identify mature CLI tools with search, ranked result, reporting, or operational
+- [x] `W06.P05.S41` - Identify mature CLI tools with search, ranked result, reporting, or operational; `src/vaultspec_rag/cli/_search.py`.
   listing output that is respected by working developers and operators.
-- [x] Use primary or authoritative sources where possible, such as official
+- [x] `W06.P05.S42` - Use primary or authoritative sources where possible, such as official; `src/vaultspec_rag/cli/_search.py`.
   documentation, manpages, and long-lived project references.
-- [x] Compare how those tools handle:
+- [x] `W06.P05.S43` - Compare how those tools handle; `src/vaultspec_rag/cli/_search.py`.
   - stable line-oriented output,
   - TTY-aware color and decoration,
   - non-TTY output suitable for pipes,
@@ -819,11 +820,11 @@ Progress tracking:
   - JSON, NDJSON, or other machine-readable modes,
   - explicit context/detail flags,
   - truncation and wrapping behavior.
-- [x] Treat `ragx` as a possible stable handoff format for long or structured result
+- [x] `W06.P05.S44` - Treat `ragx` as a possible stable handoff format for long or structured result; `src/vaultspec_rag/cli/_search.py`.
   inspection, not as a substitute for a good default CLI result view.
-- [x] Produce design recommendations for `vaultspec-rag search` that keep default
+- [x] `W06.P05.S45` - Produce design recommendations for `vaultspec-rag search` that keep default; `src/vaultspec_rag/cli/_search.py`.
   output easily grabbable, stable, and never silently truncated.
-- [x] Do not implement the search output redesign until the human reviewer accepts the
+- [x] `W06.P05.S46` - Do not implement the search output redesign until the human reviewer accepts the; `src/vaultspec_rag/cli/_search.py`.
   research direction.
 
 Agent brief:
@@ -845,7 +846,7 @@ Agent brief:
 - Use `uv run` or `uv run --no-sync` for project commands if local CLI examples are
   needed.
 
-### Phase W06.P06 - Redesign `search` Human Result Output
+### Phase `W06.P06` - Redesign `search` Human Result Output
 
 Objective: Replace the fragile default `vaultspec-rag search` table with a mature,
 line-oriented result format that is stable, copyable, pipe-friendly, and consistent with
@@ -853,18 +854,18 @@ the redesigned status, jobs, and logs surfaces.
 
 Progress tracking:
 
-- [x] Remove Rich table rendering from default human search results.
-- [x] Use a line-oriented default result shape based on mature CLI search conventions.
-- [x] Keep source locations mechanically grabbable and never silently truncated.
-- [x] Show rank as explicit ranking metadata, not as a source coordinate.
-- [x] Keep numeric scores behind an explicit detail flag unless human review approves
+- [x] `W06.P06.S47` - Remove Rich table rendering from default human search results; `src/vaultspec_rag/cli/_search.py`.
+- [x] `W06.P06.S48` - Use a line-oriented default result shape based on mature CLI search conventions; `src/vaultspec_rag/cli/_search.py`.
+- [x] `W06.P06.S49` - Keep source locations mechanically grabbable and never silently truncated; `src/vaultspec_rag/cli/_search.py`.
+- [x] `W06.P06.S50` - Show rank as explicit ranking metadata, not as a source coordinate; `src/vaultspec_rag/cli/_search.py`.
+- [x] `W06.P06.S51` - Keep numeric scores behind an explicit detail flag unless human review approves; `src/vaultspec_rag/cli/_search.py`.
   showing them by default.
-- [x] Keep `--json` envelope output stable and full-fidelity.
-- [x] Preserve empty-result diagnostics and timeout diagnostics from earlier waves.
-- [x] Ensure service-backed and local search share the same human output contract.
-- [x] Add or update real-behavior tests for default output, JSON output, detail flags,
+- [x] `W06.P06.S52` - Keep `--json` envelope output stable and full-fidelity; `src/vaultspec_rag/cli/_search.py`.
+- [x] `W06.P06.S53` - Preserve empty-result diagnostics and timeout diagnostics from earlier waves; `src/vaultspec_rag/cli/_search.py`.
+- [x] `W06.P06.S54` - Ensure service-backed and local search share the same human output contract; `src/vaultspec_rag/cli/_search.py`.
+- [x] `W06.P06.S55` - Add or update real-behavior tests for default output, JSON output, detail flags,; `src/vaultspec_rag/cli/_search.py`.
   and no table/truncation regressions.
-- [x] Run manual CLI review and wait for human acceptance before closing the phase.
+- [x] `W06.P06.S56` - Run manual CLI review and wait for human acceptance before closing the phase; `src/vaultspec_rag/cli/_search.py`.
 
 Agent brief:
 
@@ -894,26 +895,26 @@ Agent brief:
 - Add flags only where needed for the accepted design; avoid broad command tree churn.
 - Use `uv run` or `uv run --no-sync` for project commands.
 
-### Phase W06.P07 - Remove Human CLI Table Formatting Mandate-Wide
+### Phase `W06.P07` - Remove Human CLI Table Formatting Mandate-Wide
 
 Objective: Treat table removal as an endemic CLI operability hardening mandate for
 human-facing default output, not as a one-command preference.
 
 Progress tracking:
 
-- [x] Remove Rich table output from user-facing default paths touched by the current
+- [x] `W06.P07.S57` - Remove Rich table output from user-facing default paths touched by the current; `src/vaultspec_rag/cli/_render.py`.
   operability wave.
-- [x] Replace backend-contract tables in search timeout/error diagnostics with plain,
+- [x] `W06.P07.S58` - Replace backend-contract tables in search timeout/error diagnostics with plain,; `src/vaultspec_rag/cli/_render.py`.
   human-facing text.
-- [x] Translate internal backend fields such as `same_project_search_strategy` into
+- [x] `W06.P07.S59` - Translate internal backend fields such as `same_project_search_strategy` into; `src/vaultspec_rag/cli/_render.py`.
   natural user-facing language or move them behind `--json` or an explicit detail/debug
   path.
-- [x] Keep machine-readable and full-fidelity diagnostic fields in `--json`.
-- [x] Add tests that fail on table borders, wrapped columns, or internal strategy names
+- [x] `W06.P07.S60` - Keep machine-readable and full-fidelity diagnostic fields in `--json`; `src/vaultspec_rag/cli/_render.py`.
+- [x] `W06.P07.S61` - Add tests that fail on table borders, wrapped columns, or internal strategy names; `src/vaultspec_rag/cli/_render.py`.
   in default human output.
-- [x] Record remaining table-using CLI commands as follow-up inventory if they are
+- [x] `W06.P07.S62` - Record remaining table-using CLI commands as follow-up inventory if they are; `src/vaultspec_rag/cli/_render.py`.
   outside the current review wave.
-- [x] Run manual CLI review and wait for human acceptance before closing the phase.
+- [x] `W06.P07.S63` - Run manual CLI review and wait for human acceptance before closing the phase; `src/vaultspec_rag/cli/_render.py`.
 
 Agent brief:
 

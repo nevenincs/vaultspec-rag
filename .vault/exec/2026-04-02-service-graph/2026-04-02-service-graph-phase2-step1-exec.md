@@ -2,7 +2,7 @@
 tags:
   - '#exec'
   - '#service-graph'
-date: 2026-04-02
+date: '2026-04-02'
 modified: '2026-06-30'
 related:
   - '[[2026-04-02-service-graph-phase1-plan]]'

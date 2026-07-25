@@ -2,7 +2,7 @@
 tags:
   - '#plan'
   - '#store-eviction-log-rotation'
-date: 2026-04-12
+date: '2026-04-12'
 modified: '2026-06-30'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-adr]]'
@@ -20,7 +20,35 @@ recorded in the accepted ADR (`2026-04-12-store-eviction-log-rotation-adr.md`)
 in twelve traceable steps. Every step ties back to a specific ADR decision and
 is verifiable end-to-end without mocks, patches, stubs, fakes, or skips.
 
-## Proposed changes
+### Phase `P01` - Configuration and cache relocation
+
+Add the eviction and rotation configuration keys with both override channels, and give the graph cache its own module so the registry can own project slots cleanly.
+
+- [x] `P01.S01` - Add the idle time-to-live, project ceiling and log rotation configuration keys with their environment overrides and defaults; `src/vaultspec_rag/config.py`.
+- [x] `P01.S02` - Relocate the graph cache into its own module and repoint every caller, leaving no copy behind in the module it came from; `src/vaultspec_rag/graph_cache.py`.
+
+### Phase `P02` - Bounded project slots
+
+Track per-slot last-use, evict the least-recently-used slot past the ceiling and any slot idle beyond its time-to-live, releasing every resource the slot owns.
+
+- [x] `P02.S03` - Track last-use per project slot and evict the least-recently-used slot once the configured ceiling is exceeded, releasing the store, searcher, indexers, cache and watcher the slot owns; `src/vaultspec_rag/service.py`.
+- [x] `P02.S04` - Evict a slot idle beyond its configured time-to-live so an unbounded daemon lifetime cannot accumulate abandoned projects; `src/vaultspec_rag/service.py`.
+- [x] `P02.S05` - Expose the resident projects and an explicit eviction verb so an operator can inspect and reclaim slots directly; `src/vaultspec_rag/cli/_service_projects.py`.
+
+### Phase `P03` - Daemon log rotation
+
+Give the daemon log a bounded size with a retained backup count so an append-mode log cannot grow without limit.
+
+- [x] `P03.S06` - Give the daemon log a bounded size and a retained backup count through a rotating handler, replacing the unbounded append; `src/vaultspec_rag/logging_config.py`.
+
+### Phase `P04` - Tests
+
+Prove eviction under both triggers and rotation at the boundary against real resources, with no mocks, patches or stubs.
+
+- [x] `P04.S07` - Prove eviction under both the ceiling and the idle triggers against real project slots, asserting the evicted slot released its resources and a surviving slot still answers; `src/vaultspec_rag/tests/integration/test_service_eviction.py`.
+- [x] `P04.S08` - Prove the daemon log rotates at its configured boundary and retains the configured number of backups; `src/vaultspec_rag/tests/`.
+
+## Description
 
 Two long-standing beta gates are addressed in a single feature:
 
@@ -77,7 +105,7 @@ plan. Violations block merge:
   integration tests layer onto the existing `_service_env(tmp_path)`
   subprocess fixture in `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
 
-## Tasks
+## Steps
 
 Twelve ordered steps. Every step is one commit (see "Commit cadence"
 below). Steps 1–9 implement the behavior; step 10 adds the integration

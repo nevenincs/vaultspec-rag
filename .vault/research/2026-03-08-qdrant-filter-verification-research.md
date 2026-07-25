@@ -2,7 +2,7 @@
 tags:
   - '#research'
   - '#gpu-rag-stack'
-date: 2026-03-08
+date: '2026-03-08'
 modified: '2026-06-30'
 ---
 

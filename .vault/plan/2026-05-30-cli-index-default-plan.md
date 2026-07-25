@@ -16,7 +16,33 @@ audit: (1) `--rebuild` now requires an explicit `--type`; (2) the
 in-process rebuild branch drops only the selected collection
 instead of nuking the whole shared Qdrant directory.
 
-## Proposed Changes
+### Phase `P01` - Require an explicit type with a rebuild
+
+Refuse a rebuild that did not name its scope, distinguishing a user-supplied type from the default, and report the refusal through the structured envelope on both output paths.
+
+- [x] `P01.S01` - Refuse a rebuild whose type was left at its default by inspecting the invocation's parameter source, and emit a rebuild-requires-explicit-type refusal that names the valid invocations, carried through the structured envelope in JSON mode and a non-zero exit in both modes; `src/vaultspec_rag/cli/_index.py`.
+
+### Phase `P02` - Scope the rebuild drop to the selected collection
+
+Replace the whole-directory removal with a per-collection drop gated on the selected type, so a scoped rebuild can no longer destroy the other collection.
+
+- [x] `P02.S02` - Replace the shared-directory removal in the in-process rebuild path with a per-collection drop gated on the selected type, so rebuilding one collection leaves the other intact; `src/vaultspec_rag/cli/_index.py`.
+
+### Phase `P03` - Documentation
+
+Correct every documented rebuild invocation to name its type, and state the requirement and the honoured scope.
+
+- [x] `P03.S03` - Correct the documented rebuild invocations to name an explicit type in the project README, the package README, and the shipped discovery rule, and state that the scope is honoured; `README.md`.
+
+### Phase `P04` - Tests and smoke
+
+Cover the refusal in both output modes, prove a scoped rebuild leaves the other collection intact, and confirm the unchanged bare-index path.
+
+- [x] `P04.S04` - Cover the refusal in human and JSON mode and confirm a rebuild naming its type proceeds; `src/vaultspec_rag/tests/test_cli_index.py`.
+- [x] `P04.S05` - Prove with an integration test over both populated collections that rebuilding one leaves the other's point count unchanged; `src/vaultspec_rag/tests/integration/`.
+- [x] `P04.S06` - Confirm by hand that a bare index run is unaffected, an unscoped rebuild refuses with a non-zero exit, and a scoped rebuild spares the other collection; `src/vaultspec_rag/tests/integration/`.
+
+## Description
 
 - `handle_index` (`cli.py`): inspect the typer context to detect
   whether `--type` was user-supplied; if `--rebuild` is set and
@@ -29,7 +55,7 @@ instead of nuking the whole shared Qdrant directory.
 - README examples updated for the new contract.
 - Tests cover the guard (Rich + JSON) and the scope fix.
 
-## Tasks
+## Steps
 
 ### Phase 1 — CLI guard
 

@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#search-index-availability'
-date: '2026-07-24'
-modified: '2026-07-24'
+date: '2026-07-25'
+modified: '2026-07-25'
 related:
   - '[[2026-07-21-search-index-availability-W01-P01-S01]]'
   - '[[2026-07-21-search-index-availability-W01-P05-S06]]'

@@ -52,7 +52,7 @@ from . import (
     _store,
     _test,
 )
-from ._app import app
+from ._app import app, run_cli
 from ._core import console
 from ._gpu_errors import _cpu_only_message, _no_gpu_message, _no_torch_message
 from ._http_search import _try_http_reindex, _try_http_search
@@ -123,5 +123,6 @@ __all__ = [
     "_write_service_status",
     "app",
     "console",
+    "run_cli",
     "sys",
 ]

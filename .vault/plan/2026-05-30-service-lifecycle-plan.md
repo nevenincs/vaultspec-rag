@@ -14,7 +14,29 @@ related:
 Implements gh issue #113. Closes the three coupled gaps the Wave 1F
 audit flagged: daemon never owns end-of-life cleanup, `service status` hides divergence, `service.log` has no lifecycle entries.
 
-## Proposed Changes
+### Phase `P01` - Daemon heartbeat and end-of-life ownership
+
+Give the daemon a periodic heartbeat and true end-of-life ownership, so the status file is removed on clean, signalled and ungraceful exit alike, and lifecycle transitions are logged where an operator sees them.
+
+- [x] `P01.S01` - Add the periodic heartbeat writing a fresh timestamp into the status file through an atomic replace, tolerating a missing file by exiting the loop rather than raising; `src/vaultspec_rag/server/_lifespan.py`.
+- [x] `P01.S02` - Give the daemon end-of-life ownership through exit and signal hooks plus the lifespan finally block, each unlinking the status file idempotently and re-raising so the server own shutdown still runs; `src/vaultspec_rag/server/_lifecycle.py`.
+- [x] `P01.S03` - Emit structured lifecycle log lines naming the event and its reason at a level visible without operator opt-in, for both startup and every shutdown path; `src/vaultspec_rag/server/_lifecycle.py`.
+
+### Phase `P02` - Status divergence surfacing
+
+Gather the four independent liveness signals before rendering and surface each one plus a derived state, exiting non-zero when they diverge.
+
+- [x] `P02.S04` - Gather the status-file, process-liveness, port-listening and heartbeat-freshness signals before rendering, surface each as its own row alongside a derived state, and exit non-zero when the signals diverge or the heartbeat is stale; `src/vaultspec_rag/cli/_service_status.py`.
+
+### Phase `P03` - Tests, documentation and smoke
+
+Cover the heartbeat, every shutdown path, and each divergent signal combination, and document the contract.
+
+- [x] `P03.S05` - Cover the heartbeat refresh and its missing-file exit, the unlink on each of the clean, signalled and ungraceful shutdown paths, and the derived state and exit code for each divergent signal combination; `src/vaultspec_rag/tests/`.
+- [x] `P03.S06` - Walk the full lifecycle against a live daemon, confirming the status file appears and is removed, the heartbeat advances, and the lifecycle log lines are present; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
+- [x] `P03.S07` - Document the lifecycle contract, the heartbeat interval and staleness threshold, and the status exit codes across the project README, the package README, and the shipped discovery rule; `README.md`.
+
+## Description
 
 - Daemon owns end-of-life: `atexit.register` + SIGTERM/SIGINT
   handlers in `service_lifespan` unlink `service.json` on clean
@@ -33,7 +55,7 @@ audit flagged: daemon never owns end-of-life cleanup, `service status` hides div
 - README + package README + rule file document the new contract.
 - Tests + smoke walking the full lifecycle.
 
-## Tasks
+## Steps
 
 ### Phase 1 — daemon heartbeat + atexit
 
