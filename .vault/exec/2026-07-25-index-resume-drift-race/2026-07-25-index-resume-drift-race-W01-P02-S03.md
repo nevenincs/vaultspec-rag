@@ -1,0 +1,105 @@
+---
+tags:
+  - '#exec'
+  - '#index-resume-drift-race'
+date: '2026-07-25'
+modified: '2026-07-25'
+step_id: 'S03'
+related:
+  - "[[2026-07-25-index-resume-drift-race-plan]]"
+---
+
+<!-- FRONTMATTER RULES:
+     tags: one directory tag (hardcoded #exec) and one feature tag.
+     Replace index-resume-drift-race with a kebab-case feature tag, e.g. #foo-bar.
+     Additional tags may be appended below the required pair.
+
+     modified: CLI-maintained last-modified stamp; set at scaffold time,
+     refreshed by mutating CLI verbs and vault check fix; never hand-edit.
+
+     step_id is the originating Step's canonical identifier, e.g. S01.
+     The S03 and 2026-07-25-index-resume-drift-race-plan placeholders are machine-filled by
+     `vaultspec-core vault add exec`; do not fill them by hand.
+
+     Related: use wiki-links as '[[yyyy-mm-dd-foo-bar-plan]]' and link the
+     parent plan.
+
+     DO NOT add fields beyond those scaffolded; metadata lives
+     only in the frontmatter. -->
+
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the related: field above.
+     - NEVER use [[wiki-links]] or markdown links in the document body.
+     - NEVER reference file paths in the body. If you must name a source file,
+       class, or function, use inline backtick code: `src/module.py`. -->
+
+<!-- STEP RECORD:
+     This file represents one Step from the originating plan. Identified
+     by its canonical leaf identifier (S##) and ancestor display path.
+     The Extract discovery and admission into its own collaborator, grounding first with vaultspec-rag semantic search and citing what it returned and ## Scope
+
+- `src/vaultspec_rag/indexer/_codebase_indexer.py` placeholders below are machine-filled
+     by `vaultspec-core vault add exec` from the originating Step row;
+     do not fill them by hand. -->
+
+# Extract discovery and admission into its own collaborator, grounding first with vaultspec-rag semantic search and citing what it returned
+
+## Scope
+
+- `src/vaultspec_rag/indexer/_codebase_indexer.py`
+
+## Description
+
+- Extract the discovery and admission responsibility into its own collaborator
+  module.
+- Move the admission and preflight types out of the indexer entirely rather
+  than aliasing them.
+- Hold the indexer to consuming the collaborator through a single accessor.
+- Verify behaviour preservation against the full unit suite.
+
+## Outcome
+
+The first seam is cut. Discovery and admission - tree scanning, ignore-rule
+application, admissibility classification, admission counting and sampling, and
+the preflight types - now live in a collaborator the indexer holds rather than
+in a region of one class.
+
+The indexer dropped from 3938 lines to 3294, a reduction of 644, and the
+collaborator is 498. The types moved rather than being re-exported: each of the
+five admission and preflight types resolves in exactly one module, with none
+left behind as an alias. That matters more than the line count, because an
+extraction that leaves a shim behind has not moved the responsibility, only
+spread it.
+
+Behaviour preservation holds. The full unit suite passes at 2568 tests against
+the seamed tree, and the indexer, checkpoint, and ledger suites pass together.
+No test assertion was weakened, skipped, or adjusted to accommodate the move,
+which was the one hard constraint on this Step: a seam that requires changing an
+assertion about indexing behaviour is a seam in the wrong place.
+
+Gates on the extracted scope: lint clean, no absolute imports in the new module,
+type check clean, citation gate clean. The new module carries no development
+metastate.
+
+## Notes
+
+The single-GPU-consumer constraint is untouched. The collaborator owns no
+encoding path, no lock, and no queue; the indexer retains orchestration and the
+one in-process consumer it already had. Seams here are ownership boundaries, not
+concurrency boundaries, and this one did not become the latter.
+
+Two pieces of concurrent work in the same worktree complicated verification and
+are worth recording, because neither is a defect in this Step.
+
+Relocating the decorated types removed an import while their definitions still
+stood, so for a window every module on that import chain failed at collection.
+That transient break blocked a sibling Step's verification. The cause was
+dispatching two executors into one worktree on the reasoning that they targeted
+different files; different files still share an import graph.
+
+Separately, a concurrent effort began removing the unreachable chunking helpers
+and the second collect-into-a-list pipeline identified by the duplication sweep.
+That work deletes three hundred lines from the same module and repoints the tests
+that were the dead pipeline's only callers. Mid-flight it leaves the indexer unit
+suite red, since those tests still reach symbols that have gone. It is not part
+of this Step and its state is not attributed here.
