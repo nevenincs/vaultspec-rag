@@ -32,8 +32,8 @@ Compute the published-versus-live comparison once in the service domain and carr
 
 Prove both guards can fail for their intended reason, run every gate on real Qdrant and SQLite, and close the feature with a review.
 
-- [ ] `P03.S07` - Run the lint, type, citation, complexity, and full test gates and record actual output rather than asserting success; `gates only, no source changes`.
-- [ ] `P03.S08` - Review the landed change against the decision and record the closing audit; `.vault/audit/`.
+- [x] `P03.S07` - Run the lint, type, citation, complexity, and full test gates and record actual output rather than asserting success; `gates only, no source changes`.
+- [x] `P03.S08` - Review the landed change against the decision and record the closing audit; `.vault/audit/`.
 
 ## Description
 
