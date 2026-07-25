@@ -8,11 +8,14 @@ how the integration suite isolates runtime state.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
 
 from ..storage_manifest import (
+    SnapshotCollection,
+    StorageSnapshotManifest,
     classify_root,
     load_manifest,
     manifest_path,
@@ -21,8 +24,10 @@ from ..storage_manifest import (
     rekey_prefix,
     remove_root,
     reverse_map,
+    write_snapshot_manifest,
 )
 from ..store import root_collection_prefix
+from ..store_schema import STORAGE_SCHEMA_VERSION, CollectionIdentity
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -229,3 +234,74 @@ def test_rekey_moves_stale_key(tmp_path: Path) -> None:
     loaded = load_manifest()
     assert stale_prefix not in loaded
     assert loaded[new_prefix].backend == "local"
+
+
+def test_snapshot_manifest_records_the_stamped_identity(tmp_path: Path) -> None:
+    """An archive must carry what produced the vectors it preserves.
+
+    The drop that follows a successful archive destroys the live entry holding
+    that record, so an archive without it can only ever be restored as
+    unverifiable.
+
+    Mutation it catches: omitting ``identity`` from the per-collection payload
+    ``write_snapshot_manifest`` writes.
+    """
+    written = write_snapshot_manifest(
+        tmp_path / "archive" / "rdeadbeefcafe",
+        StorageSnapshotManifest(
+            prefix="rdeadbeefcafe_",
+            root=str(tmp_path / "proj"),
+            storage_schema_version=STORAGE_SCHEMA_VERSION,
+            collections=(
+                SnapshotCollection(
+                    name="rdeadbeefcafe_vault_docs",
+                    snapshot_file="vault.snapshot",
+                    points=7,
+                    identity=CollectionIdentity(
+                        dense_model="acme/dense-v1",
+                        sparse_model="acme/sparse-v1",
+                        dense_dim=1024,
+                        distance="Cosine",
+                        dense_vector_name="dense",
+                        sparse_vector_name="sparse",
+                        storage_schema_version=STORAGE_SCHEMA_VERSION,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    payload = json.loads(written.read_text(encoding="utf-8"))
+    collection = payload["collections"][0]
+    # Asserted before the lookup so dropping the field fails here rather than
+    # raising a KeyError, which reads as a broken test instead of a lost record.
+    assert "identity" in collection
+    assert collection["identity"]["dense_model"] == "acme/dense-v1"
+    assert collection["identity"]["dense_dim"] == 1024
+
+
+def test_snapshot_manifest_writes_absent_identity_as_null(tmp_path: Path) -> None:
+    """A pre-stamping archive says so, rather than omitting the question.
+
+    Mutation it catches: substituting a current identity when the collection
+    carried none, which would let a restore of unattributable data present as
+    conforming.
+    """
+    written = write_snapshot_manifest(
+        tmp_path / "archive" / "rdeadbeefcafe",
+        StorageSnapshotManifest(
+            prefix="rdeadbeefcafe_",
+            root=None,
+            storage_schema_version=STORAGE_SCHEMA_VERSION,
+            collections=(
+                SnapshotCollection(
+                    name="rdeadbeefcafe_vault_docs",
+                    snapshot_file="vault.snapshot",
+                    points=7,
+                ),
+            ),
+        ),
+    )
+
+    payload = json.loads(written.read_text(encoding="utf-8"))
+    assert payload["collections"][0]["identity"] is None

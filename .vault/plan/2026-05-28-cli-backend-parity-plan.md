@@ -18,7 +18,36 @@ and #111 in one PR. Builds on the original `cli-search-filters` plan
 audit captured in the related research document. Design-heavy follow-ups
 are queued as Wave 2 issues, not implemented here.
 
-## Proposed Changes
+### Phase `P01` - Parity wires
+
+Forward every filter the backend already honours through the MCP tools, the searcher, and both CLI search paths, so no advertised narrowing is silently dropped.
+
+- [x] `P01.S01` - Forward every backend-honoured filter through the MCP code-search and vault-search tools so an MCP client can reach each one; `src/vaultspec_rag/mcp/_tools.py`.
+- [x] `P01.S02` - Accept the same filter set on the vault-search path in the searcher so both search types share one contract; `src/vaultspec_rag/search/_searcher.py`.
+- [x] `P01.S03` - Forward every filter from the search command through both the service fast path and the in-process path; `src/vaultspec_rag/cli/_search.py`.
+
+### Phase `P02` - Fail-hard fast path
+
+Make an explicitly requested but unreachable service a hard failure rather than a silent local fallback, with the previous behaviour available only as an opt-in.
+
+- [x] `P02.S04` - Treat an explicitly requested but unreachable service as a hard failure on both the search and index fast paths, rather than silently falling back to a local run; `src/vaultspec_rag/cli/_index.py`.
+- [x] `P02.S05` - Offer the previous fallback behaviour as an explicit opt-in flag, and name it in the refusal message so the operator sees the remedy; `src/vaultspec_rag/cli/_render.py`.
+
+### Phase `P03` - Output and destructive-default polish
+
+Show which backend answered, suppress the download progress bars by default, widen the default result count, and require an explicit target for the destructive clean verb.
+
+- [x] `P03.S06` - Show which backend answered a search, suppress the model-download progress bars by default, widen the default result count, and add the flag that bypasses snippet truncation; `src/vaultspec_rag/cli/_search.py`.
+- [x] `P03.S07` - Require an explicit target on the clean verb so it can no longer default to destroying everything; `src/vaultspec_rag/cli/_index.py`.
+
+### Phase `P04` - Tests and documentation
+
+Cover every parity wire, the fail-hard path and its opt-in, and the clean-verb refusal, and document the full filter surface.
+
+- [x] `P04.S08` - Cover each parity wire end to end, the fail-hard refusal and its opt-in override, and the clean-verb refusal without an explicit target; `src/vaultspec_rag/tests/`.
+- [x] `P04.S09` - Document the full filter surface, the fail-hard fast-path contract, and the clean-verb requirement across the project README, the package README, and the shipped discovery rule; `README.md`.
+
+## Description
 
 Wave 1 is one PR. It ships:
 
@@ -45,7 +74,7 @@ Wave 2 is filed as follow-up issues only:
   post-filter vs Qdrant `MatchText` / prefix support).
 - `index --type all` default re-evaluation (mirrors #111 concern).
 
-## Tasks
+## Steps
 
 ### Phase 1 - Parity wires
 

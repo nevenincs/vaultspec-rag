@@ -17,17 +17,25 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from ..storage_identity import load_identity, record_identity
 from ..storage_manifest import load_manifest, record_root, update_orphan_stamps
 from ..storage_ops import (
     GeometryEntry,
+    MigrateResult,
     ReclaimPolicy,
     ReconcileResult,
+    carry_migrated_identity,
     evaluate_reclaim,
     plan_reconcile,
     sweep_archive,
 )
 from ..storage_survey import NamespaceSurvey
-from ..store_schema import SERVER_SEGMENT_NUMBER
+from ..store import root_collection_prefix
+from ..store_schema import (
+    SERVER_SEGMENT_NUMBER,
+    STORAGE_SCHEMA_VERSION,
+    CollectionIdentity,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -57,6 +65,7 @@ def _survey(
     status: str = "orphaned",
     points: int = 0,
     footprint: int = 100,
+    models: dict[str, str] | None = None,
 ) -> NamespaceSurvey:
     return NamespaceSurvey(
         prefix=prefix,
@@ -65,7 +74,23 @@ def _survey(
         collections=[f"{prefix}vault_docs"],
         points=points,
         footprint_bytes=footprint,
+        models=models or {},
     )
+
+
+def _identity(**overrides: object) -> CollectionIdentity:
+    """Build a complete identity, overriding named fields."""
+    base: dict[str, object] = {
+        "dense_model": "acme/dense-v1",
+        "sparse_model": "acme/sparse-v1",
+        "dense_dim": 1024,
+        "distance": "Cosine",
+        "dense_vector_name": "dense",
+        "sparse_vector_name": "sparse",
+        "storage_schema_version": STORAGE_SCHEMA_VERSION,
+    }
+    base.update(overrides)
+    return CollectionIdentity(**base)  # type: ignore[arg-type]
 
 
 class TestOrphanStamps:
@@ -204,6 +229,193 @@ class TestEvaluateReclaim:
             policy=_POLICY,
         )
         assert decisions[0].action == "pending"
+
+    def test_provenance_is_not_a_reclamation_input(self) -> None:
+        """Reachability decides a reclaim; what produced the vectors never does.
+
+        Two classifications share the word ``unverifiable`` and this pins them
+        apart in both directions, because wiring either one into the other
+        breaks something silently.
+
+        Mutation the first assertion catches: gating a reclaim on the namespace
+        carrying a stamped model. That reads as caution and is a leak - every
+        namespace written before stamping existed would be exempt forever, and
+        an orphan's root is already gone, so it can never be rebuilt into a
+        stamp.
+
+        Mutation the second catches: admitting a namespace whose root could not
+        be confirmed absent because its provenance is known. Full provenance
+        says nothing about whether the volume is merely offline.
+        """
+        aged = (_NOW - timedelta(hours=25)).isoformat()
+
+        unstamped_orphan = _survey("r000000000001_", models={})
+        decisions = evaluate_reclaim(
+            [unstamped_orphan],
+            {"r000000000001_": aged},
+            now=_NOW,
+            policy=_POLICY,
+        )
+        assert [d.action for d in decisions] == ["reclaim_empty"]
+
+        stamped_unreachable = _survey(
+            "r000000000002_",
+            status="unverifiable",
+            models={"r000000000002_vault_docs": "acme/dense-v1"},
+        )
+        assert (
+            evaluate_reclaim(
+                [stamped_unreachable],
+                {"r000000000002_": aged},
+                now=_NOW,
+                policy=_POLICY,
+            )
+            == []
+        )
+
+
+class TestMigrateCarriesIdentity:
+    """A copied namespace inherits provenance, or honestly inherits none.
+
+    Pure filesystem: the carry only touches the two identity homes and the
+    migrate results it is handed, so it needs no server. The real copy is
+    covered against a live daemon at the integration tier.
+    """
+
+    @staticmethod
+    def _migrated(source: str, target: str) -> list[MigrateResult]:
+        return [MigrateResult(source, target, "migrated", 1)]
+
+    def test_local_to_server_carries_the_source_stamp(self, tmp_path: Path) -> None:
+        """The source's own record moves onto the remapped target name.
+
+        Mutation it catches: stamping the destination with
+        ``current_identity()`` instead of the loaded source identity, which
+        asserts that this process produced vectors it only copied - the exact
+        laundering that lets a namespace claim conformance it never
+        established. The asserted model is one no running configuration would
+        ever produce, so a restamp cannot accidentally satisfy it.
+        """
+        root = tmp_path / "proj"
+        local_dir = root / ".vaultspec-rag" / "qdrant"
+        local_dir.mkdir(parents=True)
+        prefix = root_collection_prefix(root)
+        target = f"{prefix}vault_docs"
+        record_identity(
+            root,
+            backend="local",
+            collection="vault_docs",
+            identity=_identity(dense_model="superseded/dense"),
+            local_dir=local_dir,
+        )
+
+        carried = carry_migrated_identity(
+            root,
+            name_map={"vault_docs": target},
+            to_backend="server",
+            local_dir=local_dir,
+            results=self._migrated("vault_docs", target),
+        )
+
+        assert carried == [target]
+        got = load_identity(root, backend="server", collection=target)
+        assert got is not None
+        assert got.dense_model == "superseded/dense"
+
+    def test_server_to_local_carries_into_the_sidecar(self, tmp_path: Path) -> None:
+        """The reverse direction lands in the other home, keyed by bare name.
+
+        Mutation it catches: writing both directions to one home, which leaves
+        the destination of a server-to-local migrate unverifiable because local
+        reads never consult the manifest.
+        """
+        root = tmp_path / "proj"
+        local_dir = root / ".vaultspec-rag" / "qdrant"
+        local_dir.mkdir(parents=True)
+        prefix = root_collection_prefix(root)
+        source = f"{prefix}vault_docs"
+        record_identity(
+            root,
+            backend="server",
+            collection=source,
+            identity=_identity(dense_model="superseded/dense"),
+        )
+
+        carried = carry_migrated_identity(
+            root,
+            name_map={source: "vault_docs"},
+            to_backend="local",
+            local_dir=local_dir,
+            results=self._migrated(source, "vault_docs"),
+        )
+
+        assert carried == ["vault_docs"]
+        got = load_identity(
+            root, backend="local", collection="vault_docs", local_dir=local_dir
+        )
+        assert got is not None
+        assert got.dense_model == "superseded/dense"
+
+    def test_an_unstamped_source_leaves_the_target_unverifiable(
+        self, tmp_path: Path
+    ) -> None:
+        """Copying provenance nobody recorded must invent none.
+
+        Mutation it catches: falling back to ``current_identity()`` when the
+        source carries no stamp, which manufactures the very claim the record
+        exists to prove and scores a pre-stamping namespace as conforming the
+        moment it is moved.
+        """
+        root = tmp_path / "proj"
+        local_dir = root / ".vaultspec-rag" / "qdrant"
+        local_dir.mkdir(parents=True)
+        prefix = root_collection_prefix(root)
+        target = f"{prefix}vault_docs"
+
+        carried = carry_migrated_identity(
+            root,
+            name_map={"vault_docs": target},
+            to_backend="server",
+            local_dir=local_dir,
+            results=self._migrated("vault_docs", target),
+        )
+
+        assert carried == []
+        assert load_identity(root, backend="server", collection=target) is None
+
+    def test_a_copy_that_did_not_happen_carries_nothing(self, tmp_path: Path) -> None:
+        """Only an applied copy earns provenance.
+
+        Mutation it catches: iterating ``name_map`` without consulting the
+        migrate results, which stamps a target that a skipped or failed copy
+        never wrote - a namespace claiming provenance for data that is not
+        there.
+        """
+        root = tmp_path / "proj"
+        local_dir = root / ".vaultspec-rag" / "qdrant"
+        local_dir.mkdir(parents=True)
+        prefix = root_collection_prefix(root)
+        target = f"{prefix}vault_docs"
+        record_identity(
+            root,
+            backend="local",
+            collection="vault_docs",
+            identity=_identity(),
+            local_dir=local_dir,
+        )
+
+        carried = carry_migrated_identity(
+            root,
+            name_map={"vault_docs": target},
+            to_backend="server",
+            local_dir=local_dir,
+            results=[
+                MigrateResult("vault_docs", target, "skipped", 1, "target_exists")
+            ],
+        )
+
+        assert carried == []
+        assert load_identity(root, backend="server", collection=target) is None
 
 
 class TestSweepArchive:
