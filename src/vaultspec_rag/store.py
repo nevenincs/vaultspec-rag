@@ -30,6 +30,7 @@ from ._store_models import (
     _code_chunk_payload,
     _vault_chunk_payload,
     _vault_doc_payload,
+    resolve_served_code_collection,
     root_collection_prefix,
 )
 from ._store_models import (
@@ -253,7 +254,14 @@ class VaultStore(_VaultSearchMixin):
         # constants; basedpyright's uppercase-is-constant rule does not model
         # the class-constant / instance-override split this class relies on.
         self.TABLE_NAME: str = _prefix + VaultStore.TABLE_NAME  # pyright: ignore[reportConstantRedefinition]
-        self.CODE_TABLE_NAME: str = _prefix + VaultStore.CODE_TABLE_NAME  # pyright: ignore[reportConstantRedefinition]
+        # Code reads resolve through the per-root served pointer rather than
+        # the derived name, so a replacement generation takes effect for
+        # readers when the pointer moves and not before. Absent a pointer this
+        # is exactly the derived name, which is the state of every root that
+        # has never published a replacement.
+        self.CODE_TABLE_NAME: str = resolve_served_code_collection(  # pyright: ignore[reportConstantRedefinition]
+            self.root_dir, _prefix + VaultStore.CODE_TABLE_NAME
+        )
         self.DOCUMENT_TABLE_NAME: str = _prefix + VaultStore.DOCUMENT_TABLE_NAME  # pyright: ignore[reportConstantRedefinition]
         # Locking is backend-aware and split per concern. The lifecycle
         # lock guards client open/close, collection create/drop, and the

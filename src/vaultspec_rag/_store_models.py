@@ -11,14 +11,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
+import pathlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, cast
 
 from ._domain import classify_domain
 
-if TYPE_CHECKING:
-    import pathlib
+logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
     from . import store_schema
 
 __all__ = [
@@ -390,3 +393,72 @@ def _code_chunk_payload(chunk: CodeChunk) -> store_schema.CodeChunkPayload:
         # the query-time fallback share one source of truth (`_domain.py`).
         "domain": classify_domain(chunk.path),
     }
+
+
+#: File holding the per-root pointer to the collection currently serving code
+#: reads. Its absence is the normal state for a root that has never published a
+#: replacement generation, and resolves to the derived name.
+SERVED_CODE_POINTER_FILE = "code_served_collection.json"
+
+
+def served_code_pointer_path(root_dir: pathlib.Path | str) -> pathlib.Path:
+    """Return the path of *root_dir*'s served-collection pointer."""
+    from .config import get_config
+
+    cfg = get_config()
+    return pathlib.Path(root_dir) / cfg.data_dir / SERVED_CODE_POINTER_FILE
+
+
+def read_served_code_collection(root_dir: pathlib.Path | str) -> str | None:
+    """Return the collection *root_dir* publishes code reads against.
+
+    ``None`` means no replacement has been published and the derived name is
+    authoritative. An unreadable, malformed, or empty pointer is also ``None``:
+    a root whose pointer cannot be trusted must fall back to the name it would
+    have used anyway rather than resolve to nothing and read an absent
+    collection.
+    """
+    path = served_code_pointer_path(root_dir)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        logger.debug("served-collection pointer %s unreadable: %s", path, exc)
+        return None
+    if not isinstance(raw, dict):
+        return None
+    name = cast("dict[str, object]", raw).get("collection")
+    return name if isinstance(name, str) and name else None
+
+
+def resolve_served_code_collection(
+    root_dir: pathlib.Path | str,
+    derived_name: str,
+) -> str:
+    """Return the collection code reads resolve to for *root_dir*.
+
+    Every read path goes through this rather than deriving the name, so a
+    published replacement takes effect for readers at the moment the pointer
+    moves and not before. Absent a pointer the derived name is returned
+    unchanged, which is what keeps a root written by an older build working
+    without migration.
+    """
+    return read_served_code_collection(root_dir) or derived_name
+
+
+def publish_served_code_collection(
+    root_dir: pathlib.Path | str,
+    collection: str,
+) -> None:
+    """Point *root_dir*'s code reads at *collection*.
+
+    Written to a temporary file and moved into place, so a reader never
+    observes a partially written pointer and a crash mid-write leaves the
+    previous one intact.
+    """
+    if not collection:
+        raise ValueError("collection must be a non-empty name")
+    path = served_code_pointer_path(root_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps({"collection": collection}), encoding="utf-8")
+    os.replace(tmp_path, path)

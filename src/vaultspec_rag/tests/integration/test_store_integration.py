@@ -171,3 +171,73 @@ class TestVaultStore:
             assert results == []
         finally:
             store.close()
+
+
+class TestServedCodeCollectionPointer:
+    """Code reads resolve through the per-root pointer, not the derived name."""
+
+    def test_absent_pointer_resolves_to_the_derived_name(self, tmp_path: Path) -> None:
+        """A root that never published a replacement is unaffected.
+
+        This is every existing root, so the default is what makes the
+        indirection safe to introduce ahead of anything that moves it.
+
+        Proven able to fail: returning a constant instead of ``derived_name``
+        from ``resolve_served_code_collection`` fails the equality below.
+        """
+        from ..._store_models import resolve_served_code_collection
+
+        assert (
+            resolve_served_code_collection(tmp_path, "codebase_docs") == "codebase_docs"
+        )
+
+    def test_a_published_pointer_redirects_reads(self, tmp_path: Path) -> None:
+        """A published pointer is what the store opens, not the derived name.
+
+        Proven able to fail: having ``resolve_served_code_collection`` ignore
+        the pointer and return ``derived_name`` fails both assertions below.
+        """
+        from ... import VaultStore
+        from ..._store_models import (
+            publish_served_code_collection,
+            resolve_served_code_collection,
+        )
+
+        publish_served_code_collection(tmp_path, "codebase_docs_g2")
+        assert (
+            resolve_served_code_collection(tmp_path, "codebase_docs")
+            == "codebase_docs_g2"
+        )
+
+        # The store is the consumer that matters: it must open the pointed-to
+        # collection, which is what makes a swap visible to readers.
+        store = VaultStore(tmp_path)
+        try:
+            assert store.CODE_TABLE_NAME == "codebase_docs_g2"
+        finally:
+            store.close()
+
+    def test_an_unusable_pointer_falls_back_to_the_derived_name(
+        self, tmp_path: Path
+    ) -> None:
+        """A pointer that cannot be trusted must not resolve to nothing.
+
+        Resolving an unreadable pointer to ``None`` would send reads at an
+        absent collection and present a populated index as empty - the exact
+        failure this indirection exists to prevent.
+
+        Proven able to fail: dropping the ``or derived_name`` fallback makes
+        this raise or return None instead of the derived name.
+        """
+        from ..._store_models import (
+            resolve_served_code_collection,
+            served_code_pointer_path,
+        )
+
+        path = served_code_pointer_path(tmp_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{ not json", encoding="utf-8")
+
+        assert (
+            resolve_served_code_collection(tmp_path, "codebase_docs") == "codebase_docs"
+        )
