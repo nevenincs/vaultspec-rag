@@ -29,6 +29,7 @@ from ..indexer._run_ledger import (
     RunLedger,
     RunLedgerCompatibilityError,
     RunLedgerCorruptionError,
+    RunLedgerIndexedPathCollisionError,
     RunLedgerStateError,
     RunOperation,
     RunSignature,
@@ -307,6 +308,72 @@ def test_file_outcomes_and_finalization_are_immutable(tmp_path: Path) -> None:
         )
         == completed
     )
+
+
+def _indexed_path_ledger(tmp_path: Path, digest: str) -> tuple[RunLedger, str]:
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    generation = ledger.start_generation(_signature(tmp_path))
+    ledger.record_storage_confirmed_unit(
+        generation.generation_id,
+        _unit("src/drift.py", 0, 1, digest=digest),
+    )
+    ledger.record_file_state(
+        generation.generation_id,
+        FileState.indexed("src/drift.py", ContentKind.CODE, digest),
+    )
+    return ledger, generation.generation_id
+
+
+def test_upsert_onto_an_indexed_path_raises_the_dedicated_collision(
+    tmp_path: Path,
+) -> None:
+    indexed_digest = _digest("original")
+    ledger, generation_id = _indexed_path_ledger(tmp_path, indexed_digest)
+
+    edited_digest = _digest("edited")
+    # The exact type is the assertion. A caller must be able to separate this
+    # repairable condition - a file edited while the run that indexed it was
+    # still going - from a genuinely broken generation invariant, and the base
+    # state error carries no way to tell them apart.
+    with pytest.raises(RunLedgerIndexedPathCollisionError) as drifted:
+        ledger.record_storage_confirmed_unit(
+            generation_id,
+            _unit("src/drift.py", 1, 2, digest=edited_digest),
+        )
+    error = drifted.value
+    assert type(error) is RunLedgerIndexedPathCollisionError
+    assert error.generation_id == generation_id
+    assert error.rel_path == "src/drift.py"
+    assert error.indexed_digest == indexed_digest
+    assert error.unit_digest == edited_digest
+    assert error.is_drift
+
+    with pytest.raises(RunLedgerIndexedPathCollisionError) as resubmitted:
+        ledger.record_storage_confirmed_unit(
+            generation_id,
+            _unit("src/drift.py", 1, 2, digest=indexed_digest),
+        )
+    assert not resubmitted.value.is_drift
+
+
+def test_indexed_path_collision_stays_catchable_as_a_state_error(
+    tmp_path: Path,
+) -> None:
+    indexed_digest = _digest("original")
+    ledger, generation_id = _indexed_path_ledger(tmp_path, indexed_digest)
+
+    # Handlers written against the base class predate the dedicated type and
+    # must keep intercepting the collision unchanged.
+    try:
+        ledger.record_storage_confirmed_unit(
+            generation_id,
+            _unit("src/drift.py", 1, 2, digest=_digest("edited")),
+        )
+    except RunLedgerStateError as caught:
+        assert isinstance(caught, RunLedgerIndexedPathCollisionError)
+        assert "path is indexed" in str(caught)
+    else:  # pragma: no cover - the guard above always raises
+        pytest.fail("recording an upsert onto an indexed path must be refused")
 
 
 def test_compaction_preserves_published_and_running_generations(tmp_path: Path) -> None:
