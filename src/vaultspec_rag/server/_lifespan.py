@@ -919,6 +919,20 @@ def _service_health_status(
         )
         if status == "ready":
             status = "degraded"
+    # A permitted upgrade is still a one-way door. The store opened, every
+    # probe is green, and nothing anywhere records that the previous binary can
+    # no longer read it - which is exactly what an operator needs to know
+    # before attempting to go back. Reported for this daemon generation only,
+    # because the open has already rewritten the stamp.
+    migrated_from = store_migrated_from(qdrant_state)
+    if migrated_from:
+        degraded_reasons.append(
+            f"the vector store was carried across a server version change "
+            f"(written by {migrated_from}, now opened by {qdrant_state.version}), "
+            f"so the binary that wrote it can no longer read this store"
+        )
+        if status == "ready":
+            status = "degraded"
     return status, degraded_reasons
 
 
@@ -934,6 +948,18 @@ def quarantined_collections(qdrant_state: QdrantRuntimeState) -> list[str]:
     if not isinstance(entries, list):
         return []
     return [str(entry) for entry in cast("list[object]", entries)]
+
+
+def store_migrated_from(qdrant_state: QdrantRuntimeState) -> str:
+    """Return the version this store was carried across from, if any.
+
+    Empty whenever the open did not cross a version boundary, which is the
+    ordinary case. Read through this accessor for the same reason the
+    quarantine listing is: the runtime state produces the fact once, and both
+    the degradation author and the health payload read it the same way.
+    """
+    migrated_from = qdrant_state.extra.get("migrated_from")
+    return str(migrated_from) if isinstance(migrated_from, str) else ""
 
 
 def _health_job_records() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
