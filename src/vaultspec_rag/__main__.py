@@ -67,11 +67,11 @@ def main() -> None:
     Loads the root Typer CLI application, then delegates to it.
     """
     try:
-        from .cli import app
+        from .cli import run_cli
     except KeyboardInterrupt:
         _exit_startup_interrupted()
     else:
-        app()
+        run_cli()
 
 
 if __name__ == "__main__":
