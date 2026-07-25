@@ -1269,19 +1269,65 @@ class ReclaimDecision:
     footprint_bytes: int = 0
 
 
-def _prefix_has_points(client: QdrantClient, prefix: str) -> bool:
-    """Return True when any collection of *prefix* currently holds points."""
+def _prefix_points(client: QdrantClient, prefix: str) -> int | None:
+    """Return *prefix*'s total live point count, or ``None`` if unverifiable.
+
+    The pre-drop re-count, shared by both destruction tiers. ``None`` means at
+    least one collection could not be counted, and is never treated as a
+    number: comparing a total that silently omits a collection would read a
+    partial sum as agreement with the survey.
+    """
+    total = 0
     for collection in client.get_collections().collections:
         if not collection.name.startswith(prefix):
             continue
         try:
-            if int(client.count(collection_name=collection.name).count) > 0:
-                return True
+            total += int(client.count(collection_name=collection.name).count)
         except (OSError, RuntimeError):
-            # An uncountable collection is treated as point-bearing: the
-            # conservative answer defers the drop.
-            return True
-    return False
+            return None
+    return total
+
+
+def _active_index_prefixes() -> frozenset[str]:
+    """Return the collection prefixes an active index job is writing to.
+
+    The liveness signal automated destruction consults. Read-only: it reads
+    the job registry's nonterminal set and maps each job's project root
+    through the same ``root_collection_prefix`` the store namespaces
+    collections with, so the answer arrives in the reclaim path's own
+    vocabulary. It touches no lifecycle verb, no GPU, and no search path.
+
+    Every active index job counts, not only one mid-upsert: a queued or paused
+    run for that root will write to those collections, so destroying its
+    namespace first is the same data loss slightly deferred. A job that cannot
+    be attributed to a root is skipped - it cannot be matched to a prefix, and
+    an unattributable job is not evidence about any particular namespace.
+
+    A registry that cannot be read yields the empty set rather than raising:
+    this runs inside a background cycle, and the pre-drop re-count and the
+    persisted grace windows both remain in force behind it.
+    """
+    from . import jobs
+    from .job_models import JobOperation
+    from .store import root_collection_prefix
+
+    try:
+        active = jobs.get_job_manager().active()
+    except (OSError, RuntimeError):
+        logger.exception("active-job probe failed; treating no namespace as busy")
+        return frozenset()
+    prefixes: set[str] = set()
+    for snapshot in active:
+        if snapshot.spec.operation is not JobOperation.INDEX:
+            continue
+        root = snapshot.spec.project_root
+        if root is None:
+            continue
+        try:
+            prefixes.add(root_collection_prefix(root))
+        except (OSError, ValueError):
+            logger.debug("unattributable active job root %s", root, exc_info=True)
+    return frozenset(prefixes)
 
 
 def _parse_iso(ts: str) -> datetime | None:
@@ -1310,9 +1356,12 @@ def _evaluate_ephemeral(
     namespace classifies ``live`` and survives orphan pruning forever.
     Ephemerality is derived from the root path (``is_temp_rooted``) and
     danglingness from the persisted ``last_indexed`` activity clock -
-    stamped by every successful index run, restart-safe, and only ever
-    advanced by real activity, so protection can only extend. A missing
-    or unparsable stamp is ``pending`` (never destroy on absent
+    restart-safe, and only ever advanced by real activity, so protection can
+    only extend. That clock is advanced both by a completed index run and by
+    a survey observing this namespace's stored points move
+    (``update_activity_stamps``), because an indexer that writes without
+    stamping is exactly the writer whose data this tier would destroy. A
+    missing or unparsable stamp is ``pending`` (never destroy on absent
     evidence). ``unknown``/``unverifiable`` namespaces never reach this
     function (they are not ``live``).
     """
@@ -1473,6 +1522,23 @@ def _decide_orphan(
     )
 
 
+def _redecide(decision: ReclaimDecision, action: str, reason: str) -> ReclaimDecision:
+    """Restate one namespace's decision, preserving its measured facts.
+
+    Every gate that turns a reclaim into a ``deferred`` or ``failed`` outcome
+    reports the same prefix, tier, point count and footprint it was handed;
+    only the verdict and its reason change.
+    """
+    return ReclaimDecision(
+        decision.prefix,
+        action,
+        decision.tier,
+        reason=reason,
+        points=decision.points,
+        footprint_bytes=decision.footprint_bytes,
+    )
+
+
 def _apply_cycle_cap(
     decision: ReclaimDecision,
     eligible: list[ReclaimDecision],
@@ -1489,14 +1555,7 @@ def _apply_cycle_cap(
     if len(eligible) < policy.max_per_cycle:
         eligible.append(decision)
         return decision
-    return ReclaimDecision(
-        decision.prefix,
-        "deferred",
-        decision.tier,
-        reason="over_cycle_cap",
-        points=decision.points,
-        footprint_bytes=decision.footprint_bytes,
-    )
+    return _redecide(decision, "deferred", "over_cycle_cap")
 
 
 def archive_prefix(
@@ -1673,6 +1732,89 @@ class MaintenanceResult:
     reconcile: ReconcileBatch | None = None
 
 
+def _apply_reclaim(
+    client: QdrantClient,
+    decision: ReclaimDecision,
+    *,
+    snapshots_dir: Path,
+    archive_dir: Path,
+    active_prefixes: Callable[[], frozenset[str]],
+) -> tuple[ReclaimDecision, list[Path]]:
+    """Destroy one eligible namespace, or defer it, under the pre-drop gates.
+
+    Separated from the cycle so the gates read as one ordered sequence rather
+    than as branches interleaved with the cycle's bookkeeping. Every exit is a
+    decision plus whatever archive artifacts were written, including on a
+    deferral after a torn snapshot: those files exist, the retention sweep
+    bounds them, and reporting them is how an operator learns the archive
+    happened.
+
+    Args:
+        client: Qdrant client for the managed server.
+        decision: An eligible ``reclaim_empty`` / ``reclaim_data`` decision.
+        snapshots_dir: The server's snapshots tree.
+        archive_dir: The bounded archive destination.
+        active_prefixes: Liveness probe, called here rather than once per
+            cycle so a run that started during an earlier namespace's archive
+            is still seen.
+
+    Returns:
+        The outcome decision and the archive paths written.
+    """
+    # Liveness first. An archive taken across a live writer is torn, so this
+    # gate has to precede the archive, not just the drop.
+    if decision.prefix in active_prefixes():
+        return _redecide(decision, "deferred", "active_index_job"), []
+    # Re-count immediately before acting, in BOTH tiers. The survey reading
+    # can be many minutes stale by the time this prefix's turn arrives, and
+    # any movement since means a writer this cycle cannot see. An archive
+    # makes loss recoverable, never prevented, so the data tier needs this
+    # check at least as much as the empty tier.
+    observed = _prefix_points(client, decision.prefix)
+    if observed is None:
+        return _redecide(decision, "deferred", "points_unverifiable"), []
+    if observed != decision.points:
+        moved = (
+            "points_appeared_since_survey"
+            if decision.tier == "empty"
+            else "points_changed_since_survey"
+        )
+        return _redecide(decision, "deferred", moved), []
+    archived: list[Path] = []
+    if decision.action == "reclaim_data":
+        try:
+            archived = archive_prefix(
+                client,
+                decision.prefix,
+                snapshots_dir=snapshots_dir,
+                archive_dir=archive_dir,
+            )
+        except (OSError, RuntimeError) as exc:
+            return _redecide(decision, "failed", f"archive_failed: {exc}"), []
+        # The snapshot is a point-in-time copy. A write landing during it
+        # tears the copy, and the delete below would then destroy the delta
+        # the copy missed - the one loss an archive cannot undo.
+        settled = _prefix_points(client, decision.prefix)
+        if settled != observed:
+            return (
+                _redecide(decision, "deferred", "points_changed_during_archive"),
+                archived,
+            )
+    result = delete_prefix(client, decision.prefix, dry_run=False)
+    if result.status != "removed":
+        return _redecide(decision, "failed", result.reason or result.status), archived
+    return (
+        ReclaimDecision(
+            decision.prefix,
+            "removed" if decision.tier == "empty" else "archived_removed",
+            decision.tier,
+            points=decision.points,
+            footprint_bytes=decision.footprint_bytes,
+        ),
+        archived,
+    )
+
+
 def run_maintenance_cycle(
     client: QdrantClient,
     *,
@@ -1682,6 +1824,7 @@ def run_maintenance_cycle(
     snapshots_dir: Path,
     archive_dir: Path,
     dry_run: bool = False,
+    active_prefixes: Callable[[], frozenset[str]] = _active_index_prefixes,
 ) -> MaintenanceResult:
     """Run one scheduled reclamation cycle end to end.
 
@@ -1691,8 +1834,18 @@ def run_maintenance_cycle(
     dropped only when every snapshot succeeded; the archive retention
     sweep bounds the archive tree. All destruction reuses
     :func:`delete_prefix` - one implementation shared with the operator
-    CLI. Never touches ``unknown``, ``unverifiable``, or ``live``
-    namespaces, and never touches the GPU.
+    CLI. Never touches ``unknown`` or ``unverifiable`` namespaces, never
+    touches a ``live`` one except through the ephemeral idle tier, and never
+    touches the GPU.
+
+    Two gates stand between a decision and the drop, both re-evaluated per
+    namespace immediately before acting on it rather than once per cycle:
+    a liveness check (no active index job may own the prefix) and a re-count
+    against the surveyed point total (any movement defers). The data tier
+    re-counts a second time across its archive, because a write landing
+    during the snapshot tears it and the delete would then destroy the delta
+    the copy missed. Deferral is always the safe answer: the namespace is
+    re-evaluated next cycle, having lost nothing but time.
 
     Args:
         client: Qdrant client for the managed server.
@@ -1704,20 +1857,28 @@ def run_maintenance_cycle(
         dry_run: When True, evaluate and report but mutate nothing
             (grace stamps are still advanced - observation is not
             destruction).
+        active_prefixes: Liveness probe returning the collection prefixes an
+            active index job is writing to. Defaults to the job registry;
+            injectable so the gate is testable without a live daemon.
 
     Returns:
         A :class:`MaintenanceResult` for the jobs registry and rollup.
     """
-    from .storage_manifest import load_manifest, update_orphan_stamps
+    from .storage_manifest import update_activity_stamps, update_orphan_stamps
 
     surveys = gather_survey(client, storage_dir)
     stamps = update_orphan_stamps(
         {s.prefix: s.status for s in surveys},
         now_iso=now.isoformat(),
     )
-    last_indexed = {
-        prefix: entry.last_indexed for prefix, entry in load_manifest().items()
-    }
+    # The ephemeral tier's idle clock, advanced from what the stored data is
+    # doing rather than from index-run stamps alone. Reading the manifest
+    # directly here would see only what an indexer chose to stamp, which is
+    # the blind spot this tier cannot afford.
+    last_indexed = update_activity_stamps(
+        {s.prefix: (s.status, s.points) for s in surveys},
+        now_iso=now.isoformat(),
+    )
     decisions = evaluate_reclaim(
         surveys,
         stamps,
@@ -1732,68 +1893,17 @@ def run_maintenance_cycle(
         if decision.action not in ("reclaim_empty", "reclaim_data") or dry_run:
             applied.append(decision)
             continue
-        if decision.action == "reclaim_data":
-            try:
-                archived.extend(
-                    archive_prefix(
-                        client,
-                        decision.prefix,
-                        snapshots_dir=snapshots_dir,
-                        archive_dir=archive_dir,
-                    )
-                )
-            except (OSError, RuntimeError) as exc:
-                applied.append(
-                    ReclaimDecision(
-                        decision.prefix,
-                        "failed",
-                        decision.tier,
-                        reason=f"archive_failed: {exc}",
-                        points=decision.points,
-                        footprint_bytes=decision.footprint_bytes,
-                    )
-                )
-                continue
-        else:
-            # The empty tier has no archive, so re-count immediately before
-            # the drop: a reindex of a just-restored root racing this cycle
-            # (survey-to-drop TOCTOU) defers the prefix to the next cycle
-            # instead of destroying fresh points.
-            if _prefix_has_points(client, decision.prefix):
-                applied.append(
-                    ReclaimDecision(
-                        decision.prefix,
-                        "deferred",
-                        decision.tier,
-                        reason="points_appeared_since_survey",
-                        points=decision.points,
-                        footprint_bytes=decision.footprint_bytes,
-                    )
-                )
-                continue
-        result = delete_prefix(client, decision.prefix, dry_run=False)
-        if result.status == "removed":
-            reclaimed += decision.footprint_bytes
-            applied.append(
-                ReclaimDecision(
-                    decision.prefix,
-                    "removed" if decision.tier == "empty" else "archived_removed",
-                    decision.tier,
-                    points=decision.points,
-                    footprint_bytes=decision.footprint_bytes,
-                )
-            )
-        else:
-            applied.append(
-                ReclaimDecision(
-                    decision.prefix,
-                    "failed",
-                    decision.tier,
-                    reason=result.reason or result.status,
-                    points=decision.points,
-                    footprint_bytes=decision.footprint_bytes,
-                )
-            )
+        outcome, artifacts = _apply_reclaim(
+            client,
+            decision,
+            snapshots_dir=snapshots_dir,
+            archive_dir=archive_dir,
+            active_prefixes=active_prefixes,
+        )
+        archived.extend(artifacts)
+        applied.append(outcome)
+        if outcome.action in ("removed", "archived_removed"):
+            reclaimed += outcome.footprint_bytes
     swept = (
         []
         if dry_run
