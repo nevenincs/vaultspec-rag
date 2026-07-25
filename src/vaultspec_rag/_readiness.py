@@ -22,10 +22,9 @@ It reports, per dependency, whether it is provisioned and usable:
 
 This is a *report*, not a fixer: it performs no provisioning, no
 download, and no mutation. It is bounded to the known dependency set
-(it never accretes into a general health console) per the
-``operator-views-are-bounded`` rule, and it lives in the service domain
-so the CLI verb and MCP tool adapt to this shared behaviour rather than
-duplicating it, per the ``service-domain-owns-operability`` rule.
+(it never accretes into a general health console), and it lives in the
+service domain so the CLI verb and MCP tool adapt to this shared
+behaviour rather than duplicating it.
 
 The structured :class:`ReadinessReport` is designed to serve both a
 human render and a JSON envelope: every node is a serialisable dataclass

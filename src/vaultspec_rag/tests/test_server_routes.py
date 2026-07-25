@@ -325,8 +325,7 @@ class TestServiceStateSchemaVersion:
 
     def test_service_state_echoes_schema_version(self, tmp_path: Path) -> None:
         # Isolate the managed-singleton paths to a temp dir so the snapshot
-        # never touches the operator's real status or qdrant storage dir
-        # (managed-singleton-paths-isolate-storage-dir-in-tests).
+        # never touches the operator's real status or qdrant storage dir.
         import os
 
         import vaultspec_rag as vr

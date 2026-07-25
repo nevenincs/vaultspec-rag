@@ -222,7 +222,7 @@ def _split_document_batch(
 
     Runs inside CPU-only spawn workers: it must never construct an embedding
     model, touch CUDA, or pull a module-scope torch import onto this module's
-    import chain (rule ``index-workers-stay-cpu-only``).
+    import chain.
     """
     return [chunk for doc in docs for chunk in split_document(doc, chunk_chars)]
 

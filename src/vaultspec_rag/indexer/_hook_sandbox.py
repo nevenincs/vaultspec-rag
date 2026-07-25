@@ -8,8 +8,7 @@ environment (no daemon tokens, no ``VAULTSPEC_RAG_*`` knobs). The caller runs
 the hook with the project root as its cwd - project-launcher commands
 (``uv run``, ``npm exec``, ``make``) resolve their project from the cwd, so any
 other directory silently breaks them. The subprocess boundary itself is a
-CPU/CUDA-correctness requirement (``index-workers-stay-cpu-only``), not a
-security measure.
+CPU/CUDA-correctness requirement, not a security measure.
 
 The module is stdlib-only so it stays importable from the CPU-only spawn chunk
 worker without loading torch.

@@ -7,8 +7,8 @@ outcome onto the rule's ``on_error`` disposition.
 
 Running the real extraction in a separate OS process is what makes the command
 form CPU-only-safe *by construction*: the child has its own interpreter and
-cannot pollute the spawn worker's import chain or CUDA state, satisfying the
-``index-workers-stay-cpu-only`` rule without any trust assumptions. The command
+cannot pollute the spawn worker's import chain or CUDA state, and it holds
+without any trust assumptions. The command
 is split with :func:`shlex.split` and the ``{path}`` placeholder is substituted
 token-wise (never via a shell), so source paths with spaces or shell
 metacharacters cannot inject.
