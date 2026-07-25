@@ -2,7 +2,7 @@
 tags:
   - '#audit'
   - '#ecosystem-integration'
-date: 2026-04-11
+date: '2026-04-11'
 modified: '2026-06-30'
 related:
   - '[[2026-04-06-ecosystem-integration-adr]]'
