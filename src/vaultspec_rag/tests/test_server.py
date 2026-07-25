@@ -1474,9 +1474,7 @@ class TestReindexPreprocessPreflight:
 
     _CHILD_ROUTE = """
 import json
-import shutil
 import sys
-from unittest.mock import patch
 
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
@@ -1490,19 +1488,13 @@ jobs.reset()
 jobs.get_job_manager().begin_shutdown()
 server._http_mode = True
 server._SERVICE_TOKEN = token
-# These tests exercise the reindex preprocess-preflight report, not the
-# disk-space admission guard; a CI runner's real free space can fall below
-# even the lightweight "embedded-local" profile's floor, so report ample
-# free space rather than have this test depend on the host's actual disk.
-_fake_usage = shutil.disk_usage(".")._replace(free=1024**4)
 try:
-    with patch("shutil.disk_usage", return_value=_fake_usage):
-        with TestClient(Starlette(routes=ROUTES)) as client:
-            response = client.post(
-                "/reindex",
-                json={"type": "code", "project_root": sys.argv[1]},
-                headers={"Authorization": f"Bearer {token}"},
-            )
+    with TestClient(Starlette(routes=ROUTES)) as client:
+        response = client.post(
+            "/reindex",
+            json={"type": "code", "project_root": sys.argv[1]},
+            headers={"Authorization": f"Bearer {token}"},
+        )
     print(
         "REINDEX_PREFLIGHT_RESULT="
         + json.dumps({"status_code": response.status_code, "body": response.json()})
