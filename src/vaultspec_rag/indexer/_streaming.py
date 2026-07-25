@@ -1373,6 +1373,7 @@ def encode_and_upsert_code_slice(
     on_cuda_oom: Callable[[BaseException], None] | None = None,
     run_control: RunControl = NO_RUN_CONTROL,
     reuse: DonorReuseContext | None = None,
+    collection: str | None = None,
 ) -> None:
     """Encode dense + sparse vectors for one slice of code chunks and upsert it.
 
@@ -1426,6 +1427,7 @@ def encode_and_upsert_code_slice(
             slice_chunks,
             write_policy=write_policy,
             wait=ingest_wait,
+            collection=collection,
         )
         if on_storage_confirmed is not None:
             on_storage_confirmed()
