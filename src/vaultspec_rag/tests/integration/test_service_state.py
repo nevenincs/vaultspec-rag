@@ -112,12 +112,14 @@ async def test_get_service_state_consolidated_shape(
     _assert_watcher_state(state["watcher"])
 
 
+@pytest.mark.unit
 def test_info_subcommand_not_registered() -> None:
     result = runner.invoke(app, ["server", "info", "--help"])
     assert result.exit_code != 0
     assert "No such command" in result.output
 
 
+@pytest.mark.unit
 def test_service_state_backend_remains_available_without_cli_alias() -> None:
     assert callable(admin.get_service_state)
     help_result = runner.invoke(app, ["server", "--help"])
@@ -127,6 +129,7 @@ def test_service_state_backend_remains_available_without_cli_alias() -> None:
     assert "status" in help_result.stdout
 
 
+@pytest.mark.unit
 def test_health_subcommand_not_registered() -> None:
     result = runner.invoke(app, ["server", "health", "--help"])
     assert result.exit_code != 0

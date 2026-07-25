@@ -20,6 +20,8 @@ from ..config import (
 from ..memory_probe import MemoryBudget
 from ._scaffold import restore_env, set_env
 
+pytestmark = [pytest.mark.unit]
+
 _RESILIENCE_CONFIG_CASES: tuple[
     tuple[str, EnvVar, str, object, str, object],
     ...,

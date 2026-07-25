@@ -29,6 +29,8 @@ if TYPE_CHECKING:
 
 runner = CliRunner()
 
+pytestmark = [pytest.mark.unit]
+
 # A port with nothing listening: _try_http_admin gets connection-refused
 # and returns None -> the command reports service-not-running (exit 3).
 _DEAD_PORT = "59231"

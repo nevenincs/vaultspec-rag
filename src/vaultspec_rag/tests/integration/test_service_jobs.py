@@ -505,6 +505,7 @@ async def test_get_jobs_non_positive_limit_is_empty(
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.unit
 def test_jobs_not_running_json() -> None:
     result = runner.invoke(
         app,
@@ -517,6 +518,7 @@ def test_jobs_not_running_json() -> None:
     assert payload["error"] == "service_not_running"
 
 
+@pytest.mark.unit
 def test_jobs_not_running_prose() -> None:
     result = runner.invoke(app, ["server", "jobs", "--port", _DEAD_PORT])
     assert result.exit_code == 3
@@ -524,6 +526,7 @@ def test_jobs_not_running_prose() -> None:
     assert "not running" in result.stdout.lower()
 
 
+@pytest.mark.unit
 def test_jobs_subcommand_registered() -> None:
     result = runner.invoke(app, ["server", "jobs", "--help"])
     assert result.exit_code == 0
@@ -547,6 +550,7 @@ def test_jobs_subcommand_registered() -> None:
     assert "--running" not in result.stdout
 
 
+@pytest.mark.unit
 def test_jobs_help_uses_operator_language() -> None:
     result = runner.invoke(app, ["server", "jobs", "--help"])
     assert result.exit_code == 0
@@ -577,6 +581,7 @@ def test_jobs_help_uses_operator_language() -> None:
     assert not leaked, f"internal phrasing leaked into help: {leaked}"
 
 
+@pytest.mark.unit
 def test_jobs_filter_summary_uses_operator_language() -> None:
     from ...cli._service_jobs import _filters_label
 
@@ -602,6 +607,7 @@ def test_jobs_filter_summary_uses_operator_language() -> None:
     assert "watcher" not in rendered
 
 
+@pytest.mark.unit
 def test_jobs_filter_summary_humanizes_finished_state() -> None:
     from ...cli._service_jobs import _filters_label
 
@@ -612,6 +618,7 @@ def test_jobs_filter_summary_humanizes_finished_state() -> None:
     assert "state=" not in rendered
 
 
+@pytest.mark.unit
 def test_jobs_index_filter_is_operator_facing_cli_alias() -> None:
     with _jobs_http_server(
         [
@@ -647,6 +654,7 @@ def test_jobs_index_filter_is_operator_facing_cli_alias() -> None:
     assert "--source" not in result.output
 
 
+@pytest.mark.unit
 def test_jobs_started_by_filter_is_operator_facing_cli_alias() -> None:
     with _jobs_http_server(
         [
@@ -682,6 +690,7 @@ def test_jobs_started_by_filter_is_operator_facing_cli_alias() -> None:
     assert "--trigger" not in result.output
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("state", "phase", "filter_line", "empty_message"),
     [
@@ -728,6 +737,7 @@ def test_jobs_state_filter_sends_service_phase(
     assert empty_message in result.stdout
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("argv", "message"),
     [
@@ -757,6 +767,7 @@ def test_jobs_rejects_invalid_filter_values(argv: list[str], message: str) -> No
     assert "not running" not in result.stdout.lower()
 
 
+@pytest.mark.unit
 def test_jobs_rejects_invalid_filter_values_as_json() -> None:
     result = runner.invoke(
         app,
@@ -779,6 +790,7 @@ def test_jobs_rejects_invalid_filter_values_as_json() -> None:
     assert 'Invalid --state "bananas"' in payload["message"]
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "argv",
     [
@@ -796,6 +808,7 @@ def test_jobs_removed_legacy_filter_flags_are_not_supported(
     assert "not running" not in result.stdout.lower()
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("result", "expected_message", "expected_filter"),
     [
@@ -932,6 +945,7 @@ def _assert_no_internal_jobs_fragments(output: str) -> None:
     assert not leaked, f"internal or table fragments leaked: {leaked}"
 
 
+@pytest.mark.unit
 def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     now = time.time()
     with _jobs_http_server([_cli_jobs_payload(now)]) as (_server, port):
@@ -948,6 +962,7 @@ def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
     _assert_no_internal_jobs_fragments(output)
 
 
+@pytest.mark.unit
 def test_jobs_sparse_service_payload_uses_reported_absence_language() -> None:
     payload: dict[str, object] = {
         "jobs": [
@@ -983,6 +998,7 @@ def test_jobs_sparse_service_payload_uses_reported_absence_language() -> None:
     assert "unknown" not in result.output.lower()
 
 
+@pytest.mark.unit
 def test_jobs_humanizes_disk_space_failures() -> None:
     now = time.time()
     payload = _cli_jobs_payload(now)
@@ -1008,6 +1024,7 @@ def test_jobs_humanizes_disk_space_failures() -> None:
     assert "No space left on device" not in result.output
 
 
+@pytest.mark.unit
 def test_jobs_humanizes_subsecond_finish_duration() -> None:
     now = time.time()
     payload: dict[str, object] = {
@@ -1045,6 +1062,7 @@ def test_jobs_humanizes_subsecond_finish_duration() -> None:
     assert "finished in 0 seconds" not in result.output
 
 
+@pytest.mark.unit
 def test_jobs_failure_detail_stays_on_one_feed_line() -> None:
     now = time.time()
     payload: dict[str, object] = {
@@ -1091,6 +1109,7 @@ def test_jobs_failure_detail_stays_on_one_feed_line() -> None:
     assert lines[-1].endswith(rows[0]["detail"])
 
 
+@pytest.mark.unit
 def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> None:
     from ...cli._service_jobs import _render_jobs_result
 
@@ -1143,6 +1162,7 @@ def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> 
     assert row["detail"] == "waiting to write the index for 20 seconds"
 
 
+@pytest.mark.unit
 def test_jobs_filtered_header_separates_matches_from_service_total(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1207,6 +1227,7 @@ def test_jobs_filtered_header_separates_matches_from_service_total(
     assert all(row["marker"] == "*" and row["state"] == "active" for row in rows)
 
 
+@pytest.mark.unit
 def test_jobs_state_active_only_shows_processing_jobs() -> None:
     now = time.time()
     payload: dict[str, object] = {
@@ -1270,6 +1291,7 @@ def test_jobs_state_active_only_shows_processing_jobs() -> None:
     assert "active or waiting" not in result.output
 
 
+@pytest.mark.unit
 def test_jobs_state_waiting_only_shows_queued_jobs() -> None:
     now = time.time()
     payload: dict[str, object] = {
@@ -1333,6 +1355,7 @@ def test_jobs_state_waiting_only_shows_queued_jobs() -> None:
     assert "active or waiting" not in result.output
 
 
+@pytest.mark.unit
 def test_jobs_waiting_progress_uses_user_language() -> None:
     from ...cli._service_jobs import _human_progress
 
@@ -1357,6 +1380,7 @@ def test_jobs_waiting_progress_uses_user_language() -> None:
     assert "upsert" not in compound
 
 
+@pytest.mark.unit
 def test_jobs_missing_context_uses_reported_absence_language(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1393,6 +1417,7 @@ def test_jobs_missing_context_uses_reported_absence_language(
     assert "unknown" not in output
 
 
+@pytest.mark.unit
 def test_jobs_humanizes_cancelled_automatic_update(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1435,6 +1460,7 @@ def test_jobs_humanizes_cancelled_automatic_update(
     assert "watcher" not in output
 
 
+@pytest.mark.unit
 def test_job_detail_uses_plain_runtime_and_resource_language(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1501,6 +1527,7 @@ def test_job_detail_uses_plain_runtime_and_resource_language(
     assert "State:" not in output
 
 
+@pytest.mark.unit
 def test_jobs_job_id_detail_uses_precise_process_label() -> None:
     now = time.time()
     payload = _cli_jobs_payload(now)
@@ -1535,6 +1562,7 @@ def test_jobs_job_id_detail_uses_precise_process_label() -> None:
     assert "PID:" not in result.output
 
 
+@pytest.mark.unit
 def test_jobs_job_id_detail_humanizes_cleanup_progress() -> None:
     now = time.time()
     payload: dict[str, object] = {
@@ -1580,6 +1608,7 @@ def test_jobs_job_id_detail_humanizes_cleanup_progress() -> None:
     assert "delete removed" not in result.output
 
 
+@pytest.mark.unit
 def test_job_detail_only_reports_progress_freshness_while_running(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1620,6 +1649,7 @@ def test_job_detail_only_reports_progress_freshness_while_running(
     assert "10 minutes" not in failed_output
 
 
+@pytest.mark.unit
 def test_jobs_json_preserves_raw_service_payload() -> None:
     now = time.time()
     payload = _cli_jobs_payload(now)
@@ -1637,6 +1667,7 @@ def test_jobs_json_preserves_raw_service_payload() -> None:
     assert jobs[2]["result"] == "+3 /1 -0 (22231ms)"
 
 
+@pytest.mark.unit
 def test_jobs_watch_refreshes_managed_terminal_view() -> None:
     now = time.time()
     payload = _cli_jobs_payload(now)
@@ -1673,6 +1704,7 @@ def test_jobs_watch_refreshes_managed_terminal_view() -> None:
     assert "Jobs on service port" not in clean_output
 
 
+@pytest.mark.unit
 def test_jobs_watch_bounded_empty_view_reports_refresh_count() -> None:
     payload: dict[str, object] = {
         "jobs": [],
@@ -1704,6 +1736,7 @@ def test_jobs_watch_bounded_empty_view_reports_refresh_count() -> None:
     assert "There are no active or waiting jobs." not in result.output
 
 
+@pytest.mark.unit
 def test_jobs_watch_is_human_only() -> None:
     result = runner.invoke(
         app,
@@ -1714,6 +1747,7 @@ def test_jobs_watch_is_human_only() -> None:
     assert envelope["error"] == "invalid_watch"
 
 
+@pytest.mark.unit
 def test_jobs_cli_mcp_parity() -> None:
     assert callable(admin.get_jobs)
     help_result = runner.invoke(app, ["server", "--help"])
@@ -1765,6 +1799,7 @@ def _routes_app(  # pyright: ignore[reportUnusedFunction]
         reset_config()
 
 
+@pytest.mark.unit
 def test_jobs_route_401_without_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
@@ -1776,6 +1811,7 @@ def test_jobs_route_401_without_token(
     assert payload["error"] == "unauthorized"
 
 
+@pytest.mark.unit
 def test_jobs_route_401_with_wrong_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
@@ -1787,6 +1823,7 @@ def test_jobs_route_401_with_wrong_token(
     assert response.status_code == 401
 
 
+@pytest.mark.unit
 def test_jobs_route_200_with_bearer_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
@@ -1807,6 +1844,7 @@ def test_jobs_route_200_with_bearer_token(
     assert payload["summary"]["users"]
 
 
+@pytest.mark.unit
 def test_jobs_route_200_with_query_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
@@ -1961,6 +1999,7 @@ def _assert_route_paused_filter(
     assert [entry["id"] for entry in filtered.json()["jobs"]] == [job_id]
 
 
+@pytest.mark.unit
 def test_jobs_route_canonical_control_retry_and_delete(
     _routes_app: tuple[TestClient, str],
     tmp_path: Path,
@@ -2069,6 +2108,7 @@ def _retry_delete_route_job(
     assert missing.status_code == 404
 
 
+@pytest.mark.unit
 def test_jobs_route_control_retry_and_terminal_delete(
     _routes_app: tuple[TestClient, str],
     tmp_path: Path,
@@ -2085,6 +2125,7 @@ def test_jobs_route_control_retry_and_terminal_delete(
     _retry_delete_route_job(client, headers, job_id)
 
 
+@pytest.mark.unit
 def test_jobs_route_enforces_nonterminal_capacity(
     _routes_app: tuple[TestClient, str],
     tmp_path: Path,
@@ -2149,6 +2190,7 @@ def test_jobs_route_enforces_nonterminal_capacity(
         reset_config()
 
 
+@pytest.mark.unit
 def test_reindex_route_rejects_unknown_type(
     _routes_app: tuple[TestClient, str],
     tmp_path: Path,
@@ -2168,6 +2210,7 @@ def test_reindex_route_rejects_unknown_type(
         assert response.json()["code"] == "invalid_job_spec"
 
 
+@pytest.mark.unit
 async def test_job_mutations_keep_real_asgi_loop_responsive(
     tmp_path: Path,
 ) -> None:
@@ -2289,6 +2332,7 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
         reset_config()
 
 
+@pytest.mark.unit
 def test_jobs_route_respects_limit_param(
     _routes_app: tuple[TestClient, str],
 ) -> None:
@@ -2303,6 +2347,7 @@ def test_jobs_route_respects_limit_param(
     assert len(response.json()["jobs"]) == 1
 
 
+@pytest.mark.unit
 def test_jobs_route_prioritises_running_before_limit(
     _routes_app: tuple[TestClient, str],
 ) -> None:
@@ -2319,6 +2364,7 @@ def test_jobs_route_prioritises_running_before_limit(
     assert "current" in payload["jobs"][0]["resources"]
 
 
+@pytest.mark.unit
 def test_jobs_route_prioritises_failed_before_completed_limit(
     _routes_app: tuple[TestClient, str],
 ) -> None:
@@ -2338,6 +2384,7 @@ def test_jobs_route_prioritises_failed_before_completed_limit(
     assert payload["jobs"][0]["phase"] == "error"
 
 
+@pytest.mark.unit
 def test_jobs_route_filters_phase_source_trigger_and_query(
     _routes_app: tuple[TestClient, str],
 ) -> None:
@@ -2364,6 +2411,7 @@ def test_jobs_route_filters_phase_source_trigger_and_query(
     assert payload["jobs"][0]["phase"] == "running"
 
 
+@pytest.mark.unit
 def test_jobs_route_accepts_codebase_source_alias(
     _routes_app: tuple[TestClient, str],
 ) -> None:
@@ -2380,6 +2428,7 @@ def test_jobs_route_accepts_codebase_source_alias(
     assert payload["filters"]["source"] == "code"
 
 
+@pytest.mark.unit
 def test_jobs_route_filters_failed_job_id_and_since(
     _routes_app: tuple[TestClient, str],
 ) -> None:
@@ -2413,6 +2462,7 @@ def test_jobs_route_filters_failed_job_id_and_since(
     assert payload["filters"]["since"] == 60.0
 
 
+@pytest.mark.unit
 def test_jobs_route_query_matches_runtime_and_initiator(
     _routes_app: tuple[TestClient, str],
 ) -> None:
@@ -2435,6 +2485,7 @@ def test_jobs_route_query_matches_runtime_and_initiator(
     assert running_id in ids
 
 
+@pytest.mark.unit
 def test_jobs_route_since_uses_progress_update_time(
     _routes_app: tuple[TestClient, str],
 ) -> None:
@@ -2454,6 +2505,7 @@ def test_jobs_route_since_uses_progress_update_time(
     assert running_id in ids
 
 
+@pytest.mark.unit
 def test_jobs_route_job_id_prefix_can_return_multiple_matches(
     _routes_app: tuple[TestClient, str],
 ) -> None:
@@ -2738,6 +2790,7 @@ def _assert_resilience_cli_human(
         assert line in cli_human.output
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("outcome_name", "error_kind", "expected_state", "expected_error_kind"),
     [

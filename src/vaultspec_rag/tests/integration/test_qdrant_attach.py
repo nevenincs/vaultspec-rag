@@ -131,6 +131,7 @@ class TestVerifiedAttach:
             assert supervisor.pid is None
             assert supervisor.is_alive() is True
 
+    @pytest.mark.unit
     def test_refuses_foreign_holder_without_identity(self, tmp_path: Path) -> None:
         with _running_managed_qdrant(tmp_path, version=QDRANT_SERVER_VERSION):
             # No identity sidecar written -> the holder is foreign.
@@ -138,6 +139,7 @@ class TestVerifiedAttach:
                 start_supervised_from_config()
             assert "refusing to start qdrant" in str(excinfo.value)
 
+    @pytest.mark.unit
     def test_refuses_on_version_mismatch(self, tmp_path: Path) -> None:
         with _running_managed_qdrant(tmp_path, version="0.0.1") as (port, storage):
             write_qdrant_identity(

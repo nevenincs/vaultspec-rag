@@ -18,6 +18,8 @@ from .benchmarks.bench_large_index_resilience import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+pytestmark = [pytest.mark.unit]
+
 
 def test_preparation_is_idempotent_and_production_chunk_exact(tmp_path: Path) -> None:
     spec = CorpusSpec(files=5, chunks_per_file=3)

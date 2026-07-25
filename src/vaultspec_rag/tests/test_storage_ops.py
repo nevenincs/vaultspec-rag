@@ -1221,6 +1221,8 @@ class TestKindPointsCountGenerations:
         vault_generation = f"r0123456789ab_{store_schema.VAULT_COLLECTION}_gbbbb"
 
         assert _kind_points([vault_generation], {vault_generation: 9}, code) == 0
+
+
 class _CycleClient:
     """Qdrant stand-in exercising the maintenance cycle's destruction path.
 

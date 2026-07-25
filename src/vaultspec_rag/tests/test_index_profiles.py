@@ -18,6 +18,8 @@ from ..index_profiles import (
     validate_profile_admission,
 )
 
+pytestmark = [pytest.mark.unit]
+
 
 def _volume(
     free_bytes: int | None,
