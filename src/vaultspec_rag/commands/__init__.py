@@ -21,33 +21,7 @@ rag never reads or writes shared repository files (``.gitignore``,
 All such state changes flow through core.
 
 This module was split into a package (``commands/``) from a former monolith.
-The verbatim public surface - the two
-orchestrators and their report dataclasses - is re-exported here unchanged.
+Import each name from the module that defines it - the orchestrators from
+:mod:`._install` and :mod:`._uninstall`, their report dataclasses from
+:mod:`._models`. This package exports nothing itself.
 """
-
-from __future__ import annotations
-
-from ._install import install_run
-from ._models import InstallReport, UninstallReport
-from ._provision import (
-    ProvisionAction,
-    ProvisionOutcome,
-    ProvisionStep,
-    ProvisionStepResult,
-    provision_dependencies,
-    provision_models,
-)
-from ._uninstall import uninstall_run
-
-__all__ = [
-    "InstallReport",
-    "ProvisionAction",
-    "ProvisionOutcome",
-    "ProvisionStep",
-    "ProvisionStepResult",
-    "UninstallReport",
-    "install_run",
-    "provision_dependencies",
-    "provision_models",
-    "uninstall_run",
-]
