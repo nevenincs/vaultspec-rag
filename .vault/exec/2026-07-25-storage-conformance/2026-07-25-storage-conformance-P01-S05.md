@@ -63,16 +63,16 @@ All eight ran and were restored in one sequence.
 
 Ten tests, all green when unmutated. The proofs:
 
-| Mutation | Test | Observed failure |
-| --- | --- | --- |
-| `record_root` restamps the current generation | preserves a stale schema version | `assert 2 == 1` |
-| `record_root` drops the identity map | preserves stamped identity | `assert None is not None` |
-| `rekey_prefix` restamps the generation | rekey carries identity | `assert 2 == 1` |
-| unstamped scores as conforming | unstamped is unverifiable | `assert 'conforming' == 'unverifiable'` |
-| dense-model comparison removed | same-width swap is nonconforming | `assert 'conforming' == 'nonconforming'` |
-| width branch marked non-fatal | width disagreement is fatal | `assert False` |
-| local branch routed into the manifest | local writes no manifest entry | prefix present in manifest |
-| sidecar written from a fresh dict | second stamp preserves the first | `assert None is not None` |
+| Mutation                                      | Test                             | Observed failure                         |
+| --------------------------------------------- | -------------------------------- | ---------------------------------------- |
+| `record_root` restamps the current generation | preserves a stale schema version | `assert 2 == 1`                          |
+| `record_root` drops the identity map          | preserves stamped identity       | `assert None is not None`                |
+| `rekey_prefix` restamps the generation        | rekey carries identity           | `assert 2 == 1`                          |
+| unstamped scores as conforming                | unstamped is unverifiable        | `assert 'conforming' == 'unverifiable'`  |
+| dense-model comparison removed                | same-width swap is nonconforming | `assert 'conforming' == 'nonconforming'` |
+| width branch marked non-fatal                 | width disagreement is fatal      | `assert False`                           |
+| local branch routed into the manifest         | local writes no manifest entry   | prefix present in manifest               |
+| sidecar written from a fresh dict             | second stamp preserves the first | `assert None is not None`                |
 
 Restored: `10 passed`.
 
