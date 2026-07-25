@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#store-eviction-log-rotation'
-date: '2026-07-24'
-modified: '2026-07-24'
+date: '2026-07-25'
+modified: '2026-07-25'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-adr]]'
   - '[[2026-04-12-store-eviction-log-rotation-phase1-plan]]'
