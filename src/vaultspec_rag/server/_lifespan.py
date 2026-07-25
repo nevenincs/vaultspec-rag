@@ -1076,6 +1076,7 @@ async def health_handler(_request: Request) -> object:
     from starlette.responses import JSONResponse
 
     from .. import store_schema
+    from ..serviceclient._release import RELEASE_FIELD, local_release
 
     reg_health = _m._registry.health()
     uptime = _uptime_seconds()
@@ -1119,6 +1120,11 @@ async def health_handler(_request: Request) -> object:
             # direct-Qdrant consumer can check before scrolling. The full
             # descriptor lives on /readiness.
             "schema_version": store_schema.STORAGE_SCHEMA_VERSION,
+            # The daemon's own package release. This route is ungated, so it is
+            # the one surface where a client can establish which build it is
+            # about to drive before it authenticates. Distinct from
+            # `schema_version` (storage shape) above.
+            RELEASE_FIELD: local_release(),
             # Per-process identity token. Mirrors the value written
             # to service.json. The CLI compares the two to detect
             # PID-reuse and unrelated-HTTP-server-on-port collisions

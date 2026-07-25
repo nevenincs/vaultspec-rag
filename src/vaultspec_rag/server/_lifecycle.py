@@ -167,6 +167,7 @@ def _daemon_discovery_snapshot(
         SERVICE_PHASE_RUNNING,
         SERVICE_PHASE_WARMING,
     )
+    from ..serviceclient._release import RELEASE_FIELD, local_release
 
     if phase not in {SERVICE_PHASE_WARMING, SERVICE_PHASE_RUNNING}:
         msg = f"unsupported daemon discovery phase: {phase!r}"
@@ -195,6 +196,11 @@ def _daemon_discovery_snapshot(
         "base_prefix": sys.base_prefix,
         "virtual_env": os.environ.get("VIRTUAL_ENV"),
         "python_version": sys.version.split()[0],
+        # The serving build's package release, beside the interpreter version
+        # and the environment paths that already identify this daemon. It is
+        # what lets a client that resolved this pointer tell a daemon from its
+        # own install apart from one left behind by another.
+        RELEASE_FIELD: local_release(),
     }
     if _m._launch_token:
         fields["launch_token"] = _m._launch_token

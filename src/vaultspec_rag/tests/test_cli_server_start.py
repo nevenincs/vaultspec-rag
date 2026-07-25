@@ -183,8 +183,10 @@ class TestStartReorderAndGuards:
             doc["service_token"] = "tok-live"
             sf.write_text(json.dumps(doc), encoding="utf-8")
 
-            triple = _existing_service_running()
-            assert triple == (os.getpid(), port, "degraded")
+            # The fourth element is the daemon's published release. This stand-in
+            # responder publishes none, which is reported as absent rather than
+            # guessed at.
+            assert _existing_service_running() == (os.getpid(), port, "degraded", None)
 
             result = runner.invoke(app, ["server", "start", "--json"])
             assert result.exit_code == 0

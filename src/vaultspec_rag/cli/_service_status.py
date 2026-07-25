@@ -121,12 +121,19 @@ def _write_service_status(pid: int, port: int, *, timeout: float = 1.0) -> None:
         port: TCP port the service is listening on.
 
     """
+    from ..serviceclient._release import RELEASE_FIELD, local_release
+
     data = {
         "schema": SERVICE_DISCOVERY_SCHEMA,
         "version": SERVICE_DISCOVERY_VERSION,
         "pid": pid,
         "port": port,
         "started_at": _discovery_timestamp(),
+        # The spawning launcher's release. The daemon overwrites this with its
+        # own on the first heartbeat; until then it is the only release the
+        # file can honestly report, and publishing it keeps the field present
+        # from the moment the file exists rather than only after warm-up.
+        RELEASE_FIELD: local_release(),
     }
     _merge_service_status(
         data,

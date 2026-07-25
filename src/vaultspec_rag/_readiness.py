@@ -143,13 +143,16 @@ class ReadinessReport:
         """Return a JSON-serialisable view of the whole report.
 
         Carries the bounded storage-schema descriptor so a consumer can assert
-        compatibility against the Qdrant data shape before a direct read. The
-        descriptor is config-derived and torch-free, so it stays inside the
-        no-GPU readiness contract.
+        compatibility against the Qdrant data shape before a direct read, and
+        the reporting build's package release so a consumer can assert
+        compatibility against the process it is talking to. Both are
+        config-derived and torch-free, so they stay inside the no-GPU readiness
+        contract.
         """
         from . import store_schema
         from .config import get_config
         from .index_profiles import index_support_profile_status
+        from .serviceclient._release import RELEASE_FIELD, local_release
 
         degraded_reasons = [
             dep.detail
@@ -166,6 +169,7 @@ class ReadinessReport:
                 get_config().index_support_profile
             ),
             "schema": store_schema.describe_storage_schema(),
+            RELEASE_FIELD: local_release(),
         }
 
 

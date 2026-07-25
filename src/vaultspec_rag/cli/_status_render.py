@@ -18,6 +18,7 @@ import typer
 import vaultspec_rag.cli as _cli
 
 from ..serviceclient._discovery import MachineResolution, resolve_machine_service
+from ..serviceclient._release import payload_release_compatibility
 from ..serviceclient._status import (
     STATUS_STOPPED,
     DiscoveryStatus,
@@ -519,6 +520,13 @@ def _print_health_detail(
         env_exe = health.get("executable")
         if isinstance(env_exe, str) and env_exe:
             _print_detail_line("Service env", env_exe)
+        # Beside the environment that identifies the daemon's install, the
+        # release that identifies its build. A client and a daemon from
+        # different installs drift independently, and this line is where that
+        # shows up outside the start path.
+        _print_detail_line(
+            "Release", payload_release_compatibility(health).summary()
+        )
         _print_detail_line(
             "Search models", _model_ready_label(health.get("models_loaded"))
         )

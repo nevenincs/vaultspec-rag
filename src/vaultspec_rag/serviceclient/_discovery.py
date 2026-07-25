@@ -80,6 +80,12 @@ DISCOVERY_REASON_POINTER_INVALID = "pointer_invalid"
 DISCOVERY_REASON_POINTER_STALE = "pointer_stale"
 DISCOVERY_REASON_POINTER_FOREIGN = "pointer_foreign"
 DISCOVERY_REASON_PROBE_FAILED = "probe_failed"
+#: The pointer declares a discriminator this build does not understand. Kept
+#: apart from ``pointer_invalid`` (a payload of the right shape carrying an
+#: unusable field) because the remedy differs: an unreadable field is a fault,
+#: a foreign discriminator means the file belongs to a build that is not this
+#: one and the fields inside it cannot be assumed to mean what they say.
+DISCOVERY_REASON_POINTER_INCOMPATIBLE = "pointer_incompatible"
 
 #: Which view supplied the resolved address.
 DISCOVERY_SOURCE_MACHINE_POINTER = "machine_pointer"
@@ -88,6 +94,7 @@ DISCOVERY_SOURCE_NONE = "none"
 
 __all__ = [
     "DISCOVERY_REASON_POINTER_FOREIGN",
+    "DISCOVERY_REASON_POINTER_INCOMPATIBLE",
     "DISCOVERY_REASON_POINTER_INVALID",
     "DISCOVERY_REASON_POINTER_MISSING",
     "DISCOVERY_REASON_POINTER_STALE",
@@ -112,8 +119,37 @@ __all__ = [
     "_replace_service_status",
     "_status_dir",
     "_status_file",
+    "discovery_payload_supported",
     "resolve_machine_service",
 ]
+
+
+def discovery_payload_supported(payload: Mapping[str, Any]) -> bool:
+    """Whether this build understands *payload*'s declared shape.
+
+    The discovery file carries a ``(schema, version)`` discriminator that every
+    writer stamps, and the published contract instructs a consumer to pin on
+    the pair and refuse a file it does not understand. This is that refusal.
+
+    A payload declaring neither half is the pre-discriminator case - a file
+    written before the pair existed, which the next daemon heartbeat upgrades
+    in place - and is accepted so an upgrade does not read as a foreign build.
+    A payload declaring one half without the other is a partial or truncated
+    write, and a payload declaring the pair with values this build does not
+    recognise belongs to another product or another shape generation. Neither
+    can be assumed to mean what its remaining fields say, so both are refused.
+    """
+    schema = payload.get("schema")
+    version = payload.get("version")
+    if schema is None and version is None:
+        return True
+    # ``type(...) is int`` rather than ``isinstance``: ``True == 1``, so a bool
+    # would otherwise satisfy a version-one pin.
+    return (
+        schema == SERVICE_DISCOVERY_SCHEMA
+        and type(version) is int
+        and version == SERVICE_DISCOVERY_VERSION
+    )
 
 
 def _discovery_timestamp() -> str:
@@ -396,8 +432,9 @@ def _read_service_status() -> dict[str, Any] | None:
     """Read and parse the service status file.
 
     Returns:
-        Parsed status dict, or None if the file is missing,
-        unreadable, or lacks ``pid``/``port`` keys.
+        Parsed status dict, or None if the file is missing, unreadable, lacks
+        ``pid``/``port`` keys, or declares a shape this build does not
+        understand.
 
     """
     sf = _status_file()
@@ -407,7 +444,19 @@ def _read_service_status() -> dict[str, Any] | None:
         raw: object = json.loads(sf.read_text(encoding="utf-8"))
         if not isinstance(raw, dict) or "pid" not in raw or "port" not in raw:
             return None
-        return cast("dict[str, Any]", raw)
+        data = cast("dict[str, Any]", raw)
+        if not discovery_payload_supported(data):
+            # Refused rather than parsed: the pid and port of a file written to
+            # a shape this build does not know are not this build's pid and
+            # port, and acting on them would drive or kill a foreign process.
+            logger.debug(
+                "service status file %s declares unsupported schema %r version %r",
+                sf,
+                data.get("schema"),
+                data.get("version"),
+            )
+            return None
+        return data
     except (json.JSONDecodeError, OSError) as exc:
         logger.debug("service status file %s unreadable: %s", sf, exc, exc_info=True)
         return None
@@ -552,6 +601,19 @@ def resolve_machine_service() -> MachineResolution:
             source=DISCOVERY_SOURCE_MACHINE_POINTER,
             holder_pid=holder,
             reason=DISCOVERY_REASON_POINTER_MISSING,
+        )
+
+    # Checked before any field is read. A pointer whose declared shape is
+    # foreign resolves degraded rather than absent - a live holder owns the
+    # singleton either way - but none of its fields are carried forward, since
+    # this build cannot say what they mean.
+    if not discovery_payload_supported(payload):
+        return MachineResolution(
+            state=DISCOVERY_STATE_DEGRADED,
+            source=DISCOVERY_SOURCE_MACHINE_POINTER,
+            holder_pid=holder,
+            reason=DISCOVERY_REASON_POINTER_INCOMPATIBLE,
+            payload=payload,
         )
 
     port = _coerce_port(payload.get("port"))
