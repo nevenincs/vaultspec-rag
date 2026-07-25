@@ -955,3 +955,48 @@ class TestGeometryScope:
 
         assert selected == []
         assert remaining == 0
+
+
+class TestKindPointsCountGenerations:
+    """A kind's points must include the generation currently serving it.
+
+    A rebuild publishes into ``<declared>_g<token>`` and moves a pointer, so a
+    healthy root is routinely served by a collection whose name does not end
+    with the declared suffix. Counting on the suffix alone reported zero code
+    points for exactly those roots - a complete index reading as empty on the
+    surface an operator checks first.
+    """
+
+    def test_a_generation_counts_toward_its_kind(self) -> None:
+        """Proven able to fail: restoring the bare ``endswith`` match returns 0."""
+        from .. import store_schema
+        from ..storage_survey import _kind_points
+
+        suffix = store_schema.CODE_COLLECTION
+        generation = f"r0123456789ab_{suffix}_gaaaaaaaaaaaaaaaa"
+
+        assert _kind_points([generation], {generation: 24}, suffix) == 24
+
+    def test_the_declared_collection_still_counts(self) -> None:
+        from .. import store_schema
+        from ..storage_survey import _kind_points
+
+        suffix = store_schema.CODE_COLLECTION
+        declared = f"r0123456789ab_{suffix}"
+
+        assert _kind_points([declared], {declared: 12}, suffix) == 12
+
+    def test_another_kind_never_counts(self) -> None:
+        """The widened match must not start absorbing other kinds.
+
+        Proven able to fail: matching on the ``_g`` split alone, without
+        requiring the base to end with the kind suffix, counts a vault
+        generation toward the code total and fails this.
+        """
+        from .. import store_schema
+        from ..storage_survey import _kind_points
+
+        code = store_schema.CODE_COLLECTION
+        vault_generation = f"r0123456789ab_{store_schema.VAULT_COLLECTION}_gbbbb"
+
+        assert _kind_points([vault_generation], {vault_generation: 9}, code) == 0
