@@ -38,12 +38,12 @@ Creates the per-collection identity the rest of the plan compares against, and s
 
 Adds the three-verdict conformance check where every read and write already passes, refusing on geometry and degrading on model identity.
 
-- [ ] `P02.S06` - Read live collection geometry back from the backend behind the existing per-collection ensure cache so it never reaches the query path; `src/vaultspec_rag/store.py`.
-- [ ] `P02.S07` - Add the three-verdict conformance evaluator over stamped identity and live geometry, feeding the existing compatibility comparator; `src/vaultspec_rag/store_schema.py`.
-- [ ] `P02.S08` - Refuse a dense width, distance, or vector-name disagreement at the ensure step with a message naming expected and actual; `src/vaultspec_rag/store.py`.
-- [ ] `P02.S09` - Report a model-identity disagreement at equal width as nonconforming without raising, leaving the collection readable; `src/vaultspec_rag/store.py`.
-- [ ] `P02.S10` - Report a namespace carrying no stamped identity as unverifiable, never as a failure; `src/vaultspec_rag/store.py`.
-- [ ] `P02.S11` - Cover the three verdicts with guard tests, and prove each fails against a deliberately conforming fixture; `src/vaultspec_rag/tests/test_store_conformance.py`.
+- [x] `P02.S06` - Read live collection geometry back from the backend behind the existing per-collection ensure cache so it never reaches the query path; `src/vaultspec_rag/store.py`.
+- [x] `P02.S07` - Add the three-verdict conformance evaluator over stamped identity and live geometry, feeding the existing compatibility comparator; `src/vaultspec_rag/store_schema.py`.
+- [x] `P02.S08` - Refuse a dense width, distance, or vector-name disagreement at the ensure step with a message naming expected and actual; `src/vaultspec_rag/store.py`.
+- [x] `P02.S09` - Report a model-identity disagreement at equal width as nonconforming without raising, leaving the collection readable; `src/vaultspec_rag/store.py`.
+- [x] `P02.S10` - Report a namespace carrying no stamped identity as unverifiable, never as a failure; `src/vaultspec_rag/store.py`.
+- [x] `P02.S11` - Cover the three verdicts with guard tests, and prove each fails against a deliberately conforming fixture; `src/vaultspec_rag/tests/test_store_conformance.py`.
 
 ### Phase `P03` - surface the verdict to an operator
 
