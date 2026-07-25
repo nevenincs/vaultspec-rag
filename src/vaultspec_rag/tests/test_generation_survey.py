@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from ..storage_survey import NamespaceSurvey
 
 pytestmark = [pytest.mark.unit]
 
@@ -101,3 +103,96 @@ class TestGenerationSurvey:
         )
 
         assert reports == ()
+
+
+def _namespace_of(payload: dict[str, object], root: str | None) -> dict[str, object]:
+    """Return the one namespace entry the shaped payload holds for *root*."""
+    namespaces = cast("list[dict[str, object]]", payload["namespaces"])
+    return next(item for item in namespaces if item["root"] == root)
+
+
+def _shape(surveys: list[NamespaceSurvey]) -> dict[str, object]:
+    """Shape *surveys* through the real route shaper, unfiltered."""
+    from ..server._routes_storage import _shape_survey_payload
+
+    return _shape_survey_payload(
+        surveys,
+        None,
+        10,
+        None,
+        computed_at="2026-07-25T00:00:00+00:00",
+        source="fresh",
+    )
+
+
+class TestGenerationDebtInTheSurveyPayload:
+    """The route reports generation debt per namespace, and withholds guesses."""
+
+    def test_a_superseded_generation_is_named_in_the_payload(
+        self, tmp_path: Path
+    ) -> None:
+        """An operator reading the survey can see what the rebuild left behind."""
+        from .._store_models import publish_served_code_collection
+        from ..storage_survey import NamespaceSurvey
+
+        root = str(tmp_path)
+        publish_served_code_collection(tmp_path, f"{_DERIVED}_gnew")
+        survey = NamespaceSurvey(
+            prefix="r0123456789ab_",
+            root=root,
+            status="live",
+            collections=[f"{_DERIVED}_gold", f"{_DERIVED}_gnew"],
+        )
+
+        namespace = _namespace_of(_shape([survey]), root)
+
+        assert namespace["served_code_collection"] == f"{_DERIVED}_gnew"
+        assert namespace["unreferenced_generations"] == [f"{_DERIVED}_gold"]
+
+    def test_an_unreadable_pointer_reports_null_not_an_empty_debt_list(
+        self, tmp_path: Path
+    ) -> None:
+        """An illegible pointer must not read as a clean bill of health.
+
+        ``None`` says nothing is known about this root; ``[]`` would say the
+        root is carrying nothing, which is the claim that invites a later
+        reclamation pass to drop a live served collection.
+
+        Proven able to fail: returning ``{"unreferenced_generations": []}``
+        from the ``report is None`` branch of ``_generation_fields`` passes an
+        ``== []`` assertion and fails the ``is None`` assertion below.
+        """
+        from .._store_models import served_code_pointer_path
+        from ..storage_survey import NamespaceSurvey
+
+        root = str(tmp_path)
+        path = served_code_pointer_path(tmp_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{ not json", encoding="utf-8")
+        survey = NamespaceSurvey(
+            prefix="r0123456789ab_",
+            root=root,
+            status="live",
+            collections=[f"{_DERIVED}_gold"],
+        )
+
+        namespace = _namespace_of(_shape([survey]), root)
+
+        assert namespace["served_code_collection"] is None
+        assert namespace["unreferenced_generations"] is None
+
+    def test_an_unattributable_namespace_claims_no_generations(self) -> None:
+        """A namespace with no root has no pointer to resolve, so it reports none."""
+        from ..storage_survey import NamespaceSurvey
+
+        survey = NamespaceSurvey(
+            prefix="r0123456789ab_",
+            root=None,
+            status="unknown",
+            collections=[f"{_DERIVED}_gold"],
+        )
+
+        namespace = _namespace_of(_shape([survey]), None)
+
+        assert namespace["served_code_collection"] is None
+        assert namespace["unreferenced_generations"] is None
