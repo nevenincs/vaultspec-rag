@@ -15,7 +15,7 @@ import logging
 import os
 import pathlib
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal, NamedTuple, cast
 
 from ._domain import classify_domain
 
@@ -411,25 +411,57 @@ def served_code_pointer_path(root_dir: pathlib.Path | str) -> pathlib.Path:
     return pathlib.Path(root_dir) / cfg.data_dir / SERVED_CODE_POINTER_FILE
 
 
-def read_served_code_collection(root_dir: pathlib.Path | str) -> str | None:
-    """Return the collection *root_dir* publishes code reads against.
+class ServedPointer(NamedTuple):
+    """What a root's served-collection pointer says, and whether it was legible.
 
-    ``None`` means no replacement has been published and the derived name is
-    authoritative. An unreadable, malformed, or empty pointer is also ``None``:
-    a root whose pointer cannot be trusted must fall back to the name it would
-    have used anyway rather than resolve to nothing and read an absent
-    collection.
+    The two ``None`` cases are not the same fact and must never be collapsed.
+    ``collection is None`` with ``verifiable`` true means no replacement was
+    ever published, so the derived name is authoritative. ``verifiable`` false
+    means the pointer could not be read at all - an offline share, a
+    permissions blip, a half-written file - and absence is simply not proven.
+
+    Reading matters little: both fall back to the derived name, which is the
+    safe direction. Deletion matters entirely. A consumer that treats an
+    unreadable pointer as "nothing points here" would take a live served
+    collection for an unreferenced one, which is the reason the storage rules
+    require the grace clock to reset on any unverifiable observation rather
+    than treat it as evidence.
     """
+
+    collection: str | None
+    verifiable: bool
+
+
+def read_served_pointer(root_dir: pathlib.Path | str) -> ServedPointer:
+    """Return *root_dir*'s served-collection pointer and whether it was legible."""
     path = served_code_pointer_path(root_dir)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return ServedPointer(collection=None, verifiable=True)
     except (OSError, ValueError) as exc:
         logger.debug("served-collection pointer %s unreadable: %s", path, exc)
-        return None
+        return ServedPointer(collection=None, verifiable=False)
     if not isinstance(raw, dict):
-        return None
+        # Present and parseable but not the shape this writes: the file exists
+        # and was read, so absence of a usable name is an observed fact.
+        return ServedPointer(collection=None, verifiable=True)
     name = cast("dict[str, object]", raw).get("collection")
-    return name if isinstance(name, str) and name else None
+    if isinstance(name, str) and name:
+        return ServedPointer(collection=name, verifiable=True)
+    return ServedPointer(collection=None, verifiable=True)
+
+
+def read_served_code_collection(root_dir: pathlib.Path | str) -> str | None:
+    """Return the collection *root_dir* publishes code reads against.
+
+    ``None`` covers both "never published" and "could not be read", because a
+    reader treats them identically: fall back to the derived name rather than
+    resolve to nothing and read an absent collection. A caller deciding
+    anything destructive must use :func:`read_served_pointer` instead, which
+    keeps the two apart.
+    """
+    return read_served_pointer(root_dir).collection
 
 
 def resolve_served_code_collection(

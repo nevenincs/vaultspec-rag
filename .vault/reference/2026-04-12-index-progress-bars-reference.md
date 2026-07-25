@@ -5,7 +5,7 @@ tags:
   - '#reference'
   - '#index-progress-bars'
 date: '2026-04-12'
-modified: '2026-06-30'
+modified: '2026-07-25'
 related:
   - '[[2026-04-12-index-progress-bars-adr]]'
 ---

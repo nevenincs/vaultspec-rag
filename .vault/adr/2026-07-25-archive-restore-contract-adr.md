@@ -11,6 +11,7 @@ related:
   - '[[2026-07-14-storage-namespace-hygiene-adr]]'
   - '[[2026-07-21-storage-prealloc-reclaim-adr]]'
 ---
+
 # `archive-restore-contract` adr: `what a snapshot archive promises and who may read it back` | (**status:** `accepted`)
 
 ## Problem Statement
@@ -173,8 +174,7 @@ a corrupted snapshot body must make the restore fail rather than pass quietly -
 and both directions are recorded. This is the only place the readability claim
 is ever established.
 
-**D4 - Restore is an operator verb and never automatic.** `server storage
-restore` takes an archive directory and a destination root, derives the
+**D4 - Restore is an operator verb and never automatic.** `server storage restore` takes an archive directory and a destination root, derives the
 destination prefix from that root through the existing hash, and recovers each
 collection the manifest names into the destination namespace. It reports through
 the same sync vocabulary as the other storage verbs, offers the same dry-run

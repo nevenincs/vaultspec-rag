@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#cicl'
 date: '2026-04-01'
-modified: '2026-06-30'
+modified: '2026-07-25'
 related:
   - '[[2026-04-01-cicl-pipeline-research]]'
 ---

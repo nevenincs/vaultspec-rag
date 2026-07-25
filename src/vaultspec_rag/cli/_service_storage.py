@@ -740,15 +740,35 @@ def _local_store_path(root: str) -> Path:
 
 
 def _migrate_name_map(root: str, *, to_server: bool) -> dict[str, str]:
-    """Map source collection names to target names for the given direction."""
+    """Map source collection names to target names for the given direction.
+
+    The code entry resolves its SOURCE name through the root's served pointer
+    rather than deriving it. A root that has published a rebuild serves
+    ``<derived>_g<generation>``, so keying on the derived name alone copies
+    either a superseded generation or nothing at all - migrating stale code
+    data, or silently migrating none of it.
+
+    The TARGET stays the derived base name in both directions. The target
+    store has no pointer of its own, so it resolves to the derived name, and
+    landing there means the migrated index is served immediately without
+    carrying the source's generation history across.
+    """
     from .. import store_schema
+    from .._store_models import resolve_served_code_collection
     from ..store import root_collection_prefix
 
     prefix = root_collection_prefix(root)
     bases = store_schema.collection_names()
+
+    def _source(base: str) -> str:
+        derived = base if to_server else f"{prefix}{base}"
+        if base != store_schema.CODE_COLLECTION:
+            return derived
+        return resolve_served_code_collection(root, derived)
+
     if to_server:
-        return {base: f"{prefix}{base}" for base in bases}
-    return {f"{prefix}{base}": base for base in bases}
+        return {_source(base): f"{prefix}{base}" for base in bases}
+    return {_source(base): base for base in bases}
 
 
 def _render_migrate(results: list[MigrateResult], json_mode: bool) -> None:

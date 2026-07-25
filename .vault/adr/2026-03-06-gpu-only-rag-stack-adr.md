@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-07-23'
+modified: '2026-07-25'
 related:
   - '[[2026-03-06-gpu-rag-architecture-research]]'
   - '[[2026-03-06-gpu-vector-search-deep-dive-research]]'
