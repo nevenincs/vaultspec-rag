@@ -44,13 +44,15 @@ every extraction lowers the next rung.
 A single passing number would hide how far there is to go, so the census is
 recorded rather than implied. Over 434 modules:
 
-    over 3400:    0   the enforced ceiling
-    over 3000:    1
-    over 2000:    9
-    over 1200:   34
-    over 1000:   49
-    over  800:   63
-    over  500:  113   the ratchet target
+```
+over 3400:    0   the enforced ceiling
+over 3000:    1
+over 2000:    9
+over 1200:   34
+over 1000:   49
+over  800:   63
+over  500:  113   the ratchet target
+```
 
 The two extractions this Phase depends on are what made the step orderable at
 all: the indexer was the fifth-longest module in the tree before them.
