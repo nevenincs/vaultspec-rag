@@ -1637,6 +1637,89 @@ class MaintenanceResult:
     reconcile: ReconcileBatch | None = None
 
 
+def _apply_reclaim(
+    client: QdrantClient,
+    decision: ReclaimDecision,
+    *,
+    snapshots_dir: Path,
+    archive_dir: Path,
+    active_prefixes: Callable[[], frozenset[str]],
+) -> tuple[ReclaimDecision, list[Path]]:
+    """Destroy one eligible namespace, or defer it, under the pre-drop gates.
+
+    Separated from the cycle so the gates read as one ordered sequence rather
+    than as branches interleaved with the cycle's bookkeeping. Every exit is a
+    decision plus whatever archive artifacts were written, including on a
+    deferral after a torn snapshot: those files exist, the retention sweep
+    bounds them, and reporting them is how an operator learns the archive
+    happened.
+
+    Args:
+        client: Qdrant client for the managed server.
+        decision: An eligible ``reclaim_empty`` / ``reclaim_data`` decision.
+        snapshots_dir: The server's snapshots tree.
+        archive_dir: The bounded archive destination.
+        active_prefixes: Liveness probe, called here rather than once per
+            cycle so a run that started during an earlier namespace's archive
+            is still seen.
+
+    Returns:
+        The outcome decision and the archive paths written.
+    """
+    # Liveness first. An archive taken across a live writer is torn, so this
+    # gate has to precede the archive, not just the drop.
+    if decision.prefix in active_prefixes():
+        return _redecide(decision, "deferred", "active_index_job"), []
+    # Re-count immediately before acting, in BOTH tiers. The survey reading
+    # can be many minutes stale by the time this prefix's turn arrives, and
+    # any movement since means a writer this cycle cannot see. An archive
+    # makes loss recoverable, never prevented, so the data tier needs this
+    # check at least as much as the empty tier.
+    observed = _prefix_points(client, decision.prefix)
+    if observed is None:
+        return _redecide(decision, "deferred", "points_unverifiable"), []
+    if observed != decision.points:
+        moved = (
+            "points_appeared_since_survey"
+            if decision.tier == "empty"
+            else "points_changed_since_survey"
+        )
+        return _redecide(decision, "deferred", moved), []
+    archived: list[Path] = []
+    if decision.action == "reclaim_data":
+        try:
+            archived = archive_prefix(
+                client,
+                decision.prefix,
+                snapshots_dir=snapshots_dir,
+                archive_dir=archive_dir,
+            )
+        except (OSError, RuntimeError) as exc:
+            return _redecide(decision, "failed", f"archive_failed: {exc}"), []
+        # The snapshot is a point-in-time copy. A write landing during it
+        # tears the copy, and the delete below would then destroy the delta
+        # the copy missed - the one loss an archive cannot undo.
+        settled = _prefix_points(client, decision.prefix)
+        if settled != observed:
+            return (
+                _redecide(decision, "deferred", "points_changed_during_archive"),
+                archived,
+            )
+    result = delete_prefix(client, decision.prefix, dry_run=False)
+    if result.status != "removed":
+        return _redecide(decision, "failed", result.reason or result.status), archived
+    return (
+        ReclaimDecision(
+            decision.prefix,
+            "removed" if decision.tier == "empty" else "archived_removed",
+            decision.tier,
+            points=decision.points,
+            footprint_bytes=decision.footprint_bytes,
+        ),
+        archived,
+    )
+
+
 def run_maintenance_cycle(
     client: QdrantClient,
     *,
@@ -1715,72 +1798,17 @@ def run_maintenance_cycle(
         if decision.action not in ("reclaim_empty", "reclaim_data") or dry_run:
             applied.append(decision)
             continue
-        # Liveness first, and probed per namespace rather than once per cycle:
-        # a run that started while an earlier prefix was being archived is
-        # exactly the one a cycle-scoped snapshot would miss. An archive taken
-        # across a live writer is torn, so this gate has to precede the
-        # archive, not just the drop.
-        if decision.prefix in active_prefixes():
-            applied.append(_redecide(decision, "deferred", "active_index_job"))
-            continue
-        # Re-count immediately before acting, in BOTH tiers. The survey
-        # reading can be many minutes stale by the time this prefix's turn
-        # arrives, and any movement since means a writer this cycle cannot
-        # see. An archive makes loss recoverable, never prevented, so the
-        # data tier needs this check at least as much as the empty tier.
-        observed = _prefix_points(client, decision.prefix)
-        if observed is None:
-            applied.append(_redecide(decision, "deferred", "points_unverifiable"))
-            continue
-        if observed != decision.points:
-            applied.append(
-                _redecide(
-                    decision,
-                    "deferred",
-                    "points_appeared_since_survey"
-                    if decision.tier == "empty"
-                    else "points_changed_since_survey",
-                )
-            )
-            continue
-        if decision.action == "reclaim_data":
-            try:
-                archived.extend(
-                    archive_prefix(
-                        client,
-                        decision.prefix,
-                        snapshots_dir=snapshots_dir,
-                        archive_dir=archive_dir,
-                    )
-                )
-            except (OSError, RuntimeError) as exc:
-                applied.append(_redecide(decision, "failed", f"archive_failed: {exc}"))
-                continue
-            # The snapshot is a point-in-time copy. A write landing during it
-            # tears the copy, and the delete below would then destroy the
-            # delta the copy missed - the one loss an archive cannot undo.
-            settled = _prefix_points(client, decision.prefix)
-            if settled != observed:
-                applied.append(
-                    _redecide(decision, "deferred", "points_changed_during_archive")
-                )
-                continue
-        result = delete_prefix(client, decision.prefix, dry_run=False)
-        if result.status == "removed":
-            reclaimed += decision.footprint_bytes
-            applied.append(
-                ReclaimDecision(
-                    decision.prefix,
-                    "removed" if decision.tier == "empty" else "archived_removed",
-                    decision.tier,
-                    points=decision.points,
-                    footprint_bytes=decision.footprint_bytes,
-                )
-            )
-        else:
-            applied.append(
-                _redecide(decision, "failed", result.reason or result.status)
-            )
+        outcome, artifacts = _apply_reclaim(
+            client,
+            decision,
+            snapshots_dir=snapshots_dir,
+            archive_dir=archive_dir,
+            active_prefixes=active_prefixes,
+        )
+        archived.extend(artifacts)
+        applied.append(outcome)
+        if outcome.action in ("removed", "archived_removed"):
+            reclaimed += outcome.footprint_bytes
     swept = (
         []
         if dry_run
