@@ -72,8 +72,8 @@ Bound the peak-storage cost the swap introduces. A root that cannot afford the d
 
 Remove the degraded-regime mitigation from Phase P01 once generation-scoped publication serves its purpose, and prove by test that an unattended gate now reaches the non-destructive publication path rather than either the old destructive rebuild or the interim compromise.
 
-- [ ] `P05.S16` - Remove the interim superseded-regime mitigation and its reporting now that an unattended gate publishes non-destructively; `src/vaultspec_rag/indexer/_codebase_indexer.py, src/vaultspec_rag/cli/_search.py`.
-- [ ] `P05.S17` - Prove by real-storage test that an unattended gate now reaches generation-scoped publication, reaching neither the destructive rebuild nor the interim compromise; `src/vaultspec_rag/tests/integration/test_index_job_control.py`.
+- [x] `P05.S16` - Remove the interim superseded-regime mitigation and its reporting now that an unattended gate publishes non-destructively; `src/vaultspec_rag/indexer/_codebase_indexer.py, src/vaultspec_rag/cli/_search.py`.
+- [x] `P05.S17` - Prove by real-storage test that an unattended gate now reaches generation-scoped publication, reaching neither the destructive rebuild nor the interim compromise; `src/vaultspec_rag/tests/integration/test_index_job_control.py`.
 
 ## Parallelization
 
