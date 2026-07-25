@@ -25,13 +25,15 @@ threshold. A closeout that names its gates individually will keep missing
 whichever one it does not name.
 
 The fix for it is not this branch's. An extraction was written here and then
-found to duplicate one that had already landed on the trunk - same diagnosis
-down to the figure, same helper name, better factored, written concurrently by a
-worker who could not have been found by searching because the work was still
-uncommitted. The duplicate was collapsed onto the trunk's version, so this
-branch now carries none of it and the manifest loader here is byte-identical to
-the trunk's apart from this feature's own archive-identity field. The finding
-stands; the credit does not.
+found to duplicate one already on the trunk - same diagnosis down to the figure,
+same helper name, better factored. The timestamps are unflattering and are
+recorded rather than softened: the trunk's version landed twenty-five minutes
+before the duplicate was committed here, so it was public and findable, and the
+failure was reading the trunk once at session start and never again before adding
+code to it. The duplicate was collapsed onto the trunk's version, so this branch
+carries none of it and the manifest loader here is byte-identical to the trunk's
+apart from this feature's own archive-identity field. The finding stands; the
+credit does not.
 
 The review found seven of the decision's eight implementation clauses
 implemented where it put them, and one delivered short: the storage survey
