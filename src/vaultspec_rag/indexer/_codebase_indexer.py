@@ -841,44 +841,6 @@ class CodebaseIndexer:
         """
         return self._discovery.scan_files()
 
-    def _chunk_file(self, path: pathlib.Path) -> list[CodeChunk]:
-        """Read a file and split it into AST-aware ``CodeChunk``s.
-
-        Delegates to the module-level worker (`_chunk_worker.chunk_file`) so the
-        serial in-process path and the process-pool path share a single code
-        path and produce byte-identical chunk ids.
-
-        Args:
-            path: Absolute path to the source file.
-
-        Returns:
-            List of ``CodeChunk`` instances with empty vectors.
-        """
-        return _chunk_worker.chunk_file(
-            path,
-            self.root_dir,
-            execution_policy=self._chunk_execution_policy,
-        )
-
-    def _chunk_with_ast(
-        self,
-        content: str,
-        rel_path: str,
-        language: str,
-        grammar: str,
-    ) -> list[CodeChunk]:
-        """Chunk source code using tree-sitter AST (delegates to the worker)."""
-        return _chunk_worker.chunk_with_ast(content, rel_path, language, grammar)
-
-    def _chunk_with_splitter(
-        self,
-        content: str,
-        rel_path: str,
-        language: str,
-    ) -> list[CodeChunk]:
-        """Chunk content using TextSplitter (delegates to the worker)."""
-        return _chunk_worker.chunk_with_splitter(content, rel_path, language)
-
     def _resolve_chunk_workers(self, n_paths: int) -> int:
         """Resolve the number of chunk worker processes to use.
 
@@ -987,61 +949,6 @@ class CodebaseIndexer:
                 batch_groups.append((rule, group[start : start + BATCH_SIZE]))
             run_control.checkpoint()
         return batch_groups, singles
-
-    def _submit_batch_futures(
-        self,
-        pool: ProcessPoolExecutor,
-        batch_groups: list[tuple[PreprocessRule, list[pathlib.Path]]],
-        prep: PreprocessContext,
-        run_control: RunControl,
-    ) -> dict[Future[list[FileChunkResult]], int]:
-        """Submit batch worker tasks while retaining cooperative ownership."""
-        futures: dict[Future[list[FileChunkResult]], int] = {}
-        try:
-            for rule, group in batch_groups:
-                run_control.checkpoint()
-                future = pool.submit(
-                    _chunk_worker.chunk_batch_files,
-                    group,
-                    self.root_dir,
-                    rule,
-                    prep,
-                    self._chunk_execution_policy,
-                )
-                futures[future] = len(group)
-                run_control.checkpoint()
-        except BaseException:
-            for future in futures:
-                future.cancel()
-            raise
-        return futures
-
-    def _submit_single_futures(
-        self,
-        pool: ProcessPoolExecutor,
-        paths: list[pathlib.Path],
-        prep: PreprocessContext | None,
-        run_control: RunControl,
-    ) -> dict[Future[_chunk_worker.ScopedChunkResult], pathlib.Path]:
-        """Submit single-file worker tasks with cooperative cancellation."""
-        futures: dict[Future[_chunk_worker.ScopedChunkResult], pathlib.Path] = {}
-        try:
-            for path in paths:
-                run_control.checkpoint()
-                future = pool.submit(
-                    _chunk_worker.chunk_file_with_status,
-                    path,
-                    self.root_dir,
-                    prep,
-                    self._chunk_execution_policy,
-                )
-                futures[future] = path
-                run_control.checkpoint()
-        except BaseException:
-            for future in futures:
-                future.cancel()
-            raise
-        return futures
 
     def _run_batch_groups(
         self,
@@ -1176,139 +1083,6 @@ class CodebaseIndexer:
                 reporter.advance()
             run_control.checkpoint()
 
-    def _chunk_paths(
-        self,
-        paths: list[pathlib.Path],
-        *,
-        reporter: ProgressReporter,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> list[CodeChunk]:
-        """Chunk files, batching batch-rule matches and pooling the rest.
-
-        Files matched by a ``batch = true`` rule are grouped and run through the
-        batch path (one spawn per group); every other file keeps the per-file
-        process-pool flow. Returns all chunks across both, recording each file's
-        preprocess disposition.
-
-        Args:
-            paths: Absolute file paths to chunk.
-            reporter: Progress reporter, advanced once per file.
-
-        Returns:
-            All ``CodeChunk``s across every file, with empty vectors.
-        """
-        all_chunks: list[CodeChunk] = []
-        if not paths:
-            return all_chunks
-
-        batch_groups, singles = self._partition_batch_work(
-            paths,
-            run_control=run_control,
-        )
-
-        def _collect(results: list[FileChunkResult]) -> None:
-            for res in results:
-                self._record_preprocess_result(res)
-                all_chunks.extend(res.chunks)
-
-        self._run_batch_groups(
-            batch_groups,
-            reporter,
-            _collect,
-            run_control=run_control,
-        )
-        if singles:
-            all_chunks.extend(
-                self._chunk_singles(
-                    singles,
-                    reporter,
-                    run_control=run_control,
-                )
-            )
-        return all_chunks
-
-    def _chunk_singles(
-        self,
-        paths: list[pathlib.Path],
-        reporter: ProgressReporter,
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> list[CodeChunk]:
-        """Chunk singles with a bounded spawned-worker submit window."""
-        all_chunks: list[CodeChunk] = []
-        if not paths:
-            return all_chunks
-        workers = self._plan_chunk_workers(paths)
-        if workers <= 1:
-            return self._chunk_singles_serial(paths, reporter, run_control=run_control)
-
-        completed = 0
-        ctx = multiprocessing.get_context("spawn")
-        prep = getattr(self, "_prep_ctx", None)
-        try:
-            with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
-                paths_iter = iter(paths)
-                window = min(len(paths), _CHUNK_FUTURE_WINDOW_PER_WORKER * workers)
-                futures: dict[
-                    Future[_chunk_worker.ScopedChunkResult], pathlib.Path
-                ] = {}
-                try:
-                    for path in itertools.islice(paths_iter, window):
-                        run_control.checkpoint()
-                        futures[
-                            pool.submit(
-                                _chunk_worker.chunk_file_with_status,
-                                path,
-                                self.root_dir,
-                                prep,
-                                self._chunk_execution_policy,
-                            )
-                        ] = path
-                        run_control.checkpoint()
-                    while futures:
-                        run_control.checkpoint()
-                        done, _pending = wait(
-                            set(futures),
-                            timeout=_CONTROL_POLL_SECONDS,
-                            return_when=FIRST_COMPLETED,
-                        )
-                        run_control.checkpoint()
-                        while done:
-                            future = done.pop()
-                            path = futures.pop(future)
-                            self._process_single_future(
-                                future, path, all_chunks, reporter
-                            )
-                            completed += 1
-                            run_control.checkpoint()
-                            next_path = next(paths_iter, None)
-                            if next_path is not None:
-                                futures[
-                                    pool.submit(
-                                        _chunk_worker.chunk_file_with_status,
-                                        next_path,
-                                        self.root_dir,
-                                        prep,
-                                        self._chunk_execution_policy,
-                                    )
-                                ] = next_path
-                                run_control.checkpoint()
-                except BaseException:
-                    for future in futures:
-                        future.cancel()
-                    raise
-        except BrokenProcessPool:
-            if completed:
-                logger.error(
-                    "Chunk process pool broke after %d/%d files; aborting",
-                    completed,
-                    len(paths),
-                )
-                raise
-            logger.warning("Chunk process pool could not start; chunking serially")
-            return self._chunk_singles_serial(paths, reporter, run_control=run_control)
-        return all_chunks
-
     def _process_single_future(
         self,
         future: Future[_chunk_worker.ScopedChunkResult],
@@ -1331,83 +1105,6 @@ class CodebaseIndexer:
             all_chunks.extend(result.chunks)
         finally:
             reporter.advance()
-
-    def _chunk_paths_serial(
-        self,
-        paths: list[pathlib.Path],
-        reporter: ProgressReporter,
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> list[CodeChunk]:
-        """Chunk files serially in-process (single-worker / fallback path).
-
-        Batch-rule matches are batched serially (one spawn per group); every
-        other file is chunked one at a time. Returns all chunks across both.
-
-        Args:
-            paths: Absolute file paths to chunk.
-            reporter: Progress reporter, advanced once per file.
-
-        Returns:
-            All ``CodeChunk``s across every file, with empty vectors.
-        """
-        all_chunks: list[CodeChunk] = []
-        batch_groups, singles = self._partition_batch_work(
-            paths,
-            run_control=run_control,
-        )
-
-        def _collect(results: list[FileChunkResult]) -> None:
-            for res in results:
-                self._record_preprocess_result(res)
-                all_chunks.extend(res.chunks)
-
-        self._run_batch_groups_serial(
-            batch_groups,
-            reporter,
-            _collect,
-            run_control=run_control,
-        )
-        all_chunks.extend(
-            self._chunk_singles_serial(
-                singles,
-                reporter,
-                run_control=run_control,
-            )
-        )
-        return all_chunks
-
-    def _chunk_singles_serial(
-        self,
-        paths: list[pathlib.Path],
-        reporter: ProgressReporter,
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> list[CodeChunk]:
-        """Chunk single files serially in-process."""
-        all_chunks: list[CodeChunk] = []
-        prep = getattr(self, "_prep_ctx", None)
-        for path in paths:
-            run_control.checkpoint()
-            try:
-                result = _chunk_worker.chunk_file_with_status(
-                    path,
-                    self.root_dir,
-                    prep,
-                    self._chunk_execution_policy,
-                )
-            except PreprocessAbortError:
-                raise
-            except Exception:
-                logger.warning("Failed to chunk %s", path, exc_info=True)
-                raise
-            else:
-                self._record_scoped_preprocess(path, result)
-                all_chunks.extend(result.chunks)
-            finally:
-                reporter.advance()
-            run_control.checkpoint()
-        return all_chunks
 
     def _run_serial_chunk_producer(
         self,
@@ -2685,29 +2382,12 @@ class CodebaseIndexer:
                 run_control.checkpoint()
         finally:
             reporter.phase_end()
-        run_control.checkpoint()
 
-        reporter.phase_start("hash files", len(current_files))
-        current_hashes: dict[str, str] = {}
-        try:
-            for rel, path in current_files.items():
-                run_control.checkpoint()
-                try:
-                    with open(path, "rb") as stream:
-                        current_hashes[rel] = hashlib.file_digest(
-                            stream,
-                            "blake2b",
-                        ).hexdigest()
-                except OSError:
-                    logger.warning("Cannot hash file, skipping: %s", rel)
-                reporter.advance()
-                run_control.checkpoint()
-        finally:
-            reporter.phase_end()
-        run_control.checkpoint()
-
-        for rel in set(current_files) - set(current_hashes):
-            del current_files[rel]
+        current_hashes = self._hash_changed_paths(
+            current_files,
+            reporter,
+            run_control=run_control,
+        )
         return current_files, current_hashes
 
     def _reconcile_full_stale_ids(
@@ -3370,6 +3050,11 @@ class CodebaseIndexer:
         *,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> dict[str, str]:
+        """Hash a path mapping, pruning entries that cannot be read.
+
+        ``to_hash`` is pruned in place so it stays keyed exactly like the
+        returned digests; callers index one by the other.
+        """
         run_control.checkpoint()
         reporter.phase_start("hash files", len(to_hash))
         changed_hashes: dict[str, str] = {}
@@ -3389,6 +3074,8 @@ class CodebaseIndexer:
         finally:
             reporter.phase_end()
         run_control.checkpoint()
+        for rel in set(to_hash) - set(changed_hashes):
+            del to_hash[rel]
         return changed_hashes
 
     def _scoped_incremental_locked(
@@ -3414,8 +3101,6 @@ class CodebaseIndexer:
         changed_hashes = self._hash_changed_paths(
             to_hash, reporter, run_control=run_control
         )
-        for rel in set(to_hash) - set(changed_hashes):
-            to_hash.pop(rel, None)
         new_files = {rel for rel in changed_hashes if rel not in previous_metadata}
         modified_files = {
             rel

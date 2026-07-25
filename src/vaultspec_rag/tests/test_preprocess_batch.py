@@ -45,6 +45,7 @@ from ..indexer._preprocess_runner import (
 )
 from ..progress import NullProgressReporter
 from ..store import CodeChunk
+from ._chunk_production import produce_chunks
 
 pytestmark = [pytest.mark.unit]
 
@@ -591,7 +592,7 @@ def _batch_indexer(root: Path, ctx: PreprocessContext) -> CodebaseIndexer:
     return indexer
 
 
-def test_chunk_paths_batches_matches_and_chunks_rest(
+def test_production_path_batches_matches_and_chunks_rest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv(EnvVar.INDEX_CHUNK_WORKERS.value, "1")
@@ -603,7 +604,7 @@ def test_chunk_paths_batches_matches_and_chunks_rest(
     py.write_text("def foo():\n    return 1\n", encoding="utf-8")
 
     indexer = _batch_indexer(tmp_path, ctx)
-    chunks = indexer._chunk_paths([*bins, py], reporter=NullProgressReporter())
+    chunks = produce_chunks(indexer, [*bins, py])
 
     # One spawn handled all three batch files; the .py file chunked normally.
     assert _spawn_count(log) == 1
@@ -630,7 +631,7 @@ def _counting_rule(command: str, pattern: str) -> PreprocessRule:
     )
 
 
-def test_chunk_paths_multi_worker_pool_over_batch_groups(
+def test_production_path_multi_worker_pool_over_batch_groups(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Two batch rules give two groups; forcing two workers routes them through
@@ -659,7 +660,7 @@ def test_chunk_paths_multi_worker_pool_over_batch_groups(
         p.write_bytes(p.name.encode())
 
     indexer = _batch_indexer(tmp_path, ctx)
-    chunks = indexer._chunk_paths([*a_files, *b_files], reporter=NullProgressReporter())
+    chunks = produce_chunks(indexer, [*a_files, *b_files])
 
     # Two groups -> two batch spawns through the pool; every file produced a
     # preprocessed chunk.
@@ -672,7 +673,7 @@ def test_chunk_paths_multi_worker_pool_over_batch_groups(
     # with no further spawn, even without the hook script present.
     (tmp_path / "counting.py").unlink()
     indexer2 = _batch_indexer(tmp_path, ctx)
-    again = indexer2._chunk_paths([*a_files, *b_files], reporter=NullProgressReporter())
+    again = produce_chunks(indexer2, [*a_files, *b_files])
     assert _spawn_count(log) == 2
     assert len([c for c in again if c.preprocessor_id == "counting"]) == 6
 
@@ -709,7 +710,7 @@ def test_indexer_pool_propagates_batch_on_error_fail(tmp_path: Path) -> None:
 
     indexer = _batch_indexer(tmp_path, ctx)
     with pytest.raises(PreprocessAbortError):
-        indexer._chunk_paths(files, reporter=NullProgressReporter())
+        produce_chunks(indexer, files)
 
 
 def test_batch_pool_retains_only_one_worker_window(tmp_path: Path) -> None:

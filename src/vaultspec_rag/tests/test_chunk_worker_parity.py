@@ -41,7 +41,8 @@ from ..indexer._preprocess_config import (
 )
 from ..indexer._preprocess_runner import PreprocessAbortError
 from ..indexer._run_ledger import CommitUnit, CommitUnitKind
-from ..progress import NullProgressReporter, RichProgressReporter
+from ..progress import RichProgressReporter
+from ._chunk_production import produce_chunks
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
 
 if TYPE_CHECKING:
@@ -291,7 +292,7 @@ class TestSingleFileScheduler:
 
         def _run() -> None:
             try:
-                chunks.extend(indexer._chunk_singles(paths, reporter))
+                chunks.extend(produce_chunks(indexer, paths, reporter=reporter))
             except BaseException as exc:
                 failures.append(exc)
 
@@ -356,11 +357,18 @@ class TestSingleFileScheduler:
             path.write_bytes(path.name.encode())
 
         with _Workers(2), pytest.raises(PreprocessAbortError):
-            indexer._chunk_singles(paths, NullProgressReporter())
+            produce_chunks(indexer, paths)
 
 
 class TestChunkIdentityParity:
-    """Process-pool chunking must match the serial path exactly."""
+    """Process-pool chunking must match the serial path exactly.
+
+    Both sides drive the shipped producers, so worker count is the only
+    difference between the runs: four workers routes the files through the
+    spawn pool, one worker takes the in-process serial producer. Comparing
+    ids element-wise (not as sets) also binds the per-file emission order,
+    which a set comparison would let drift silently.
+    """
 
     def test_parallel_matches_serial(self, tmp_path: Path) -> None:
         _make_code_tree(tmp_path, 40)
@@ -369,10 +377,12 @@ class TestChunkIdentityParity:
         assert len(paths) >= 40
 
         with _Workers(4):
-            parallel = indexer._chunk_paths(paths, reporter=NullProgressReporter())
-        serial = indexer._chunk_paths_serial(paths, NullProgressReporter())
+            parallel = produce_chunks(indexer, paths)
+        with _Workers(1):
+            serial = produce_chunks(indexer, paths)
 
-        assert {c.id for c in parallel} == {c.id for c in serial}
+        assert [c.id for c in parallel] == [c.id for c in serial]
+        assert [c.content for c in parallel] == [c.content for c in serial]
         assert len(parallel) == len(serial)
 
     def test_parallel_pipeline_hashes_every_file(self, tmp_path: Path) -> None:

@@ -170,7 +170,7 @@ class TestASTChunkerPython:
         chunker = ASTChunker(chunk_size=500)
         chunks = chunker.chunk("", "python")
         # tree-sitter may emit a root node for empty input; the caller
-        # (_chunk_file) filters empty chunks via `if not text.strip()`.
+        # The chunk worker filters empty chunks via `if not text.strip()`.
         meaningful = [c for c in chunks if c[0].strip()]
         assert meaningful == []
 
@@ -350,16 +350,13 @@ class TestASTChunkerPythonBoundaries:
             assert first_line in self.SAMPLE
 
     def test_chunk_ids_contain_hash_via_chunk_file(self, tmp_path: Path):
-        """_chunk_with_ast produces IDs with blake2b hash suffix."""
-        from ..indexer import CodebaseIndexer
+        """AST chunking produces IDs with a blake2b hash suffix."""
+        from ..indexer import _chunk_worker
 
         src = tmp_path / "example.py"
         src.write_text(self.SAMPLE, encoding="utf-8")
 
-        # Call _chunk_with_ast directly (no model/store needed).
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        chunks = indexer._chunk_with_ast(
+        chunks = _chunk_worker.chunk_with_ast(
             self.SAMPLE,
             "example.py",
             "python",
@@ -423,16 +420,13 @@ class TestASTChunkerJavaScript:
 class TestASTChunkerFallback:
     """ASTChunker falls back to TextSplitter when grammar is invalid."""
 
-    def test_invalid_grammar_falls_back_to_splitter(self, tmp_path: Path):
-        """_chunk_with_ast returns splitter chunks for an invalid grammar."""
-        from ..indexer import CodebaseIndexer
+    def test_invalid_grammar_falls_back_to_splitter(self):
+        """AST chunking returns splitter chunks for an invalid grammar."""
+        from ..indexer import _chunk_worker
 
         content = "x = 1\ny = 2\nz = 3\n"
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-
-        chunks = indexer._chunk_with_ast(
+        chunks = _chunk_worker.chunk_with_ast(
             content,
             "data.py",
             "python",
@@ -443,15 +437,13 @@ class TestASTChunkerFallback:
 
     def test_chunk_file_uses_splitter_for_yaml(self, tmp_path: Path):
         """Files with grammar=None in LANGUAGE_MAP use TextSplitter."""
-        from ..indexer import CodebaseIndexer
+        from ..indexer import _chunk_worker
 
         src = tmp_path / "config.yaml"
         content = "key: value\nlist:\n  - item1\n  - item2\n"
         src.write_text(content, encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        chunks = indexer._chunk_file(src)
+        chunks = _chunk_worker.chunk_file(src, tmp_path)
         assert len(chunks) >= 1
         assert chunks[0].language == "yaml"
         # ID should still carry the emit ordinal and the hash suffix.
@@ -497,21 +489,18 @@ class TestChunkIDUniqueness:
 
 
 class TestChunkWithSplitterSearchOffset:
-    """Regression: _chunk_with_splitter uses search_offset to avoid
+    """Regression: splitter chunking uses search_offset to avoid
     mapping duplicate code blocks to the same line number."""
 
     def test_duplicate_blocks_get_different_lines(self, tmp_path: Path):
-        from ..indexer import CodebaseIndexer
+        from ..indexer import _chunk_worker
 
         # Repeated identical lines force two deterministic fallback chunks.
         content = "a\n" * 300
         src = tmp_path / "repeat.yaml"
         src.write_text(content, encoding="utf-8")
 
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        # Use _chunk_with_splitter (TextSplitter path).
-        chunks = indexer._chunk_with_splitter(content, "repeat.yaml", "yaml")
+        chunks = _chunk_worker.chunk_with_splitter(content, "repeat.yaml", "yaml")
 
         assert [(chunk.line_start, chunk.line_end) for chunk in chunks] == [
             (1, 256),
@@ -691,35 +680,29 @@ class TestASTChunkerMetadataExtraction:
 class TestCodeChunkMetadataFields:
     """CodeChunk dataclass carries node_type, function_name, class_name."""
 
-    def test_chunk_with_ast_populates_function_name(self, tmp_path: Path):
-        from ..indexer import CodebaseIndexer
+    def test_chunk_with_ast_populates_function_name(self):
+        from ..indexer import _chunk_worker
 
         code = "def process(data):\n    return data\n"
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        chunks = indexer._chunk_with_ast(code, "proc.py", "python", "python")
+        chunks = _chunk_worker.chunk_with_ast(code, "proc.py", "python", "python")
         assert len(chunks) >= 1
         fn_chunks = [c for c in chunks if c.function_name == "process"]
         assert fn_chunks, "Expected function_name='process' on CodeChunk"
 
-    def test_chunk_with_ast_populates_node_type(self, tmp_path: Path):
-        from ..indexer import CodebaseIndexer
+    def test_chunk_with_ast_populates_node_type(self):
+        from ..indexer import _chunk_worker
 
         code = "class Engine:\n    pass\n"
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        chunks = indexer._chunk_with_ast(code, "engine.py", "python", "python")
+        chunks = _chunk_worker.chunk_with_ast(code, "engine.py", "python", "python")
         assert len(chunks) >= 1
         typed = [c for c in chunks if c.node_type == "class_definition"]
         assert typed, "Expected node_type='class_definition' on CodeChunk"
 
-    def test_chunk_with_splitter_has_none_metadata(self, tmp_path: Path):
-        from ..indexer import CodebaseIndexer
+    def test_chunk_with_splitter_has_none_metadata(self):
+        from ..indexer import _chunk_worker
 
         content = "key: value\n"
-        indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-        indexer.root_dir = tmp_path
-        chunks = indexer._chunk_with_splitter(content, "conf.yaml", "yaml")
+        chunks = _chunk_worker.chunk_with_splitter(content, "conf.yaml", "yaml")
         assert len(chunks) >= 1
         for chunk in chunks:
             assert chunk.node_type is None
