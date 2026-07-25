@@ -15,7 +15,7 @@ import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from ...serviceclient import (
+from ...serviceclient._transport import (
     _do_http_call,
     _try_http_get_job,
     _try_http_reindex,

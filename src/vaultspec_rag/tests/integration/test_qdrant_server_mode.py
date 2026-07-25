@@ -20,10 +20,8 @@ import pytest
 
 from ...config import EnvVar, reset_config
 from ...progress import NullProgressReporter
-from ...qdrant_runtime import (
-    QdrantSupervisor,
-    resolve_binary,
-)
+from ...qdrant_runtime._resolve import resolve_binary
+from ...qdrant_runtime._supervise import QdrantSupervisor
 from .._ports import free_loopback_port
 from ..corpus import build_synthetic_vault
 from ._helpers import provisioned_qdrant_binary, serve_qdrant
@@ -37,6 +35,10 @@ if TYPE_CHECKING:
     from ...embeddings import EmbeddingModel
 
 pytestmark = [pytest.mark.integration]
+
+#: A stamp no clock would produce, planted so a refresh is provable without
+#: depending on the manifest's one-second stamp resolution.
+_STALE_STAMP = "1999-01-01T00:00:00+00:00"
 
 _SAMPLE_MODULE = '''"""Watcher debounce helper used by the server-mode test corpus."""
 
@@ -671,7 +673,7 @@ class TestServerFirstStartupSelection:
         names ``--local-only``; here we prove the underlying loud failure
         the contract depends on.
         """
-        from ...qdrant_runtime import start_supervised_from_config
+        from ...qdrant_runtime._supervise import start_supervised_from_config
 
         prev_status = os.environ.get(EnvVar.STATUS_DIR.value)
         prev_binary = os.environ.get(EnvVar.QDRANT_BINARY.value)

@@ -27,7 +27,7 @@ from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissin
 )
 
 from ..builtins import list_builtins, seed_builtins
-from ..torch_config import TorchConfigAction
+from ..torch_config._constants import TorchConfigAction
 from ._mcp_extra import reconcile_mcp_extra
 from ._mcp_topology import (
     NodeSnapshot,

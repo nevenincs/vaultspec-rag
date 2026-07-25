@@ -24,7 +24,7 @@ from ...jobs import reset as reset_jobs
 from ...mcp._mcp import mcp
 from ...mcp._tools import reindex_vault
 from ...server._routes import ROUTES
-from ...serviceclient import (
+from ...serviceclient._transport import (
     _try_http_create_job,
     _try_http_delete_job,
     _try_http_get_job,
