@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, cast
 
 if TYPE_CHECKING:
     import pathlib
@@ -81,25 +81,32 @@ class BreadthShortfall(NamedTuple):
         }
 
 
-def parse_published_points(raw: Mapping[str, str]) -> int | None:
+def parse_published_points(raw: Mapping[str, object]) -> int | None:
     """Return the point count a sidecar mapping claims, or ``None`` for no claim.
 
     ``None`` means the sidecar predates the key or carries an unusable value.
     That is a "cannot tell" and must never be read as a shortfall: treating
     ignorance as loss would escalate every root written by an older build.
+
+    The values are typed as ``object`` because they arrive from parsed JSON: the
+    writer stamps a string, but a sidecar this build did not write can carry
+    anything, and that is exactly the case the unusable-value branch exists for.
     """
     value = raw.get(PUBLISHED_POINTS_KEY)
     if value is None:
         return None
+    if not isinstance(value, (str, int)):
+        logger.debug("unusable published point count %r in code sidecar", value)
+        return None
     try:
         count = int(value)
-    except (TypeError, ValueError):
+    except ValueError:
         logger.debug("unusable published point count %r in code sidecar", value)
         return None
     return count if count >= 0 else None
 
 
-def parse_superseded_regime(raw: Mapping[str, str]) -> bool:
+def parse_superseded_regime(raw: Mapping[str, object]) -> bool:
     """Return whether a sidecar mapping marks the collection's regime superseded.
 
     Absence is "no", not "cannot tell": a sidecar written before the key
@@ -119,7 +126,7 @@ def code_regime_superseded(root: pathlib.Path) -> bool:
         return False
     if not isinstance(raw, dict):
         return False
-    return parse_superseded_regime(raw)
+    return parse_superseded_regime(cast("dict[str, object]", raw))
 
 
 def code_meta_path(root: pathlib.Path) -> pathlib.Path:
@@ -145,7 +152,7 @@ def read_published_points(root: pathlib.Path) -> int | None:
         return None
     if not isinstance(raw, dict):
         return None
-    return parse_published_points(raw)
+    return parse_published_points(cast("dict[str, object]", raw))
 
 
 def code_breadth_shortfall(

@@ -43,7 +43,7 @@ def isolate_manifest_dir(isolated_status_dir: Path) -> None:
 
 def _identity(**overrides: object) -> store_schema.CollectionIdentity:
     """Build a complete identity, overriding named fields."""
-    base = {
+    base: dict[str, object] = {
         "dense_model": "acme/dense-v1",
         "sparse_model": "acme/sparse-v1",
         "dense_dim": 1024,

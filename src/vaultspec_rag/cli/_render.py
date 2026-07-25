@@ -29,6 +29,7 @@ __all__ = [
     "_display_search_results",
     "_display_service_error",
     "_display_service_not_running",
+    "_display_service_version_error",
     "_emit_json",
     "_emit_json_error_and_exit",
     "_format_local_index_busy_message",
