@@ -30,8 +30,7 @@ Four proofs, each one uninterrupted, each mutation restored before the next.
 
 The reported failure. Reducing the recording helper to the bare ledger call -
 the behaviour before this work - failed the reproduction test with
-`RunLedgerIndexedPathCollisionError: cannot add upsert commit units after a
-path is indexed: 'src/moving.py'`, which is the reported error verbatim.
+`RunLedgerIndexedPathCollisionError: cannot add upsert commit units after a path is indexed: 'src/moving.py'`, which is the reported error verbatim.
 Restored, the test passes.
 
 The non-drift rejection. Removing the re-raise for equal digests failed the

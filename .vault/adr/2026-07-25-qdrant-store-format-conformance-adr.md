@@ -20,9 +20,10 @@ server binary whose on-disk format the store predates aborts with exactly that
 shape: it names the collection it choked on first. The recovery therefore
 misdiagnoses one whole-store incompatibility as up to three separate
 per-collection corruptions, moves three healthy indexes out of the load set, and
+
 - because the retry loop is bounded rather than fatal - can still bring the
-daemon up. `/readyz` answers, the health payload reports ready, and the only
-trace is a warning in the daemon log. The affected roots return nothing.
+  daemon up. `/readyz` answers, the health payload reports ready, and the only
+  trace is a warning in the daemon log. The affected roots return nothing.
 
 Nothing today can tell the two apart. The pinned server version is coupled to the
 locked client's minor line, which is a wire-API guard and says nothing about

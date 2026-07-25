@@ -7,8 +7,10 @@ import typing
 
 import pytest
 
+from ..serviceclient._compat import SERVICE_VERSION_FIELD, local_package_version
 from ._cli_helpers import (
     _hold_local_index_lock,
+    _no_service,
     _plain_lines,
     app,
     runner,
@@ -636,6 +638,10 @@ from vaultspec_rag._machine_lock import (  # absolute-import-ok
     machine_discovery_path,
     release_machine_lock,
 )
+from vaultspec_rag.serviceclient._compat import (  # absolute-import-ok
+    SERVICE_VERSION_FIELD,
+    local_package_version,
+)
 
 requests = []
 
@@ -692,6 +698,7 @@ try:
                 "pid": os.getpid(),
                 "port": fallback_port,
                 "service_token": "fallback-token",
+                SERVICE_VERSION_FIELD: local_package_version(),
             }
         ),
         encoding="utf-8",
@@ -709,6 +716,7 @@ try:
                     "service_token": "machine-token",
                     "last_heartbeat": datetime.now(UTC).isoformat(timespec="seconds"),
                     "stale_after_s": 60,
+                    SERVICE_VERSION_FIELD: local_package_version(),
                 }
             ),
             encoding="utf-8",
@@ -723,14 +731,14 @@ try:
     assert initial_target_tree == [".vaultspec"]
 
     from vaultspec_rag.cli._index import (  # absolute-import-ok
-        _default_service_port as index_port,
+        resolve_data_plane_service as index_resolve,
     )
     from vaultspec_rag.cli._search import (  # absolute-import-ok
-        _default_service_port as search_port,
+        resolve_data_plane_service as search_resolve,
     )
 
-    assert search_port() == expected
-    assert index_port() == expected
+    assert search_resolve().port == expected
+    assert index_resolve().port == expected
 
     from typer.testing import CliRunner
     from vaultspec_rag.cli import app  # absolute-import-ok
@@ -877,16 +885,24 @@ finally:
         (tmp_path / ".vaultspec").mkdir()
 
         def _stub_read_status() -> dict[str, object]:
-            return {"pid": 12345, "port": 8766, "service_token": "token123"}
+            return {
+                "pid": 12345,
+                "port": 8766,
+                "service_token": "token123",
+                # A daemon of this release, which is what the delegation path
+                # under test requires; the data plane refuses a service whose
+                # release it cannot confirm.
+                SERVICE_VERSION_FIELD: local_package_version(),
+            }
 
         def _stub_is_our_service_search(
             _pid: int, _port: int, _expected_token: str | None
         ) -> bool:
             return True
 
-        # Stub _read_service_status to return active port and pid.
-        # _default_service_port reads through the serviceclient discovery
-        # module after the service-client factoring, so patch it there.
+        # Stub _read_service_status to return active port and pid. Port
+        # resolution reads through the serviceclient discovery module, so patch
+        # it there rather than on the CLI adapter.
         monkeypatch.setattr(
             "vaultspec_rag.serviceclient._discovery._read_service_status",
             _stub_read_status,
@@ -928,7 +944,12 @@ finally:
         (tmp_path / ".vaultspec").mkdir()
 
         def _stub_read_status_idx() -> dict[str, object]:
-            return {"pid": 12345, "port": 8766, "service_token": "token123"}
+            return {
+                "pid": 12345,
+                "port": 8766,
+                "service_token": "token123",
+                SERVICE_VERSION_FIELD: local_package_version(),
+            }
 
         def _stub_is_our_service_idx(
             _pid: int, _port: int, _expected_token: str | None
@@ -1044,7 +1065,7 @@ class TestDiskPreflightRefusal:
 
         (tmp_path / ".vaultspec").mkdir()
         monkeypatch.setattr(
-            "vaultspec_rag.cli._index._default_service_port", lambda: None
+            "vaultspec_rag.cli._index.resolve_data_plane_service", _no_service
         )
         monkeypatch.setattr(
             "vaultspec_rag.progress.RichProgressReporter", _QuietReporter
@@ -1080,7 +1101,7 @@ class TestDiskPreflightRefusal:
 
         (tmp_path / ".vaultspec").mkdir()
         monkeypatch.setattr(
-            "vaultspec_rag.cli._index._default_service_port", lambda: None
+            "vaultspec_rag.cli._index.resolve_data_plane_service", _no_service
         )
 
         def _raise_preflight(*_args: object, **_kwargs: object) -> object:
