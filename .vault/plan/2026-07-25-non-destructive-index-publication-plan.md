@@ -57,7 +57,7 @@ A rebuild writes into a collection named for its generation and never reuses a n
 
 - [x] `P03.S09` - Name each rebuild generation's collection so a name is never reused, defeating the local-mode directory-survival behaviour on create; `src/vaultspec_rag/store.py`.
 - [ ] `P03.S10` - Write a clean rebuild into its generation collection, leaving the served collection untouched for the duration of the build; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
-- [ ] `P03.S11` - Move the pointer to the new generation only after its breadth is recorded, so a reader never resolves a collection that has not reconciled; `src/vaultspec_rag/store.py, src/vaultspec_rag/indexer/_run_checkpoint.py`.
+- [x] `P03.S11` - Move the pointer to the new generation only after its breadth is recorded, so a reader never resolves a collection that has not reconciled; `src/vaultspec_rag/store.py, src/vaultspec_rag/indexer/_run_checkpoint.py`.
 - [ ] `P03.S12` - Prove by real-storage test that a rebuild interrupted mid-build leaves the previously served point count fully readable, and that the pointer still names the old collection; `src/vaultspec_rag/tests/integration/test_index_job_control.py`.
 
 ### Phase `P04` - admit by headroom and reclaim the superseded collection
