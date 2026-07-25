@@ -572,12 +572,15 @@ def _code_breadth_timings(
     root written by a build that recorded no breadth must not be reported as
     incomplete for want of evidence.
     """
-    from ._index_breadth import code_breadth_shortfall
+    from ._index_breadth import code_breadth_shortfall, code_regime_superseded
 
+    carried: dict[str, float] = {}
     shortfall = code_breadth_shortfall(root, indexed_count)
-    if shortfall is None:
-        return {}
-    return {"published_points": float(shortfall.published)}
+    if shortfall is not None:
+        carried["published_points"] = float(shortfall.published)
+    if code_regime_superseded(root):
+        carried["superseded_regime"] = 1.0
+    return carried
 
 
 def search_codebase_timed(
