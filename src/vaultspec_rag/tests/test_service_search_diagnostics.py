@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_search_index_state_uses_selected_source_preflight_count() -> None:
@@ -155,3 +158,81 @@ def test_search_index_state_omits_the_shortfall_when_breadth_is_unknown() -> Non
     )
 
     assert "shortfall" not in state
+
+
+def test_a_path_filter_note_survives_classification_into_the_empty_block(
+    tmp_path: Path,
+) -> None:
+    """The note the search recorded must reach the envelope's empty block.
+
+    Availability classification stands between the two. It returns a fresh body
+    on the unavailable path, so a note carried on the searched body is exactly
+    the kind of thing that can be dropped in transit without any test noticing.
+    """
+    from ..server._routes import _classify_search_result
+
+    searched: dict[str, object] = {
+        "results": [],
+        "index_state": {
+            "source": "code",
+            "indexed_count": 1284,
+            "indexed_target_root": str(tmp_path),
+            "requested_target_root": str(tmp_path),
+            "target_matches": True,
+            "status": "available",
+        },
+        "path_filter": {
+            "patterns": ["src/vaultspec_rag/indexr/**"],
+            "candidates_before_filter": 50,
+        },
+    }
+
+    classification = _classify_search_result(
+        searched,
+        job_snapshot_before=[],
+        root=tmp_path,
+        source="code",
+        request_id="0" * 32,
+        port=8766,
+    )
+
+    assert classification.status_code == 200
+    empty = cast("dict[str, object]", classification.response["empty"])
+    # Asserting the reason, not the prose: every empty page renders a message,
+    # and a substring match would pass on whichever branch happened to fire.
+    assert empty["reason"] == "no_match_path_filter"
+    assert "src/vaultspec_rag/indexr/**" in str(empty["message"])
+
+
+def test_the_mcp_output_model_preserves_the_path_filter_diagnostic() -> None:
+    """The MCP tools must hand the agent the same diagnostic the CLI renders.
+
+    Both adapters read one service envelope, but the MCP surface validates it
+    through a declared output model on the way out. A model that dropped the
+    unlisted diagnostic fields would leave agents with a bare empty result and
+    no way to tell a path-filter mistake from a query that matched nothing.
+    """
+    from ..mcp._tools import SearchResults
+
+    envelope: dict[str, object] = {
+        "results": [],
+        "summary": "Found 0 relevant items.",
+        "path_filter": {
+            "patterns": ["src/vaultspec_rag/indexr/**"],
+            "candidates_before_filter": 50,
+        },
+        "empty": {
+            "reason": "no_match_path_filter",
+            "message": "50 indexed items matched the query, and the path filter "
+            "(src/vaultspec_rag/indexr/**) excluded every one.",
+            "remediation": ["rerun without the path filter"],
+        },
+    }
+
+    validated = SearchResults.model_validate(envelope).model_dump()
+
+    assert validated["results"] == []
+    empty = cast("dict[str, object]", validated["empty"])
+    assert empty["reason"] == "no_match_path_filter"
+    path_filter = cast("dict[str, object]", validated["path_filter"])
+    assert path_filter["patterns"] == ["src/vaultspec_rag/indexr/**"]
