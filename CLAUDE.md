@@ -3,6 +3,7 @@
 
 You MUST respect these rules at all times:
 
+@.claude/rules/canonical-code.md
 @.claude/rules/gpu-discipline.md
 @.claude/rules/guard-tests-prove-they-can-fail.md
 @.claude/rules/no-dev-metadata-in-code.md
