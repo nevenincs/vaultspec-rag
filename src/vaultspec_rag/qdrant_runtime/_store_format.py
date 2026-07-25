@@ -91,12 +91,21 @@ class StoreFormatVerdict:
             names this same storage path), ``"empty"`` (no data to be
             incompatible with), or ``""`` when nothing was found.
         reason: Operator-facing explanation, always populated.
+        migrates_store: Whether opening the store carries it across a server
+            version change. True only for a permitted upgrade onto a
+            data-bearing store of known provenance - never for a same-version
+            open, an empty store, or a refusal. The open rewrites the stamp to
+            the new version, so this is the only moment the crossing is
+            observable, and it matters past that moment: the migration is
+            irreversible and the binary that wrote the store can no longer
+            read it.
     """
 
     verdict: str
     stored_version: str
     provenance: str
     reason: str
+    migrates_store: bool = False
 
     @property
     def may_spawn(self) -> bool:
@@ -377,4 +386,5 @@ def _judge_parsed(
             f"the managed store was written by Qdrant {stored} and {spawning} "
             "is within the supported consecutive-minor upgrade window"
         ),
+        migrates_store=True,
     )
