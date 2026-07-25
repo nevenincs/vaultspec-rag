@@ -521,8 +521,8 @@ class VaultSearcher:
             )
         return results[:top_k]
 
+    @staticmethod
     def _build_codebase_store_filters(
-        self,
         parsed: ParsedQuery,
         language: str | None,
         path: str | None,

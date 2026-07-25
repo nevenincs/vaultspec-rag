@@ -72,6 +72,7 @@ def _fetch(
         like_ids=None,
         unlike_ids=None,
         timings=None,
+        notes=None,
     )
 
 
