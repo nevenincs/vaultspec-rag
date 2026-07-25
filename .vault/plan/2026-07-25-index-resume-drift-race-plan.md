@@ -13,6 +13,16 @@ related:
   - '[[2026-07-21-large-index-resilience-adr]]'
 ---
 
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
+
 # `index-resume-drift-race` plan
 
 ## Wave `W01` - Seam the codebase indexer
@@ -33,8 +43,8 @@ Fix the behavioural oracle and prove the seams are not carrying duplicate implem
 One extraction per responsibility cluster, each landing green before the next begins.
 
 - [x] `W01.P02.S03` - Extract discovery and admission into its own collaborator, grounding first with vaultspec-rag semantic search and citing what it returned; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
-- [ ] `W01.P02.S04` - Extract chunk production and submission into its own collaborator, grounding first with vaultspec-rag semantic search and citing what it returned; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
-- [ ] `W01.P02.S05` - Extract generation and ledger lifecycle into its own collaborator, grounding first with vaultspec-rag semantic search and citing what it returned; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `W01.P02.S04` - Extract chunk production and submission into its own collaborator, grounding first with vaultspec-rag semantic search and citing what it returned; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `W01.P02.S05` - Extract generation and ledger lifecycle into its own collaborator, grounding first with vaultspec-rag semantic search and citing what it returned; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [x] `W01.P02.S06` - Extract drift ownership into its own collaborator that holds the drop-points-then-remove-units ordering as a property of the type; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [x] `W01.P02.S17` - Collapse the duplicated stat-failure classification so an admitted file is stat-ed once per scan rather than twice, treating it as the behaviour change it is; `src/vaultspec_rag/indexer/_content_discovery.py`.
 
@@ -65,7 +75,7 @@ Stop the breaker reacting to edit rate, restart the module-length ratchet the to
 Count faults only, and turn the advisory length gate into a failing one.
 
 - [x] `W03.P05.S11` - Count faults only in the circuit breaker and record drift outcomes in their own counter reported alongside job state; `src/vaultspec_rag/indexer/_run_policy.py`.
-- [ ] `W03.P05.S12` - Turn the module-length gate from advisory to failing at a threshold the post-seam tree actually meets, and record the full offender census in the same change so the remaining ratchet is visible rather than implied; `tools/module_length.py`.
+- [x] `W03.P05.S12` - Turn the module-length gate from advisory to failing at a threshold the post-seam tree actually meets, and record the full offender census in the same change so the remaining ratchet is visible rather than implied; `tools/module_length.py`.
 
 ### Phase `W03.P06` - Verify against a live service
 
