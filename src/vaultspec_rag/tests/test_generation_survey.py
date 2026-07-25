@@ -10,6 +10,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from ..generation_survey import GenerationReclaim
     from ..storage_survey import NamespaceSurvey
 
 pytestmark = [pytest.mark.unit]
@@ -298,7 +299,7 @@ class TestGenerationReclaimGates:
     _NOW = datetime(2026, 7, 26, 12, 0, tzinfo=UTC)
     _LONG_AGO = "2026-07-01T00:00:00+00:00"
 
-    def _decide(self, **overrides: object) -> object:
+    def _decide(self, **overrides: object) -> GenerationReclaim:
         from ..generation_survey import decide_generation_reclaim
 
         kwargs: dict[str, object] = {
