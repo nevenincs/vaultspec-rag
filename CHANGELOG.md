@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.9](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.8...vaultspec-rag-v0.3.9) (2026-07-25)
+
+
+### Bug Fixes
+
+* **cli:** answer an interrupt taken before the command exists ([ad1ac7d](https://github.com/nevenincs/vaultspec-rag/commit/ad1ac7db56660768fe1ee9a7543613f063acda4a))
+
+
+### Performance
+
+* **package:** resolve __version__ on first access instead of at import ([88d891f](https://github.com/nevenincs/vaultspec-rag/commit/88d891f701c6324f9887ddf718819534e9176a84))
+
 ## [0.3.8](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.7...vaultspec-rag-v0.3.8) (2026-07-24)
 
 
