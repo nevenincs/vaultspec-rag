@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 import os
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import cast
 
@@ -53,6 +53,7 @@ __all__ = [
     "remove_root",
     "reverse_map",
     "snapshot_manifest_path",
+    "update_activity_stamps",
     "update_orphan_stamps",
     "write_snapshot_manifest",
 ]
@@ -100,8 +101,17 @@ class ManifestEntry:
             server mode; the empty string in local mode.
         root: The resolved root path, as a string.
         backend: ``"server"`` or ``"local"``.
-        last_indexed: ISO-8601 timestamp of the most recent index, or the
-            empty string when never stamped.
+        last_indexed: ISO-8601 timestamp of the most recent observed index
+            activity, or the empty string when never stamped. Advanced by a
+            completed index run AND by a survey that observes this
+            namespace's stored point count move, because an indexer that
+            writes without stamping still proves the namespace is in use.
+            This is the ephemeral tier's idle clock.
+        observed_points: Stored point count at the last survey that looked,
+            or ``-1`` when never observed. Persisted so the next survey can
+            tell a moving namespace from a settled one; ``-1`` and ``0`` are
+            deliberately distinct, because "nobody has counted" is not
+            evidence of emptiness.
         first_seen_orphaned: ISO-8601 timestamp of the first survey that
             observed the root ``orphaned``, or the empty string when the
             root is (or has returned to being) live/unverifiable. This is
@@ -122,6 +132,7 @@ class ManifestEntry:
     backend: str
     last_indexed: str = ""
     first_seen_orphaned: str = ""
+    observed_points: int = -1
     storage_schema_version: int = store_schema.STORAGE_SCHEMA_VERSION
     collections: tuple[str, ...] = ()
     collection_identity: dict[str, store_schema.CollectionIdentity] = field(
@@ -235,6 +246,20 @@ def _decode_schema_version(record: dict[str, object]) -> int:
     return raw
 
 
+def _decode_observed_points(record: dict[str, object]) -> int:
+    """Read a record's last observed point count, defaulting to never-observed.
+
+    Absent, malformed, or negative reads as ``-1`` (never observed) rather
+    than ``0``: an unreadable count treated as an observed zero would let the
+    next survey either invent movement that never happened, or call a settled
+    zero verified when nothing ever verified it.
+    """
+    raw = record.get("observed_points", -1)
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        return -1
+    return raw
+
+
 def _decode_identity(
     record: dict[str, object],
 ) -> dict[str, store_schema.CollectionIdentity]:
@@ -276,6 +301,7 @@ def _entry_from_record(prefix: str, record_obj: object) -> ManifestEntry | None:
         # "never observed orphaned", so the first reclaim can happen no
         # earlier than one full grace window after upgrade.
         first_seen_orphaned=str(record.get("first_seen_orphaned", "")),
+        observed_points=_decode_observed_points(record),
         storage_schema_version=_decode_schema_version(record),
         collections=_decode_collections(record, prefix, backend),
         collection_identity=_decode_identity(record),
@@ -331,6 +357,7 @@ def _write_manifest(entries: dict[str, ManifestEntry]) -> Path:
                 "backend": entry.backend,
                 "last_indexed": entry.last_indexed,
                 "first_seen_orphaned": entry.first_seen_orphaned,
+                "observed_points": entry.observed_points,
                 "storage_schema_version": entry.storage_schema_version,
                 "collections": list(entry.collections),
                 "collection_identity": {
@@ -383,6 +410,11 @@ def record_root(
             root=resolved,
             backend=backend,
             last_indexed=last_indexed,
+            # An observed point count describes the stored data, which
+            # re-recording the root does not change, so it carries over for the
+            # same reason the schema generation and identity do. Dropping it
+            # would blind the next survey's change detection for a cycle.
+            observed_points=(existing.observed_points if existing is not None else -1),
             storage_schema_version=(
                 existing.storage_schema_version
                 if existing is not None
@@ -451,6 +483,7 @@ def record_collection_identity(
             first_seen_orphaned=(
                 existing.first_seen_orphaned if existing is not None else ""
             ),
+            observed_points=(existing.observed_points if existing is not None else -1),
             storage_schema_version=identity.storage_schema_version,
             collections=_declared_collections(prefix, backend),
             collection_identity=merged,
@@ -587,32 +620,83 @@ def update_orphan_stamps(statuses: dict[str, str], *, now_iso: str) -> dict[str,
                 continue
             if status == "orphaned":
                 if not entry.first_seen_orphaned:
-                    entry = ManifestEntry(
-                        prefix=entry.prefix,
-                        root=entry.root,
-                        backend=entry.backend,
-                        last_indexed=entry.last_indexed,
-                        first_seen_orphaned=now_iso,
-                        storage_schema_version=entry.storage_schema_version,
-                        collections=entry.collections,
-                        collection_identity=entry.collection_identity,
-                    )
+                    entry = replace(entry, first_seen_orphaned=now_iso)
                     entries[prefix] = entry
                     changed = True
             elif entry.first_seen_orphaned:
-                entry = ManifestEntry(
-                    prefix=entry.prefix,
-                    root=entry.root,
-                    backend=entry.backend,
-                    last_indexed=entry.last_indexed,
-                    first_seen_orphaned="",
-                    storage_schema_version=entry.storage_schema_version,
-                    collections=entry.collections,
-                    collection_identity=entry.collection_identity,
-                )
+                entry = replace(entry, first_seen_orphaned="")
                 entries[prefix] = entry
                 changed = True
             stamps[prefix] = entry.first_seen_orphaned
+        if changed:
+            _write_manifest(entries)
+    return stamps
+
+
+def update_activity_stamps(
+    observations: dict[str, tuple[str, int]], *, now_iso: str
+) -> dict[str, str]:
+    """Advance the persisted idle clocks from one survey's observations.
+
+    The companion to :func:`update_orphan_stamps`. That one maintains the
+    orphan grace clock from whether a root still exists; this one maintains
+    the ``last_indexed`` idle clock from what the namespace's stored data is
+    doing. They read different evidence and write different fields, and both
+    run once per maintenance cycle.
+
+    Why an idle clock cannot be driven by index-run stamps alone: the clock
+    exists to prove a namespace has gone a whole TTL unused, and an indexer
+    that writes without stamping is exactly the writer whose data would be
+    destroyed. So the clock resets unless this cycle can positively confirm
+    the namespace held still, which takes three things to be true at once:
+
+    - a previous count exists to compare against. A FIRST observation
+      confirms nothing - there is no earlier reading it could have held
+      steady against - so it records the count and restarts the clock. The
+      orphan clock already works this way: an entry predating the field
+      cannot be reclaimed until one full window has elapsed since the field
+      appeared, and one observation is no more of a window here.
+    - the count has not moved. Movement is direct evidence of a live writer,
+      whether or not anything stamped a completed run.
+    - the root was verifiable. An unreadable root is not evidence of
+      idleness.
+
+    So a namespace becomes reclaimable only after a whole TTL of consecutive
+    cycles that each agreed with the last. Races can only extend protection:
+    a reset writes a LATER stamp, and a stamp lost to a concurrent writer
+    reads as absent evidence, which is protective too.
+
+    Args:
+        observations: Mapping of collection prefix to its
+            ``(survey status, total stored points)`` for this cycle.
+        now_iso: ISO-8601 timestamp to stamp when activity is observed.
+
+    Returns:
+        Mapping of prefix to its ``last_indexed`` value after the update, for
+        every prefix in *observations* that has a manifest entry.
+    """
+    stamps: dict[str, str] = {}
+    with _LOCK:
+        entries = load_manifest()
+        changed = False
+        for prefix, (status, points) in observations.items():
+            entry = entries.get(prefix)
+            if entry is None:
+                continue
+            held_still = (
+                entry.observed_points >= 0
+                and points == entry.observed_points
+                and status != "unverifiable"
+            )
+            updated = replace(
+                entry,
+                observed_points=points,
+                last_indexed=entry.last_indexed if held_still else now_iso,
+            )
+            if updated != entry:
+                entries[prefix] = updated
+                changed = True
+            stamps[prefix] = updated.last_indexed
         if changed:
             _write_manifest(entries)
     return stamps
@@ -654,6 +738,7 @@ def rekey_prefix(
             root=resolved,
             backend=backend,
             last_indexed=last_indexed,
+            observed_points=(source.observed_points if source is not None else -1),
             storage_schema_version=(
                 source.storage_schema_version
                 if source is not None
