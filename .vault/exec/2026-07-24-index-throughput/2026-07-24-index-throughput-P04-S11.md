@@ -34,8 +34,18 @@ related:
 
 ## Outcome
 
-Measured. Population: 253 terminal gated index jobs (239 succeeded, 11
-failed, 3 interrupted) across four watched roots.
+PARTLY OBSERVED, STEP LEFT OPEN. The Step asks for two things: a contended
+multi-job window and a solo rebuild-class job. The contended window is
+answered, from the daemon's own persisted telemetry rather than from timings
+taken by this session - no GPU was seized, no run was timed against a busy
+device, and every figure below was recorded by the daemon about itself. The
+solo rebuild-class arm was NOT run and no number for it exists anywhere in
+this record. The machine's owner declined a quiesce window so the release
+could ship; that half of the Step therefore stays open by decision, and the
+Step row stays unchecked to say so.
+
+Population: 253 terminal gated index jobs (239 succeeded, 11 failed, 3
+interrupted) across the watched roots.
 
 Encode-slot exclusivity: 0 overlapping hold windows out of 31,878 pairs. At
 most one encode-bearing index job was ever in flight - in production, not
@@ -78,8 +88,32 @@ queues honestly, one holder at a time.
   was not measured and cannot be inferred from these records. The gate adds no
   GPU capacity; it removes per-job latency inflation and makes the wait
   visible.
-- A full rebuild-class job does not appear in the measured population; the
+- A full rebuild-class job does not appear in the observed population; the
   largest observations are long incremental runs. Staging a full rebuild needs
-  an exclusive GPU window, which this machine did not have.
+  an exclusive GPU window, which the machine's owner declined.
 - The CUDA cache-flush cadence re-tune is a separate Step and stays unmeasured
   for the same reason: it needs an idle device.
+
+What the open half needs, so a later run does not re-derive it:
+
+- The same preconditions as the cadence Step: an idle device confirmed by
+  `nvidia-smi --query-gpu=memory.used,utilization.gpu --format=csv` and by
+  `uv run --no-sync vaultspec-rag server jobs` reporting nothing active or
+  waiting, then automatic updates stopped per root with
+  `uv run --no-sync vaultspec-rag server updates stop <root>`, taking the roots
+  from `uv run --no-sync vaultspec-rag server updates status` and restoring each
+  afterwards with `uv run --no-sync vaultspec-rag server updates start <root>`.
+- Solo arm: one `uv run --no-sync vaultspec-rag index --type code --rebuild --json`
+  and one `--type vault --rebuild --json` on a rebuild-class root with nothing
+  else admitted, recording job wall-clock, the run's own work timer, admission
+  wait and in-run GPU-lock wait from the job record. The acceptance question is
+  narrow: a solo rebuild must not have regressed against the pre-gate solo
+  baseline, since the gate is meant to cost an uncontended job nothing.
+- Contended arm, if a staged one is still wanted after the production evidence
+  above: submit four rebuilds within a second of each other and compare the
+  window's total wall-clock and each job's admission wait against the solo arm.
+  Doing this with the gate disabled would require building the encode slot's
+  token count into configuration, which it deliberately is not - the slot is a
+  module constant precisely so nobody can widen it at runtime. That is why the
+  pre-gate side of any staged comparison can only come from the historical
+  records.
