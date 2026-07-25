@@ -22,17 +22,21 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ..config import EnvVar, reset_config
-from ..qdrant_runtime import (
+from ..qdrant_runtime._constants import (
     QDRANT_ASSET_SHA256,
     QDRANT_SERVER_VERSION,
-    ChecksumMismatchError,
     QdrantProvisionAction,
-    asset_for_platform,
-    binary_filename,
+)
+from ..qdrant_runtime._provision import (
+    ChecksumMismatchError,
     extract_verified_archive,
     file_sha256,
     provision,
     provisioned_versions,
+)
+from ..qdrant_runtime._resolve import (
+    asset_for_platform,
+    binary_filename,
     qdrant_bin_dir,
     resolve_binary,
 )
@@ -162,7 +166,7 @@ class TestPreExecDigestGuard:
         self, isolated_status_dir: Path
     ) -> None:
         from ..config import get_config
-        from ..qdrant_runtime import start_supervised_from_config
+        from ..qdrant_runtime._supervise import start_supervised_from_config
 
         _ = isolated_status_dir
         version_dir = qdrant_bin_dir()

@@ -31,7 +31,7 @@ from ..cli._service_lifecycle import (
     _status_env_label,
     _tail_daemon_log,
 )
-from ..torch_config import CU130_INDEX_URL
+from ..torch_config._constants import CU130_INDEX_URL
 
 pytestmark = [pytest.mark.unit]
 
@@ -174,7 +174,7 @@ class TestRemediationCommands:
         assert cmd.endswith("torch")
 
     def test_durable_command_pins_a_cu130_wheel_via_with(self) -> None:
-        from ..torch_config import TORCH_TOOL_PIN_VERSION
+        from ..torch_config._constants import TORCH_TOOL_PIN_VERSION
 
         cmd = durable_tool_install_command()
         assert CU130_INDEX_URL in cmd

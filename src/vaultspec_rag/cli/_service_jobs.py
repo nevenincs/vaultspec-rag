@@ -22,7 +22,7 @@ from .._job_errors import (
     classify_error_text,
     remediation,
 )
-from ..serviceclient import (
+from ..serviceclient._transport import (
     _try_http_delete_job,
     _try_http_get_job,
     _try_http_retry_job,

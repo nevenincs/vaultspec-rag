@@ -9,7 +9,8 @@ from typer.testing import CliRunner
 
 from ..cli import app
 from ..config import EnvVar
-from ..qdrant_runtime import QDRANT_SERVER_VERSION, binary_filename
+from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
+from ..qdrant_runtime._resolve import binary_filename
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from ...serviceclient import _do_http_call
+from ...serviceclient._transport import _do_http_call
 from ...storage_manifest import load_manifest, record_root, update_orphan_stamps
 from ...store import root_collection_prefix
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from functools import partial
 
-from ..serviceclient import _try_http_vault_document
+from ..serviceclient._transport import _try_http_vault_document
 from ._mcp import mcp
 from ._roots import _resolve_project_root
 from ._tools import (

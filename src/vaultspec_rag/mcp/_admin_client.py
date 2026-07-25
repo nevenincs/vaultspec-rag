@@ -19,7 +19,7 @@ from __future__ import annotations
 from functools import partial
 from typing import Any
 
-from ..serviceclient import _try_http_admin
+from ..serviceclient._transport import _try_http_admin
 from ._tools import (
     _delegate,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
     _require_port,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam

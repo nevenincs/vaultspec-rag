@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
-from ..torch_config import TorchConfigAction
+from ..torch_config._constants import TorchConfigAction
 
 if TYPE_CHECKING:
     from pathlib import Path

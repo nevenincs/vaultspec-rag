@@ -35,7 +35,7 @@ from ...job_models import (
 from ...registry import get_registry
 from ...server import _lifespan as server_lifespan
 from ...server._routes import ROUTES
-from ...serviceclient import (
+from ...serviceclient._transport import (
     _try_http_create_job,
     _try_http_delete_job,
     _try_http_get_job,

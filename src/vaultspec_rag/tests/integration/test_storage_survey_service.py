@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from ...serviceclient import _do_http_call, _try_http_admin
+from ...serviceclient._transport import _do_http_call, _try_http_admin
 from ...store import root_collection_prefix
 
 if TYPE_CHECKING:
