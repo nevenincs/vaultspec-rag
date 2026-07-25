@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Annotated, Any, cast
 
 import typer
+from typer.core import TyperGroup
 from vaultspec_core.config.workspace import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
     WorkspaceError,
     WorkspaceLayout,
@@ -41,7 +42,31 @@ __all__ = [
     "version_callback",
 ]
 
+class _LiteralArgvGroup(TyperGroup):
+    """Root command group that hands ``sys.argv`` to the parser verbatim.
+
+    On Windows, Click and Typer simulate Unix shell expansion before parsing:
+    every argument read from ``sys.argv`` goes through ``glob``,
+    ``expanduser``, and ``expandvars``. That is wrong for this CLI. Its path
+    options carry patterns matched against *indexed* project-relative paths,
+    not against files on disk, so filesystem expansion destroys them - a
+    quoted ``--include-path "src/**"`` arrives as one existing file per match,
+    the option keeps the first, and the rest reach the parser as unexpected
+    positional arguments. Quoting cannot prevent it, because the expansion
+    runs after the shell has already delivered the argument intact.
+
+    Refusing the behaviour here covers every entry point, because they all
+    funnel through this group's ``main``. Nothing is lost: the options that do
+    name real filesystem paths are expanded explicitly where they resolve.
+    """
+
+    def main(self, *args: Any, **kwargs: Any) -> Any:
+        kwargs["windows_expand_args"] = False
+        return super().main(*args, **kwargs)
+
+
 app = typer.Typer(
+    cls=_LiteralArgvGroup,
     help=(
         "VaultSpec RAG: search project documentation and source code by "
         "meaning.\n"
