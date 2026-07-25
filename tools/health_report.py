@@ -183,7 +183,7 @@ def report_function_limits(top: int) -> None:
 def report_module_length(top: int) -> None:
     _section(
         "Module length (physical LOC)",
-        "report-only via tools/module_length.py (threshold 1000)",
+        "enforced via tools/module_length.py (ceiling 3400, target 500)",
     )
     lengths: list[tuple[int, str]] = []
     for path in _python_files():
