@@ -7,6 +7,7 @@ date: '2026-07-25'
 modified: '2026-07-25'
 related:
   - '[[2026-07-25-index-resume-drift-race-adr]]'
+  - '[[2026-07-25-index-resume-drift-race-plan]]'
   - '[[2026-07-25-index-resume-drift-race-research]]'
 ---
 
@@ -18,7 +19,11 @@ Auto-generated index of all documents tagged with `#index-resume-drift-race`.
 
 ### adr
 
-- `2026-07-25-index-resume-drift-race-adr` - `index-resume-drift-race` adr: `seam the codebase indexer and give drift a single owner` | (**status:** `{proposed|accepted|rejected|superseded|deprecated}`)
+- `2026-07-25-index-resume-drift-race-adr` - `index-resume-drift-race` adr: `seam the codebase indexer and give drift a single owner` | (**status:** `accepted`)
+
+### plan
+
+- `2026-07-25-index-resume-drift-race-plan` - `index-resume-drift-race` plan
 
 ### research
 
