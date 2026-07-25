@@ -18,7 +18,7 @@ import time
 from functools import partial
 from typing import TYPE_CHECKING, NamedTuple
 
-from .._index_breadth import PUBLISHED_POINTS_KEY, parse_published_points
+from .._index_breadth import PUBLISHED_POINTS_KEY
 from .._job_errors import JobError, JobErrorKind
 from .._store_models import (
     generation_code_collection,
@@ -59,19 +59,16 @@ from ._content_policy import (
     RootContentPolicy,
     SourceProfileVersion,
 )
-from ._drift_owner import CodeDriftOwner
 from ._file_state import FileStateKind
+from ._generation_lifecycle import CodeGenerationLifecycle
 from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
 from ._route_migration import reconcile_generation_storage
 from ._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
 from ._run_ledger import (
     CommitUnitKind,
-    FinalizationPhase,
     RunLedgerCompatibilityError,
     RunOperation,
-    RunTerminalState,
 )
-from ._run_policy import RunPolicy
 from ._streaming import (
     CodeFileSegment,
     WeightedCodeSlice,
@@ -98,6 +95,7 @@ if TYPE_CHECKING:
     )
     from ._resolved_policy import ResolvedIndexPolicy
     from ._reuse import DonorReuseContext, ReuseStats
+    from ._run_policy import RunPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +134,22 @@ class _CodePipelineLimits(NamedTuple):
     sparse_dimension: int
     encode_batch_size: int
     flush_slices: int
+
+    @property
+    def run_configuration(self) -> CodeRunConfiguration:
+        """Project the limits a resumed generation must be compatible with."""
+        return CodeRunConfiguration(
+            segment_max_chunks=self.segment_max_chunks,
+            segment_max_bytes=self.segment_max_bytes,
+            queue_max_chunks=self.queue_max_chunks,
+            queue_max_bytes=self.queue_max_bytes,
+            slice_max_chunks=self.slice_max_chunks,
+            slice_max_bytes=self.slice_max_bytes,
+            sparse_enabled=self.sparse_enabled,
+            sparse_dimension=self.sparse_dimension,
+            encode_batch_size=self.encode_batch_size,
+            flush_slices=self.flush_slices,
+        )
 
 
 class CodebaseIndexer:
@@ -235,11 +249,15 @@ class CodebaseIndexer:
         self._support_measurement = SupportMeasurement(0, 0)
         self._support_limits: SupportProfileLimits | None = None
         self._support_profile_name: str | None = None
-        self._last_checkpoint: CodeRunCheckpoint | None = None
+        self._lifecycle = CodeGenerationLifecycle(
+            self.root_dir,
+            data_root=self._data_root,
+            meta_path=self._meta_path,
+            store=self.store,
+            load_meta=self._load_meta,
+            read_meta_raw=self._read_meta_raw,
+        )
         self._memory_budget: MemoryBudget | None = None
-        # Bound to the generation once a run opens its checkpoint, because
-        # superseding evidence is meaningless without one to supersede in.
-        self._drift_owner: CodeDriftOwner | None = None
 
     @property
     def support_measurement(self) -> SupportMeasurement:
@@ -249,7 +267,7 @@ class CodebaseIndexer:
     @property
     def last_checkpoint(self) -> CodeRunCheckpoint | None:
         """Return the latest run authority for service-domain projection."""
-        return self._last_checkpoint
+        return self._lifecycle.last_checkpoint
 
     @property
     def memory_budget_snapshot(self) -> MemoryBudgetSnapshot | None:
@@ -445,7 +463,7 @@ class CodebaseIndexer:
         """Clear per-run donor reuse and drift state at the start of a run."""
         self._reuse_stats = None
         self._donor_reuse = None
-        self._drift_owner = None
+        self._lifecycle.forget_open_generation()
         # Cleared per run so a generation target can never leak from a
         # finished rebuild into the next job on this indexer.
         self._code_build_target = None
@@ -459,11 +477,6 @@ class CodebaseIndexer:
         """Return this run's reuse telemetry block, or ``None`` when off."""
         stats = self._reuse_stats
         return stats.snapshot() if stats is not None else None
-
-    def _drift_snapshot(self) -> dict[str, object] | None:
-        """Return this run's drift telemetry, or ``None`` before a generation."""
-        owner = self._drift_owner
-        return owner.snapshot() if owner is not None else None
 
     def _classify_config_drift(self, membership: str, content: str) -> str:
         """Classify config drift against the stored epochs.
@@ -731,7 +744,7 @@ class CodebaseIndexer:
         since its digest was observed must be superseded and re-recorded, not
         allowed to fail a run that has otherwise succeeded.
         """
-        self.drift_owner.record_segments(segments, metadata)
+        self._lifecycle.drift_owner.record_segments(segments, metadata)
 
     def _consume_weighted_slice(
         self,
@@ -994,159 +1007,6 @@ class CodebaseIndexer:
             flush_slices=max(1, int(config.index_cache_flush_slices)),
         )
 
-    def _open_run_checkpoint(
-        self,
-        *,
-        policy: ResolvedIndexPolicy,
-        operation: RunOperation,
-        clean: bool,
-        limits: _CodePipelineLimits,
-        run_control: RunControl,
-    ) -> CodeRunCheckpoint:
-        """Open one compatible storage-confirmed code generation."""
-        from ..config import get_config
-
-        config = get_config()
-        model_identity = json.dumps(
-            {
-                "dense": str(config.embedding_model),
-                "sparse": (str(config.sparse_model) if limits.sparse_enabled else None),
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        checkpoint_configuration = CodeRunConfiguration(
-            segment_max_chunks=limits.segment_max_chunks,
-            segment_max_bytes=limits.segment_max_bytes,
-            queue_max_chunks=limits.queue_max_chunks,
-            queue_max_bytes=limits.queue_max_bytes,
-            slice_max_chunks=limits.slice_max_chunks,
-            slice_max_bytes=limits.slice_max_bytes,
-            sparse_enabled=limits.sparse_enabled,
-            sparse_dimension=limits.sparse_dimension,
-            encode_batch_size=limits.encode_batch_size,
-            flush_slices=limits.flush_slices,
-        )
-
-        def _open() -> CodeRunCheckpoint:
-            return CodeRunCheckpoint.open(
-                data_root=self._data_root,
-                root_dir=self.root_dir,
-                policy=policy,
-                run_policy=RunPolicy.from_config(run_control=run_control),
-                operation=operation,
-                clean=clean,
-                model_identity=model_identity,
-                dense_dimensions=limits.dense_dimension,
-                configuration=checkpoint_configuration,
-            )
-
-        checkpoint = _open()
-        if self._checkpoint_evidence_lost(checkpoint):
-            logger.warning(
-                "code collection is missing from storage but the run ledger "
-                "claims storage-confirmed progress; retiring generation %s "
-                "and re-encoding from scratch",
-                checkpoint.generation_id,
-            )
-            checkpoint.ledger.finish_generation(
-                checkpoint.generation_id,
-                RunTerminalState.INVALIDATED,
-                detail=(
-                    "code collection is missing from storage; the "
-                    "storage-confirmed evidence no longer describes anything"
-                ),
-            )
-            checkpoint = _open()
-        self._last_checkpoint = checkpoint
-        self._drift_owner = CodeDriftOwner(checkpoint, self.store)
-        return checkpoint
-
-    @property
-    def drift_owner(self) -> CodeDriftOwner:
-        """Return the open generation's drift owner.
-
-        Reaching this before a checkpoint is open means a caller is trying to
-        supersede evidence in a generation that does not exist yet.
-        """
-        owner = self._drift_owner
-        if owner is None:
-            raise RuntimeError("code drift ownership requires an open run checkpoint")
-        return owner
-
-    def _checkpoint_evidence_lost(self, checkpoint: CodeRunCheckpoint) -> bool:
-        """Return whether resumed storage-confirmed evidence points at nothing.
-
-        External destruction (a storage delete) drops the code collection but
-        leaves the per-root run ledger behind. Resuming such a generation
-        would skip its committed units with zero encoding and publish an
-        index whose committed portion no longer exists anywhere, so a
-        generation carrying commit evidence for an absent collection must be
-        retired rather than resumed.
-        """
-        has_evidence = (
-            checkpoint.ingestion_complete
-            or checkpoint.ledger.committed_unit_count(checkpoint.generation_id) > 0
-        )
-        return has_evidence and not self.store.code_collection_exists()
-
-    def _published_evidence_lost(self) -> bool:
-        """Return whether the store fails to back the carried incremental evidence.
-
-        Carried metadata and the run ledger outlive the points they describe.
-        Destruction drops the collection or part of it and leaves the sidecar
-        behind; an incremental diff against that metadata then classifies every
-        surviving file as unchanged, skips all encoding, and publishes a
-        "successful" result over points that are no longer there. Such evidence
-        must escalate to full failure-safe reconciliation instead of being
-        trusted.
-
-        Destruction is rarely total. A clean rebuild drops the collection and
-        then repopulates it incrementally, so an interrupted one leaves a
-        fragment - present, non-empty, and describing itself as whole. Asking
-        only whether the collection exists therefore misses the common case,
-        which is why the point count published alongside the sidecar is compared
-        as well: it is the only record of how much breadth the metadata claims.
-
-        A shortfall is any deficit. Publication happens after storage
-        reconciliation at every call site, so a complete index reads back
-        exactly what it published, and a legitimate shrink travels the
-        incremental path and republishes. Escalation is failure-safe and
-        republishes the count, so even a spurious one self-corrects on the next
-        run rather than latching.
-
-        A sidecar with no published count, or a store that cannot be counted,
-        yields "cannot tell" and keeps the existence-only behaviour: neither is
-        evidence of loss, and escalating on ignorance would rebuild every root
-        written by an older build.
-        """
-        if not self._load_meta():
-            return False
-        if not self.store.code_collection_exists():
-            return True
-        claimed = parse_published_points(self._read_meta_raw())
-        if claimed is None:
-            return False
-        try:
-            live = self.store.count_code()
-        except (OSError, RuntimeError):
-            logger.warning(
-                "Could not count the code collection to verify published "
-                "breadth; trusting the carried evidence for this run",
-                exc_info=True,
-            )
-            return False
-        if live >= claimed:
-            return False
-        logger.warning(
-            "Code collection holds %d of the %d points its published metadata "
-            "describes; escalating to a full failure-safe reconciliation "
-            "instead of trusting the carried evidence",
-            live,
-            claimed,
-        )
-        return True
-
     def _resume_pending_finalization(
         self,
         checkpoint: CodeRunCheckpoint,
@@ -1155,24 +1015,10 @@ class CodebaseIndexer:
         started_at: float,
     ) -> IndexResult | None:
         """Finish an ingestion-complete generation without re-entering writes."""
-        if checkpoint.generation.finalization_phase is FinalizationPhase.INGESTING:
+        if not self._lifecycle.publish_pending_finalization(
+            checkpoint, reporter=reporter
+        ):
             return None
-        reporter.phase_start("resume publication", 1)
-        try:
-            reconcile_generation_storage(
-                self.store,
-                checkpoint,
-                checkpoint.policy,
-                ContentKind.CODE,
-            )
-            checkpoint.publish_metadata(
-                self._meta_path,
-                published_points=self.store.count_code(),
-            )
-            checkpoint.publish_generation()
-            reporter.advance(1)
-        finally:
-            reporter.phase_end()
         return IndexResult(
             total=self.store.count_code(),
             added=0,
@@ -1185,7 +1031,7 @@ class CodebaseIndexer:
             preprocess_skipped=len(self._prep_skips),
             preprocess_failures=list(self._prep_skips),
             reuse=self._reuse_snapshot(),
-            drift=self._drift_snapshot(),
+            drift=self._lifecycle.drift_snapshot(),
         )
 
     def _unchanged_incremental_result(self, *, started_at: float) -> IndexResult:
@@ -1202,7 +1048,7 @@ class CodebaseIndexer:
             preprocess_skipped=len(self._prep_skips),
             preprocess_failures=list(self._prep_skips),
             reuse=self._reuse_snapshot(),
-            drift=self._drift_snapshot(),
+            drift=self._lifecycle.drift_snapshot(),
         )
 
     @staticmethod
@@ -1229,15 +1075,6 @@ class CodebaseIndexer:
             JobErrorKind.CHUNK_FAILED,
             "admitted code source produced no indexable chunks",
         )
-
-    @staticmethod
-    def _checkpoint_content_hash(content_hash: str) -> str | None:
-        """Return a content hash only when it has the checkpoint wire shape."""
-        if len(content_hash) == 128 and all(
-            char in "0123456789abcdef" for char in content_hash
-        ):
-            return content_hash
-        return None
 
     def _record_empty_source(
         self,
@@ -1266,7 +1103,9 @@ class CodebaseIndexer:
         if checkpoint is not None:
             checkpoint.record_empty_source(
                 result.rel_path,
-                content_hash=self._checkpoint_content_hash(result.content_hash),
+                content_hash=self._lifecycle.checkpoint_content_hash(
+                    result.content_hash
+                ),
             )
         logger.debug(
             "Converged empty source %s with no indexable content",
@@ -1291,7 +1130,9 @@ class CodebaseIndexer:
                 result.rel_path,
                 failure_state,
                 detail,
-                content_hash=self._checkpoint_content_hash(result.content_hash),
+                content_hash=self._lifecycle.checkpoint_content_hash(
+                    result.content_hash
+                ),
             )
         raise JobError(failure_kind, detail)
 
@@ -1589,36 +1430,13 @@ class CodebaseIndexer:
                 exc_info=True,
             )
 
-    def _checkpoint_ids_by_path(
-        self,
-        checkpoint: CodeRunCheckpoint,
-        rel_paths: set[str],
-        *,
-        retained: bool,
-    ) -> dict[str, set[str]]:
-        """Return bounded deterministic point evidence grouped by path."""
-        result: dict[str, set[str]] = {rel: set() for rel in rel_paths}
-        if retained:
-            for rel in rel_paths:
-                result[rel].update(
-                    checkpoint.ledger.iter_retained_point_ids(
-                        checkpoint.generation_id,
-                        rel_path=rel,
-                    )
-                )
-            return result
-        for unit in checkpoint.ledger.iter_units(checkpoint.generation_id):
-            if unit.kind is CommitUnitKind.UPSERT and unit.rel_path in result:
-                result[unit.rel_path].update(unit.point_ids)
-        return result
-
     def _incremental_prior_ids_by_path(
         self,
         checkpoint: CodeRunCheckpoint,
         rel_paths: set[str],
     ) -> dict[str, set[str]]:
         """Combine carried evidence with real current storage observations."""
-        result = self._checkpoint_ids_by_path(
+        result = self._lifecycle.checkpoint_ids_by_path(
             checkpoint,
             rel_paths,
             retained=True,
@@ -1642,7 +1460,7 @@ class CodebaseIndexer:
             if obsolete_ids:
                 self.store.delete_code_chunks(obsolete_ids)
             return
-        current_ids_by_path = self._checkpoint_ids_by_path(
+        current_ids_by_path = self._lifecycle.checkpoint_ids_by_path(
             checkpoint,
             set(prior_ids_by_path),
             retained=False,
@@ -1796,7 +1614,7 @@ class CodebaseIndexer:
         """Delete stale full-run identities and checkpoint removed paths."""
         stale_ids = sorted(existing_ids - retained_ids)
         removed_paths = set(previous_metadata) - set(metadata)
-        removed_ids_by_path = self._checkpoint_ids_by_path(
+        removed_ids_by_path = self._lifecycle.checkpoint_ids_by_path(
             checkpoint,
             removed_paths,
             retained=True,
@@ -1924,11 +1742,13 @@ class CodebaseIndexer:
             )
         )
         limits = self._resolve_code_pipeline_limits()
-        checkpoint = self._open_run_checkpoint(
+        checkpoint = self._lifecycle.open_checkpoint(
             policy=policy,
             operation=RunOperation.FULL,
             clean=effective_clean,
-            limits=limits,
+            configuration=limits.run_configuration,
+            dense_dimensions=limits.dense_dimension,
+            sparse_enabled=limits.sparse_enabled,
             run_control=run_control,
         )
         resumed_publication = self._resume_pending_finalization(
@@ -2099,7 +1919,7 @@ class CodebaseIndexer:
             preprocess_skipped=len(self._prep_skips),
             preprocess_failures=list(self._prep_skips),
             reuse=self._reuse_snapshot(),
-            drift=self._drift_snapshot(),
+            drift=self._lifecycle.drift_snapshot(),
         )
 
     def incremental_index(
@@ -2165,7 +1985,7 @@ class CodebaseIndexer:
     ) -> IndexResult:
         """Locked implementation of cooperative incremental indexing."""
         run_control.checkpoint()
-        if self._published_evidence_lost():
+        if self._lifecycle.published_evidence_lost():
             # The predicate has already logged which branch fired and, for a
             # shortfall, both counts. Naming only the absent-collection case
             # here would contradict it on the commoner path.
@@ -2257,11 +2077,13 @@ class CodebaseIndexer:
             return self._unchanged_incremental_result(started_at=start)
         limits = self._resolve_code_pipeline_limits()
         try:
-            checkpoint = self._open_run_checkpoint(
+            checkpoint = self._lifecycle.open_checkpoint(
                 policy=policy,
                 operation=RunOperation.INCREMENTAL,
                 clean=False,
-                limits=limits,
+                configuration=limits.run_configuration,
+                dense_dimensions=limits.dense_dimension,
+                sparse_enabled=limits.sparse_enabled,
                 run_control=run_control,
             )
         except RunLedgerCompatibilityError:
@@ -2286,7 +2108,7 @@ class CodebaseIndexer:
         run_control.checkpoint()
         # Scoped to the paths this run re-ingests: re-opening anything else
         # would drop its points without republishing them.
-        self.drift_owner.supersede_snapshot(
+        self._lifecycle.drift_owner.supersede_snapshot(
             {rel: current_hashes[rel] for rel in to_index}
         )
         run_control.checkpoint()
@@ -2337,7 +2159,7 @@ class CodebaseIndexer:
             preprocess_skipped=len(self._prep_skips),
             preprocess_failures=list(self._prep_skips),
             reuse=self._reuse_snapshot(),
-            drift=self._drift_snapshot(),
+            drift=self._lifecycle.drift_snapshot(),
         )
 
     def _scan_changed_paths(
@@ -2468,11 +2290,13 @@ class CodebaseIndexer:
             return self._unchanged_incremental_result(started_at=start)
         limits = self._resolve_code_pipeline_limits()
         try:
-            checkpoint = self._open_run_checkpoint(
+            checkpoint = self._lifecycle.open_checkpoint(
                 policy=policy,
                 operation=RunOperation.SCOPED_INCREMENTAL,
                 clean=False,
-                limits=limits,
+                configuration=limits.run_configuration,
+                dense_dimensions=limits.dense_dimension,
+                sparse_enabled=limits.sparse_enabled,
                 run_control=run_control,
             )
         except RunLedgerCompatibilityError:
@@ -2496,7 +2320,7 @@ class CodebaseIndexer:
         run_control.checkpoint()
         # Scoped to the paths this run re-ingests: re-opening anything else
         # would drop its points without republishing them.
-        self.drift_owner.supersede_snapshot(
+        self._lifecycle.drift_owner.supersede_snapshot(
             {rel: changed_hashes[rel] for rel in to_index}
         )
         run_control.checkpoint()
@@ -2550,7 +2374,7 @@ class CodebaseIndexer:
             preprocess_skipped=len(self._prep_skips),
             preprocess_failures=list(self._prep_skips),
             reuse=self._reuse_snapshot(),
-            drift=self._drift_snapshot(),
+            drift=self._lifecycle.drift_snapshot(),
         )
 
     def _get_chunk_ids_for_files(

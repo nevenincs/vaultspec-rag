@@ -1375,7 +1375,7 @@ class TestPublishedEvidenceRequiresStoredBreadth:
     fragment, which is how a truncated index becomes permanent.
 
     Each test here was proven able to fail, by mutating the one branch of
-    ``_published_evidence_lost`` it pins and observing the named assertion -
+    ``published_evidence_lost`` it pins and observing the named assertion -
     not a setup or import error - fail, then restoring and observing it pass:
 
     - short-collection: relaxing the comparison to ``live >= 0`` (the
@@ -1467,7 +1467,7 @@ class TestPublishedEvidenceRequiresStoredBreadth:
 
             assert store.code_collection_exists()
             assert store.count_code() == 2
-            assert indexer._published_evidence_lost() is True
+            assert indexer._lifecycle.published_evidence_lost() is True
         finally:
             store.close()
 
@@ -1486,7 +1486,7 @@ class TestPublishedEvidenceRequiresStoredBreadth:
                 published_points=3,
             )
 
-            assert indexer._published_evidence_lost() is False
+            assert indexer._lifecycle.published_evidence_lost() is False
         finally:
             store.close()
 
@@ -1510,7 +1510,7 @@ class TestPublishedEvidenceRequiresStoredBreadth:
                 published_points=None,
             )
 
-            assert indexer._published_evidence_lost() is False
+            assert indexer._lifecycle.published_evidence_lost() is False
         finally:
             store.close()
 
@@ -1528,7 +1528,7 @@ class TestPublishedEvidenceRequiresStoredBreadth:
             )
 
             assert not store.code_collection_exists()
-            assert indexer._published_evidence_lost() is True
+            assert indexer._lifecycle.published_evidence_lost() is True
         finally:
             store.close()
 
@@ -1542,6 +1542,6 @@ class TestPublishedEvidenceRequiresStoredBreadth:
             indexer = self._indexer(tmp_path, store)
             self._write_sidecar(indexer, files={}, published_points=64)
 
-            assert indexer._published_evidence_lost() is False
+            assert indexer._lifecycle.published_evidence_lost() is False
         finally:
             store.close()
