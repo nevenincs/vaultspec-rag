@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-06-30'
+modified: '2026-07-25'
 ---
 
 # Research: CodebaseIndexer Tech Stack — 2026 GPU-First
