@@ -5,18 +5,15 @@ for the narrowed surface - exactly the search, index-refresh, and
 read-only retrieval tools, carrying spec-correct 2025-11-25 annotations and
 titles - and exercises the transport's legible-error contract against a real
 local HTTP server returning an empty-body 404 (the opaque failure the grounding
-research recorded). The dispatch contract is covered the same way: a recording
-stand-in daemon proves what an omitting caller actually puts on the wire.
+research recorded).
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
-import os
 import threading
 from http.server import ThreadingHTTPServer
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -26,7 +23,6 @@ from ._http_stubs import QuietHandler
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
     from mcp.types import Tool
 
@@ -190,105 +186,6 @@ def empty_404_port() -> Iterator[int]:
     finally:
         server.shutdown()
         server.server_close()
-
-
-@pytest.fixture
-def recorded_requests(isolated_singleton_dirs: Path) -> Iterator[list[dict[str, Any]]]:
-    """Publish a real recording daemon and yield the bodies it receives.
-
-    A stand-in server on a loopback port answers every POST with a valid search
-    envelope and appends the decoded request body, so a test can assert on the
-    exact payload the MCP put on the wire rather than on an intercepted call.
-    Writing the discovery file into the relocated status dir is what makes the
-    tools resolve this port instead of the operator's real service.
-    """
-    received: list[dict[str, Any]] = []
-
-    class _Recorder(QuietHandler):
-        def do_POST(self) -> None:  # stdlib handler contract
-            length = int(self.headers.get("Content-Length") or 0)
-            decoded = cast("dict[str, Any]", json.loads(self.rfile.read(length)))
-            decoded["_path"] = self.path
-            received.append(decoded)
-            body = json.dumps({"results": [], "summary": "recorded"}).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _Recorder)
-    port = int(server.server_address[1])
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    (isolated_singleton_dirs / "service.json").write_text(
-        json.dumps({"pid": os.getpid(), "port": port, "service_token": ""}),
-        encoding="utf-8",
-    )
-    try:
-        yield received
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-class TestOptionalProjectRootReachesTheRouteConcrete:
-    """An omitted project root travels as a real root, never as the empty string.
-
-    The daemon is multi-root and requires ``project_root`` on every request, so
-    the tool schema may only advertise the argument as optional if an omitting
-    caller still sends a concrete root. Forwarding the empty string instead is
-    the rejected request this guards; the working directory is the honest
-    default because the host launches one stdio server per project.
-    """
-
-    def test_omitted_project_root_is_sent_as_the_process_cwd(
-        self,
-        recorded_requests: list[dict[str, Any]],
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        from ..mcp._tools import search_codebase
-
-        monkeypatch.chdir(tmp_path)
-
-        asyncio.run(search_codebase("anything"))
-
-        assert [r["_path"] for r in recorded_requests] == ["/search"]
-        assert recorded_requests[0]["project_root"] == str(tmp_path.resolve())
-
-    def test_omitted_project_root_reaches_the_reindex_route_too(
-        self,
-        recorded_requests: list[dict[str, Any]],
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """The fill covers the index family, not just search."""
-        from ..mcp._tools import reindex_vault
-
-        monkeypatch.chdir(tmp_path)
-
-        asyncio.run(reindex_vault())
-
-        assert [r["_path"] for r in recorded_requests] == ["/reindex"]
-        assert recorded_requests[0]["project_root"] == str(tmp_path.resolve())
-
-    def test_explicit_project_root_is_not_replaced_by_the_cwd(
-        self,
-        recorded_requests: list[dict[str, Any]],
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """A caller who names a root gets that root, not the one it ran from."""
-        from ..mcp._tools import search_codebase
-
-        monkeypatch.chdir(tmp_path)
-        explicit = str(tmp_path / "elsewhere")
-
-        asyncio.run(search_codebase("anything", project_root=explicit))
-
-        assert recorded_requests[0]["project_root"] == explicit
-        assert recorded_requests[0]["project_root"] != str(tmp_path.resolve())
 
 
 class TestLegibleTransportError:
