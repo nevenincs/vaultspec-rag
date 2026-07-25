@@ -95,9 +95,16 @@ you do not understand:
 same change. Additive fields do not bump the version.
 
 A reader that does not understand the pair must refuse the file, and this project's own
-client now does: an unrecognised `schema` or `version` resolves `degraded` with reason
-`pointer_incompatible` rather than being parsed on the assumption that its other fields
-mean what this reader expects.
+client enforces the pin rather than only writing it: a file declaring a `schema` or
+`version` this build does not recognise is refused, and none of its remaining fields are
+read on the assumption that they mean what this reader expects. A file declaring
+*neither* is the pre-discriminator case and is accepted; the next daemon heartbeat
+upgrades it in place. A file declaring one half without the other is a partial write and
+is refused.
+
+Where the refused file is the machine pointer of a live lock holder, the resolution is
+`degraded` with reason `pointer_incompatible`, never `absent`: something owns the
+singleton, and reporting it as stopped would invite a caller to start a second daemon.
 
 Do not confuse this pair with `package_version`. The pair describes the *shape of this
 file*; `package_version` describes the *release of the daemon that wrote it*. A client
