@@ -47,11 +47,27 @@ def _chunk(path: str, identity: str) -> CodeChunk:
 
 
 def _segments(path: str) -> tuple[CodeFileSegment, CodeFileSegment]:
-    first = _chunk(path, "first")
-    second = _chunk(path, "second")
+    # Point identities are unique per generation, so scope them to the path to
+    # keep segments for two paths from claiming the same points.
+    stem = path.rpartition("/")[2].partition(".")[0]
+    first = _chunk(path, f"{stem}_first")
+    second = _chunk(path, f"{stem}_second")
     return (
         CodeFileSegment(path, 0, (first,), 128, False),
         CodeFileSegment(path, 1, (second,), 128, True),
+    )
+
+
+def _index_path(checkpoint: CodeRunCheckpoint, path: str, digest: str) -> None:
+    for segment in _segments(path):
+        checkpoint.record_confirmed_segment(segment, digest)
+
+
+def _interrupt(checkpoint: CodeRunCheckpoint, detail: str) -> None:
+    checkpoint.ledger.finish_generation(
+        checkpoint.generation_id,
+        RunTerminalState.CANCELLED,
+        detail=detail,
     )
 
 
@@ -160,6 +176,92 @@ def test_confirmed_weighted_slice_records_all_segments_atomically(
     assert tuple(checkpoint.pending_segments((first,), digests[first.path])) == ()
     assert tuple(checkpoint.pending_segments((second,), digests[second.path])) == ()
     assert checkpoint.run_policy.snapshot().durable_progress_count == 1
+
+
+def test_drifted_path_maps_to_the_digest_recorded_when_it_was_indexed(
+    tmp_path: Path,
+) -> None:
+    checkpoint = _open(tmp_path)
+    indexed_digest = _digest("before the edit")
+    _index_path(checkpoint, "src/drifted.py", indexed_digest)
+    _interrupt(checkpoint, "interrupted after one path was indexed")
+
+    resumed = _open(tmp_path)
+    assert resumed.generation_id == checkpoint.generation_id
+
+    # The mapped value is the superseded evidence, not the freshly observed
+    # digest: the caller needs the recorded digest to clear the stale units
+    # that claim the published points. Returning the observed digest instead
+    # would leave the old evidence in place and duplicate the content.
+    assert resumed.drifted_indexed_paths(
+        {"src/drifted.py": _digest("after the edit")}
+    ) == {"src/drifted.py": indexed_digest}
+
+
+def test_unchanged_indexed_path_is_not_reported_as_drifted(tmp_path: Path) -> None:
+    checkpoint = _open(tmp_path)
+    digest = _digest("stable source")
+    _index_path(checkpoint, "src/stable.py", digest)
+    _interrupt(checkpoint, "interrupted after one path was indexed")
+
+    resumed = _open(tmp_path)
+    assert resumed.drifted_indexed_paths({"src/stable.py": digest}) == {}
+
+
+def test_paths_without_indexed_evidence_are_never_reported_as_drifted(
+    tmp_path: Path,
+) -> None:
+    checkpoint = _open(tmp_path)
+    rejected_digest = _digest("an empty source")
+    checkpoint.record_empty_source("src/empty.py", content_hash=rejected_digest)
+    # A path whose first segment was confirmed but never reached its file end
+    # carries committed units without an indexed state.
+    checkpoint.record_confirmed_segment(
+        _segments("src/partial.py")[0],
+        _digest("a partially ingested source"),
+    )
+    _interrupt(checkpoint, "interrupted before any path was indexed")
+
+    resumed = _open(tmp_path)
+    # Only an indexed state is evidence a caller must supersede; a converged
+    # rejection, a half-ingested path, and an unknown path carry none, so a
+    # differing digest for any of them is an ordinary first ingestion.
+    assert resumed.drifted_indexed_paths(
+        {
+            "src/empty.py": _digest("no longer empty"),
+            "src/partial.py": _digest("a changed partial source"),
+            "src/unknown.py": _digest("never seen before"),
+        }
+    ) == {}
+
+
+def test_fresh_generation_reports_no_drifted_paths(tmp_path: Path) -> None:
+    checkpoint = _open(tmp_path)
+
+    assert checkpoint.drifted_indexed_paths(
+        {
+            "src/first.py": _digest("first source"),
+            "src/second.py": _digest("second source"),
+        }
+    ) == {}
+
+
+def test_indexed_path_outside_the_observed_digests_is_not_reported(
+    tmp_path: Path,
+) -> None:
+    checkpoint = _open(tmp_path)
+    _index_path(checkpoint, "src/carried.py", _digest("carried source"))
+    _index_path(checkpoint, "src/reingested.py", _digest("before the edit"))
+    _interrupt(checkpoint, "interrupted after two paths were indexed")
+
+    resumed = _open(tmp_path)
+    # The lookup is scoped to the supplied observation, so a carried indexed
+    # path the caller did not observe is left alone. Reporting it would
+    # re-open a path this run never re-ingests, dropping its published points
+    # with nothing to replace them.
+    assert resumed.drifted_indexed_paths(
+        {"src/reingested.py": _digest("after the edit")}
+    ) == {"src/reingested.py": _digest("before the edit")}
 
 
 def test_checkpoint_signature_drift_starts_a_new_generation(tmp_path: Path) -> None:
