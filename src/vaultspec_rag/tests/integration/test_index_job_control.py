@@ -59,7 +59,15 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.integration
 
 _CONTROL_WAIT_SECONDS = 20.0
-_MANAGED_WAIT_SECONDS = 60.0
+# Generous on purpose. These waits bound a real job - process-pool chunking, a
+# real encode of the whole corpus, then publication - on whatever machine the
+# suite happens to run on. A bound tuned to an idle machine turns ordinary load
+# into a failure, and a suite that fails under load cannot be used to judge
+# whether a change regressed anything: the A/B it is asked for returns noise.
+# Sixty seconds was such a bound; a passing run of the managed rebuild took
+# 68.8s wall-clock on a host also running the resident daemon. The only thing
+# these should catch is a job that has genuinely stopped making progress.
+_MANAGED_WAIT_SECONDS = 240.0
 _CONTROL_POLL_SECONDS = 0.001
 
 
