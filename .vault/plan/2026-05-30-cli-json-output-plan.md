@@ -16,7 +16,35 @@ wrapping output in a `{"ok": bool, "command": str, "data" | "error" + "message"}
 (agents, CI, MCP clients) branch on a structured contract
 instead of scraping Rich tables.
 
-## Proposed Changes
+### Phase `P01` - Envelope helpers
+
+Provide one success and one failure envelope helper writing a single JSON document to standard output, and teach the shared error renderers to honour JSON mode.
+
+- [x] `P01.S01` - Add the success and failure envelope helpers that serialise exactly one JSON document to standard output with a single trailing newline, the failure helper carrying the exit code; `src/vaultspec_rag/cli/_render.py`.
+- [x] `P01.S02` - Teach the shared error renderers to honour JSON mode so an unreachable service and a rejected call emit the envelope rather than human text; `src/vaultspec_rag/cli/_render.py`.
+
+### Phase `P02` - High-traffic commands
+
+Wire the flag onto search, index and status, suppressing spinners and conditional warnings so a JSON run emits nothing but its envelope.
+
+- [x] `P02.S03` - Wire the flag onto the search command, suppressing the spinner and routing results and both error paths through the envelope; `src/vaultspec_rag/cli/_search.py`.
+- [x] `P02.S04` - Wire the flag onto the index and status commands, serialising the per-source summary and the index-status shape through the envelope; `src/vaultspec_rag/cli/_index.py`.
+
+### Phase `P03` - Service commands
+
+Wire the flag across the service verbs, preserving their exit codes and turning each rendered panel into one envelope.
+
+- [x] `P03.S05` - Wire the flag onto the service status verb, serialising the lifecycle signals, heartbeat age, derived state and backend capabilities while preserving its exit codes; `src/vaultspec_rag/cli/_service_status.py`.
+- [x] `P03.S06` - Wire the flag onto the remaining service verbs so each rendered panel becomes exactly one envelope with its exit code preserved; `src/vaultspec_rag/cli/_service_start.py`.
+
+### Phase `P04` - Tests, documentation and smoke
+
+Prove every command emits exactly one envelope on success and failure, that no stray output reaches standard output in JSON mode, and document the contract.
+
+- [x] `P04.S07` - Cover every command for exactly one envelope on both the success and the failure path, and assert no spinner, warning or progress output reaches standard output in JSON mode; `src/vaultspec_rag/tests/`.
+- [x] `P04.S08` - Document the envelope contract and the flag across the project README, the package README, and the shipped discovery rule; `README.md`.
+
+## Description
 
 - `_emit_json` + `_emit_json_error_and_exit` helpers in
   `cli.py`.
@@ -33,7 +61,7 @@ instead of scraping Rich tables.
   payload shapes where they exist.
 - Tests, docs, smoke.
 
-## Tasks
+## Steps
 
 ### Phase 1 — helpers
 
