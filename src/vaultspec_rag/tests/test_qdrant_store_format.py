@@ -18,7 +18,6 @@ reason; the mutation each one catches is named in its own docstring.
 from __future__ import annotations
 
 import json
-import socket
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -47,6 +46,7 @@ from ..server._lifespan import (
     _service_health_status,  # pyright: ignore[reportPrivateUsage]
 )
 from ..store_schema import CONFORMING, NONCONFORMING, UNVERIFIABLE
+from ._ports import free_loopback_port
 from .conftest import managed_env
 
 if TYPE_CHECKING:
@@ -63,18 +63,6 @@ def _make_collection(storage: Path, name: str) -> Path:
     col.mkdir(parents=True, exist_ok=True)
     (col / "segment.bin").write_bytes(b"data")
     return col
-
-
-def _free_loopback_port() -> int:
-    """A loopback port nothing is listening on, so the gate is what refuses.
-
-    The default port may be held by the operator's own running service, which
-    the decision layer correctly refuses as a foreign holder before the format
-    gate is ever reached.
-    """
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
 
 
 def _identity_for(storage: Path, version: str) -> QdrantIdentity:
@@ -387,7 +375,7 @@ class TestSpawnGateRefusesBeforeSpawning:
             **{
                 EnvVar.QDRANT_STORAGE_DIR.value: str(storage),
                 EnvVar.QDRANT_BINARY.value: str(binary),
-                EnvVar.QDRANT_PORT.value: str(_free_loopback_port()),
+                EnvVar.QDRANT_PORT.value: str(free_loopback_port()),
             }
         ):
             reset_config()
