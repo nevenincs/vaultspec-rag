@@ -57,6 +57,20 @@ class BreadthShortfall(NamedTuple):
         """Points the publication claimed that the collection no longer holds."""
         return self.published - self.live
 
+    def as_index_state_block(self) -> dict[str, int]:
+        """Return the canonical ``index_state["shortfall"]`` block.
+
+        One projection, so the in-process search path and the daemon hand a
+        renderer the same keys. A second construction site would let the two
+        drift, and a renderer reading a key only one of them emits would go
+        quiet on exactly the surface that lacked it.
+        """
+        return {
+            "published_count": self.published,
+            "live_count": self.live,
+            "missing_count": self.missing,
+        }
+
 
 def parse_published_points(raw: Mapping[str, str]) -> int | None:
     """Return the point count a sidecar mapping claims, or ``None`` for no claim.

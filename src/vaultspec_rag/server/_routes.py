@@ -287,13 +287,32 @@ def _search_index_state(
     # adapter names the deficit without comparing counts itself. Absence means
     # complete or unknowable; a consumer must not read it as either one alone.
     if published_points is not None:
-        published = int(published_points)
-        state["shortfall"] = {
-            "published_count": published,
-            "live_count": count,
-            "missing_count": published - count,
-        }
+        from .._index_breadth import BreadthShortfall
+
+        state["shortfall"] = BreadthShortfall(
+            published=int(published_points), live=count
+        ).as_index_state_block()
     return state
+
+
+def _search_summary(count: int, index_state: dict[str, object]) -> str:
+    """Return the one-line summary, naming a demonstrated shortfall inline.
+
+    An adapter that surfaces only the summary would otherwise report a
+    confident count drawn from an index known to be missing points. The
+    deficit belongs in the sentence a reader actually reads, not solely in a
+    nested field they have to go looking for.
+    """
+    found = f"Found {count} relevant items."
+    shortfall = index_state.get("shortfall")
+    if not isinstance(shortfall, dict):
+        return found
+    figures = cast("dict[str, object]", shortfall)
+    return (
+        f"{found} Warning: this index holds {figures['live_count']} of the "
+        f"{figures['published_count']} sections it published, so an absent "
+        "result is not evidence that no such item exists."
+    )
 
 
 def _empty_search_diagnostics(
@@ -1305,7 +1324,7 @@ def _execute_search_request(
         response: dict[str, object] = {
             "request_id": request_id,
             "results": items,
-            "summary": f"Found {len(results)} relevant items.",
+            "summary": _search_summary(len(results), index_state),
             "filtered": notes.get("dropped_domains"),
             "path_filter": notes.get("path_filter"),
             "timing": {

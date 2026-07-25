@@ -376,13 +376,7 @@ def _try_in_process_search(
 
         shortfall = code_breadth_shortfall(target, counts[PublicSourceType.CODE])
         if shortfall is not None:
-            envelope["index_state"] = {
-                "shortfall": {
-                    "published_count": shortfall.published,
-                    "live_count": shortfall.live,
-                    "missing_count": shortfall.missing,
-                }
-            }
+            envelope["index_state"] = {"shortfall": shortfall.as_index_state_block()}
     try:
         status_ctx = (
             _cli.console.status(f"Searching {search_type.value}...")
