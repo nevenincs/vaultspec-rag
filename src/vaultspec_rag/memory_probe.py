@@ -604,6 +604,33 @@ class MemoryBudget:
         self._raise_if_latched()
         measured_rss = _measure_rss_mb()
         measured_cuda = _measure_cuda_mb() if self.cuda_ceiling_mb is not None else None
+        return self.sample_readings(
+            label=label,
+            rss_mb=measured_rss,
+            cuda_mb=measured_cuda,
+        )
+
+    def sample_readings(
+        self,
+        *,
+        label: str,
+        rss_mb: float | None,
+        cuda_mb: tuple[float, float] | None,
+    ) -> MemoryBudgetSnapshot:
+        """Enforce the budget over readings the caller already holds.
+
+        What a set of readings means for enforcement does not depend on how
+        they were obtained, and the distinction this method carries is the
+        load-bearing one: the enforced CUDA peak is the job's own captured
+        forward maximum, while the live allocated and reserved figures stay
+        diagnostics. A process-global reading taken while a sibling holds the
+        device must therefore not decide this job's outcome.
+
+        ``None`` means the corresponding probe had nothing to report.
+        """
+        self._raise_if_latched()
+        measured_rss = rss_mb
+        measured_cuda = cuda_mb
         return self._record(
             label=label,
             rss_mb=measured_rss if measured_rss is not None else 0.0,

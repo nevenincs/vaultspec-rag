@@ -255,37 +255,34 @@ def test_route_shaping_is_absent_when_no_resilience_recorded() -> None:
     assert _job_resilience({"resilience": None}) is None
 
 
-def test_budget_enforces_captured_job_peak_not_process_global_counter(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_budget_enforces_captured_job_peak_not_process_global_counter() -> None:
     """Cross-job contamination guard for CUDA ceiling enforcement.
 
     A checkpoint must enforce the job's own lock-bracketed forward peak,
-    never a process-global reading that spans concurrent jobs. The patched
-    live measurement plays a sibling's mid-flight forward (far above this
-    job's ceiling); the assertion is narrow on purpose - it catches the
-    mutation that re-points ``sample``'s enforced peak at any process-wide
-    counter, which raises ``cuda_memory_ceiling`` here despite this job's
-    own demand sitting well under its ceiling.
+    never a process-global reading that spans concurrent jobs. The readings
+    below play a sibling's mid-flight forward (far above this job's ceiling);
+    the assertion is narrow on purpose - it catches the mutation that
+    re-points the enforced peak at any process-wide counter, which raises
+    ``cuda_memory_ceiling`` here despite this job's own demand sitting well
+    under its ceiling.
+
+    The readings are stated rather than measured: what a given reading must
+    mean for enforcement does not depend on a machine presenting it, and
+    ``sample`` is exactly this call preceded by the two probes.
     """
-    from .. import memory_probe
     from ..memory_probe import MemoryBudget
 
-    monkeypatch.setattr(memory_probe, "_measure_rss_mb", lambda: 100.0)
-    # A sibling job's forward is in flight at checkpoint time: the
-    # process-global allocated reading dwarfs this job's ceiling.
-    monkeypatch.setattr(
-        memory_probe,
-        "_measure_cuda_mb",
-        lambda: (9000.0, 9500.0),
-    )
     sibling = MemoryBudget(cuda_ceiling_mb=20000.0)
     sibling.record_forward_peak_mb(9000.0)
     budget = MemoryBudget(cuda_ceiling_mb=1000.0)
     budget.record_forward_peak_mb(500.0)
     # The field failure mode: a non-forward checkpoint taken while a
     # sibling holds the GPU. It must be admitted.
-    snapshot = budget.sample("code producer queue wait")
+    snapshot = budget.sample_readings(
+        label="code producer queue wait",
+        rss_mb=100.0,
+        cuda_mb=(9000.0, 9500.0),
+    )
 
     # Enforced peak is the job's own captured maximum...
     assert snapshot.peak_cuda_allocated_mb == 500.0
