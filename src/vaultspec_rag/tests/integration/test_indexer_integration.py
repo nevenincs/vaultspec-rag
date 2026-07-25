@@ -894,3 +894,144 @@ class TestIncrementalModifyAndDelete:
             target.write_text(original_content, encoding="utf-8")
             # Re-index to restore
             indexer.incremental_index(reporter=NullProgressReporter())
+
+
+# ---------------------------------------------------------------------------
+# A resumed run over a tree that is still being written.
+# ---------------------------------------------------------------------------
+
+
+def _revise_code_memory_corpus(root: Path, count: int, marker: str) -> None:
+    """Rewrite every corpus file in place, changing content but not structure.
+
+    Content only: a file that vanished or stopped parsing would fail the run
+    for a reason that has nothing to do with drift, and the claim under test is
+    specifically that changed content no longer aborts it.
+    """
+    source = root / "src"
+    for ordinal in range(count):
+        (source / f"memory_{ordinal:03d}.py").write_text(
+            f"def memory_{ordinal:03d}() -> str:\n"
+            f'    return "alpha beta gamma index memory'
+            f' {marker} {ordinal:03d}"\n',
+            encoding="utf-8",
+        )
+
+
+class _CorpusChurn:
+    """A real second writer rewriting the tree while an index runs.
+
+    Not a stub for concurrency - it is the condition itself. #262 was observed
+    against a tree of roughly 710 files being rewritten by another process, and
+    the window this exercises only exists while something else is writing.
+    """
+
+    def __init__(self, root: Path, count: int) -> None:
+        self._root = root
+        self._count = count
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._churn,
+            name="corpus-churn",
+            daemon=True,
+        )
+        self.revisions = 0
+
+    def _churn(self) -> None:
+        while not self._stop.is_set():
+            self.revisions += 1
+            _revise_code_memory_corpus(
+                self._root,
+                self._count,
+                f"rev{self.revisions:04d}",
+            )
+            time.sleep(0.005)
+
+    def __enter__(self) -> _CorpusChurn:
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._stop.set()
+        self._thread.join(timeout=30)
+
+
+def _cancel_after_first_code_slice(store: object, token: object) -> None:
+    """Cancel only once production storage has published one real slice."""
+    from ... import VaultStore
+    from ...job_control import RunControlToken
+
+    assert isinstance(store, VaultStore)
+    assert isinstance(token, RunControlToken)
+    deadline = time.monotonic() + 60.0
+    while time.monotonic() < deadline:
+        if store.count_code() > 0:
+            assert token.request_cancel()
+            return
+        time.sleep(0.01)
+    raise AssertionError("the code run never published a slice to cancel")
+
+
+@pytest.mark.timeout(600)
+def test_a_resumed_code_run_over_a_moving_tree_completes(
+    cpu_code_embedding_model: EmbeddingModel,
+    tmp_path: Path,
+) -> None:
+    """A resumed run whose tree keeps changing finishes instead of aborting.
+
+    The reported defect: a resumed generation carries indexed evidence, a file
+    changes between the digest snapshot and the moment its units are recorded,
+    and the indexed-path upsert guard fails the entire job. Both preconditions
+    are built here for real - an interrupted attempt to resume from, and a
+    second process rewriting the tree throughout the run.
+
+    The assertion is deliberately the whole-run outcome rather than a
+    particular drift count. Whether any single path lands inside the window is
+    a matter of timing, and a test that demanded it would be flaky; a run that
+    aborts, however, is the defect, and that cannot happen by timing.
+    """
+    from ... import CodebaseIndexer, VaultStore
+    from ...job_control import CancelRequested, RunControlToken
+
+    count = 8
+    _write_code_memory_corpus(tmp_path, count)
+    dimension = cpu_code_embedding_model.dimension
+    with VaultStore(tmp_path, embedding_dim=dimension) as store:
+        indexer = CodebaseIndexer(tmp_path, cpu_code_embedding_model, store)
+
+        # Interrupt a real attempt so the next one resumes carrying the indexed
+        # paths of a generation that never published.
+        token = RunControlToken()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            canceller = executor.submit(_cancel_after_first_code_slice, store, token)
+            with pytest.raises(CancelRequested):
+                indexer.full_index(
+                    reporter=NullProgressReporter(),
+                    preflight=indexer.preflight_content(),
+                    run_control=token,
+                )
+            canceller.result(timeout=60)
+
+        interrupted = indexer.last_checkpoint
+        assert interrupted is not None
+        assert not interrupted.generation.complete
+
+        # Resume while the tree is actively rewritten underneath the run.
+        with _CorpusChurn(tmp_path, count) as churn:
+            result = indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+            )
+            assert churn.revisions > 0
+
+        # The run reached a real outcome rather than dying on the guard, and it
+        # reports its drift accounting either way.
+        assert result.total > 0
+        assert result.drift is not None
+        assert set(result.drift) == {
+            "superseded_paths",
+            "deferred_paths",
+            "collisions_observed",
+            "retry_budget",
+        }
+        _assert_code_pipeline_released(indexer)
