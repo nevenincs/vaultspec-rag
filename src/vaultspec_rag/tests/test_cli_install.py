@@ -155,7 +155,7 @@ class TestRenderInstallReport:
         return buf.getvalue()
 
     def test_warning_with_literal_toml_keys_preserved(self) -> None:
-        from ..commands import InstallReport
+        from ..commands._models import InstallReport
 
         warning = (
             "torch-config patched, but `torch` is not a direct dependency. "
@@ -181,7 +181,7 @@ class TestRenderInstallReport:
         the new INSTALL-03 tail. ``[project]`` and ``[tool]`` tokens
         in uv's own error rendering must survive.
         """
-        from ..commands import InstallReport
+        from ..commands._models import InstallReport
 
         report = InstallReport(
             action="install",
@@ -204,7 +204,7 @@ class TestRenderInstallReport:
         future maintainer cannot accidentally collapse the two-line
         treatment back into a single ``f"... {conflict}"`` print).
         """
-        from ..commands import InstallReport
+        from ..commands._models import InstallReport
 
         report = InstallReport(
             action="install",
@@ -223,7 +223,7 @@ class TestRenderInstallReport:
         must reach the colour map. A regression that dropped it would
         render the label in default-white instead of yellow.
         """
-        from ..commands import InstallReport
+        from ..commands._models import InstallReport
 
         report = InstallReport(
             action="install",
@@ -234,7 +234,7 @@ class TestRenderInstallReport:
         assert "PyTorch configuration: needs confirmation" in out
 
     def test_dry_run_uses_operator_language(self) -> None:
-        from ..commands import InstallReport
+        from ..commands._models import InstallReport
 
         report = InstallReport(
             action="dry_run",
@@ -265,7 +265,7 @@ class TestRenderInstallReport:
             SyncResult,
         )
 
-        from ..commands import InstallReport
+        from ..commands._models import InstallReport
 
         claude = SyncResult(
             added=1,
@@ -315,7 +315,7 @@ class TestRenderInstallReport:
             SyncResult,
         )
 
-        from ..commands import InstallReport
+        from ..commands._models import InstallReport
 
         report = InstallReport(
             action="install",
@@ -356,7 +356,7 @@ class TestRenderUninstallReport:
         return buf.getvalue()
 
     def test_warning_with_literal_toml_keys_preserved(self) -> None:
-        from ..commands import UninstallReport
+        from ..commands._models import UninstallReport
 
         report = UninstallReport(
             action="uninstall",
@@ -373,7 +373,7 @@ class TestRenderUninstallReport:
         """INSTALL-08 follow-up: uninstall now has ``error`` in its
         colour map. Just verify the label reaches the renderer.
         """
-        from ..commands import UninstallReport
+        from ..commands._models import UninstallReport
 
         report = UninstallReport(
             action="uninstall",
@@ -384,7 +384,7 @@ class TestRenderUninstallReport:
         assert "PyTorch configuration: error" in out
 
     def test_dry_run_uses_operator_language(self) -> None:
-        from ..commands import UninstallReport
+        from ..commands._models import UninstallReport
 
         report = UninstallReport(
             action="dry_run",
@@ -417,7 +417,7 @@ class TestRenderUninstallReport:
             assert forbidden not in out
 
     def test_mcp_extra_result_is_preserved_in_json_and_human_output(self) -> None:
-        from ..commands import UninstallReport
+        from ..commands._models import UninstallReport
 
         report = UninstallReport(
             action="uninstall",
@@ -437,7 +437,7 @@ class TestRenderUninstallReport:
             SyncResult,
         )
 
-        from ..commands import UninstallReport
+        from ..commands._models import UninstallReport
 
         provider_result = SyncResult(
             pruned=2,
