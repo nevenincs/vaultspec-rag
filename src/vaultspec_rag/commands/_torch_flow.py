@@ -5,8 +5,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from .. import torch_config
-from ..torch_config import TorchConfigAction
+from ..torch_config import _direct_dep, _inspect, _mutate
+from ..torch_config._constants import (
+    DIRECT_TORCH_REQUIREMENT,
+    TorchConfigAction,
+    TorchConfigState,
+)
 from ._util import _exception_caused_by
 from ._uv_sync import _run_uv_sync_torch
 
@@ -99,7 +103,7 @@ def _handle_canonical_state(
 
 def _handle_customised_state(pyproject: Path, report: InstallReport) -> None:
     try:
-        report_patch = torch_config.apply_patch(pyproject)
+        report_patch = _mutate.apply_patch(pyproject)
     except Exception as exc:
         logger.error("torch_config.apply_patch failed on CUSTOMISED: %s", exc)
         report.torch_config_action = TorchConfigAction.ERROR
@@ -141,30 +145,30 @@ def _run_torch_config_install(
 
     pyproject = target / "pyproject.toml"
     try:
-        state = torch_config.detect_state(pyproject)
+        state = _inspect.detect_state(pyproject)
     except Exception as exc:
         logger.error("torch_config.detect_state failed: %s", exc)
         report.torch_config_action = TorchConfigAction.ERROR
         report.warnings.append(f"torch-config inspect failed: {exc}")
         return
 
-    if state == torch_config.TorchConfigState.NO_PROJECT_FILE:
+    if state == TorchConfigState.NO_PROJECT_FILE:
         report.torch_config_action = TorchConfigAction.ABSENT
         report.warnings.append(
             f"no pyproject.toml at {pyproject}; skipped torch-config patch"
         )
         return
-    if state == torch_config.TorchConfigState.CANONICAL:
+    if state == TorchConfigState.CANONICAL:
         _handle_canonical_state(pyproject, target, report, sync_after, torch_group)
         return
-    if state == torch_config.TorchConfigState.CUSTOMISED:
+    if state == TorchConfigState.CUSTOMISED:
         _handle_customised_state(pyproject, report)
         return
 
     # state is MISSING.
     if dry_run:
         report.torch_config_action = TorchConfigAction.DRY_RUN
-        if not torch_config.has_direct_torch_dep(pyproject)[0]:
+        if not _direct_dep.has_direct_torch_dep(pyproject)[0]:
             preview_location = (
                 f"[dependency-groups].{torch_group}"
                 if torch_group is not None
@@ -172,7 +176,7 @@ def _run_torch_config_install(
             )
             report.warnings.append(
                 "(dry-run preview) torch-config would add "
-                f"direct dependency `{torch_config.DIRECT_TORCH_REQUIREMENT}` to "
+                f"direct dependency `{DIRECT_TORCH_REQUIREMENT}` to "
                 f"{preview_location} so uv applies the cu130 source pin."
             )
             if torch_group is not None:
@@ -183,7 +187,7 @@ def _run_torch_config_install(
         return
 
     try:
-        patch_report = torch_config.apply_patch(pyproject)
+        patch_report = _mutate.apply_patch(pyproject)
     except Exception as exc:
         logger.error("torch_config.apply_patch failed: %s", exc)
         report.torch_config_action = TorchConfigAction.ERROR
@@ -229,15 +233,13 @@ def _ensure_torch_direct_dep(
     requested group target, the existing placement is left untouched and
     a warning explains it will not be moved.
     """
-    dep_report = torch_config.ensure_direct_torch_dep(
-        pyproject, torch_group=torch_group
-    )
+    dep_report = _direct_dep.ensure_direct_torch_dep(pyproject, torch_group=torch_group)
     report.torch_direct_dep_action = dep_report.action
     report.torch_direct_dep_location = dep_report.location
     report.torch_config_conflicts.extend(dep_report.conflicts)
     if dep_report.action == "applied":
         report.warnings.append(
-            f"added direct dependency `{torch_config.DIRECT_TORCH_REQUIREMENT}` to "
+            f"added direct dependency `{DIRECT_TORCH_REQUIREMENT}` to "
             f"{dep_report.location} so uv applies the cu130 torch source pin."
         )
         if torch_group is not None:
@@ -283,26 +285,26 @@ def _run_torch_config_uninstall(
     """
     pyproject = target / "pyproject.toml"
     try:
-        state = torch_config.detect_state(pyproject)
+        state = _inspect.detect_state(pyproject)
     except Exception as exc:
         logger.error("torch_config.detect_state failed: %s", exc)
         report.torch_config_action = TorchConfigAction.ERROR
         report.warnings.append(f"torch-config inspect failed: {exc}")
         return
 
-    if state == torch_config.TorchConfigState.NO_PROJECT_FILE:
+    if state == TorchConfigState.NO_PROJECT_FILE:
         report.torch_config_action = TorchConfigAction.ABSENT
         return
-    if state == torch_config.TorchConfigState.MISSING:
+    if state == TorchConfigState.MISSING:
         report.torch_config_action = TorchConfigAction.ABSENT
         return
-    if state == torch_config.TorchConfigState.CUSTOMISED:
+    if state == TorchConfigState.CUSTOMISED:
         # remove_patch is safe to call on CUSTOMISED - it short-circuits
         # before any write and returns the conflict list. Call it in
         # both dry-run and wet modes so the report is symmetric with
         # the install side (which calls apply_patch unconditionally).
         try:
-            patch_report = torch_config.remove_patch(pyproject)
+            patch_report = _mutate.remove_patch(pyproject)
         except Exception as exc:
             logger.error("torch_config.remove_patch failed on CUSTOMISED: %s", exc)
             report.torch_config_action = TorchConfigAction.ERROR
@@ -323,7 +325,7 @@ def _run_torch_config_uninstall(
         return
 
     try:
-        patch_report = torch_config.remove_patch(pyproject)
+        patch_report = _mutate.remove_patch(pyproject)
     except Exception as exc:
         logger.error("torch_config.remove_patch failed: %s", exc)
         report.torch_config_action = TorchConfigAction.ERROR
@@ -332,13 +334,13 @@ def _run_torch_config_uninstall(
     report.torch_config_action = patch_report.action
     report.torch_config_conflicts = list(patch_report.conflicts)
     if patch_report.action == TorchConfigAction.REMOVED:
-        dep_report = torch_config.remove_managed_direct_torch_dep(pyproject)
+        dep_report = _direct_dep.remove_managed_direct_torch_dep(pyproject)
         report.torch_direct_dep_action = dep_report.action
         report.torch_direct_dep_location = dep_report.location
         report.torch_config_conflicts.extend(dep_report.conflicts)
         if dep_report.action == "removed":
             report.warnings.append(
                 "removed vaultspec-rag managed "
-                f"`{torch_config.DIRECT_TORCH_REQUIREMENT}` from "
+                f"`{DIRECT_TORCH_REQUIREMENT}` from "
                 f"{dep_report.location}."
             )

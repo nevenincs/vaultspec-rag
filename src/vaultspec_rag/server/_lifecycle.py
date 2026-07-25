@@ -104,9 +104,9 @@ def _status_file_path() -> Path:
 
 def _qdrant_discovery_fields() -> dict[str, object]:
     """Return daemon-observed Qdrant identity fields for one snapshot."""
-    from .. import qdrant_runtime as _qr
+    from ..qdrant_runtime import _supervise
 
-    supervisor = _qr.active_supervisor()
+    supervisor = _supervise.active_supervisor()
     if supervisor is None:
         return {}
     from ..qdrant_runtime._resolve import read_qdrant_identity
@@ -449,9 +449,9 @@ def _qdrant_liveness_tick() -> None:
     intervenes. There is deliberately no background sweeper - this
     rides the existing heartbeat cadence.
     """
-    from .. import qdrant_runtime as _qr
+    from ..qdrant_runtime import _supervise
 
-    supervisor = _qr.active_supervisor()
+    supervisor = _supervise.active_supervisor()
     if supervisor is None or supervisor.is_alive():
         return
     if supervisor.restart_count >= 1:
