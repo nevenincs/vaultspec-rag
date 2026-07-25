@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
+import http.server
 import os
+import threading
+import time
 import typing
 
 import pytest
@@ -17,8 +21,43 @@ from ._cli_helpers import (
     app,
     runner,
 )
+from ._http_stubs import QuietHandler
 
 pytestmark = [pytest.mark.unit]
+
+
+@contextlib.contextmanager
+def _misbehaving_service(*, stall_seconds: float = 0.0):
+    """Serve a live-but-broken response, optionally after stalling.
+
+    A live service that answers with something unusable is a different
+    condition from a dead one, and the caller must not conflate them. Both are
+    produced here by a real socket: a stall outlasts the client timeout, and a
+    non-JSON body is exactly what an unrelated server on the port would send.
+    """
+    body = b"<html>not the service you are looking for</html>"
+
+    class _Handler(QuietHandler):
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(length)
+            if stall_seconds:
+                time.sleep(stall_seconds)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield int(server.server_address[1])
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 class TestSearchTimeoutDefaults:
@@ -348,84 +387,52 @@ class TestMcpFastPath:
         )
         assert result is None
 
-    def test_live_but_broken_returns_structured_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
-        """Non-connection-refused exception yields ok=False dict, not None.
+    def test_live_but_broken_returns_structured_error(self) -> None:
+        """A live-but-unusable service yields ok=False, never None.
 
-        Without this discrimination the caller would treat a
-        live-but-broken service the same as a dead one and silently
-        relane to the unsafe in-process path. The fix preserves the
-        ``None`` -> dead-service semantic for ConnectionRefused only.
+        Without this discrimination the caller treats a broken service the
+        same as a dead one and silently relanes to the unsafe in-process path.
+        The server here is genuinely listening and genuinely answering with
+        something unusable, which is the condition being discriminated.
         """
-
         from .. import cli as cli_mod
 
-        def _boom(*_args: object, **_kwargs: object) -> None:
-            raise RuntimeError("synthetic live-but-broken tool failure")
+        with _misbehaving_service() as port:
+            result = cli_mod._try_http_search("q", "code", 5, port, "/tmp/proj")
 
-        monkeypatch.setattr(
-            "vaultspec_rag.serviceclient._transport._do_http_call", _boom
-        )
-
-        result = cli_mod._try_http_search(
-            "q",
-            "code",
-            5,
-            8766,
-            "/tmp/proj",
-        )
         assert isinstance(result, dict)
         assert result.get("ok") is False
-        assert result.get("error") == "http_call_failed"
-        assert "synthetic live-but-broken" in str(result.get("message", ""))
+        # The real code for a live server answering with something unusable.
+        # The substituted version raised RuntimeError and so asserted
+        # http_call_failed - a code this condition does not actually produce.
+        assert result.get("error") == "invalid_service_response"
 
-    def test_live_but_broken_reindex_returns_structured_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_live_but_broken_reindex_returns_structured_error(self) -> None:
         """Same discrimination for _try_http_reindex."""
-
         from .. import cli as cli_mod
 
-        def mock_timeout(*_a: object, **_kw: object) -> None:
-            raise TimeoutError("synthetic mcp timeout")
+        with _misbehaving_service() as port:
+            result = cli_mod._try_http_reindex(
+                "vault", False, port, "/tmp/proj", initiator_kind="cli"
+            )
 
-        monkeypatch.setattr(
-            "vaultspec_rag.serviceclient._transport._do_http_call", mock_timeout
-        )
-
-        result = cli_mod._try_http_reindex(
-            "vault",
-            False,
-            8766,
-            "/tmp/proj",
-            initiator_kind="cli",
-        )
         assert isinstance(result, dict)
         assert result.get("ok") is False
-        assert result.get("error") == "http_call_failed"
 
-    def test_connection_refused_still_returns_none(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
-        """Explicit ConnectionRefusedError must keep the dead-service path."""
+    def test_connection_refused_still_returns_none(self) -> None:
+        """A refused connection must keep the dead-service path.
 
+        Nothing is bound on this port, so the refusal comes from the operating
+        system rather than a substituted transport - which is the only way to
+        know the caller still reads a real refusal as a dead service.
+        """
         from .. import cli as cli_mod
 
-        def _refuse(*_args: object, **_kwargs: object) -> None:
-            raise ConnectionRefusedError("port closed")
+        with contextlib.closing(__import__("socket").socket()) as probe:
+            probe.bind(("127.0.0.1", 0))
+            dead_port = probe.getsockname()[1]
 
-        monkeypatch.setattr(
-            "vaultspec_rag.serviceclient._transport._do_http_call", _refuse
-        )
-
-        result = cli_mod._try_http_search(
-            "q",
-            "code",
-            5,
-            8766,
-            "/tmp/proj",
-        )
+        result = cli_mod._try_http_search("q", "code", 5, dead_port, "/tmp/proj")
         assert result is None
 
 
