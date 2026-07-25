@@ -60,6 +60,7 @@ from ._content_policy import (
     SourceProfileVersion,
 )
 from ._file_state import FileStateKind
+from ._path_drift import CodePathDriftOwner
 from ._preprocess_runner import PreprocessAbortError
 from ._route_migration import reconcile_generation_storage
 from ._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
@@ -67,6 +68,7 @@ from ._run_ledger import (
     CommitUnitKind,
     FinalizationPhase,
     RunLedgerCompatibilityError,
+    RunLedgerIndexedPathCollisionError,
     RunOperation,
     RunTerminalState,
 )
@@ -327,6 +329,11 @@ class CodebaseIndexer:
         self._content_policy = content_policy or RootContentPolicy(
             SourceProfileVersion.CONVENTIONAL_V1
         )
+        self._discovery = CodeContentDiscovery(
+            root_dir,
+            content_policy=self._content_policy,
+            extra_excludes=self._extra_excludes,
+        )
         # Indexer-level writer lock that serializes full_index and
         # incremental_index against each other on the same instance,
         # preventing a concurrent reindex race.
@@ -366,6 +373,7 @@ class CodebaseIndexer:
         self._support_limits: SupportProfileLimits | None = None
         self._support_profile_name: str | None = None
         self._last_checkpoint: CodeRunCheckpoint | None = None
+        self._drift: CodePathDriftOwner | None = None
         self._memory_budget: MemoryBudget | None = None
 
     @property
@@ -524,22 +532,6 @@ class CodebaseIndexer:
                 )
             )
             yield segment
-
-    @property
-    def _discovery(self) -> CodeContentDiscovery:
-        """Build the discovery collaborator from this indexer's live inputs.
-
-        Rebuilt per access rather than captured at construction: the three
-        inputs that decide admission (root, content policy, extra excludes)
-        are plain attributes that lightweight consumers assign directly onto
-        an instance they never ran ``__init__`` on, so a value frozen in the
-        constructor would be absent or stale for them.
-        """
-        return CodeContentDiscovery(
-            self.root_dir,
-            content_policy=getattr(self, "_content_policy", None),
-            extra_excludes=getattr(self, "_extra_excludes", ()),
-        )
 
     def _resolve_operation_policy(self) -> ResolvedIndexPolicy:
         """Resolve and validate one immutable snapshot before mutation authority."""
@@ -1291,14 +1283,92 @@ class CodebaseIndexer:
                 return
             yield segment
 
-    @staticmethod
     def _record_confirmed_slice(
+        self,
         checkpoint: CodeRunCheckpoint,
         segments: tuple[CodeFileSegment, ...],
         metadata: dict[str, str],
     ) -> None:
-        """Persist the file units covered by one confirmed store mutation."""
-        checkpoint.record_confirmed_segments(segments, metadata)
+        """Persist the file units covered by one confirmed store mutation.
+
+        A path rewritten while this run was encoding it cannot be recorded
+        over its own indexed evidence, and the ledger refuses the write to
+        keep the old and new content from being published side by side. That
+        refusal is a repairable signal rather than a run failure: the drift
+        owner supersedes the path and the same units are recorded again. Only
+        a path that keeps moving is given up on, and the run still completes.
+        """
+        drift = self._drift_owner(checkpoint)
+        pending = self._admit_undeferred(drift, segments)
+        while pending:
+            abandoned = drift.settle_pending(pending, metadata)
+            if abandoned:
+                pending = tuple(
+                    segment for segment in pending if segment.path not in abandoned
+                )
+                continue
+            try:
+                checkpoint.record_confirmed_segments(pending, metadata)
+            except RunLedgerIndexedPathCollisionError as collision:
+                if not collision.is_drift:
+                    raise
+                pending = self._settle_slice_collision(drift, collision, pending)
+                continue
+            return
+
+    def _admit_undeferred(
+        self,
+        drift: CodePathDriftOwner,
+        segments: tuple[CodeFileSegment, ...],
+    ) -> tuple[CodeFileSegment, ...]:
+        """Drop segments belonging to a path this run already gave up on."""
+        deferred = drift.deferred_paths
+        if not deferred:
+            return segments
+        abandoned = frozenset(
+            chunk.id
+            for segment in segments
+            if segment.path in deferred
+            for chunk in segment.chunks
+        )
+        if abandoned:
+            self.store.delete_code_chunks(sorted(abandoned))
+        return tuple(segment for segment in segments if segment.path not in deferred)
+
+    def _settle_slice_collision(
+        self,
+        drift: CodePathDriftOwner,
+        collision: RunLedgerIndexedPathCollisionError,
+        pending: tuple[CodeFileSegment, ...],
+    ) -> tuple[CodeFileSegment, ...]:
+        """Repair or abandon the one racing path this mutation stalled on."""
+        rel_path = collision.rel_path
+        protected = frozenset(
+            chunk.id
+            for segment in pending
+            if segment.path == rel_path
+            for chunk in segment.chunks
+        )
+        if drift.budget_exhausted(rel_path):
+            drift.defer(rel_path, protected)
+            return tuple(segment for segment in pending if segment.path != rel_path)
+        indexed_digest = collision.indexed_digest
+        assert indexed_digest is not None
+        drift.supersede(rel_path, indexed_digest, protected_ids=protected)
+        return pending
+
+    def _drift_owner(self, checkpoint: CodeRunCheckpoint) -> CodePathDriftOwner:
+        """Return the drift owner bound to this run's generation.
+
+        The per-path retry budget only means anything if the same owner sees
+        every mutation of one run, so the owner outlives an individual slice
+        and is rebuilt only when the generation it repairs changes.
+        """
+        owner = self._drift
+        if owner is None or owner.checkpoint is not checkpoint:
+            owner = CodePathDriftOwner(self.store, checkpoint)
+            self._drift = owner
+        return owner
 
     def _consume_weighted_slice(
         self,
@@ -1626,6 +1696,7 @@ class CodebaseIndexer:
             )
             checkpoint = _open()
         self._last_checkpoint = checkpoint
+        self._drift = CodePathDriftOwner(self.store, checkpoint)
         return checkpoint
 
     def _checkpoint_evidence_lost(self, checkpoint: CodeRunCheckpoint) -> bool:
@@ -2184,47 +2255,16 @@ class CodebaseIndexer:
         checkpoint: CodeRunCheckpoint,
         current_digests: dict[str, str],
     ) -> int:
-        """Supersede resumed indexed evidence for paths that changed since.
+        """Sweep resumed evidence for paths that moved before dispatch.
 
-        A resumed generation carries the indexed paths of the attempt that
-        failed. Any of those whose source changed in the meantime cannot be
-        recognised as already committed, because commit-unit identity binds
-        the source digest, and cannot be written over an indexed path either.
-        Superseding them here - before any segment is dispatched - is what
-        turns a resumed attempt over a moving tree into an ordinary one.
-
-        Deleting the published points is not optional. Chunk identity embeds
-        the line span and a content hash, so re-ingesting changed content
-        mints new identities rather than overwriting the old ones; leaving
-        them would replace a visible failure with silently duplicated
-        content.
-
-        The points are dropped from storage first and the units that claim
-        them are removed immediately after. No separate deletion unit is
-        recorded, because a point identity may belong to only one commit
-        unit: while the superseded upsert still claims these points, nothing
-        else can, and once it is gone the ledger holds no claim on them at
-        all - which is exactly what their removal from storage means. An
-        interruption between the two steps replays cleanly, because the path
-        is still recorded indexed under the old digest and is simply
-        re-opened again, finding no points left to drop.
+        The sweep closes only the part of the window that had already opened
+        when the run started. Everything that moves afterwards is settled at
+        record time by the same owner, which is why both live there.
 
         Returns:
             The number of paths re-opened.
         """
-        drifted = checkpoint.drifted_indexed_paths(current_digests)
-        for rel_path, superseded_digest in sorted(drifted.items()):
-            stale_ids = sorted(self._get_chunk_ids_for_files({rel_path}))
-            if stale_ids:
-                self.store.delete_code_chunks(stale_ids)
-            checkpoint.reopen_drifted_path(rel_path, superseded_digest)
-        if drifted:
-            logger.info(
-                "Re-opened %d resumed code path(s) whose source changed since "
-                "the interrupted attempt indexed them",
-                len(drifted),
-            )
-        return len(drifted)
+        return self._drift_owner(checkpoint).reopen_drifted(current_digests)
 
     def _incremental_prior_ids_by_path(
         self,
