@@ -643,8 +643,6 @@ class TestJsonStdoutPurityAcrossCommands:
                 "x",
                 "--type",
                 "vault",
-                # Literal pattern with no glob meta-chars to avoid
-                # Windows argv-globbing surprises in subprocess.
                 "--include-path",
                 "nonexistent/file.py",
                 "--json",
