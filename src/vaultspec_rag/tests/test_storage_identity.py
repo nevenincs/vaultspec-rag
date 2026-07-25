@@ -30,6 +30,8 @@ from ..store import root_collection_prefix
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from ..store import VaultStore
+
 pytestmark = [pytest.mark.unit]
 
 
@@ -272,7 +274,7 @@ class TestStoreVerifiesOnEnsure:
     """
 
     @staticmethod
-    def _open(root: Path, dim: int = 64) -> object:
+    def _open(root: Path, dim: int = 64) -> VaultStore:
         from ..store import VaultStore
 
         return VaultStore(root, embedding_dim=dim)
@@ -280,10 +282,10 @@ class TestStoreVerifiesOnEnsure:
     def test_created_collection_is_conforming(self, tmp_path: Path) -> None:
         store = self._open(tmp_path)
         try:
-            store.ensure_table()  # type: ignore[attr-defined]
-            verdicts = store.conformance_verdicts()  # type: ignore[attr-defined]
+            store.ensure_table()
+            verdicts = store.conformance_verdicts()
         finally:
-            store.close()  # type: ignore[attr-defined]
+            store.close()
 
         assert verdicts["vault_docs"].verdict == store_schema.CONFORMING
 
@@ -298,16 +300,16 @@ class TestStoreVerifiesOnEnsure:
 
         store = self._open(tmp_path, dim=64)
         try:
-            store.ensure_table()  # type: ignore[attr-defined]
+            store.ensure_table()
         finally:
-            store.close()  # type: ignore[attr-defined]
+            store.close()
 
         reopened = self._open(tmp_path, dim=128)
         try:
             with pytest.raises(StorageGeometryError, match="128"):
-                reopened.ensure_table()  # type: ignore[attr-defined]
+                reopened.ensure_table()
         finally:
-            reopened.close()  # type: ignore[attr-defined]
+            reopened.close()
 
     def test_model_swap_is_nonconforming_and_does_not_raise(
         self, tmp_path: Path
@@ -319,11 +321,11 @@ class TestStoreVerifiesOnEnsure:
         duration of the rebuild that is the remedy.
         """
         store = self._open(tmp_path)
-        local_dir = store.db_path  # type: ignore[attr-defined]
+        local_dir = store.db_path
         try:
-            store.ensure_table()  # type: ignore[attr-defined]
+            store.ensure_table()
         finally:
-            store.close()  # type: ignore[attr-defined]
+            store.close()
 
         # Rewrite the stamp as an older model of identical width - the exact
         # shape that no epoch, digest, or dimension check can see.
@@ -334,10 +336,10 @@ class TestStoreVerifiesOnEnsure:
 
         reopened = self._open(tmp_path)
         try:
-            reopened.ensure_table()  # type: ignore[attr-defined]
-            verdict = reopened.conformance_verdicts()["vault_docs"]  # type: ignore[attr-defined]
+            reopened.ensure_table()
+            verdict = reopened.conformance_verdicts()["vault_docs"]
         finally:
-            reopened.close()  # type: ignore[attr-defined]
+            reopened.close()
 
         assert verdict.verdict == store_schema.NONCONFORMING
         assert not verdict.geometry_fatal
@@ -353,20 +355,20 @@ class TestStoreVerifiesOnEnsure:
         restores the silent pass.
         """
         store = self._open(tmp_path)
-        local_dir = store.db_path  # type: ignore[attr-defined]
+        local_dir = store.db_path
         try:
-            store.ensure_table()  # type: ignore[attr-defined]
+            store.ensure_table()
         finally:
-            store.close()  # type: ignore[attr-defined]
+            store.close()
 
         sidecar_path(local_dir).unlink()
 
         reopened = self._open(tmp_path)
         try:
-            reopened.ensure_table()  # type: ignore[attr-defined]
-            verdict = reopened.conformance_verdicts()["vault_docs"]  # type: ignore[attr-defined]
+            reopened.ensure_table()
+            verdict = reopened.conformance_verdicts()["vault_docs"]
         finally:
-            reopened.close()  # type: ignore[attr-defined]
+            reopened.close()
 
         assert verdict.verdict == store_schema.UNVERIFIABLE
 

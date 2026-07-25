@@ -123,6 +123,12 @@ def _shape_survey_payload(
                 "code_points": s.code_points,
                 "document_points": s.document_points,
                 "footprint_bytes": s.footprint_bytes,
+                # What produced each collection. An empty map means the
+                # namespace predates stamping, which is an unknown rather than
+                # a problem - the survey has always reported how much is
+                # stored, and this is the first thing it can say about what
+                # made it.
+                "models": s.models,
                 "temp_rooted": is_temp_rooted(s.root),
             }
             for s in bounded

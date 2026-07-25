@@ -87,6 +87,10 @@ class NamespaceSurvey:
         collections: The stored collection names sharing this prefix.
         points: Total point count across the namespace's collections.
         footprint_bytes: Total on-disk footprint, when known.
+        models: The dense model stamped on each collection of this namespace,
+            keyed by collection name. Absent keys are collections created
+            before stamping existed; the survey reports point counts and
+            footprint but had nothing to say about what produced them.
     """
 
     prefix: str
@@ -98,6 +102,10 @@ class NamespaceSurvey:
     code_points: int = 0
     document_points: int = 0
     footprint_bytes: int = 0
+    # Defaulted so the second construction site, which surveys a live server
+    # without a manifest read, keeps working and simply reports nothing about
+    # provenance rather than reporting a value it never looked up.
+    models: dict[str, str] = field(default_factory=dict)
 
 
 def _kind_points(names: list[str], counts: dict[str, int], suffix: str) -> int:
@@ -147,14 +155,21 @@ def classify_namespaces(
         entry = manifest.get(prefix)
         if entry is None:
             root, status = None, "unknown"
+            models: dict[str, str] = {}
         else:
             root, status = entry.root, classify_root(entry)
+            models = {
+                name: identity.dense_model
+                for name, identity in entry.collection_identity.items()
+                if name in names
+            }
         surveys.append(
             NamespaceSurvey(
                 prefix=prefix,
                 root=root,
                 status=status,
                 collections=sorted(names),
+                models=models,
                 points=sum(counts.get(n, 0) for n in names),
                 vault_points=_kind_points(
                     names,
