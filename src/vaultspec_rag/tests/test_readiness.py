@@ -125,10 +125,11 @@ class TestComputeReadinessShape:
     def test_report_round_trips_through_json(self) -> None:
         data = compute_readiness().to_dict()
         restored = json.loads(json.dumps(data))
-        # The report carries the bounded storage-schema descriptor and the
-        # config-derived support profile alongside the readiness dimensions.
-        # The set is exact: readiness stays a bounded snapshot rather than
-        # accreting into a general health console.
+        # The report carries the bounded storage-schema descriptor, the
+        # config-derived support profile and the reporting build's package
+        # release alongside the readiness dimensions. The set is exact:
+        # readiness stays a bounded snapshot rather than accreting into a
+        # general health console.
         assert set(restored.keys()) == {
             "ready",
             "server_mode",
@@ -136,6 +137,7 @@ class TestComputeReadinessShape:
             "degraded_reasons",
             "support_profile",
             "schema",
+            "package_version",
         }
         assert [d["name"] for d in restored["dependencies"]] == list(_DIMENSIONS)
         assert restored["schema"]["version"] == _STORAGE_SCHEMA_VERSION

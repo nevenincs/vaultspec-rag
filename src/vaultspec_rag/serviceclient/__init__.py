@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from ._discovery import (
     DISCOVERY_REASON_POINTER_FOREIGN,
+    DISCOVERY_REASON_POINTER_INCOMPATIBLE,
     DISCOVERY_REASON_POINTER_INVALID,
     DISCOVERY_REASON_POINTER_MISSING,
     DISCOVERY_REASON_POINTER_STALE,
@@ -27,7 +28,19 @@ from ._discovery import (
     _read_service_status,
     _status_dir,
     _status_file,
+    discovery_payload_supported,
     resolve_machine_service,
+)
+from ._release import (
+    RELEASE_FIELD,
+    RELEASE_MATCH,
+    RELEASE_MISMATCH,
+    RELEASE_UNKNOWN,
+    ReleaseCompatibility,
+    compare_release,
+    local_release,
+    payload_release,
+    payload_release_compatibility,
 )
 from ._transport import (
     DEFAULT_SEARCH_TIMEOUT_SECONDS,
@@ -50,6 +63,7 @@ from ._transport import (
 __all__ = [
     "DEFAULT_SEARCH_TIMEOUT_SECONDS",
     "DISCOVERY_REASON_POINTER_FOREIGN",
+    "DISCOVERY_REASON_POINTER_INCOMPATIBLE",
     "DISCOVERY_REASON_POINTER_INVALID",
     "DISCOVERY_REASON_POINTER_MISSING",
     "DISCOVERY_REASON_POINTER_STALE",
@@ -60,7 +74,12 @@ __all__ = [
     "DISCOVERY_STATE_ABSENT",
     "DISCOVERY_STATE_DEGRADED",
     "DISCOVERY_STATE_READY",
+    "RELEASE_FIELD",
+    "RELEASE_MATCH",
+    "RELEASE_MISMATCH",
+    "RELEASE_UNKNOWN",
     "MachineResolution",
+    "ReleaseCompatibility",
     "_default_service_port",
     "_delete_service_status",
     "_do_http_call",
@@ -80,5 +99,10 @@ __all__ = [
     "_try_http_search",
     "_try_http_set_job_desired_state",
     "_try_http_vault_document",
+    "compare_release",
+    "discovery_payload_supported",
+    "local_release",
+    "payload_release",
+    "payload_release_compatibility",
     "resolve_machine_service",
 ]

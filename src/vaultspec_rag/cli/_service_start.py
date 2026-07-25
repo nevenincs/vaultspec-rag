@@ -20,6 +20,13 @@ import typer
 import vaultspec_rag.cli as _cli
 
 from ..config import EnvVar, get_config
+from ..serviceclient._release import (
+    RELEASE_MATCH,
+    ReleaseCompatibility,
+    compare_release,
+    payload_release,
+    payload_release_compatibility,
+)
 from ._app import _global_target, server_app
 from ._core import logger
 from ._gpu_errors import (
@@ -128,6 +135,27 @@ def _ensure_qdrant_binary(
         )
 
 
+def _release_envelope(release: ReleaseCompatibility) -> dict[str, object]:
+    """Render the release verdict as one stable structured field.
+
+    Emitted on every start outcome that reaches a daemon, matched or not, so a
+    broker reads the pairing from a field that is always present instead of
+    inferring it from the absence of a warning.
+    """
+    return {
+        "verdict": release.verdict,
+        "client": release.client,
+        "service": release.service,
+    }
+
+
+def _release_warning_lines(release: ReleaseCompatibility) -> tuple[str, ...]:
+    """Return the human warning for a pairing that is not a confirmed match."""
+    if release.verdict == RELEASE_MATCH:
+        return ()
+    return (f"Release: {release.summary()}",)
+
+
 def _health_service_pid(health: dict[str, object], fallback_pid: int) -> int:
     serving_pid = health.get("pid")
     if isinstance(serving_pid, int) and serving_pid > 0:
@@ -170,8 +198,8 @@ def _tail_daemon_log(log_path: Path, max_lines: int = 6) -> list[str]:
     return lines[-max_lines:]
 
 
-def _existing_service_running() -> tuple[int, int, str] | None:
-    """Return ``(pid, port, health_status)`` of an owned serving daemon, else ``None``.
+def _existing_service_running() -> tuple[int, int, str, str | None] | None:
+    """Return ``(pid, port, health_status, release)`` of an owned daemon, else ``None``.
 
     Detection only - it no longer prints, so the caller renders the human
     "already running" lines or the JSON envelope from one shared detection path
@@ -179,6 +207,10 @@ def _existing_service_running() -> tuple[int, int, str] | None:
     ``/health`` status (``ready`` / ``degraded`` / ``error``) so the caller can
     distinguish a serving-and-healthy daemon from one that answers but cannot
     serve yet (issue #237) instead of calling every response "running".
+    ``release`` is the daemon's own published package release, or ``None`` when
+    it publishes none; identity confirms only that this daemon is *ours*, and a
+    daemon left behind by a different install of this tool passes that check,
+    so the caller needs the release to tell the two apart.
     Removes the status file only when its recorded PID is confirmed dead; an
     ambiguous identity/health miss on a *live* PID leaves the file untouched so
     a transient probe failure cannot erase a running daemon's discovery file
@@ -202,7 +234,12 @@ def _existing_service_running() -> tuple[int, int, str] | None:
             health_status = (
                 raw_status if isinstance(raw_status, str) and raw_status else "error"
             )
-            return (existing_pid, existing_port, health_status)
+            return (
+                existing_pid,
+                existing_port,
+                health_status,
+                payload_release(health),
+            )
     # Identity or health did not confirm a live service we own. Remove the
     # status file only when the recorded PID is confirmed dead; leave it in
     # place on an ambiguous miss against a live PID (issue #204).
@@ -415,7 +452,15 @@ def _attach_existing_service(
     attach_extra: dict[str, object] = (
         {"warnings": list(caller_warnings)} if caller_warnings else {}
     )
-    existing_pid, existing_port, health_status = existing
+    existing_pid, existing_port, health_status, service_release = existing
+    # Attaching is the moment a client binds to a daemon it did not start, so
+    # it is where a release disagreement has to become visible. The verdict
+    # travels with the outcome rather than gating it: this remains an
+    # already-satisfied success, and a client that refused to attach could not
+    # stop the daemon it is complaining about either.
+    release = compare_release(service_release)
+    attach_extra["release"] = _release_envelope(release)
+    release_lines = _release_warning_lines(release)
     if health_status == "ready":
         _start_success(
             json_mode,
@@ -424,6 +469,7 @@ def _attach_existing_service(
             human_lines=(
                 _process_line(existing_pid),
                 _address_line(existing_port),
+                *release_lines,
             ),
             pid=existing_pid,
             port=existing_port,
@@ -440,6 +486,7 @@ def _attach_existing_service(
             "The service is serving but not fully ready; searches may "
             "fail or queue until it recovers.",
             "Watch: vaultspec-rag server status",
+            *release_lines,
         ),
         pid=existing_pid,
         port=existing_port,
@@ -904,6 +951,11 @@ def _emit_start_succeeded(
     _update_service_metadata(_status_metadata_from_health(health, pid=serving_pid))
     startup_s = time.perf_counter() - t0
     extra: dict[str, object] = {"warnings": list(env_warnings)} if env_warnings else {}
+    # The daemon runs in the interpreter this CLI selected for it, which is not
+    # necessarily this CLI's own install, so a freshly started daemon can still
+    # be a different release than the client that started it.
+    release = payload_release_compatibility(health)
+    extra["release"] = _release_envelope(release)
     raw_status = health.get("status")
     health_status = raw_status if isinstance(raw_status, str) and raw_status else ""
     reason_lines: tuple[str, ...] = ()
@@ -924,6 +976,7 @@ def _emit_start_succeeded(
             _address_line(port),
             f"Startup: {startup_s:.1f}s",
             f"Log: {log_path}",
+            *_release_warning_lines(release),
             *reason_lines,
         ),
         pid=serving_pid,
