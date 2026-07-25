@@ -7,6 +7,7 @@ date: '2026-07-25'
 modified: '2026-07-25'
 related:
   - '[[2026-07-25-non-destructive-index-publication-adr]]'
+  - '[[2026-07-25-non-destructive-index-publication-plan]]'
   - '[[2026-07-25-non-destructive-index-publication-research]]'
 ---
 
@@ -18,7 +19,11 @@ Auto-generated index of all documents tagged with `#non-destructive-index-public
 
 ### adr
 
-- `2026-07-25-non-destructive-index-publication-adr` - `non-destructive-index-publication` adr: `publish a rebuilt index without destroying the served one` | (**status:** `proposed`)
+- `2026-07-25-non-destructive-index-publication-adr` - `non-destructive-index-publication` adr: `publish a rebuilt index without destroying the served one` | (**status:** `accepted`)
+
+### plan
+
+- `2026-07-25-non-destructive-index-publication-plan` - `non-destructive-index-publication` plan
 
 ### research
 
