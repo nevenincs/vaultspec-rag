@@ -114,6 +114,7 @@ Fix the behavioural oracle and prove the seams are not carrying duplicate implem
 
 - [ ] `W01.P01.S01` - Capture the behavioural baseline: run the full suite and record the passing count and the per-module test inventory that the extractions must preserve; `src/vaultspec_rag/tests/`.
 - [ ] `W01.P01.S02` - Sweep the indexer for duplicate behaviour with vaultspec-rag semantic search before any extraction, recording each duplicate pair so extraction collapses it rather than carrying both across the seam; `src/vaultspec_rag/indexer/`.
+- [ ] `W01.P01.S15` - Cover the drift-detection predicate with direct tests before it moves across a seam, since it currently has no test of its own and only its remedy is exercised; `src/vaultspec_rag/indexer/_run_checkpoint.py`.
 
 ### Phase `W01.P02` - Extract the collaborators
 
@@ -151,7 +152,7 @@ Stop the breaker reacting to edit rate, restart the module-length ratchet the to
 Count faults only, and turn the advisory length gate into a failing one.
 
 - [ ] `W03.P05.S11` - Count faults only in the circuit breaker and record drift outcomes in their own counter reported alongside job state; `src/vaultspec_rag/indexer/_run_policy.py`.
-- [ ] `W03.P05.S12` - Turn the module-length gate from advisory to failing at a threshold the seamed tree meets; `tools/module_length.py`.
+- [ ] `W03.P05.S12` - Turn the module-length gate from advisory to failing at a threshold the post-seam tree actually meets, and record the full offender census in the same change so the remaining ratchet is visible rather than implied; `tools/module_length.py`.
 
 ### Phase `W03.P06` - Verify against a live service
 
