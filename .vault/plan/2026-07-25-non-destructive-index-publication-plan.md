@@ -3,13 +3,23 @@ tags:
   - '#plan'
   - '#non-destructive-index-publication'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-26'
 tier: L2
 related:
   - '[[2026-07-25-non-destructive-index-publication-adr]]'
   - '[[2026-07-25-non-destructive-index-publication-research]]'
   - '[[2026-07-25-index-completeness-guard-adr]]'
 ---
+
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
 
 # `non-destructive-index-publication` plan
 
@@ -48,7 +58,7 @@ Readers stop deriving the served collection name from the root and resolve it th
 
 - [x] `P02.S05` - Introduce a per-root served-collection pointer in the store, persisted alongside the existing per-root identity, defaulting to today's derived name where absent; `src/vaultspec_rag/store.py`.
 - [x] `P02.S06` - Resolve every read path's collection name through the pointer rather than deriving it from the root, leaving write paths on the derived name for now; `src/vaultspec_rag/store.py, src/vaultspec_rag/_store_search.py`.
-- [ ] `P02.S07` - Route the survey and storage-operation surfaces at the pointer so no caller outside the store derives a collection name for itself; `src/vaultspec_rag/cli/_service_storage.py, src/vaultspec_rag/server/_routes_storage.py`.
+- [x] `P02.S07` - Route the survey and storage-operation surfaces at the pointer so no caller outside the store derives a collection name for itself; `src/vaultspec_rag/cli/_service_storage.py, src/vaultspec_rag/server/_routes_storage.py`.
 - [x] `P02.S08` - Prove by real-storage test that a root whose pointer is absent resolves to the derived name unchanged, and that a root whose pointer names another collection is read from that collection; `src/vaultspec_rag/tests/integration/test_store_integration.py`.
 
 ### Phase `P03` - build a generation into its own collection and swap
