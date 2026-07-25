@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#cli-search-filters'
-date: '2026-07-24'
-modified: '2026-07-24'
+date: '2026-07-25'
+modified: '2026-07-25'
 related:
   - '[[2026-05-28-cli-search-filters-adr]]'
   - '[[2026-05-28-cli-search-filters-plan]]'
