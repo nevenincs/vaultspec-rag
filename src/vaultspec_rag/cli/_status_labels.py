@@ -264,6 +264,8 @@ MODELS_FAMILY = "models"
 CONFORMANCE_FAMILY = "conformance"
 QUARANTINE_FAMILY = "quarantine"
 DOMAIN_INDEX_FAMILY = "domain_index"
+QUARANTINED_COLLECTIONS_FAMILY = "quarantined_collections"
+STORE_FORMAT_FAMILY = "store_format"
 
 #: Families whose signal records something that HAPPENED, not something that
 #: IS. Such a signal explains a reason the service reported, but is never
@@ -381,22 +383,66 @@ def _stalled_jobs_finding(
     )
 
 
+def _health_qdrant(health: dict[str, object] | None) -> dict[str, object]:
+    if not isinstance(health, dict):
+        return {}
+    qdrant = health.get("qdrant")
+    return cast("dict[str, object]", qdrant) if isinstance(qdrant, dict) else {}
+
+
 def _vector_service_finding(
     health: dict[str, object] | None,
     now: float,
 ) -> DegradedFinding | None:
     _ = now
-    if not isinstance(health, dict):
-        return None
-    qdrant = health.get("qdrant")
-    if not isinstance(qdrant, dict):
-        return None
-    if cast("dict[str, object]", qdrant).get("alive") is not False:
+    if _health_qdrant(health).get("alive") is not False:
         return None
     return DegradedFinding(
         cause="the vector storage service is not live",
         command="vaultspec-rag server qdrant status",
         family=VECTOR_SERVICE_FAMILY,
+    )
+
+
+def _quarantined_collections_finding(
+    health: dict[str, object] | None,
+    now: float,
+) -> DegradedFinding | None:
+    _ = now
+    names = _health_qdrant(health).get("quarantined_collections")
+    if not isinstance(names, list) or not names:
+        return None
+    return DegradedFinding(
+        cause="collections were quarantined out of the store at startup",
+        detail=(
+            "the roots behind them answer nothing until re-indexed; the moved "
+            "directories are preserved under the store's quarantine directory"
+        ),
+        command="vaultspec-rag server qdrant quarantine",
+        family=QUARANTINED_COLLECTIONS_FAMILY,
+    )
+
+
+def _store_format_finding(
+    health: dict[str, object] | None,
+    now: float,
+) -> DegradedFinding | None:
+    _ = now
+    record = _health_qdrant(health).get("store_format")
+    if not isinstance(record, dict):
+        return None
+    fields = cast("dict[str, object]", record)
+    if fields.get("status") != "migrated":
+        return None
+    return DegradedFinding(
+        cause="the store was opened by a different qdrant server version",
+        detail=(
+            f"written by {fields.get('recorded')}, now opened by "
+            f"{fields.get('running')}; confirm searches still answer before "
+            "relying on this store, and keep a copy before downgrading"
+        ),
+        command="vaultspec-rag server qdrant status",
+        family=STORE_FORMAT_FAMILY,
     )
 
 
@@ -488,6 +534,11 @@ _DEGRADED_FAMILIES: tuple[
     ("fail", _failed_job_finding),
     ("quarantined", _quarantine_finding),
     ("vector", _vector_service_finding),
+    # Distinct stems no other reason contains, so their position is not
+    # load-bearing; they sit beside the vector service because all three
+    # explain the same component.
+    ("quarantined", _quarantined_collections_finding),
+    ("storage format", _store_format_finding),
     ("different embedding model", _conformance_finding),
     ("model", _models_finding),
 )
