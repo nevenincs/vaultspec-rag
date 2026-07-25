@@ -41,6 +41,7 @@ import vaultspec_rag.mcp._admin_client as admin
 import vaultspec_rag.mcp._tools as tools
 import vaultspec_rag.server as _m
 
+from ... import jobs as _jobs
 from ... import jobs as _managed_jobs
 from ..._job_errors import JobError, JobErrorKind, remediation
 from ...cli import app
@@ -56,7 +57,6 @@ from ...job_models import (
     JobSpec,
     JobState,
 )
-from ...server import _jobs
 from ...server._lifespan import health_handler
 from ...server._routes import ROUTES
 from .._http_stubs import QuietHandler
