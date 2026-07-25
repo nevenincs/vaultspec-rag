@@ -16,12 +16,12 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
 from ... import CodebaseIndexer
-from ...config import EnvVar, get_config, reset_config
+from ...config import EnvVar, reset_config
 from .._chunk_production import produce_chunks
 
 if TYPE_CHECKING:
@@ -105,10 +105,7 @@ _REPEATS_PER_FILE = 6
 
 def _chunk_only_indexer(root: Path) -> CodebaseIndexer:
     """Build a valid chunk-stage indexer without loading model or store."""
-    indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-    indexer.root_dir = root
-    indexer._extra_excludes = []
-    indexer._data_root = root / get_config().data_dir
+    indexer = CodebaseIndexer(root, cast("Any", None), cast("Any", None))
     indexer._begin_preprocess_run(indexer.resolve_policy_snapshot())
     return indexer
 

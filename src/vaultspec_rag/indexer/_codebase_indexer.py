@@ -290,11 +290,6 @@ class CodebaseIndexer:
     hashing to skip unchanged files.
     """
 
-    # Immutable compatibility default for lightweight ``__new__`` consumers.
-    # Normal construction and every indexing operation replace this on the
-    # instance with the exact resolved snapshot semantics.
-    _chunk_execution_policy = _chunk_worker.ChunkExecutionPolicy()
-
     def __init__(
         self,
         root_dir: pathlib.Path,
@@ -327,6 +322,13 @@ class CodebaseIndexer:
         self._extra_excludes = extra_excludes or []
         self._content_policy = content_policy or RootContentPolicy(
             SourceProfileVersion.CONVENTIONAL_V1
+        )
+        # Discovery is fully determined by the three inputs above and holds no
+        # per-run state, so one instance serves every operation on this root.
+        self._discovery = CodeContentDiscovery(
+            self.root_dir,
+            content_policy=self._content_policy,
+            extra_excludes=self._extra_excludes,
         )
         # Indexer-level writer lock that serializes full_index and
         # incremental_index against each other on the same instance,
@@ -372,17 +374,17 @@ class CodebaseIndexer:
     @property
     def support_measurement(self) -> SupportMeasurement:
         """Return the latest immutable code workload measurement snapshot."""
-        return getattr(self, "_support_measurement", SupportMeasurement(0, 0))
+        return self._support_measurement
 
     @property
     def last_checkpoint(self) -> CodeRunCheckpoint | None:
         """Return the latest run authority for service-domain projection."""
-        return getattr(self, "_last_checkpoint", None)
+        return self._last_checkpoint
 
     @property
     def memory_budget_snapshot(self) -> MemoryBudgetSnapshot | None:
         """Return the latest immutable enforced-memory observation."""
-        budget = getattr(self, "_memory_budget", None)
+        budget = self._memory_budget
         return budget.snapshot if budget is not None else None
 
     def _begin_memory_budget(self) -> None:
@@ -402,7 +404,7 @@ class CodebaseIndexer:
         """Route this thread's forward-peak captures into the job budget."""
         from ..memory_probe import record_forward_peaks
 
-        budget = getattr(self, "_memory_budget", None)
+        budget = self._memory_budget
         if budget is None:
             return contextlib.nullcontext()
         return record_forward_peaks(budget.record_forward_peak_mb)
@@ -526,21 +528,6 @@ class CodebaseIndexer:
             )
             yield segment
 
-    @property
-    def _discovery(self) -> CodeContentDiscovery:
-        """Build the discovery collaborator from this indexer's live inputs.
-
-        Rebuilt per access rather than captured at construction: the three
-        inputs that decide admission (root, content policy, extra excludes)
-        are plain attributes that lightweight consumers assign directly onto
-        an instance they never ran ``__init__`` on, so a value frozen in the
-        constructor would be absent or stale for them.
-        """
-        return CodeContentDiscovery(
-            self.root_dir,
-            content_policy=getattr(self, "_content_policy", None),
-            extra_excludes=getattr(self, "_extra_excludes", ()),
-        )
 
     def _resolve_operation_policy(self) -> ResolvedIndexPolicy:
         """Resolve and validate one immutable snapshot before mutation authority."""
@@ -689,7 +676,7 @@ class CodebaseIndexer:
         return getattr(
             self,
             "_prep_rule_total",
-            _preprocess_glue.prep_rule_count(getattr(self, "_prep_ctx", None)),
+            _preprocess_glue.prep_rule_count(self._prep_ctx),
         )
 
     @staticmethod
@@ -819,9 +806,7 @@ class CodebaseIndexer:
         extension is unsupported, it exceeds ``_MAX_FILE_SIZE``, or it is binary,
         because the preprocessor extracts indexable text from it.
         """
-        return _preprocess_glue.matches_preprocess_rule(
-            getattr(self, "_prep_ctx", None), rel
-        )
+        return _preprocess_glue.matches_preprocess_rule(self._prep_ctx, rel)
 
     def scan_content(
         self,
@@ -917,7 +902,7 @@ class CodebaseIndexer:
             ``(batch_groups, singles)``: batch groups as ``(rule, paths)`` pairs
             and the single-file paths, together covering every input path.
         """
-        prep = getattr(self, "_prep_ctx", None)
+        prep = self._prep_ctx
         if prep is None or not any(rule.batch for rule in prep.config.rules):
             # No batch rule configured: every file keeps the per-file flow and
             # pays zero extra per-path match cost.
@@ -960,7 +945,7 @@ class CodebaseIndexer:
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> None:
         """Run batch groups through a bounded spawned-worker window."""
-        prep = getattr(self, "_prep_ctx", None)
+        prep = self._prep_ctx
         if not batch_groups or prep is None:
             return
         workers = self._resolve_chunk_workers(len(batch_groups))
@@ -1066,7 +1051,7 @@ class CodebaseIndexer:
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> None:
         """Run batch groups serially in-process."""
-        prep = getattr(self, "_prep_ctx", None)
+        prep = self._prep_ctx
         if prep is None:
             return
         for rule, group in batch_groups:
