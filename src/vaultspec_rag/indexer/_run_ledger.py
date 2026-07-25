@@ -35,6 +35,7 @@ __all__ = [
     "RunLedgerCompatibilityError",
     "RunLedgerCorruptionError",
     "RunLedgerError",
+    "RunLedgerIndexedPathCollisionError",
     "RunLedgerStateError",
     "RunOperation",
     "RunSignature",
@@ -121,6 +122,48 @@ class RunLedgerCorruptionError(RunLedgerError):
 
 class RunLedgerStateError(RunLedgerError):
     """A requested transition violates immutable generation state."""
+
+
+class RunLedgerIndexedPathCollisionError(RunLedgerStateError):
+    """An upsert unit arrived for a path this generation already indexed.
+
+    Refusing the write is not negotiable: chunk identity embeds a content
+    digest, so recording the unit would publish the new content alongside the
+    old rather than replacing it. What the bare state error cannot express is
+    that the cause is usually benign - a resumed generation carries the indexed
+    states of the attempt that failed, and a file edited since then arrives
+    under a fresh digest. That is a repairable path, not a broken invariant,
+    and only a distinct type lets a caller tell the two apart instead of
+    failing the whole run.
+
+    Subclasses the general state error so existing handlers keep catching it.
+    The digests are carried because they are what separates the two cases and
+    what a repair needs: an ``indexed_digest`` differing from ``unit_digest``
+    is drift, while equal digests mean the caller re-submitted content the
+    generation already committed.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        generation_id: str,
+        rel_path: str,
+        indexed_digest: str | None,
+        unit_digest: str,
+    ) -> None:
+        super().__init__(message)
+        self.generation_id = generation_id
+        self.rel_path = rel_path
+        self.indexed_digest = indexed_digest
+        self.unit_digest = unit_digest
+
+    @property
+    def is_drift(self) -> bool:
+        """Whether the incoming content differs from what was indexed."""
+        return (
+            self.indexed_digest is not None and self.indexed_digest != self.unit_digest
+        )
 
 
 class RunOperation(StrEnum):
@@ -610,6 +653,13 @@ class RunLedger:
         Every unit is validated and inserted in the same SQLite transaction.
         The transaction therefore exposes either the complete synchronous
         store mutation or none of it to compatible recovery.
+
+        Raises:
+            RunLedgerIndexedPathCollisionError: When an upsert unit names a
+                path this generation already indexed, which a caller can
+                repair rather than having to fail the run.
+            RunLedgerStateError: When any other durable invariant of the
+                generation would be violated.
         """
         if not units:
             raise ValueError("a confirmed storage mutation must contain units")
@@ -663,15 +713,23 @@ class RunLedger:
             return 0
         indexed = connection.execute(
             """
-            SELECT 1 FROM file_states
+            SELECT content_hash FROM file_states
             WHERE generation_id = ? AND rel_path = ? AND state = ?
               AND evidence_generation_id = generation_id
             """,
             (generation_id, unit.rel_path, FileStateKind.INDEXED.value),
         ).fetchone()
         if indexed is not None and unit.kind is CommitUnitKind.UPSERT:
-            raise RunLedgerStateError(
-                "cannot add upsert commit units after a path is indexed"
+            indexed_digest = cast("str | None", indexed["content_hash"])
+            unit_digest = unit.source_digest
+            assert unit_digest is not None
+            raise RunLedgerIndexedPathCollisionError(
+                "cannot add upsert commit units after a path is indexed: "
+                f"{unit.rel_path!r}",
+                generation_id=generation_id,
+                rel_path=unit.rel_path,
+                indexed_digest=indexed_digest,
+                unit_digest=unit_digest,
             )
         sibling = connection.execute(
             """

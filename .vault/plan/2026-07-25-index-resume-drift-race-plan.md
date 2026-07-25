@@ -133,7 +133,7 @@ Turn the ledger collision into a distinguishable signal and let the drift owner 
 
 Distinguish a racing path from a genuine invariant breach at the type level.
 
-- [ ] `W02.P03.S07` - Give the indexed-path upsert collision its own exception type so a racing path is distinguishable from a genuine invariant breach; `src/vaultspec_rag/indexer/_run_ledger.py`.
+- [x] `W02.P03.S07` - Give the indexed-path upsert collision its own exception type so a racing path is distinguishable from a genuine invariant breach; `src/vaultspec_rag/indexer/_run_ledger.py`.
 - [ ] `W02.P03.S08` - Add the cheap pre-record drift re-check that keeps the common case off the signal path entirely; `src/vaultspec_rag/indexer/_run_checkpoint.py`.
 
 ### Phase `W02.P04` - Supersede and re-record
