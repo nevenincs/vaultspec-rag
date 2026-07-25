@@ -123,7 +123,6 @@ See [search and index](docs/search-and-index.md) for the full filter set, [MCP i
 - [vaultspec-core](https://github.com/nevenincs/vaultspec-core) - Beta - The agent harness: the pipeline, the vault, and the CLI that drives them.
 - **vaultspec-rag** - Beta - Semantic search across vault, code, and document domains.
 - [vaultspec-dashboard](https://github.com/nevenincs/vaultspec-dashboard) - Beta - The application that runs it all as a UI.
-- [vaultspec-a2a](https://github.com/nevenincs/vaultspec-a2a) - Beta - Headless agent-to-agent orchestration.
 
 ## Documentation
 
