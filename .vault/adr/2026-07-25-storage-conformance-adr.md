@@ -113,13 +113,29 @@ service tells its operator.
 
 ## Implementation
 
-**D1 - Effective identity is stamped per collection at create time.** When a
-collection is created, the store records the identity that produced it: dense
-model name, sparse model name or its absence, effective dense width, distance
-metric, dense and sparse vector names, and the storage schema generation. The
-record is keyed by collection name inside that namespace's manifest entry, because
-the three collections of one namespace are indexed at different times and can
-genuinely disagree.
+**D1 - Effective identity is stamped per collection at create time, in the home
+that backend already uses.** When a collection is created, the store records the
+identity that produced it: dense model name, sparse model name or its absence,
+effective dense width, distance metric, dense and sparse vector names, and the
+storage schema generation. It is keyed by collection name, because the three
+collections of one namespace are indexed at different times and can genuinely
+disagree about what produced them.
+
+The record has two homes, selected by backend, because the manifest covers only
+one of them. Server mode stores it in that namespace's manifest entry. Local mode
+stores it in a sidecar under that root's own storage directory, which is
+per-root and self-contained. This is not two sources of one truth: the manifest is
+server-mode-only today and holds no local record to disagree with, so the two
+homes are disjoint by construction. One accessor pair dispatches on backend, so
+every caller sees a single interface and neither home is reachable directly.
+
+The alternative - extending the manifest to record local roots - was rejected on
+safety rather than tidiness. The survey classifies a namespace by matching
+manifest entries against live server collections, and reclamation acts on that
+classification. Local entries would match nothing, so they would present as
+unattributable namespaces to a surface whose governing rule forbids exactly that.
+A conformance feature must not hand the reclaimer a new class of namespace it
+cannot explain.
 
 **D2 - Verification happens on the ensure path, once per collection.** The
 function every read and write already traverses gains a verification step after
