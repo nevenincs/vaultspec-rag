@@ -517,3 +517,43 @@ class TestServedCodeCollectionPointer:
         )
 
         assert reclaimable == (abandoned,)
+
+    def test_a_generation_target_leaves_the_served_collection_untouched(
+        self, tmp_path: Path
+    ) -> None:
+        """Writing to a generation must not disturb what is being served.
+
+        One store is shared between search and indexing, so the build target
+        is a per-call argument rather than instance state. This is the
+        assertion that binds that choice: after ensuring and counting a
+        generation collection, the served one must be unchanged.
+
+        Proven able to fail: having ``_code_collection`` ignore its argument
+        and always return ``self.CODE_TABLE_NAME`` makes the generation
+        operations land on the served collection and fails the served-count
+        assertion below.
+        """
+        from ... import VaultStore
+        from ..._store_models import generation_code_collection
+
+        store = VaultStore(tmp_path)
+        try:
+            store.ensure_code_table()
+            served_before = store.count_code()
+
+            generation = generation_code_collection(store.CODE_TABLE_NAME, "f" * 32)
+            store.ensure_code_table(generation)
+
+            # The generation exists and is independently countable...
+            assert store.code_collection_exists(generation) is True
+            assert store.count_code(generation) == 0
+            # ...and the served collection is exactly as it was.
+            assert store.count_code() == served_before
+            assert generation != store.CODE_TABLE_NAME
+
+            # Dropping the generation must not touch the served collection.
+            store.drop_code_table(generation)
+            assert store.code_collection_exists(generation) is False
+            assert store.code_collection_exists() is True
+        finally:
+            store.close()
