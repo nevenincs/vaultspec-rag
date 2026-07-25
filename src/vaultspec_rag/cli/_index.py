@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from .._public_index import DocumentScanResult
     from ..api import AllIndexOutcomes
     from ..indexer import IndexResult
-    from ..indexer._codebase_indexer import (
+    from ..indexer._content_discovery import (
         AdmissionCount,
         AdmissionSample,
         ContentScanResult,
