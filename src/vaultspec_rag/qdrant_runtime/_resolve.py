@@ -209,8 +209,8 @@ def read_manifest(version_dir: Path) -> dict[str, Any] | None:
     """Read and parse the provisioning manifest in *version_dir*.
 
     Returns:
-        The manifest dict, or ``None`` when absent or unreadable
-        (logged at debug per the no-swallow rule).
+        The manifest dict, or ``None`` when absent or unreadable. An unreadable
+        manifest is logged at debug, never discarded silently.
     """
     path = version_dir / MANIFEST_FILENAME
     try:
