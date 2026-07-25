@@ -160,6 +160,123 @@ def test_search_index_state_omits_the_shortfall_when_breadth_is_unknown() -> Non
     assert "shortfall" not in state
 
 
+def test_one_projection_backs_the_shortfall_block_on_both_search_paths() -> None:
+    """The in-process path and the daemon must emit one block shape.
+
+    The local search path builds its own envelope rather than reading the
+    daemon's, so the two would drift the moment either spelled the keys for
+    itself. Pinning both against the single projection is what makes the
+    renderer's lookup safe on either surface.
+
+    Proven able to fail: respelling ``live_count`` as ``held_count`` in
+    ``BreadthShortfall.as_index_state_block`` fails this test on the literal
+    block assertion below; restoring returns it to green. The daemon equality
+    alone cannot carry that proof - both surfaces read the one projection, so
+    a respelling moves them together and the comparison stays true. The
+    literals are what pin the key names a renderer looks up.
+    """
+    from .._index_breadth import BreadthShortfall
+    from ..server._routes import _search_index_state
+
+    block = BreadthShortfall(published=421, live=4).as_index_state_block()
+    daemon_state = _search_index_state(
+        indexed_count=4,
+        requested_root="C:/work/project",
+        search_type="codebase",
+        published_points=421.0,
+    )
+
+    assert block == {
+        "published_count": 421,
+        "live_count": 4,
+        "missing_count": 417,
+    }
+    assert block == daemon_state["shortfall"]
+
+
+def test_the_search_summary_names_a_demonstrated_shortfall() -> None:
+    """An adapter reading only the summary must still learn the index is short.
+
+    The Model Context Protocol surface hands an agent the summary as the
+    sentence describing the answer. Leaving the deficit solely in a nested
+    field lets that sentence report a confident count over an index known to
+    be missing points, which is the reading the completeness signal exists to
+    prevent.
+
+    Proven able to fail: returning ``found`` unconditionally from
+    ``_search_summary`` fails this test on the shortfall-figure assertion
+    below, not on a crash; restoring returns it to green. Its companion pins
+    the opposite direction, so neither passes on a constant string.
+    """
+    from ..server._routes import _search_summary
+
+    summary = _search_summary(
+        5,
+        {"shortfall": {"published_count": 421, "live_count": 4, "missing_count": 417}},
+    )
+
+    assert "Found 5 relevant items." in summary
+    assert "4 of the 421 sections" in summary
+    assert "not evidence that no such item exists" in summary
+
+
+def test_the_search_summary_stays_plain_over_an_index_with_no_shortfall() -> None:
+    """A complete or unknowable index must not carry a warning.
+
+    Warning whenever breadth cannot be established would fire on every root
+    written by a build that recorded none, which trains the reader to skip the
+    sentence that matters.
+
+    Proven able to fail: making the warning unconditional in
+    ``_search_summary`` fails this test on the equality below; restoring
+    returns it to green.
+    """
+    from ..server._routes import _search_summary
+
+    assert _search_summary(5, {}) == "Found 5 relevant items."
+
+
+def test_the_mcp_output_model_preserves_the_shortfall_summary() -> None:
+    """The agent-facing surface must carry the warning the operator surface prints.
+
+    The command line renders the deficit as its own warning block. The Model
+    Context Protocol surface has no renderer, so the same fact has to survive
+    output-model validation on the envelope itself or the agent is the one
+    consumer that never learns the index is incomplete.
+
+    Proven able to fail: declaring ``model_config = ConfigDict(extra="ignore")``
+    on ``SearchResults`` fails this test on the ``index_state`` lookup below;
+    restoring ``extra="allow"`` returns it to green.
+    """
+    from ..mcp._tools import SearchResults
+
+    envelope: dict[str, object] = {
+        "results": [],
+        "summary": (
+            "Found 0 relevant items. Warning: this index holds 4 of the 421 "
+            "sections it published, so an absent result is not evidence that "
+            "no such item exists."
+        ),
+        "index_state": {
+            "shortfall": {
+                "published_count": 421,
+                "live_count": 4,
+                "missing_count": 417,
+            }
+        },
+    }
+
+    validated = SearchResults.model_validate(envelope).model_dump()
+
+    assert "4 of the 421 sections" in str(validated["summary"])
+    index_state = cast("dict[str, object]", validated["index_state"])
+    assert index_state["shortfall"] == {
+        "published_count": 421,
+        "live_count": 4,
+        "missing_count": 417,
+    }
+
+
 def test_a_path_filter_note_survives_classification_into_the_empty_block(
     tmp_path: Path,
 ) -> None:

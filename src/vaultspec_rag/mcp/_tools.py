@@ -64,12 +64,19 @@ _SERVICE_DOWN_MESSAGE = (
 _DEFAULT_TOP_K = 10
 
 # Behavioral hints advertised to clients (MCP 2025-11-25 tool annotations). The
-# search and retrieval tools only read and are repeatable; the index-refresh
-# tools write the index incrementally - they reconcile to the current files
-# without dropping data, so they are not read-only but are non-destructive and
-# idempotent. The destructive drop-and-recreate rebuild is a CLI-only operation
-# and is never exposed on this agent-facing surface. None of these tools reach
-# an open world of external entities - they talk to one local daemon.
+# search and retrieval tools only read and are repeatable. The index-refresh
+# tools reconcile to the current files and expose no clean flag, so this surface
+# cannot request a drop-and-recreate rebuild.
+#
+# The hint describes the request, not the outcome: the incremental path can
+# still escalate itself into a destructive rebuild when stored vectors predate
+# the current embed-input format or content-shaping config has drifted, which
+# empties the collection until repopulation finishes. Closing that gap belongs
+# in the indexer, where the escalation lives; widening the hint here would
+# describe an effect no caller asked for and would not stop it happening.
+#
+# None of these tools reach an open world of external entities - they talk to
+# one local daemon.
 _READ_ONLY = ToolAnnotations(
     readOnlyHint=True, idempotentHint=True, openWorldHint=False
 )
