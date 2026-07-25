@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#ecosystem-integration'
 date: '2026-04-06'
-modified: '2026-06-30'
+modified: '2026-07-25'
 revised: 2026-04-11
 related:
   - '[[2026-04-06-ecosystem-integration-adr]]'

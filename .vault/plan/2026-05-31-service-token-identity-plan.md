@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#service-token-identity'
 date: '2026-05-31'
-modified: '2026-06-30'
+modified: '2026-07-25'
 related:
   - '[[2026-05-31-service-token-identity-adr]]'
   - '[[2026-05-31-service-token-identity-research]]'
