@@ -278,3 +278,57 @@ class TestServedCodeCollectionPointer:
             assert populated == 0
         finally:
             swapped.close()
+
+    def test_each_generation_gets_a_name_the_previous_one_never_used(self) -> None:
+        """Two generations of one root must never share a collection name.
+
+        Local mode pops a deleted collection's handle while its on-disk
+        directory survives, and a create under the same name re-reads that
+        directory. Reusing a name would therefore deliver a superseded
+        generation's points into its successor - the silent corruption this
+        naming exists to prevent.
+
+        Proven able to fail: dropping the generation token from
+        ``generation_code_collection`` so it returns ``derived_name`` makes
+        the two names equal and fails the inequality below.
+        """
+        from ..._store_models import generation_code_collection
+
+        first = generation_code_collection("codebase_docs", "a" * 32)
+        second = generation_code_collection("codebase_docs", "b" * 32)
+
+        assert first != second
+        assert first.startswith("codebase_docs")
+        assert second.startswith("codebase_docs")
+
+    def test_a_generation_name_is_stable_for_one_generation(self) -> None:
+        """The same generation must resolve to the same collection every time.
+
+        A resume re-derives the name it was already writing into; deriving a
+        fresh one would strand the points the interrupted attempt committed.
+
+        Proven able to fail: mixing any per-call varying value into the name
+        makes the two derivations differ and fails the equality below.
+        """
+        from ..._store_models import generation_code_collection
+
+        assert generation_code_collection(
+            "codebase_docs", "c" * 32
+        ) == generation_code_collection("codebase_docs", "c" * 32)
+
+    def test_a_generation_name_never_collides_with_the_served_one(
+        self, tmp_path: Path
+    ) -> None:
+        """The build target must differ from what is currently served.
+
+        If they matched, writing a generation would mutate the collection
+        answering reads - which is the destructive publication this whole
+        design removes.
+        """
+        from ..._store_models import (
+            generation_code_collection,
+            resolve_served_code_collection,
+        )
+
+        served = resolve_served_code_collection(tmp_path, "codebase_docs")
+        assert generation_code_collection("codebase_docs", "d" * 32) != served

@@ -462,3 +462,26 @@ def publish_served_code_collection(
     tmp_path = path.with_suffix(".tmp")
     tmp_path.write_text(json.dumps({"collection": collection}), encoding="utf-8")
     os.replace(tmp_path, path)
+
+
+def generation_code_collection(derived_name: str, generation_id: str) -> str:
+    """Return the collection a rebuild generation writes into.
+
+    A generation writes to its own name so the collection currently serving
+    reads is untouched for the duration of the build, and so an interrupted
+    build leaves an unreferenced collection rather than a truncated served
+    one.
+
+    The generation identifier is part of the name because names must never be
+    reused. Local mode pops a deleted collection's in-memory handle while its
+    on-disk directory survives, and a create under the same name re-reads that
+    directory - so reusing a name would deliver a superseded generation's
+    points into its successor. A fresh name cannot collide with a directory
+    that outlived its collection.
+    """
+    if not derived_name:
+        raise ValueError("derived_name must be a non-empty name")
+    token = "".join(ch for ch in generation_id if ch.isalnum())
+    if not token:
+        raise ValueError("generation_id must contain alphanumeric characters")
+    return f"{derived_name}_g{token[:16]}"
