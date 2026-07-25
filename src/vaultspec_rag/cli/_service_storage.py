@@ -791,7 +791,7 @@ def storage_migrate(
     """Copy a root's namespaced collections between the local and server stores."""
     from qdrant_client import QdrantClient
 
-    from ..storage_ops import migrate_collections
+    from ..storage_ops import IdentityCarry, migrate_collections
 
     _require_yes_for_json(_MIGRATE_CMD, json_mode, yes)
     if to_backend not in ("server", "local"):
@@ -828,7 +828,14 @@ def storage_migrate(
         with StartupStatusReporter(json_mode=json_mode) as progress:
             progress.announce(f"Migrating {root} to the {to_backend} backend...")
             results = migrate_collections(
-                src, dst, name_map, dry_run=preview, on_progress=progress.stage
+                src,
+                dst,
+                name_map,
+                dry_run=preview,
+                on_progress=progress.stage,
+                identity_carry=IdentityCarry(
+                    root=root, to_backend=to_backend, local_dir=local_path
+                ),
             )
     except (OSError, RuntimeError) as exc:
         _emit_or_echo_error(
