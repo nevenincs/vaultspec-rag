@@ -6,222 +6,122 @@ It uses dense embeddings (Qwen3), sparse embeddings (SPLADE), and learned
 reranking (CrossEncoder) to find the most relevant context for code generation,
 code review, and documentation discovery.
 
-This module was split into a package (``cli/``) from a former monolith. The
-verbatim public surface - the Typer
-``app`` plus the ``_``-prefixed helpers that tests import or monkeypatch
-directly (``_spawn_service``, ``_try_http_search``,
-``console`` …) - is re-exported here unchanged through an explicit
-``__all__``.
+Import order is load-bearing, but it is enforced by dependency rather than by
+the order of the statements below: every command submodule imports the app or
+sub-app it decorates from ``_app``, so ``_app`` has finished creating and
+nesting them before any ``@*.command()`` decorator fires.
 
-Import order matters and is load-bearing:
+The command submodules are imported for that decorator side effect ALONE. They
+contribute no names to this package - a command handler is reached by running
+the CLI, never by importing its function - so importing them by name here would
+be a re-export with no caller. They are named in ``__all__`` because the import
+exists for its effect rather than for a symbol, and that is the difference
+between a deliberate side-effect import and one a later reader deletes as unused.
 
-1. ``_core`` first - owns ``console`` / ``logger`` / ``sys`` so every
-   submodule shares one console and one ``vaultspec_rag.cli``-named logger.
-2. ``_app`` next - creates ``app`` and the sub-apps and nests them; this MUST
-   run before any command submodule's ``@*.command()`` decorator fires.
-3. The leaf helper submodules, then the command submodules (their decorators
-   register against the already-nested apps).
-
-Several submodules reference test-monkeypatchable names (``console``,
-``_is_pid_alive``, ``_log_file``, ``_terminate_pid``,
-``_is_our_service``) through ``import vaultspec_rag.cli as _cli`` at call
-time, so ``monkeypatch.setattr(cli, name, …)`` is observed by the consumers
-exactly as it was in the pre-split monolith.
+What this package does export is the small set of names reached through the
+package namespace rather than from the module that defines them, because a
+rebind must be observed: ``console`` and the process helpers
+(``_is_pid_alive``, ``_is_our_service``, ``_terminate_pid``, ``_log_file``) are
+read at call time through ``import vaultspec_rag.cli as _cli`` by their
+consumers, so ``monkeypatch.setattr(cli, name, …)`` reaches them. ``sys`` is
+re-exported for the same reason - tests set ``cli.sys.platform``. Everything
+else is imported from the module that owns it.
 """
 
 from __future__ import annotations
 
 import sys
 
-# 2. Typer app + sub-apps, created and nested before any command decorator.
-from ._app import (
-    CLIState,
-    _global_target,
-    app,
-    main,
-    server_app,
-    server_projects_app,
-    server_qdrant_app,
-    server_storage_app,
-    server_watcher_app,
-    version_callback,
+# Command submodules, imported purely so their decorators register against the
+# apps ``_app`` nests. Nothing here is re-exported.
+from . import (
+    _index,
+    _install,
+    _preprocess,
+    _service_doctor,
+    _service_jobs,
+    _service_lifecycle,
+    _service_logs,
+    _service_projects,
+    _service_qdrant,
+    _service_quiesce,
+    _service_reconcile,
+    _service_storage,
+    _service_watcher,
+    _status,
+    _store,
+    _test,
 )
-
-# 1. Shared runtime state (console, logger). ``sys`` is re-exported so
-#    tests that do ``monkeypatch.setattr(cli.sys, "platform", …)`` keep
-#    working against the package namespace.
-from ._core import console, logger
-
-# 3a. Leaf helper submodules (no command decorators).
-from ._gpu_errors import (
-    _cpu_only_message,
-    _handle_gpu_error,
-    _no_gpu_message,
-    _no_torch_message,
-)
-from ._http_search import (
-    _is_connection_refused,
-    _try_http_admin,
-    _try_http_reindex,
-    _try_http_search,
-)
-
-# 3b. Command submodules - importing them runs the ``@app.command()`` /
-#     ``@*_app.command()`` decorators against the apps nested in step 2.
-from ._index import handle_clean, handle_index
-from ._install import handle_install, handle_uninstall
-from ._preprocess import (
-    handle_preprocess_check,
-    handle_preprocess_list,
-    handle_preprocess_run_one,
-)
+from ._app import app
+from ._core import console
+from ._gpu_errors import _cpu_only_message, _no_gpu_message, _no_torch_message
+from ._http_search import _try_http_reindex, _try_http_search
 from ._process import (
     _heartbeat_age_seconds,
     _is_our_service,
     _is_pid_alive,
-    _port_is_available,
     _port_is_listening,
     _service_child_env,
     _spawn_service,
     _terminate_pid,
 )
 from ._render import (
-    _display_port_unreachable_error,
     _display_search_results,
     _display_service_error,
-    _emit_json,
-    _emit_json_error_and_exit,
     _render_install_report,
     _render_uninstall_report,
 )
 from ._search import (
-    _suppress_hf_progress,  # pyright: ignore[reportPrivateUsage]  # _search lacks __all__; re-exported intentionally
-    handle_search,
+    _suppress_hf_progress,  # pyright: ignore[reportPrivateUsage]  # _search lacks __all__; read through the package by its consumers
 )
-from ._service_doctor import service_doctor
-from ._service_jobs import service_jobs
-from ._service_lifecycle import (
-    service_start,
-    service_status,
-    service_stop,
-    service_warmup,
-)
-from ._service_logs import service_logs
-from ._service_projects import (
-    service_projects_list,
-    service_projects_unload,
-)
-from ._service_qdrant import (
-    qdrant_clean,
-    qdrant_install,
-    qdrant_status,
-)
-from ._service_quiesce import service_pause, service_resume
-from ._service_reconcile import service_reconcile
 from ._service_status import (
     _append_lifecycle_shutdown_log,
-    _default_service_port,
-    _delete_service_status,
     _log_file,
     _read_service_status,
-    _status_dir,
     _status_file,
-    _update_service_metadata,
-    _update_service_token,
     _write_service_status,
 )
-from ._service_storage import storage_survey
-from ._service_watcher import (
-    service_watcher_start,
-    service_watcher_status,
-    service_watcher_stop,
-    service_watcher_timing,
-)
-from ._status import handle_status
-from ._store import _open_vault_store
-from ._test import handle_test
 
 __all__ = [
-    "CLIState",
     "_append_lifecycle_shutdown_log",
     "_cpu_only_message",
-    "_default_service_port",
-    "_delete_service_status",
-    "_display_port_unreachable_error",
     "_display_search_results",
     "_display_service_error",
-    "_emit_json",
-    "_emit_json_error_and_exit",
-    "_global_target",
-    "_handle_gpu_error",
     "_heartbeat_age_seconds",
-    "_is_connection_refused",
+    "_index",
+    "_install",
     "_is_our_service",
     "_is_pid_alive",
     "_log_file",
     "_no_gpu_message",
     "_no_torch_message",
-    "_open_vault_store",
-    "_port_is_available",
     "_port_is_listening",
+    "_preprocess",
     "_read_service_status",
     "_render_install_report",
     "_render_uninstall_report",
     "_service_child_env",
+    "_service_doctor",
+    "_service_jobs",
+    "_service_lifecycle",
+    "_service_logs",
+    "_service_projects",
+    "_service_qdrant",
+    "_service_quiesce",
+    "_service_reconcile",
+    "_service_storage",
+    "_service_watcher",
     "_spawn_service",
-    "_status_dir",
+    "_status",
     "_status_file",
+    "_store",
     "_suppress_hf_progress",
     "_terminate_pid",
-    "_try_http_admin",
+    "_test",
     "_try_http_reindex",
     "_try_http_search",
-    "_update_service_metadata",
-    "_update_service_token",
     "_write_service_status",
     "app",
     "console",
-    "handle_clean",
-    "handle_index",
-    "handle_install",
-    "handle_preprocess_check",
-    "handle_preprocess_list",
-    "handle_preprocess_run_one",
-    "handle_search",
-    "handle_status",
-    "handle_test",
-    "handle_uninstall",
-    "logger",
-    "main",
-    "qdrant_clean",
-    "qdrant_install",
-    "qdrant_status",
-    "server_app",
-    "server_projects_app",
-    "server_qdrant_app",
-    "server_storage_app",
-    "server_watcher_app",
-    "service_doctor",
-    "service_jobs",
-    "service_logs",
-    "service_pause",
-    "service_projects_list",
-    "service_projects_unload",
-    "service_reconcile",
-    "service_resume",
-    "service_start",
-    "service_status",
-    "service_stop",
-    "service_warmup",
-    "service_watcher_start",
-    "service_watcher_status",
-    "service_watcher_stop",
-    "service_watcher_timing",
-    "storage_survey",
     "sys",
-    "version_callback",
 ]
-
-
-if __name__ == "__main__":
-    app()
