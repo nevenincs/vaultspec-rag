@@ -483,6 +483,21 @@ class VaultStore(_VaultSearchMixin):
             return 1000
         return max(1, total)
 
+    def _lock_for(self, collection: str) -> threading.RLock:
+        """Return *collection*'s reentrant lock, minting one on first use.
+
+        The three collections a root is opened with are seeded at
+        construction. A generation collection is created during a rebuild and
+        needs the same guarantee, so its lock is minted on demand rather than
+        raising for a name the constructor could not have known.
+
+        ``setdefault`` is atomic, so concurrent first-callers agree on one
+        lock object. It is deliberately not taken under the lifecycle lock:
+        this runs on paths that already hold a collection lock, and acquiring
+        the lifecycle lock beneath one would invert the documented order.
+        """
+        return self._collection_locks.setdefault(collection, threading.RLock())
+
     def _point_lock(self, collection: str) -> AbstractContextManager[object]:
         """Return the point-operation guard for *collection*.
 
@@ -495,7 +510,7 @@ class VaultStore(_VaultSearchMixin):
         """
         if self._server_mode:
             return nullcontext()
-        return self._collection_locks[collection]
+        return self._lock_for(collection)
 
     @contextmanager
     def _point_write_lock(
@@ -509,7 +524,7 @@ class VaultStore(_VaultSearchMixin):
                 yield
             return
 
-        lock = self._collection_locks[collection]
+        lock = self._lock_for(collection)
         acquired = False
         try:
             while not acquired:
@@ -770,9 +785,23 @@ class VaultStore(_VaultSearchMixin):
         """Drop the vault_docs collection if it exists."""
         self._drop_collection(self.TABLE_NAME)
 
-    def drop_code_table(self) -> None:
-        """Drop the codebase_docs collection if it exists."""
-        self._drop_collection(self.CODE_TABLE_NAME)
+    def _code_collection(self, collection: str | None) -> str:
+        """Return the code collection a call targets.
+
+        Defaults to the served name, so every existing caller keeps reading
+        and writing exactly where it did. A rebuild passes its generation
+        collection instead, which is what lets it populate a replacement while
+        the served one keeps answering searches.
+
+        The target is a per-call argument rather than instance state because
+        one store is shared between search and indexing: rebinding it on the
+        instance would drag concurrent readers onto the half-built generation.
+        """
+        return collection or self.CODE_TABLE_NAME
+
+    def drop_code_table(self, collection: str | None = None) -> None:
+        """Drop a code collection if it exists, defaulting to the served one."""
+        self._drop_collection(self._code_collection(collection))
 
     def drop_document_table(self) -> None:
         """Drop only the independently owned document collection."""
@@ -987,7 +1016,7 @@ class VaultStore(_VaultSearchMixin):
             store_schema.VAULT_INTEGER_INDEXES,
         )
 
-    def code_collection_exists(self) -> bool:
+    def code_collection_exists(self, collection: str | None = None) -> bool:
         """Return whether the code collection currently exists in storage.
 
         Read-only existence probe for callers that must distinguish an
@@ -995,9 +1024,10 @@ class VaultStore(_VaultSearchMixin):
         namespace) from an empty one before trusting prior-run evidence
         that claims storage-confirmed writes.
         """
-        return self._collection_exists(self.CODE_TABLE_NAME)
+        _target = self._code_collection(collection)
+        return self._collection_exists(_target)
 
-    def ensure_code_table(self) -> None:
+    def ensure_code_table(self, collection: str | None = None) -> None:
         """Create the codebase_docs collection and its declared payload indexes.
 
         ``node_type`` is in the KEYWORD set so the MCP
@@ -1006,8 +1036,9 @@ class VaultStore(_VaultSearchMixin):
         exclude/only pushdown - the index that first made reaching an existing
         collection matter.
         """
+        _target = self._code_collection(collection)
         self._ensure_table(
-            self.CODE_TABLE_NAME,
+            _target,
             store_schema.CODE_KEYWORD_INDEXES,
             store_schema.CODE_INTEGER_INDEXES,
         )
@@ -1157,6 +1188,7 @@ class VaultStore(_VaultSearchMixin):
         *,
         write_policy: StoreWritePolicy | None,
         wait: bool = True,
+        collection: str | None = None,
     ) -> None:
         """Insert or update codebase chunks by ``id``.
 
@@ -1170,6 +1202,7 @@ class VaultStore(_VaultSearchMixin):
                 or terminal metadata publish. Ignored by the embedded
                 backend, which applies synchronously.
         """
+        _target = self._code_collection(collection)
         if not chunks:
             return
 
@@ -1194,9 +1227,9 @@ class VaultStore(_VaultSearchMixin):
             )
 
         self.ensure_code_table()
-        with self._point_write_lock(self.CODE_TABLE_NAME, write_policy):
+        with self._point_write_lock(_target, write_policy):
             self._guarded_upsert(
-                self.CODE_TABLE_NAME,
+                _target,
                 points,
                 "code chunks",
                 write_policy=write_policy,
@@ -1397,21 +1430,22 @@ class VaultStore(_VaultSearchMixin):
             )
         logger.info("Deleted %d document(s)", len(ids))
 
-    def delete_code_chunks(self, ids: list[str]) -> None:
+    def delete_code_chunks(self, ids: list[str], collection: str | None = None) -> None:
         """Remove code chunks by their ``id`` values.
 
         Args:
             ids: List of chunk IDs to delete.
         """
+        _target = self._code_collection(collection)
         if not ids:
             return
         from qdrant_client import models
 
         self.ensure_code_table()
-        with self._point_lock(self.CODE_TABLE_NAME):
+        with self._point_lock(_target):
             point_ids: list[int | str | UUID] = [self._stable_id(i) for i in ids]
             self._delete_points(
-                collection_name=self.CODE_TABLE_NAME,
+                collection_name=_target,
                 points_selector=models.PointIdsList(points=point_ids),
             )
         logger.info("Deleted %d code chunk(s)", len(ids))
@@ -1558,15 +1592,16 @@ class VaultStore(_VaultSearchMixin):
             )
         logger.info("Deleted chunk tail of %s from ordinal %d", doc_id, from_ordinal)
 
-    def get_all_code_ids(self) -> set[str]:
+    def get_all_code_ids(self, collection: str | None = None) -> set[str]:
         """Return the set of all code chunk ``id`` values in the store.
 
         Returns:
             Set of chunk IDs from the codebase_docs collection.
         """
+        _target = self._code_collection(collection)
         self.ensure_code_table()
-        with self._point_lock(self.CODE_TABLE_NAME):
-            return self._scroll_all_ids(self.CODE_TABLE_NAME, "chunk_id")
+        with self._point_lock(_target):
+            return self._scroll_all_ids(_target, "chunk_id")
 
     def scroll_code_content(
         self,
@@ -1621,12 +1656,15 @@ class VaultStore(_VaultSearchMixin):
         ]
         return rows, next_offset
 
-    def code_content_ids_exist(self, ids: Sequence[str]) -> bool:
+    def code_content_ids_exist(
+        self, ids: Sequence[str], collection: str | None = None
+    ) -> bool:
         """Return whether every requested code identity is currently stored."""
+        _target = self._code_collection(collection)
         if not ids:
             return False
         self.ensure_code_table()
-        return self._content_ids_exist(self.CODE_TABLE_NAME, ids)
+        return self._content_ids_exist(_target, ids)
 
     def get_all_document_content_ids(self) -> set[str]:
         """Return every deterministic ID in the document collection."""
@@ -1742,7 +1780,9 @@ class VaultStore(_VaultSearchMixin):
             offset = next_offset
         return ids
 
-    def get_code_ids_by_paths(self, rel_paths: set[str]) -> list[str]:
+    def get_code_ids_by_paths(
+        self, rel_paths: set[str], collection: str | None = None
+    ) -> list[str]:
         """Return chunk IDs for code chunks belonging to the given file paths.
 
         Uses a Qdrant MatchAny filter on the ``path`` payload field
@@ -1754,6 +1794,7 @@ class VaultStore(_VaultSearchMixin):
         Returns:
             List of chunk ID strings for matching code chunks.
         """
+        _target = self._code_collection(collection)
         from qdrant_client import models
 
         if not rel_paths:
@@ -1772,11 +1813,11 @@ class VaultStore(_VaultSearchMixin):
 
         ids: list[str] = []
         offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
-        page_limit = self._id_scan_page_limit(self.CODE_TABLE_NAME)
+        page_limit = self._id_scan_page_limit(_target)
         while True:
-            with self._point_lock(self.CODE_TABLE_NAME):
+            with self._point_lock(_target):
                 records, next_offset = self._scroll(
-                    collection_name=self.CODE_TABLE_NAME,
+                    collection_name=_target,
                     scroll_filter=scroll_filter,
                     limit=page_limit,
                     offset=offset,
@@ -1811,14 +1852,15 @@ class VaultStore(_VaultSearchMixin):
         self.ensure_table()
         return self._count_collection(self.TABLE_NAME)
 
-    def count_code(self) -> int:
+    def count_code(self, collection: str | None = None) -> int:
         """Return total number of indexed codebase chunks.
 
         Returns:
             Point count in the codebase_docs collection.
         """
+        _target = self._code_collection(collection)
         self.ensure_code_table()
-        return self._count_collection(self.CODE_TABLE_NAME)
+        return self._count_collection(_target)
 
     def count_document(self) -> int:
         """Return the point count in the document collection."""
