@@ -6,6 +6,7 @@ tags:
 date: '2026-07-25'
 modified: '2026-07-25'
 related:
+  - '[[2026-07-25-index-resume-drift-race-adr]]'
   - '[[2026-07-25-index-resume-drift-race-research]]'
 ---
 
@@ -14,6 +15,10 @@ related:
 Auto-generated index of all documents tagged with `#index-resume-drift-race`.
 
 ## Documents
+
+### adr
+
+- `2026-07-25-index-resume-drift-race-adr` - `index-resume-drift-race` adr: `seam the codebase indexer and give drift a single owner` | (**status:** `{proposed|accepted|rejected|superseded|deprecated}`)
 
 ### research
 
