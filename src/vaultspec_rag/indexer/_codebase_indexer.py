@@ -2074,7 +2074,17 @@ class CodebaseIndexer:
         metadata: dict[str, str] = {}
         total = [len(new_ids)]
         self._begin_support_measurement(paths)
-        self.store.disk_headroom_preflight(len(paths) * _CHUNKS_PER_FILE_ESTIMATE)
+        # A generation build holds both collections at once, so the served
+        # points are part of what has to fit. Charged through the one existing
+        # estimator rather than a second sizing rule: a root that cannot afford
+        # the duplicate is refused here and keeps serving what it has, which is
+        # the whole reason the build never touches the served collection.
+        duplicate_points = (
+            self.store.count_code() if self._code_build_target is not None else 0
+        )
+        self.store.disk_headroom_preflight(
+            len(paths) * _CHUNKS_PER_FILE_ESTIMATE + duplicate_points
+        )
         run_control.checkpoint()
         reporter.phase_start("chunk + embed", len(paths))
         try:
