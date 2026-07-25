@@ -39,6 +39,7 @@ from ._app import (
     _global_target,
     app,
     main,
+    run_cli,
     server_app,
     server_projects_app,
     server_qdrant_app,
@@ -196,6 +197,7 @@ __all__ = [
     "qdrant_clean",
     "qdrant_install",
     "qdrant_status",
+    "run_cli",
     "server_app",
     "server_projects_app",
     "server_qdrant_app",
@@ -224,4 +226,4 @@ __all__ = [
 
 
 if __name__ == "__main__":
-    app()
+    run_cli()
