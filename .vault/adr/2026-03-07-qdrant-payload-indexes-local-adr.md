@@ -2,7 +2,7 @@
 tags:
   - '#adr'
   - '#gpu-rag-stack'
-date: 2026-03-07
+date: '2026-03-07'
 modified: '2026-07-23'
 related:
   - '[[2026-03-08-qdrant-hybrid-search-patterns-research]]'

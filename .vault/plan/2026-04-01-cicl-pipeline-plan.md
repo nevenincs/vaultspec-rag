@@ -2,7 +2,7 @@
 tags:
   - '#plan'
   - '#cicl'
-date: 2026-04-01
+date: '2026-04-01'
 modified: '2026-07-23'
 related:
   - '[[2026-04-01-cicl-pipeline-adr]]'
