@@ -7,6 +7,7 @@ date: '2026-07-25'
 modified: '2026-07-25'
 related:
   - '[[2026-07-25-service-release-compatibility-adr]]'
+  - '[[2026-07-25-service-release-compatibility-plan]]'
   - '[[2026-07-25-service-release-compatibility-reference]]'
 ---
 
@@ -19,6 +20,10 @@ Auto-generated index of all documents tagged with `#service-release-compatibilit
 ### adr
 
 - `2026-07-25-service-release-compatibility-adr` - `service-release-compatibility` adr: `client and service release compatibility` | (**status:** `accepted`)
+
+### plan
+
+- `2026-07-25-service-release-compatibility-plan` - `service-release-compatibility` plan
 
 ### reference
 
