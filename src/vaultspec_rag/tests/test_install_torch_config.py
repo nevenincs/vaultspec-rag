@@ -23,9 +23,10 @@ from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStub
     InstallMode,
 )
 
-from vaultspec_rag import torch_config as tc
-
-from ..commands import install_run, uninstall_run
+from ..commands._install import install_run
+from ..commands._uninstall import uninstall_run
+from ..torch_config import _inspect, _mutate
+from ..torch_config._constants import TorchConfigState
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -62,7 +63,7 @@ class TestInstallTorchConfig:
         report = install_run(path=consumer_workspace, assume_yes=True)
         assert report.torch_config_action == "applied"
         pyproject = consumer_workspace / "pyproject.toml"
-        assert tc.detect_state(pyproject) == tc.TorchConfigState.CANONICAL
+        assert _inspect.detect_state(pyproject) == TorchConfigState.CANONICAL
 
     def test_install_with_no_torch_config_leaves_pyproject_alone(
         self, consumer_workspace: Path
@@ -116,8 +117,8 @@ class TestInstallTorchConfig:
         # path exercises the sys.stdin.isatty() / confirm-absent fence.
         report = install_run(path=consumer_workspace, assume_yes=False, confirm=None)
         assert report.torch_config_action == "skipped-non-tty"
-        assert tc.detect_state(consumer_workspace / "pyproject.toml") == (
-            tc.TorchConfigState.MISSING
+        assert _inspect.detect_state(consumer_workspace / "pyproject.toml") == (
+            TorchConfigState.MISSING
         )
 
     def test_install_with_confirm_false_is_declined(
@@ -130,8 +131,8 @@ class TestInstallTorchConfig:
             confirm=lambda _prompt: False,
         )
         assert report.torch_config_action == "declined"
-        assert tc.detect_state(consumer_workspace / "pyproject.toml") == (
-            tc.TorchConfigState.MISSING
+        assert _inspect.detect_state(consumer_workspace / "pyproject.toml") == (
+            TorchConfigState.MISSING
         )
 
     def test_install_dry_run_reports_dry_run_action(
@@ -165,7 +166,7 @@ class TestInstallTorchConfig:
             (
                 "import json; "
                 "from pathlib import Path; "
-                "from vaultspec_rag" + ".commands import install_run; "
+                "from vaultspec_rag.commands._install import install_run; "
                 "report = install_run(path=Path(r'"
                 + str(consumer_workspace)
                 + "'), assume_yes=True); "
@@ -196,8 +197,8 @@ class TestInstallTorchConfig:
             confirm=None,  # non-interactive - would otherwise be skipped-non-tty
         )
         assert report.torch_config_action == "applied"
-        assert tc.detect_state(consumer_workspace / "pyproject.toml") == (
-            tc.TorchConfigState.CANONICAL
+        assert _inspect.detect_state(consumer_workspace / "pyproject.toml") == (
+            TorchConfigState.CANONICAL
         )
 
     def test_install_eof_distinguished_from_decline(
@@ -219,8 +220,8 @@ class TestInstallTorchConfig:
         assert report.torch_config_action == "skipped-eof"
         # Warning names the bypass flags so the user knows the next move.
         assert any("--yes" in w or "--force" in w for w in report.warnings)
-        assert tc.detect_state(consumer_workspace / "pyproject.toml") == (
-            tc.TorchConfigState.MISSING
+        assert _inspect.detect_state(consumer_workspace / "pyproject.toml") == (
+            TorchConfigState.MISSING
         )
 
     def test_install_keyboard_interrupt_still_reports_declined(
@@ -348,7 +349,9 @@ class TestInstallTorchConfig:
             report.torch_config_action,
             report.warnings,
         )
-        assert tc.detect_state(ws / "pyproject.toml") == tc.TorchConfigState.CANONICAL
+        assert (
+            _inspect.detect_state(ws / "pyproject.toml") == TorchConfigState.CANONICAL
+        )
         # No torch-config write-failure warning surfaced.
         assert not any("torch-config write failed" in w for w in report.warnings)
         # No "[tool] is not a table" / OutOfOrderTableProxy regression.
@@ -361,8 +364,8 @@ class TestUninstallTorchConfig:
         report = uninstall_run(path=consumer_workspace, force=True)
         assert report.torch_config_action == "removed"
         assert report.torch_direct_dep_action == "removed"
-        assert tc.detect_state(consumer_workspace / "pyproject.toml") == (
-            tc.TorchConfigState.MISSING
+        assert _inspect.detect_state(consumer_workspace / "pyproject.toml") == (
+            TorchConfigState.MISSING
         )
         pyproject = (consumer_workspace / "pyproject.toml").read_text(encoding="utf-8")
         assert '"torch>=2.4"' not in pyproject
@@ -535,8 +538,8 @@ class TestInstallTorchConfigFollowups:
             "Abort" in w and ("--yes" in w or "--force" in w) for w in report.warnings
         ), report.warnings
         # Pyproject untouched.
-        assert tc.detect_state(consumer_workspace / "pyproject.toml") == (
-            tc.TorchConfigState.MISSING
+        assert _inspect.detect_state(consumer_workspace / "pyproject.toml") == (
+            TorchConfigState.MISSING
         )
 
     def test_install_confirm_runtime_error_does_not_kill_install(
@@ -1090,7 +1093,7 @@ class TestManualSnippetBytes:
             "# Add torch as a direct dep too, e.g. in [project].dependencies\n"
             '# or [dependency-groups].dev:  "torch>=2.4"\n'
         )
-        assert tc.manual_snippet() == expected
+        assert _mutate.manual_snippet() == expected
 
     def test_manual_snippet_cu130_portion_matches_apply_output(
         self, tmp_path: Path
@@ -1105,9 +1108,9 @@ class TestManualSnippetBytes:
         # Apply against an empty body (no [project], no [tool]) so the
         # output is purely the cu130 block plus tomlkit's trailing LF.
         p.write_bytes(b"")
-        tc.apply_patch(p)
+        _mutate.apply_patch(p)
         applied = p.read_text(encoding="utf-8")
-        snippet = tc.manual_snippet()
+        snippet = _mutate.manual_snippet()
         # The snippet starts with a leading newline (so it can be
         # appended to an existing file). Strip that for comparison.
         snippet_cu130 = snippet[1:]
@@ -1155,7 +1158,7 @@ class TestInstallTorchGroupPlacement:
         assert not any("torch" in str(entry) for entry in project_deps)  # pyright: ignore[reportGeneralTypeIssues]
 
         # The cu130 index + sources block still landed.
-        assert tc.detect_state(pyproject) == tc.TorchConfigState.CANONICAL
+        assert _inspect.detect_state(pyproject) == TorchConfigState.CANONICAL
         raw = pyproject.read_text(encoding="utf-8")
         assert "pytorch-cu130" in raw
         assert "[tool.uv.sources]" in raw

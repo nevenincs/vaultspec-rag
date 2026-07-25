@@ -131,10 +131,10 @@ def _stamp_qdrant_identity(
 
 def _stop_active_qdrant() -> bool:
     """Stop the process-owned supervisor and report confirmed convergence."""
-    from .. import qdrant_runtime as _qr
     from ..config import EnvVar
+    from ..qdrant_runtime import _supervise
 
-    supervisor = _qr.active_supervisor()
+    supervisor = _supervise.active_supervisor()
     if supervisor is None:
         return True
     try:
@@ -150,7 +150,7 @@ def _stop_active_qdrant() -> bool:
         return False
     if not stopped:
         return False
-    _qr.set_active_supervisor(None)
+    _supervise.set_active_supervisor(None)
     os.environ.pop(EnvVar.QDRANT_URL.value, None)
     return True
 
@@ -425,7 +425,7 @@ async def _start_components(
     # so the ``--local-only`` escape hatch deterministically selects the
     # on-disk store. An operator-set URL wins over spawning: it is the
     # remote-server escape hatch.
-    from .. import qdrant_runtime as _qr
+    from ..qdrant_runtime import _supervise
 
     cfg = get_config()
     if cfg.effective_server_mode():
@@ -442,7 +442,9 @@ async def _start_components(
             discovery.publish_phase("warming", detail="provisioning the qdrant server")
             t_q = time.perf_counter()
             try:
-                supervisor = await _run_in_thread(_qr.start_supervised_from_config)
+                supervisor = await _run_in_thread(
+                    _supervise.start_supervised_from_config
+                )
             except Exception as exc:
                 # Server mode is the default, so a startup failure here
                 # is the default-path failure. Per the server-first
@@ -903,7 +905,35 @@ def _service_health_status(
         )
         if status == "ready":
             status = "degraded"
+    # A quarantined collection was moved out of the store's active set after it
+    # failed to load. The server is alive, ready, and answering - the affected
+    # root just returns empty or partial results, with nothing but a log line to
+    # say why. That is the whole reason it has to be reported here: quarantined
+    # data must never sit behind a ready status.
+    quarantined = quarantined_collections(qdrant_state)
+    if quarantined:
+        degraded_reasons.append(
+            f"{len(quarantined)} collection(s) are quarantined out of the vector "
+            f"store after failing to load, so the roots that own them return "
+            f"incomplete results: {', '.join(quarantined[:3])}"
+        )
+        if status == "ready":
+            status = "degraded"
     return status, degraded_reasons
+
+
+def quarantined_collections(qdrant_state: QdrantRuntimeState) -> list[str]:
+    """Return the quarantine entries the runtime state reports, if any.
+
+    The runtime state is the one place this fact is produced, and it reaches
+    both the degradation author above and the health payload's structured
+    signal through this accessor rather than through two readings of the same
+    ``extra`` key.
+    """
+    entries = qdrant_state.extra.get("quarantined")
+    if not isinstance(entries, list):
+        return []
+    return [str(entry) for entry in cast("list[object]", entries)]
 
 
 def _health_job_records() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
@@ -1079,9 +1109,9 @@ async def health_handler(_request: Request) -> object:
 
     reg_health = _m._registry.health()
     uptime = _uptime_seconds()
-    from .. import qdrant_runtime as _qr
+    from ..qdrant_runtime import _supervise
 
-    qdrant_state = _qr.runtime_state()
+    qdrant_state = _supervise.runtime_state()
     status, degraded_reasons = _service_health_status(reg_health, qdrant_state)
     jobs_health, jobs_degraded_reasons = _jobs_health()
     degraded_reasons.extend(jobs_degraded_reasons)

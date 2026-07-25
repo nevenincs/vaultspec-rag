@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ...indexer._content_policy import RootContentPolicy
-    from ...qdrant_runtime import QdrantSupervisor
+    from ...qdrant_runtime._supervise import QdrantSupervisor
 
 __all__ = [
     "_document_policy",
@@ -55,7 +55,9 @@ def provisioned_qdrant_binary() -> Path:
     the three benign ones means the managed install is not in a usable state,
     which is a failure of the test's premise rather than of its subject.
     """
-    from ...qdrant_runtime import QdrantProvisionAction, provision, resolve_binary
+    from ...qdrant_runtime._constants import QdrantProvisionAction
+    from ...qdrant_runtime._provision import provision
+    from ...qdrant_runtime._resolve import resolve_binary
 
     reset_config()
     report = provision()
@@ -78,7 +80,7 @@ def serve_qdrant(binary: Path, root: Path) -> Generator[QdrantSupervisor]:
     that fails mid-body would otherwise leave a real server process and its
     storage behind for the rest of the session.
     """
-    from ...qdrant_runtime import QdrantSupervisor as _Supervisor
+    from ...qdrant_runtime._supervise import QdrantSupervisor as _Supervisor
 
     supervisor = _Supervisor(
         binary,

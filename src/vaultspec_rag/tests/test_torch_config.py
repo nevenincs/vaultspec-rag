@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 import tomlkit
 
-from .. import torch_config as tc
+from ..torch_config import _constants, _diagnose, _direct_dep, _inspect, _mutate
 from ..torch_config._direct_dep import _is_torch_requirement
 
 if TYPE_CHECKING:
@@ -93,33 +93,33 @@ def _write(path: Path, content: str) -> None:
 
 def test_detect_state_no_project_file(tmp_path: Path) -> None:
     assert (
-        tc.detect_state(tmp_path / "pyproject.toml")
-        == tc.TorchConfigState.NO_PROJECT_FILE
+        _inspect.detect_state(tmp_path / "pyproject.toml")
+        == _constants.TorchConfigState.NO_PROJECT_FILE
     )
 
 
 def test_detect_state_missing(tmp_path: Path) -> None:
     p = tmp_path / "pyproject.toml"
     _write(p, PROJECT_ONLY)
-    assert tc.detect_state(p) == tc.TorchConfigState.MISSING
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.MISSING
 
 
 def test_detect_state_canonical(tmp_path: Path) -> None:
     p = tmp_path / "pyproject.toml"
     _write(p, PROJECT_ONLY + CANONICAL_TAIL)
-    assert tc.detect_state(p) == tc.TorchConfigState.CANONICAL
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.CANONICAL
 
 
 def test_detect_state_customised_wrong_url(tmp_path: Path) -> None:
     p = tmp_path / "pyproject.toml"
     _write(p, PROJECT_ONLY + CUSTOM_WRONG_URL_TAIL)
-    assert tc.detect_state(p) == tc.TorchConfigState.CUSTOMISED
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.CUSTOMISED
 
 
 def test_detect_state_customised_extra_keys(tmp_path: Path) -> None:
     p = tmp_path / "pyproject.toml"
     _write(p, PROJECT_ONLY + CUSTOM_EXTRA_KEY_TAIL)
-    assert tc.detect_state(p) == tc.TorchConfigState.CUSTOMISED
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.CUSTOMISED
 
 
 def test_detect_state_customised_single_table_index(tmp_path: Path) -> None:
@@ -134,8 +134,8 @@ def test_detect_state_customised_single_table_index(tmp_path: Path) -> None:
         'name = "private"\n'
         'url = "https://private.example.com/simple"\n',
     )
-    assert tc.detect_state(p) == tc.TorchConfigState.CUSTOMISED
-    report = tc.apply_patch(p)
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.CUSTOMISED
+    report = _mutate.apply_patch(p)
     assert report.action == "conflict"
     assert any("single table" in c for c in report.conflicts)
 
@@ -150,8 +150,8 @@ def test_detect_state_customised_scalar_torch_source(tmp_path: Path) -> None:
         p,
         PROJECT_ONLY + '\n[tool.uv.sources]\ntorch = "pinned-string"\n',
     )
-    assert tc.detect_state(p) == tc.TorchConfigState.CUSTOMISED
-    report = tc.apply_patch(p)
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.CUSTOMISED
+    report = _mutate.apply_patch(p)
     assert report.action == "conflict"
     assert any("not an array or table" in c for c in report.conflicts)
 
@@ -164,8 +164,8 @@ def test_remove_drops_empty_tool_uv_after_full_uninstall(tmp_path: Path) -> None
     """
     p = tmp_path / "pyproject.toml"
     _write(p, PROJECT_ONLY)
-    tc.apply_patch(p)
-    tc.remove_patch(p)
+    _mutate.apply_patch(p)
+    _mutate.remove_patch(p)
     after = p.read_text(encoding="utf-8")
     # None of these section headers should survive the round trip.
     assert "[tool.uv.sources]" not in after
@@ -188,8 +188,8 @@ def test_detect_state_customised_standard_table_torch_source(tmp_path: Path) -> 
         'git = "https://github.com/pytorch/pytorch"\n'
         'rev = "main"\n',
     )
-    assert tc.detect_state(p) == tc.TorchConfigState.CUSTOMISED
-    report = tc.apply_patch(p)
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.CUSTOMISED
+    report = _mutate.apply_patch(p)
     assert report.action == "conflict"
     assert any("standard table" in c for c in report.conflicts)
 
@@ -202,17 +202,17 @@ def test_detect_state_customised_standard_table_torch_source(tmp_path: Path) -> 
 def test_apply_on_missing_writes_canonical(tmp_path: Path) -> None:
     p = tmp_path / "pyproject.toml"
     _write(p, PROJECT_ONLY)
-    report = tc.apply_patch(p)
+    report = _mutate.apply_patch(p)
     assert report.action == "applied"
-    assert tc.detect_state(p) == tc.TorchConfigState.CANONICAL
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.CANONICAL
 
 
 def test_apply_is_idempotent(tmp_path: Path) -> None:
     p = tmp_path / "pyproject.toml"
     _write(p, PROJECT_ONLY)
-    tc.apply_patch(p)
+    _mutate.apply_patch(p)
     sha_after_first = _sha(p)
-    report = tc.apply_patch(p)
+    report = _mutate.apply_patch(p)
     assert report.action == "already"
     assert _sha(p) == sha_after_first
 
@@ -221,21 +221,21 @@ def test_apply_on_customised_returns_conflict(tmp_path: Path) -> None:
     p = tmp_path / "pyproject.toml"
     _write(p, PROJECT_ONLY + CUSTOM_WRONG_URL_TAIL)
     sha_before = _sha(p)
-    report = tc.apply_patch(p)
+    report = _mutate.apply_patch(p)
     assert report.action == "conflict"
     assert report.conflicts  # non-empty
     assert _sha(p) == sha_before
 
 
 def test_apply_on_absent_file(tmp_path: Path) -> None:
-    report = tc.apply_patch(tmp_path / "pyproject.toml")
+    report = _mutate.apply_patch(tmp_path / "pyproject.toml")
     assert report.action == "absent"
 
 
 def test_apply_preserves_user_comments(tmp_path: Path) -> None:
     p = tmp_path / "pyproject.toml"
     _write(p, PROJECT_WITH_COMMENTS)
-    tc.apply_patch(p)
+    _mutate.apply_patch(p)
     after = p.read_text(encoding="utf-8")
     assert "# Top-of-file comment" in after
     assert "# inline name comment" in after
@@ -256,8 +256,8 @@ def test_apply_then_remove_semantic_round_trip(tmp_path: Path) -> None:
     p = tmp_path / "pyproject.toml"
     _write(p, PROJECT_ONLY)
     orig_parsed = tomlkit.parse(PROJECT_ONLY)
-    tc.apply_patch(p)
-    tc.remove_patch(p)
+    _mutate.apply_patch(p)
+    _mutate.remove_patch(p)
     final_parsed = tomlkit.parse(p.read_text(encoding="utf-8"))
     # Project table survives intact.
     assert final_parsed["project"] == orig_parsed["project"]
@@ -292,7 +292,7 @@ def test_remove_preserves_user_trivia_on_sibling_index_entries(
         "]\n"
     )
     _write(p, content)
-    tc.remove_patch(p)
+    _mutate.remove_patch(p)
     after = p.read_text(encoding="utf-8")
     # The user's sibling index entry and its preceding comment survive.
     assert "# user index before cu130" in after
@@ -307,7 +307,7 @@ def test_remove_preserves_user_trivia_on_sibling_index_entries(
 def test_remove_on_missing_is_absent(tmp_path: Path) -> None:
     p = tmp_path / "pyproject.toml"
     _write(p, PROJECT_ONLY)
-    report = tc.remove_patch(p)
+    report = _mutate.remove_patch(p)
     assert report.action == "absent"
 
 
@@ -315,14 +315,14 @@ def test_remove_on_customised_skips(tmp_path: Path) -> None:
     p = tmp_path / "pyproject.toml"
     _write(p, PROJECT_ONLY + CUSTOM_WRONG_URL_TAIL)
     sha_before = _sha(p)
-    report = tc.remove_patch(p)
+    report = _mutate.remove_patch(p)
     assert report.action == "skipped"
     assert report.conflicts
     assert _sha(p) == sha_before
 
 
 def test_remove_on_no_project_file(tmp_path: Path) -> None:
-    report = tc.remove_patch(tmp_path / "pyproject.toml")
+    report = _mutate.remove_patch(tmp_path / "pyproject.toml")
     assert report.action == "absent"
 
 
@@ -334,16 +334,16 @@ def test_remove_on_no_project_file(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("cuda", "available", "expected"),
     [
-        (None, False, tc.TorchDiagnosis.CPU_ONLY),
-        (None, True, tc.TorchDiagnosis.CPU_ONLY),  # anomaly → safer message
-        ("13.0", False, tc.TorchDiagnosis.NO_GPU),
-        ("13.0", True, tc.TorchDiagnosis.WORKING),
+        (None, False, _constants.TorchDiagnosis.CPU_ONLY),
+        (None, True, _constants.TorchDiagnosis.CPU_ONLY),  # anomaly → safer message
+        ("13.0", False, _constants.TorchDiagnosis.NO_GPU),
+        ("13.0", True, _constants.TorchDiagnosis.WORKING),
     ],
 )
 def test_diagnose_torch(
-    cuda: str | None, available: bool, expected: tc.TorchDiagnosis
+    cuda: str | None, available: bool, expected: _constants.TorchDiagnosis
 ) -> None:
-    assert tc.diagnose_torch(cuda, available) == expected
+    assert _diagnose.diagnose_torch(cuda, available) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -352,31 +352,32 @@ def test_diagnose_torch(
 
 
 def test_manual_snippet_is_valid_toml() -> None:
-    snippet = tc.manual_snippet()
+    snippet = _mutate.manual_snippet()
     # Parses without error and yields our canonical shape. unwrap() drops
     # the tomlkit Item wrappers so nested subscription type-checks cleanly.
     doc = tomlkit.parse(snippet).unwrap()
-    assert doc["tool"]["uv"]["index"][0]["name"] == tc.CU130_INDEX_NAME
-    assert doc["tool"]["uv"]["index"][0]["url"] == tc.CU130_INDEX_URL
-    assert doc["tool"]["uv"]["sources"]["torch"][0]["index"] == tc.CU130_INDEX_NAME
+    assert doc["tool"]["uv"]["index"][0]["name"] == _constants.CU130_INDEX_NAME
+    assert doc["tool"]["uv"]["index"][0]["url"] == _constants.CU130_INDEX_URL
+    torch_source = doc["tool"]["uv"]["sources"]["torch"][0]
+    assert torch_source["index"] == _constants.CU130_INDEX_NAME
 
 
 def test_preview_patch_on_missing(tmp_path: Path) -> None:
     p = tmp_path / "pyproject.toml"
     _write(p, PROJECT_ONLY)
-    assert tc.preview_patch(p) == tc.manual_snippet()
+    assert _mutate.preview_patch(p) == _mutate.manual_snippet()
 
 
 def test_preview_patch_on_canonical(tmp_path: Path) -> None:
     p = tmp_path / "pyproject.toml"
     _write(p, PROJECT_ONLY + CANONICAL_TAIL)
-    assert tc.preview_patch(p) == ""
+    assert _mutate.preview_patch(p) == ""
 
 
 def test_preview_patch_on_customised(tmp_path: Path) -> None:
     p = tmp_path / "pyproject.toml"
     _write(p, PROJECT_ONLY + CUSTOM_WRONG_URL_TAIL)
-    assert tc.preview_patch(p) == ""
+    assert _mutate.preview_patch(p) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -394,7 +395,7 @@ def test_rag_own_pyproject_is_canonical() -> None:
     # If this path resolution breaks (e.g. editable layout changes),
     # the file must at least exist for the test to be meaningful.
     assert pyproject.is_file(), f"cannot locate rag pyproject at {pyproject}"
-    assert tc.detect_state(pyproject) == tc.TorchConfigState.CANONICAL
+    assert _inspect.detect_state(pyproject) == _constants.TorchConfigState.CANONICAL
 
 
 # ---------------------------------------------------------------------------
@@ -456,7 +457,7 @@ def test_scattered_tool_uv_detect_canonical(tmp_path: Path) -> None:
     """
     p = tmp_path / "pyproject.toml"
     _write(p, SCATTERED_PROJECT + SCATTERED_CANONICAL_TAIL)
-    assert tc.detect_state(p) == tc.TorchConfigState.CANONICAL
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.CANONICAL
 
 
 def test_scattered_tool_uv_detect_missing(tmp_path: Path) -> None:
@@ -465,7 +466,7 @@ def test_scattered_tool_uv_detect_missing(tmp_path: Path) -> None:
     """
     p = tmp_path / "pyproject.toml"
     _write(p, SCATTERED_PROJECT)
-    assert tc.detect_state(p) == tc.TorchConfigState.MISSING
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.MISSING
 
 
 def test_scattered_tool_uv_apply_writes_patch(tmp_path: Path) -> None:
@@ -475,9 +476,9 @@ def test_scattered_tool_uv_apply_writes_patch(tmp_path: Path) -> None:
     """
     p = tmp_path / "pyproject.toml"
     _write(p, SCATTERED_PROJECT)
-    report = tc.apply_patch(p)
+    report = _mutate.apply_patch(p)
     assert report.action == "applied", report.conflicts
-    assert tc.detect_state(p) == tc.TorchConfigState.CANONICAL
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.CANONICAL
     after = p.read_text(encoding="utf-8")
     # User's other tool.* sections survive intact.
     assert "[tool.ruff]" in after
@@ -490,7 +491,7 @@ def test_scattered_tool_uv_apply_idempotent(tmp_path: Path) -> None:
     p = tmp_path / "pyproject.toml"
     _write(p, SCATTERED_PROJECT + SCATTERED_CANONICAL_TAIL)
     sha_before = _sha(p)
-    report = tc.apply_patch(p)
+    report = _mutate.apply_patch(p)
     assert report.action == "already"
     assert _sha(p) == sha_before
 
@@ -503,7 +504,7 @@ def test_scattered_tool_uv_remove_succeeds(tmp_path: Path) -> None:
     """
     p = tmp_path / "pyproject.toml"
     _write(p, SCATTERED_PROJECT + SCATTERED_CANONICAL_TAIL)
-    report = tc.remove_patch(p)
+    report = _mutate.remove_patch(p)
     assert report.action == "removed"
     after = p.read_text(encoding="utf-8")
     # cu130 block gone.
@@ -524,8 +525,8 @@ def test_scattered_tool_uv_apply_then_remove_round_trip(tmp_path: Path) -> None:
     p = tmp_path / "pyproject.toml"
     _write(p, SCATTERED_PROJECT)
     orig = tomlkit.parse(SCATTERED_PROJECT).unwrap()
-    tc.apply_patch(p)
-    tc.remove_patch(p)
+    _mutate.apply_patch(p)
+    _mutate.remove_patch(p)
     final = tomlkit.parse(p.read_text(encoding="utf-8")).unwrap()
     # All non-uv tool.* sections preserved with identical content.
     assert final["project"] == orig["project"]
@@ -547,10 +548,10 @@ def test_top_level_split_tool_proxy(tmp_path: Path) -> None:
         "\n[tool.ruff]\nline-length = 120\n"
     )
     _write(p, content)
-    assert tc.detect_state(p) == tc.TorchConfigState.MISSING
-    report = tc.apply_patch(p)
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.MISSING
+    report = _mutate.apply_patch(p)
     assert report.action == "applied", report.conflicts
-    assert tc.detect_state(p) == tc.TorchConfigState.CANONICAL
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.CANONICAL
 
 
 # ---------------------------------------------------------------------------
@@ -735,7 +736,7 @@ def test_has_direct_torch_dep_reads_every_declaration_surface(
     p = tmp_path / "pyproject.toml"
     _write(p, pyproject_text)
 
-    assert tc.has_direct_torch_dep(p) == (found, location)
+    assert _direct_dep.has_direct_torch_dep(p) == (found, location)
 
 
 def test_ensure_direct_torch_dep_adds_project_dependency(tmp_path: Path) -> None:
@@ -745,7 +746,7 @@ def test_ensure_direct_torch_dep_adds_project_dependency(tmp_path: Path) -> None
         '[project]\nname = "demo"\ndependencies = ["vaultspec-rag"]\n',
     )
 
-    report = tc.ensure_direct_torch_dep(p)
+    report = _direct_dep.ensure_direct_torch_dep(p)
 
     assert report.action == "applied"
     assert report.location == "[project].dependencies"
@@ -754,7 +755,7 @@ def test_ensure_direct_torch_dep_adds_project_dependency(tmp_path: Path) -> None
     # The marker now records the written surface (location-bearing),
     # not a bare boolean.
     assert 'managed-torch-direct-dependency = "[project].dependencies"' in after
-    found, location = tc.has_direct_torch_dep(p)
+    found, location = _direct_dep.has_direct_torch_dep(p)
     assert found is True
     assert location == "[project].dependencies"
 
@@ -767,7 +768,7 @@ def test_ensure_direct_torch_dep_is_noop_when_present(tmp_path: Path) -> None:
     )
     before = p.read_bytes()
 
-    report = tc.ensure_direct_torch_dep(p)
+    report = _direct_dep.ensure_direct_torch_dep(p)
 
     assert report.action == "already"
     assert report.location == "[project].dependencies"
@@ -783,9 +784,9 @@ def test_remove_managed_direct_torch_dep_removes_only_owned_entry(
         p,
         '[project]\nname = "demo"\ndependencies = ["vaultspec-rag"]\n',
     )
-    tc.ensure_direct_torch_dep(p)
+    _direct_dep.ensure_direct_torch_dep(p)
 
-    report = tc.remove_managed_direct_torch_dep(p)
+    report = _direct_dep.remove_managed_direct_torch_dep(p)
 
     assert report.action == "removed"
     after = p.read_text(encoding="utf-8")
@@ -801,7 +802,7 @@ def test_remove_managed_direct_torch_dep_preserves_user_entry(tmp_path: Path) ->
     )
     before = p.read_bytes()
 
-    report = tc.remove_managed_direct_torch_dep(p)
+    report = _direct_dep.remove_managed_direct_torch_dep(p)
 
     assert report.action == "skipped"
     assert p.read_bytes() == before
@@ -809,7 +810,7 @@ def test_remove_managed_direct_torch_dep_preserves_user_entry(tmp_path: Path) ->
 
 def test_has_direct_torch_dep_no_project_file(tmp_path: Path) -> None:
     """Missing pyproject yields ``(False, "")`` - not an exception."""
-    found, location = tc.has_direct_torch_dep(tmp_path / "missing.toml")
+    found, location = _direct_dep.has_direct_torch_dep(tmp_path / "missing.toml")
     assert found is False
     assert location == ""
 
@@ -886,10 +887,10 @@ def test_apply_on_empty_pyproject(tmp_path: Path) -> None:
     """
     p = tmp_path / "pyproject.toml"
     _write(p, "")
-    assert tc.detect_state(p) == tc.TorchConfigState.MISSING
-    report = tc.apply_patch(p)
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.MISSING
+    report = _mutate.apply_patch(p)
     assert report.action == "applied"
-    assert tc.detect_state(p) == tc.TorchConfigState.CANONICAL
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.CANONICAL
 
 
 def test_apply_on_pyproject_with_only_tool_uv(tmp_path: Path) -> None:
@@ -898,9 +899,9 @@ def test_apply_on_pyproject_with_only_tool_uv(tmp_path: Path) -> None:
     """
     p = tmp_path / "pyproject.toml"
     _write(p, "[tool.uv]\noverride-dependencies = []\n")
-    assert tc.detect_state(p) == tc.TorchConfigState.MISSING
-    assert tc.apply_patch(p).action == "applied"
-    assert tc.detect_state(p) == tc.TorchConfigState.CANONICAL
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.MISSING
+    assert _mutate.apply_patch(p).action == "applied"
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.CANONICAL
 
 
 def test_apply_preserves_blank_lines_between_sections(tmp_path: Path) -> None:
@@ -913,7 +914,7 @@ def test_apply_preserves_blank_lines_between_sections(tmp_path: Path) -> None:
         'testpaths = ["tests"]\n'
     )
     _write(p, content)
-    tc.apply_patch(p)
+    _mutate.apply_patch(p)
     after = p.read_text(encoding="utf-8")
     # Order preserved.
     assert after.find("[tool.ruff]") < after.find("[tool.pytest.ini_options]")
@@ -939,7 +940,7 @@ def test_remove_preserves_user_overrides_in_tool_uv(tmp_path: Path) -> None:
         "]\n"
     )
     _write(p, content)
-    tc.remove_patch(p)
+    _mutate.remove_patch(p)
     after = p.read_text(encoding="utf-8")
     assert "[tool.uv]" in after
     assert "override-dependencies" in after
@@ -969,7 +970,7 @@ def test_apply_scattered_pyproject_reparses_canonical(tmp_path: Path) -> None:
         "\n[tool.pytest.ini_options]\n"
         'testpaths = ["tests"]\n',
     )
-    rep = tc.apply_patch(p)
+    rep = _mutate.apply_patch(p)
     assert rep.action == "applied"
     after = p.read_text(encoding="utf-8")
     # Re-parse the post-apply bytes directly, then assert cu130 keys
@@ -1003,8 +1004,8 @@ def test_apply_inline_array_index_conflict_message(tmp_path: Path) -> None:
         "\n[tool.uv]\n"
         "index = [{name = 'foo', url = 'https://example.com/simple'}]\n",
     )
-    assert tc.detect_state(p) == tc.TorchConfigState.CUSTOMISED
-    rep = tc.apply_patch(p)
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.CUSTOMISED
+    rep = _mutate.apply_patch(p)
     assert rep.action == "conflict"
     # Message must mention "inline array" - not "single table".
     assert any("inline array" in c for c in rep.conflicts), rep.conflicts
@@ -1030,7 +1031,7 @@ def test_apply_appended_index_block_has_trailing_blank_line(tmp_path: Path) -> N
         "\n[tool.something]\n"
         'foo = "bar"\n',
     )
-    tc.apply_patch(p)
+    _mutate.apply_patch(p)
     out = p.read_text(encoding="utf-8")
     # The appended cu130 block must NOT collapse into the following
     # ``[tool.something]`` header.
@@ -1052,7 +1053,7 @@ def test_remove_orphan_canonical_index_only(tmp_path: Path) -> None:
         'url = "https://download.pytorch.org/whl/cu130"\n'
         "explicit = true\n",
     )
-    rep = tc.remove_patch(p)
+    rep = _mutate.remove_patch(p)
     assert rep.action == "removed"
     after = p.read_text(encoding="utf-8")
     assert "pytorch-cu130" not in after
@@ -1071,7 +1072,7 @@ def test_remove_orphan_canonical_source_only(tmp_path: Path) -> None:
         'torch = [{index = "pytorch-cu130", '
         "marker = \"sys_platform == 'linux' or sys_platform == 'win32'\"}]\n",
     )
-    rep = tc.remove_patch(p)
+    rep = _mutate.remove_patch(p)
     assert rep.action == "removed"
     after = p.read_text(encoding="utf-8")
     assert "pytorch-cu130" not in after
@@ -1088,9 +1089,9 @@ def test_apply_with_existing_user_index(tmp_path: Path) -> None:
         'url = "https://private.example.com/simple"\n'
     )
     _write(p, content)
-    assert tc.detect_state(p) == tc.TorchConfigState.MISSING
-    tc.apply_patch(p)
-    assert tc.detect_state(p) == tc.TorchConfigState.CANONICAL
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.MISSING
+    _mutate.apply_patch(p)
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.CANONICAL
     after = p.read_text(encoding="utf-8")
     # Both indices present.
     assert "pytorch-cu130" in after
@@ -1113,11 +1114,11 @@ def test_load_strips_utf8_bom(tmp_path: Path) -> None:
     p = tmp_path / "pyproject.toml"
     p.write_bytes(b"\xef\xbb\xbf" + b'[project]\nname = "bom"\nversion = "0.1.0"\n')
     # Detect must not raise and must classify normally.
-    assert tc.detect_state(p) == tc.TorchConfigState.MISSING
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.MISSING
     # Apply must succeed and produce a canonical file.
-    rep = tc.apply_patch(p)
+    rep = _mutate.apply_patch(p)
     assert rep.action == "applied"
-    assert tc.detect_state(p) == tc.TorchConfigState.CANONICAL
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.CANONICAL
 
 
 def test_apply_preserves_crlf_line_endings(tmp_path: Path) -> None:
@@ -1132,7 +1133,7 @@ def test_apply_preserves_crlf_line_endings(tmp_path: Path) -> None:
     )
     crlf_before = p.read_bytes().count(b"\r\n")
     assert crlf_before == 4
-    tc.apply_patch(p)
+    _mutate.apply_patch(p)
     crlf_after = p.read_bytes().count(b"\r\n")
     # Every original CRLF still present (and more added by the patch).
     assert crlf_after >= crlf_before
@@ -1151,8 +1152,8 @@ def test_remove_preserves_crlf_line_endings(tmp_path: Path) -> None:
     p.write_bytes(
         b'[project]\r\nname = "crlf"\r\nversion = "0.1.0"\r\ndependencies = []\r\n'
     )
-    tc.apply_patch(p)
-    tc.remove_patch(p)
+    _mutate.apply_patch(p)
+    _mutate.remove_patch(p)
     raw = p.read_bytes()
     bare_lf = raw.count(b"\n") - raw.count(b"\r\n")
     assert bare_lf == 0, raw
@@ -1165,7 +1166,7 @@ def test_apply_lf_file_stays_lf(tmp_path: Path) -> None:
     """
     p = tmp_path / "pyproject.toml"
     p.write_bytes(b'[project]\nname = "lf"\nversion = "0.1.0"\n')
-    tc.apply_patch(p)
+    _mutate.apply_patch(p)
     raw = p.read_bytes()
     assert b"\r\n" not in raw, raw
 
@@ -1186,8 +1187,8 @@ def test_apply_remove_round_trip_byte_equal(tmp_path: Path) -> None:
     )
     p.write_bytes(body)
     sha_before = hashlib.sha256(p.read_bytes()).hexdigest()
-    tc.apply_patch(p)
-    tc.remove_patch(p)
+    _mutate.apply_patch(p)
+    _mutate.remove_patch(p)
     sha_after = hashlib.sha256(p.read_bytes()).hexdigest()
     assert sha_after == sha_before, (
         f"round-trip not byte-equal: before={sha_before}, after={sha_after}; "
@@ -1207,8 +1208,8 @@ def test_apply_remove_round_trip_byte_equal_no_trailing_newline(
     body = b'[project]\nname = "rt"\nversion = "0.0.1"\n'
     p.write_bytes(body.rstrip(b"\n"))
     sha_before = hashlib.sha256(p.read_bytes()).hexdigest()
-    tc.apply_patch(p)
-    tc.remove_patch(p)
+    _mutate.apply_patch(p)
+    _mutate.remove_patch(p)
     sha_after = hashlib.sha256(p.read_bytes()).hexdigest()
     assert sha_after == sha_before
 
@@ -1223,8 +1224,8 @@ def test_apply_remove_round_trip_byte_equal_double_trailing_newline(
     body = b'[project]\nname = "rt"\nversion = "0.0.1"\n\n'
     p.write_bytes(body)
     sha_before = hashlib.sha256(p.read_bytes()).hexdigest()
-    tc.apply_patch(p)
-    tc.remove_patch(p)
+    _mutate.apply_patch(p)
+    _mutate.remove_patch(p)
     sha_after = hashlib.sha256(p.read_bytes()).hexdigest()
     assert sha_after == sha_before
 
@@ -1250,9 +1251,9 @@ def test_apply_on_inline_sources_form(tmp_path: Path) -> None:
         "sources = { numpy = { workspace = true } }\n",
     )
     # Detect: MISSING (cu130 not present).
-    assert tc.detect_state(p) == tc.TorchConfigState.MISSING
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.MISSING
     # Apply must NOT raise TypeError.
-    rep = tc.apply_patch(p)
+    rep = _mutate.apply_patch(p)
     assert rep.action == "applied", rep.conflicts
     # File must reparse and reach CANONICAL.
-    assert tc.detect_state(p) == tc.TorchConfigState.CANONICAL
+    assert _inspect.detect_state(p) == _constants.TorchConfigState.CANONICAL
