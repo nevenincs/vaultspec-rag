@@ -24,7 +24,7 @@ import textwrap
 import threading
 import time
 from concurrent.futures import Future
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from rich.console import Console
@@ -131,17 +131,12 @@ def test_scoped_worker_retains_readable_unsupported_encoding_disposition(
 def _chunk_only_indexer(root: Path) -> CodebaseIndexer:
     """Build a CodebaseIndexer for chunk-only use without a model or store.
 
-    Mirrors the established unit-test pattern (``__new__`` + manual attribute
-    setup): the chunking, scanning, and worker-planning methods never touch the
-    embedding model or vector store, so constructing them is unnecessary.
+    Constructed through the production entry point: the chunking, scanning, and
+    worker-planning methods never reach the embedding model or vector store, so
+    those two collaborators stay absent while everything the indexer itself
+    owns is exactly what a real run would hold.
     """
-    indexer = CodebaseIndexer.__new__(CodebaseIndexer)
-    indexer.root_dir = root
-    indexer._extra_excludes = []
-    indexer._prep_ctx = None
-    indexer._prep_skips = []
-    indexer._prep_ok = 0
-    return indexer
+    return CodebaseIndexer(root, cast("Any", None), cast("Any", None))
 
 
 def _make_code_tree(root: Path, n_files: int) -> None:
