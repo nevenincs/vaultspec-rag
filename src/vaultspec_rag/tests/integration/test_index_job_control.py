@@ -23,6 +23,7 @@ from sentence_transformers.sentence_transformer import SentenceTransformer
 from sentence_transformers.sentence_transformer.modules import BoW
 
 from ... import jobs
+from ..._store_models import read_served_code_collection
 from ...concurrency import limiter_stats, reset_limiters
 from ...config import get_config, reset_config
 from ...embeddings import EmbeddingModel, QueryEmbeddingCache
@@ -853,16 +854,29 @@ def test_code_clean_rebuild_defers_pause_until_publication_is_current(
                     preflight=indexer.preflight_content(),
                     run_control=token,
                 )
+                served_before_rebuild = store.count_code()
                 deadline = time.monotonic() + _CONTROL_WAIT_SECONDS
                 while time.monotonic() < deadline:
                     state = token.snapshot()
-                    if state.protected_depth == 1 and store.count_code() == 0:
+                    if state.protected_depth == 1:
                         break
                     time.sleep(_CONTROL_POLL_SECONDS)
                 else:
                     raise AssertionError(
-                        "clean code rebuild never exposed its protected empty span"
+                        "clean code rebuild never entered its protected span"
                     )
+
+                # The wait used to key on the collection reading zero, because a
+                # clean rebuild dropped before repopulating and the empty window
+                # was a convenient marker for "inside the protected span". A
+                # rebuild now builds beside the served collection, so that window
+                # does not exist and waiting for it would hang forever. The
+                # protected depth is the property this test was always about.
+                #
+                # The absent window is worth asserting rather than merely no
+                # longer waiting on: a rebuild that emptied what it serves is the
+                # defect the generation build removes.
+                assert store.count_code() == served_before_rebuild
 
                 assert token.request_pause()
                 pending = token.snapshot()
@@ -1346,4 +1360,66 @@ def test_unattended_gate_reconciles_without_emptying_the_served_collection(
         )
         assert rebuilt.added > 0
         assert store.count_code() == rebuilt.added
+    _assert_code_resources_released()
+
+
+def test_an_interrupted_rebuild_leaves_the_served_index_fully_readable(
+    tmp_path: Path,
+    cpu_embedding_model: EmbeddingModel,
+) -> None:
+    """A rebuild interrupted mid-build must not cost the served index a point.
+
+    This is what building beside the served collection buys. Before, a clean
+    rebuild dropped first and repopulated after, so an interruption left a
+    fragment beneath a sidecar describing the whole corpus - the latch that
+    made every later run reconcile the entire tree.
+
+    The interruption uses the real cooperative-cancel path a job uses, and the
+    cancel point is past where the old destructive rebuild reached its drop.
+
+    Proven able to fail: reverting the clean branch to the old destructive path
+    - targeting the served collection and dropping it up front - empties it
+    here and fails the served-count assertion with 0 == 24.
+    """
+    paths = _write_code_files(tmp_path, 24, "interrupted-rebuild")
+
+    with VaultStore(tmp_path, embedding_dim=cpu_embedding_model.dimension) as store:
+        indexer = CodebaseIndexer(
+            tmp_path,
+            cpu_embedding_model,
+            store,
+            gpu_lock=threading.Lock(),
+        )
+        published = indexer.full_index(
+            clean=True,
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
+        assert published.added > 0
+        served_before = store.CODE_TABLE_NAME
+
+        with contextlib.suppress(CancelRequested):
+            indexer.full_index(
+                clean=True,
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+                run_control=_CancelAfterCheckpoints(40),
+            )
+
+        # The served collection answered throughout and still holds everything
+        # the previous publication claimed.
+        assert store.count_code(served_before) == published.added
+        # The pointer never moved, so a reader still resolves the old
+        # collection rather than the abandoned generation.
+        assert read_served_code_collection(tmp_path) in (None, served_before)
+
+        # A later completed rebuild publishes and the pointer moves.
+        rebuilt = indexer.full_index(
+            clean=True,
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
+        assert rebuilt.added > 0
+        assert read_served_code_collection(tmp_path) == store.CODE_TABLE_NAME
+        _assert_current_code_state(indexer, store, paths, "interrupted-rebuild")
     _assert_code_resources_released()

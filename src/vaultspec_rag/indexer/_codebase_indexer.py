@@ -35,6 +35,10 @@ from .._index_breadth import (
     parse_superseded_regime,
 )
 from .._job_errors import JobError, JobErrorKind
+from .._store_models import (
+    generation_code_collection,
+    publish_generation_as_served,
+)
 from ..index_profiles import (
     SupportMeasurement,
     SupportProfileLimits,
@@ -586,6 +590,9 @@ class CodebaseIndexer:
         self._donor_reuse = None
         self._drift_owner = None
         self._superseded_cleared = False
+        # Cleared per run so a generation target can never leak from a
+        # finished rebuild into the next job on this indexer.
+        self._code_build_target = None
 
     #: Set when a gate reconciled in place instead of rebuilding destructively,
     #: leaving points from a regime the current configuration no longer
@@ -596,6 +603,11 @@ class CodebaseIndexer:
     #: Set when this run dropped the collection, so the carried mark from
     #: the outgoing sidecar must not survive into the one being written.
     _superseded_cleared: bool = False
+
+    #: Collection a clean rebuild is populating, or ``None`` outside one. Held
+    #: on the indexer rather than the store because the store is shared with
+    #: search, while one indexer runs one job at a time behind the writer lock.
+    _code_build_target: str | None = None
 
     def _reuse_snapshot(self) -> dict[str, object] | None:
         """Return this run's reuse telemetry block, or ``None`` when off."""
@@ -1380,6 +1392,7 @@ class CodebaseIndexer:
                         else None
                     ),
                     ingest_wait=ingest_wait,
+                    collection=self._code_build_target,
                     on_storage_confirmed=on_storage_confirmed,
                     after_forward=_after_forward,
                     on_cuda_oom=_on_cuda_oom,
@@ -2616,10 +2629,18 @@ class CodebaseIndexer:
         )
 
         if effective_clean:
-            # The drop below removes every superseded point, so the mark this
-            # clears is genuinely no longer true.
+            # A generation build removes every superseded point by not carrying
+            # them into the new collection, so the mark this clears is
+            # genuinely no longer true.
             self._superseded_regime = False
             self._superseded_cleared = True
+            # Build beside the served collection, never into it. The served one
+            # keeps answering searches for the whole build, and an interrupted
+            # build leaves this collection unreferenced rather than leaving the
+            # served one truncated.
+            self._code_build_target = generation_code_collection(
+                self.store.CODE_TABLE_NAME, checkpoint.generation_id
+            )
 
         # Failure-safe rebuild (mirrors VaultIndexer.full_index): snapshot the
         # existing chunk ids BEFORE streaming, keep the old chunks live, and
@@ -2644,16 +2665,20 @@ class CodebaseIndexer:
             reporter.phase_start("prepare collection", 1)
             try:
                 if effective_clean and not clean_has_confirmed_units:
-                    self.store.drop_code_table()
-                    self.store.ensure_code_table()
-                    # The collection was just dropped: the snapshot is
-                    # empty by construction, and a full id scan of a large
-                    # local collection costs minutes of GIL-holding CPU.
+                    # A fresh generation name cannot collide with a surviving
+                    # directory, so this creates rather than recreates and the
+                    # served collection is left alone.
+                    self.store.ensure_code_table(self._code_build_target)
+                    # The generation is new: the snapshot is empty by
+                    # construction, and a full id scan of a large local
+                    # collection costs minutes of GIL-holding CPU.
                     existing_ids_before: set[str] = set()
                 else:
-                    self.store.ensure_code_table()
+                    self.store.ensure_code_table(self._code_build_target)
                     try:
-                        existing_ids_before = set(self.store.get_all_code_ids())
+                        existing_ids_before = set(
+                            self.store.get_all_code_ids(self._code_build_target)
+                        )
                     except (OSError, RuntimeError):
                         logger.warning(
                             "Could not snapshot existing code-chunk IDs "
@@ -2692,7 +2717,7 @@ class CodebaseIndexer:
             # purge the collection must hold exactly the union of the
             # pre-existing snapshot and everything this run published.
             self.store.apply_ingest_barrier(
-                self.store.CODE_TABLE_NAME,
+                self._code_build_target or self.store.CODE_TABLE_NAME,
                 expected_points=len(new_ids | existing_ids_before),
                 write_policy=checkpoint.run_policy.store_write_policy,
             )
@@ -2714,10 +2739,30 @@ class CodebaseIndexer:
                     policy,
                     ContentKind.CODE,
                 )
-                checkpoint.publish_metadata(
-                    self._meta_path,
-                    published_points=self.store.count_code(),
-                )
+                build_target = self._code_build_target
+
+                def _record_breadth() -> None:
+                    checkpoint.publish_metadata(
+                        self._meta_path,
+                        published_points=self.store.count_code(build_target),
+                    )
+
+                if build_target is None:
+                    _record_breadth()
+                else:
+                    # Breadth first, pointer second - a reader must never
+                    # resolve a generation whose published figure is missing.
+                    publish_generation_as_served(
+                        self.root_dir,
+                        collection=build_target,
+                        record_breadth=_record_breadth,
+                    )
+                    # Both collections are complete at this instant: the old one
+                    # served throughout and the new one has just reconciled. A
+                    # reader mid-flight sees one or the other, never a partial
+                    # index, which is what makes this assignment the swap rather
+                    # than a race.
+                    self.store.CODE_TABLE_NAME = build_target
                 checkpoint.publish_generation()
                 reporter.advance(1)
             finally:
