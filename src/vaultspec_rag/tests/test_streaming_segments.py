@@ -31,6 +31,8 @@ from ..indexer._streaming import (
     iter_weighted_code_slices,
 )
 
+pytestmark = [pytest.mark.unit]
+
 
 def _chunk(
     chunk_id: str,

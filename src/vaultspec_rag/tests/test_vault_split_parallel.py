@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
 from .._store_models import VaultDocument
 from ..config import EnvVar, reset_config
 from ..indexer._vault_prep import (
@@ -12,6 +14,8 @@ from ..indexer._vault_prep import (
     split_documents,
 )
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
+
+pytestmark = [pytest.mark.unit]
 
 
 class _Workers:

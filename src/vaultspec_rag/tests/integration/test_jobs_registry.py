@@ -137,6 +137,7 @@ def _assert_resource_snapshot(raw: object) -> dict[str, object]:
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.unit
 def test_record_start_then_finish_produces_done_snapshot(_clean_jobs: None) -> None:
     job_id = _jobs.record_start("vault", "tool")
 
@@ -176,6 +177,7 @@ def test_record_start_then_finish_produces_done_snapshot(_clean_jobs: None) -> N
     assert isinstance(done_resources["finished"], dict)
 
 
+@pytest.mark.unit
 def test_record_finish_with_error_sets_error_phase(_clean_jobs: None) -> None:
     job_id = _jobs.record_start("code", "watcher")
     _jobs.record_finish(job_id, error="boom")
@@ -188,6 +190,7 @@ def test_record_finish_with_error_sets_error_phase(_clean_jobs: None) -> None:
     assert isinstance(entry["finished_at"], float)
 
 
+@pytest.mark.unit
 def test_record_finish_unknown_id_is_noop(_clean_jobs: None) -> None:
     job_id = _jobs.record_start("vault", "tool")
     _jobs.record_finish("does-not-exist", result="ignored")
@@ -198,6 +201,7 @@ def test_record_finish_unknown_id_is_noop(_clean_jobs: None) -> None:
     assert entries[0]["phase"] == "running"
 
 
+@pytest.mark.unit
 def test_snapshot_is_newest_first(_clean_jobs: None) -> None:
     first = _jobs.record_start("vault", "tool")
     second = _jobs.record_start("code", "tool")
@@ -207,6 +211,7 @@ def test_snapshot_is_newest_first(_clean_jobs: None) -> None:
     assert ids == [third, second, first]
 
 
+@pytest.mark.unit
 def test_snapshot_returns_independent_copies(_clean_jobs: None) -> None:
     _jobs.record_start("vault", "tool", command="reindex_vault")
     snap = _jobs.snapshot()
@@ -237,6 +242,7 @@ def test_snapshot_returns_independent_copies(_clean_jobs: None) -> None:
     assert next_started_resources["rss_mb"] != -1.0
 
 
+@pytest.mark.unit
 def test_registry_is_bounded(_clean_jobs: None) -> None:
     overflow = _jobs.MAX_RECORDS + 50
     ids = [_jobs.record_start("vault", "tool") for _ in range(overflow)]
@@ -254,6 +260,7 @@ def test_registry_is_bounded(_clean_jobs: None) -> None:
     assert ids[0] not in retained_ids
 
 
+@pytest.mark.unit
 def test_concurrent_writers_do_not_corrupt(_clean_jobs: None) -> None:
     writers = 8
     per_writer = 100
@@ -307,6 +314,8 @@ def test_concurrent_writers_do_not_corrupt(_clean_jobs: None) -> None:
 
 class TestManagedJobPersistence:
     """Canonical lifecycle state survives real atomic filesystem boundaries."""
+
+    pytestmark = pytest.mark.unit
 
     def test_paused_state_and_idempotency_restore_under_the_same_id(
         self,
