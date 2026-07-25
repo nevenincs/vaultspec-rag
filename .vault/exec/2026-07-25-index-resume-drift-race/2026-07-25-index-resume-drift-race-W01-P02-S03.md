@@ -64,12 +64,29 @@ application, admissibility classification, admission counting and sampling, and
 the preflight types - now live in a collaborator the indexer holds rather than
 in a region of one class.
 
-The indexer dropped from 3938 lines to 3294, a reduction of 644, and the
-collaborator is 498. The types moved rather than being re-exported: each of the
-five admission and preflight types resolves in exactly one module, with none
-left behind as an alias. That matters more than the line count, because an
-extraction that leaves a shim behind has not moved the responsibility, only
-spread it.
+The indexer dropped from 3938 lines to 3294, and the collaborator is 498. Of the
+377 lines removed, 36 came back as a larger import block, a discovery accessor,
+and the delegating one-liners, for a net reduction of 341.
+
+Every type and method definition moved; nothing was copied. The moved bodies
+were diffed against their originals programmatically rather than by eye, and
+every executable line is byte-identical, with the only differences a constant
+rename and two docstring edits. The nine methods retained on the indexer are
+delegating façades of four to twelve lines, each being a signature, a docstring,
+and one call into the collaborator. No call site reaches an old code path,
+because no old code path remains.
+
+The admission and preflight types are re-exported from the indexer, and that is
+deliberate rather than residue: roughly forty external call sites across the API,
+jobs, dispatch, watcher, and server modules import them from their historical
+home, and rehoming them would have turned a contained extraction into a
+tree-wide import churn. The re-export is a name alias over a single definition,
+not a second definition.
+
+Four ignore-collection helpers were removed outright rather than moved. Their
+docstrings claimed they were kept as methods so callers and tests could
+monkeypatch them, and a repo-wide search across all file types found zero
+callers of any kind.
 
 Behaviour preservation holds. The full unit suite passes at 2568 tests against
 the seamed tree, and the indexer, checkpoint, and ledger suites pass together.
