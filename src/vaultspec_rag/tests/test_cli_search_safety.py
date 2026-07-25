@@ -16,6 +16,7 @@ from ._cli_helpers import (
     _expected_code_search_request,
     _invoke_search_contract,
     _label_values,
+    _no_service,
     _plain_lines,
     _search_output_contract_server,
     _search_records,
@@ -336,7 +337,7 @@ class TestSearchSafetyContract:
 
         monkeypatch.setattr("vaultspec_rag.search_vault", mock_search)
         monkeypatch.setattr(
-            "vaultspec_rag.cli._search._default_service_port", lambda: None
+            "vaultspec_rag.cli._search.resolve_data_plane_service", _no_service
         )
 
         # Search is service-first: the local store is only opened under an
@@ -381,7 +382,7 @@ class TestSearchSafetyContract:
 
         monkeypatch.setattr("vaultspec_rag.search_vault", mock_search)
         monkeypatch.setattr(
-            "vaultspec_rag.cli._search._default_service_port", lambda: None
+            "vaultspec_rag.cli._search.resolve_data_plane_service", _no_service
         )
 
         # Service-first: --allow-fallback is the explicit mandate that opens the
