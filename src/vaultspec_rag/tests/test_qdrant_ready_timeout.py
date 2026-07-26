@@ -55,8 +55,12 @@ def test_env_override_is_honoured() -> None:
         _restore(prev)
 
 
-def test_malformed_falls_back_to_default() -> None:
-    prev = _set("not-a-number")
+@pytest.mark.parametrize("raw", ["not-a-number", "", "   "])
+def test_malformed_falls_back_to_default(raw: str) -> None:
+    # The settings lookup coerces and RAISES on each of these; the fallback
+    # here is what keeps an operator typo from failing daemon startup. Drop
+    # the catch and these fail with ValueError, not an assertion.
+    prev = _set(raw)
     try:
         assert _ready_timeout_seconds() == _READY_TIMEOUT_DEFAULT_SECONDS
     finally:
