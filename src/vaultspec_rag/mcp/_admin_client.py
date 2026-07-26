@@ -49,12 +49,22 @@ async def evict_project(root: str) -> dict[str, Any]:
     return await _admin("evict_project", {"root": root})
 
 
-async def get_watcher_state(project_root: str | None = None) -> dict[str, Any]:
-    """Report filesystem-watcher configuration and running state."""
+async def _admin_for_root(tool: str, project_root: str | None) -> dict[str, Any]:
+    """Call *tool*, passing ``project_root`` only when the caller supplied one.
+
+    An empty or absent root must be OMITTED rather than sent as ``""``: the
+    service resolves its own default root for an absent argument, and an empty
+    string would be a request to resolve nothing.
+    """
     args: dict[str, Any] = {}
     if project_root:
         args["project_root"] = project_root
-    return await _admin("get_watcher_state", args)
+    return await _admin(tool, args)
+
+
+async def get_watcher_state(project_root: str | None = None) -> dict[str, Any]:
+    """Report filesystem-watcher configuration and running state."""
+    return await _admin_for_root("get_watcher_state", project_root)
 
 
 async def start_watcher(root: str) -> dict[str, Any]:
@@ -69,10 +79,7 @@ async def stop_watcher(root: str) -> dict[str, Any]:
 
 async def get_service_state(project_root: str | None = None) -> dict[str, Any]:
     """Return a consolidated read-only snapshot of the service's state."""
-    args: dict[str, Any] = {}
-    if project_root:
-        args["project_root"] = project_root
-    return await _admin("get_service_state", args)
+    return await _admin_for_root("get_service_state", project_root)
 
 
 async def survey_storage(
