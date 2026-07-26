@@ -2,29 +2,23 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from .. import store_schema
-from ._checkpoint_common import (
-    classify_interrupted_generation,
-    configuration_fingerprint,
-)
+from ._checkpoint_common import RunCheckpointBase, configuration_fingerprint
 from ._content_policy import ContentKind
 from ._document_meta import (
     DOCUMENT_EMBED_SCHEMA,
     publish_document_meta_from_file_states,
 )
-from ._file_state import FileState, FileStateKind
+from ._file_state import FileStateKind
 from ._run_ledger import (
     CommitUnit,
     CommitUnitKind,
     FinalizationPhase,
-    RunGeneration,
     RunLedger,
     RunLedgerCompatibilityError,
-    RunLedgerStateError,
     RunOperation,
     RunSignature,
     RunTerminalState,
@@ -33,7 +27,6 @@ from ._run_ledger import (
 from ._run_policy import DurableProgressKind, RunPolicy
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
     from pathlib import Path
 
     from ._resolved_policy import ResolvedIndexPolicy
@@ -70,14 +63,11 @@ class DocumentRunConfiguration:
 
 
 @dataclass(slots=True)
-class DocumentRunCheckpoint:
+class DocumentRunCheckpoint(RunCheckpointBase):
     """One document generation's durable storage and publication authority."""
 
-    ledger: RunLedger
-    generation: RunGeneration
-    policy: ResolvedIndexPolicy
-    run_policy: RunPolicy
-    resumed_units: int = 0
+    _content_kind: ClassVar[ContentKind] = ContentKind.DOCUMENT
+    _kind_label: ClassVar[str] = "document"
 
     @classmethod
     def open(
@@ -122,29 +112,6 @@ class DocumentRunCheckpoint:
                 "manifest; run a full reconciliation"
             )
         return cls(ledger, generation, policy, run_policy)
-
-    @property
-    def generation_id(self) -> str:
-        """Return the stable active generation identifier."""
-        return self.generation.generation_id
-
-    @property
-    def ingestion_complete(self) -> bool:
-        """Return whether this attempt should resume finalization only."""
-        return self.generation.finalization_phase is not FinalizationPhase.INGESTING
-
-    @contextmanager
-    def preserve_incomplete_generation(self) -> Generator[None]:
-        """Persist interruption state while preserving the original exception."""
-        try:
-            yield
-        except BaseException as exc:
-            self.generation = classify_interrupted_generation(
-                self.ledger,
-                self.generation,
-                exc,
-            )
-            raise
 
     def unit_for(
         self,
@@ -191,81 +158,8 @@ class DocumentRunCheckpoint:
             self._record_indexed_file(unit.rel_path, unit.source_digest)
         return inserted
 
-    def record_confirmed_deletion(
-        self,
-        rel_path: str,
-        point_ids: tuple[str, ...],
-    ) -> bool:
-        """Checkpoint one idempotent document-path deletion."""
-        unit = CommitUnit(
-            rel_path=rel_path,
-            kind=CommitUnitKind.DELETE_PATH,
-            source_digest=None,
-            segment_ordinal=0,
-            is_file_end=True,
-            point_ids=tuple(sorted(point_ids)),
-        )
-        inserted = self.ledger.record_storage_confirmed_unit(
-            self.generation_id,
-            unit,
-        )
-        if inserted:
-            self.run_policy.record_durable_progress(
-                kind=DurableProgressKind.LEDGER_UNIT_COMMITTED,
-                label=f"document deletion {rel_path}",
-            )
-        self.ledger.record_path_deleted(self.generation_id, rel_path)
-        return inserted
-
-    def record_confirmed_stale_deletion(
-        self,
-        rel_path: str,
-        point_ids: tuple[str, ...],
-    ) -> bool:
-        """Checkpoint obsolete document points while retaining their path."""
-        unit = CommitUnit(
-            rel_path=rel_path,
-            kind=CommitUnitKind.DELETE_STALE,
-            source_digest=None,
-            segment_ordinal=0,
-            is_file_end=True,
-            point_ids=tuple(sorted(point_ids)),
-        )
-        inserted = self.ledger.record_storage_confirmed_unit(
-            self.generation_id,
-            unit,
-        )
-        if inserted:
-            self.run_policy.record_durable_progress(
-                kind=DurableProgressKind.LEDGER_UNIT_COMMITTED,
-                label=f"stale document deletion {rel_path}",
-            )
-        return inserted
-
-    def record_processing_failure(
-        self,
-        rel_path: str,
-        state: FileStateKind,
-        detail: str,
-        *,
-        content_hash: str | None = None,
-    ) -> None:
-        """Replace carried convergence with an explicit document failure."""
-        self.ledger.record_file_state(
-            self.generation_id,
-            FileState.failed(
-                rel_path,
-                state,
-                ContentKind.DOCUMENT,
-                detail,
-                content_hash=content_hash,
-            ),
-        )
-
     def current_files(self) -> dict[str, tuple[str, tuple[str, ...]]]:
         """Return the current indexed manifest reconstructed from ledger rows."""
-        from ._file_state import FileStateKind
-
         result: dict[str, tuple[str, tuple[str, ...]]] = {}
         for state in self.ledger.iter_file_states(self.generation_id):
             if state.state is not FileStateKind.INDEXED:
@@ -322,35 +216,3 @@ class DocumentRunCheckpoint:
             label="document metadata publication",
         )
         return count
-
-    def publish_generation(self) -> RunGeneration:
-        """Certify document publication and compact prior compatible rows."""
-        phase = self.generation.finalization_phase
-        if phase in (FinalizationPhase.INGESTING, FinalizationPhase.STALE_RECONCILED):
-            raise RunLedgerStateError(
-                "document metadata must be durable before generation publication"
-            )
-        if phase is FinalizationPhase.METADATA_PUBLISHED:
-            self.generation = self.ledger.advance_finalization(
-                self.generation_id,
-                FinalizationPhase.GENERATION_PUBLISHED,
-            )
-        if self.generation.terminal_state is RunTerminalState.RUNNING:
-            self.generation = self.ledger.finish_generation(
-                self.generation_id,
-                RunTerminalState.SUCCEEDED,
-            )
-        if self.generation.finalization_phase is not FinalizationPhase.COMPACTED:
-            self.ledger.compact(self.generation_id)
-        self.generation = self.ledger.generation(self.generation_id)
-        self.run_policy.record_durable_progress(
-            kind=DurableProgressKind.FINALIZATION_PHASE_COMMITTED,
-            label="document generation publication",
-        )
-        return self.generation
-
-    def _record_indexed_file(self, rel_path: str, source_digest: str) -> None:
-        self.ledger.record_file_state(
-            self.generation_id,
-            FileState.indexed(rel_path, ContentKind.DOCUMENT, source_digest),
-        )
