@@ -2,9 +2,7 @@
 
 Owns the ``~/.vaultspec-rag`` status directory, the ``service.json``
 status file (atomic write + tolerant read), the rotating log file, and
-the Windows-only lifecycle shutdown mirror line. The shutdown helper
-resolves ``_log_file`` through the package namespace so tests that
-swap ``vaultspec_rag.cli._log_file`` observe the substitution.
+the Windows-only lifecycle shutdown mirror line.
 
 The read-only discovery surface (``_status_dir``, ``_status_file``,
 ``_read_service_status``, ``_default_service_port``) was factored into the
@@ -18,8 +16,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
-
-import vaultspec_rag.cli as _cli
 
 from ..serviceclient._compat import SERVICE_VERSION_FIELD, local_package_version
 from ..serviceclient._discovery import (
@@ -98,7 +94,7 @@ def _append_lifecycle_shutdown_log(reason: str, **kv: object) -> None:
         **kv: Extra key=value pairs (e.g. ``pid=...``,
             ``platform=...``) rendered space-separated.
     """
-    path = _cli._log_file()
+    path = _log_file()
     ts = datetime.now(UTC).isoformat(timespec="seconds")
     parts = ["event=shutdown", f"reason={reason}"]
     parts.extend(f"{k}={v}" for k, v in kv.items())
