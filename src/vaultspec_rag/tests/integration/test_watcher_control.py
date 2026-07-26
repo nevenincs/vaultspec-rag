@@ -60,7 +60,31 @@ async def test_start_then_stop_watcher(tmp_path: Path) -> None:
 
 @pytest.mark.subprocess_gpu
 @pytest.mark.usefixtures("live_service_with_watch")
-async def test_reconfigure_restarts_with_new_values(tmp_path: Path) -> None:
+async def test_reconfigure_queues_the_restart_and_records_new_values(
+    tmp_path: Path,
+) -> None:
+    """Reconfigure answers with the state reached, not the one requested.
+
+    Reconfigure stops the running watcher and immediately asks for a new one.
+    The stop returns before the old generation has observed it, so on return
+    no watcher carrying the new timing is running yet - the start is owed,
+    queued behind the drain, and publishes when the old generation releases.
+
+    ``restarted`` therefore reports ``False`` here, and that is the point:
+    the field names what is true on return so an operator is never told
+    automatic indexing is back while it is not. The requested values are
+    still recorded and travel with the queued start.
+
+    Asserting ``restarted is True`` is what this test used to do, and it only
+    passed while the field reported the request rather than the outcome.
+
+    Proven able to fail, both assertions separately: replacing
+    ``outcome.running`` with a literal ``True`` fails the ``restarted``
+    assertion, and hard-coding the status fails the ``status`` one. The
+    status assertion is not redundant - ``unavailable`` and ``disabled`` also
+    report ``restarted is False``, and those mean the watcher is not coming
+    back at all rather than that it is queued. Restored, both pass.
+    """
     root = _make_root(tmp_path)
     await admin.start_watcher(str(root))
 
@@ -69,7 +93,8 @@ async def test_reconfigure_restarts_with_new_values(tmp_path: Path) -> None:
         debounce_ms=50,
         cooldown_s=2,
     )
-    assert result["restarted"] is True
+    assert result["status"] == "queued_behind_drain"
+    assert result["restarted"] is False
     assert result["debounce_ms"] == 50
     assert result["cooldown_s"] == 2
 
