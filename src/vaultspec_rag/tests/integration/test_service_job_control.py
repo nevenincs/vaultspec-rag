@@ -150,7 +150,7 @@ def _invoke_job_json(*args: str) -> tuple[int, dict[str, object]]:
 def _create_paused_transport_job(port: int, project_root: Path) -> tuple[str, int]:
     """Create one paused job through the typed transport."""
     created = _try_http_create_job(
-        "vault",
+        JobSource.VAULT,
         str(project_root),
         port,
         start_paused=True,

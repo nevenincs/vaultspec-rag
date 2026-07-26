@@ -37,7 +37,6 @@ from ..serviceclient._discovery import (
     DISCOVERY_STATE_DEGRADED,
     DISCOVERY_STATE_READY,
     _default_service_port,
-    _machine_service_resolution,
     _status_file,
     resolve_machine_service,
 )
@@ -113,7 +112,8 @@ class TestMachineDiscoveryResolution:
 
     def test_no_live_service_resolves_to_none(self) -> None:
         """With no lock holder and no pointer, machine resolution is absence."""
-        assert _machine_service_resolution() is None
+        resolution = resolve_machine_service()
+        assert not resolution.is_ready
         assert _default_service_port() is None
 
     def test_live_lock_and_fresh_pointer_resolves_the_port(self) -> None:
@@ -122,9 +122,11 @@ class TestMachineDiscoveryResolution:
         assert acquired
         _write_pointer(8812, heartbeat_age_s=1)
 
-        resolution = _machine_service_resolution()
-        assert resolution is not None
-        assert resolution["port"] == 8812
+        resolution = resolve_machine_service()
+        assert resolution.is_ready
+        assert resolution.source == DISCOVERY_SOURCE_MACHINE_POINTER
+        assert resolution.payload is not None
+        assert resolution.payload["port"] == 8812
         assert _default_service_port() == 8812
 
     def test_stale_pointer_is_treated_as_absent(self) -> None:
@@ -138,7 +140,8 @@ class TestMachineDiscoveryResolution:
         assert acquired
         _write_pointer(8813, heartbeat_age_s=7200)
 
-        assert _machine_service_resolution() is None
+        resolution = resolve_machine_service()
+        assert not resolution.is_ready
         assert _default_service_port() is None
 
     def test_machine_resolution_outranks_a_foreign_status_dir(self) -> None:
@@ -163,7 +166,11 @@ class TestMachineDiscoveryResolution:
         status = _status_file()
         status.write_text(json.dumps({"pid": 4242, "port": 9777}), encoding="utf-8")
 
-        assert _machine_service_resolution() is None
+        # The resolution IS ready here - from the status file, which is the
+        # fallback this test is about. The deleted compatibility view
+        # collapsed "not from the machine pointer" into None, which read as
+        # "nothing resolved"; naming the source says which one is meant.
+        assert resolve_machine_service().source != DISCOVERY_SOURCE_MACHINE_POINTER
         assert _default_service_port() == 9777
 
 
@@ -318,7 +325,7 @@ class TestTypedMachineResolution:
         assert resolution.state == DISCOVERY_STATE_DEGRADED
         assert resolution.source == DISCOVERY_SOURCE_MACHINE_POINTER
         assert _default_service_port() is None
-        assert _machine_service_resolution() is None
+        assert not resolution.is_ready
 
     def test_evidence_names_the_disagreement(self) -> None:
         """Degraded evidence carries the reason and both identities."""

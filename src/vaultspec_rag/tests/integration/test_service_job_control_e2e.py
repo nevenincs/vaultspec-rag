@@ -971,7 +971,7 @@ async def test_watcher_coalesces_replaces_stops_and_closes_store_safely(
 def _create_operator_matrix_job(port: int, project_root: Path) -> tuple[str, int]:
     """Create one paused job for the cross-surface operator matrix."""
     created = _try_http_create_job(
-        "vault",
+        JobSource.VAULT,
         str(project_root),
         port,
         start_paused=True,

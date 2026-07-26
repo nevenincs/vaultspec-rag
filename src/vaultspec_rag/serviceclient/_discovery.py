@@ -113,7 +113,6 @@ __all__ = [
     "_default_service_port",
     "_delete_service_status",
     "_discovery_timestamp",
-    "_machine_service_resolution",
     "_merge_service_status",
     "_read_service_status",
     "_replace_service_status",
@@ -657,21 +656,6 @@ def _status_file_resolution() -> MachineResolution:
         service_token=token if isinstance(token, str) else None,
         payload=data,
     )
-
-
-def _machine_service_resolution() -> dict[str, Any] | None:
-    """Return the live machine pointer payload, or ``None``.
-
-    Thin compatibility view over :func:`resolve_machine_service` for callers
-    that only need the payload of a trustworthy machine publication. A degraded
-    resolution (a live holder whose pointer is missing, invalid, foreign, or
-    stale) collapses to ``None`` here; callers that must distinguish degraded
-    from absent use the typed resolution directly.
-    """
-    resolution = resolve_machine_service()
-    if resolution.is_ready and resolution.source == DISCOVERY_SOURCE_MACHINE_POINTER:
-        return resolution.payload
-    return None
 
 
 def _default_service_port() -> int | None:
