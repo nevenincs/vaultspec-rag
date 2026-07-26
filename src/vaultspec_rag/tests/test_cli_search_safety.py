@@ -646,7 +646,10 @@ class TestSearchSafetyContract:
 
 
 def _shortfall_contract_server(
-    *, shortfall: dict[str, object] | None, results: bool
+    *,
+    shortfall: dict[str, object] | None,
+    results: bool,
+    file_shortfall: dict[str, object] | None = None,
 ) -> tuple[typing.Any, typing.Any]:
     """Start a service returning one code search envelope.
 
@@ -669,6 +672,8 @@ def _shortfall_contract_server(
     }
     if shortfall is not None:
         index_state["shortfall"] = shortfall
+    if file_shortfall is not None:
+        index_state["file_shortfall"] = file_shortfall
 
     class _ShortfallHandler(QuietHandler):
         def do_POST(self):
@@ -821,3 +826,55 @@ class TestIncompleteIndexCannotAnswerSilently:
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["data"]["index_state"]["shortfall"] == self._SHORTFALL
+
+
+class TestFileBreadthWarningContract:
+    """The CLI warns when a publication covered fewer files than it names.
+
+    Distinct from the section-count warning: this fires where that one is
+    structurally silent, because a republished fragment stamps a point count
+    that agrees with itself and only the file figures disagree.
+
+    Proven able to fail. Making ``_render_file_breadth_shortfall`` return
+    before printing fails ``test_file_shortfall_warns_over_returned_results``
+    on the missing-warning assertion, not on an import or collection error.
+    """
+
+    _FILE_SHORTFALL: typing.ClassVar[dict[str, object]] = {
+        "named_count": 442,
+        "covered_count": 27,
+        "missing_count": 415,
+    }
+
+    def test_file_shortfall_warns_over_returned_results(self, tmp_path: Path) -> None:
+        """A file-breadth deficit must be named even when results come back."""
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread = _shortfall_contract_server(
+            shortfall=None, results=True, file_shortfall=self._FILE_SHORTFALL
+        )
+        try:
+            result = _invoke_search_contract(tmp_path, server.server_port)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert result.exit_code == 0, result.output
+        normalized = " ".join(_plain_lines(result.output))
+        assert "names 442 files but holds content for only 27" in normalized, normalized
+        assert "415 are missing" in normalized, normalized
+        assert "not evidence that no such code exists" in normalized, normalized
+
+    def test_complete_file_breadth_stays_silent(self, tmp_path: Path) -> None:
+        """No claim means no warning; warning on absence would train it away."""
+        (tmp_path / ".vaultspec").mkdir()
+        server, thread = _shortfall_contract_server(shortfall=None, results=True)
+        try:
+            result = _invoke_search_contract(tmp_path, server.server_port)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert result.exit_code == 0, result.output
+        assert "files but holds content for only" not in result.output, result.output
