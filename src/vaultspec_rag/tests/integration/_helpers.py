@@ -124,6 +124,7 @@ def _make_root(tmp_path: Path) -> Path:
     """
     adr_dir = tmp_path / ".vault" / "adr"
     adr_dir.mkdir(parents=True)
+    (tmp_path / ".vaultspec").mkdir(parents=True, exist_ok=True)
     (adr_dir / "x.md").write_text(
         "---\ntags: ['#adr', '#t']\n---\n# x\n\nbody\n",
         encoding="utf-8",
