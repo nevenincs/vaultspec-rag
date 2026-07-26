@@ -17,7 +17,7 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .._index_breadth import PUBLISHED_POINTS_KEY
+from .._index_breadth import PUBLISHED_FILES_KEY, PUBLISHED_POINTS_KEY
 from . import _config_epoch
 
 if TYPE_CHECKING:
@@ -166,6 +166,7 @@ def publish_meta_from_file_states(
     membership_epoch: str,
     content_epoch: str,
     published_points_count: int,
+    published_files_count: int | None = None,
 ) -> int:
     """Atomically stream converged indexed hashes into the code sidecar.
 
@@ -185,6 +186,8 @@ def publish_meta_from_file_states(
             raise ValueError(f"{name} must not be empty")
     if published_points_count < 0:
         raise ValueError("published_points_count must not be negative")
+    if published_files_count is not None and published_files_count < 0:
+        raise ValueError("published_files_count must not be negative")
 
     meta_path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temp_name = tempfile.mkstemp(
@@ -204,6 +207,10 @@ def publish_meta_from_file_states(
                 (CONTENT_EPOCH_KEY, content_epoch),
                 (GENERATION_ID_KEY, generation_id),
                 (PUBLISHED_POINTS_KEY, str(published_points_count)),
+            ) + (
+                ()
+                if published_files_count is None
+                else ((PUBLISHED_FILES_KEY, str(published_files_count)),)
             )
             first = True
             for key, value in reserved:

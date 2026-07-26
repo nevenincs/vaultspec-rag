@@ -18,7 +18,7 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from .._index_breadth import parse_published_points
+from .._index_breadth import PUBLISHED_POINTS_KEY, parse_reserved_count
 from ._content_policy import ContentKind
 from ._drift_owner import CodeDriftOwner
 from ._route_migration import reconcile_generation_storage
@@ -227,7 +227,7 @@ class CodeGenerationLifecycle:
             return False
         if not self._store.code_collection_exists():
             return True
-        claimed = parse_published_points(self._read_meta_raw())
+        claimed = parse_reserved_count(self._read_meta_raw(), PUBLISHED_POINTS_KEY)
         if claimed is None:
             return False
         try:

@@ -385,7 +385,13 @@ class CodeRunCheckpoint:
             ),
         )
 
-    def publish_metadata(self, meta_path: Path, *, published_points: int) -> int:
+    def publish_metadata(
+        self,
+        meta_path: Path,
+        *,
+        published_points: int,
+        published_files: int | None = None,
+    ) -> int:
         """Publish exact converged ledger rows and advance the durable phase.
 
         ``published_points`` is the collection point count as observed by the
@@ -409,6 +415,7 @@ class CodeRunCheckpoint:
             membership_epoch=fingerprints.membership,
             content_epoch=fingerprints.content,
             published_points_count=published_points,
+            published_files_count=published_files,
         )
         self.generation = self.ledger.advance_finalization(
             self.generation_id,

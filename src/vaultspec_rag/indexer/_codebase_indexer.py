@@ -1549,6 +1549,7 @@ class CodebaseIndexer:
                         checkpoint.publish_metadata(
                             self._meta_path,
                             published_points=self.store.count_code(),
+                            published_files=self.store.count_code_files(),
                         )
                         checkpoint.publish_generation()
                     reporter.advance(1)
@@ -1879,6 +1880,7 @@ class CodebaseIndexer:
                     checkpoint.publish_metadata(
                         self._meta_path,
                         published_points=self.store.count_code(build_target),
+                        published_files=self.store.count_code_files(build_target),
                     )
 
                 if build_target is None:
