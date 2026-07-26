@@ -950,6 +950,7 @@ __all__ = [
     "_projects_list_contract_server",
     "_projects_unload_contract_server",
     "_read_service_status",
+    "_reindex_contract_server",
     "_running_service_record",
     "_search_output_contract_server",
     "_search_records",
@@ -991,10 +992,14 @@ def _reindex_contract_server() -> tuple[
                 self.end_headers()
                 return
             try:
-                body = json.loads(raw) if raw else {}
+                parsed: object = json.loads(raw) if raw else {}
             except ValueError:
-                body = {}
-            requests.append(body if isinstance(body, dict) else {})
+                parsed = {}
+            requests.append(
+                typing.cast("dict[str, object]", parsed)
+                if isinstance(parsed, dict)
+                else {}
+            )
             payload = {
                 "ok": True,
                 "added": 1,
