@@ -311,6 +311,88 @@ def read_qdrant_identity() -> QdrantIdentity | None:
         return None
 
 
+#: ``PROCESS_QUERY_LIMITED_INFORMATION`` - the least access that answers
+#: "does this pid exist and what is its image", and the only one grantable
+#: across integrity levels, so a probe of a higher-privilege process fails
+#: with ``ERROR_ACCESS_DENIED`` (which means alive) rather than not at all.
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+
+def win_kernel32() -> Any:
+    """Return ``kernel32`` with its process-handle signatures declared once.
+
+    ``ctypes.windll.kernel32`` is a process-global cache shared by every module
+    that touches it, and its function objects default to a 32-bit ``c_int``
+    return. A Windows ``HANDLE`` is pointer-sized, so the default TRUNCATES it,
+    and the truncated value handed back to ``GetExitCodeProcess`` or
+    ``CloseHandle`` is sign-extended into a different, invalid handle: the call
+    fails, a live process reads as dead, and the real kernel object leaks.
+    Declaring the widths here, once, is what keeps every caller correct - the
+    alternative is each site remembering, and the sites that forgot are what
+    made this function necessary.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = (
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.QueryFullProcessImageNameW.argtypes = (
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    return kernel32
+
+
+def pid_image_path(pid: int) -> str | None:
+    """Return *pid*'s full executable path, or ``None`` when unreadable.
+
+    ``None`` is genuinely "could not tell" - the process is gone, or runs at a
+    privilege this process cannot open - and is never evidence about what the
+    image IS. Callers deciding whether to trust or kill a pid must treat it as
+    unknown, not as a mismatch.
+    """
+    if pid <= 0:
+        return None
+    if sys.platform != "win32":
+        try:
+            return os.readlink(f"/proc/{pid}/exe")
+        except OSError as exc:
+            logger.debug("image path unreadable for pid %d: %s", pid, exc)
+            return None
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = win_kernel32()
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        logger.debug(
+            "cannot open pid %d for image inspection: error %d",
+            pid,
+            kernel32.GetLastError(),
+        )
+        return None
+    try:
+        size = wintypes.DWORD(32768)
+        buf = ctypes.create_unicode_buffer(size.value)
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+            logger.debug("image name query failed for pid %d", pid)
+            return None
+        return buf.value
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def pid_alive(pid: int) -> bool:
     """Return whether *pid* is a live process (cross-platform, best-effort).
 
@@ -324,11 +406,10 @@ def pid_alive(pid: int) -> bool:
     if sys.platform == "win32":
         import ctypes
 
-        process_query_limited = 0x1000
         still_active = 259
         error_access_denied = 5
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.OpenProcess(process_query_limited, False, pid)
+        kernel32 = win_kernel32()
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
         if not handle:
             # A null handle carries two opposite facts, and the error code is
             # the only thing that separates them. ERROR_ACCESS_DENIED means
