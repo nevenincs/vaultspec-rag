@@ -66,6 +66,29 @@ The owner of the machine declined a quiesce window so the release could ship,
 which is the right trade: an honestly open Step beats a number that is really
 scheduler noise, because the noise would be trusted later.
 
+SECOND ATTEMPT, ALSO ABANDONED, AND STILL NO CADENCE NUMBER. A later session
+did get a window: automatic updates were stopped for every watched root and the
+admitted queue was allowed to drain. The A/B was launched, four cells, arms
+alternating. Arm one at the shipped cadence completed clean - 131.9 s wall,
+peak CUDA reserved 3,626 MB, peak allocated 3,572 MB, read from the allocator
+directly. Arm two at the candidate cadence ran more than fifteen minutes
+without completing and was killed unfinished.
+
+The arm-two figure is NOT a cadence result and must never be quoted as one. A
+daemon code index job admitted at 00:44:18 was still running when arm two
+started and spanned the whole cell, and the watched root's automatic updates
+were restarted by another session at 00:57:02 while the cell was mid-encode.
+Arm one ran comparatively quiet and arm two ran contended, so the two arms
+differ by device load and by cadence at once and nothing can be attributed to
+either. The run was abandoned rather than reported, and it was killed partly
+because the contention was mutual: the daemon's own 61-chunk job made no
+progress for fifteen minutes while the two processes fought over the device.
+
+The window could not be held. Automatic updates were restarted externally three
+times - 00:20:31, 00:38:37 and 00:57:02 - each within ten to twenty minutes of
+being stopped, on a machine with other active sessions. That is the real
+blocker for this Step and it is a scheduling problem, not a technical one.
+
 ## Notes
 
 Deferred by decision, not dropped. What a later run needs, so none of this is
@@ -122,3 +145,36 @@ under contention and believe the result.
 
 Nothing regressed: the shipped defaults preserve the historical per-slice flush
 on both paths.
+
+Established by the abandoned second attempt, so the next run does not re-derive
+it:
+
+- The knob is wired correctly and the A/B has a real lever. The vault slice loop
+  computes its flush cadence from the config knob and passes
+  `release_cache=(is_last or (slice_index + 1) % flush_slices == 0)` into each
+  slice, so raising the knob genuinely removes device syncs rather than being
+  read and ignored.
+- The A/B is adequately powered on this repository's own vault, which removes
+  the assumption that only the PDF-heavy sibling corpus is large enough. The
+  vault collection holds roughly 4,248 chunks and the slice size is the
+  embedding batch size, giving about 133 slices: roughly 133 flushes at the
+  shipped cadence against roughly 17 at the candidate, a difference of over a
+  hundred device syncs inside a run that takes under two minutes when quiet.
+- Encode-seam vector reuse MUST be disabled for any cadence measurement, and
+  forgetting it produces a silent false win rather than an error. On a worktree
+  forked from an indexed tree the default-on reuse adopts donor vectors and
+  skips the encode entirely: the same vault corpus returned in 12 s against
+  108 s of real encoding, never moving the allocator past model weights. Cache
+  flush cadence has no meaning when nothing is being encoded.
+- The missing vault peak telemetry can be worked around for the A/B itself, but
+  not for production. Reading the allocator high-water directly in the measuring
+  process gives the safety number the acceptance rule needs without shipping
+  anything. The production gap is unchanged and still real: vault job records
+  carry null peak CUDA reserved, allocated and ceiling, so a raised vault
+  cadence would ship with no observable safety signal in the field. Closing that
+  gap is its own Step, not a rider on a measurement.
+- Prefer a device with no second encoder. Cells driving the indexer out of
+  process load a model copy alongside the daemon's resident one, which roughly
+  halves the capacity-derived CUDA ceiling and already failed one code rebuild
+  outright at that ceiling. Either stop the service for the window or route the
+  runs through it.

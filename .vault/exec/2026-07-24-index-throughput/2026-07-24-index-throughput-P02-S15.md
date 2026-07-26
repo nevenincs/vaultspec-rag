@@ -37,3 +37,27 @@ Scope the successor decision record must cover, so it is not re-derived:
 The measured 20-25% per-upsert transport win recorded in the decision record remains unharvested; the follow-up must add the gRPC-port knob before flipping the client flag.
 
 Re-examined during the plan closeout; the skip stands and gains a second reason. The store's error handling is written against the REST exception surface: the donor read in `src/vaultspec_rag/store.py` branches on `UnexpectedResponse.status_code == 404` to treat a vanished donor collection as a miss, and the write classifier in `src/vaultspec_rag/_store_writes.py` separates unrecoverable storage exhaustion from transient failure by walking the exception chain for a wrapped ENOSPC and for the HTTP 500 whose body names a WAL buffer overflow. Under gRPC those become status codes on a different exception type, so a transport flip silently reclassifies a full disk as transient and would retry writes that can never land - while burning GPU upstream. The switch therefore needs the port knob AND a mapped classification for the gRPC error surface, with its own tests. It is a decision record of its own, not a Step of this plan.
+
+Re-verified empirically in a later session, which converts two of the claims
+above from code reading into observation. The port claim holds: the managed
+server was listening on 127.0.0.1:8764 and 127.0.0.1:8765 and on nothing else,
+so the derived `http_port - 1` gRPC listener is real and the qdrant-client
+default 6334 is closed. The local-mode claim also holds, and more strongly than
+"local mode ignores it": in the pinned qdrant-client 1.18.0 the constructor
+dispatches `path=` to `QdrantLocal(location=path)` and never forwards
+`prefer_grpc` or `grpc_port` to it at all, so local mode has no transport
+argument to ignore and the switch is inert there by construction rather than by
+policy. One correction to the reasoning, which makes the classifier hazard
+narrower but no safer: `classify_write_error` in
+`src/vaultspec_rag/_store_writes.py:99-117` does not read `status_code`. It walks
+the chain for an `OSError` carrying `ENOSPC` and then matches the lowercased
+exception text against the markers "no space left on device" and "wal buffer
+size exceeds", falling through to `transient`. Text matching is transport-blind,
+so disk-full detection *may* survive gRPC if the server's message text reaches
+the exception string. That is the whole risk: it is unverified either way, and
+the failure mode when it does not survive is an unbounded retry against a full
+disk. The donor-read branch has no such ambiguity - it tests
+`isinstance(exc, UnexpectedResponse)`, an HTTP-layer type gRPC never raises, so
+that branch stops matching outright. A successor decision record must measure
+the gRPC exception text rather than assume it, and must cover the donor branch
+regardless.
