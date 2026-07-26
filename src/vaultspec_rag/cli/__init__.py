@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import sys
 
+from ..serviceclient._transport import _try_http_reindex, _try_http_search
+
 # Command submodules, imported purely so their decorators register against the
 # apps ``_app`` nests. Nothing here is re-exported.
 from . import (
@@ -55,7 +57,6 @@ from . import (
 from ._app import app, run_cli
 from ._core import console
 from ._gpu_errors import _cpu_only_message, _no_gpu_message, _no_torch_message
-from ._http_search import _try_http_reindex, _try_http_search
 from ._process import (
     TerminationResult,
     _heartbeat_age_seconds,

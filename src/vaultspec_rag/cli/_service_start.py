@@ -26,6 +26,7 @@ from ..serviceclient._compat import (
     ServiceVersionVerdict,
     classify_service_version,
 )
+from ..serviceclient._transport import _try_http_health
 from ._app import _global_target, server_app
 from ._core import logger
 from ._gpu_errors import (
@@ -34,7 +35,6 @@ from ._gpu_errors import (
     durable_tool_install_command,
     gpu_escape_hatch_command,
 )
-from ._http_search import _try_http_health
 from ._process import (
     DaemonBreakawayError,
     _call_interruptibly,

@@ -21,8 +21,8 @@ from ..serviceclient._status import (
     ReconcileOutcome,
     reconcile_discovery,
 )
+from ..serviceclient._transport import _try_http_health
 from ._app import server_app
-from ._http_search import _try_http_health
 from ._progress import StartupStatusReporter
 from ._render import _emit_json
 from ._service_lifecycle import (

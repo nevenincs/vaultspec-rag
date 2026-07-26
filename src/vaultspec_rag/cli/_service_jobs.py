@@ -23,6 +23,7 @@ from .._job_errors import (
     remediation,
 )
 from ..serviceclient._transport import (
+    _try_http_admin,
     _try_http_delete_job,
     _try_http_get_job,
     _try_http_retry_job,
@@ -35,7 +36,6 @@ from ._cli_format import (
     _format_seconds,
     _path_label,
 )
-from ._http_search import _try_http_admin
 from ._process import _call_interruptibly
 from ._render import (
     _display_service_not_running,

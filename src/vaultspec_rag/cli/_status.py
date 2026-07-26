@@ -7,9 +7,9 @@ from typing import Annotated, Any, cast
 
 import typer
 
+from ..serviceclient._transport import _try_http_admin
 from ._app import CLIState, app
 from ._cli_format import _counted_unit, _format_mb
-from ._http_search import _try_http_admin
 from ._render import (
     _emit_json,
     _emit_json_error_and_exit,
