@@ -131,6 +131,7 @@ def _handle_service_success(
     if not results:
         _render_empty_service_results(payload, query, search_type)
         _render_breadth_shortfall(payload)
+        _render_file_breadth_shortfall(payload)
         _render_partial_domain_failures(payload)
         return
     _display_search_results(
@@ -141,6 +142,7 @@ def _handle_service_success(
         root=target,
     )
     _render_breadth_shortfall(payload)
+    _render_file_breadth_shortfall(payload)
     _render_partial_domain_failures(payload)
 
 
@@ -170,6 +172,36 @@ def _render_breadth_shortfall(payload: dict[str, object]) -> None:
     _plain(
         "  These results are drawn from an incomplete index, so an absent "
         "result is not evidence that no such code exists.",
+        soft_wrap=True,
+    )
+    _plain("  Next action: vaultspec-rag index --type code --full")
+
+
+def _render_file_breadth_shortfall(payload: dict[str, object]) -> None:
+    """Warn that the publication answering this search covered fewer files.
+
+    Separate from the point-count warning because the two fail independently:
+    a publication covering a fraction of the files it names still stamps a
+    self-consistent point count, so this fires where that one cannot.
+    """
+    index_state = payload.get("index_state")
+    if not isinstance(index_state, dict):
+        return
+    shortfall = cast("dict[str, object]", index_state).get("file_shortfall")
+    if not isinstance(shortfall, dict):
+        return
+    figures = cast("dict[str, object]", shortfall)
+    named = figures.get("named_count")
+    covered = figures.get("covered_count")
+    missing = figures.get("missing_count")
+    _plain(
+        f"Warning: this index names {named} files but holds content for only "
+        f"{covered}; {missing} are missing.",
+        soft_wrap=True,
+    )
+    _plain(
+        "  A file absent from the index cannot be found by any query, so an "
+        "absent result is not evidence that no such code exists.",
         soft_wrap=True,
     )
     _plain("  Next action: vaultspec-rag index --type code --full")
@@ -369,13 +401,21 @@ def _try_in_process_search(
         else counts[search_type] > 0
     )
     if envelope is not None:
-        from .._index_breadth import code_breadth_shortfall
+        from .._index_breadth import (
+            code_breadth_shortfall,
+            code_file_breadth_shortfall,
+        )
         from .._search_state import search_index_state
 
         # Breadth is published for the code index alone, so a vault- or
         # document-only search has no claim to fall short of.
         shortfall = (
             code_breadth_shortfall(target, counts[PublicSourceType.CODE])
+            if search_type in (PublicSourceType.CODE, PublicSourceType.COMBINED)
+            else None
+        )
+        file_shortfall = (
+            code_file_breadth_shortfall(target)
             if search_type in (PublicSourceType.CODE, PublicSourceType.COMBINED)
             else None
         )
@@ -388,6 +428,7 @@ def _try_in_process_search(
             requested_root=target,
             search_type=search_type,
             shortfall=shortfall,
+            file_shortfall=file_shortfall,
         )
     try:
         status_ctx = (
@@ -660,6 +701,7 @@ def _render_in_process_results(
     if not result_items:
         _render_empty_in_process_results(query, search_type.value, target)
         _render_breadth_shortfall(breadth)
+        _render_file_breadth_shortfall(breadth)
         if domains is not None:
             _render_partial_domain_failures(
                 {
@@ -677,6 +719,7 @@ def _render_in_process_results(
         root=target,
     )
     _render_breadth_shortfall(breadth)
+    _render_file_breadth_shortfall(breadth)
     if domains is not None:
         _render_partial_domain_failures(
             {

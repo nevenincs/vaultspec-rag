@@ -271,6 +271,8 @@ def _search_index_state(
     requested_root: object,
     search_type: PublicSourceType | str,
     published_points: float | None = None,
+    named_files: float | None = None,
+    covered_files: float | None = None,
 ) -> dict[str, object]:
     """Adapt this route's carried figures onto the service-domain block.
 
@@ -278,7 +280,7 @@ def _search_index_state(
     figure it carries on the timing channel back into the shortfall the
     domain builder expects, and renders whatever that returns.
     """
-    from .._index_breadth import BreadthShortfall
+    from .._index_breadth import BreadthShortfall, FileBreadthShortfall
     from .._search_state import search_index_state
 
     count = int(indexed_count)
@@ -287,11 +289,17 @@ def _search_index_state(
         if published_points is None
         else BreadthShortfall(published=int(published_points), live=count)
     )
+    file_shortfall = (
+        None
+        if named_files is None or covered_files is None
+        else FileBreadthShortfall(named=int(named_files), covered=int(covered_files))
+    )
     return search_index_state(
         indexed_count=count,
         requested_root=requested_root,
         search_type=search_type,
         shortfall=shortfall,
+        file_shortfall=file_shortfall,
     )
 
 
@@ -1313,6 +1321,8 @@ def _execute_search_request(
             requested_root=root,
             search_type=search_type,
             published_points=phase_timing.get("published_points"),
+            named_files=phase_timing.get("named_files"),
+            covered_files=phase_timing.get("covered_files"),
         )
         index_state_seconds = time.perf_counter() - phase_started
         phase_started = time.perf_counter()
