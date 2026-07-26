@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 from ._source_types import PublicSourceType, parse_source_type
 
 if TYPE_CHECKING:
-    from ._index_breadth import BreadthShortfall
+    from ._index_breadth import BreadthShortfall, FileBreadthShortfall
 
 __all__ = ["search_index_state"]
 
@@ -33,6 +33,7 @@ def search_index_state(
     requested_root: object,
     search_type: PublicSourceType | str,
     shortfall: BreadthShortfall | None = None,
+    file_shortfall: FileBreadthShortfall | None = None,
 ) -> dict[str, object]:
     """Return the canonical ``index_state`` block for one search response.
 
@@ -54,4 +55,8 @@ def search_index_state(
     }
     if shortfall is not None:
         state["shortfall"] = shortfall.as_index_state_block()
+    # Independent of the point comparison: a republished fragment stamps a
+    # point count that agrees with itself, so only the file figures disagree.
+    if file_shortfall is not None:
+        state["file_shortfall"] = file_shortfall.as_index_state_block()
     return state
