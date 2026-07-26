@@ -68,23 +68,31 @@ def load_pyproject(pyproject: Path) -> TOMLDocument | None:
         raise
 
 
-def get_tool_uv_table(doc: TOMLDocument) -> TableLike | None:
-    """Return the ``[tool.uv]`` table, or None.
+def _get_tool_subtable(doc: TOMLDocument, key: str) -> TableLike | None:
+    """Return the ``[tool.<key>]`` table, or None.
 
     Narrowed to either :class:`tomlkit.items.Table` or
     :class:`tomlkit.container.OutOfOrderTableProxy`. tomlkit returns
-    the proxy whenever ``[tool.uv]`` and ``[tool.uv.sources]`` (or
-    ``[[tool.uv.index]]``) are interleaved with non-uv sections - the
-    dominant ``[tool.*]`` layout in real-world pyprojects. Both expose
-    the same Mapping surface we touch.
+    the proxy whenever ``[tool.<key>]`` and its children are
+    interleaved with non-``<key>`` sections - the dominant ``[tool.*]``
+    layout in real-world pyprojects. Both expose the same Mapping
+    surface we touch.
     """
     tool = tget(doc, "tool")
     if not isinstance(tool, _TABLE_LIKE_TYPES):
         return None
-    uv = tget(tool, "uv")
-    if not isinstance(uv, _TABLE_LIKE_TYPES):
+    sub = tget(tool, key)
+    if not isinstance(sub, _TABLE_LIKE_TYPES):
         return None
-    return uv
+    return sub
+
+
+def get_tool_uv_table(doc: TOMLDocument) -> TableLike | None:
+    """Return the ``[tool.uv]`` table, or None.
+
+    See :func:`_get_tool_subtable`.
+    """
+    return _get_tool_subtable(doc, "uv")
 
 
 def get_indices_aot(doc: TOMLDocument) -> AoT | None:
