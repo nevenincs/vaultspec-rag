@@ -24,7 +24,11 @@ from ...qdrant_runtime._resolve import resolve_binary
 from ...qdrant_runtime._supervise import QdrantSupervisor
 from .._ports import free_loopback_port
 from ..corpus import build_synthetic_vault
-from ._helpers import provisioned_qdrant_binary, serve_qdrant
+from ._helpers import (
+    _get_ephemeral_qdrant_port,
+    provisioned_qdrant_binary,
+    serve_qdrant,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -678,12 +682,19 @@ class TestServerFirstStartupSelection:
         prev_status = os.environ.get(EnvVar.STATUS_DIR.value)
         prev_binary = os.environ.get(EnvVar.QDRANT_BINARY.value)
         prev_local = os.environ.get(EnvVar.LOCAL_ONLY.value)
+        prev_port = os.environ.get(EnvVar.QDRANT_PORT.value)
         # Isolate the managed dir to an empty tmp so nothing is
         # provisioned, point the operator-binary knob at a path that does
         # not exist, and keep server mode the default (no local-only).
         os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path)
         os.environ[EnvVar.QDRANT_BINARY.value] = str(tmp_path / "does-not-exist")
         os.environ.pop(EnvVar.LOCAL_ONLY.value, None)
+        # The port must be isolated too, or this test asserts nothing on a
+        # host that happens to run qdrant. The supervisor checks the port
+        # BEFORE the binary, so a live server on the default 8765 - an
+        # operator's own, or another test run - refuses with "port held by a
+        # non-managed process" and the missing-binary branch is never reached.
+        os.environ[EnvVar.QDRANT_PORT.value] = str(_get_ephemeral_qdrant_port())
         reset_config()
         try:
             if resolve_binary() is not None:
@@ -707,4 +718,8 @@ class TestServerFirstStartupSelection:
                 os.environ[EnvVar.QDRANT_BINARY.value] = prev_binary
             if prev_local is not None:
                 os.environ[EnvVar.LOCAL_ONLY.value] = prev_local
+            if prev_port is None:
+                os.environ.pop(EnvVar.QDRANT_PORT.value, None)
+            else:
+                os.environ[EnvVar.QDRANT_PORT.value] = prev_port
             reset_config()
