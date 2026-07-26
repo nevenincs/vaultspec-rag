@@ -22,6 +22,7 @@ from ..indexer._preprocess_runner import (
     PreprocessAbortError,
     PreprocessResult,
     _build_argv,
+    _build_batch_argv,
     run_preprocessor,
 )
 
@@ -63,6 +64,37 @@ def test_dash_leading_path_operand_is_neutralised() -> None:
         order=0,
     )
     assert _build_argv(rule_embedded, Path("-x")) == ["extract", "--in=-x"]
+
+
+def test_dash_leading_manifest_operand_is_neutralised() -> None:
+    """The batch shape carries the same CWE-88 guarantee as the per-file one.
+
+    Both shapes now share one substitution helper, so this asserts the batch
+    caller actually reaches it. While they were separate functions with
+    identical bodies, a fix to the per-file form above would have left this
+    path silently exposed - and only the per-file form had a test.
+
+    Mutation-proven: dropping the ``./`` guard in ``_substitute_operand``
+    fails this on its own ``startswith("-")`` assertion.
+    """
+    rule = PreprocessRule(
+        pattern="*",
+        command="extract {paths}",
+        entry_point=None,
+        priority=100,
+        target=ContentKind.DOCUMENT,
+        extractor_version="1.0.0",
+        on_error="skip",
+        timeout_s=30.0,
+        options={},
+        order=0,
+    )
+    argv = _build_batch_argv(rule, "--output=owned")
+    assert argv == ["extract", "./--output=owned"]
+    assert not argv[-1].startswith("-")
+    # An absolute manifest path (the normal case) is untouched.
+    manifest = str(Path("/tmp/manifest.txt"))
+    assert _build_batch_argv(rule, manifest)[-1] == manifest
 
 
 _CAP = 1024 * 1024

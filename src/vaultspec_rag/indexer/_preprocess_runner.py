@@ -144,23 +144,27 @@ def _build_argv(rule: PreprocessRule, source_path: pathlib.Path) -> list[str]:
     if rule.command is not None:
         path_str = str(source_path)
         tokens = shlex.split(rule.command, posix=True)
-        return [_substitute_path(token, path_str) for token in tokens]
+        return [_substitute_operand(token, "{path}", path_str) for token in tokens]
     return []
 
 
-def _substitute_path(token: str, path_str: str) -> str:
-    """Substitute ``{path}`` into one argv token, neutralising option-injection.
+def _substitute_operand(token: str, placeholder: str, value: str) -> str:
+    """Substitute *placeholder* into one argv token, neutralising option-injection.
+
+    Serves both invocation shapes - the per-file ``{path}`` operand and the
+    batch ``{paths}`` manifest operand - because the neutralisation is the
+    same guarantee for both and must never be strengthened on one shape only.
 
     Token-wise substitution already defeats shell injection. This additionally
-    closes argv-position injection (CWE-88): if a standalone ``{path}`` operand
-    resolves to a value beginning with ``-`` (a file whose name an attacker
-    controls, e.g. ``--output=...``), it would be parsed by the child as an
-    option, not an operand. A bare ``-``-leading path operand is prefixed with
-    ``./`` so it is unambiguously a path. Absolute paths (the normal case) never
-    begin with ``-`` and are unchanged.
+    closes argv-position injection (CWE-88): if a standalone operand resolves
+    to a value beginning with ``-`` (a file whose name an attacker controls,
+    e.g. ``--output=...``), it would be parsed by the child as an option, not
+    an operand. A bare ``-``-leading operand is prefixed with ``./`` so it is
+    unambiguously a path. Absolute paths - the normal case for both a source
+    file and a manifest temp file - never begin with ``-`` and are unchanged.
     """
-    substituted = token.replace("{path}", path_str)
-    if substituted == path_str and substituted.startswith("-"):
+    substituted = token.replace(placeholder, value)
+    if substituted == value and substituted.startswith("-"):
         return f"./{substituted}"
     return substituted
 
@@ -535,21 +539,6 @@ class _BatchParse:
     failures: dict[str, str]
 
 
-def _substitute_paths(token: str, manifest_str: str) -> str:
-    """Substitute ``{paths}`` into one argv token, neutralising injection.
-
-    Mirrors :func:`_substitute_path` for the batch manifest placeholder: the
-    substitution is token-wise (never via a shell), and a standalone operand
-    that resolves to a ``-``-leading value is prefixed with ``./`` so the child
-    parses it as a path, not an option (CWE-88). A manifest temp path is
-    absolute in the normal case and never ``-``-leading.
-    """
-    substituted = token.replace("{paths}", manifest_str)
-    if substituted == manifest_str and substituted.startswith("-"):
-        return f"./{substituted}"
-    return substituted
-
-
 def _build_batch_argv(rule: PreprocessRule, manifest_path: str) -> list[str]:
     """Build the subprocess argv for a batch command rule.
 
@@ -559,7 +548,7 @@ def _build_batch_argv(rule: PreprocessRule, manifest_path: str) -> list[str]:
     """
     command = rule.command or ""
     tokens = shlex.split(command, posix=True)
-    return [_substitute_paths(token, manifest_path) for token in tokens]
+    return [_substitute_operand(token, "{paths}", manifest_path) for token in tokens]
 
 
 def _write_manifest_fd(fd: int, source_paths: Sequence[pathlib.Path]) -> None:
