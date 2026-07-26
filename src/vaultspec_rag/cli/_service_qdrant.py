@@ -20,10 +20,10 @@ from ..qdrant_runtime._constants import (
 )
 from ..qdrant_runtime._provision import provision, provisioned_versions
 from ..qdrant_runtime._resolve import probe_qdrant_endpoint, resolve_binary
+from ..serviceclient._discovery import _read_service_status
 from ._app import server_qdrant_app
 from ._progress import StartupStatusReporter
 from ._render import _emit_json, _plain
-from ._service_status import _read_service_status
 
 
 def _print_line(text: str) -> None:

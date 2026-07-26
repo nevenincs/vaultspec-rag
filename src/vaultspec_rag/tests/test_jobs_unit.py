@@ -31,10 +31,10 @@ import pytest
 from .. import job_manager, job_models
 from .. import jobs as jobs_module
 from ..job_control import PauseRequested, QuiesceGate, RunControlToken
-from ..jobs import (
+from ..job_manager import JobManager
+from ..job_models import (
     DesiredJobState,
     JobInitiator,
-    JobManager,
     JobMode,
     JobOperation,
     JobOutcome,
@@ -42,6 +42,8 @@ from ..jobs import (
     JobSource,
     JobSpec,
     JobState,
+)
+from ..jobs import (
     index_job_status,
     record_finish,
     record_start,

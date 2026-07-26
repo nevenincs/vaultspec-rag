@@ -17,9 +17,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from ..._store_models import root_collection_prefix
 from ...serviceclient._transport import _do_http_call
 from ...storage_manifest import load_manifest, record_root, update_orphan_stamps
-from ...store import root_collection_prefix
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -51,7 +51,8 @@ class TestVaultStore:
 
     def test_vault_store_locked_raises_typed_exception(self, tmp_path: Path) -> None:
         """Opening the same Qdrant storage twice must raise VaultStoreLockedError."""
-        from ...store import VaultStore, VaultStoreLockedError
+        from ..._store_locks import VaultStoreLockedError
+        from ...store import VaultStore
 
         first = VaultStore(tmp_path)
         try:

@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from ..._store_models import root_collection_prefix
 from ...serviceclient._transport import _do_http_call, _try_http_admin
-from ...store import root_collection_prefix
 
 if TYPE_CHECKING:
     from pathlib import Path

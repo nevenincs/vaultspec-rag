@@ -20,7 +20,9 @@ import vaultspec_rag.cli as _cli
 from ..serviceclient._discovery import (
     SERVICE_PHASE_WARMING,
     MachineResolution,
+    _default_service_port,
     _delete_service_status,
+    _read_service_status,
     resolve_machine_service,
 )
 from ..serviceclient._status import (
@@ -49,11 +51,7 @@ from ._service_lifecycle import (
     _print_detail_line,
     _should_unlink_discovery_file,
 )
-from ._service_status import (
-    _default_service_port,
-    _read_service_status,
-    _service_phase,
-)
+from ._service_status import _service_phase
 from ._status_labels import (
     FAILED_JOB_FAMILY,
     DegradedFinding,
@@ -83,11 +81,7 @@ __all__ = [
     "_explicit_port_state",
     "_failure_lines",
     "_liveness_from_resolution",
-    "_status_busy_label",
-    "_status_env_label",
-    "_status_jobs_label",
     "_status_next_action",
-    "_status_queue_label",
     "service_status",
 ]
 

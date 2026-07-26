@@ -43,8 +43,8 @@ if TYPE_CHECKING:
         search_documents,
         search_documents_timed,
     )
+    from ._store_models import CodeChunk, VaultDocument
     from .api import (
-        GraphCache,
         clean,
         get_readiness,
         get_related,
@@ -65,6 +65,7 @@ if TYPE_CHECKING:
         search_vault_timed,
     )
     from .embeddings import EmbeddingModel, SparseResult
+    from .graph_cache import GraphCache
     from .indexer import (
         CodebaseIndexer,
         DocumentIndexer,
@@ -82,7 +83,7 @@ if TYPE_CHECKING:
         parse_query,
         rerank_with_graph,
     )
-    from .store import CodeChunk, VaultDocument, VaultStore
+    from .store import VaultStore
 
 # Maps each lazily-exported public name to the submodule that defines it.
 # Accessing ``vaultspec_rag.<name>`` imports the owning submodule on demand.
@@ -96,7 +97,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "search_combined_timed": "_public_search",
     "search_documents": "_public_search",
     "search_documents_timed": "_public_search",
-    "GraphCache": "api",
     "clean": "api",
     "get_readiness": "api",
     "get_related": "api",
@@ -115,6 +115,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "search_codebase_timed": "api",
     "search_vault": "api",
     "search_vault_timed": "api",
+    "GraphCache": "graph_cache",
     "EmbeddingModel": "embeddings",
     "SparseResult": "embeddings",
     "CodebaseIndexer": "indexer",
@@ -130,8 +131,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "VaultSearcher": "search",
     "parse_query": "search",
     "rerank_with_graph": "search",
-    "CodeChunk": "store",
-    "VaultDocument": "store",
+    "CodeChunk": "_store_models",
+    "VaultDocument": "_store_models",
     "VaultStore": "store",
 }
 

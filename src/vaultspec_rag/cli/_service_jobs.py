@@ -22,6 +22,7 @@ from .._job_errors import (
     classify_error_text,
     remediation,
 )
+from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import (
     _try_http_admin,
     _try_http_delete_job,
@@ -43,7 +44,6 @@ from ._render import (
     _emit_json_error_and_exit,
     _plain,
 )
-from ._service_status import _default_service_port
 
 if TYPE_CHECKING:
     from collections.abc import Callable

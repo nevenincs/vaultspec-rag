@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from .. import indexer as indexer_package
+from .._store_models import root_collection_prefix
 from ..indexer._index_lifecycle import (
     INDEX_EVENT_NAMESPACE,
     run_index_lifecycle,
@@ -29,7 +30,6 @@ from ..indexer._index_lifecycle import (
 from ..indexer._vault_prep import IndexResult
 from ..job_control import NO_RUN_CONTROL
 from ..storage_manifest import load_manifest, record_root
-from ..store import root_collection_prefix
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator

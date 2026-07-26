@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from .._store_models import VaultChunk
+from .._store_models import CodeChunk, VaultChunk
 from ..config import reset_config
 from ..indexer._donor_candidates import CollectionKind
 from ..indexer._reuse import (
@@ -33,7 +33,10 @@ from ..indexer._reuse import (
     resolve_donor_reuse,
 )
 from ..indexer._streaming import _code_embed_text, encode_and_upsert_code_slice
-from ..store import CodeChunk, DonorPoint, VaultStore
+from ..store import (
+    DonorPoint,
+    VaultStore,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Sequence

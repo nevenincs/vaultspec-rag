@@ -328,7 +328,10 @@ class TestStoreLocalClientSerialization:
         return vector
 
     def _seed_searchable_points(self, store: VaultStore, dim: int) -> None:
-        from ..store import CodeChunk, VaultDocument
+        from .._store_models import (
+            CodeChunk,
+            VaultDocument,
+        )
 
         store.upsert_documents(
             [
@@ -605,7 +608,8 @@ class TestDropTable:
         collection's sqlite handle open, rmtree silently failed on Windows, and a
         same-name create_collection resurrected the deleted points.
         """
-        from ..store import VaultDocument, VaultStore
+        from .._store_models import VaultDocument
+        from ..store import VaultStore
 
         store = VaultStore(tmp_path, embedding_dim=4)
         try:
@@ -693,12 +697,12 @@ class TestServerModeNamespacing:
     """
 
     def test_prefix_is_stable_across_calls(self, tmp_path: Path) -> None:
-        from ..store import root_collection_prefix
+        from .._store_models import root_collection_prefix
 
         assert root_collection_prefix(tmp_path) == root_collection_prefix(tmp_path)
 
     def test_prefix_normalises_path_spelling(self, tmp_path: Path) -> None:
-        from ..store import root_collection_prefix
+        from .._store_models import root_collection_prefix
 
         spelled_differently = tmp_path / "sub" / ".."
         assert root_collection_prefix(tmp_path) == root_collection_prefix(
@@ -706,7 +710,7 @@ class TestServerModeNamespacing:
         )
 
     def test_prefix_differs_per_root(self, tmp_path: Path) -> None:
-        from ..store import root_collection_prefix
+        from .._store_models import root_collection_prefix
 
         root_a = tmp_path / "a"
         root_b = tmp_path / "b"
@@ -715,7 +719,7 @@ class TestServerModeNamespacing:
     def test_prefix_shape(self, tmp_path: Path) -> None:
         import re
 
-        from ..store import root_collection_prefix
+        from .._store_models import root_collection_prefix
 
         assert re.fullmatch(r"r[0-9a-f]{12}_", root_collection_prefix(tmp_path))
 
@@ -733,8 +737,9 @@ class TestServerModeNamespacing:
     def test_server_mode_names_prefixed_per_root(self, tmp_path: Path) -> None:
         import os
 
+        from .._store_models import root_collection_prefix
         from ..config import EnvVar, reset_config
-        from ..store import VaultStore, root_collection_prefix
+        from ..store import VaultStore
 
         root_a = tmp_path / "project-a"
         root_b = tmp_path / "project-b"

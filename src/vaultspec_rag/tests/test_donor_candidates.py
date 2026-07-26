@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .. import store_schema
+from .._store_models import root_collection_prefix
 from ..config import get_config, reset_config
 from ..indexer._code_meta import (
     CODE_EMBED_SCHEMA,
@@ -41,7 +42,6 @@ from ..indexer._donor_candidates import (
     read_donor_recorded_state,
 )
 from ..storage_manifest import ManifestEntry, record_root
-from ..store import root_collection_prefix
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

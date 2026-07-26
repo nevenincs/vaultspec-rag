@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
     from pytest import TempPathFactory
 
-    from ...store import CodeChunk
+    from ..._store_models import CodeChunk
 
 # A non-trivial module: multiple classes and functions with real nesting so
 # tree-sitter parsing + the recursive Python traversal cost is meaningful.

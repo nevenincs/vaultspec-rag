@@ -15,8 +15,9 @@ if TYPE_CHECKING:
 import pytest
 
 from .._job_errors import JobError, JobErrorKind
+from .._store_models import CodeChunk
 from .._store_writes import StoreWritePolicy
-from ..store import CodeChunk, VaultStore
+from ..store import VaultStore
 
 pytestmark = [pytest.mark.integration]
 

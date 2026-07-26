@@ -26,6 +26,7 @@ from typing import Any, cast
 import pytest
 
 from .. import CodebaseIndexer
+from .._store_models import CodeChunk
 from ..config import EnvVar, reset_config
 from ..indexer import _chunk_worker
 from ..indexer._content_policy import ContentKind
@@ -45,7 +46,6 @@ from ..indexer._preprocess_runner import (
     run_preprocessor_batch,
 )
 from ..progress import NullProgressReporter
-from ..store import CodeChunk
 from ._chunk_production import produce_chunks
 
 pytestmark = [pytest.mark.unit]

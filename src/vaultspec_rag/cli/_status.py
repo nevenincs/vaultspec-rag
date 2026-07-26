@@ -7,6 +7,7 @@ from typing import Annotated, Any, cast
 
 import typer
 
+from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
 from ._app import CLIState, app
 from ._cli_format import _counted_unit, _format_mb
@@ -16,7 +17,6 @@ from ._render import (
     _format_local_index_busy_message,
     _plain,
 )
-from ._service_status import _default_service_port
 from ._status_labels import render_degradation
 
 
@@ -307,7 +307,7 @@ def handle_status(
 
     import vaultspec_rag
 
-    from ..store import VaultStoreLockedError
+    from .._store_locks import VaultStoreLockedError
     from ._gpu_errors import _handle_gpu_error
 
     service_status = _service_index_status(target)

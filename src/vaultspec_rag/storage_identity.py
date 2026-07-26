@@ -106,8 +106,8 @@ def load_identity(
         The stamped identity, or ``None`` when none is recorded.
     """
     if backend == "server":
+        from ._store_models import root_collection_prefix
         from .storage_manifest import load_manifest
-        from .store import root_collection_prefix
 
         try:
             entry = load_manifest().get(root_collection_prefix(root))

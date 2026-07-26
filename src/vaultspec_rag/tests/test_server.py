@@ -989,8 +989,8 @@ class TestRegistryFullErrorShape:
 
     def test_local_store_locked_error_dict_shape(self, tmp_path: Path) -> None:
         """Local Qdrant lock contention returns an actionable MCP payload."""
+        from .._store_locks import VaultStoreLockedError
         from ..server import _local_store_locked_error_dict
-        from ..store import VaultStoreLockedError
 
         db_path: Path = tmp_path / ".vault" / "data" / "search-data" / "qdrant"
         exc = VaultStoreLockedError(str(db_path))

@@ -9,6 +9,7 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
 from ._app import server_watcher_app
 from ._cli_format import _counted_unit, _project_name
@@ -18,7 +19,6 @@ from ._render import (
     _emit_json_error_and_exit,
     _plain,
 )
-from ._service_status import _default_service_port
 
 
 def _format_milliseconds(raw: object) -> str:

@@ -395,8 +395,8 @@ def discover_donor_candidates(
     Returns:
         At most ``cap`` candidates in consultation order.
     """
+    from .._store_models import root_collection_prefix
     from ..storage_manifest import load_manifest
-    from ..store import root_collection_prefix
 
     entries = manifest if manifest is not None else load_manifest()
     own_prefix = root_collection_prefix(root)

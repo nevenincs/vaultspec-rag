@@ -1309,8 +1309,8 @@ def _active_index_prefixes() -> frozenset[str]:
     persisted grace windows both remain in force behind it.
     """
     from . import jobs
+    from ._store_models import root_collection_prefix
     from .job_models import JobOperation
-    from .store import root_collection_prefix
 
     try:
         active = jobs.get_job_manager().active()

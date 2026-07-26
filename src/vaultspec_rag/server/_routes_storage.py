@@ -120,10 +120,10 @@ def _shape_survey_payload(
     import pathlib
 
     from .. import store_schema
+    from .._store_models import root_collection_prefix
     from ..generation_survey import survey_generations
     from ..storage_ops import backend_totals
     from ..storage_survey import is_temp_rooted
-    from ..store import root_collection_prefix
 
     # Whole-backend rollup, computed before any filter so consumers see
     # true total size and per-status composition regardless of the view.

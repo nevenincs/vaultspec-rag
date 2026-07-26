@@ -115,8 +115,8 @@ class TestDeleteRootAddressing:
     @staticmethod
     def _registered_root(tmp_path: Path, name: str) -> tuple[Path, str]:
         """Create a root, record it in the manifest, return it and its prefix."""
+        from ..._store_models import root_collection_prefix
         from ...storage_manifest import record_root
-        from ...store import root_collection_prefix
 
         root = tmp_path / name
         root.mkdir()
@@ -227,7 +227,7 @@ class TestDeleteRootAddressing:
         ``delete_prefix`` removes the collection, failing the survival
         assertion. Restored, it passes.
         """
-        from ...store import root_collection_prefix
+        from ..._store_models import root_collection_prefix
 
         root = tmp_path / "unattributable"
         root.mkdir()

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .. import store_schema
+from .._store_models import root_collection_prefix
 from ..storage_identity import load_identity, record_identity, sidecar_path
 from ..storage_manifest import (
     load_manifest,
@@ -25,7 +26,6 @@ from ..storage_manifest import (
     record_root,
     rekey_prefix,
 )
-from ..store import root_collection_prefix
 
 if TYPE_CHECKING:
     from pathlib import Path

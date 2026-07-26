@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from ...cli import _spawn_service, _terminate_pid
-from ...cli._service_status import _status_file
+from ...serviceclient._discovery import _status_file
 from ...serviceclient._transport import _do_http_call
 from ._helpers import (
     _get_ephemeral_port,

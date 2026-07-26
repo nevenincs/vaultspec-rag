@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from ...job_manager import JobManager
     from ...service import ProjectSlot, ServiceRegistry
 
-from ...store import VaultStoreLockedError
+from ..._store_locks import VaultStoreLockedError
 
 pytestmark = [pytest.mark.integration]
 

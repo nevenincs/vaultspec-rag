@@ -56,6 +56,7 @@ def policy_boundary_project(
 ) -> Generator[PolicyBoundaryProject]:
     """Seed a real collection, sidecar, and cache behind conflicting routing."""
     from ... import CodebaseIndexer, VaultStore
+    from ..._store_models import CodeChunk
     from ...config import get_config
     from ...indexer._content_policy import (
         ContentKind,
@@ -65,7 +66,6 @@ def policy_boundary_project(
     )
     from ...indexer._preprocess_cache import preprocess_cache_dir
     from ...indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
-    from ...store import CodeChunk
 
     routed_dir = tmp_path / "incoming"
     routed_dir.mkdir()
@@ -227,9 +227,9 @@ def test_missing_mismatched_and_foreign_preflights_are_mutation_free(
 ) -> None:
     """Direct mutators reject absent or forged authority before store writes."""
     from ... import CodebaseIndexer, VaultStore
+    from ..._store_models import CodeChunk
     from ...config import get_config
     from ...indexer._codebase_indexer import CodeScopedPreflight
-    from ...store import CodeChunk
 
     root = tmp_path / "target"
     foreign_root = tmp_path / "foreign"

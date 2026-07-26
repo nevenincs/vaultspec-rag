@@ -32,10 +32,11 @@ if TYPE_CHECKING:
     import threading
     from collections.abc import Generator, Iterable, Iterator
 
+    from .._store_models import VaultDocument
     from ..embeddings import EmbeddingModel
     from ..job_control import RunControl
     from ..progress import ProgressReporter
-    from ..store import VaultDocument, VaultStore
+    from ..store import VaultStore
     from ._reuse import DonorReuseContext, ReuseStats
 
 logger = logging.getLogger(__name__)

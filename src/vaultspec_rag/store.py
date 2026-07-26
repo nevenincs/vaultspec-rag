@@ -60,13 +60,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "CodeChunk",
     "DonorPoint",
     "IngestVerificationError",
-    "VaultDocument",
     "VaultStore",
-    "VaultStoreLockedError",
-    "root_collection_prefix",
 ]
 
 

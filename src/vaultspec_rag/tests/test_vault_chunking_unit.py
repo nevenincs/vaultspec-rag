@@ -5,6 +5,7 @@ from typing import ClassVar
 
 import pytest
 
+from .._store_models import VaultDocument
 from ..indexer._vault_prep import split_document
 from ..search._models import SearchResult
 from ..search._rerank import (
@@ -14,7 +15,6 @@ from ..search._rerank import (
     rerank_with_graph,
 )
 from ..search._searcher import _group_chunks_by_document
-from ..store import VaultDocument
 
 
 def _doc(content: str, doc_id: str = "adr/sample") -> VaultDocument:

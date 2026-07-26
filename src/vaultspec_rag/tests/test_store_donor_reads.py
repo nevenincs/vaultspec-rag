@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ..store import CodeChunk, VaultStore
+from .._store_models import CodeChunk
+from ..store import VaultStore
 
 if TYPE_CHECKING:
     from collections.abc import Generator

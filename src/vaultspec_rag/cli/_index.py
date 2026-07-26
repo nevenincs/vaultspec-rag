@@ -24,11 +24,11 @@ import typer
 import vaultspec_rag.cli as _cli
 
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
+from .._store_locks import VaultStoreLockedError
 from .._store_writes import InsufficientDiskSpaceError
 from ..config import EnvVar
 from ..serviceclient._compat import resolve_data_plane_service
 from ..serviceclient._transport import _try_http_reindex
-from ..store import VaultStoreLockedError
 from ._app import CLIState, app
 from ._cli_format import _counted_unit
 from ._core import logger

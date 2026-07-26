@@ -30,9 +30,10 @@ if TYPE_CHECKING:
 
     from pytest import TempPathFactory
 
+    from ..._store_models import CodeChunk
     from ..._store_writes import StoreWritePolicy
     from ...qdrant_runtime._supervise import QdrantSupervisor
-    from ...store import CodeChunk, VaultChunk
+    from ...store import VaultChunk
 
 pytestmark = [pytest.mark.integration]
 
@@ -102,7 +103,7 @@ class _DeterministicCpuModel:
 
 
 def _make_code_chunks(count: int, dimension: int) -> list[CodeChunk]:
-    from ...store import CodeChunk
+    from ..._store_models import CodeChunk
 
     chunks: list[CodeChunk] = []
     for index in range(count):

@@ -15,10 +15,12 @@ Package ``__init__.py`` files are exempt: a package's public surface is a
 deliberate facade, and re-exporting through it is the language's own idiom
 rather than a hidden second path.
 
-``_KNOWN_FACADES`` is a RATCHET, not a permission list. It records the modules
-that still carry pass-throughs, so nothing new can appear while the campaign
-works through them. Entries come OUT as each module is cleaned; nothing is ever
-added. Adding a name here to make this test pass defeats its only purpose.
+``_KNOWN_FACADES`` is a RATCHET, not a permission list. It is now EMPTY: every
+non-``__init__`` module exports only what it defines. It stays in place as the
+mechanism rather than the exemption - if a cleanup ever has to land in stages,
+an entry records the interim count and the test fails when that count grows.
+Adding an entry to make this test pass, rather than to stage a cleanup already
+underway, defeats its only purpose.
 """
 
 from __future__ import annotations
@@ -34,16 +36,9 @@ pytestmark = [pytest.mark.unit]
 
 _PACKAGE_ROOT = Path(_process_probe.__file__).parent
 
-#: Modules that still re-export, with the count at the time of writing. Shrink
-#: this; never grow it. A count that no longer matches means the module moved
-#: in one direction or the other and this file needs updating deliberately.
-_KNOWN_FACADES: dict[str, int] = {
-    "api.py": 10,
-    "jobs.py": 24,
-    "store.py": 4,
-    "cli/_service_status.py": 4,
-    "cli/_status_render.py": 4,
-}
+#: Modules permitted an interim pass-through count while a staged cleanup is in
+#: flight. Empty, and meant to stay that way: shrink entries, never grow them.
+_KNOWN_FACADES: dict[str, int] = {}
 
 
 def _reexported_names(path: Path) -> list[str]:

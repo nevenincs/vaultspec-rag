@@ -6,7 +6,8 @@ from typing import TYPE_CHECKING
 
 import typer
 
-from ..store import VaultStore, VaultStoreLockedError
+from .._store_locks import VaultStoreLockedError
+from ..store import VaultStore
 from ._render import _emit_json_error_and_exit, _plain
 
 if TYPE_CHECKING:

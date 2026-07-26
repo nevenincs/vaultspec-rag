@@ -27,10 +27,10 @@ import vaultspec_rag.mcp._tools as tools
 from ... import jobs as _jobs
 from ... import server
 from ...job_control import RunControlToken
-from ...jobs import (
+from ...job_manager import JobManager
+from ...job_models import (
     DesiredJobState,
     JobInitiator,
-    JobManager,
     JobMode,
     JobOperation,
     JobSource,
