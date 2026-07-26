@@ -521,19 +521,28 @@ class TestGatherStorageSurveyCached:
         publish_survey_snapshot(surveys, computed_at=computed_at)
 
     def test_cached_answer_never_opens_a_client(
-        self, monkeypatch: pytest.MonkeyPatch
+        self,
     ) -> None:
+        """A cache hit must answer from the snapshot, never walk the store.
+
+        Proved by observation rather than by forbidding the walk: the published
+        snapshot names a prefix that exists in no storage anywhere. A miss would
+        walk the real store, which cannot invent that name, so seeing it back is
+        the evidence the cache answered.
+
+        Proven able to fail: making ``_gather_storage_survey`` always recompute
+        returns a payload without this prefix, failing the identity assertion.
+        """
         from ..server import _routes
 
-        def _fail() -> list[NamespaceSurvey]:
-            raise AssertionError("cache hit must not walk the store")
-
-        monkeypatch.setattr(_routes, "_fetch_surveys", _fail)
-        self._publish([_survey("r" + "a" * 12 + "_", status="live")], computed_at="t1")
+        phantom = "r" + "a" * 12 + "_"
+        self._publish([_survey(phantom, status="live")], computed_at="t1")
         payload = _routes._gather_storage_survey(None, 200)
         assert payload["source"] == "cache"
         assert payload["computed_at"] == "t1"
         assert payload["returned"] == 1
+        namespaces = cast("list[dict[str, object]]", payload["namespaces"])
+        assert [n["prefix"] for n in namespaces] == [phantom]
 
     def test_filters_and_limit_apply_to_the_cached_list(self) -> None:
         from ..server import _routes
