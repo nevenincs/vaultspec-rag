@@ -16,12 +16,12 @@ from ._cli_helpers import (
     _expected_code_search_request,
     _invoke_search_contract,
     _label_values,
-    _no_service,
     _plain_lines,
     _search_output_contract_server,
     _search_records,
     _slow_search_contract_server,
     _sparse_search_output_contract_server,
+    _store_locked_by_another_process,
     app,
     runner,
 )
@@ -324,35 +324,39 @@ class TestSearchSafetyContract:
         assert os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] == "1"
         assert os.environ["TRANSFORMERS_VERBOSITY"] == "error"
 
-    def test_search_locked_store_raises_actionable_error(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        """Locked store in direct search prints a friendly routing-mode message."""
-        from ..store import VaultStoreLockedError
+    def test_search_locked_store_raises_actionable_error(self, tmp_path: Path):
+        """A store held by another process prints the routing-mode message.
 
+        The lock is real and foreign. A ``VaultStore`` in this interpreter does
+        not block a second open - the lock is per process - so a same-process
+        holder proves nothing, and substituting the search proved only that the
+        renderer can format an exception someone constructed by hand.
+
+        Driving the real condition found a defect the substitution hid: the
+        index counts taken before the search also open the store, and they sat
+        outside the guard, so a genuinely busy store exited non-zero with no
+        output at all and this message never reached the operator it was
+        written for.
+
+        Proven able to fail: dropping the holder lets the store open and the
+        search returns an ordinary empty result on exit zero.
+        """
         (tmp_path / ".vaultspec").mkdir()
-
-        def mock_search(*_args: object, **_kwargs: object) -> None:
-            raise VaultStoreLockedError(str(tmp_path / "db"))
-
-        monkeypatch.setattr("vaultspec_rag.search_vault", mock_search)
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._search.resolve_data_plane_service", _no_service
-        )
 
         # Search is service-first: the local store is only opened under an
         # explicit local mandate, so --allow-fallback is required to reach the
         # in-process path that surfaces the locked-store message.
-        result = runner.invoke(
-            app,
-            [
-                "--target",
-                str(tmp_path),
-                "search",
-                "anything",
-                "--allow-fallback",
-            ],
-        )
+        with _store_locked_by_another_process(tmp_path):
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "search",
+                    "anything",
+                    "--allow-fallback",
+                ],
+            )
         assert result.exit_code != 0
         normalized = " ".join(result.output.split())
         assert "local search index" in normalized
@@ -367,37 +371,40 @@ class TestSearchSafetyContract:
         assert "RAG service" not in normalized
         assert "file watcher" not in normalized
 
-    def test_search_locked_store_json_mode(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        """Locked store in direct search under --json outputs local_store_locked."""
-        import json
+    def test_search_locked_store_json_mode(self, tmp_path: Path):
+        """A store held by another process reports local_store_locked under --json.
 
-        from ..store import VaultStoreLockedError
+        The lock is real and foreign. A ``VaultStore`` in this interpreter does
+        not block a second open - the lock is per process - so a same-process
+        holder proves nothing, and substituting the search proved only that the
+        renderer can format an exception someone constructed by hand.
 
+        Driving the real condition found a defect the substitution hid: the
+        index counts taken before the search also open the store, and they sat
+        outside the guard, so a genuinely busy store exited non-zero with no
+        output at all and this message never reached the operator it was
+        written for.
+
+        Proven able to fail: dropping the holder lets the store open and the
+        search returns an ordinary empty result on exit zero.
+        """
         (tmp_path / ".vaultspec").mkdir()
 
-        def mock_search(*_args: object, **_kwargs: object) -> None:
-            raise VaultStoreLockedError(str(tmp_path / "db"))
-
-        monkeypatch.setattr("vaultspec_rag.search_vault", mock_search)
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._search.resolve_data_plane_service", _no_service
-        )
-
-        # Service-first: --allow-fallback is the explicit mandate that opens the
-        # local store, the only path that can report local_store_locked.
-        result = runner.invoke(
-            app,
-            [
-                "--target",
-                str(tmp_path),
-                "search",
-                "anything",
-                "--allow-fallback",
-                "--json",
-            ],
-        )
+        # Search is service-first: the local store is only opened under an
+        # explicit local mandate, so --allow-fallback is required to reach the
+        # in-process path that surfaces the locked-store message.
+        with _store_locked_by_another_process(tmp_path):
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "search",
+                    "anything",
+                    "--allow-fallback",
+                    "--json",
+                ],
+            )
         assert result.exit_code != 0
         data = json.loads(result.output.strip())
         assert data["ok"] is False
