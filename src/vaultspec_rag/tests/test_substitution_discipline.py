@@ -42,11 +42,6 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "the provisioner requires https on a pinned host and an archive "
         "matching a committed digest, so no substitute source can be staged",
     ),
-    "test_search_quality_fixes_unit.py": (
-        1,
-        "the auth gate fails closed on an unset token, and only the full "
-        "lifespan mints one; the routes themselves are production's",
-    ),
 }
 
 
