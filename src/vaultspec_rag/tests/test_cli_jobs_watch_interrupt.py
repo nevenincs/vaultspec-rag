@@ -153,17 +153,36 @@ def test_the_watch_loop_refreshes_through_the_shared_helper(
         calls += 1
         return real(work, **kwargs)
 
-    def _payload(_spec: jobs._JobsQuery) -> dict[str, object]:
-        return {"jobs": [], "total": 0, "returned": 0}
+    from ._cli_helpers import _jobs_empty_contract_server
 
-    monkeypatch.setattr(jobs, "_default_service_port", lambda: 8766)
-    monkeypatch.setattr(jobs, "_fetch_jobs_result", _payload)
+    # Only the call counter is substituted, and it delegates to the real helper
+    # rather than replacing it: the loop still fetches over a real socket from a
+    # real server, and what is observed - that production routed through the
+    # shared helper - is decided by production, not by the counter.
     monkeypatch.setattr(jobs, "_call_interruptibly", _counting)
 
-    result = runner.invoke(app, ["server", "jobs", "--watch", "--refresh-count", "2"])
+    server, thread, requests = _jobs_empty_contract_server()
+    try:
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "jobs",
+                "--watch",
+                "--refresh-count",
+                "2",
+                "--port",
+                str(server.server_address[1]),
+            ],
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
     assert result.exit_code == 0
     assert calls == 2, "each refresh must route through the shared helper"
+    assert len(requests) == 2, "each refresh must reach the service"
 
 
 def test_the_watch_refresh_is_a_read_only_request(
