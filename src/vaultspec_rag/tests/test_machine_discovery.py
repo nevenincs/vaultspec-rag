@@ -271,51 +271,54 @@ class TestQdrantClientOpTimeout:
     accepts the socket but never answers would strand the singleton forever.
     """
 
-    def test_startup_reconcile_client_carries_a_finite_timeout(
+    def test_startup_reconcile_returns_when_the_server_never_answers(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Guard: the reconcile client must be built with a finite timeout.
+        """The reconcile must not wedge on a server that accepts and stalls.
 
-        Mutation this catches: drop ``timeout=`` from the ``QdrantClient(...)``
-        construction in ``_reconcile_storage_manifest`` and the recorded kwargs
-        carry no ``timeout``, so the assertion below fails.
+        A refused connection is not the hazard - the reconcile swallows that
+        immediately. The hazard is a half-dead server that completes the
+        handshake and never answers, because the read then blocks for however
+        long the client was built to wait. So the socket here binds and
+        listens, and nothing ever accepts a request on it.
+
+        The bound is injected rather than defaulted: asserting the production
+        default would mean a test that waits the production default.
+
+        Proven able to fail: dropping ``timeout=`` from the ``QdrantClient``
+        construction falls back to the client's own default and the call takes
+        roughly 6.1s against this socket; honouring the injected bound takes
+        roughly 2.7s. Both numbers are measured, not assumed - a first version
+        of this test bounded at 15s and passed under the mutation, because the
+        unhonoured path does not hang forever, it just waits longer. The bound
+        below sits in the gap with margin either side.
         """
-        import math
-        from types import SimpleNamespace
+        import socket
+        import time
 
         from ..server import _lifespan
-        from ..server._lifecycle import _QDRANT_CLIENT_OP_TIMEOUT_SECONDS
 
-        # Isolate the storage manifest to tmp: an empty ``known`` set makes the
-        # reconcile a candidate to drop entries, so it must never read or mutate
-        # the operator's real managed manifest.
-        monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(tmp_path / "status"))
-        monkeypatch.setenv(
-            EnvVar.QDRANT_STORAGE_DIR.value,
-            str(tmp_path / "qdrant" / "storage"),
-        )
-        reset_config()
-
-        recorded: dict[str, object] = {}
-
-        class _RecordingClient:
-            def __init__(self, **kwargs: object) -> None:
-                recorded.update(kwargs)
-
-            def get_collections(self) -> object:
-                return SimpleNamespace(collections=[])
-
-            def close(self) -> None:
-                pass
-
-        monkeypatch.setattr("qdrant_client.QdrantClient", _RecordingClient)
+        stall = socket.socket()
+        stall.bind(("127.0.0.1", 0))
+        stall.listen(1)
+        port = stall.getsockname()[1]
         try:
-            _lifespan._reconcile_storage_manifest()
-        finally:
+            # Isolate the manifest and identity sidecar to tmp: an empty
+            # ``known`` set makes the reconcile a candidate to drop entries, so
+            # it must never read or mutate the operator's real managed state.
+            monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(tmp_path / "status"))
+            monkeypatch.setenv(
+                EnvVar.QDRANT_STORAGE_DIR.value,
+                str(tmp_path / "qdrant" / "storage"),
+            )
+            monkeypatch.setenv(EnvVar.QDRANT_URL.value, f"http://127.0.0.1:{port}")
             reset_config()
 
-        timeout = recorded.get("timeout")
-        assert isinstance(timeout, int | float) and not isinstance(timeout, bool)
-        assert timeout > 0
-        assert math.isfinite(float(timeout))
-        assert timeout == _QDRANT_CLIENT_OP_TIMEOUT_SECONDS
+            started = time.monotonic()
+            _lifespan._reconcile_storage_manifest(timeout=1)
+            elapsed = time.monotonic() - started
+        finally:
+            reset_config()
+            stall.close()
+
+        assert elapsed < 4.5
