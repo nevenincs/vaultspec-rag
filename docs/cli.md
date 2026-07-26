@@ -516,7 +516,9 @@ Exit/JSON: `0` on success; `3` when the service is not running. With `--json`, t
 
 `vaultspec-rag server updates start <project>`
 
-Start automatic index updates for a project. This is the renamed `watcher start` verb. It is a no-op when automatic updates are disabled.
+Start automatic index updates for a project. This is the renamed `watcher start` verb.
+
+The verb reports the state the project is actually in, never the state the service intends to reach. A project already updating automatically is a success. A start the service recorded but has not yet honoured - because the previous watcher for the same project is still stopping, or another start is still finishing - is reported as not started, with the reason and a `server updates status` follow-up; the service completes it without a further request.
 
 Arguments:
 
@@ -531,7 +533,7 @@ Options:
 | `--port` | integer | running service port | Target a specific service port.   |
 | `--json` | flag    | off                  | Emit one JSON envelope to stdout. |
 
-Exit/JSON: `0` when the request is handled; `3` when the service is not running. With `--json`, the result is one envelope on stdout.
+Exit/JSON: `0` when the project is updating automatically on return, whether this call started it or it already was; `1` when it is not (`updates_pending` when the service still owes the start, `updates_disabled` when automatic updates are switched off for the service, `updates_not_started` otherwise); `3` when the service is not running. With `--json`, the result is one envelope on stdout, and `data.status` names the exact state.
 
 ## server updates stop
 
@@ -575,7 +577,7 @@ Options:
 | `--port`                  | integer | running service port | Target a specific service port.                                                                           |
 | `--json`                  | flag    | off                  | Emit one JSON envelope to stdout.                                                                         |
 
-Exit/JSON: `0` when the request is handled; `3` when the service is not running. With `--json`, the result is one envelope on stdout.
+Exit/JSON: `0` when a watcher carrying the new timing is running on return; `1` when it is not, with the same error strings and `data.status` as [server updates start](#server-updates-start) - the new timing is retained and applied once the previous watcher finishes stopping; `3` when the service is not running. With `--json`, the result is one envelope on stdout.
 
 ## server qdrant install
 
