@@ -18,6 +18,7 @@ import typer
 import vaultspec_rag.cli as _cli
 
 from ..serviceclient._discovery import (
+    HEARTBEAT_STALENESS_SECONDS,
     SERVICE_PHASE_WARMING,
     MachineResolution,
     _default_service_port,
@@ -35,7 +36,6 @@ from ..serviceclient._transport import _try_http_admin, _try_http_health
 from ._app import server_app
 from ._cli_format import NOT_REPORTED
 from ._process import (
-    _HEARTBEAT_STALENESS_SECONDS,
     _heartbeat_age_seconds,
     _port_is_listening,
 )
@@ -245,7 +245,7 @@ def _evaluate_service_signals(
     heartbeat_stale = (
         pid_alive
         if heartbeat_age is None
-        else heartbeat_age > _HEARTBEAT_STALENESS_SECONDS
+        else heartbeat_age > HEARTBEAT_STALENESS_SECONDS
     )
 
     token_match = _compute_token_match(expected_token, pid_alive, port_listening, port)

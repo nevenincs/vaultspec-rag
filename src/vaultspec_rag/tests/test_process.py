@@ -7,10 +7,15 @@ from pathlib import Path
 
 import pytest
 
+from .._win32 import (
+    WIN_CREATE_BREAKAWAY_FROM_JOB,
+    WIN_CREATE_NEW_PROCESS_GROUP,
+    WIN_CREATE_NO_WINDOW,
+    WIN_DETACHED_PROCESS,
+)
 from ..cli._process import (
-    _WIN_CREATE_BREAKAWAY_FROM_JOB,
-    _WIN_CREATE_NEW_PROCESS_GROUP,
-    _WIN_CREATE_NO_WINDOW,
+    WIN_DAEMON_DETACHED_FLAGS,
+    WIN_DAEMON_SPAWN_FLAGS,
     _resolve_daemon_interpreter,
 )
 
@@ -18,39 +23,49 @@ pytestmark = [pytest.mark.unit]
 
 
 class TestWindowsCreationFlags:
-    """Assert the Windows process-creation flag constants are correct.
+    """Assert the daemon spawn's Windows creation-flag policy.
 
-    These tests exercise pure constant values — no subprocess is spawned.
-    The numeric values are fixed by the Windows API and must never change;
-    asserting them here guards against accidental refactoring.
+    The numeric values are fixed by the Windows API and read from ``_win32``,
+    which is the one place they are declared. The combinations are this
+    spawn's policy and are read from the module that spawns, so these assert
+    what production passes to ``Popen`` rather than a copy of it: the previous
+    versions built the combination inside the test and then asserted a bit
+    they had just set, which held whatever production did.
     """
 
     def test_create_new_process_group_value(self) -> None:
-        assert _WIN_CREATE_NEW_PROCESS_GROUP == 0x00000200
+        assert WIN_CREATE_NEW_PROCESS_GROUP == 0x00000200
 
     def test_create_no_window_value(self) -> None:
-        assert _WIN_CREATE_NO_WINDOW == 0x08000000
+        assert WIN_CREATE_NO_WINDOW == 0x08000000
 
     def test_create_breakaway_from_job_value(self) -> None:
-        assert _WIN_CREATE_BREAKAWAY_FROM_JOB == 0x01000000
+        assert WIN_CREATE_BREAKAWAY_FROM_JOB == 0x01000000
+
+    def test_detached_process_value(self) -> None:
+        assert WIN_DETACHED_PROCESS == 0x00000008
 
     def test_breakaway_flag_included_in_full_creationflags(self) -> None:
-        """The combined flags for a normal spawn include the breakaway bit."""
-        full_flags = (
-            _WIN_CREATE_NEW_PROCESS_GROUP
-            | _WIN_CREATE_NO_WINDOW
-            | _WIN_CREATE_BREAKAWAY_FROM_JOB
-        )
-        assert full_flags & _WIN_CREATE_BREAKAWAY_FROM_JOB, (
+        """The flags the preferred spawn passes include the breakaway bit."""
+        assert WIN_DAEMON_SPAWN_FLAGS & WIN_CREATE_BREAKAWAY_FROM_JOB, (
             "CREATE_BREAKAWAY_FROM_JOB must be set in the full creationflags"
+        )
+        assert WIN_DAEMON_SPAWN_FLAGS == (
+            WIN_CREATE_NEW_PROCESS_GROUP
+            | WIN_CREATE_NO_WINDOW
+            | WIN_CREATE_BREAKAWAY_FROM_JOB
         )
 
     def test_fallback_flags_exclude_breakaway(self) -> None:
-        """The fallback flags (used when breakaway is denied) omit the bit."""
-        fallback_flags = _WIN_CREATE_NEW_PROCESS_GROUP | _WIN_CREATE_NO_WINDOW
-        assert not (fallback_flags & _WIN_CREATE_BREAKAWAY_FROM_JOB), (
+        """The console-detached fallback must not carry the breakaway bit.
+
+        Breakaway is what the fallback exists because the Job Object refused,
+        so passing it again would fail the same way.
+        """
+        assert not (WIN_DAEMON_DETACHED_FLAGS & WIN_CREATE_BREAKAWAY_FROM_JOB), (
             "CREATE_BREAKAWAY_FROM_JOB must NOT be set in the fallback creationflags"
         )
+        assert WIN_DAEMON_DETACHED_FLAGS & WIN_DETACHED_PROCESS
 
 
 class TestResolveDaemonInterpreter:

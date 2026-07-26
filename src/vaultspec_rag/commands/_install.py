@@ -65,10 +65,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Compatibility aliases for the established focused rollback tests.
-_file_snapshot = file_snapshot
-_restore_file_snapshot = restore_file_snapshot
-
 _DEFAULT_PROJECT_MCP_PROVIDERS = (Tool.CLAUDE, Tool.CODEX)
 
 
@@ -349,7 +345,7 @@ def _commit_mcp_placement_and_mode(
     """Commit placement, package mode, and builtin intent as one transition."""
     snapshots: dict[Path, NodeSnapshot] = {}
     try:
-        snapshots = {path: _file_snapshot(path) for path in _mcp_intent_paths(target)}
+        snapshots = {path: file_snapshot(path) for path in _mcp_intent_paths(target)}
         if not _reconcile_mcp_extra(
             target,
             report,
@@ -521,7 +517,7 @@ def _run_core_sync(
     fresh_providers: tuple[Tool, ...] | None,
 ) -> None:
     manifest_snapshots = {
-        path: _file_snapshot(path)
+        path: file_snapshot(path)
         for path in _fresh_provider_transaction_paths(target)
         if fresh_providers is not None
     }

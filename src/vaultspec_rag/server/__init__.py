@@ -71,7 +71,6 @@ from ._models import (
 # 1. State globals
 from ._state import (
     _HEARTBEAT_INTERVAL_SECONDS,
-    _HEARTBEAT_STALENESS_SECONDS,
     _SERVICE_TOKEN,
     _daemon_log_capture,
     _daemon_process,
@@ -115,7 +114,6 @@ from ._watcher import (
 
 __all__ = [
     "_HEARTBEAT_INTERVAL_SECONDS",
-    "_HEARTBEAT_STALENESS_SECONDS",
     "_SERVICE_TOKEN",
     "BackendCapabilities",
     "HealthResponse",

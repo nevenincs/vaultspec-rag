@@ -46,7 +46,6 @@ from .._win32 import (
     WIN_DETACHED_PROCESS,
 )
 from ..config import EnvVar
-from ..serviceclient._discovery import HEARTBEAT_STALENESS_SECONDS
 from ..serviceclient._transport import _try_http_health
 from ._core import logger
 
@@ -57,7 +56,6 @@ if TYPE_CHECKING:
 
 __all__ = [
     "_DEFAULT_GRACEFUL_DRAIN_SECONDS",
-    "_HEARTBEAT_STALENESS_SECONDS",
     "DaemonBreakawayError",
     "TerminationResult",
     "_call_interruptibly",
@@ -223,7 +221,6 @@ def _port_is_available(port: int) -> bool:
 
 # Re-exported from the shared heartbeat contract so this module keeps its
 # existing name for importers. The CLI still never imports ``server``.
-_HEARTBEAT_STALENESS_SECONDS = HEARTBEAT_STALENESS_SECONDS
 
 # Post-signal drain bound before a forced kill. The short default serves
 # callers that only need the process gone; an operator stop overrides it so the
@@ -390,15 +387,17 @@ def _service_child_env(
     return env
 
 
-# Windows process-creation flags for the detached daemon spawn. The values are
-# Win32 API facts held once in .._win32; the combination below is this spawn's
-# policy - break away from the launching shell's Job Object so the daemon
-# survives the shell, with a console-detached fallback when breakaway is denied.
-# Kept under the existing names so importers and tests are unaffected.
-_WIN_CREATE_NEW_PROCESS_GROUP = WIN_CREATE_NEW_PROCESS_GROUP
-_WIN_CREATE_NO_WINDOW = WIN_CREATE_NO_WINDOW
-_WIN_CREATE_BREAKAWAY_FROM_JOB = WIN_CREATE_BREAKAWAY_FROM_JOB
-_WIN_DETACHED_PROCESS = WIN_DETACHED_PROCESS
+# The flag VALUES are Win32 API facts held once in .._win32. What belongs here
+# is the daemon spawn's POLICY: break away from the launching shell's Job
+# Object so the daemon survives the shell, and fall back to a console-detached
+# spawn when a restricted Job Object denies breakaway. Naming both combinations
+# is what lets a test assert the policy the spawn actually uses.
+WIN_DAEMON_SPAWN_FLAGS = (
+    WIN_CREATE_NEW_PROCESS_GROUP | WIN_CREATE_NO_WINDOW | WIN_CREATE_BREAKAWAY_FROM_JOB
+)
+WIN_DAEMON_DETACHED_FLAGS = (
+    WIN_CREATE_NEW_PROCESS_GROUP | WIN_CREATE_NO_WINDOW | WIN_DETACHED_PROCESS
+)
 
 
 def _resolve_daemon_interpreter() -> str:
@@ -782,11 +781,6 @@ def _spawn_windows(
     to the shell's Job Object - the previous behaviour, which produced the
     flapping daemon of issue #204 (it died minutes later when the shell closed).
     """
-    flags_with_breakaway = (
-        _WIN_CREATE_NEW_PROCESS_GROUP
-        | _WIN_CREATE_NO_WINDOW
-        | _WIN_CREATE_BREAKAWAY_FROM_JOB
-    )
     try:
         return subprocess.Popen(
             cmd,
@@ -794,7 +788,7 @@ def _spawn_windows(
             stdout=log_fd,
             stderr=subprocess.STDOUT,
             env=env,
-            creationflags=flags_with_breakaway,
+            creationflags=WIN_DAEMON_SPAWN_FLAGS,
         )
     except OSError as breakaway_exc:
         logger.warning(
@@ -804,9 +798,6 @@ def _spawn_windows(
             breakaway_exc,
         )
 
-    flags_detached = (
-        _WIN_CREATE_NEW_PROCESS_GROUP | _WIN_CREATE_NO_WINDOW | _WIN_DETACHED_PROCESS
-    )
     try:
         return subprocess.Popen(
             cmd,
@@ -814,7 +805,7 @@ def _spawn_windows(
             stdout=log_fd,
             stderr=subprocess.STDOUT,
             env=env,
-            creationflags=flags_detached,
+            creationflags=WIN_DAEMON_DETACHED_FLAGS,
         )
     except OSError as detached_exc:
         # Neither breakaway nor console detachment is permitted. Spawning

@@ -20,7 +20,8 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 from .. import store_schema
-from ..store import EMBEDDING_DIM, VaultStore
+from ..store import VaultStore
+from ..store_schema import DEFAULT_DENSE_DIM
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -55,7 +56,7 @@ def test_vault_collection_vector_config_matches_schema(tmp_store: VaultStore) ->
     tmp_store.ensure_table()
     vectors, sparse = _vectors(tmp_store, tmp_store.TABLE_NAME)
     dense = vectors[store_schema.DENSE_VECTOR_NAME]
-    assert dense.size == EMBEDDING_DIM
+    assert dense.size == DEFAULT_DENSE_DIM
     assert dense.distance.value == store_schema.DENSE_DISTANCE
     assert store_schema.SPARSE_VECTOR_NAME in sparse
 
@@ -64,7 +65,7 @@ def test_code_collection_vector_config_matches_schema(tmp_store: VaultStore) -> 
     tmp_store.ensure_code_table()
     vectors, sparse = _vectors(tmp_store, tmp_store.CODE_TABLE_NAME)
     dense = vectors[store_schema.DENSE_VECTOR_NAME]
-    assert dense.size == EMBEDDING_DIM
+    assert dense.size == DEFAULT_DENSE_DIM
     assert dense.distance.value == store_schema.DENSE_DISTANCE
     assert store_schema.SPARSE_VECTOR_NAME in sparse
 

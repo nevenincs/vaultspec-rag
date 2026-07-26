@@ -70,7 +70,6 @@ _RESULT_RE = re.compile(
 # The stall threshold is service-domain: the server computes the
 # authoritative ``stalled`` flag; this constant only backs the fallback
 # for snapshots from an older service that lacks the flag.
-_STALE_PROGRESS_SECONDS = STALL_THRESHOLD_SECONDS
 type _DesiredJobState = Literal["running", "paused", "cancelled"]
 
 
@@ -316,7 +315,7 @@ def _stale_progress_label(job: dict[str, object]) -> str:
     stalled = job.get("stalled")
     if stalled is False:
         return ""
-    if stalled is not True and float(raw_age) < _STALE_PROGRESS_SECONDS:
+    if stalled is not True and float(raw_age) < STALL_THRESHOLD_SECONDS:
         return ""
     return f"no progress for {_format_seconds(raw_age)}"
 
