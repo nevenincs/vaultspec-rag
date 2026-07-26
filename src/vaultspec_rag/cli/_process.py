@@ -11,7 +11,6 @@ observed.
 
 from __future__ import annotations
 
-import contextlib
 import os
 import signal
 import subprocess
@@ -20,6 +19,7 @@ import sysconfig
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -39,7 +39,7 @@ from .._win32 import (
     WIN_DETACHED_PROCESS,
 )
 from ..config import EnvVar
-from ..qdrant_runtime._resolve import pid_alive
+from ..qdrant_runtime._resolve import pid_alive, pid_image_path
 from ..serviceclient._discovery import HEARTBEAT_STALENESS_SECONDS
 from ..serviceclient._transport import _try_http_health
 from ._core import logger
@@ -53,6 +53,7 @@ __all__ = [
     "_DEFAULT_GRACEFUL_DRAIN_SECONDS",
     "_HEARTBEAT_STALENESS_SECONDS",
     "DaemonBreakawayError",
+    "TerminationResult",
     "_call_interruptibly",
     "_heartbeat_age_seconds",
     "_is_our_service",
@@ -69,6 +70,63 @@ __all__ = [
     "machine_lock_path",
     "release_machine_lock",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class TerminationResult:
+    """What a termination attempt actually achieved.
+
+    ``_terminate_pid`` used to return ``None`` on every path with each
+    ``os.kill`` wrapped in a blanket ``suppress(OSError)``, so a refused kill
+    was indistinguishable from a successful one. Callers then deleted the
+    discovery file and reported "Service stopped" over a daemon that was still
+    listening, and the next ``server start`` failed on a port held by a service
+    the operator had just been told was stopped. The outcome is a value now so
+    the caller must look at it.
+
+    Attributes:
+        alive: Whether the target is STILL RUNNING once the whole termination
+            budget is spent. This is the field that decides success: a stop
+            that leaves the service running is a failure.
+        signal_denied: Whether the OS refused this process permission to
+            signal the target (Windows ``ERROR_ACCESS_DENIED``, POSIX
+            ``EPERM``). Distinguishes "cannot touch it" - which no retry or
+            longer timeout fixes, and which needs a privilege change - from
+            "signalled it and it would not die".
+
+    """
+
+    alive: bool
+    signal_denied: bool
+
+
+def _send_termination_signal(pid: int, sig: int) -> bool:
+    """Deliver *sig* to *pid*; return whether permission was refused.
+
+    Separates the three ways a kill can fail to land, which the previous
+    blanket ``suppress(OSError)`` collapsed into one silent pass:
+
+    - ``ProcessLookupError`` - the target already exited. Not a denial; the
+      caller's liveness check resolves it as success.
+    - ``PermissionError`` - the target runs at a privilege this process cannot
+      signal (a daemon launched from an elevated shell, or owned by another
+      user). Reported so the caller can say so and name the remedy.
+    - any other ``OSError`` - notably a Windows ``CTRL_BREAK_EVENT`` aimed at a
+      pid that leads no console group, which is expected for a
+      console-detached daemon and is meant to fall through to the escalation.
+
+    Every branch is debug-logged so a swallowed signal stays observable.
+    """
+    try:
+        os.kill(pid, sig)
+    except ProcessLookupError as exc:
+        logger.debug("pid %s already gone when signalling %s: %s", pid, sig, exc)
+    except PermissionError as exc:
+        logger.debug("pid %s refused signal %s: %s", pid, sig, exc)
+        return True
+    except OSError as exc:
+        logger.debug("signal %s to pid %s failed: %s", sig, pid, exc)
+    return False
 
 
 class DaemonBreakawayError(RuntimeError):
@@ -153,21 +211,10 @@ def _is_our_service(
         # check (the daemon may be alive but port-bound late).
 
     if sys.platform == "win32":
-        import ctypes
-        from ctypes import wintypes
-
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFO
-        if not handle:
+        image = pid_image_path(pid)
+        if image is None:
             return True  # can't query → fall back to PID-alive trust
-        try:
-            buf = ctypes.create_unicode_buffer(1024)
-            size = wintypes.DWORD(1024)
-            if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
-                return "python" in buf.value.lower()
-            return True  # API call failed → fall back to trust
-        finally:
-            kernel32.CloseHandle(handle)
+        return "python" in image.lower()
     try:
         cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace")
         return "vaultspec_rag" in cmdline
@@ -847,7 +894,7 @@ def _terminate_pid(
     *,
     graceful_drain: float = _DEFAULT_GRACEFUL_DRAIN_SECONDS,
     console_group_signal: bool = True,
-) -> None:
+) -> TerminationResult:
     """Send a termination signal to a process.
 
     On Windows sends ``CTRL_BREAK_EVENT`` for graceful uvicorn
@@ -880,6 +927,13 @@ def _terminate_pid(
             or deliver the break to the caller's own console group instead. When
             False, Windows goes straight to a pid-targeted ``TerminateProcess``.
 
+    Returns:
+        A ``TerminationResult`` recording whether the target is still alive
+        once the budget is spent, and whether the OS refused permission to
+        signal it. Callers MUST branch on it: reporting a stop that left the
+        service running as success strands a listening daemon and breaks the
+        next start.
+
     """
     from .._test_isolation import enforce_pytest_managed_singleton_containment
 
@@ -889,17 +943,15 @@ def _terminate_pid(
     deadline = time.monotonic() + max(0.0, timeout)
     qdrant_identity = _owned_qdrant_identity(pid, deadline=deadline)
     if sys.platform == "win32":
-        with contextlib.suppress(OSError):
-            if console_group_signal:
-                os.kill(pid, signal.CTRL_BREAK_EVENT)
-            else:
-                # TerminateProcess: targets this exact pid, never a console
-                # group, so a stray with no known process group cannot block
-                # the caller or signal it by accident.
-                os.kill(pid, signal.SIGTERM)
+        if console_group_signal:
+            denied = _send_termination_signal(pid, signal.CTRL_BREAK_EVENT)
+        else:
+            # TerminateProcess: targets this exact pid, never a console
+            # group, so a stray with no known process group cannot block
+            # the caller or signal it by accident.
+            denied = _send_termination_signal(pid, signal.SIGTERM)
     else:
-        with contextlib.suppress(OSError):
-            os.kill(pid, signal.SIGTERM)
+        denied = _send_termination_signal(pid, signal.SIGTERM)
     # Allow graceful drain before force-killing. On POSIX this CLI is normally
     # the daemon's parent, so reap an exited child promptly instead of treating
     # its zombie record as a live process that still needs SIGKILL.
@@ -907,18 +959,24 @@ def _terminate_pid(
     graceful_wait = min(graceful_drain, remaining / 2.0)
     if _wait_for_child_exit(pid, timeout=graceful_wait):
         _reap_owned_qdrant(qdrant_identity, deadline=deadline)
-        return
+        return TerminationResult(alive=False, signal_denied=False)
     if _cli._is_pid_alive(pid):
-        with contextlib.suppress(OSError):
-            if sys.platform == "win32":
-                os.kill(pid, signal.SIGTERM)  # TerminateProcess on Windows
-            else:
-                os.kill(pid, signal.SIGKILL)
+        if sys.platform == "win32":
+            escalation = signal.SIGTERM  # TerminateProcess on Windows
+        else:
+            escalation = signal.SIGKILL
+        # The escalation is the signal that decides the outcome, so its
+        # refusal is the one worth reporting even when the graceful attempt
+        # failed for an unrelated reason (a console event that could never
+        # reach a detached daemon).
+        denied = _send_termination_signal(pid, escalation) or denied
         _wait_for_child_exit(
             pid,
             timeout=max(0.0, deadline - time.monotonic()),
         )
     _reap_owned_qdrant(qdrant_identity, deadline=deadline)
+    alive = _cli._is_pid_alive(pid)
+    return TerminationResult(alive=alive, signal_denied=denied and alive)
 
 
 def _wait_for_child_exit(pid: int, *, timeout: float) -> bool:
