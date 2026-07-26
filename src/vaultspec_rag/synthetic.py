@@ -18,6 +18,8 @@ import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .search._validation import INDEXABLE_DOC_TYPES
+
 __all__ = [
     "CorpusManifest",
     "GeneratedDoc",
@@ -25,7 +27,11 @@ __all__ = [
     "build_synthetic_vault",
 ]
 
-DOC_TYPES: list[str] = ["adr", "plan", "research", "exec", "reference", "audit"]
+# The vocabulary the search validator accepts, in a fixed generation order.
+# Membership comes from the validator so a doc type added there is
+# generated here too; sorting makes the order reproducible without
+# restating the values.
+DOC_TYPES: list[str] = sorted(INDEXABLE_DOC_TYPES)
 FEATURES: list[str] = ["alpha-engine", "beta-pipeline", "gamma-index", "delta-store"]
 
 # ADR status values cycled across generated ADRs (after the first, which is a
