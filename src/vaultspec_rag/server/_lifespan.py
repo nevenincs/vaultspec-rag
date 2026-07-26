@@ -13,7 +13,6 @@ import asyncio
 import contextlib
 import logging
 import os
-import sys
 import threading
 import time
 import uuid
@@ -29,6 +28,7 @@ from .._machine_lock import (
     acquire_machine_lock_lease,
     release_machine_lock_lease,
 )
+from .._runtime_identity import interpreter_fields
 from ..capabilities import backend_capabilities_dict
 from ..logging_config import log_event
 from ._lifecycle import (
@@ -1206,10 +1206,7 @@ async def health_handler(_request: Request) -> object:
             "qdrant": qdrant_state.to_dict(),
             "pid": os.getpid(),
             "parent_pid": os.getppid(),
-            "executable": sys.executable,
-            "prefix": sys.prefix,
-            "base_prefix": sys.base_prefix,
-            "virtual_env": os.environ.get("VIRTUAL_ENV"),
+            **interpreter_fields(),
             "cuda": reg_health["cuda"],
             "models_loaded": reg_health["model_loaded"],
             "reranker_loaded": reg_health["reranker_loaded"],

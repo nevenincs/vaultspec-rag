@@ -48,6 +48,7 @@ __all__ = [
 
 import vaultspec_rag.server as _m
 
+from .._runtime_identity import interpreter_fields
 from ..logging_config import log_event
 from ..serviceclient._discovery import (
     SERVICE_DISCOVERY_SCHEMA,
@@ -194,10 +195,7 @@ def _daemon_discovery_snapshot(
         "heartbeat_interval_s": _HEARTBEAT_INTERVAL_SECONDS,
         "stale_after_s": _HEARTBEAT_STALENESS_SECONDS,
         "service_token": _m._SERVICE_TOKEN,
-        "executable": sys.executable,
-        "prefix": sys.prefix,
-        "base_prefix": sys.base_prefix,
-        "virtual_env": os.environ.get("VIRTUAL_ENV"),
+        **interpreter_fields(),
         "python_version": sys.version.split()[0],
         # The package release, alongside the interpreter version that was
         # already here. A consumer that reads this pointer can refuse an

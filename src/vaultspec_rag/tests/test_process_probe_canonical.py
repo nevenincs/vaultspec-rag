@@ -126,3 +126,51 @@ def test_allowlist_names_only_modules_that_exist() -> None:
     names = {path.name for path in _production_sources()}
     stale = sorted(set(_ALLOWED) - names)
     assert not stale, f"allowlist names modules that no longer exist: {stale}"
+
+
+class TestRuntimeIdentityHasOneHome:
+    """The interpreter/process description resolves to ``_runtime_identity``.
+
+    Four modules derived these fields independently - the job runtime context,
+    the job-manager snapshot, the discovery pointer, and the health payload -
+    and all four read ``VIRTUAL_ENV`` as a bare string despite ``EnvVar``
+    declaring itself "the single source of truth" for env-var names. Four
+    copies means a field added to one is missing from three.
+    """
+
+    def test_no_module_reads_virtual_env_as_a_bare_string(self) -> None:
+        # EnvVar owns env-var names. A bare literal is how the four copies
+        # drifted from the enum in the first place.
+        offenders: list[str] = []
+        for path in _production_sources():
+            if path.name in {"config.py", "_runtime_identity.py"}:
+                continue
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                if '"VIRTUAL_ENV"' in line or "'VIRTUAL_ENV'" in line:
+                    offenders.append(
+                        f"{path.relative_to(_PACKAGE_ROOT).as_posix()}:{number}"
+                    )
+        assert not offenders, (
+            f"bare VIRTUAL_ENV literal at {offenders}; read it through "
+            "EnvVar.VIRTUAL_ENV, or better, _runtime_identity"
+        )
+
+    def test_no_module_rebuilds_the_interpreter_field_set(self) -> None:
+        # sys.base_prefix is the fingerprint of this particular field set: it
+        # appears for no other reason than describing which interpreter is
+        # running, so a new use means a fifth copy is being assembled.
+        offenders = [
+            f"{path.relative_to(_PACKAGE_ROOT).as_posix()}:{number}"
+            for path in _production_sources()
+            if path.name != "_runtime_identity.py"
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            )
+            if "sys.base_prefix" in line
+        ]
+        assert not offenders, (
+            f"interpreter field set rebuilt at {offenders}; splice "
+            "_runtime_identity.interpreter_fields() instead"
+        )
