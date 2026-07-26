@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import typing
 
 import pytest
@@ -813,7 +814,6 @@ class TestWinShutdownLog:
             # The post-terminate poll iterates until _is_pid_alive returns
             # False; stub False so the wait collapses immediately.
             monkeypatch.setattr(cli, "_is_pid_alive", _stub_is_pid_alive)
-            monkeypatch.setattr(cli.sys, "platform", "win32")
 
             result = runner.invoke(app, ["server", "stop"])
             assert result.exit_code == 0, result.output
@@ -842,7 +842,7 @@ class TestWinShutdownLog:
             assert "event=shutdown" in content
             assert "reason=cli_terminate" in content
             assert f"pid={os.getpid()}" in content
-            assert "platform=win32" in content
+            assert f"platform={sys.platform}" in content
         finally:
             os.environ.pop(EnvVar.STATUS_DIR, None)
 
@@ -882,7 +882,6 @@ class TestWinShutdownLog:
             monkeypatch.setattr(cli, "_is_our_service", _stub_is_our_service)
             monkeypatch.setattr(cli, "_terminate_pid", _stub_terminate_pid)
             monkeypatch.setattr(cli, "_is_pid_alive", _stub_is_pid_alive)
-            monkeypatch.setattr(cli.sys, "platform", "linux")
 
             result = runner.invoke(app, ["server", "stop"])
             assert result.exit_code == 0, result.output
@@ -898,7 +897,7 @@ class TestWinShutdownLog:
             content = log_path.read_text(encoding="utf-8")
             assert "event=shutdown" in content
             assert "reason=cli_terminate" in content
-            assert "platform=linux" in content
+            assert f"platform={sys.platform}" in content
             assert "initiator_pid" in content
             assert "initiator_cmd" in content
             assert "initiator_cwd" in content

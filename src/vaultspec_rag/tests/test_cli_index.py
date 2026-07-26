@@ -878,64 +878,47 @@ finally:
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def test_search_auto_delegates_when_service_running(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """If service is running, search auto-delegates to it."""
+    def test_search_auto_delegates_when_service_running(self, tmp_path: Path) -> None:
+        """A discovered, live daemon takes the search rather than the local path.
+
+        Discovery is real end to end: a status record naming this process and a
+        real port, a bound server answering /health with the token that record
+        publishes, and the production identity check comparing the two. The
+        substituted version asserted the CLI called a function someone replaced,
+        which could not notice discovery moving - the sibling locked-store tests
+        failed on exactly that, patching a symbol that had been relocated.
+
+        Proven able to fail: removing the service record leaves nothing to
+        discover, the CLI keeps the search local, and the request log stays
+        empty (0 == 1).
+
+        What this does NOT bind, checked rather than assumed: publishing a
+        token the health server never serves still delegates. So the identity
+        comparison is not exercised on this path, and claiming otherwise here
+        would be a guard test asserting a branch it never reaches. That
+        comparison has its own real coverage in the service-identity tests,
+        which drive it against a bound /health and this process's own pid.
+        """
+        from ._cli_helpers import (
+            _running_service_record,
+            _search_output_contract_server,
+        )
+
         (tmp_path / ".vaultspec").mkdir()
+        server, thread, requests = _search_output_contract_server()
+        try:
+            port = server.server_address[1]
+            with _running_service_record(tmp_path / "status", port):
+                runner.invoke(
+                    app,
+                    ["--target", str(tmp_path), "search", "anything"],
+                )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
-        def _stub_read_status() -> dict[str, object]:
-            return {
-                "pid": 12345,
-                "port": 8766,
-                "service_token": "token123",
-                # A daemon of this release, which is what the delegation path
-                # under test requires; the data plane refuses a service whose
-                # release it cannot confirm.
-                SERVICE_VERSION_FIELD: local_package_version(),
-            }
-
-        def _stub_is_our_service_search(
-            _pid: int, _port: int, _expected_token: str | None
-        ) -> bool:
-            return True
-
-        # Stub _read_service_status to return active port and pid. Port
-        # resolution reads through the serviceclient discovery module, so patch
-        # it there rather than on the CLI adapter.
-        monkeypatch.setattr(
-            "vaultspec_rag.serviceclient._discovery._read_service_status",
-            _stub_read_status,
-        )
-        # Mock _is_our_service to return True
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._is_our_service",
-            _stub_is_our_service_search,
-        )
-
-        # Mock _try_http_search to return dummy results (so we know it got called)
-        called: list[int] = []
-
-        def mock_try_search(*args: object, **_kwargs: object) -> dict[str, object]:
-            # args: query, search_type, max_results, port, target
-            called.append(int(typing.cast("str | int", args[3])))
-            return {"ok": True, "results": []}
-
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._search._try_http_search", mock_try_search
-        )
-
-        runner.invoke(
-            app,
-            [
-                "--target",
-                str(tmp_path),
-                "search",
-                "anything",
-            ],
-        )
-        assert len(called) == 1
-        assert called[0] == 8766
+        assert len(requests) == 1
 
     def test_index_auto_delegates_when_service_running(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
