@@ -116,17 +116,31 @@ def test_watch_interrupt_exits_on_the_interrupted_status(
     command's own handler is what is under test.
     """
 
-    def _payload(_spec: jobs._JobsQuery) -> dict[str, object]:
-        return {"jobs": [], "total": 0, "returned": 0}
+    from ._cli_helpers import _jobs_empty_contract_server
 
     def _interrupt(_seconds: float) -> None:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(jobs, "_default_service_port", lambda: 8766)
-    monkeypatch.setattr(jobs, "_fetch_jobs_result", _payload)
+    # Only the wait is substituted, and it is the interrupt itself - the
+    # signal a terminal would deliver into the sleep the loop parks in. The
+    # port is a real bound server rather than a resolver stand-in, so the loop
+    # runs its real fetch path up to the point the interrupt lands.
+    #
+    # The request log is deliberately not asserted: the interruptible wait the
+    # fetch runs under also sleeps, so the patched sleep can raise before the
+    # request completes. Asserting a count here would be asserting a race.
     monkeypatch.setattr(time, "sleep", _interrupt)
 
-    result = runner.invoke(app, ["server", "jobs", "--watch"])
+    server, thread, _requests = _jobs_empty_contract_server()
+    try:
+        result = runner.invoke(
+            app,
+            ["server", "jobs", "--watch", "--port", str(server.server_address[1])],
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
     assert result.exit_code == 130
     assert "Stopped watching jobs." in result.output
