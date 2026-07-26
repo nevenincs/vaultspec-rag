@@ -9,7 +9,6 @@ import pytest
 
 from ._cli_helpers import (
     _hold_local_index_lock,
-    _no_service,
     _plain_lines,
     app,
     runner,
@@ -18,6 +17,7 @@ from ._http_stubs import QuietHandler
 from ._scaffold import make_workspace
 
 if typing.TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
@@ -969,69 +969,88 @@ finally:
         assert evidence["expected"] != evidence["machine_port"]
 
 
-class _QuietReporter:
-    """Context-managed no-op reporter standing in for the Rich one.
+# Larger than the free space on any volume a test can run against, so the
+# store's own headroom check refuses rather than a rehearsed verdict standing
+# in for it.
+_UNSATISFIABLE_FLOOR_BYTES = 1 << 60
 
-    The live progress rendering interleaves terminal escape sequences
-    with the JSON envelope in captured output (platform-dependent), so
-    envelope-shape tests silence it rather than parse around it.
+
+def _index_refused_by_the_real_disk_preflight(
+    storage_path: Path,
+) -> Callable[..., object]:
+    """Return an index entry point that fails the production headroom check.
+
+    The in-process index cannot be driven to a genuine out-of-disk condition
+    from a unit test: reaching the preflight means loading the models and
+    filling the store volume first. So the refusal is raised by the store's
+    own ``ensure_disk_headroom`` against a floor no volume satisfies - the
+    exception class, the classification, and the operator wording are all
+    production's, and what the tests below bind is what the CLI does with
+    them rather than anything written here.
     """
+    from .._store_writes import ensure_disk_headroom
 
-    def __init__(self, _console: object) -> None:
-        pass
+    def _index(*_args: object, **_kwargs: object) -> object:
+        ensure_disk_headroom(storage_path, floor_bytes=_UNSATISFIABLE_FLOOR_BYTES)
+        raise AssertionError(
+            "the disk preflight accepted a floor no volume can satisfy"
+        )
 
-    def __enter__(self) -> _QuietReporter:
-        return self
-
-    def __exit__(self, *_exc: object) -> bool:
-        return False
-
-    def phase_start(self, name: str, total: int | None) -> None:
-        del name, total
-
-    def advance(self, n: int = 1) -> None:
-        del n
-
-    def phase_end(self) -> None:
-        return None
-
-    def log(self, message: str) -> None:
-        del message
+    return _index
 
 
+@pytest.mark.usefixtures("isolated_singleton_dirs")
 class TestDiskPreflightRefusal:
     """The in-process index path surfaces a disk-preflight refusal as one
-    structured non-zero envelope - never the GPU-error diagnosis."""
+    structured non-zero envelope - never the GPU-error diagnosis.
+
+    The in-process path is reached the way an operator reaches it: the
+    singleton dirs are isolated and empty, so real discovery finds no daemon
+    to delegate to. Nothing rehearses that verdict.
+    """
 
     def test_json_mode_emits_disk_preflight_failed(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from .._store_writes import InsufficientDiskSpaceError
+        """A refused preflight is one classified envelope, exit 1.
 
-        (tmp_path / ".vaultspec").mkdir()
+        The real progress rendering runs; its stream is pointed at a buffer
+        because Rich interleaves cursor control bytes with the envelope on
+        stdout and this test parses that envelope. The reporter itself is
+        the production one, built by the production call site from the
+        console it reads at call time.
+
+        Proven able to fail: deleting the ``except InsufficientDiskSpaceError``
+        branch in the in-process index path drops the refusal into the
+        ``(ImportError, RuntimeError)`` GPU handler, and the
+        ``disk_preflight_failed`` assertion fails on a GPU diagnosis;
+        restoring the branch passes.
+        """
+        import io
+
+        from rich.console import Console
+
+        from .. import cli
+
+        project = tmp_path / "project"
+        (project / ".vaultspec").mkdir(parents=True)
         monkeypatch.setattr(
-            "vaultspec_rag.cli._index.resolve_data_plane_service", _no_service
+            "vaultspec_rag.index",
+            _index_refused_by_the_real_disk_preflight(project),
         )
-        monkeypatch.setattr(
-            "vaultspec_rag.progress.RichProgressReporter", _QuietReporter
-        )
-
-        def _raise_preflight(*_args: object, **_kwargs: object) -> object:
-            msg = (
-                "not enough free disk space for the vector store "
-                "(No space left on device imminent)"
-            )
-            raise InsufficientDiskSpaceError(msg)
-
-        monkeypatch.setattr("vaultspec_rag.index", _raise_preflight)
+        monkeypatch.setattr(cli, "console", Console(file=io.StringIO()))
 
         result = runner.invoke(
             app,
-            ["--target", str(tmp_path), "index", "--type", "vault", "--json"],
+            ["--target", str(project), "index", "--type", "vault", "--json"],
         )
         assert result.exit_code == 1
+        assert result.output.lstrip().startswith("{"), (
+            "--json must answer with one envelope on every exit path, "
+            f"got: {result.output!r}"
+        )
         payload = typing.cast("dict[str, object]", json.loads(result.output))
         assert payload["ok"] is False
         assert payload["error"] == "disk_preflight_failed"
@@ -1044,21 +1063,29 @@ class TestDiskPreflightRefusal:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from .._store_writes import InsufficientDiskSpaceError
+        """Human mode prints the store's own wording, exit 1.
 
-        (tmp_path / ".vaultspec").mkdir()
+        Proven able to fail: replacing the refusal's ``_plain(f"Error: {exc}")``
+        with a bare ``_plain("Error")`` fails the assertion below; restoring
+        it passes.
+
+        What this does NOT bind, checked rather than assumed: deleting the
+        dedicated disk branch entirely still passes here, because on a host
+        whose torch and GPU are both healthy the GPU handler's fallback
+        prints the same ``Error: {exc}`` line. Human text cannot tell the two
+        apart, so the classification is bound by the ``--json`` sibling and
+        this test binds only the wording that reaches the operator.
+        """
+        project = tmp_path / "project"
+        (project / ".vaultspec").mkdir(parents=True)
         monkeypatch.setattr(
-            "vaultspec_rag.cli._index.resolve_data_plane_service", _no_service
+            "vaultspec_rag.index",
+            _index_refused_by_the_real_disk_preflight(project),
         )
-
-        def _raise_preflight(*_args: object, **_kwargs: object) -> object:
-            raise InsufficientDiskSpaceError("not enough free disk space")
-
-        monkeypatch.setattr("vaultspec_rag.index", _raise_preflight)
 
         result = runner.invoke(
             app,
-            ["--target", str(tmp_path), "index", "--type", "vault"],
+            ["--target", str(project), "index", "--type", "vault"],
         )
         assert result.exit_code == 1
         assert "not enough free disk space" in " ".join(_plain_lines(result.output))
