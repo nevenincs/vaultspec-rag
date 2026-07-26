@@ -35,6 +35,7 @@ __all__ = [
     "_emit_json_error_and_exit",
     "_format_local_index_busy_message",
     "_plain",
+    "_plain_line",
     "_render_install_report",
     "_render_uninstall_report",
 ]
@@ -55,6 +56,21 @@ def _plain(text: str, *, soft_wrap: bool | None = None) -> None:
     ``vaultspec_rag.cli.console`` still observes the substitution.
     """
     _cli.console.print(text, markup=False, highlight=False, soft_wrap=soft_wrap)
+
+
+def _plain_line(text: str) -> None:
+    """Print one operator line that a live progress region may be open around.
+
+    Lines emitted from inside a reporting block cannot use ``typer.echo``:
+    Rich erases its own frame before a line only when the line arrives through
+    its console, and a raw stream write is invisible to that bookkeeping, so
+    the frame erases it instead. Soft wrapping is what keeps a long path or
+    command from being folded mid-token on a narrow terminal.
+
+    Result tables rendered after the block closes have no such constraint;
+    this is for the lines that do.
+    """
+    _plain(text, soft_wrap=True)
 
 
 def _emit_json(
