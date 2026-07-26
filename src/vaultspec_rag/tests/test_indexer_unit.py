@@ -1545,3 +1545,68 @@ class TestPublishedEvidenceRequiresStoredBreadth:
             assert indexer._lifecycle.published_evidence_lost() is False
         finally:
             store.close()
+
+
+class TestPublishedFileBreadth:
+    """The breadth comparison a point count structurally cannot express.
+
+    A publication that covers a fraction of the files its own sidecar names
+    still stamps a self-consistent point count, because the figure it stamps is
+    the fragment's own. Only the file figures disagree.
+    """
+
+    @staticmethod
+    def _write_sidecar(root: Path, named: int, covered: str | None) -> None:
+        """Write a sidecar naming *named* files and claiming *covered* coverage."""
+        import json as _json
+
+        from .._index_breadth import PUBLISHED_FILES_KEY, code_meta_path
+
+        reserved: dict[str, str] = {}
+        if covered is not None:
+            reserved[PUBLISHED_FILES_KEY] = covered
+        entries = {f"src/mod_{index}.py": f"hash{index}" for index in range(named)}
+        path = code_meta_path(root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_json.dumps({**reserved, **entries}), encoding="utf-8")
+
+    def test_publication_covering_fewer_files_than_it_names_is_a_shortfall(
+        self, tmp_path: Path
+    ) -> None:
+        from .._index_breadth import code_file_breadth_shortfall
+
+        self._write_sidecar(tmp_path, named=442, covered="27")
+        shortfall = code_file_breadth_shortfall(tmp_path)
+        # Mutation this catches: returning None whenever the point counts agree,
+        # which is exactly the state a republished fragment leaves behind.
+        assert shortfall is not None
+        assert shortfall.named == 442
+        assert shortfall.covered == 27
+        assert shortfall.missing == 415
+
+    def test_full_coverage_is_not_a_shortfall(self, tmp_path: Path) -> None:
+        from .._index_breadth import code_file_breadth_shortfall
+
+        self._write_sidecar(tmp_path, named=12, covered="12")
+        assert code_file_breadth_shortfall(tmp_path) is None
+
+    def test_sidecar_without_a_coverage_claim_is_never_a_shortfall(
+        self, tmp_path: Path
+    ) -> None:
+        from .._index_breadth import code_file_breadth_shortfall
+
+        # A sidecar written before the key existed cannot be compared against,
+        # and must read as "cannot tell" rather than total loss.
+        self._write_sidecar(tmp_path, named=12, covered=None)
+        assert code_file_breadth_shortfall(tmp_path) is None
+
+    def test_unusable_coverage_claim_is_never_a_shortfall(self, tmp_path: Path) -> None:
+        from .._index_breadth import code_file_breadth_shortfall
+
+        self._write_sidecar(tmp_path, named=12, covered="not-a-number")
+        assert code_file_breadth_shortfall(tmp_path) is None
+
+    def test_absent_sidecar_is_never_a_shortfall(self, tmp_path: Path) -> None:
+        from .._index_breadth import code_file_breadth_shortfall
+
+        assert code_file_breadth_shortfall(tmp_path) is None

@@ -1862,6 +1862,22 @@ class VaultStore(_VaultSearchMixin):
         self.ensure_code_table()
         return self._count_collection(_target)
 
+    def count_code_files(self, collection: str | None = None) -> int:
+        """Return how many distinct files the code collection holds points for.
+
+        Counted from the collection rather than read from the sidecar, so it
+        describes what is actually being served. A publication claiming more
+        files than this is claiming breadth the collection does not hold - the
+        shape a destroyed-and-partially-repopulated collection takes, where the
+        point count alone still looks self-consistent.
+
+        Scans the collection, so it belongs on a publication path and not on a
+        query path.
+        """
+        _target = self._code_collection(collection)
+        self.ensure_code_table()
+        return len(self._scroll_all_ids(_target, "path"))
+
     def count_document(self) -> int:
         """Return the point count in the document collection."""
         self.ensure_document_table()
