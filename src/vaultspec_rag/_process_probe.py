@@ -41,7 +41,9 @@ __all__ = [
     "PROCESS_QUERY_LIMITED_INFORMATION",
     "START_TIME_TOLERANCE_SECONDS",
     "bounded_call",
+    "close_process_handle",
     "iter_process_info",
+    "open_process_handle",
     "pid_alive",
     "pid_cmdline",
     "pid_image_matches",
@@ -105,6 +107,33 @@ def win_kernel32() -> Any:
     )
     kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
     return kernel32
+
+
+def open_process_handle(pid: int, access: int) -> int | None:
+    """Open *pid* with *access*, or ``None`` when refused or absent.
+
+    Exists so a caller needing a HANDLE for something other than a probe - job
+    membership, a waitable object - does not redeclare ``OpenProcess`` to get
+    one. That redeclaration is the exact defect this module was built to end:
+    three copies existed and only one got the pointer-sized ``HANDLE`` restype
+    right, so the others truncated it and read a live process as dead.
+
+    The caller owns the returned handle and must pass it to
+    :func:`close_process_handle`. ``None`` collapses "refused" and "absent"
+    deliberately: a caller that needs to tell those apart is asking a liveness
+    question and should call :func:`pid_alive`, which separates them properly.
+    """
+    if pid <= 0 or sys.platform != "win32":
+        return None
+    handle = win_kernel32().OpenProcess(access, False, pid)
+    return int(handle) if handle else None
+
+
+def close_process_handle(handle: int) -> None:
+    """Release a handle from :func:`open_process_handle`."""
+    if sys.platform != "win32":
+        return
+    win_kernel32().CloseHandle(handle)
 
 
 def bounded_call[T](

@@ -518,7 +518,10 @@ def _spawn_service(
         PID of the spawned process.
 
     """
-    from .._test_isolation import enforce_pytest_managed_singleton_containment
+    from .._test_isolation import (
+        anchor_spawned_process_to_pytest,
+        enforce_pytest_managed_singleton_containment,
+    )
 
     enforce_pytest_managed_singleton_containment(
         operation="spawn the managed service process",
@@ -564,6 +567,12 @@ def _spawn_service(
             )
     finally:
         os.close(log_fd)  # child has the fd now (or the spawn failed)
+    # Inert in production; under pytest this is what stops a hard-killed run
+    # from stranding the daemon it spawned. It must follow the spawn because
+    # the daemon breaks away from its birth Job Object first, and it covers the
+    # launcher: on Windows the venv shim is the process just created, and the
+    # worker it execs inherits job membership.
+    anchor_spawned_process_to_pytest(proc.pid)
     if deadline is not None and time.monotonic() >= deadline:
         launcher_start_time = pid_start_time(proc.pid, timeout=_PROBE_BUDGET_SECONDS)
         cleanup_error = _cleanup_late_service_spawn(

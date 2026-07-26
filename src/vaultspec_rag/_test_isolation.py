@@ -27,6 +27,7 @@ __all__ = [
     "PYTEST_MANAGED_SINGLETON_BOOTSTRAP_ENV",
     "PYTEST_MANAGED_SINGLETON_ROOT_ENV",
     "ManagedSingletonIsolationError",
+    "anchor_spawned_process_to_pytest",
     "enforce_pytest_managed_singleton_containment",
     "enforce_pytest_singleton_containment",
     "pytest_singleton_containment_active",
@@ -216,6 +217,72 @@ def sweep_orphaned_singleton_roots(
         if not candidate.exists():
             reclaimed.append(candidate)
     return reclaimed
+
+
+#: The kill-on-close job every pytest-spawned daemon joins. Created on first
+#: use and then held for the run: the handle IS the guarantee, so it is
+#: deliberately never closed by this module. Process exit closes it, which is
+#: exactly the event that must take the daemons down.
+_pytest_process_job: int | None = None
+_pytest_job_lock = threading.Lock()
+
+#: ``PROCESS_SET_QUOTA | PROCESS_TERMINATE`` - the access
+#: ``AssignProcessToJobObject`` requires on the target.
+_PROCESS_SET_QUOTA_AND_TERMINATE = 0x0100 | 0x0001
+
+
+def anchor_spawned_process_to_pytest(pid: int) -> bool:
+    """Bind a pytest-spawned daemon's lifetime to this pytest process.
+
+    ``sweep_orphaned_singleton_roots`` already exists because a pytest run
+    killed externally never reaches its teardown, stranding the session root.
+    The daemons that run cost more than the directory does - they hold ports,
+    a machine lock, and the GPU - and every mechanism that could stop them
+    lives inside the run that just died: the fixture teardown, the atexit
+    backstop, any watchdog thread. So a hard-killed pytest strands a daemon
+    with nothing left to reap it, and the daemon is built to survive exactly
+    that (``_spawn_service`` breaks away from the launching Job Object on
+    Windows and calls ``start_new_session`` on POSIX, both deliberately, so it
+    outlives the operator's shell).
+
+    A kill-on-close Job Object is the one guarantee that does not live inside
+    the dying process: the kernel destroys every member when the last handle
+    closes, and a handle closes however the owner dies. Membership is
+    established here rather than at spawn time because the daemon must break
+    away from whatever job it was born into first.
+
+    Returns whether the anchor was established. ``False`` is not a failure to
+    propagate - off-Windows, outside pytest, or when the OS refuses, the
+    fixture teardown remains the guarantee it has always been - so callers
+    spawn regardless.
+    """
+    if not pytest_singleton_containment_active():
+        return False
+    if os.name != "nt":
+        # POSIX has no equivalent the owner can enforce from outside the
+        # target; ``prctl(PDEATHSIG)`` is the child's own call and does not
+        # survive the ``start_new_session`` this daemon needs. Fixture
+        # teardown stays the guarantee there, so say so rather than imply a
+        # containment that is not in force.
+        return False
+    from ._process_probe import close_process_handle, open_process_handle
+    from ._win32 import assign_process_to_job, create_kill_on_close_job
+
+    global _pytest_process_job
+    with _pytest_job_lock:
+        if _pytest_process_job is None:
+            _pytest_process_job = create_kill_on_close_job(purpose="pytest-spawned")
+        job = _pytest_process_job
+    if job is None:
+        return False
+
+    handle = open_process_handle(pid, _PROCESS_SET_QUOTA_AND_TERMINATE)
+    if handle is None:
+        return False
+    try:
+        return assign_process_to_job(job, handle, pid, purpose="pytest-spawned")
+    finally:
+        close_process_handle(handle)
 
 
 def _adopt_inherited_pytest_singleton_root() -> None:

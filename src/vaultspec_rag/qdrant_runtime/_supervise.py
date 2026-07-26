@@ -30,7 +30,12 @@ from typing import TYPE_CHECKING, cast
 
 from .._loopback_http import LOOPBACK_OPENER
 from .._managed_log_sink import RawRotatingLogSink
-from .._win32 import WIN_CREATE_NEW_PROCESS_GROUP, WIN_CREATE_NO_WINDOW
+from .._win32 import (
+    WIN_CREATE_NEW_PROCESS_GROUP,
+    WIN_CREATE_NO_WINDOW,
+    assign_process_to_job,
+    create_kill_on_close_job,
+)
 from ._constants import (
     QDRANT_SERVER_VERSION,
     QdrantRuntimeState,
@@ -248,96 +253,24 @@ _CHILD_ENV_PASSTHROUGH = frozenset(
 _WIN_CREATE_NEW_PROCESS_GROUP = WIN_CREATE_NEW_PROCESS_GROUP
 _WIN_CREATE_NO_WINDOW = WIN_CREATE_NO_WINDOW
 
-# Job Object constants (WinBase.h / winnt.h).
-_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
-_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 
-
-def _win_kill_on_close_job() -> object | None:
-    """Create a Windows Job Object configured to kill members on close.
+def _win_kill_on_close_job() -> int | None:
+    """Create the Job Object whose closure kills the qdrant child.
 
     Returns:
         The job handle (kept alive by the caller for the daemon's
         lifetime), or ``None`` off-Windows or when creation fails.
     """
-    if sys.platform != "win32":
-        return None
-    import ctypes
-    from ctypes import wintypes
-
-    kernel32 = ctypes.windll.kernel32
-
-    class _IoCounters(ctypes.Structure):
-        _fields_ = [
-            ("ReadOperationCount", ctypes.c_uint64),
-            ("WriteOperationCount", ctypes.c_uint64),
-            ("OtherOperationCount", ctypes.c_uint64),
-            ("ReadTransferCount", ctypes.c_uint64),
-            ("WriteTransferCount", ctypes.c_uint64),
-            ("OtherTransferCount", ctypes.c_uint64),
-        ]
-
-    class _BasicLimits(ctypes.Structure):
-        _fields_ = [
-            ("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER),
-            ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
-            ("LimitFlags", wintypes.DWORD),
-            ("MinimumWorkingSetSize", ctypes.c_size_t),
-            ("MaximumWorkingSetSize", ctypes.c_size_t),
-            ("ActiveProcessLimit", wintypes.DWORD),
-            ("Affinity", ctypes.c_size_t),
-            ("PriorityClass", wintypes.DWORD),
-            ("SchedulingClass", wintypes.DWORD),
-        ]
-
-    class _ExtendedLimits(ctypes.Structure):
-        _fields_ = [
-            ("BasicLimitInformation", _BasicLimits),
-            ("IoInfo", _IoCounters),
-            ("ProcessMemoryLimit", ctypes.c_size_t),
-            ("JobMemoryLimit", ctypes.c_size_t),
-            ("PeakProcessMemoryUsed", ctypes.c_size_t),
-            ("PeakJobMemoryUsed", ctypes.c_size_t),
-        ]
-
-    job = kernel32.CreateJobObjectW(None, None)
-    if not job:
-        logger.warning("CreateJobObjectW failed; qdrant orphan guard disabled")
-        return None
-    info = _ExtendedLimits()
-    info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-    ok = kernel32.SetInformationJobObject(
-        job,
-        _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
-        ctypes.byref(info),
-        ctypes.sizeof(info),
-    )
-    if not ok:
-        logger.warning("SetInformationJobObject failed; qdrant orphan guard disabled")
-        kernel32.CloseHandle(job)
-        return None
-    return job
+    return create_kill_on_close_job(purpose="qdrant")
 
 
-def _win_assign_to_job(job: object, proc: subprocess.Popen[bytes]) -> bool:
+def _win_assign_to_job(job: int | None, proc: subprocess.Popen[bytes]) -> bool:
     """Assign *proc* to *job*; True on success (logged otherwise)."""
-    if sys.platform != "win32" or job is None:
-        return False
-    import ctypes
-
-    kernel32 = ctypes.windll.kernel32
     # Popen exposes the raw Windows process handle as ``_handle``;
     # typeshed does not declare it, hence the Any cast.
-    handle = int(cast("Any", proc)._handle)
-    if kernel32.AssignProcessToJobObject(job, handle):
-        return True
-    logger.error(
-        "AssignProcessToJobObject failed for qdrant pid %d; kill-on-close "
-        "orphan guard is DISABLED for this child - a hard daemon death may "
-        "orphan it",
-        proc.pid,
+    return assign_process_to_job(
+        job, int(cast("Any", proc)._handle), proc.pid, purpose="qdrant"
     )
-    return False
 
 
 class QdrantSupervisor:
@@ -399,7 +332,7 @@ class QdrantSupervisor:
         # (on process exit), which IS the orphan guard. One job is
         # created once and reused across restart(); a supervisor must
         # therefore never be dropped-and-recreated while its child runs.
-        self._job_handle: object | None = None
+        self._job_handle: int | None = None
 
     @property
     def url(self) -> str:
