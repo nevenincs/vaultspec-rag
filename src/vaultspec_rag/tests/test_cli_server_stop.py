@@ -347,8 +347,10 @@ class TestStopThatDidNotStop:
         assert '"ok"' not in out
         assert "still running" in out.lower()
         assert "left in place" in out.lower()
-        # A refused kill is not waited out; only a privilege change fixes it.
-        assert "elevated" in out.lower()
+        # A refused kill is not waited out, so the operator is handed the
+        # command that ends it - naming the pid the stop just failed on.
+        assert "4242" in out
+        assert ("taskkill" if sys.platform == "win32" else "kill -9") in out.lower()
 
     @pytest.mark.usefixtures("isolated_singleton_dirs")
     def test_terminate_pid_reports_a_child_it_really_killed(self) -> None:
@@ -419,32 +421,36 @@ class TestStopThatDidNotStop:
     @pytest.mark.parametrize(
         ("platform", "expected"),
         [
-            ("win32", "elevated (administrator) terminal"),
-            ("linux", "user that started the service"),
-            ("darwin", "user that started the service"),
+            ("win32", "taskkill /f /t /pid 4242"),
+            ("linux", "kill -9 4242"),
+            ("darwin", "kill -9 4242"),
         ],
     )
-    def test_remediation_is_correct_on_every_platform(
+    def test_remediation_names_the_command_that_ends_the_process(
         self, platform: str, expected: str
     ) -> None:
         # Both branches are statable on either kind of host, so neither goes
-        # unverified just because CI runs on one of them. A Windows operator
-        # needs elevation; a POSIX one needs the owning user or sudo, and
-        # telling either the other one's remedy sends them nowhere.
-        lines = still_running_remediation_for(platform)
-        assert lines, "a refused stop must always name a next action"
+        # unverified just because CI runs on one of them. The action has to be
+        # runnable as typed: an operator reading this has already had one stop
+        # fail, and prose about why is not a next action.
+        lines = still_running_remediation_for(platform, (4242,))
+        assert lines, "a stop that left the service running must name a next action"
         assert expected in " ".join(lines).lower()
 
-    def test_an_ordinary_process_gets_no_unreachable_owner_claim(self) -> None:
-        # The detail asserts something strong - "another account, or session
-        # 0" - so a false positive would misdiagnose every ordinary refused
-        # kill and send the operator chasing a privilege boundary that is not
-        # there. A process this one can plainly open must produce nothing.
-        import os
-
-        from ..cli._service_stop import _unreachable_owner_detail
-
-        assert _unreachable_owner_detail(os.getpid()) == ""
+    def test_remediation_never_tells_a_user_service_to_elevate(self) -> None:
+        # This service installs into the operator's own directory and is never
+        # registered as a machine service, so it can hold no privilege its own
+        # operator lacks. Advice to elevate is a dead end that reads as an
+        # explanation - and it was observed to be flatly wrong: a plain
+        # non-elevated `taskkill /F /T` ended a daemon this path had just
+        # reported unkillable.
+        for platform in ("win32", "linux", "darwin"):
+            for pids in ((), (4242,), (4242, 4243)):
+                text = " ".join(still_running_remediation_for(platform, pids)).lower()
+                for banned in ("elevat", "administrator", "sudo", "privilege"):
+                    assert banned not in text, (
+                        f"{platform} remediation for {pids} says {banned!r}: {text!r}"
+                    )
 
     def test_remediation_never_offers_the_originating_console(self) -> None:
         # Permission to signal is carried by the access token, not by the
@@ -453,6 +459,6 @@ class TestStopThatDidNotStop:
         # unreachable when the daemon runs under another account or in
         # session 0. Restoring that clause is the regression this catches.
         for platform in ("win32", "linux", "darwin"):
-            text = " ".join(still_running_remediation_for(platform)).lower()
+            text = " ".join(still_running_remediation_for(platform, (4242,))).lower()
             assert "terminal the service was started in" not in text
             assert "shell the service was started in" not in text

@@ -272,88 +272,45 @@ def _terminate_and_confirm(
     return _cli.TerminationResult(alive=False, signal_denied=False)
 
 
-def _still_running_remediation() -> tuple[str, ...]:
-    """Name the privilege change that makes a refused termination possible."""
-    return still_running_remediation_for(sys.platform)
+def _still_running_remediation(pids: tuple[int, ...] = ()) -> tuple[str, ...]:
+    """Name the command that ends a daemon this stop could not end."""
+    return still_running_remediation_for(sys.platform, pids)
 
 
-def still_running_remediation_for(platform: str) -> tuple[str, ...]:
-    """Return the refused-termination next actions on *platform*.
+def still_running_remediation_for(
+    platform: str, pids: tuple[int, ...] = ()
+) -> tuple[str, ...]:
+    """Return the next actions for a stop that left *pids* running.
 
-    A refused kill is not a transient the operator can wait out or retry into
-    success, so the next actions have to point at the only thing that changes
-    the outcome: running the stop with a token that may signal the daemon.
+    This service is a USER service. It is installed into the operator's own
+    directory, started by the operator, and never registered as a machine
+    service, so there is no privilege tier it can legitimately reach that its
+    own operator cannot. Earlier revisions of this text sent people to an
+    elevated terminal, and then to "the terminal the service was started in".
+    Both were wrong, and the second was wrong twice over - permission is a
+    property of the access token, never of the console, and that clause
+    confused this refusal with the unrelated console-group one, where a
+    ``CTRL_BREAK_EVENT`` genuinely does need a shared console but merely
+    escalates to ``TerminateProcess`` and never reaches here.
 
-    Permission is a property of the ACCESS TOKEN, never of the console. An
-    earlier Windows remediation offered "the terminal the service was started
-    in" as an alternative, which sends the operator somewhere that cannot help:
-    the shell that spawned a daemon holds no right over it that any other shell
-    with the same token lacks, and where the daemon runs under a different
-    account or in the services session, no shell of the operator's own token
-    can signal it at all. That clause confused this refusal with the unrelated
-    console-group one - a ``CTRL_BREAK_EVENT`` really does depend on a shared
-    console, but that is a DELIVERY failure that escalates to
-    ``TerminateProcess`` and never reaches this helper.
+    Advice to elevate is worse than useless: it is a dead end that reads as an
+    explanation. A plain non-elevated ``taskkill /F /T`` was observed ending a
+    daemon this path had just reported unkillable, so the honest next action is
+    the command that does the job with the token the operator already has.
 
     The platform is an argument for the same reason it is one on
     ``graceful_drain_seconds_for``: the rule is about the platform, not about
     the host running the code, so both branches stay statable - and testable -
     on either kind of machine, while a host can only ever exercise one.
     """
+    if not pids:
+        return ("vaultspec-rag server status --verbose",)
     if platform == "win32":
-        return (
-            "Re-run this command from an elevated (Administrator) terminal, "
-            "which can signal a process owned by another account or running in "
-            "the services session (session 0).",
-        )
-    return (
-        "Re-run this command as the user that started the service, or with "
-        "elevated privileges (for example under sudo).",
-    )
-
-
-def _unreachable_owner_detail(pid: int) -> str:
-    """Name WHY a signal was refused, when the OS will say that much.
-
-    A refused kill has two shapes that need different responses, and the
-    refusal alone does not separate them. ``PROCESS_QUERY_LIMITED_INFORMATION``
-    is the least access Windows grants, and it is grantable across integrity
-    levels - so an elevated same-user daemon still opens. Being refused even
-    that means the target is not this operator's to inspect at all: another
-    account, or the services session.
-
-    That distinction is the whole diagnosis. Without it an operator reads
-    "permission refused", knows they never ran anything as Administrator,
-    concludes the stop path is lying, and goes looking in the wrong place -
-    which is exactly what happened. Returns an empty string when the process
-    IS openable (an ordinary privilege gap) or off Windows, so the caller adds
-    a sentence only when it carries information.
-    """
-    if sys.platform != "win32":
-        return ""
-    from .._process_probe import (
-        PROCESS_QUERY_LIMITED_INFORMATION,
-        close_process_handle,
-        open_process_handle,
-    )
-
-    # An ABSENT pid is unopenable too, and `open_process_handle` collapses
-    # refused and absent by design. Asking liveness first is what separates
-    # them: `pid_alive` reads access-denied as alive and a vacant pid as dead,
-    # so a stop that raced the daemon's own exit never gets told the process
-    # belongs to someone else.
-    if not _cli._is_pid_alive(pid):
-        return ""
-    handle = open_process_handle(pid, PROCESS_QUERY_LIMITED_INFORMATION)
-    if handle is not None:
-        close_process_handle(handle)
-        return ""
-    return (
-        f"This command cannot open process {pid} even to read its basic "
-        "details, which means it belongs to another account or runs in the "
-        "services session (session 0) rather than your desktop session. "
-        "Nothing this terminal does will change that."
-    )
+        # /T takes the process tree, so the daemon's qdrant child and any
+        # launcher shim go with it rather than needing a second command.
+        targets = " ".join(f"/PID {pid}" for pid in pids)
+        return (f"taskkill /F /T {targets}",)
+    return (f"kill -9 {' '.join(str(pid) for pid in pids)}",)
 
 
 def _fail_still_running(
@@ -374,9 +331,7 @@ def _fail_still_running(
     if result.signal_denied:
         cause = (
             f"The operating system refused this process permission to "
-            f"terminate process {pid} (it runs under an account or privilege "
-            f"level this command's token cannot signal), so the service is "
-            f"still running."
+            f"terminate process {pid}, so the service is still running."
         )
         error = "terminate_permission_denied"
     else:
@@ -389,19 +344,12 @@ def _fail_still_running(
     data: dict[str, object] = {"pid": pid, "signal_denied": result.signal_denied}
     if port is not None:
         data["port"] = port
-    detail = _unreachable_owner_detail(pid) if result.signal_denied else ""
-    if detail:
-        data["owner_unreachable"] = True
     return _fail_stop(
         json_mode,
         error=error,
         message="Service stop failed",
-        human_lines=(
-            cause,
-            *((detail,) if detail else ()),
-            "The discovery record was left in place.",
-        ),
-        next_actions=_still_running_remediation(),
+        human_lines=(cause, "The discovery record was left in place."),
+        next_actions=_still_running_remediation((pid,)),
         **data,
     )
 
@@ -724,12 +672,8 @@ def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
         (reaped if _pid_terminated(pid) else survivors).append(pid)
 
     if survivors:
-        # A refused kill and a stubborn one need different next actions: no
-        # amount of re-running fixes a privilege the terminal does not have.
         cause = (
-            "The operating system refused this process permission to terminate "
-            "them; they run under an account or privilege level this command's "
-            "token cannot signal."
+            "The operating system refused this process permission to terminate them."
             if denied
             else "They did not exit within the termination budget."
         )
@@ -742,11 +686,7 @@ def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
                 f"{len(survivors)} would not terminate: {survivors}.",
                 cause,
             ),
-            next_actions=(
-                _still_running_remediation()
-                if denied
-                else (f"vaultspec-rag server status --port {port} --verbose",)
-            ),
+            next_actions=_still_running_remediation(tuple(survivors)),
             reaped=len(reaped),
             survivors=survivors,
             signal_denied=denied,
