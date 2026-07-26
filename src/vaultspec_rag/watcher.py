@@ -2062,6 +2062,20 @@ def _log_managed_transition(
             job_id=snapshot.id,
             pending_paths=pending_count,
         )
+    elif not snapshot.state.is_terminal:
+        # Queued, running, pausing and cancelling are progress, not outcomes.
+        # They reached the failure branch below only because it was the
+        # fallthrough, so every healthy run logged an error a second after it
+        # started - which buries the failures that are real.
+        log_event(
+            logger,
+            "service.watcher",
+            "reindex_state_changed",
+            source=slot.source.value,
+            job_id=snapshot.id,
+            state=snapshot.state.value,
+            pending_paths=pending_count,
+        )
     else:
         log_event(
             logger,
