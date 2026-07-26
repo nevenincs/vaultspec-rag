@@ -34,7 +34,7 @@ Plain-English definitions for terms used across the vaultspec-rag docs. Consult 
 
 **MCP (Model Context Protocol)**. An open protocol that lets AI clients, such as Claude Code, call tools running in a separate server process. vaultspec-rag exposes search and indexing as MCP tools. See [the MCP guide](mcp.md).
 
-**Project root**. The directory vaultspec-rag treats as the project boundary, the folder holding `.vault`. It is resolved from the current working directory or from `VAULTSPEC_RAG_ROOT`. See [the configuration guide](configuration.md).
+**Project root**. The directory vaultspec-rag treats as the project boundary, the folder holding `.vault`. It is resolved from `--target`, then `VAULTSPEC_RAG_ROOT`, then the current working directory. See [the configuration guide](configuration.md).
 
 **Provisioning**. The one-time setup, run during `install`, that obtains the three external dependencies vaultspec-rag needs. These are the CUDA PyTorch build, the search models cached from Hugging Face, and the managed Qdrant server binary. See [the installation guide](installation.md).
 

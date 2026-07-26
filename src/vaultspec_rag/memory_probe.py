@@ -1,7 +1,8 @@
 """Lightweight RSS + CUDA memory probe for index pipelines.
 
-Gated by the ``VAULTSPEC_RAG_MEMORY_PROBE`` env var.  When enabled the
-probe records resident-set size (RSS) and ``torch.cuda.memory_allocated/
+Gated by the ``VAULTSPEC_RAG_MEMORY_PROBE`` env var, which spells its two
+states the way every flag in this project does.  When enabled the probe
+records resident-set size (RSS) and ``torch.cuda.memory_allocated/
 reserved`` at named checkpoints and emits a structured report.
 
 The probe is intentionally self-contained: it has no hard dependency on
@@ -20,6 +21,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
+from ._env_values import BOOL_SHAPE, parse_bool, rejection
 from ._job_errors import JobError, JobErrorKind
 from ._units import bytes_to_mib, mib_to_bytes
 
@@ -50,7 +52,8 @@ __all__ = [
 #: module is reachable from spawn workers, which re-import their whole chain,
 #: and the settings module pulls the vaultspec-core config package with it. A
 #: guard test asserts this string still equals the settings enum member, so the
-#: copy cannot drift.
+#: copy cannot drift. Only the *name* is restated - the spellings it accepts
+#: come from the shared table, which is stdlib-only and costs a worker nothing.
 ENV_VAR = "VAULTSPEC_RAG_MEMORY_PROBE"
 
 # Module-level caches for hot-path samplers. ``current_rss_mb`` and
@@ -68,11 +71,24 @@ _torch_has_cuda: bool = False
 def is_enabled() -> bool:
     """Return ``True`` when the memory probe is active.
 
-    The probe activates when ``VAULTSPEC_RAG_MEMORY_PROBE`` is set to a
-    non-empty, non-``0`` value.
+    The switch spells its two states the way every flag in this project does:
+    ``1``, ``true``, ``yes`` and ``on`` turn the probe on, ``0``, ``false``,
+    ``no`` and ``off`` turn it off, and an unset or empty value leaves it off.
+
+    A word that spells neither state is rejected rather than guessed at. This
+    switch is set once, by hand, by an operator who wants the sampler; reading
+    a typo as either state hides the mistake behind whichever behaviour the
+    guess produced, and the sampler is exactly the kind of diagnostic whose
+    absence goes unnoticed for a long time.
+
+    Raises:
+        ValueError: If the variable is set to a value spelling neither state.
     """
-    value = os.environ.get(ENV_VAR, "")
-    return bool(value) and value != "0"
+    raw = os.environ.get(ENV_VAR, "")
+    enabled = parse_bool(raw)
+    if enabled is None:
+        raise rejection(ENV_VAR, BOOL_SHAPE, raw)
+    return enabled
 
 
 def _measure_rss_mb() -> float | None:
