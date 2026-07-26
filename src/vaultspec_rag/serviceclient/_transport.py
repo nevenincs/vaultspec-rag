@@ -747,6 +747,21 @@ def _admin_url_with_root(base: str, args: dict[str, Any]) -> str:
     return base
 
 
+_LOGS_PARAMS = {"lines", "source", "job_id", "contains"}
+
+
+def _bounded_route_path(base: str, args: dict[str, Any], allowed: set[str]) -> str:
+    """Append the allowlisted, non-``None`` entries of ``args`` to ``base``."""
+    params = {
+        key: value
+        for key, value in args.items()
+        if key in allowed and value is not None
+    }
+    if params:
+        base += "?" + urllib.parse.urlencode(params)
+    return base
+
+
 def _logs_route_path(args: dict[str, Any]) -> str:
     """Build the grouped JSON logs route with source and bounded filters.
 
@@ -754,15 +769,7 @@ def _logs_route_path(args: dict[str, Any]) -> str:
     JSON-parsing ``_do_http_call`` can decode. The plaintext ``/logs`` route is
     for direct human inspection and is not an admin-transport payload.
     """
-    path = "/logs/json"
-    params = {
-        key: value
-        for key, value in args.items()
-        if key in {"lines", "source", "job_id", "contains"} and value is not None
-    }
-    if params:
-        path += "?" + urllib.parse.urlencode(params)
-    return path
+    return _bounded_route_path("/logs/json", args, _LOGS_PARAMS)
 
 
 # GET admin tools that accept only an optional ``?project_root=`` query.
@@ -798,15 +805,7 @@ _JOBS_PARAMS = {
 
 def _jobs_route_path(args: dict[str, Any]) -> str:
     """Build the ``/jobs`` route path with its bounded query filters."""
-    url_path = "/jobs"
-    params = {
-        key: value
-        for key, value in args.items()
-        if key in _JOBS_PARAMS and value is not None
-    }
-    if params:
-        url_path += "?" + urllib.parse.urlencode(params)
-    return url_path
+    return _bounded_route_path("/jobs", args, _JOBS_PARAMS)
 
 
 _STORAGE_SURVEY_PARAMS = {"status", "limit", "root", "fresh"}
@@ -814,15 +813,7 @@ _STORAGE_SURVEY_PARAMS = {"status", "limit", "root", "fresh"}
 
 def _storage_survey_route_path(args: dict[str, Any]) -> str:
     """Build the ``/storage/survey`` route path with its bounded filters."""
-    url_path = "/storage/survey"
-    params = {
-        key: value
-        for key, value in args.items()
-        if key in _STORAGE_SURVEY_PARAMS and value is not None
-    }
-    if params:
-        url_path += "?" + urllib.parse.urlencode(params)
-    return url_path
+    return _bounded_route_path("/storage/survey", args, _STORAGE_SURVEY_PARAMS)
 
 
 def _resolve_admin_call(
