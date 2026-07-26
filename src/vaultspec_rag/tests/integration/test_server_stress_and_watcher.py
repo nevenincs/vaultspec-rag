@@ -31,6 +31,7 @@ from ...job_models import (
     ResumeStrategy,
 )
 from ...progress import NullProgressReporter
+from ...server import WatcherStartOutcome
 from ...server import _watcher as watcher_lifecycle
 from ...watcher_retry import WatcherRetryPolicy, WatcherSource
 from ..benchmarks.bench_large_index_resilience import (
@@ -165,10 +166,13 @@ async def _wait_for_watcher_job(
 async def _start_watcher(root: Path, *, cooldown: float) -> None:
     """Start the real server watcher and wait for watchfiles intake."""
     resolved = root.resolve()
-    assert server._ensure_watcher(
-        resolved,
-        debounce_ms=50,
-        cooldown_s=cooldown,
+    assert (
+        server._ensure_watcher(
+            resolved,
+            debounce_ms=50,
+            cooldown_s=cooldown,
+        )
+        is WatcherStartOutcome.STARTED
     )
     assert resolved in server._watcher_tasks
     await asyncio.sleep(0.3)
