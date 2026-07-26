@@ -34,7 +34,6 @@ from typer.testing import CliRunner
 from ..cli import _service_jobs as jobs
 from ..cli import app
 from ..cli._process import _call_interruptibly
-from ..serviceclient._transport import _build_call_request, _resolve_admin_call
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -185,31 +184,33 @@ def test_the_watch_loop_refreshes_through_the_shared_helper(
     assert len(requests) == 2, "each refresh must reach the service"
 
 
-def test_the_watch_refresh_is_a_read_only_request(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_the_watch_refresh_is_a_read_only_request() -> None:
     """Abandoning a refresh cannot modify service state, a job, or a lock.
 
-    The tool name is captured from the real fetch and handed to the real
-    transport resolver, so this binds to the request the watch loop actually
-    issues rather than to a restated constant.
+    The refresh runs against a bound server that serves GET and nothing else,
+    so a mutating request would not have been answered. That is a stronger
+    claim than resolving a captured tool name here, which only proved the
+    resolver agrees with itself.
+
+    Proven able to fail: routing the fetch through a POST tool leaves the GET
+    handler unused and the request log empty.
     """
-    seen: dict[str, Any] = {}
+    from ._cli_helpers import _jobs_empty_contract_server
 
-    def _capture(tool_name: str, args: dict[str, Any], port: int | None) -> None:
-        seen["tool"] = tool_name
-        seen["args"] = args
-        seen["port"] = port
+    server, thread, requests = _jobs_empty_contract_server()
+    try:
+        jobs._fetch_jobs_result(jobs._JobsQuery(port=server.server_address[1], limit=5))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
-    monkeypatch.setattr(jobs, "_try_http_admin", _capture)
-    jobs._fetch_jobs_result(jobs._JobsQuery(port=8766, limit=5))
-
-    resolved = _resolve_admin_call(seen["tool"], seen["args"])
-    assert resolved is not None
-    path, body = resolved
-    assert body is None, "a body would make the refresh a mutating request"
-    request = _build_call_request(seen["port"], path, body, "")
-    assert request.get_method() == "GET"
+    # The server answers GET only, so a mutating refresh would not have been
+    # served at all. Observing the request it did receive binds the method to
+    # what the loop actually sent rather than to a resolution recomputed here
+    # from a captured tool name.
+    assert len(requests) == 1, "the refresh must reach the service"
+    assert requests[0].startswith("/jobs")
 
 
 def test_the_refresh_thread_never_outlives_the_process() -> None:
