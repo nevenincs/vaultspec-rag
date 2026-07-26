@@ -11,11 +11,14 @@ import os
 
 import pytest
 
-from ..qdrant_runtime._supervise import (
-    _READY_TIMEOUT_DEFAULT_SECONDS,
-    _READY_TIMEOUT_ENV,
-    _ready_timeout_seconds,
-)
+from ..config import EnvVar, rag_default
+from ..qdrant_runtime._supervise import _ready_timeout_seconds
+
+#: Read from the settings object, which is where this timeout's name and
+#: default live. Restating either here would let the test keep passing after
+#: the shipped default moved.
+_READY_TIMEOUT_ENV = EnvVar.QDRANT_READY_TIMEOUT.value
+_READY_TIMEOUT_DEFAULT_SECONDS = float(rag_default("qdrant_ready_timeout_seconds"))
 
 pytestmark = [pytest.mark.unit]
 
