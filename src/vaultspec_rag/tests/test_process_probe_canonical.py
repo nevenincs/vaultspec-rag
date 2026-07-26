@@ -780,3 +780,54 @@ class TestAtomicReplaceHasOneImplementation:
         from .._atomic_write import replace_atomically, replace_durably
 
         assert replace_atomically is not replace_durably
+
+
+class TestNoSymbolKeptAliveForTests:
+    """No private production symbol exists only because a test calls it.
+
+    ``CodebaseIndexer`` carried ``_resolve_operation_policy`` and
+    ``resolve_policy_snapshot`` with byte-identical bodies forwarding to the
+    same collaborator. Production used the public one; fourteen test call
+    sites used the private one. So the path the tests exercised was not the
+    path production ran - which is the whole reason the rule forbids keeping a
+    symbol alive for tests.
+    """
+
+    def test_no_private_symbol_is_reachable_only_from_tests(self) -> None:
+        import ast
+        import re
+
+        definitions: dict[str, list[str]] = {}
+        production: list[str] = []
+        for path in _production_sources():
+            text = path.read_text(encoding="utf-8")
+            production.append(text)
+            for node in ast.walk(ast.parse(text)):
+                if (
+                    isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+                    and node.name.startswith("_")
+                    and not node.name.startswith("__")
+                ):
+                    definitions.setdefault(node.name, []).append(
+                        f"{path.relative_to(_PACKAGE_ROOT).as_posix()}:{node.lineno}"
+                    )
+
+        tests_dir = _PACKAGE_ROOT / "tests"
+        test_blob = "\n".join(
+            p.read_text(encoding="utf-8") for p in tests_dir.rglob("*.py")
+        )
+        production_blob = "\n".join(production)
+
+        orphans: dict[str, list[str]] = {}
+        for name, sites in definitions.items():
+            word = rf"\b{re.escape(name)}\b"
+            # every production mention minus the definition lines themselves
+            used = len(re.findall(word, production_blob)) - len(sites)
+            if used == 0 and re.search(word, test_blob):
+                orphans[name] = sites
+
+        assert not orphans, (
+            f"private symbol(s) reachable only from tests: {orphans}. Delete "
+            "them and repoint the tests at the production entry point - a "
+            "test-only path proves nothing about the path production runs"
+        )
