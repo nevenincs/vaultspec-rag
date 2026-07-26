@@ -233,7 +233,8 @@ def _get_admin_timeout(timeout: float | None = None) -> float:
     if timeout is None:
         try:
             resolved = float(get_config().service_admin_timeout_seconds)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            _warn_unusable_settings("admin", exc)
             return DEFAULT_ADMIN_TIMEOUT_SECONDS
     if resolved is None or not math.isfinite(resolved) or resolved <= 0:
         return DEFAULT_ADMIN_TIMEOUT_SECONDS
@@ -954,18 +955,41 @@ def _try_http_vault_document(
     )
 
 
+def _warn_unusable_settings(bound: str, exc: BaseException) -> None:
+    """Report a settings failure that a request bound is about to absorb.
+
+    The settings object validates every value when it is built, so the
+    failure this absorbs is frequently NOT about the bound being resolved -
+    one malformed variable anywhere makes the whole object unbuildable. The
+    two callers must not raise: they sit under a health probe whose contract
+    is that it never does, and under lifecycle verbs that must emit exactly
+    one outcome. Degrading is therefore right, but degrading in silence would
+    hide a rejected setting behind a request that appears to work, which is
+    the failure mode the validation exists to prevent. So it degrades loudly,
+    and names the real cause rather than implying the bound itself was bad.
+    """
+    logger.warning(
+        "using the default %s bound: the settings could not be read (%s). "
+        "The rejected value may belong to any setting, not this bound.",
+        bound,
+        exc,
+    )
+
+
 def _get_search_timeout(timeout: float | None) -> float:
     """Return the search-call bound, resolved leniently from the settings.
 
     An unusable configured bound - malformed, empty, non-finite or
     non-positive - degrades to the shipped default rather than raising, so
-    an operator typo never turns a search into a crash.
+    an operator typo never turns a search into a crash. The degrade is
+    logged; see :func:`_warn_unusable_settings`.
     """
     resolved = timeout
     if timeout is None:
         try:
             resolved = float(get_config().service_search_timeout_seconds)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            _warn_unusable_settings("search", exc)
             return DEFAULT_SEARCH_TIMEOUT_SECONDS
     if resolved is None or not math.isfinite(resolved) or resolved <= 0:
         return DEFAULT_SEARCH_TIMEOUT_SECONDS
