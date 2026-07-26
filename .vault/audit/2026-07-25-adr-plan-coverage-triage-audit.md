@@ -137,14 +137,21 @@ characters and creates a real collection
 
 `[[2026-06-30-mcp-search-scope-adr]]` is `accepted` and carries its own SB7
 amendment restating the surface parametrically per content kind. The guard its
-Consequences demanded exists and enforces the amended rule, not the superseded
-five-name list: `src/vaultspec_rag/tests/test_mcp_conformance_surface.py`
+Consequences demanded exists and enforces the amended tool set rather than the
+superseded five-name one: `src/vaultspec_rag/tests/test_mcp_conformance_surface.py`
 asserts the surface is exactly the search, refresh, convenience, status, and
 clean tools (`:81`), that no admin or lifecycle tool survives (`:84`), the
 read-only and idempotent annotations (`:87`), refresh non-destructiveness
 (`:95`), explicit destructive annotation on the clean tools (`:104`), absence of
 a destructive clean input on refresh (`:113`), display titles (`:122`), and a
 declared output schema (`:144`).
+
+Corrected on 2026-07-26 by
+`[[2026-07-26-adr-plan-coverage-triage-corpus-reconciliation-audit]]`: the guard
+enforces the amended tool *set*, but not as a parametric *rule*. SB7's own prose
+claims the guard was changed to assert a rule "rather than a frozen five-name
+list"; it is a twelve-name literal set at `:31-44`. The delivery verdict stands;
+the original wording here overstated what the guard does.
 
 ### provisioning-setup-delivered | low | front door and readiness verb both shipped
 

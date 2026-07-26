@@ -14,16 +14,6 @@ related:
   - '[[2026-07-21-index-backpressure-storage-hygiene-plan]]'
 ---
 
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the
-       related: field above.
-     - The related: field carries the AUTHORISING documents
-       (ADR, research, reference, prior plan) for every Step in
-       this plan. Steps inherit this chain; per-row reference
-       footers do not exist.
-     - NEVER use [[wiki-links]] or markdown links in the
-       document body. -->
-
 <!-- RETIRED: S04 -->
 
 # `large-index-resilience` plan
