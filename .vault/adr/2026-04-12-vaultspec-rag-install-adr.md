@@ -3,10 +3,11 @@ tags:
   - '#adr'
   - '#install-command'
 date: '2026-04-12'
-modified: '2026-07-25'
+modified: '2026-07-26'
 related:
   - '[[2026-04-12-vaultspec-rag-install-research]]'
   - '[[2026-04-12-vaultspec-rag-install-reference]]'
+  - '[[2026-04-06-ecosystem-integration-adr]]'
 ---
 
 # `install-command` adr: `vaultspec-rag install/uninstall as a thin core delegator` | (**status:** `proposed`)

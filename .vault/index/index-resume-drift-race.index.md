@@ -4,7 +4,7 @@ tags:
   - '#index'
   - '#index-resume-drift-race'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-26'
 related:
   - '[[2026-07-25-index-resume-drift-race-W01-P01-S01]]'
   - '[[2026-07-25-index-resume-drift-race-W01-P01-S02]]'

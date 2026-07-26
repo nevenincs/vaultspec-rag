@@ -89,8 +89,7 @@ version = "0.3.9"
   # The agent-facing MCP server is an opt-in extra: the CLI and the HTTP search
   # daemon never import `mcp`, so a base install must not drag it (and, on
   # Windows, its `pywin32` transitive). Install `vaultspec-rag[mcp]` to run the
-  # MCP server. See the `mcp-optional-dependency` ADR (supersedes the core-dep
-  # decision of #182).
+  # MCP server.
   mcp = ["mcp>=1.28.1"]
 
 [dependency-groups]
