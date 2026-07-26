@@ -13,7 +13,7 @@ import os
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
     VaultSpecConfig as BaseConfig,
@@ -21,6 +21,9 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  
 from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
     get_config as get_base_config,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -917,11 +920,10 @@ class VaultSpecConfigWrapper:
         Raises:
             ValueError: If the configured value is not a positive integer.
         """
-        value: object = self._resolve_rag_default("managed_log_max_bytes")
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            msg = f"managed_log_max_bytes must be a positive integer, got {value!r}"
-            raise ValueError(msg)
-        return value
+        return self._positive_int(
+            "managed_log_max_bytes",
+            self._resolve_rag_default("managed_log_max_bytes"),
+        )
 
     @property
     def managed_log_backup_count(self) -> int:
@@ -949,11 +951,10 @@ class VaultSpecConfigWrapper:
         Raises:
             ValueError: If the configured value is not a positive integer.
         """
-        value: object = self._resolve_rag_default("job_max_nonterminal")
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            msg = f"job_max_nonterminal must be a positive integer, got {value!r}"
-            raise ValueError(msg)
-        return value
+        return self._positive_int(
+            "job_max_nonterminal",
+            self._resolve_rag_default("job_max_nonterminal"),
+        )
 
     @property
     def job_shutdown_timeout_seconds(self) -> float:
@@ -1014,6 +1015,28 @@ class VaultSpecConfigWrapper:
             raise ValueError(msg)
         return float(value)
 
+    def _ordered_bounds[T: (int, float)](
+        self,
+        low_key: str,
+        high_key: str,
+        validator: Callable[[str, object], T],
+    ) -> tuple[T, T]:
+        """Resolve two config keys as an ordered ``(low, high)`` bound pair.
+
+        Raises:
+            ValueError: If either value fails ``validator``, or if the
+                resolved high value is smaller than the low value.
+        """
+        low = validator(low_key, self._resolve_rag_default(low_key))
+        high = validator(high_key, self._resolve_rag_default(high_key))
+        if high < low:
+            msg = (
+                f"{high_key} must be greater than or equal to {low_key}, "
+                f"got {high_key}={high}, {low_key}={low}"
+            )
+            raise ValueError(msg)
+        return low, high
+
     @property
     def store_operation_timeout_seconds(self) -> float:
         """Return the finite positive timeout for one store operation."""
@@ -1031,21 +1054,11 @@ class VaultSpecConfigWrapper:
         )
 
     def _store_write_retry_bounds(self) -> tuple[float, float]:
-        base = self._finite_positive(
+        return self._ordered_bounds(
             "store_write_retry_base_seconds",
-            self._resolve_rag_default("store_write_retry_base_seconds"),
-        )
-        maximum = self._finite_positive(
             "store_write_retry_max_seconds",
-            self._resolve_rag_default("store_write_retry_max_seconds"),
+            self._finite_positive,
         )
-        if maximum < base:
-            msg = (
-                "store_write_retry_max_seconds must be greater than or equal to "
-                f"store_write_retry_base_seconds, got maximum={maximum}, base={base}"
-            )
-            raise ValueError(msg)
-        return base, maximum
 
     @property
     def store_write_retry_base_seconds(self) -> float:
@@ -1058,38 +1071,18 @@ class VaultSpecConfigWrapper:
         return self._store_write_retry_bounds()[1]
 
     def _index_chunk_bounds(self) -> tuple[int, int]:
-        segment = self._positive_int(
+        return self._ordered_bounds(
             "index_segment_max_chunks",
-            self._resolve_rag_default("index_segment_max_chunks"),
-        )
-        queue = self._positive_int(
             "index_queue_max_chunks",
-            self._resolve_rag_default("index_queue_max_chunks"),
+            self._positive_int,
         )
-        if queue < segment:
-            msg = (
-                "index_queue_max_chunks must be greater than or equal to "
-                f"index_segment_max_chunks, got queue={queue}, segment={segment}"
-            )
-            raise ValueError(msg)
-        return segment, queue
 
     def _index_byte_bounds(self) -> tuple[int, int]:
-        segment = self._positive_int(
+        return self._ordered_bounds(
             "index_segment_max_bytes",
-            self._resolve_rag_default("index_segment_max_bytes"),
-        )
-        queue = self._positive_int(
             "index_queue_max_bytes",
-            self._resolve_rag_default("index_queue_max_bytes"),
+            self._positive_int,
         )
-        if queue < segment:
-            msg = (
-                "index_queue_max_bytes must be greater than or equal to "
-                f"index_segment_max_bytes, got queue={queue}, segment={segment}"
-            )
-            raise ValueError(msg)
-        return segment, queue
 
     @property
     def index_segment_max_chunks(self) -> int:
@@ -1167,21 +1160,11 @@ class VaultSpecConfigWrapper:
         )
 
     def _watch_retry_bounds(self) -> tuple[float, float]:
-        base = self._finite_positive(
+        return self._ordered_bounds(
             "watch_retry_base_seconds",
-            self._resolve_rag_default("watch_retry_base_seconds"),
-        )
-        maximum = self._finite_positive(
             "watch_retry_max_seconds",
-            self._resolve_rag_default("watch_retry_max_seconds"),
+            self._finite_positive,
         )
-        if maximum < base:
-            msg = (
-                "watch_retry_max_seconds must be greater than or equal to "
-                f"watch_retry_base_seconds, got maximum={maximum}, base={base}"
-            )
-            raise ValueError(msg)
-        return base, maximum
 
     @property
     def watch_retry_base_seconds(self) -> float:

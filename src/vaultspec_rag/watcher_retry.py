@@ -28,7 +28,7 @@ from ._store_locks import FileLock
 
 if TYPE_CHECKING:
     import _thread
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
     from pathlib import Path
     from typing import Self
 
@@ -176,7 +176,7 @@ class WatcherRetryPolicy:
             raise ValueError(
                 "max_seconds must be greater than or equal to base_seconds"
             )
-        self._jitter_fraction = _jitter_fraction(jitter_fraction)
+        self._jitter_fraction = _unit_interval("jitter_fraction", jitter_fraction)
         if type(failure_threshold) is not int or failure_threshold <= 0:
             raise ValueError("failure_threshold must be a positive integer")
         self._failure_threshold = failure_threshold
@@ -585,7 +585,11 @@ class WatcherRetryPolicy:
     ) -> WatcherRetryState:
         """Persist classification, exponential backoff, and circuit transition."""
         timestamp = _wall_time(now)
-        unit = random.random() if random_unit is None else _random_unit(random_unit)
+        unit = (
+            random.random()
+            if random_unit is None
+            else _unit_interval("random_unit", random_unit)
+        )
         with _locked_state(self._path):
             state = self._refresh_unlocked()
             self._require_active_attempt(state, attempt_generation)
@@ -1260,13 +1264,6 @@ def _optional_positive_int(value: object, key: str) -> int | None:
     return value
 
 
-def _positive_int(raw: dict[str, object], key: str) -> int:
-    value = _optional_positive_int(raw.get(key), key)
-    if value is None:
-        raise ValueError(f"watcher retry field {key!r} must be positive")
-    return value
-
-
 def _optional_positive_number(value: object, key: str) -> float | None:
     if value is None:
         return None
@@ -1275,11 +1272,23 @@ def _optional_positive_number(value: object, key: str) -> float | None:
     return _finite_positive(key, float(value))
 
 
-def _positive_number(raw: dict[str, object], key: str) -> float:
-    value = _optional_positive_number(raw.get(key), key)
+def _required_positive[T: (int, float)](
+    raw: dict[str, object],
+    key: str,
+    optional: Callable[[object, str], T | None],
+) -> T:
+    value = optional(raw.get(key), key)
     if value is None:
         raise ValueError(f"watcher retry field {key!r} must be positive")
     return value
+
+
+def _positive_int(raw: dict[str, object], key: str) -> int:
+    return _required_positive(raw, key, _optional_positive_int)
+
+
+def _positive_number(raw: dict[str, object], key: str) -> float:
+    return _required_positive(raw, key, _optional_positive_number)
 
 
 def _required_bool(raw: dict[str, object], key: str) -> bool:
@@ -1320,13 +1329,7 @@ def _finite_nonnegative(name: str, value: float) -> float:
     return float(value)
 
 
-def _jitter_fraction(value: float) -> float:
+def _unit_interval(name: str, value: float) -> float:
     if isinstance(value, bool) or not math.isfinite(value) or not 0.0 <= value <= 1.0:
-        raise ValueError("jitter_fraction must be finite and between zero and one")
-    return float(value)
-
-
-def _random_unit(value: float) -> float:
-    if isinstance(value, bool) or not math.isfinite(value) or not 0.0 <= value <= 1.0:
-        raise ValueError("random_unit must be finite and between zero and one")
+        raise ValueError(f"{name} must be finite and between zero and one")
     return float(value)

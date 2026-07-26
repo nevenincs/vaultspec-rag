@@ -287,34 +287,24 @@ def _refresh_watcher_policy(
     return policy
 
 
-async def _run_retry_transaction[T](operation: Callable[[], T]) -> T:
-    """Run retry-state locking and durable I/O outside the service event loop."""
+async def _run_bounded_transaction[T](
+    operation: Callable[[], T],
+    slots: threading.BoundedSemaphore,
+    unavailable_message: str,
+) -> T:
+    """Run locking and durable I/O on a worker thread behind a capacity gate.
+
+    ``slots`` bounds a dedicated worker pool so callers competing for one
+    pool can never starve another; each caller passes its own pool.
+    """
 
     def _guarded_operation() -> T:
-        if not _STATE_TRANSACTION_WORKER_SLOTS.acquire(blocking=False):
-            raise WatcherRetryUnavailableError(
-                "watcher retry state worker capacity is unavailable"
-            )
+        if not slots.acquire(blocking=False):
+            raise WatcherRetryUnavailableError(unavailable_message)
         try:
             return operation()
         finally:
-            _STATE_TRANSACTION_WORKER_SLOTS.release()
-
-    return await _run_in_thread(_guarded_operation, abandon_on_cancel=True)
-
-
-async def _run_fallback_transaction[T](operation: Callable[[], T]) -> T:
-    """Run a recovery handoff without competing for state worker capacity."""
-
-    def _guarded_operation() -> T:
-        if not _CANCELLATION_FALLBACK_WORKER_SLOTS.acquire(blocking=False):
-            raise WatcherRetryUnavailableError(
-                "watcher recovery handoff worker capacity is unavailable"
-            )
-        try:
-            return operation()
-        finally:
-            _CANCELLATION_FALLBACK_WORKER_SLOTS.release()
+            slots.release()
 
     return await _run_in_thread(_guarded_operation, abandon_on_cancel=True)
 
@@ -388,7 +378,13 @@ async def _attempt_durable_transaction[T](
     should back off and start a fresh transaction. Raises
     ``CancelledError`` once the durability window closes.
     """
-    transaction = asyncio.create_task(_run_retry_transaction(operation))
+    transaction = asyncio.create_task(
+        _run_bounded_transaction(
+            operation,
+            _STATE_TRANSACTION_WORKER_SLOTS,
+            "watcher retry state worker capacity is unavailable",
+        )
+    )
     while True:
         try:
             result = await _await_retry_transaction(
@@ -509,7 +505,13 @@ async def _attempt_fallback_transaction(
     ``None`` when the caller should back off and try again.
     """
     remaining = deadline - time.monotonic()
-    task = asyncio.create_task(_run_fallback_transaction(operation))
+    task = asyncio.create_task(
+        _run_bounded_transaction(
+            operation,
+            _CANCELLATION_FALLBACK_WORKER_SLOTS,
+            "watcher recovery handoff worker capacity is unavailable",
+        )
+    )
     while True:
         try:
             await asyncio.wait_for(asyncio.shield(task), timeout=remaining)
