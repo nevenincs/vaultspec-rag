@@ -1034,3 +1034,99 @@ class TestShortfallProseHasOneHome:
                 f"{renderer.__name__} reaches for a shortfall key directly, which "
                 "is what lets one kind be handled and the other forgotten"
             )
+
+
+class TestBackoffMathHasOneHome:
+    """Capped exponential backoff is computed in ``_backoff`` and nowhere else.
+
+    Five sites grew their own: the file-replacement ladder, the watcher retry
+    policy, and three copies inside the watcher's replacement scheduler. They
+    had already diverged where it counts - the retry policy clamped the
+    exponent so a long failure streak could not overflow, and the three
+    scheduler copies, written from the same idea, did not.
+    """
+
+    def test_only_the_backoff_module_raises_two_to_a_power(self) -> None:
+        """A new capped exponential anywhere else is a new copy."""
+        offenders: list[str] = []
+        for path in _production_sources():
+            if path.name == "_backoff.py":
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            offenders.extend(
+                f"{path.name}:{node.lineno}"
+                for node in ast.walk(tree)
+                if isinstance(node, ast.BinOp)
+                and isinstance(node.op, ast.Pow)
+                and isinstance(node.left, ast.Constant)
+                and node.left.value in (2, 2.0)
+            )
+        assert not offenders, (
+            f"base-2 exponentiation outside the backoff module at {offenders}; "
+            "call capped_exponential or jittered_backoff so the exponent clamp "
+            "cannot be present in one copy and absent in the next"
+        )
+
+    def test_the_replacement_constants_feed_one_scheduler(self) -> None:
+        """Only ``defer_replacement`` may turn the streak into a deadline."""
+        from .. import watcher
+
+        source = Path(watcher.__file__).read_text(encoding="utf-8")
+        uses = [
+            number
+            for number, line in enumerate(source.splitlines(), start=1)
+            if "_WATCH_REPLACEMENT_BACKOFF_BASE_SECONDS" in line
+            and not line.startswith("_WATCH_REPLACEMENT_BACKOFF_BASE_SECONDS")
+        ]
+        assert len(uses) == 1, (
+            f"the replacement backoff base is read at {uses}; exactly one "
+            "reader (defer_replacement) may exist, or the streak increment and "
+            "the deadline drift apart again"
+        )
+
+    def test_a_long_failure_streak_returns_the_cap_instead_of_overflowing(
+        self,
+    ) -> None:
+        """The defect the three scheduler copies carried.
+
+        ``2 ** (streak - 1)`` builds an integer before the float multiply, so a
+        streak past 1024 raised ``OverflowError`` instead of returning the cap
+        - reachable after about eight and a half hours of sustained
+        replacement failure at the thirty-second cap.
+
+        Proven able to fail: dropping the ``min(exponent, _MAX_EXPONENT)``
+        clamp in ``capped_exponential`` fails this test on the ``pytest.fail``
+        below, which is why the overflow is caught rather than left to error
+        the test out.
+        """
+        from .._backoff import capped_exponential
+
+        for streak in (1025, 100_000):
+            try:
+                delay = capped_exponential(streak - 1, base=1.0, cap=30.0)
+            except OverflowError as exc:
+                pytest.fail(f"streak {streak} overflowed instead of capping: {exc}")
+            assert delay == 30.0
+
+    def test_jitter_cannot_push_a_wait_past_the_cap(self) -> None:
+        """A cap is a cap; an upward draw must not exceed it.
+
+        The replacement ladder previously applied jitter to an already-capped
+        nominal without re-clamping, so its longest sleep ran a quarter over
+        the maximum it declared.
+
+        Proven able to fail: returning ``max(0.0, nominal + jitter)`` without
+        the outer ``min(cap, ...)`` fails this test on the upper-bound
+        assertion below.
+        """
+        from .._backoff import jittered_backoff
+
+        for exponent in range(0, 12):
+            for unit in (0.0, 0.5, 1.0):
+                delay = jittered_backoff(
+                    exponent, base=0.005, cap=0.15, fraction=0.25, random_unit=unit
+                )
+                assert 0.0 <= delay <= 0.15, (exponent, unit, delay)

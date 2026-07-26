@@ -26,6 +26,7 @@ from watchfiles import (
 )
 
 from . import jobs as _jobs
+from ._backoff import capped_exponential
 from .indexer._content_policy import ContentKind
 from .indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
 from .indexer._route_migration import prior_stored_owners
@@ -143,6 +144,24 @@ class _WatcherConvergenceSlot:
     def pending_count(self) -> int:
         with self.lock:
             return len(self.held_paths | self.pending_paths)
+
+    def defer_replacement(self, now: float) -> float:
+        """Extend the replacement backoff after another failed attempt.
+
+        Three callers scheduled this for themselves, each rewriting the same
+        streak increment, capped exponential, and deadline assignment. Returns
+        the delay so a caller can report what it scheduled without recomputing
+        it from the streak - which is how the copies came about.
+        """
+        with self.lock:
+            self.replacement_streak += 1
+            delay = capped_exponential(
+                self.replacement_streak - 1,
+                base=_WATCH_REPLACEMENT_BACKOFF_BASE_SECONDS,
+                cap=_WATCH_REPLACEMENT_BACKOFF_MAX_SECONDS,
+            )
+            self.replacement_not_before = now + delay
+            return delay
 
     def dirty_paths(self) -> frozenset[Path]:
         """Snapshot the exact paths eligible for the next watcher attempt."""
@@ -1923,13 +1942,7 @@ def _schedule_replacement(
 ) -> None:
     """Delay repeated orchestration failures with a finite exponential bound."""
     with slot.lock:
-        slot.replacement_streak += 1
-        delay = min(
-            _WATCH_REPLACEMENT_BACKOFF_BASE_SECONDS
-            * (2 ** (slot.replacement_streak - 1)),
-            _WATCH_REPLACEMENT_BACKOFF_MAX_SECONDS,
-        )
-        slot.replacement_not_before = now + delay
+        delay = slot.defer_replacement(now)
         pending_count = len(slot.held_paths | slot.pending_paths)
     log_event(
         logger,
@@ -1987,13 +2000,7 @@ def _observe_managed_job(
                 JobState.FAILED,
                 JobState.INTERRUPTED,
             }:
-                slot.replacement_streak += 1
-                replacement_delay = min(
-                    _WATCH_REPLACEMENT_BACKOFF_BASE_SECONDS
-                    * (2 ** (slot.replacement_streak - 1)),
-                    _WATCH_REPLACEMENT_BACKOFF_MAX_SECONDS,
-                )
-                slot.replacement_not_before = now + replacement_delay
+                replacement_delay = slot.defer_replacement(now)
 
             slot.job_id = None
             slot.watcher_owned = False
@@ -2106,13 +2113,7 @@ def _release_missing_job(
         slot.job_id = None
         slot.watcher_owned = False
         slot.observed_state = None
-        slot.replacement_streak += 1
-        delay = min(
-            _WATCH_REPLACEMENT_BACKOFF_BASE_SECONDS
-            * (2 ** (slot.replacement_streak - 1)),
-            _WATCH_REPLACEMENT_BACKOFF_MAX_SECONDS,
-        )
-        slot.replacement_not_before = now + delay
+        delay = slot.defer_replacement(now)
         pending_count = len(slot.pending_paths)
     log_event(
         logger,
