@@ -155,7 +155,10 @@ def _stop_active_qdrant() -> bool:
     return True
 
 
-def _reconcile_storage_manifest() -> None:
+def _reconcile_storage_manifest(
+    *,
+    timeout: int = _QDRANT_CLIENT_OP_TIMEOUT_SECONDS,
+) -> None:
     """Reconcile the storage manifest against the live managed server.
 
     Enumerates the server's collections, derives each one's per-root prefix,
@@ -163,6 +166,11 @@ def _reconcile_storage_manifest() -> None:
     Runs on a worker thread off the GPU lock. Any failure is logged and
     swallowed: a stale-but-present manifest is a survey nuisance, never a
     reason to fail service startup.
+
+    ``timeout`` bounds the client's wait so a server that accepts a connection
+    and then never answers cannot wedge this. It is an argument rather than a
+    read of the constant so the bound can be exercised: asserting the default
+    would mean a test that waits the default.
     """
     import re
 
@@ -175,7 +183,7 @@ def _reconcile_storage_manifest() -> None:
 
         cfg = get_config()
         url = str(cfg.qdrant_url or "") or f"http://127.0.0.1:{cfg.qdrant_port}"
-        client = QdrantClient(url=url, timeout=_QDRANT_CLIENT_OP_TIMEOUT_SECONDS)
+        client = QdrantClient(url=url, timeout=timeout)
         try:
             names = [c.name for c in client.get_collections().collections]
         finally:
