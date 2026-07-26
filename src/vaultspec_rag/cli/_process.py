@@ -3,10 +3,11 @@
 Liveness (``_is_pid_alive``), identity (``_is_our_service`` via a
 ``/health`` service-token round-trip through the service client, with an
 executable-name fallback), port probes, heartbeat staleness, the
-detached-daemon spawn, and graceful termination all live here. Helpers that
-tests monkeypatch on ``vaultspec_rag.cli`` (e.g. ``_is_pid_alive``) are
-referenced through the package namespace at call time so the substitution is
-observed.
+detached-daemon spawn, and graceful termination all live here. The helpers
+reached from other command modules (e.g. ``_is_pid_alive``) are referenced
+through the package namespace at call time, which keeps those modules from
+importing this one at their own import time and pulling process and socket
+handling onto every CLI import path.
 """
 
 from __future__ import annotations
