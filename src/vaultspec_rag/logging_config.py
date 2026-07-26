@@ -732,7 +732,8 @@ def configure_logging(
     Honors the configured ``log_level`` setting (``WARNING`` by default) when
     no explicit ``level``/``debug``/``quiet`` is provided, then delegates to
     :func:`vaultspec_core.logging_config.configure_logging`. An unrecognised
-    level name degrades to ``INFO`` rather than raising.
+    level name degrades to the shipped default rather than raising, and says
+    so, so a typo never makes the process quietly noisier than requested.
 
     Args:
         level: Explicit log level (e.g. ``logging.INFO`` or ``"DEBUG"``).
@@ -741,10 +742,22 @@ def configure_logging(
         quiet: When ``True``, forces level to ``WARNING``.
     """
     if level is None and not debug and not quiet:
-        from .config import get_config
+        from .config import get_config, rag_default
 
         configured = str(get_config().log_level).upper()
-        level = getattr(logging, configured, logging.INFO)
+        level = getattr(logging, configured, None)
+        if not isinstance(level, int):
+            # Degrade to the shipped default, not to something noisier. An
+            # unreadable level name is a typo, and the surprising outcome is
+            # a quiet service that suddenly logs more than it was asked to -
+            # the operator sees new output and reads it as a change in
+            # behaviour rather than as a rejected setting. Say what happened
+            # and use the default the documentation promises.
+            fallback = str(rag_default("log_level")).upper()
+            level = getattr(logging, fallback, logging.WARNING)
+            logging.getLogger(__name__).warning(
+                "ignoring unrecognised log level %r; using %s", configured, fallback
+            )
 
     _core_configure_logging(level=level, debug=debug, quiet=quiet)
 
