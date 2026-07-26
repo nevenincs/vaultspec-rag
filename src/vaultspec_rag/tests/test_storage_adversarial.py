@@ -16,16 +16,18 @@ from typing import TYPE_CHECKING
 
 import pytest
 import typer
+from qdrant_client import QdrantClient, models
 from typer.testing import CliRunner
 
 from ..cli import app
 from ..cli._service_storage import _emit_or_echo_error, _require_yes_for_json
-from ..storage_ops import DeleteResult
 from ..storage_safety import StorageSafetyError, resolve_within
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
     from pathlib import Path
+
+    from ..storage_ops import DeleteResult
 
 pytestmark = [pytest.mark.unit]
 
@@ -73,36 +75,62 @@ def test_traversal_escape_is_rejected(tmp_path: object) -> None:
 class TestDeleteRootAddressing:
     """``server storage delete --root``: resolution parity and idempotency.
 
-    The client and server-mode gate are bypassed (``_run_storage_op`` calls
-    the operation directly) so these tests exercise only the verb's
-    addressing, outcome mapping, and envelope - the real ``delete_prefix``
-    gates have their own coverage.
+    Every collection here is a real local Qdrant collection and the removal
+    is the real ``delete_prefix`` against a real manifest, so what these
+    assertions read is what actually survived the verb. Only the client
+    handoff is redirected: the verb opens an HTTP client to the managed
+    server, and these tests hand it a local one instead, which is why the
+    unreachable-server mapping is asserted elsewhere.
     """
 
-    @pytest.fixture(autouse=True)
-    def _bypass_client(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.fixture
+    def storage(
+        self,
+        isolated_status_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> Generator[QdrantClient]:
+        """Run the verb against a real local store and a relocated manifest."""
+        del isolated_status_dir
         from ..cli import _service_storage
 
+        client = QdrantClient(path=str(tmp_path / "storage"))
+
         def _direct(
-            _command: str, _json_mode: bool, fn: Callable[[None], DeleteResult]
+            _command: str, _json_mode: bool, fn: Callable[[QdrantClient], DeleteResult]
         ) -> DeleteResult:
-            return fn(None)
+            return fn(client)
 
         monkeypatch.setattr(_service_storage, "_run_storage_op", _direct)
+        try:
+            yield client
+        finally:
+            client.close()
 
-    def _record_delete(
-        self, monkeypatch: pytest.MonkeyPatch, result_status: str, reason: str | None
-    ) -> list[str]:
-        from .. import storage_ops
+    @staticmethod
+    def _create(client: QdrantClient, *names: str) -> None:
+        for name in names:
+            client.create_collection(
+                collection_name=name,
+                vectors_config=models.VectorParams(
+                    size=4, distance=models.Distance.COSINE
+                ),
+            )
 
-        seen: list[str] = []
+    @staticmethod
+    def _live(client: QdrantClient) -> set[str]:
+        return {c.name for c in client.get_collections().collections}
 
-        def _fake(_client: object, prefix: str, **_kwargs: object) -> DeleteResult:
-            seen.append(prefix)
-            return DeleteResult(prefix, result_status, reason=reason)
+    @staticmethod
+    def _registered_root(tmp_path: Path, name: str) -> tuple[Path, str]:
+        """Create a root, record it in the manifest, return it and its prefix."""
+        from ..storage_manifest import record_root
+        from ..store import root_collection_prefix
 
-        monkeypatch.setattr(storage_ops, "delete_prefix", _fake)
-        return seen
+        root = tmp_path / name
+        root.mkdir()
+        record_root(root, backend="server")
+        return root, root_collection_prefix(root)
 
     def test_both_prefix_and_root_are_rejected(self) -> None:
         result = runner.invoke(
@@ -118,46 +146,58 @@ class TestDeleteRootAddressing:
         assert envelope["ok"] is False
         assert envelope["error"] == "bad_request"
 
-    def test_root_resolves_exactly_like_registration(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    def test_root_deletes_exactly_the_namespace_registration_derived(
+        self, storage: QdrantClient, tmp_path: Path
     ) -> None:
-        from ..store import root_collection_prefix
+        """``--root`` reaches the registered namespace and no neighbour's.
 
-        seen = self._record_delete(monkeypatch, "removed", None)
+        Both roots are registered and both hold real collections, so a
+        derivation that drifted from the one registration uses would either
+        miss the target or take the bystander with it - and the store is
+        asked afterwards which of the two is still there.
+
+        Proven able to fail: replacing the verb's derivation with a fixed
+        canonical prefix leaves the target collection standing, failing the
+        assertion that it is gone. Restored, it passes.
+        """
+        root, prefix = self._registered_root(tmp_path, "target")
+        _, bystander = self._registered_root(tmp_path, "bystander")
+        self._create(storage, f"{prefix}vault_docs", f"{bystander}vault_docs")
+
         result = runner.invoke(
             app,
-            [
-                "server",
-                "storage",
-                "delete",
-                "--root",
-                str(tmp_path),
-                "--yes",
-                "--json",
-            ],
+            ["server", "storage", "delete", "--root", str(root), "--yes", "--json"],
         )
+
         assert result.exit_code == 0, result.output
-        assert seen == [root_collection_prefix(tmp_path)]
+        live = self._live(storage)
+        assert f"{prefix}vault_docs" not in live
+        assert f"{bystander}vault_docs" in live
         envelope = json.loads(result.output)
         assert envelope["ok"] is True
-        assert envelope["data"]["queried_root"]["prefix"] == seen[0]
+        assert envelope["data"]["status"] == "removed"
+        assert envelope["data"]["queried_root"]["prefix"] == prefix
 
     def test_absent_namespace_is_an_idempotent_success(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self, storage: QdrantClient, tmp_path: Path
     ) -> None:
-        self._record_delete(monkeypatch, "skipped", "no_such_namespace")
+        """A root the store never held tears down as a success, not a fault.
+
+        The store is genuinely empty here, so ``no_such_namespace`` is the
+        real gate's own finding rather than a stated one.
+
+        Proven able to fail: dropping the remap of that finding leaves the
+        raw ``skipped``/``no_such_namespace`` pair in the envelope, failing
+        the ``already_absent`` assertion. Restored, it passes.
+        """
+        del storage
+        root, _ = self._registered_root(tmp_path, "never-stored")
+
         result = runner.invoke(
             app,
-            [
-                "server",
-                "storage",
-                "delete",
-                "--root",
-                str(tmp_path),
-                "--yes",
-                "--json",
-            ],
+            ["server", "storage", "delete", "--root", str(root), "--yes", "--json"],
         )
+
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["ok"] is True
@@ -165,46 +205,76 @@ class TestDeleteRootAddressing:
         assert envelope["data"]["reason"] is None
 
     def test_absent_namespace_exits_zero_in_human_mode_too(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self, storage: QdrantClient, tmp_path: Path
     ) -> None:
-        self._record_delete(monkeypatch, "skipped", "no_such_namespace")
+        """The operator reading prose is told the same thing as the broker.
+
+        Proven able to fail: under the same mutation as the sibling test
+        the line reads "Skipped ...: no_such_namespace", failing the phrase
+        assertion. Restored, it passes.
+        """
+        del storage
+        root, _ = self._registered_root(tmp_path, "never-stored")
         result = runner.invoke(
-            app, ["server", "storage", "delete", "--root", str(tmp_path), "--yes"]
+            app, ["server", "storage", "delete", "--root", str(root), "--yes"]
         )
         assert result.exit_code == 0, result.output
         assert "already absent" in result.output
 
-    def test_unknown_namespace_refusal_is_preserved(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    def test_unattributable_namespace_survives_the_delete(
+        self, storage: QdrantClient, tmp_path: Path
     ) -> None:
-        self._record_delete(monkeypatch, "skipped", "unknown_namespace")
+        """Data the manifest cannot vouch for is reported, never destroyed.
+
+        The root is deliberately left out of the manifest while its
+        collection really exists, which is the shape of a namespace written
+        by something this installation does not know about. The load-bearing
+        assertion is the survival, not the envelope: a refusal that still
+        deleted would be the worst outcome and reads identically otherwise.
+
+        Proven able to fail: dropping the manifest-attribution gate in
+        ``delete_prefix`` removes the collection, failing the survival
+        assertion. Restored, it passes.
+        """
+        from ..store import root_collection_prefix
+
+        root = tmp_path / "unattributable"
+        root.mkdir()
+        prefix = root_collection_prefix(root)
+        self._create(storage, f"{prefix}vault_docs")
+
         result = runner.invoke(
             app,
-            [
-                "server",
-                "storage",
-                "delete",
-                "--root",
-                str(tmp_path),
-                "--yes",
-                "--json",
-            ],
+            ["server", "storage", "delete", "--root", str(root), "--yes", "--json"],
         )
+
         assert result.exit_code == 0, result.output
+        assert f"{prefix}vault_docs" in self._live(storage)
         envelope = json.loads(result.output)
         assert envelope["data"]["status"] == "skipped"
         assert envelope["data"]["reason"] == "unknown_namespace"
 
-    def test_prefix_form_is_unchanged(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        seen = self._record_delete(monkeypatch, "removed", None)
+    def test_prefix_form_deletes_and_reports_no_queried_root(
+        self, storage: QdrantClient, tmp_path: Path
+    ) -> None:
+        """Addressing by prefix removes the same namespace, minus the echo.
+
+        ``queried_root`` answers "which namespace did my path resolve to",
+        a question a caller that supplied the prefix never asked; emitting
+        it anyway would let a consumer read a path it never gave.
+        """
+        _, prefix = self._registered_root(tmp_path, "by-prefix")
+        self._create(storage, f"{prefix}vault_docs")
+
         result = runner.invoke(
-            app,
-            ["server", "storage", "delete", "rdeadbeef0000_", "--yes", "--json"],
+            app, ["server", "storage", "delete", prefix, "--yes", "--json"]
         )
+
         assert result.exit_code == 0, result.output
-        assert seen == ["rdeadbeef0000_"]
         envelope = json.loads(result.output)
+        assert envelope["data"]["status"] == "removed"
         assert "queried_root" not in envelope["data"]
+        assert f"{prefix}vault_docs" not in self._live(storage)
 
 
 class TestReconcileRendering:

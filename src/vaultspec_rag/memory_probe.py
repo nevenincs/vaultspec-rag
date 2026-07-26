@@ -40,6 +40,7 @@ __all__ = [
     "record_forward_peaks",
     "reset_cuda_peak_memory_stats",
     "resident_cuda_baseline_mb",
+    "route_forward_peak_mb",
     "sample_resident_cuda_baseline",
     "snapshot_resource_bytes",
 ]
@@ -373,6 +374,38 @@ def record_forward_peaks(
         _forward_peak_recorder.value = previous
 
 
+def route_forward_peak_mb(peak_mb: float | None) -> bool:
+    """Credit one captured forward peak to this thread's recorder.
+
+    The routing rule, stated over a reading rather than over the allocator:
+    a peak belongs to the recorder registered on the thread that captured
+    it, and is dropped when that thread has none - a capture taken outside
+    a job's recorder context has no owner, and crediting it to whichever
+    recorder ran last would attribute one job's demand to another. A
+    recorder that raises loses its capture rather than propagating out of
+    the bracket, which would surface as a failure of the forward itself.
+
+    Args:
+        peak_mb: The captured high-water in MiB, or ``None`` when the
+            allocator could not be read.
+
+    Returns:
+        True when the reading reached a recorder.
+    """
+    recorder = getattr(_forward_peak_recorder, "value", None)
+    if peak_mb is None or recorder is None:
+        return False
+    try:
+        recorder(peak_mb)
+    except Exception:
+        logger.warning(
+            "forward peak recorder failed; capture dropped",
+            exc_info=True,
+        )
+        return False
+    return True
+
+
 @contextlib.contextmanager
 def cuda_forward_peak_capture() -> Generator[None]:
     """Bracket one model forward with a job-local peak capture.
@@ -383,23 +416,15 @@ def cuda_forward_peak_capture() -> Generator[None]:
     so the captured value is this forward's own demand (resident baseline
     included) and never a concurrent job's. The read also happens on an
     exceptional exit so an allocator OOM still records the demand that
-    triggered it.
+    triggered it. This bracket probes; :func:`route_forward_peak_mb` owns
+    what the reading then means.
     """
     armed = _reset_cuda_peak_stats_bare()
     try:
         yield
     finally:
         if armed:
-            peak = _read_cuda_peak_allocated_mb()
-            recorder = getattr(_forward_peak_recorder, "value", None)
-            if peak is not None and recorder is not None:
-                try:
-                    recorder(peak)
-                except Exception:
-                    logger.warning(
-                        "forward peak recorder failed; capture dropped",
-                        exc_info=True,
-                    )
+            route_forward_peak_mb(_read_cuda_peak_allocated_mb())
 
 
 @dataclass
