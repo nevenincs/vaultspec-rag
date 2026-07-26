@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 
@@ -328,56 +329,66 @@ def test_runtime_cuda_peak_is_not_a_corpus_rejection_dimension() -> None:
     assert exceeded[0] == "rss_bytes"
 
 
-def test_forward_peak_capture_routes_to_thread_recorder_and_keeps_maximum(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The capture bracket feeds the registered recorder, max across brackets.
+def test_forward_peak_routes_to_thread_recorder_and_keeps_maximum() -> None:
+    """A captured peak reaches the capturing thread's recorder, max-wins.
 
-    Guards two narrow properties: a bracket outside ``record_forward_peaks``
-    must drop its capture (no recorder registered on the thread), and a
-    later smaller bracket must not shrink the job's accumulated maximum.
+    Guards two narrow properties: a capture taken outside
+    ``record_forward_peaks`` must be dropped (no recorder registered on
+    the thread) rather than credited to whichever recorder ran last, and a
+    later smaller forward must not shrink the job's accumulated maximum.
+
+    The readings are stated rather than measured: what a given reading must
+    mean for attribution does not depend on a machine presenting it, and
+    the capture bracket is exactly this call preceded by the two allocator
+    probes.
+
+    Proven able to fail: dropping the restore that ``record_forward_peaks``
+    performs on exit leaves the departed job's recorder installed on the
+    thread, so the orphan 9999.0 reading finds an owner and the assertion
+    that it was dropped reports True against False. Restored, it passes.
     """
-    from .. import memory_probe
-    from ..memory_probe import (
-        MemoryBudget,
-        cuda_forward_peak_capture,
-        record_forward_peaks,
-    )
+    from ..memory_probe import MemoryBudget, record_forward_peaks, route_forward_peak_mb
 
-    monkeypatch.setattr(memory_probe, "_reset_cuda_peak_stats_bare", lambda: True)
-    monkeypatch.setattr(
-        memory_probe,
-        "_read_cuda_peak_allocated_mb",
-        lambda: 321.5,
-    )
     budget = MemoryBudget(cuda_ceiling_mb=1000.0)
-    with (
-        record_forward_peaks(budget.record_forward_peak_mb),
-        cuda_forward_peak_capture(),
-    ):
-        pass
-    assert budget.captured_cuda_peak_mb == 321.5
-
-    # A later, smaller forward must not shrink the job maximum.
-    monkeypatch.setattr(
-        memory_probe,
-        "_read_cuda_peak_allocated_mb",
-        lambda: 100.0,
-    )
-    with (
-        record_forward_peaks(budget.record_forward_peak_mb),
-        cuda_forward_peak_capture(),
-    ):
-        pass
+    with record_forward_peaks(budget.record_forward_peak_mb):
+        assert route_forward_peak_mb(321.5) is True
+        # A later, smaller forward must not shrink the job maximum.
+        assert route_forward_peak_mb(100.0) is True
     assert budget.captured_cuda_peak_mb == 321.5
 
     # Outside the recorder context a capture has nowhere to go and
     # must be dropped rather than credited to a stale recorder.
-    monkeypatch.setattr(
-        memory_probe,
-        "_read_cuda_peak_allocated_mb",
-        lambda: 9999.0,
-    )
-    with cuda_forward_peak_capture():
-        pass
+    assert route_forward_peak_mb(9999.0) is False
     assert budget.captured_cuda_peak_mb == 321.5
+
+
+def test_unreadable_forward_peak_is_dropped_quietly(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A miss is a miss: neither arm of the drop may raise an alarm.
+
+    Two readings have no owner to credit - an allocator that transiently
+    refused the read, and a capture taken on a thread with no recorder
+    registered. Both already credit nothing. What the guard buys is
+    silence: routed on regardless, each arrives at the failure branch and
+    logs a warning once per forward, drowning the operator in an alarm
+    about components that are working. The assertions are therefore on the
+    log, since the return value is False under every form.
+
+    Proven able to fail: dropping either arm of the guard sends that
+    reading into the branch it was meant to skip - a rejected reading for
+    the ``None`` peak, an uncallable recorder for the orphan - and the
+    warning fires, failing the assertion that nothing was logged. Restored,
+    both pass.
+    """
+    from ..memory_probe import MemoryBudget, record_forward_peaks, route_forward_peak_mb
+
+    budget = MemoryBudget(cuda_ceiling_mb=1000.0)
+    with caplog.at_level(logging.WARNING, logger="vaultspec_rag.memory_probe"):
+        with record_forward_peaks(budget.record_forward_peak_mb):
+            assert route_forward_peak_mb(444.0) is True
+            assert route_forward_peak_mb(None) is False
+        assert route_forward_peak_mb(777.0) is False
+
+    assert caplog.records == []
+    assert budget.captured_cuda_peak_mb == 444.0
