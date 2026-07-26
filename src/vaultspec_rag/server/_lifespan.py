@@ -1083,6 +1083,42 @@ def _failure_belongs_to_this_generation(record: dict[str, object]) -> bool:
     return finished_at >= generation_start
 
 
+def _job_source(record: dict[str, object]) -> object:
+    """Return the content source a job record indexed, or ``None``."""
+    spec = record.get("spec")
+    if isinstance(spec, dict):
+        return spec.get("source")
+    return record.get("source")
+
+
+def _failure_was_superseded(
+    failed: dict[str, object],
+    records: list[dict[str, object]],
+) -> bool:
+    """Return whether a later run of the same source already succeeded.
+
+    A failure degrades health because it says the index is not being kept
+    current. A success afterwards on the same source answers that: the run
+    that mattered got through. Without this, one transient failure - a
+    momentary memory ceiling, a file that vanished mid-scan - degrades the
+    service for the rest of the generation no matter how many runs succeed
+    after it, and the operator is told the *latest* job failed while newer
+    ones are visibly finishing clean.
+    """
+    from ._routes_jobs import job_state, job_updated_timestamp
+
+    failed_at = job_updated_timestamp(failed)
+    if failed_at is None:
+        return False
+    source = _job_source(failed)
+    return any(
+        job_state(record) == "succeeded"
+        and _job_source(record) == source
+        and (job_updated_timestamp(record) or float("-inf")) > failed_at
+        for record in records
+    )
+
+
 def _jobs_health() -> tuple[dict[str, object], list[str]]:
     """Build the bounded job rollup and its service degradation reasons."""
     from ._routes_jobs import _job_summary, job_state
@@ -1121,7 +1157,11 @@ def _jobs_health() -> tuple[dict[str, object], list[str]]:
     degraded_reasons: list[str] = []
     if summary["stalled"]:
         degraded_reasons.append(f"{summary['stalled']} indexing job(s) are stalled")
-    if last_failed is not None and _failure_belongs_to_this_generation(last_failed):
+    if (
+        last_failed is not None
+        and _failure_belongs_to_this_generation(last_failed)
+        and not _failure_was_superseded(last_failed, job_records)
+    ):
         failed_kind = last_failed.get("error_kind") or "unknown"
         degraded_reasons.append(f"the latest indexing job failed: {failed_kind}")
     return jobs_health, degraded_reasons
