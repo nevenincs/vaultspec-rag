@@ -92,6 +92,19 @@ class TestMergeKeepsIdentityCoherent:
 def _search_app(  # pyright: ignore[reportUnusedFunction]
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[httpx.Client, str]:
+    """Serve production's own route table over real ASGI, with a real token.
+
+    ``ROUTES`` is the production route table and the transport is Starlette's
+    own, so every assertion below is decided by production request handling.
+
+    The token is a precondition, not a substitute for anything under test: the
+    auth gate fails closed on an unset token, so a request could not reach the
+    validation being asserted without one. Assigning it is what
+    ``service_lifespan`` does at startup, and the value assigned here is
+    production-legal. Driving the real lifespan instead would start a daemon,
+    claim the machine singleton and load the models - none of which any
+    assertion here depends on.
+    """
     monkeypatch.setattr(_m, "_SERVICE_TOKEN", "test-token-q")
     client = cast("httpx.Client", TestClient(Starlette(routes=ROUTES)))
     return client, "test-token-q"
