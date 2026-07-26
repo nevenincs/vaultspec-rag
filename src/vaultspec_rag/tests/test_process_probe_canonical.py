@@ -831,3 +831,51 @@ class TestNoSymbolKeptAliveForTests:
             "them and repoint the tests at the production entry point - a "
             "test-only path proves nothing about the path production runs"
         )
+
+
+class TestSchemaDeclarationsAreNotCopied:
+    """A payload-index declaration lives in ``store_schema``, nowhere else.
+
+    ``_store_search._build_document_filter`` re-listed the six document
+    keyword indexes its own docstring said it must take from the schema. A
+    keyword index added to the schema would have been rejected there as an
+    unknown filter key - logged as a warning, the filter silently dropped, and
+    the search returning UNFILTERED results rather than failing.
+    """
+
+    def test_no_module_relists_a_schema_index_set(self) -> None:
+        from .. import store_schema
+
+        declared = {
+            name: frozenset(getattr(store_schema, name))
+            for name in dir(store_schema)
+            if name.endswith(("_KEYWORD_INDEXES", "_INTEGER_INDEXES"))
+        }
+        assert declared, "store_schema declares no index sets; has it moved?"
+
+        import ast
+
+        offenders: list[str] = []
+        for path in _production_sources():
+            if path.name == "store_schema.py":
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Set | ast.Tuple | ast.List):
+                    continue
+                literal = {
+                    element.value
+                    for element in node.elts
+                    if isinstance(element, ast.Constant)
+                    and isinstance(element.value, str)
+                }
+                if len(literal) < 2 or len(literal) != len(node.elts):
+                    continue
+                for name, values in declared.items():
+                    if literal == values:
+                        rel = path.relative_to(_PACKAGE_ROOT).as_posix()
+                        offenders.append(f"{rel}:{node.lineno} == {name}")
+        assert not offenders, (
+            f"schema index set copied at {offenders}; import it from "
+            "store_schema so a new index reaches every reader"
+        )

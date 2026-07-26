@@ -520,14 +520,13 @@ class _VaultSearchMixin:
             return None
         from qdrant_client import models
 
-        indexed = {
-            "source_path",
-            "content_fingerprint",
-            "extractor_id",
-            "extractor_version",
-            "locator_kind",
-            "locator_value_str",
-        }
+        from . import store_schema
+
+        # The schema DECLARES which document payload keys carry an index, and
+        # this filter may only use those. Re-listing them here meant a keyword
+        # index added to the schema would be rejected as unknown, silently
+        # dropping a legitimate filter and returning unfiltered results.
+        indexed = frozenset(store_schema.DOCUMENT_KEYWORD_INDEXES)
         conditions: list[Condition] = []
         for key, value in filters.items():
             if key not in indexed:
