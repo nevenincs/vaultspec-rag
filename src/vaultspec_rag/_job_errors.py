@@ -157,13 +157,25 @@ class JobError(RuntimeError):
 # Marker sets are matched case-insensitively against the recorded error
 # text. Disk-full covers the raw OS error, qdrant's WAL guard and
 # optimizer messages, and the preflight refusal phrasing.
-_DISK_FULL_MARKERS = (
+#: Every spelling of "the disk is full" this project has seen, across the
+#: OS, the qdrant server, and its WAL. One tuple with two readers: the job
+#: record's error_kind, and the store-write retry loop, which treats a full
+#: disk as unrecoverable. They diverged while there were two lists - the
+#: write path knew two of these five, so three of them were retried until
+#: the budget ran out against a disk that was never going to free itself.
+DISK_FULL_MARKERS = (
     "no space left",
     "errno 28",
     "wal buffer size exceeds",
     "not enough space available",
     "not enough free disk space",
 )
+
+#: The spelling to use when this project RAISES a disk-full error itself,
+#: rather than relaying one. It is matched by the tuple above, so a message
+#: built from it classifies as ``disk_full`` and reaches the operator with
+#: the friendly remediation instead of falling through to ``other``.
+DISK_FULL_PHRASE = "No space left on device"
 _TIMEOUT_MARKERS = ("timed out", "timeout")
 _UNAVAILABLE_MARKERS = (
     "connection refused",
@@ -190,7 +202,7 @@ def classify_error_text(text: str | None) -> JobErrorKind | None:
             return JobErrorKind(token.strip())
         except ValueError:
             pass
-    if any(marker in lowered for marker in _DISK_FULL_MARKERS):
+    if any(marker in lowered for marker in DISK_FULL_MARKERS):
         return JobErrorKind.DISK_FULL
     if any(marker in lowered for marker in _TIMEOUT_MARKERS):
         return JobErrorKind.TIMEOUT

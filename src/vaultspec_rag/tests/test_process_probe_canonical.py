@@ -287,3 +287,62 @@ class TestDiscoveryFilenameHasOneSpelling:
             "the discovery file carries the service token and must stay in the "
             "indexer's sensitive-pattern list"
         )
+
+
+class TestDiskFullVocabularyHasOneHome:
+    """One list of what "the disk is full" looks like in an error string.
+
+    ``_job_errors`` knew five spellings and ``_store_writes`` knew two, so
+    three of them were classified transient by the write path and retried
+    until the budget expired against a disk that was never going to free
+    itself. The lists agreeing is the property; a second list is how they
+    stopped agreeing.
+    """
+
+    def test_no_second_disk_full_vocabulary(self) -> None:
+        # Only spellings that are FOREIGN error text - qdrant's WAL message and
+        # the OS phrasing - so a module carrying one is quoting an error to match
+        # it. Generic English like "not enough free disk space" is deliberately
+        # NOT a fingerprint: this project raises its own disk-full error whose
+        # operator-facing sentence reads that way, and flagging that would push
+        # the next author to reword good prose instead of reusing the vocabulary.
+        fingerprints = ("wal buffer size exceeds", "not enough space available")
+        offenders = [
+            f"{path.relative_to(_PACKAGE_ROOT).as_posix()}:{number}"
+            for path in _production_sources()
+            if path.name != "_job_errors.py"
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            )
+            if any(mark in line.lower() for mark in fingerprints)
+        ]
+        assert not offenders, (
+            f"second disk-full vocabulary at {offenders}; import "
+            "_job_errors.DISK_FULL_MARKERS so both readers agree"
+        )
+
+    def test_both_readers_agree_on_every_spelling(self) -> None:
+        # The behavioural property the shared tuple exists to hold. Asserted
+        # over the canonical list itself, so a spelling added later is covered
+        # without anyone remembering to extend this test.
+        from .._job_errors import DISK_FULL_MARKERS, JobErrorKind, classify_error_text
+        from .._store_writes import classify_write_error
+
+        for marker in DISK_FULL_MARKERS:
+            text = f"the backend said: {marker} while writing"
+            assert classify_error_text(text) is JobErrorKind.DISK_FULL, (
+                f"{marker!r} must read as disk_full in a job record"
+            )
+            assert classify_write_error(RuntimeError(text)) == "unrecoverable", (
+                f"{marker!r} must stop the write retry loop; retrying cannot "
+                "free disk space"
+            )
+
+    def test_a_transient_error_is_still_retried(self) -> None:
+        # The merge widened what counts as unrecoverable, so pin the other
+        # direction: an ordinary blip must remain eligible for retry.
+        from .._store_writes import classify_write_error
+
+        assert classify_write_error(RuntimeError("connection reset by peer")) == (
+            "transient"
+        )
