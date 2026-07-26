@@ -968,3 +968,69 @@ class TestFinalizationPhaseWalkHasOneCopy:
             # The label the envelope emits is built from _kind_label, so each
             # subclass must still declare the one it had.
             assert cls._kind_label in {"code", "document"}
+
+
+class TestShortfallProseHasOneHome:
+    """The words warning an operator their index is short have one source.
+
+    Three renderers described the same deficits: two on the command line and
+    one in the service summary. They had already drifted - the summary named
+    the point shortfall alone, so a publication covering a fraction of the
+    files it named reached an agent as an unqualified count, and the two
+    surfaces disagreed on the noun. Both the consequence clause and the
+    remediation command now live beside the figures they describe.
+    """
+
+    def test_only_the_breadth_module_spells_the_consequence(self) -> None:
+        from .._index_breadth import SHORTFALL_CONSEQUENCE
+
+        offenders = [
+            f"{path.name}:{number}"
+            for path in _production_sources()
+            if path.name != "_index_breadth.py"
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            )
+            if "not evidence that no such" in line
+        ]
+        assert not offenders, (
+            f"the shortfall consequence is spelled again at {offenders}; import "
+            f"SHORTFALL_CONSEQUENCE ({SHORTFALL_CONSEQUENCE!r}) so both surfaces "
+            "cannot describe one deficit differently"
+        )
+
+    def test_only_the_breadth_module_spells_the_remediation(self) -> None:
+        from .._index_breadth import SHORTFALL_REMEDIATION
+
+        offenders = [
+            f"{path.name}:{number}"
+            for path in _production_sources()
+            if path.name != "_index_breadth.py"
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            )
+            if SHORTFALL_REMEDIATION in line
+        ]
+        assert not offenders, (
+            f"the shortfall remediation is spelled again at {offenders}; import "
+            "SHORTFALL_REMEDIATION so an operator is never sent to a command a "
+            "rename removed from one copy"
+        )
+
+    def test_every_surface_walks_both_shortfall_kinds(self) -> None:
+        """Neither renderer may read one key and stay blind to the other."""
+        import inspect
+
+        from ..cli._search import _render_shortfall_warnings
+        from ..server._routes import _search_summary
+
+        for renderer in (_render_shortfall_warnings, _search_summary):
+            source = inspect.getsource(renderer)
+            assert "shortfall_warnings" in source, (
+                f"{renderer.__name__} must walk the shared reader; keying on one "
+                "shortfall name is how the summary went silent on file breadth"
+            )
+            assert '"file_shortfall"' not in source, (
+                f"{renderer.__name__} reaches for a shortfall key directly, which "
+                "is what lets one kind be handled and the other forgotten"
+            )
