@@ -4,23 +4,25 @@ Split out of the original ``server.py`` monolith. This module is the canonical h
 the daemon's process-wide globals (registry, watcher bookkeeping,
 identity token, HTTP-mode flag). The package ``__init__`` re-imports
 these names so they live in the ``vaultspec_rag.server`` namespace,
-which is the target tests rebind (e.g. ``server._http_mode = True``).
-The MCP ``FastMCP`` instance is not owned here - after the thin-client
-rework it lives only in ``vaultspec_rag.mcp._mcp`` and is served by the
-standalone stdio forwarder.
+which is where every consumer reads them. The MCP ``FastMCP`` instance
+is not owned here - after the thin-client rework it lives only in
+``vaultspec_rag.mcp._mcp`` and is served by the standalone stdio
+forwarder.
 
-Rebind discipline (mirrors the ``cli`` split's monkeypatch handling):
+Rebind discipline (mirrors the ``cli`` split):
 
 - ``_watcher_tasks``, ``_watcher_stops``, ``_watcher_lock`` are mutated
   *in place* (dict insert/pop, lock acquire) and may be imported by
   reference.
-- ``_registry``, ``_http_mode``, ``_SERVICE_TOKEN``, ``_start_time``,
+- ``_http_mode``, ``_SERVICE_TOKEN``, ``_start_time``,
   ``_start_wall_time`` are *reassigned* at runtime (``main`` sets
   ``_http_mode``; ``service_lifespan`` sets the start stamps and
-  ``_SERVICE_TOKEN``; tests
-  rebind ``_registry``). Consumers must read them at call time through
-  ``import vaultspec_rag.server as _m`` so a rebind on the package
-  namespace is observed.
+  ``_SERVICE_TOKEN``). Consumers must read them at call time through
+  ``import vaultspec_rag.server as _m``, or they bind the value the
+  daemon held before startup finished rather than the one it runs on.
+- ``_registry`` is bound once here at import and never reassigned. It is
+  read through the same alias so the watcher's ownership check compares
+  every caller against one object.
 """
 
 from __future__ import annotations
