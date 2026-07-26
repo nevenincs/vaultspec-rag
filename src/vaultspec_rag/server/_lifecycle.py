@@ -2,8 +2,8 @@
 
 Split out of the original ``server.py`` monolith. ``_heartbeat_tick_sync`` reads the
 rebindable ``_status_file_path`` and ``_SERVICE_TOKEN`` through the
-package alias so test monkeypatches on ``vaultspec_rag.server`` are
-observed.
+package alias, so a tick that fires after startup writes the identity the
+daemon actually runs on rather than the empty pre-startup value.
 """
 
 from __future__ import annotations

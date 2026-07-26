@@ -2,8 +2,9 @@
 
 Holds the shared ``--json`` envelope helpers plus the renderers for
 search results and install/uninstall reports. Renderers read
-``console`` from the package namespace at call time so tests that
-swap ``vaultspec_rag.cli.console`` observe the substitution.
+``console`` from the package namespace at call time, which keeps this
+module out of the import cycle an import-time binding of ``_core``
+would create.
 """
 
 from __future__ import annotations
