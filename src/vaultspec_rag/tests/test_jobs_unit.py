@@ -70,31 +70,38 @@ _TEST_PROJECT_ROOT_OTHER = os.path.abspath(os.path.join(os.sep, "other"))
 _TEST_PROJECT_ROOT_DIFFERENT = os.path.abspath(os.path.join(os.sep, "different"))
 
 
-def test_canonical_job_models_are_reexported_by_identity() -> None:
-    assert set(job_models.__all__) <= set(jobs_module.__all__)
+def test_job_models_are_defined_exactly_once() -> None:
+    # These names used to be re-exported through ``jobs`` as a compatibility
+    # facade, and this test asserted the forwarding held. The facade is gone:
+    # ``job_models`` is the definition site and consumers import from it. What
+    # still matters is that no SECOND definition appears - two classes with one
+    # name is how an isinstance check starts failing for no visible reason.
     for name in job_models.__all__:
-        assert getattr(jobs_module, name) is getattr(job_models, name)
+        owner = getattr(job_models, name)
+        assert getattr(owner, "__module__", job_models.__name__).endswith(
+            ("job_models", "enum", "builtins")
+        ), f"{name} is defined outside job_models ({owner!r})"
+    assert not set(job_models.__all__) & set(jobs_module.__all__), (
+        "jobs must not re-export job_models names; import them from job_models"
+    )
 
 
-def test_job_manager_boundary_is_reexported_by_identity() -> None:
-    assert jobs_module.JobManager is job_manager.JobManager
-    assert jobs_module.MAX_RECORDS is job_manager.MAX_RECORDS
+def test_job_manager_logs_under_the_jobs_namespace() -> None:
+    # The shared logger name is a real contract (operators filter on it) and is
+    # independent of how the modules import each other.
     assert job_manager.logger.name == jobs_module.logger.name == "vaultspec_rag.jobs"
 
 
-def test_job_manager_import_does_not_load_legacy_jobs_facade() -> None:
+def test_job_manager_import_does_not_pull_in_jobs() -> None:
     probe = """
 import sys
 
 sys.path.insert(0, sys.argv[1])
 
-from vaultspec_rag.job_manager import JobManager as direct_manager  # absolute-import-ok
+from vaultspec_rag.job_manager import JobManager  # absolute-import-ok
 
+assert JobManager is not None
 assert "vaultspec_rag.jobs" not in sys.modules
-
-from vaultspec_rag.jobs import JobManager as compatibility_manager  # absolute-import-ok
-
-assert compatibility_manager is direct_manager
 """
     completed = subprocess.run(
         [sys.executable, "-c", probe, str(Path(__file__).parents[2])],
