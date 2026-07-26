@@ -27,12 +27,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 from pathlib import Path
 from typing import cast
 
 from . import store_schema
+from ._atomic_write import replace_atomically
 
 __all__ = [
     "load_identity",
@@ -180,4 +180,4 @@ def _record_local(
         payload = {"version": 1, "collections": collections}
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-        os.replace(tmp, path)
+        replace_atomically(tmp, path)

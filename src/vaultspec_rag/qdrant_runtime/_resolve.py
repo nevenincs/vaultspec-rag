@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+from .._atomic_write import replace_atomically
 from .._loopback_http import LOOPBACK_OPENER
 from .._process_probe import (
     START_TIME_TOLERANCE_SECONDS,
@@ -505,7 +506,7 @@ def write_qdrant_identity(
         ),
         encoding="utf-8",
     )
-    os.replace(tmp, path)
+    replace_atomically(tmp, path)
     logger.debug("wrote qdrant identity sidecar at %s (owner pid %d)", path, owner_pid)
     return path
 

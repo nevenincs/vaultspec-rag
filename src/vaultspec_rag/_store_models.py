@@ -17,6 +17,7 @@ import pathlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, NamedTuple, cast
 
+from ._atomic_write import replace_atomically
 from ._domain import classify_domain
 
 logger = logging.getLogger(__name__)
@@ -165,7 +166,6 @@ def root_collection_prefix(root_dir: pathlib.Path | str) -> str:
     Returns:
         A prefix of the form ``r{12-hex}_``.
     """
-    import os
     import pathlib as _pathlib
 
     raw = str(root_dir)
@@ -495,7 +495,7 @@ def publish_served_code_collection(
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(".tmp")
     tmp_path.write_text(json.dumps({"collection": collection}), encoding="utf-8")
-    os.replace(tmp_path, path)
+    replace_atomically(tmp_path, path)
 
 
 def generation_code_collection(derived_name: str, generation_id: str) -> str:

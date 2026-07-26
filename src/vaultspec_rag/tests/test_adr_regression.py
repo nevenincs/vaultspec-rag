@@ -416,30 +416,37 @@ class TestWatcherGraphInvalidation:
 
 
 class TestAtomicMetaWrite:
-    """Task #43: _write_meta must use os.replace for atomicity."""
+    """``_write_meta`` must publish atomically, never truncate in place.
+
+    A direct ``write_text`` leaves a half-written sidecar if the process dies
+    mid-write, and the next run reads that as the index's metadata. Publishing
+    means writing a temp file and replacing the target in one step.
+    """
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def test_vault_indexer_write_meta_uses_os_replace(self):
+    def test_vault_indexer_write_meta_publishes_atomically(self):
         import inspect
 
         from ..indexer import VaultIndexer
 
         src = inspect.getsource(VaultIndexer._write_meta)
-        assert "os.replace(" in src, (
-            "VaultIndexer._write_meta must use os.replace() for atomic writes; "
-            "direct write_text() risks corrupt metadata on crash (Task #43)"
+        assert "replace_atomically(" in src, (
+            "VaultIndexer._write_meta must publish through "
+            "_atomic_write.replace_atomically; a direct write_text() risks "
+            "corrupt metadata on crash"
         )
 
-    def test_codebase_indexer_write_meta_uses_os_replace(self):
+    def test_codebase_indexer_write_meta_publishes_atomically(self):
         import inspect
 
         from ..indexer import CodebaseIndexer
 
         src = inspect.getsource(CodebaseIndexer._write_meta)
-        assert "os.replace(" in src, (
-            "CodebaseIndexer._write_meta must use os.replace() for atomic writes; "
-            "direct write_text() risks corrupt metadata on crash (Task #43)"
+        assert "replace_atomically(" in src, (
+            "CodebaseIndexer._write_meta must publish through "
+            "_atomic_write.replace_atomically; a direct write_text() risks "
+            "corrupt metadata on crash"
         )
 
 

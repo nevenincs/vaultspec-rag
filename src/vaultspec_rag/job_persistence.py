@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import ctypes
 import json
 import logging
 import math
 import os
-import random
-import time
 import uuid
-from ctypes import wintypes
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -46,7 +42,6 @@ __all__ = [
     "IdempotencyBinding",
     "PersistedManagerState",
     "PersistenceWriteError",
-    "_atomic_replace",
     "load_persisted_state",
     "save_persisted_state",
 ]
@@ -167,78 +162,25 @@ def _idempotency_binding_to_dict(
     }
 
 
-def _replace_once(source: Path, destination: Path) -> None:
-    """Perform one durable replace attempt on this platform."""
-    if os.name == "nt":
-        _replace_windows_write_through(source, destination)
-        return
-    os.replace(source, destination)
-    try:
-        _fsync_directory(destination.parent)
-    except OSError as exc:
-        raise PersistenceWriteError(str(exc), published=True) from exc
-
-
-def _replace_is_retryable(exc: OSError) -> bool:
-    """Whether a failed replace is a transient sharing violation."""
-    return isinstance(exc, PermissionError) or (
-        os.name == "nt" and getattr(exc, "winerror", None) in {5, 32}
-    )
-
-
-def _replace_backoff_seconds(attempt: int) -> float:
-    """Exponential backoff with symmetric jitter, capped per attempt.
-
-    The dominant cause of a transient ACCESS_DENIED/SHARING_VIOLATION on
-    replace is an external scanner (Windows Defender / Search indexer)
-    opening the freshly published state file. Exponential growth escapes a
-    busy scan window quickly, and the jitter decorrelates the writer's
-    retries from the scanner's periodic open so repeated collisions do not
-    lock-step. Bounded so the whole ladder stays under ~1s while the manager
-    lock is held.
-    """
-    nominal = min(
-        _ATOMIC_REPLACE_MAX_SLEEP_SECONDS,
-        _ATOMIC_REPLACE_BASE_SECONDS * (2**attempt),
-    )
-    jitter = nominal * _ATOMIC_REPLACE_JITTER_FRACTION * (2.0 * random.random() - 1.0)
-    return max(0.0, nominal + jitter)
-
-
 def _atomic_replace(source: Path, destination: Path) -> None:
-    """Durably replace one state file with bounded sharing retries."""
-    for attempt in range(_ATOMIC_REPLACE_ATTEMPTS):
-        try:
-            _replace_once(source, destination)
-        except PersistenceWriteError:
+    """Durably publish one state file, in this layer's error vocabulary.
+
+    The replace itself, its Windows write-through, and the sharing-violation
+    ladder live in ``_atomic_write``. What stays here is the translation: a
+    sync failure means the state IS published and only its crash-durability is
+    in doubt, which this layer reports as ``published=True`` so a caller does
+    not roll back a write every reader can already see.
+    """
+    from ._atomic_write import NotDurableError, replace_durably
+
+    try:
+        replace_durably(source, destination)
+    except NotDurableError as exc:
+        raise PersistenceWriteError(str(exc), published=True) from exc
+    except OSError as exc:
+        if os.name != "nt":
             raise
-        except OSError as exc:
-            retryable = _replace_is_retryable(exc)
-            if retryable and attempt + 1 < _ATOMIC_REPLACE_ATTEMPTS:
-                time.sleep(_replace_backoff_seconds(attempt))
-                continue
-            if retryable or os.name != "nt":
-                raise
-            raise PersistenceWriteError(str(exc), published=True) from exc
-        else:
-            return
-
-
-def _replace_windows_write_through(source: Path, destination: Path) -> None:
-    move_file_ex = cast(
-        "_MoveFileExW",
-        ctypes.WinDLL("kernel32", use_last_error=True).MoveFileExW,
-    )
-    move_file_ex.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD]
-    move_file_ex.restype = wintypes.BOOL
-    replace_existing = 0x1
-    write_through = 0x8
-    if not move_file_ex(
-        str(source),
-        str(destination),
-        replace_existing | write_through,
-    ):
-        raise ctypes.WinError(ctypes.get_last_error())
+        raise PersistenceWriteError(str(exc), published=True) from exc
 
 
 def _ensure_parent_directory(directory: Path) -> None:

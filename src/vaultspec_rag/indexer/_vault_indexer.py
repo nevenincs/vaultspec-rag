@@ -21,6 +21,7 @@ from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs
     scan_vault,
 )
 
+from .._atomic_write import replace_atomically
 from ..job_control import NO_RUN_CONTROL
 from . import _config_epoch
 from ._index_lifecycle import run_index_lifecycle
@@ -1133,7 +1134,7 @@ class VaultIndexer:
             _CONTENT_EPOCH_KEY: self._current_vault_content_epoch(),
         }
         tmp_path.write_text(json.dumps(stamped, indent=2), encoding="utf-8")
-        os.replace(tmp_path, self._meta_path)
+        replace_atomically(tmp_path, self._meta_path)
         run_control.checkpoint()
 
     def _read_meta_raw(self) -> dict[str, str]:

@@ -11,13 +11,13 @@ import contextlib
 import hashlib
 import json
 import logging
-import os
 import pathlib
 import queue
 import time
 from functools import partial
 from typing import TYPE_CHECKING, NamedTuple
 
+from .._atomic_write import replace_atomically
 from .._index_breadth import PUBLISHED_FILES_KEY, PUBLISHED_POINTS_KEY
 from .._job_errors import JobError, JobErrorKind
 from .._store_models import (
@@ -2425,7 +2425,7 @@ class CodebaseIndexer:
         if published_files is not None:
             stamped[PUBLISHED_FILES_KEY] = str(published_files)
         tmp_path.write_text(json.dumps(stamped, indent=2), encoding="utf-8")
-        os.replace(tmp_path, self._meta_path)
+        replace_atomically(tmp_path, self._meta_path)
 
     def _read_meta_raw(self) -> dict[str, str]:
         """Load the sidecar JSON verbatim, reserved keys included."""

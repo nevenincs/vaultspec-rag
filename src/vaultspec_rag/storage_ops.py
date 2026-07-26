@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from . import store_schema
+from ._atomic_write import replace_atomically
 from ._store_writes import DISK_FLOOR_BYTES as _DISK_FLOOR_BYTES
 from .storage_manifest import (
     SnapshotCollection,
@@ -1606,7 +1607,7 @@ def archive_prefix(
         if not source.is_file():
             raise RuntimeError(f"snapshot file not found: {source}")
         dest = dest_dir / description.name
-        os.replace(source, dest)
+        replace_atomically(source, dest)
         archived.append(dest)
         collection_artifacts.append(
             SnapshotCollection(

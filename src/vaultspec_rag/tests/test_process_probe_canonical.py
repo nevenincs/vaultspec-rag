@@ -726,3 +726,57 @@ class TestNoStructurallyIdenticalFunctions:
             "values, or add the group to _ALLOWED_SHAPES with the reason the "
             "shape is not shared behaviour"
         )
+
+
+class TestAtomicReplaceHasOneImplementation:
+    """Publishing a file goes through ``_atomic_write``, never bare ``os.replace``.
+
+    Twenty-odd modules published state with a bare ``os.replace``. One - the
+    job persistence layer - had learned that Windows Defender and the Search
+    indexer open a freshly published file, so a replace landing in that window
+    fails with ACCESS_DENIED or SHARING_VIOLATION, and had grown a retry
+    ladder for it. The other twenty were still exposed to the exact condition
+    that layer was hardened against.
+    """
+
+    def test_no_module_calls_os_replace_directly(self) -> None:
+        offenders = [
+            f"{path.relative_to(_PACKAGE_ROOT).as_posix()}:{number}"
+            for path in _production_sources()
+            if path.name != "_atomic_write.py"
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            )
+            if "os.replace(" in line and not line.lstrip().startswith("#")
+        ]
+        assert not offenders, (
+            f"bare os.replace at {offenders}; use "
+            "_atomic_write.replace_atomically, which retries the Windows "
+            "sharing race and costs nothing when uncontended"
+        )
+
+    def test_the_retry_is_free_when_uncontended(self, tmp_path: Path) -> None:
+        # The whole argument for applying this everywhere is that the ladder
+        # exits on its first attempt. If a future edit made it sleep
+        # unconditionally, every publish in the codebase would slow down and
+        # no other test would notice.
+        import time
+
+        from .._atomic_write import replace_atomically
+
+        source = tmp_path / "s.tmp"
+        source.write_text("x", encoding="utf-8")
+        started = time.perf_counter()
+        replace_atomically(source, tmp_path / "d.json")
+        elapsed = time.perf_counter() - started
+        assert elapsed < 0.05, (
+            f"an uncontended replace took {elapsed * 1000:.1f} ms; the retry "
+            "ladder must not sleep when the first attempt succeeds"
+        )
+
+    def test_durability_is_opt_in_and_separate(self) -> None:
+        # Keeping the two apart is what let every caller adopt the retry: a
+        # per-file indexing write must not pay for an fsync it does not need.
+        from .._atomic_write import replace_atomically, replace_durably
+
+        assert replace_atomically is not replace_durably

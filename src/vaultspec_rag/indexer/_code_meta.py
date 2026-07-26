@@ -17,6 +17,7 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .._atomic_write import replace_atomically
 from .._index_breadth import PUBLISHED_FILES_KEY, PUBLISHED_POINTS_KEY
 from . import _config_epoch
 
@@ -239,7 +240,7 @@ def publish_meta_from_file_states(
             stream.write("\n}\n")
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temp_path, meta_path)
+        replace_atomically(temp_path, meta_path)
     except BaseException:
         temp_path.unlink(missing_ok=True)
         raise

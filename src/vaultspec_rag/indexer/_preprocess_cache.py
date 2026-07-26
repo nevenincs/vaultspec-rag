@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
+from .._atomic_write import replace_atomically
 from ._preprocess_schema import (
     SUPPORTED_SCHEMA_VERSION,
     UnsupportedSchemaVersionError,
@@ -221,7 +222,7 @@ def write_cached_output(
         # predictable (no symlink/TOCTOU pre-plant on the temp name).
         tmp_path = path.with_suffix(f".{os.getpid()}.{os.urandom(6).hex()}.tmp")
         tmp_path.write_text(json.dumps(entry), encoding="utf-8")
-        os.replace(tmp_path, path)
+        replace_atomically(tmp_path, path)
     except OSError as exc:
         logger.debug("could not write preprocess cache %s: %s", path, exc)
 

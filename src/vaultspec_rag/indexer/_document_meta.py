@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from .. import store_schema
+from .._atomic_write import replace_atomically
 from ._document_identity import normalize_document_source_path
 
 if TYPE_CHECKING:
@@ -226,7 +227,7 @@ def write_document_meta(meta_path: Path, metadata: DocumentIndexMetadata) -> Non
             stream.write(encoded)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(tmp_path, meta_path)
+        replace_atomically(tmp_path, meta_path)
     finally:
         if tmp_path.exists():
             tmp_path.unlink()

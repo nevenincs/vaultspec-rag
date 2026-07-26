@@ -8,6 +8,8 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ._atomic_write import replace_atomically
+
 if TYPE_CHECKING:
     from typing import BinaryIO
 
@@ -158,7 +160,7 @@ class RawRotatingLogSink:
                 operation="shift managed log generation destination",
             )
             try:
-                os.replace(source, destination)
+                replace_atomically(source, destination)
             except FileNotFoundError:
                 # Sparse generations are valid after interrupted/manual cleanup.
                 continue
@@ -227,7 +229,7 @@ class RawRotatingLogSink:
             operation="rotate managed log destination",
         )
         try:
-            os.replace(self.path, first_backup)
+            replace_atomically(self.path, first_backup)
         except PermissionError:
             if os.name != "nt":
                 raise

@@ -35,6 +35,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from ._atomic_write import replace_atomically
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -195,7 +197,7 @@ def publish_machine_discovery(
                 handle.write(encoded)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.replace(temporary, pointer)
+            replace_atomically(temporary, pointer)
             temporary = None
         finally:
             if temporary is not None:

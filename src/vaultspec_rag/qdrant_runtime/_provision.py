@@ -26,6 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
+from .._atomic_write import replace_atomically
 from .._units import human_bytes
 from ._constants import (
     ALLOWED_DOWNLOAD_HOSTS,
@@ -349,7 +350,7 @@ def _write_manifest(
     path = version_dir / MANIFEST_FILENAME
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    os.replace(str(tmp), str(path))
+    replace_atomically(str(tmp), str(path))
 
 
 def _existing_install_state(version_dir: Path, expected_sha256: str) -> str:
