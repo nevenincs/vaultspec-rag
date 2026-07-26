@@ -534,9 +534,15 @@ class TestStartPathProvisionProgress:
         pinned allow-list, and verifies the archive against a committed digest
         before extracting. A locally served archive therefore fails on the
         scheme, then the host, and could never match the digest anyway - the
-        security design makes a substitute source unusable on purpose, so the
-        download path cannot be staged. What is asserted here is the progress
-        the operator sees, and only the trigger is the test's.
+        security design makes a substitute source unusable on purpose.
+
+        That leaves one real alternative, and it is rejected on cost rather
+        than on possibility: provisioning into an isolated managed dir would
+        download the pinned release over the network on every run. The
+        integration helpers mirror an already-installed binary precisely to
+        avoid that, so a test that re-downloaded each time would cut against
+        the design it sits in. What is asserted here is the progress the
+        operator sees; only the trigger is the test's.
         """
         from ..qdrant_runtime import _provision as _provision_module
         from ..qdrant_runtime._constants import (
