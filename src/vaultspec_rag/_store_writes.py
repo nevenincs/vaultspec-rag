@@ -58,11 +58,6 @@ __all__ = [
 #: against the exception chain: the managed server surfaces disk-full as an
 #: HTTP 500 whose body carries "No space left on device: WAL buffer size
 #: exceeds available disk space" (observed verbatim in the incident log).
-_UNRECOVERABLE_MARKERS = (
-    "no space left on device",
-    "wal buffer size exceeds",
-)
-
 #: Conservative per-point on-disk budget for the bulk-index estimate: a
 #: 1024-dim float32 dense vector (4 KiB) plus the sparse vector, payload,
 #: HNSW index, and WAL overhead.
@@ -104,6 +99,8 @@ def classify_write_error(err: BaseException) -> Literal["unrecoverable", "transi
     at any depth. Everything else is transient (network blip, restart
     window, timeout) and eligible for a bounded retry.
     """
+    from ._job_errors import DISK_FULL_MARKERS
+
     seen: set[int] = set()
     current: BaseException | None = err
     while current is not None and id(current) not in seen:
@@ -111,7 +108,10 @@ def classify_write_error(err: BaseException) -> Literal["unrecoverable", "transi
         if isinstance(current, OSError) and current.errno == errno.ENOSPC:
             return "unrecoverable"
         text = str(current).lower()
-        if any(marker in text for marker in _UNRECOVERABLE_MARKERS):
+        # A full disk is the unrecoverable class for a write: retrying
+        # cannot free space. The vocabulary is shared with the job
+        # record's error_kind so both agree on what "full" looks like.
+        if any(marker in text for marker in DISK_FULL_MARKERS):
             return "unrecoverable"
         current = current.__cause__ or current.__context__
     return "transient"
@@ -577,8 +577,9 @@ def ensure_disk_headroom(
 
     Raises:
         InsufficientDiskSpaceError: When free space is below the requirement.
-            The message carries the canonical "No space left on device"
-            phrasing so job records hit the CLI's friendly disk mapping.
+            The message is built from ``_job_errors.DISK_FULL_PHRASE`` so job
+            records hit the CLI's friendly disk mapping; re-typing the
+            phrasing here is what let the two drift apart before.
     """
     free = _free_bytes(storage_path)
     if free is None:
@@ -586,11 +587,12 @@ def ensure_disk_headroom(
     needed = floor_bytes + new_points * BYTES_PER_POINT_ESTIMATE
     if free >= needed:
         return
+    from ._job_errors import DISK_FULL_PHRASE
     from ._units import human_bytes
 
     msg = (
-        f"not enough free disk space for the vector store (No space left on "
-        f"device imminent): need ~{human_bytes(needed)} "
+        f"not enough free disk space for the vector store "
+        f"({DISK_FULL_PHRASE} imminent): need ~{human_bytes(needed)} "
         f"({new_points} points), have {human_bytes(free)} free at "
         f"{storage_path}. Free disk space (see: vaultspec-rag server storage "
         f"survey) and retry."
