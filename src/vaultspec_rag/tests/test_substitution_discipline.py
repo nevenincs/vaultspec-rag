@@ -39,8 +39,11 @@ _ALLOWED: dict[str, tuple[int, str]] = {
     ),
     "test_cli_progress_surfaces.py": (
         1,
-        "the provisioner requires https on a pinned host and an archive "
-        "matching a committed digest, so no substitute source can be staged",
+        "no substitute source can be staged - the provisioner requires https "
+        "on a pinned host and an archive matching a committed digest - and "
+        "the only real alternative is re-downloading the pinned release on "
+        "every run, which the suite's mirror-the-installed-binary design "
+        "exists to avoid",
     ),
 }
 
