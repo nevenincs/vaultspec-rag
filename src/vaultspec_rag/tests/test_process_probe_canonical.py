@@ -492,3 +492,108 @@ class TestConfigDefaultsResolveInConfig:
             monkeypatch.delenv(EnvVar.HF_HOME.value, raising=False)
             reset_config()
         assert get_config().hf_cache_location == "~/.cache/huggingface"
+
+
+class TestNoStructurallyIdenticalFunctions:
+    """No two production functions share a body that differs only by constants.
+
+    Found by normalising every function body - identifiers, attributes,
+    literals and docstrings replaced - and hashing it, which surfaces
+    duplication no keyword search would: the store's code and document scroll
+    pages were ~50 identical lines apart from the collection, the payload key,
+    and the noun in two error messages.
+
+    The allowlist below records groups that are structurally alike but
+    semantically distinct - the same SHAPE applied to different domains, which
+    merging would harm. Each entry names why.
+    """
+
+    #: (sorted tuple of "module:function") -> reason the shape is not shared
+    #: behaviour. Shrink this as groups are merged; adding an entry to silence
+    #: the check rather than to record a judgement defeats it.
+    _ALLOWED_SHAPES: ClassVar[dict[tuple[str, ...], str]] = {
+        (
+            "cli/_search.py:_render_breadth_shortfall",
+            "cli/_search.py:_render_file_breadth_shortfall",
+        ): (
+            "Same rendering shape, different diagnosis. One reports a POINT "
+            "shortfall and the other a FILE-coverage shortfall; they fail "
+            "independently, since a publication covering a fraction of the "
+            "files it names still stamps a self-consistent point count. Only "
+            "the extraction guard was shared (_shortfall_figures); what "
+            "remains is two different sentences explaining two different "
+            "failures, and merging them would mean passing the prose in as "
+            "arguments."
+        ),
+    }
+
+    _MIN_NODES: ClassVar[int] = 60
+
+    def test_no_large_duplicate_function_bodies(self) -> None:
+        import ast
+        import hashlib
+        from collections import defaultdict
+
+        class _Norm(ast.NodeTransformer):
+            def visit_Name(self, node: ast.Name) -> ast.Name:
+                return ast.copy_location(ast.Name(id="_", ctx=node.ctx), node)
+
+            def visit_arg(self, node: ast.arg) -> ast.arg:
+                return ast.copy_location(ast.arg(arg="_", annotation=None), node)
+
+            def visit_Attribute(self, node: ast.Attribute) -> ast.Attribute:
+                self.generic_visit(node)
+                return ast.copy_location(
+                    ast.Attribute(value=node.value, attr="_", ctx=node.ctx), node
+                )
+
+            def visit_Constant(self, node: ast.Constant) -> ast.Constant:
+                return ast.copy_location(ast.Constant(value=None), node)
+
+        groups: dict[str, list[str]] = defaultdict(list)
+        for path in _production_sources():
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            rel = path.relative_to(_PACKAGE_ROOT).as_posix()
+            for fn in ast.walk(tree):
+                if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+                    continue
+                body = [
+                    stmt
+                    for stmt in fn.body
+                    if not (
+                        isinstance(stmt, ast.Expr)
+                        and isinstance(stmt.value, ast.Constant)
+                    )
+                ]
+                if not body:
+                    continue
+                normalised = ast.Module(
+                    body=[
+                        ast.fix_missing_locations(
+                            _Norm().visit(ast.parse(ast.unparse(stmt)))
+                        )
+                        for stmt in body
+                    ],
+                    type_ignores=[],
+                )
+                if sum(1 for _ in ast.walk(normalised)) < self._MIN_NODES:
+                    continue
+                digest = hashlib.sha1(ast.dump(normalised).encode()).hexdigest()
+                groups[digest].append(f"{rel}:{fn.name}")
+
+        offenders = {
+            tuple(sorted(set(members))): members
+            for members in groups.values()
+            if len(set(members)) > 1
+        }
+        unexplained = {
+            key: members
+            for key, members in offenders.items()
+            if key not in self._ALLOWED_SHAPES
+        }
+        assert not unexplained, (
+            f"functions with identical bodies at {sorted(unexplained)}; either "
+            "merge them behind one implementation that takes the differing "
+            "values, or add the group to _ALLOWED_SHAPES with the reason the "
+            "shape is not shared behaviour"
+        )

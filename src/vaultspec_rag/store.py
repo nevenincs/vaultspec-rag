@@ -1395,6 +1395,38 @@ class VaultStore(_VaultSearchMixin):
         """
         ensure_disk_headroom(self._storage_probe_path, new_points=new_points)
 
+    def _delete_by_payload_any(
+        self,
+        *,
+        collection: str,
+        ensure: Callable[[], None],
+        key: str,
+        values: Sequence[str],
+    ) -> None:
+        """Delete every point in *collection* whose *key* is one of *values*.
+
+        Deleting by payload filter rather than by point id is what makes this
+        shared: both callers need every point carrying the value gone, not a
+        known set of ids, so neither can use an id selector.
+        """
+        from qdrant_client import models
+
+        ensure()
+        with self._point_lock(collection):
+            self._delete_points(
+                collection_name=collection,
+                points_selector=models.FilterSelector(
+                    filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key=key,
+                                match=models.MatchAny(any=list(values)),
+                            ),
+                        ],
+                    ),
+                ),
+            )
+
     def delete_documents(self, ids: list[str]) -> None:
         """Remove documents (every chunk) by their ``doc_id`` values.
 
@@ -1407,23 +1439,12 @@ class VaultStore(_VaultSearchMixin):
         """
         if not ids:
             return
-        from qdrant_client import models
-
-        self.ensure_table()
-        with self._point_lock(self.TABLE_NAME):
-            self._delete_points(
-                collection_name=self.TABLE_NAME,
-                points_selector=models.FilterSelector(
-                    filter=models.Filter(
-                        must=[
-                            models.FieldCondition(
-                                key="doc_id",
-                                match=models.MatchAny(any=list(ids)),
-                            ),
-                        ],
-                    ),
-                ),
-            )
+        self._delete_by_payload_any(
+            collection=self.TABLE_NAME,
+            ensure=self.ensure_table,
+            key="doc_id",
+            values=ids,
+        )
         logger.info("Deleted %d document(s)", len(ids))
 
     def delete_code_chunks(self, ids: list[str], collection: str | None = None) -> None:
@@ -1465,23 +1486,12 @@ class VaultStore(_VaultSearchMixin):
         """Remove every document chunk belonging to the selected sources."""
         if not source_paths:
             return
-        from qdrant_client import models
-
-        self.ensure_document_table()
-        with self._point_lock(self.DOCUMENT_TABLE_NAME):
-            self._delete_points(
-                collection_name=self.DOCUMENT_TABLE_NAME,
-                points_selector=models.FilterSelector(
-                    filter=models.Filter(
-                        must=[
-                            models.FieldCondition(
-                                key="source_path",
-                                match=models.MatchAny(any=sorted(source_paths)),
-                            )
-                        ]
-                    )
-                ),
-            )
+        self._delete_by_payload_any(
+            collection=self.DOCUMENT_TABLE_NAME,
+            ensure=self.ensure_document_table,
+            key="source_path",
+            values=sorted(source_paths),
+        )
         logger.info("Deleted document chunks for %d source(s)", len(source_paths))
 
     def get_all_ids(self) -> set[str]:
@@ -1599,15 +1609,26 @@ class VaultStore(_VaultSearchMixin):
         with self._point_lock(_target):
             return self._scroll_all_ids(_target, "chunk_id")
 
-    def scroll_code_content(
+    def _scroll_content(
         self,
         *,
-        limit: int = 100,
-        offset: Any = None,
-        source_paths: set[str] | None = None,
-        with_vectors: bool = False,
+        collection: str,
+        path_key: str,
+        noun: str,
+        ensure: Callable[[], None],
+        limit: int,
+        offset: Any,
+        source_paths: set[str] | None,
+        with_vectors: bool,
     ) -> tuple[list[dict[str, Any]], Any]:
-        """Return one bounded page from the code collection."""
+        """Return one bounded page from *collection*.
+
+        The code and document pages differed only by the collection, the
+        payload key holding the source path, and the noun in the two limit
+        errors. ``ensure`` is passed rather than called by the public methods
+        so the limit is still validated BEFORE anything creates a collection -
+        a bad limit must not have a side effect.
+        """
         from qdrant_client import models
 
         raw_limit = cast("object", limit)
@@ -1616,9 +1637,9 @@ class VaultStore(_VaultSearchMixin):
             or not isinstance(raw_limit, int)
             or raw_limit <= 0
         ):
-            raise ValueError("code scroll limit must be a positive integer")
+            raise ValueError(f"{noun} scroll limit must be a positive integer")
         if raw_limit > 1000:
-            raise ValueError("code scroll limit must not exceed 1000")
+            raise ValueError(f"{noun} scroll limit must not exceed 1000")
         limit = raw_limit
         scroll_filter = None
         if source_paths is not None:
@@ -1627,15 +1648,15 @@ class VaultStore(_VaultSearchMixin):
             scroll_filter = models.Filter(
                 must=[
                     models.FieldCondition(
-                        key="path",
+                        key=path_key,
                         match=models.MatchAny(any=sorted(source_paths)),
                     )
                 ]
             )
-        self.ensure_code_table()
-        with self._point_lock(self.CODE_TABLE_NAME):
+        ensure()
+        with self._point_lock(collection):
             records, next_offset = self._scroll(
-                collection_name=self.CODE_TABLE_NAME,
+                collection_name=collection,
                 scroll_filter=scroll_filter,
                 limit=limit,
                 offset=offset,
@@ -1651,6 +1672,26 @@ class VaultStore(_VaultSearchMixin):
             for record in records
         ]
         return rows, next_offset
+
+    def scroll_code_content(
+        self,
+        *,
+        limit: int = 100,
+        offset: Any = None,
+        source_paths: set[str] | None = None,
+        with_vectors: bool = False,
+    ) -> tuple[list[dict[str, Any]], Any]:
+        """Return one bounded page from the code collection."""
+        return self._scroll_content(
+            collection=self.CODE_TABLE_NAME,
+            path_key="path",
+            noun="code",
+            ensure=self.ensure_code_table,
+            limit=limit,
+            offset=offset,
+            source_paths=source_paths,
+            with_vectors=with_vectors,
+        )
 
     def code_content_ids_exist(
         self, ids: Sequence[str], collection: str | None = None
@@ -1677,49 +1718,16 @@ class VaultStore(_VaultSearchMixin):
         with_vectors: bool = False,
     ) -> tuple[list[dict[str, Any]], Any]:
         """Return one bounded page from the document collection."""
-        from qdrant_client import models
-
-        raw_limit = cast("object", limit)
-        if (
-            isinstance(raw_limit, bool)
-            or not isinstance(raw_limit, int)
-            or raw_limit <= 0
-        ):
-            raise ValueError("document scroll limit must be a positive integer")
-        if raw_limit > 1000:
-            raise ValueError("document scroll limit must not exceed 1000")
-        limit = raw_limit
-        scroll_filter = None
-        if source_paths is not None:
-            if not source_paths:
-                return [], None
-            scroll_filter = models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="source_path",
-                        match=models.MatchAny(any=sorted(source_paths)),
-                    )
-                ]
-            )
-        self.ensure_document_table()
-        with self._point_lock(self.DOCUMENT_TABLE_NAME):
-            records, next_offset = self._scroll(
-                collection_name=self.DOCUMENT_TABLE_NAME,
-                scroll_filter=scroll_filter,
-                limit=limit,
-                offset=offset,
-                with_payload=True,
-                with_vectors=with_vectors,
-            )
-        rows = [
-            {
-                "id": str(record.id),
-                "payload": dict(record.payload or {}),
-                "vector": record.vector if with_vectors else None,
-            }
-            for record in records
-        ]
-        return rows, next_offset
+        return self._scroll_content(
+            collection=self.DOCUMENT_TABLE_NAME,
+            path_key="source_path",
+            noun="document",
+            ensure=self.ensure_document_table,
+            limit=limit,
+            offset=offset,
+            source_paths=source_paths,
+            with_vectors=with_vectors,
+        )
 
     def document_content_ids_exist(self, ids: Sequence[str]) -> bool:
         """Return whether every requested document identity is currently stored."""
