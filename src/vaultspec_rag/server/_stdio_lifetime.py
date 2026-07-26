@@ -36,6 +36,7 @@ import sys
 import threading
 import time
 
+from .._env_values import BOOL_SHAPE, parse_bool
 from .._process_probe import pid_alive
 from ..config import EnvVar
 
@@ -58,13 +59,34 @@ _POSIX_POLL_SECONDS = 15.0
 
 
 def watchdog_disabled() -> bool:
-    """True when the operator escape hatch disables the watchdog."""
-    return os.environ.get(STDIO_WATCHDOG_ENV, "").strip().lower() in {
-        "0",
-        "false",
-        "off",
-        "no",
-    }
+    """True when the operator escape hatch disables the watchdog.
+
+    The switch spells its two states the way every flag in this project does,
+    but resolves everything else the opposite way from a plain setting: an
+    empty value and a word spelling neither state both leave the backstop
+    ARMED, where a setting would read both as off.
+
+    Failing safe is the whole point here. Disarming this leaves stdin EOF as
+    the shim's only exit path, and the shape this module exists to survive is
+    precisely the one where EOF never arrives - so an unexpanded
+    ``VAR="$UNSET"`` or a misspelt escape hatch must not silently strand shim
+    processes on an operator who never meant to disable anything. The typo is
+    logged rather than raised: a misspelt diagnostic switch must not take down
+    a server whose EOF path still works.
+    """
+    raw = os.environ.get(STDIO_WATCHDOG_ENV)
+    if raw is None or not raw.strip():
+        return False
+    enabled = parse_bool(raw)
+    if enabled is None:
+        logger.warning(
+            "%s=%r is not %s; leaving the stdio watchdog armed",
+            STDIO_WATCHDOG_ENV,
+            raw,
+            BOOL_SHAPE,
+        )
+        return False
+    return not enabled
 
 
 def _walk_ancestor_pids(
