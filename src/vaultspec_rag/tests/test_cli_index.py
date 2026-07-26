@@ -1028,11 +1028,6 @@ class TestDiskPreflightRefusal:
         ``disk_preflight_failed`` assertion fails on a GPU diagnosis;
         restoring the branch passes.
         """
-        import io
-
-        from rich.console import Console
-
-        from .. import cli
 
         project = tmp_path / "project"
         (project / ".vaultspec").mkdir(parents=True)
@@ -1040,13 +1035,16 @@ class TestDiskPreflightRefusal:
             "vaultspec_rag.index",
             _index_refused_by_the_real_disk_preflight(project),
         )
-        monkeypatch.setattr(cli, "console", Console(file=io.StringIO()))
 
         result = runner.invoke(
             app,
             ["--target", str(project), "index", "--type", "vault", "--json"],
         )
         assert result.exit_code == 1
+        # No console redirect: a --json run reports no progress at all, so
+        # stdout carries the envelope and nothing else. Before that, this had
+        # to redirect the console to keep the progress lines out of the result
+        # channel, which hid the fact that they were being written there.
         assert result.output.lstrip().startswith("{"), (
             "--json must answer with one envelope on every exit path, "
             f"got: {result.output!r}"
