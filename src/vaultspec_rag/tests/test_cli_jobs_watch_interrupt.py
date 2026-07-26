@@ -24,9 +24,9 @@ jobs-local alias, and a separate test holds the watch loop to using it.
 
 from __future__ import annotations
 
+import pathlib
 import threading
 import time
-from typing import TYPE_CHECKING, Any
 
 import pytest
 from typer.testing import CliRunner
@@ -34,9 +34,6 @@ from typer.testing import CliRunner
 from ..cli import _service_jobs as jobs
 from ..cli import app
 from ..cli._process import _call_interruptibly
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 pytestmark = [pytest.mark.unit]
 
@@ -106,31 +103,37 @@ def test_a_failed_refresh_is_reported_not_flattened_to_no_result() -> None:
     assert caught.value is boom
 
 
-def test_the_watch_loop_refreshes_through_the_shared_helper(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_the_watch_loop_owns_no_second_off_thread_wait() -> None:
     """The watch loop must not grow its own copy of the off-thread wait.
 
     Two copies of this mechanism would drift into a Ctrl+C that works in one
-    operator view and not the other, so the guard is that the loop routes
-    through the shared helper. The stand-in delegates to the real one rather
-    than replacing it, so the loop still runs for real.
+    operator view and not the other. The guard is therefore about which
+    implementation exists, which the source answers directly - a counter
+    wrapped around the helper could only ever report that the call it replaced
+    was made.
+
+    Proven able to fail: replacing the ``_call_interruptibly(fetch)`` call in
+    the watch loop with a locally constructed ``threading.Thread`` fails both
+    assertions by name - the routing one on the missing call, the second-copy
+    one on the new thread; restored, both pass.
     """
-    calls = 0
-    real = jobs._call_interruptibly
+    source = pathlib.Path(jobs.__file__).read_text(encoding="utf-8").splitlines()
+    watch_loop = "\n".join(line for line in source if not line.lstrip().startswith("#"))
 
-    def _counting[T](work: Callable[[], T], **kwargs: Any) -> T:
-        nonlocal calls
-        calls += 1
-        return real(work, **kwargs)
+    assert "from ._process import _call_interruptibly" in watch_loop, (
+        "the watch loop must take the off-thread wait from the module that owns it"
+    )
+    assert "_call_interruptibly(fetch)" in watch_loop, (
+        "the refresh must route through the shared helper, not a local copy"
+    )
+    assert "threading.Thread(" not in watch_loop, (
+        "a second off-thread wait here is the drift this guard exists to prevent"
+    )
 
+
+def test_the_watch_loop_refreshes_against_a_real_service() -> None:
+    """Every refresh in a bounded watch run reaches the service."""
     from ._cli_helpers import _jobs_empty_contract_server
-
-    # Only the call counter is substituted, and it delegates to the real helper
-    # rather than replacing it: the loop still fetches over a real socket from a
-    # real server, and what is observed - that production routed through the
-    # shared helper - is decided by production, not by the counter.
-    monkeypatch.setattr(jobs, "_call_interruptibly", _counting)
 
     server, thread, requests = _jobs_empty_contract_server()
     try:
@@ -152,7 +155,6 @@ def test_the_watch_loop_refreshes_through_the_shared_helper(
         thread.join(timeout=5)
 
     assert result.exit_code == 0
-    assert calls == 2, "each refresh must route through the shared helper"
     assert len(requests) == 2, "each refresh must reach the service"
 
 
