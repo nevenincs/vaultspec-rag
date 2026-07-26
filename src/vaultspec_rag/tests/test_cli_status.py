@@ -480,7 +480,7 @@ class TestServiceTokenIdentity:
         assert _service_phase({"phase": 7}) is None
 
     def test_compute_state_warming_beats_port_and_heartbeat_signals(self):
-        from ..cli._service_lifecycle import _compute_state
+        from ..cli._status_render import _compute_state
 
         state, label, exit_code = _compute_state(
             True, True, False, True, phase="warming"
@@ -490,14 +490,14 @@ class TestServiceTokenIdentity:
         assert exit_code == 5
 
     def test_compute_state_absent_phase_keeps_crashed_semantics(self):
-        from ..cli._service_lifecycle import _compute_state
+        from ..cli._status_render import _compute_state
 
         state, _label, exit_code = _compute_state(True, True, False, True)
         assert state == "crashed_port_silent"
         assert exit_code == 4
 
     def test_compute_state_dead_pid_wins_over_warming(self):
-        from ..cli._service_lifecycle import _compute_state
+        from ..cli._status_render import _compute_state
 
         state, _label, exit_code = _compute_state(
             False, False, False, True, phase="warming"
@@ -506,7 +506,7 @@ class TestServiceTokenIdentity:
         assert exit_code == 4
 
     def test_explicit_port_state_warming_needs_a_live_owned_pid(self):
-        from ..cli._service_lifecycle import _explicit_port_state
+        from ..cli._status_render import _explicit_port_state
 
         warming = _explicit_port_state(
             False, None, phase="warming", pid_alive=True, pid_is_ours=True
@@ -525,14 +525,14 @@ class TestServiceTokenIdentity:
         assert reused[2] == 3
 
     def test_explicit_port_state_absent_phase_is_unchanged(self):
-        from ..cli._service_lifecycle import _explicit_port_state
+        from ..cli._status_render import _explicit_port_state
 
         assert _explicit_port_state(False, None)[0] == "stopped"
         assert _explicit_port_state(True, None)[0] == "unreachable"
         assert _explicit_port_state(True, {"status": "ready"})[0] == "running"
 
     def test_next_action_for_warming_says_retry(self):
-        from ..cli._service_lifecycle import _status_next_action
+        from ..cli._status_render import _status_next_action
 
         action = _status_next_action("warming", None, {})
         assert "server status" in action

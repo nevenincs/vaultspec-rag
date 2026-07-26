@@ -23,9 +23,12 @@ from typer.testing import CliRunner
 
 from .._machine_lock import machine_lock_live_holder
 from ..cli import app
-from ..cli._service_lifecycle import _service_pid_on_port, _stop_service_on_port
 from ..cli._service_status import _write_service_status
-from ..cli._service_stop import _orphan_daemon_pids
+from ..cli._service_stop import (
+    _orphan_daemon_pids,
+    _service_pid_on_port,
+    _stop_service_on_port,
+)
 from ..config import reset_config
 from ._ports import free_loopback_port
 

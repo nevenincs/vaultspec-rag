@@ -28,13 +28,14 @@ from typer.testing import CliRunner
 
 from ..cli import TerminationResult, _log_file, app
 from ..cli import _service_stop as _service_stop_module
-from ..cli._service_lifecycle import (
+from ..cli._service_stop import (
+    _fail_still_running,
     _fail_stop,
     _initiator_fields,
     _stop_success,
     _terminate_and_confirm,
+    still_running_remediation_for,
 )
-from ..cli._service_stop import _fail_still_running, still_running_remediation_for
 
 pytestmark = [pytest.mark.unit]
 

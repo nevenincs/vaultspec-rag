@@ -18,7 +18,7 @@ from typer.testing import CliRunner
 
 from ..cli import app
 from ..cli._process import _service_child_env
-from ..cli._service_lifecycle import (
+from ..cli._service_start import (
     _existing_service_running,
     _fail_start,
     _start_success,

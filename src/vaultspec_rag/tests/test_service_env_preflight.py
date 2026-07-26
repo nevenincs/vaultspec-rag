@@ -25,12 +25,12 @@ from ..cli._gpu_errors import (
     gpu_escape_hatch_command,
 )
 from ..cli._process import _probe_daemon_cuda
-from ..cli._service_lifecycle import (
+from ..cli._service_start import (
     _caller_ephemeral_warning,
     _ephemeral_env_warning,
-    _status_env_label,
     _tail_daemon_log,
 )
+from ..cli._status_labels import _status_env_label
 from ..torch_config._constants import CU130_INDEX_URL
 
 pytestmark = [pytest.mark.unit]
