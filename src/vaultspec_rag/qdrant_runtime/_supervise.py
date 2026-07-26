@@ -188,25 +188,23 @@ def _quarantine_collection(storage_dir: Path, name: str) -> Path:
 
 
 def _ready_timeout_seconds() -> float:
-    """Resolve the qdrant readiness timeout, env-overridable.
+    """Resolve the qdrant readiness timeout from the settings object.
 
     A large managed store cold-loads every collection before answering
     ``/readyz``; a multi-hundred-GB store with ~170 collections was
     measured at ~131s, well over the original fixed 60s, so the default is
     generous and operators with even larger stores can raise it via
-    ``VAULTSPEC_RAG_QDRANT_READY_TIMEOUT`` (seconds). A missing, malformed,
-    or non-positive value falls back to the default rather than failing
-    startup.
+    ``VAULTSPEC_RAG_QDRANT_READY_TIMEOUT`` (seconds). A malformed value
+    makes the settings lookup raise; catching that here, along with a
+    non-positive value, falls back to the default rather than failing
+    startup on an operator typo.
     """
-    from ..config import EnvVar, rag_default
+    from ..config import get_config, rag_default
 
     default = float(rag_default("qdrant_ready_timeout_seconds"))
-    raw = os.environ.get(EnvVar.QDRANT_READY_TIMEOUT.value)
-    if raw is None:
-        return default
     try:
-        value = float(raw)
-    except ValueError:
+        value = float(get_config().qdrant_ready_timeout_seconds)
+    except (TypeError, ValueError):
         return default
     return value if value > 0 else default
 
