@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -174,3 +175,73 @@ class TestRuntimeIdentityHasOneHome:
             f"interpreter field set rebuilt at {offenders}; splice "
             "_runtime_identity.interpreter_fields() instead"
         )
+
+
+class TestLoopbackHttpHasOneOpener:
+    """Loopback HTTP goes through ``_loopback_http.LOOPBACK_OPENER``.
+
+    Two packages built this independently, each with a long comment explaining
+    the same threat, and then diverged on the control that matters: the service
+    transport refused redirects and the qdrant runtime did not. A 3xx to a
+    qdrant probe was followed, and the redirect target's 200 was read as
+    "ready" - the spoofed-readiness case the qdrant comment itself described.
+    """
+
+    #: Provisioning downloads the pinned binary over PUBLIC HTTPS and must let
+    #: redirects happen so it can re-check scheme and host across each hop.
+    #: That is a different threat from a loopback probe, and folding it into
+    #: the no-redirect opener would delete a security control.
+    _ALLOWED_OPENERS: ClassVar[dict[str, str]] = {
+        "_provision.py": "host-pinned redirects for the binary download"
+    }
+
+    def test_no_module_builds_its_own_opener(self) -> None:
+        offenders = [
+            f"{path.relative_to(_PACKAGE_ROOT).as_posix()}:{number}"
+            for path in _production_sources()
+            if path.name != "_loopback_http.py"
+            and path.name not in self._ALLOWED_OPENERS
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            )
+            if "build_opener(" in line
+        ]
+        assert not offenders, (
+            f"second HTTP opener at {offenders}; loopback callers must use "
+            "_loopback_http.LOOPBACK_OPENER so the proxy bypass and the "
+            "redirect refusal cannot be applied to one path and forgotten on "
+            "another"
+        )
+
+    def test_the_canonical_opener_carries_both_defences(self) -> None:
+        # Asserting the object, not the source text: a future edit that drops
+        # either handler from build_opener would leave the call site looking
+        # correct while the defence is gone.
+        import urllib.request
+
+        from .._loopback_http import LOOPBACK_OPENER, NoRedirect
+
+        # CPython's OpenerDirector.__init__ sets self.handlers, but typeshed
+        # does not declare it, so it is read defensively rather than with a
+        # type-check suppression. An empty default would fail both asserts
+        # below, which is the correct outcome if the attribute ever goes.
+        handlers: list[object] = getattr(LOOPBACK_OPENER, "handlers", [])
+        assert any(isinstance(h, NoRedirect) for h in handlers), (
+            "the loopback opener must refuse redirects"
+        )
+        # ProxyHandler.proxies is likewise a real attribute typeshed omits.
+        proxy_maps = [
+            getattr(h, "proxies", None)
+            for h in handlers
+            if isinstance(h, urllib.request.ProxyHandler)
+        ]
+        assert not any(proxy_maps), (
+            f"the loopback opener must carry no proxy map, found {proxy_maps}; "
+            "an operator's http_proxy would otherwise route a 127.0.0.1 "
+            "request off the host"
+        )
+
+    def test_allowed_openers_name_only_modules_that_exist(self) -> None:
+        names = {path.name for path in _production_sources()}
+        stale = sorted(set(self._ALLOWED_OPENERS) - names)
+        assert not stale, f"opener allowlist names missing modules: {stale}"
