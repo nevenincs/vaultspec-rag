@@ -471,22 +471,43 @@ class TestSweepArchive:
         assert (archive / "c.snapshot").exists()
 
 
-@pytest.fixture
-def cold_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Start each snapshot test from a cold (unpublished) slot."""
-    from ..server import _state
-
-    monkeypatch.setattr(_state, "_survey_snapshot", None)
-
-
-@pytest.mark.usefixtures("cold_snapshot")
 class TestSurveySnapshot:
     """The daemon-held snapshot slot: publish, read, replace."""
 
     def test_cold_slot_reads_none(self) -> None:
-        from ..server._state import survey_snapshot
+        """A daemon that has published nothing reads no snapshot.
 
-        assert survey_snapshot() is None
+        Run in a fresh interpreter rather than by resetting the global here.
+        The slot is process state, so "never published" is a property of a
+        process that has not published - setting it back to its initial value
+        asserts against a value the test wrote, in an interpreter where
+        something may already have published.
+
+        Proven able to fail: initialising the slot to anything but None makes
+        the subprocess print a value and the assertion below reports it.
+        """
+        import subprocess
+        import sys
+
+        probe = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from vaultspec_rag.server._state import survey_snapshot;"
+                "from vaultspec_rag.server._routes import"
+                " _serve_survey_from_snapshot as serve;"
+                "print(survey_snapshot(),"
+                " serve(None, 200, None, fresh=False))",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=120,
+        )
+
+        # Both halves of "nothing published": the slot reads empty, and the
+        # route refuses to serve from it and defers to a walk.
+        assert probe.stdout.strip() == "None None"
 
     def test_publish_then_read_roundtrip(self) -> None:
         from ..server._state import publish_survey_snapshot, survey_snapshot
@@ -511,7 +532,6 @@ class TestSurveySnapshot:
         assert len(snapshot.surveys) == 2
 
 
-@pytest.mark.usefixtures("cold_snapshot")
 class TestGatherStorageSurveyCached:
     """The route helper answers from the snapshot and only walks on demand."""
 
@@ -593,12 +613,13 @@ class TestGatherStorageSurveyCached:
     def test_a_fresh_request_refuses_the_snapshot_it_would_otherwise_serve(
         self,
     ) -> None:
-        """``fresh=true`` must walk even with a warm slot; a cold slot always does.
+        """``fresh=true`` must walk the store even with a warm slot.
 
-        ``None`` here is the instruction to walk the store, so this states
-        both halves of what sends the route down that path. The warm case
-        is the one that matters: a published snapshot is exactly what a
-        caller passing ``fresh`` is trying to get past.
+        ``None`` is the instruction to walk. The cold half of that rule moved
+        to the fresh-interpreter test, where "nothing published" is a property
+        of the process rather than a value this test wrote into the slot. What
+        is left is the case that matters: a published snapshot is exactly what
+        a caller passing ``fresh`` is trying to get past.
 
         Proven able to fail: dropping the ``fresh`` arm returns the warm
         snapshot's shaped payload, so the assertion that a fresh request
@@ -606,8 +627,6 @@ class TestGatherStorageSurveyCached:
         it passes.
         """
         from ..server import _routes
-
-        assert _routes._serve_survey_from_snapshot(None, 200, None, fresh=False) is None
 
         self._publish([_survey("r" + "d" * 12 + "_")], computed_at="t1")
         assert _routes._serve_survey_from_snapshot(None, 200, None, fresh=True) is None
