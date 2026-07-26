@@ -28,9 +28,9 @@ from ..config import EnvVar, reset_config
 from ..server._lifecycle import _DiscoveryPublisher
 from ..server._state import (
     _HEARTBEAT_INTERVAL_SECONDS,
-    _HEARTBEAT_STALENESS_SECONDS,
 )
 from ..serviceclient._discovery import (
+    HEARTBEAT_STALENESS_SECONDS,
     SERVICE_DISCOVERY_SCHEMA,
     SERVICE_DISCOVERY_VERSION,
     SERVICE_PHASE_WARMING,
@@ -127,7 +127,7 @@ class TestDiscoverySchema:
         assert _is_second_precision_offset_iso(data["last_heartbeat"])
         # The staleness contract is surfaced in the file, sourced from config.
         assert data["heartbeat_interval_s"] == _HEARTBEAT_INTERVAL_SECONDS
-        assert data["stale_after_s"] == _HEARTBEAT_STALENESS_SECONDS
+        assert data["stale_after_s"] == HEARTBEAT_STALENESS_SECONDS
 
     def test_atomic_write_leaves_no_tmp_and_parses(self, status_dir: Path) -> None:
         _write_service_status(1234, 8766)

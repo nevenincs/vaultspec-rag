@@ -255,13 +255,13 @@ class TestStoreLocalClientSerialization:
             store.close()
 
     def test_vault_hybrid_search_waits_for_vault_lock(self, tmp_path: Path) -> None:
-        from ..store import EMBEDDING_DIM
+        from ..store_schema import DEFAULT_DENSE_DIM
 
         self._assert_call_waits_for_collection_lock(
             tmp_path,
             "TABLE_NAME",
             lambda store: store.hybrid_search(
-                query_vector=[0.0] * EMBEDDING_DIM,
+                query_vector=[0.0] * DEFAULT_DENSE_DIM,
                 _query_text="anything",
                 limit=1,
             ),
@@ -269,13 +269,13 @@ class TestStoreLocalClientSerialization:
         )
 
     def test_codebase_hybrid_search_waits_for_code_lock(self, tmp_path: Path) -> None:
-        from ..store import EMBEDDING_DIM
+        from ..store_schema import DEFAULT_DENSE_DIM
 
         self._assert_call_waits_for_collection_lock(
             tmp_path,
             "CODE_TABLE_NAME",
             lambda store: store.hybrid_search_codebase(
-                query_vector=[0.0] * EMBEDDING_DIM,
+                query_vector=[0.0] * DEFAULT_DENSE_DIM,
                 _query_text="anything",
                 limit=1,
             ),
@@ -283,7 +283,8 @@ class TestStoreLocalClientSerialization:
         )
 
     def test_code_search_proceeds_while_vault_lock_held(self, tmp_path: Path) -> None:
-        from ..store import EMBEDDING_DIM, VaultStore
+        from ..store import VaultStore
+        from ..store_schema import DEFAULT_DENSE_DIM
 
         store = VaultStore(tmp_path)
         vault_lock = store._collection_locks[store.TABLE_NAME]
@@ -297,7 +298,7 @@ class TestStoreLocalClientSerialization:
             thread, finished, errors = self._run_worker(
                 store,
                 lambda s: s.hybrid_search_codebase(
-                    query_vector=[0.0] * EMBEDDING_DIM,
+                    query_vector=[0.0] * DEFAULT_DENSE_DIM,
                     _query_text="anything",
                     limit=1,
                 ),

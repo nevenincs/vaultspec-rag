@@ -52,12 +52,13 @@ from .._runtime_identity import interpreter_fields
 from ..config import SERVICE_STATUS_FILENAME
 from ..logging_config import log_event
 from ..serviceclient._discovery import (
+    HEARTBEAT_STALENESS_SECONDS,
     SERVICE_DISCOVERY_SCHEMA,
     SERVICE_DISCOVERY_VERSION,
     SERVICE_PHASE_WARMING,
     _discovery_timestamp,
 )
-from ._state import _HEARTBEAT_INTERVAL_SECONDS, _HEARTBEAT_STALENESS_SECONDS
+from ._state import _HEARTBEAT_INTERVAL_SECONDS
 
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -197,7 +198,7 @@ def _daemon_discovery_snapshot(
         "started_at": started_at,
         "last_heartbeat": _discovery_timestamp(),
         "heartbeat_interval_s": _HEARTBEAT_INTERVAL_SECONDS,
-        "stale_after_s": _HEARTBEAT_STALENESS_SECONDS,
+        "stale_after_s": HEARTBEAT_STALENESS_SECONDS,
         "service_token": _m._SERVICE_TOKEN,
         **interpreter_fields(),
         "python_version": sys.version.split()[0],

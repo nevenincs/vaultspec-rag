@@ -33,11 +33,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ..config import SERVICE_STATUS_FILENAME
-from ..serviceclient._discovery import HEARTBEAT_STALENESS_SECONDS
 
 __all__ = [
     "_HEARTBEAT_INTERVAL_SECONDS",
-    "_HEARTBEAT_STALENESS_SECONDS",
     "_MAX_QUERY_LEN",
     "_SENSITIVE_DIRS",
     "_SENSITIVE_PATTERNS",
@@ -127,11 +125,10 @@ _SERVICE_TOKEN: str = ""
 # ``vaultspec-rag server status`` can detect a stale file
 # (process killed without running atexit / signal handlers -
 # SIGKILL, OOM, kernel panic). The CLI flags the file stale when
-# the age exceeds _HEARTBEAT_STALENESS_SECONDS. Four beats per
+# the age exceeds HEARTBEAT_STALENESS_SECONDS. Four beats per
 # minute tolerates up to three missed beats before the verdict
 # flips to "crashed".
 _HEARTBEAT_INTERVAL_SECONDS = 15
-_HEARTBEAT_STALENESS_SECONDS = HEARTBEAT_STALENESS_SECONDS
 
 _MAX_QUERY_LEN = 10_000  # characters; prevents accidental OOM on huge queries
 

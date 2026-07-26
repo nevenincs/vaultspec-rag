@@ -11,7 +11,6 @@ from ._code_meta import CODE_EMBED_SCHEMA, publish_meta_from_file_states
 from ._content_policy import AdmissionDisposition, AdmissionReason, ContentKind
 from ._file_state import FileState
 from ._run_ledger import (
-    INDEX_RUN_LEDGER_FILENAME,
     CommitUnit,
     CommitUnitKind,
     RunLedger,
@@ -30,12 +29,9 @@ if TYPE_CHECKING:
     from ._streaming import CodeFileSegment
 
 __all__ = [
-    "CODE_RUN_LEDGER_FILENAME",
     "CodeRunCheckpoint",
     "CodeRunConfiguration",
 ]
-
-CODE_RUN_LEDGER_FILENAME = INDEX_RUN_LEDGER_FILENAME
 
 
 @dataclass(frozen=True, slots=True)

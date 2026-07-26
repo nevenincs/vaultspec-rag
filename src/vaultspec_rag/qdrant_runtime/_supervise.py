@@ -250,8 +250,6 @@ _CHILD_ENV_PASSTHROUGH = frozenset(
 # Unlike the daemon spawn, the qdrant child must NOT break away from the
 # daemon's Job Object - that membership is exactly the no-orphan guarantee,
 # so no breakaway flag appears here.
-_WIN_CREATE_NEW_PROCESS_GROUP = WIN_CREATE_NEW_PROCESS_GROUP
-_WIN_CREATE_NO_WINDOW = WIN_CREATE_NO_WINDOW
 
 
 def _win_kill_on_close_job() -> int | None:
@@ -419,7 +417,7 @@ class QdrantSupervisor:
                 cwd=str(self.storage_dir.parent),
                 text=False,
                 bufsize=0,
-                creationflags=(_WIN_CREATE_NEW_PROCESS_GROUP | _WIN_CREATE_NO_WINDOW),
+                creationflags=(WIN_CREATE_NEW_PROCESS_GROUP | WIN_CREATE_NO_WINDOW),
             )
             if self._job_handle is None:
                 self._job_handle = _win_kill_on_close_job()

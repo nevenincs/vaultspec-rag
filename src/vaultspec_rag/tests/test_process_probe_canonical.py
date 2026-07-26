@@ -1130,3 +1130,83 @@ class TestBackoffMathHasOneHome:
                     exponent, base=0.005, cap=0.15, fraction=0.25, random_unit=unit
                 )
                 assert 0.0 <= delay <= 0.15, (exponent, unit, delay)
+
+
+class TestNoCompatibilityAliases:
+    """A canonical name is imported and used, never rebound under a second one.
+
+    Fourteen module-level aliases had accumulated - ``_WIN_CREATE_NO_WINDOW =
+    WIN_CREATE_NO_WINDOW`` and friends - each giving one fact a second name in
+    a module that did not own it. Two carried comments admitting the motive:
+    "Kept under the existing names so importers and tests are unaffected" and
+    "Compatibility aliases for the established focused rollback tests". That is
+    the shape canonical-code forbids: an alias reads as an abstraction, hides
+    the real owner, and survives every later refactor.
+
+    The scan is structural rather than name-based, because the next alias will
+    not be spelled like the last one.
+    """
+
+    #: The one remaining alias, named so it cannot silently grow back into a
+    #: population. ``cli._process._is_pid_alive`` fronts ``_process_probe.
+    #: pid_alive`` for roughly sixty call sites, most of them in integration
+    #: tests reached through the ``cli`` package; unpicking it is its own
+    #: change, not a rider on this one.
+    KNOWN: ClassVar[frozenset[tuple[str, str]]] = frozenset(
+        {("_process.py", "_is_pid_alive")}
+    )
+
+    def test_no_module_rebinds_an_imported_name(self) -> None:
+        offenders: list[str] = []
+        for path in _production_sources():
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            imported: set[str] = set()
+            for node in tree.body:
+                if isinstance(node, ast.ImportFrom):
+                    imported.update(a.asname or a.name for a in node.names)
+                elif isinstance(node, ast.Import):
+                    imported.update(
+                        a.asname or a.name.split(".")[0] for a in node.names
+                    )
+            for node in tree.body:
+                if not (
+                    isinstance(node, ast.Assign)
+                    and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)
+                ):
+                    continue
+                target = node.targets[0].id
+                value = node.value
+                # X = Y, or X = mod.Y, where the right-hand side is imported.
+                rebinds = (isinstance(value, ast.Name) and value.id in imported) or (
+                    isinstance(value, ast.Attribute)
+                    and isinstance(value.value, ast.Name)
+                    and value.value.id in imported
+                )
+                if not rebinds or (path.name, target) in self.KNOWN:
+                    continue
+                offenders.append(
+                    f"{path.name}:{node.lineno} {target} = {ast.unparse(value)}"
+                )
+        assert not offenders, (
+            f"compatibility aliases at {offenders}; import the canonical name "
+            "and use it, rather than giving one fact a second name in a module "
+            "that does not own it"
+        )
+
+    def test_the_known_alias_still_exists(self) -> None:
+        """The allowlist must not outlive what it allows.
+
+        An entry left behind after the alias is gone would silently permit a
+        fresh alias of the same name in the same module.
+        """
+        from ..cli import _process
+
+        source = Path(_process.__file__).read_text(encoding="utf-8")
+        assert "_is_pid_alive = pid_alive" in source, (
+            "the allowlisted alias is gone; drop it from KNOWN so the scan "
+            "covers that module fully again"
+        )

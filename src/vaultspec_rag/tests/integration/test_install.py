@@ -2303,7 +2303,7 @@ class TestDryRunInstall:
         snapshot_kind: str,
         collision_kind: str,
     ) -> None:
-        from ...commands._install import _file_snapshot, _restore_file_snapshot
+        from ...commands._mcp_topology import file_snapshot, restore_file_snapshot
 
         destination = fresh_workspace / "builtin-rule.md"
         destination_target = fresh_workspace / "builtin-target.md"
@@ -2316,7 +2316,7 @@ class TestDryRunInstall:
                 destination_target.name,
                 target_is_directory=False,
             )
-        snapshot = _file_snapshot(destination)
+        snapshot = file_snapshot(destination)
         if snapshot_kind == "regular":
             destination.chmod(stat.S_IREAD | stat.S_IWRITE)
         destination.unlink()
@@ -2338,9 +2338,9 @@ class TestDryRunInstall:
             collision.read_bytes() if collision_kind != "broken-symlink" else None
         )
 
-        _restore_file_snapshot(destination, snapshot)
+        restore_file_snapshot(destination, snapshot)
 
-        assert _file_snapshot(destination) == snapshot
+        assert file_snapshot(destination) == snapshot
         assert _node_signature(collision) == collision_signature
         if collision_bytes is not None:
             assert collision.read_bytes() == collision_bytes
@@ -2397,19 +2397,19 @@ class TestDryRunInstall:
         def test_junction_snapshot_recreates_removed_reparse_node(
             self, fresh_workspace: Path
         ) -> None:
-            from ...commands._install import _file_snapshot, _restore_file_snapshot
+            from ...commands._mcp_topology import file_snapshot, restore_file_snapshot
 
             target = fresh_workspace / "operator-target"
             target.mkdir()
             (target / "sentinel").write_bytes(b"target-owned\x00")
             junction = fresh_workspace / "builtin-junction"
             _create_windows_junction(junction, target)
-            snapshot = _file_snapshot(junction)
+            snapshot = file_snapshot(junction)
             signature = _node_signature(junction)
             junction.rmdir()
             junction.write_bytes(b"transaction-replacement")
 
-            _restore_file_snapshot(junction, snapshot)
+            restore_file_snapshot(junction, snapshot)
 
             assert junction.is_junction()
             assert _node_signature(junction) == signature

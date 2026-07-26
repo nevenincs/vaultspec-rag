@@ -66,7 +66,6 @@ __all__ = [
 ]
 
 
-EMBEDDING_DIM = store_schema.DEFAULT_DENSE_DIM  # Qwen3-Embedding-0.6B default
 _WRITE_LOCK_POLL_SECONDS = 0.1
 # Donor reads page ids in bounded batches: large enough to amortize the
 # round-trip, small enough that one response stays cheap to parse and hold.
@@ -223,7 +222,7 @@ class VaultStore(_VaultSearchMixin):
         Args:
             root_dir: Workspace root directory.
             embedding_dim: Dimensionality of the dense embedding vectors.
-                Defaults to EMBEDDING_DIM (1024).
+                Defaults to store_schema.DEFAULT_DENSE_DIM (1024).
 
         Raises:
             ImportError: If qdrant-client is not installed.
