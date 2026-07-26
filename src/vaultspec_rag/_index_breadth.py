@@ -41,14 +41,30 @@ PUBLISHED_FILES_KEY = "__code_published_files__"
 __all__ = [
     "PUBLISHED_FILES_KEY",
     "PUBLISHED_POINTS_KEY",
+    "SHORTFALL_CONSEQUENCE",
+    "SHORTFALL_REMEDIATION",
     "BreadthShortfall",
     "FileBreadthShortfall",
+    "ShortfallWarning",
     "code_breadth_shortfall",
     "code_file_breadth_shortfall",
     "code_meta_path",
     "parse_reserved_count",
     "read_reserved_count",
+    "shortfall_warnings",
 ]
+
+#: What an incomplete index means for the reader, in one wording for every
+#: surface. The noun is ``code`` because breadth is published for the code
+#: index alone, so a warning that fires is always about missing code even on a
+#: combined search - and it agrees with the remediation below, which reindexes
+#: exactly that.
+SHORTFALL_CONSEQUENCE = "an absent result is not evidence that no such code exists"
+
+#: The one command that repairs any shortfall. A remediation an operator is
+#: told to run has to be the command that still exists; a second copy is one
+#: rename away from sending them to a flag that was removed.
+SHORTFALL_REMEDIATION = "vaultspec-rag index --type code --full"
 
 
 class BreadthShortfall(NamedTuple):
@@ -105,6 +121,82 @@ class FileBreadthShortfall(NamedTuple):
             "covered_count": self.covered,
             "missing_count": self.missing,
         }
+
+
+class ShortfallWarning(NamedTuple):
+    """One demonstrated deficit, in the words every surface reports it with.
+
+    Split into three parts because the surfaces differ in how much room they
+    have, not in what they say. The command line prints all three across a
+    warning block; the service summary has one sentence and carries the
+    deficit alone. Both draw on this, so neither can describe the same figures
+    differently.
+    """
+
+    deficit: str
+    """The figures, as a clause: what the index holds against what it claimed."""
+
+    missing: str
+    """The count that is gone, as its own clause for a surface with room."""
+
+    why: str
+    """Why that deficit reaches the reader's results."""
+
+
+def _shortfall_figures(
+    index_state: Mapping[str, object], key: str
+) -> Mapping[str, object] | None:
+    """Return ``index_state[key]`` when it is a figures dict, else ``None``.
+
+    A missing field means complete or unknowable, and warning on either would
+    train the reader to ignore the warning.
+    """
+    figures = index_state.get(key)
+    if not isinstance(figures, dict):
+        return None
+    return cast("Mapping[str, object]", figures)
+
+
+def shortfall_warnings(index_state: Mapping[str, object]) -> list[ShortfallWarning]:
+    """Return every deficit *index_state* demonstrates, in reporting order.
+
+    The service settles whether a shortfall exists and carries the figures, so
+    this describes what it was given and compares nothing.
+
+    Both kinds are read here, in one pass, because that is the property worth
+    holding: a surface that renders this list cannot report one kind and stay
+    silent on the other. The two are independent - a publication covering a
+    fraction of the files it names still stamps a self-consistent point count,
+    so the file deficit fires exactly where the point deficit cannot - and a
+    consumer that walked only the key it happened to know about would go quiet
+    on the case the other key exists for.
+    """
+    warnings: list[ShortfallWarning] = []
+    points = _shortfall_figures(index_state, "shortfall")
+    if points is not None:
+        warnings.append(
+            ShortfallWarning(
+                deficit=(
+                    f"this index holds {points.get('live_count')} of the "
+                    f"{points.get('published_count')} sections it published"
+                ),
+                missing=f"{points.get('missing_count')} are missing",
+                why="These results are drawn from an incomplete index",
+            )
+        )
+    files = _shortfall_figures(index_state, "file_shortfall")
+    if files is not None:
+        warnings.append(
+            ShortfallWarning(
+                deficit=(
+                    f"this index names {files.get('named_count')} files but "
+                    f"holds content for only {files.get('covered_count')}"
+                ),
+                missing=f"{files.get('missing_count')} are missing",
+                why="A file absent from the index cannot be found by any query",
+            )
+        )
+    return warnings
 
 
 def parse_reserved_count(raw: Mapping[str, object], key: str) -> int | None:

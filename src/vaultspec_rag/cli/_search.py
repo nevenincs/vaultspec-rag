@@ -130,8 +130,7 @@ def _handle_service_success(
         return
     if not results:
         _render_empty_service_results(payload, query, search_type)
-        _render_breadth_shortfall(payload)
-        _render_file_breadth_shortfall(payload)
+        _render_shortfall_warnings(payload)
         _render_partial_domain_failures(payload)
         return
     _display_search_results(
@@ -141,81 +140,33 @@ def _handle_service_success(
         show_scores=show_scores,
         root=target,
     )
-    _render_breadth_shortfall(payload)
-    _render_file_breadth_shortfall(payload)
+    _render_shortfall_warnings(payload)
     _render_partial_domain_failures(payload)
 
 
-def _shortfall_figures(
-    payload: dict[str, object], key: str
-) -> dict[str, object] | None:
-    """Return ``index_state[key]`` when it is a figures dict, else ``None``.
-
-    The two shortfall warnings share this extraction and nothing else: their
-    prose describes independent failures, so only the guard is common. A
-    missing field means complete or unknowable, and warning on either would
-    train the reader to ignore the warning.
-    """
-    index_state = payload.get("index_state")
-    if not isinstance(index_state, dict):
-        return None
-    figures = cast("dict[str, object]", index_state).get(key)
-    if not isinstance(figures, dict):
-        return None
-    return cast("dict[str, object]", figures)
-
-
-def _render_breadth_shortfall(payload: dict[str, object]) -> None:
+def _render_shortfall_warnings(payload: dict[str, object]) -> None:
     """Warn that the index answering this search is demonstrably incomplete.
 
-    The service settles whether a shortfall exists and carries the figures, so
-    this renders what it was given and compares nothing. A missing field means
-    complete or unknowable, and warning on either would train the reader to
-    ignore the warning.
+    Walks whatever the shared reader found, so the point-count and file-count
+    deficits cannot diverge on this surface: adding a third kind reaches the
+    operator here without touching this function.
     """
-    figures = _shortfall_figures(payload, "shortfall")
-    if figures is None:
+    from .._index_breadth import (
+        SHORTFALL_CONSEQUENCE,
+        SHORTFALL_REMEDIATION,
+        shortfall_warnings,
+    )
+
+    index_state = payload.get("index_state")
+    if not isinstance(index_state, dict):
         return
-    live = figures.get("live_count")
-    published = figures.get("published_count")
-    missing = figures.get("missing_count")
-    _plain(
-        f"Warning: this index holds {live} of the {published} sections it "
-        f"published; {missing} are missing.",
-        soft_wrap=True,
-    )
-    _plain(
-        "  These results are drawn from an incomplete index, so an absent "
-        "result is not evidence that no such code exists.",
-        soft_wrap=True,
-    )
-    _plain("  Next action: vaultspec-rag index --type code --full")
-
-
-def _render_file_breadth_shortfall(payload: dict[str, object]) -> None:
-    """Warn that the publication answering this search covered fewer files.
-
-    Separate from the point-count warning because the two fail independently:
-    a publication covering a fraction of the files it names still stamps a
-    self-consistent point count, so this fires where that one cannot.
-    """
-    figures = _shortfall_figures(payload, "file_shortfall")
-    if figures is None:
-        return
-    named = figures.get("named_count")
-    covered = figures.get("covered_count")
-    missing = figures.get("missing_count")
-    _plain(
-        f"Warning: this index names {named} files but holds content for only "
-        f"{covered}; {missing} are missing.",
-        soft_wrap=True,
-    )
-    _plain(
-        "  A file absent from the index cannot be found by any query, so an "
-        "absent result is not evidence that no such code exists.",
-        soft_wrap=True,
-    )
-    _plain("  Next action: vaultspec-rag index --type code --full")
+    for warning in shortfall_warnings(cast("dict[str, object]", index_state)):
+        _plain(
+            f"Warning: {warning.deficit}; {warning.missing}.",
+            soft_wrap=True,
+        )
+        _plain(f"  {warning.why}, so {SHORTFALL_CONSEQUENCE}.", soft_wrap=True)
+        _plain(f"  Next action: {SHORTFALL_REMEDIATION}")
 
 
 def _render_partial_domain_failures(payload: dict[str, object]) -> None:
@@ -720,8 +671,7 @@ def _render_in_process_results(
 
     if not result_items:
         _render_empty_in_process_results(query, search_type.value, target)
-        _render_breadth_shortfall(breadth)
-        _render_file_breadth_shortfall(breadth)
+        _render_shortfall_warnings(breadth)
         if domains is not None:
             _render_partial_domain_failures(
                 {
@@ -738,8 +688,7 @@ def _render_in_process_results(
         show_scores=show_scores,
         root=target,
     )
-    _render_breadth_shortfall(breadth)
-    _render_file_breadth_shortfall(breadth)
+    _render_shortfall_warnings(breadth)
     if domains is not None:
         _render_partial_domain_failures(
             {

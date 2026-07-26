@@ -305,23 +305,26 @@ def _search_index_state(
 
 
 def _search_summary(count: int, index_state: dict[str, object]) -> str:
-    """Return the one-line summary, naming a demonstrated shortfall inline.
+    """Return the one-line summary, naming every demonstrated shortfall inline.
 
     An adapter that surfaces only the summary would otherwise report a
-    confident count drawn from an index known to be missing points. The
-    deficit belongs in the sentence a reader actually reads, not solely in a
-    nested field they have to go looking for.
+    confident count drawn from an index known to be incomplete. The deficit
+    belongs in the sentence a reader actually reads, not solely in a nested
+    field they have to go looking for.
+
+    Reads the deficits through the shared walker rather than the one key this
+    route happens to know about. It previously named the point shortfall
+    alone, so a publication covering a fraction of the files it named - the
+    case a point count cannot express - reached an agent as an unqualified
+    count while the command line warned about it.
     """
+    from .._index_breadth import SHORTFALL_CONSEQUENCE, shortfall_warnings
+
     found = f"Found {count} relevant items."
-    notes: list[str] = []
-    shortfall = index_state.get("shortfall")
-    if isinstance(shortfall, dict):
-        figures = cast("dict[str, object]", shortfall)
-        notes.append(
-            f"this index holds {figures['live_count']} of the "
-            f"{figures['published_count']} sections it published, so an absent "
-            "result is not evidence that no such item exists"
-        )
+    notes = [
+        f"{warning.deficit}, so {SHORTFALL_CONSEQUENCE}"
+        for warning in shortfall_warnings(index_state)
+    ]
     if not notes:
         return found
     return f"{found} Warning: " + "; ".join(notes) + "."

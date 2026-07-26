@@ -264,7 +264,67 @@ def test_the_search_summary_names_a_demonstrated_shortfall() -> None:
 
     assert "Found 5 relevant items." in summary
     assert "4 of the 421 sections" in summary
-    assert "not evidence that no such item exists" in summary
+    assert "not evidence that no such code exists" in summary
+
+
+def test_the_search_summary_names_a_file_breadth_shortfall() -> None:
+    """The deficit a point count cannot express must reach the summary too.
+
+    A publication covering a fraction of the files it names still stamps a
+    self-consistent point count, so this is exactly the case the point
+    comparison is blind to. The summary named the point shortfall alone and
+    returned an unqualified count here, while the command line warned - so the
+    agent-facing surface was the one consumer that never learned.
+
+    Proven able to fail: restricting ``_search_summary`` to the ``shortfall``
+    key fails this test on the deficit assertion below, not on a crash;
+    restoring the shared walker returns it to green.
+    """
+    from ..server._routes import _search_summary
+
+    summary = _search_summary(
+        5,
+        {
+            "file_shortfall": {
+                "named_count": 442,
+                "covered_count": 27,
+                "missing_count": 415,
+            }
+        },
+    )
+
+    assert "Found 5 relevant items." in summary
+    assert "names 442 files but holds content for only 27" in summary
+    assert "not evidence that no such code exists" in summary
+
+
+def test_both_shortfall_kinds_reach_the_summary_together() -> None:
+    """Neither deficit may mask the other; the summary carries both.
+
+    Proven able to fail: returning after the first warning in
+    ``shortfall_warnings`` fails this test on the file-deficit assertion,
+    while its point-deficit companion above stays green.
+    """
+    from ..server._routes import _search_summary
+
+    summary = _search_summary(
+        5,
+        {
+            "shortfall": {
+                "published_count": 421,
+                "live_count": 4,
+                "missing_count": 417,
+            },
+            "file_shortfall": {
+                "named_count": 442,
+                "covered_count": 27,
+                "missing_count": 415,
+            },
+        },
+    )
+
+    assert "4 of the 421 sections" in summary
+    assert "names 442 files but holds content for only 27" in summary
 
 
 def test_the_search_summary_stays_plain_over_an_index_with_no_shortfall() -> None:
@@ -302,7 +362,7 @@ def test_the_mcp_output_model_preserves_the_shortfall_summary() -> None:
         "summary": (
             "Found 0 relevant items. Warning: this index holds 4 of the 421 "
             "sections it published, so an absent result is not evidence that "
-            "no such item exists."
+            "no such code exists."
         ),
         "index_state": {
             "shortfall": {
