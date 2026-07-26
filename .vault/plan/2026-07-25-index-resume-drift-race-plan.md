@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#index-resume-drift-race'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-26'
 tier: L3
 related:
   - '[[2026-07-25-index-resume-drift-race-adr]]'
