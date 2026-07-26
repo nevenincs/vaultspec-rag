@@ -22,10 +22,6 @@ from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict, cast
 from vaultspec_core.logging_config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
     configure_logging as _core_configure_logging,
 )
-from vaultspec_core.logging_config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
-    get_console,
-    reset_logging,
-)
 
 from ._managed_log_sink import RawRotatingLogSink
 
@@ -41,14 +37,12 @@ __all__ = [
     "ManagedLogSource",
     "clamp_managed_log_lines",
     "configure_logging",
-    "get_console",
     "install_daemon_log_capture",
     "log_event",
     "managed_log_filters",
     "query_managed_logs",
     "read_managed_logs",
     "render_managed_log_groups",
-    "reset_logging",
     "validate_managed_log_payload",
 ]
 
