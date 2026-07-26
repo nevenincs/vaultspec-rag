@@ -23,16 +23,12 @@ from ..qdrant_runtime._resolve import probe_qdrant_endpoint, resolve_binary
 from ..serviceclient._discovery import _read_service_status
 from ._app import server_qdrant_app
 from ._progress import StartupStatusReporter
-from ._render import _emit_json, _plain
-
-
-def _print_line(text: str) -> None:
-    _plain(text, soft_wrap=True)
+from ._render import _emit_json, _plain_line
 
 
 def _print_next_action(command: str) -> None:
-    _print_line("Next action:")
-    _print_line(f"  {command}")
+    _plain_line("Next action:")
+    _plain_line(f"  {command}")
 
 
 def _action_label(action: object) -> str:
@@ -40,18 +36,18 @@ def _action_label(action: object) -> str:
 
 
 def _render_install_report(report: ProvisionReport) -> None:
-    _print_line(f"Action: {_action_label(report.action)}")
-    _print_line(f"Version: {report.version}")
+    _plain_line(f"Action: {_action_label(report.action)}")
+    _plain_line(f"Version: {report.version}")
     if report.asset:
-        _print_line(f"Release package: {report.asset}")
+        _plain_line(f"Release package: {report.asset}")
     if report.url:
-        _print_line(f"Download: {report.url}")
+        _plain_line(f"Download: {report.url}")
     if report.binary is not None:
-        _print_line(f"Install: {report.binary}")
+        _plain_line(f"Install: {report.binary}")
     if report.sha256:
-        _print_line(f"SHA256: {report.sha256}")
+        _plain_line(f"SHA256: {report.sha256}")
     if report.message:
-        _print_line(f"Detail: {report.message}")
+        _plain_line(f"Detail: {report.message}")
 
 
 @server_qdrant_app.command(
@@ -174,27 +170,27 @@ def _print_qdrant_install_and_state(payload: dict[str, object]) -> None:
     active = payload["active_binary"]
     if isinstance(active, dict):
         active_binary = cast("dict[str, object]", active)
-        _print_line(f"Executable: {active_binary['path']}")
+        _plain_line(f"Executable: {active_binary['path']}")
     else:
-        _print_line("Executable: not installed")
+        _plain_line("Executable: not installed")
         _print_next_action("vaultspec-rag server qdrant install")
     address = f"http://127.0.0.1:{payload['port']}"
-    _print_line(f"Address: {address}")
+    _plain_line(f"Address: {address}")
     if payload["ready"]:
-        _print_line("Connection: accepting requests")
+        _plain_line("Connection: accepting requests")
         return
-    _print_line("Connection: not accepting requests")
+    _plain_line("Connection: not accepting requests")
     if isinstance(active, dict):
         _print_next_action("vaultspec-rag server start --qdrant")
 
 
 def _print_qdrant_process(service: object) -> None:
     if not isinstance(service, dict):
-        _print_line("Process: not started by vaultspec-rag")
+        _plain_line("Process: not started by vaultspec-rag")
         return
     service_block = cast("dict[str, object]", service)
     if not service_block.get("recorded"):
-        _print_line("Process: not started by vaultspec-rag")
+        _plain_line("Process: not started by vaultspec-rag")
         return
     alive_flag = service_block.get("qdrant_alive")
     alive = (
@@ -204,16 +200,16 @@ def _print_qdrant_process(service: object) -> None:
         if alive_flag is False
         else "state not reported"
     )
-    _print_line(f"Process: {alive}")
-    _print_line(f"Process ID: {service_block.get('qdrant_pid', 'not reported')}")
-    _print_line(f"Process port: {service_block.get('qdrant_port', 'not reported')}")
+    _plain_line(f"Process: {alive}")
+    _plain_line(f"Process ID: {service_block.get('qdrant_pid', 'not reported')}")
+    _plain_line(f"Process port: {service_block.get('qdrant_port', 'not reported')}")
 
 
 def _print_qdrant_versions(provisioned: object) -> None:
     if not (isinstance(provisioned, list) and provisioned):
-        _print_line("Available installs: none")
+        _plain_line("Available installs: none")
         return
-    _print_line("Available installs:")
+    _plain_line("Available installs:")
     for raw_entry in cast("list[object]", provisioned):
         if not isinstance(raw_entry, dict):
             continue
@@ -224,7 +220,7 @@ def _print_qdrant_versions(provisioned: object) -> None:
             if entry.get("source") == "download"
             else entry.get("source")
         )
-        _print_line(f"  {entry.get('version')} - {source}{marker}")
+        _plain_line(f"  {entry.get('version')} - {source}{marker}")
 
 
 @server_qdrant_app.command(
@@ -253,8 +249,8 @@ def qdrant_status(
         _emit_json(True, "server.qdrant.status", data=payload)
         return
 
-    _print_line("Qdrant storage service")
-    _print_line(f"Managed version: {payload['pinned_version']}")
+    _plain_line("Qdrant storage service")
+    _plain_line(f"Managed version: {payload['pinned_version']}")
     _print_qdrant_install_and_state(payload)
     _print_qdrant_process(payload["service"])
     _print_qdrant_versions(payload["provisioned"])
@@ -304,9 +300,9 @@ def qdrant_clean(
     if json_mode:
         _emit_json(True, "server.qdrant.clean", data={"removed": removed})
     elif removed:
-        _print_line(f"Removed: {', '.join(removed)}")
+        _plain_line(f"Removed: {', '.join(removed)}")
     else:
-        _print_line("Nothing to remove.")
+        _plain_line("Nothing to remove.")
 
 
 def _render_clean_preview(
@@ -329,10 +325,10 @@ def _render_clean_preview(
         )
     else:
         if targets:
-            _print_line(f"Would remove installed Qdrant versions: {', '.join(targets)}")
+            _plain_line(f"Would remove installed Qdrant versions: {', '.join(targets)}")
         else:
-            _print_line("No managed Qdrant installs would be removed.")
-        _print_line(detail)
+            _plain_line("No managed Qdrant installs would be removed.")
+        _plain_line(detail)
     if not dry_run and targets:
         raise typer.Exit(code=1)
 
@@ -357,7 +353,7 @@ def _perform_clean(*, keep_current: bool, json_mode: bool) -> list[str]:
                 message=message,
             )
         else:
-            _print_line(message)
+            _plain_line(message)
         raise typer.Exit(code=1) from exc
 
 
@@ -366,7 +362,7 @@ def _fail_quarantine(error: str, message: str, *, json_mode: bool) -> NoReturn:
     if json_mode:
         _emit_json(False, "server.qdrant.quarantine", error=error, message=message)
     else:
-        _print_line(message)
+        _plain_line(message)
     raise typer.Exit(code=1)
 
 
@@ -379,11 +375,11 @@ def _emit_quarantine_listing(collections: list[str], *, json_mode: bool) -> None
             data={"collections": collections},
         )
         return
-    _print_line("Qdrant collections in the shared store")
+    _plain_line("Qdrant collections in the shared store")
     if not collections:
-        _print_line("  (none)")
+        _plain_line("  (none)")
     for name in collections:
-        _print_line(f"  {name}")
+        _plain_line(f"  {name}")
 
 
 @server_qdrant_app.command(
@@ -449,7 +445,7 @@ def qdrant_quarantine(
                 data={"collection": collection, "dry_run": True},
             )
         else:
-            _print_line(message)
+            _plain_line(message)
         return
 
     if not yes:
@@ -478,5 +474,5 @@ def qdrant_quarantine(
             data={"collection": collection, "quarantined_to": str(dest)},
         )
         return
-    _print_line(f"Quarantined collection {collection!r} to {dest}.")
-    _print_line("Restart the server; that root re-indexes on its next use.")
+    _plain_line(f"Quarantined collection {collection!r} to {dest}.")
+    _plain_line("Restart the server; that root re-indexes on its next use.")

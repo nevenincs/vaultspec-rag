@@ -20,7 +20,7 @@ import typer
 from .._units import human_bytes
 from ._app import server_storage_app
 from ._progress import StartupStatusReporter
-from ._render import _emit_json, _emit_json_error_and_exit, _plain
+from ._render import _emit_json, _emit_json_error_and_exit, _plain_line
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -43,19 +43,6 @@ _MIGRATE_CMD = "server.storage.migrate"
 _RECONCILE_CMD = "server.storage.reconcile"
 
 
-def _echo_fault(message: str) -> None:
-    """Print a failure line through the console the progress region owns.
-
-    The result tables below are rendered after the reporting block closes and
-    can safely use ``typer.echo``. These faults cannot: they are raised from
-    inside the block, while a live region may be open, and Rich can only erase
-    its frame before a line when the line arrives through its own console. A
-    raw stream write there is invisible to that bookkeeping and gets erased
-    with the frame.
-    """
-    _plain(message, soft_wrap=True)
-
-
 def _resolve_server_url(command: str, json_mode: bool) -> str:
     """Return the managed Qdrant URL, or exit 2 if server mode is off."""
     from ..config import get_config
@@ -68,7 +55,7 @@ def _resolve_server_url(command: str, json_mode: bool) -> str:
         )
         if json_mode:
             _emit_json_error_and_exit(command, "server_mode_required", message, 2)
-        _echo_fault(message)
+        _plain_line(message)
         raise typer.Exit(2)
     return str(getattr(cfg, "qdrant_url", "") or f"http://127.0.0.1:{cfg.qdrant_port}")
 
@@ -103,7 +90,7 @@ def _run_storage_op[T](
         )
         if json_mode:
             _emit_json_error_and_exit(command, "service_not_running", message, 3)
-        _echo_fault(message)
+        _plain_line(message)
         raise typer.Exit(3) from exc
     except ApiException as exc:
         # Reached the server but it refused the call. Distinct from unreachable
@@ -111,7 +98,7 @@ def _run_storage_op[T](
         message = f"The managed Qdrant server at {url} rejected the request: {exc}"
         if json_mode:
             _emit_json_error_and_exit(command, "storage_request_failed", message, 1)
-        _echo_fault(message)
+        _plain_line(message)
         raise typer.Exit(1) from exc
     finally:
         client.close()
@@ -935,5 +922,5 @@ def _emit_or_echo_error(
     """Emit a JSON error or echo it, then exit with ``code``."""
     if json_mode:
         _emit_json_error_and_exit(command, error, message, code)
-    _echo_fault(message)
+    _plain_line(message)
     raise typer.Exit(code)
