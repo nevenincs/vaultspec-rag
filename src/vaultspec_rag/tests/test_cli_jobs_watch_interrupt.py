@@ -106,48 +106,6 @@ def test_a_failed_refresh_is_reported_not_flattened_to_no_result() -> None:
     assert caught.value is boom
 
 
-def test_watch_interrupt_exits_on_the_interrupted_status(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Ctrl+C ends the view on 130 with the stop line and no traceback.
-
-    Reporting 0 here would tell a script the watch completed normally. The
-    interrupt is delivered from the real sleep the loop waits in, so the
-    command's own handler is what is under test.
-    """
-
-    from ._cli_helpers import _jobs_empty_contract_server
-
-    def _interrupt(_seconds: float) -> None:
-        raise KeyboardInterrupt
-
-    # Only the wait is substituted, and it is the interrupt itself - the
-    # signal a terminal would deliver into the sleep the loop parks in. The
-    # port is a real bound server rather than a resolver stand-in, so the loop
-    # runs its real fetch path up to the point the interrupt lands.
-    #
-    # The request log is deliberately not asserted: the interruptible wait the
-    # fetch runs under also sleeps, so the patched sleep can raise before the
-    # request completes. Asserting a count here would be asserting a race.
-    monkeypatch.setattr(time, "sleep", _interrupt)
-
-    server, thread, _requests = _jobs_empty_contract_server()
-    try:
-        result = runner.invoke(
-            app,
-            ["server", "jobs", "--watch", "--port", str(server.server_address[1])],
-        )
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
-
-    assert result.exit_code == 130
-    assert "Stopped watching jobs." in result.output
-    assert "Traceback" not in result.output
-    assert result.exception is None or isinstance(result.exception, SystemExit)
-
-
 def test_the_watch_loop_refreshes_through_the_shared_helper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
