@@ -1146,8 +1146,12 @@ def _read_recovery_marker(
         source=WatcherSource(_required_text(raw, "source")),
         observed_generation=_nonnegative_int(raw, "observed_generation"),
         attempt_token=_optional_text(raw.get("attempt_token")),
-        owner_pid=_positive_int(raw, "owner_pid"),
-        owner_create_time=_positive_number(raw, "owner_create_time"),
+        owner_pid=_required_positive(raw, "owner_pid", _optional_positive_int),
+        owner_create_time=_required_positive(
+            raw,
+            "owner_create_time",
+            _optional_positive_number,
+        ),
         created_at=_timestamp(raw, "created_at"),
     )
     if marker.canonical_root != canonical_root or marker.source != source:
@@ -1281,14 +1285,6 @@ def _required_positive[T: (int, float)](
     if value is None:
         raise ValueError(f"watcher retry field {key!r} must be positive")
     return value
-
-
-def _positive_int(raw: dict[str, object], key: str) -> int:
-    return _required_positive(raw, key, _optional_positive_int)
-
-
-def _positive_number(raw: dict[str, object], key: str) -> float:
-    return _required_positive(raw, key, _optional_positive_number)
 
 
 def _required_bool(raw: dict[str, object], key: str) -> bool:
