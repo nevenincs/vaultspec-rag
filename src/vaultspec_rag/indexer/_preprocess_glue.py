@@ -99,19 +99,6 @@ def prep_rule_count(prep_ctx: PreprocessContext | None) -> int:
     return len(prep_ctx.config.rules) if prep_ctx is not None else 0
 
 
-def matches_preprocess_rule(prep_ctx: PreprocessContext | None, rel: str) -> bool:
-    """Return whether a preprocess rule matches this project-relative path.
-
-    Ignore always wins (this is only consulted after the ignore gate), but a
-    match expands the indexable set: a matched file is admitted even when its
-    extension is unsupported, it exceeds ``_MAX_FILE_SIZE``, or it is binary,
-    because the preprocessor extracts indexable text from it.
-    """
-    if prep_ctx is None:
-        return False
-    return prep_ctx.config.match(rel) is not None
-
-
 def record_preprocess_result(
     res: FileChunkResult,
     prep_skips: list[str],

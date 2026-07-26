@@ -684,16 +684,6 @@ class CodebaseIndexer:
         """Apply ownership first, then raw-code size and binary capability."""
         return self._discovery.inspect_file(path, rel_path, policy).classified
 
-    def _matches_preprocess_rule(self, rel: str) -> bool:
-        """Return whether a preprocess rule matches this project-relative path.
-
-        Ignore always wins (this is only consulted after the ignore gate), but a
-        match expands the indexable set: a matched file is admitted even when its
-        extension is unsupported, it exceeds ``_MAX_FILE_SIZE``, or it is binary,
-        because the preprocessor extracts indexable text from it.
-        """
-        return _preprocess_glue.matches_preprocess_rule(self._prep_ctx, rel)
-
     def scan_content(
         self,
         *,

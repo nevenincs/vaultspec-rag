@@ -38,7 +38,6 @@ from .job_models import (
     DesiredJobState,
     IndexResilienceSnapshot,
     JobAttempt,
-    JobCapabilities,
     JobInitiator,
     JobOutcome,
     JobOutcomeStatus,
@@ -1215,7 +1214,7 @@ class JobManager:
                 spec=spec,
                 state=state,
                 desired_state=desired_state,
-                capabilities=self._capabilities_for(spec, state),
+                capabilities=_capabilities_for_state(spec, state),
                 attempt=JobAttempt(number=1),
                 timestamps=JobTimestamps(
                     created_at=now,
@@ -2281,7 +2280,7 @@ class JobManager:
                 spec=parent.snapshot.spec,
                 state=JobState.QUEUED,
                 desired_state=DesiredJobState.RUNNING,
-                capabilities=self._capabilities_for(
+                capabilities=_capabilities_for_state(
                     parent.snapshot.spec,
                     JobState.QUEUED,
                 ),
@@ -2709,7 +2708,7 @@ class JobManager:
             revision=previous.revision + 1,
             state=state,
             desired_state=desired_state,
-            capabilities=self._capabilities_for(previous.spec, state),
+            capabilities=_capabilities_for_state(previous.spec, state),
             attempt=attempt or previous.attempt,
             timestamps=replace(
                 timestamps,
@@ -2961,10 +2960,6 @@ class JobManager:
                 f"{_job_persistence.MAX_IDEMPOTENCY_KEY_LENGTH} characters"
             )
         return normalized
-
-    @staticmethod
-    def _capabilities_for(spec: JobSpec, state: JobState) -> JobCapabilities:
-        return _capabilities_for_state(spec, state)
 
     @staticmethod
     def _process_runtime_snapshot() -> JobRuntimeSnapshot:
