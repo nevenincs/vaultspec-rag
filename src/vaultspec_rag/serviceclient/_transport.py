@@ -34,7 +34,6 @@ import errno
 import json
 import logging
 import math
-import os
 import socket
 import time
 import urllib.error
@@ -43,7 +42,7 @@ import urllib.request
 from typing import TYPE_CHECKING, Any, Final, Literal, NoReturn, cast
 
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
-from ..config import EnvVar, rag_default
+from ..config import get_config, rag_default
 
 if TYPE_CHECKING:
     from ._discovery import MachineResolution
@@ -224,15 +223,17 @@ def _is_timeout(exc: BaseException) -> bool:
 
 
 def _get_admin_timeout(timeout: float | None = None) -> float:
+    """Return the admin-call bound, resolved leniently from the settings.
+
+    An unusable configured bound - malformed, empty, non-finite or
+    non-positive - degrades to the shipped default rather than raising, so
+    an operator typo slows nothing down and breaks no lifecycle verb.
+    """
     resolved = timeout
     if timeout is None:
-        env_timeout = os.environ.get(EnvVar.SERVICE_ADMIN_TIMEOUT.value)
-        if env_timeout:
-            try:
-                resolved = float(env_timeout)
-            except ValueError:
-                return DEFAULT_ADMIN_TIMEOUT_SECONDS
-        else:
+        try:
+            resolved = float(get_config().service_admin_timeout_seconds)
+        except (TypeError, ValueError):
             return DEFAULT_ADMIN_TIMEOUT_SECONDS
     if resolved is None or not math.isfinite(resolved) or resolved <= 0:
         return DEFAULT_ADMIN_TIMEOUT_SECONDS
@@ -954,15 +955,17 @@ def _try_http_vault_document(
 
 
 def _get_search_timeout(timeout: float | None) -> float:
+    """Return the search-call bound, resolved leniently from the settings.
+
+    An unusable configured bound - malformed, empty, non-finite or
+    non-positive - degrades to the shipped default rather than raising, so
+    an operator typo never turns a search into a crash.
+    """
     resolved = timeout
     if timeout is None:
-        env_timeout = os.environ.get(EnvVar.SERVICE_SEARCH_TIMEOUT.value)
-        if env_timeout:
-            try:
-                resolved = float(env_timeout)
-            except ValueError:
-                return DEFAULT_SEARCH_TIMEOUT_SECONDS
-        else:
+        try:
+            resolved = float(get_config().service_search_timeout_seconds)
+        except (TypeError, ValueError):
             return DEFAULT_SEARCH_TIMEOUT_SECONDS
     if resolved is None or not math.isfinite(resolved) or resolved <= 0:
         return DEFAULT_SEARCH_TIMEOUT_SECONDS
