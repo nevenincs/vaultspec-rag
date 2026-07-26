@@ -17,6 +17,7 @@ behavioural test of the existing call sites can see.
 from __future__ import annotations
 
 import ast
+import sys
 from pathlib import Path
 from typing import ClassVar
 
@@ -374,6 +375,10 @@ class TestFdLockHasOneImplementation:
             "has one implementation"
         )
 
+    @pytest.mark.skipif(
+        sys.platform != "win32",
+        reason="offset is a Windows-only parameter; POSIX flock is whole-file",
+    )
     def test_the_offset_is_honoured_so_a_locked_payload_stays_readable(
         self, tmp_path: Path
     ) -> None:
@@ -382,6 +387,13 @@ class TestFdLockHasOneImplementation:
         # unreadable. If offset were ignored, that file would become
         # unreadable to the contender that needs the holder pid for its
         # refusal message - a regression no import check would see.
+        #
+        # Windows-only by construction, and the skip above is load-bearing
+        # rather than defensive: msvcrt locks a byte RANGE, so two ranges of
+        # one file are independently lockable. POSIX flock locks the whole
+        # file per open description, so the second acquisition below is
+        # refused there - which is the documented contract, not a defect. The
+        # POSIX half of that contract is asserted separately below.
         import os
 
         from .._fd_lock import lock_fd_exclusive, unlock_fd
@@ -395,6 +407,37 @@ class TestFdLockHasOneImplementation:
             # A different byte of the same file is still lockable.
             lock_fd_exclusive(other, offset=0)
             unlock_fd(other, offset=0)
+        finally:
+            unlock_fd(held, offset=1 << 20)
+            os.close(other)
+            os.close(held)
+
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="asserts the POSIX half of the contract",
+    )
+    def test_posix_locks_the_whole_file_regardless_of_offset(
+        self, tmp_path: Path
+    ) -> None:
+        """The offset is ignored on POSIX, and the helper says so.
+
+        Asserting this keeps the platform split honest in both directions: a
+        future change that made POSIX honour the offset would pass the Windows
+        test above while silently breaking every caller that relies on the
+        whole-file exclusion this side provides.
+        """
+        import os
+
+        from .._fd_lock import lock_fd_exclusive, unlock_fd
+
+        target = tmp_path / "payload.lock"
+        held = os.open(target, os.O_RDWR | os.O_CREAT, 0o600)
+        other = os.open(target, os.O_RDWR)
+        try:
+            os.ftruncate(held, 1 << 21)
+            lock_fd_exclusive(held, offset=1 << 20)
+            with pytest.raises(OSError):
+                lock_fd_exclusive(other, offset=0)
         finally:
             unlock_fd(held, offset=1 << 20)
             os.close(other)

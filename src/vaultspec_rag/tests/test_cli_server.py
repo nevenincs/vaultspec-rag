@@ -807,8 +807,20 @@ class TestLifecycleShutdownLog:
         creationflags = (
             subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
         )
+        # The stand-in has to satisfy the real identity fallback on BOTH
+        # platforms, and they ask different questions: Windows checks the
+        # image name is a Python interpreter, POSIX reads the cmdline for the
+        # package name. A bare `-c` script answers only the first, so this
+        # test passed on Windows and failed on Linux with an unconfirmed
+        # identity. Naming the package in the script satisfies the POSIX check
+        # the way a real daemon's cmdline does, rather than skipping the test
+        # on the platform where the fallback is stricter.
         child = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(120)"],
+            [
+                sys.executable,
+                "-c",
+                "# vaultspec_rag service stand-in\nimport time; time.sleep(120)",
+            ],
             creationflags=creationflags,
         )
         try:

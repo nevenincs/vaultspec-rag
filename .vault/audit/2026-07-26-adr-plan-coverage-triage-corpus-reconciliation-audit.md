@@ -56,8 +56,7 @@ workstation or its secrets." That split no longer exists. Every job in
 those five jobs has a trusted-event `if:` gate; only `gpu-tests` does (`:173`).
 
 Stated precisely, because the severity turns on it: the five migrated jobs run
-on a **Linux** runner, while the GPU job targets `[self-hosted, windows, gpu,
-cuda]`. They are therefore not demonstrably the same machine, and the ADR itself
+on a **Linux** runner, while the GPU job targets `[self-hosted, windows, gpu, cuda]`. They are therefore not demonstrably the same machine, and the ADR itself
 notes the workstation "already hosts an unrelated runner". Two facts that would
 settle the real exposure are not visible from the tree: what host backs the
 Linux label, and whether the repository's require-approval-for-outside-
