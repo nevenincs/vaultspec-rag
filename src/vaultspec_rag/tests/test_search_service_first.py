@@ -102,23 +102,29 @@ class TestLocalSearchMandate:
         reset_config()
         assert _local_search_mandated(allow_fallback=False) is False
 
-    def test_local_only_env_off_list_value_matches_canonical_parser(
+    def test_mandate_agrees_with_the_canonical_parser_on_every_spelling(
         self, isolated_status_dir: Path
     ) -> None:
-        """An off-allowlist value is NOT a mandate, matching the config parser.
+        """The mandate resolver never re-implements truthiness.
 
-        The canonical resolver treats only ``1``/``true``/``yes`` as truthy, so
-        a value like ``on`` resolves to server mode there. The mandate resolver
-        must agree (it delegates to the same parser) rather than re-implement a
-        divergent denylist.
+        It delegates to the canonical config resolver, so it must agree on both
+        halves of that parser's contract: ``on`` is a recognised truthy
+        spelling and grants a mandate, while an unrecognised token is refused
+        outright rather than silently read as false. A divergent denylist here
+        would grant or withhold a mandate the config never agreed to.
         """
         from ..config import get_config
 
         assert not (isolated_status_dir / "local-only.json").exists()
         os.environ[EnvVar.LOCAL_ONLY.value] = "on"
         reset_config()
-        assert get_config().local_only is False
-        assert _local_search_mandated(allow_fallback=False) is False
+        assert get_config().local_only is True
+        assert _local_search_mandated(allow_fallback=False) is True
+
+        os.environ[EnvVar.LOCAL_ONLY.value] = "onn"
+        reset_config()
+        with pytest.raises(ValueError, match=EnvVar.LOCAL_ONLY.value):
+            _local_search_mandated(allow_fallback=False)
 
 
 class TestLocalSearchDeadline:

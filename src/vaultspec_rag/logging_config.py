@@ -729,9 +729,10 @@ def configure_logging(
 ) -> None:
     """Configure the root logger via core's RichHandler setup.
 
-    Honors the RAG-specific ``VAULTSPEC_RAG_LOG_LEVEL`` env var with a
-    ``WARNING`` default when no explicit ``level``/``debug``/``quiet`` is
-    provided, then delegates to :func:`vaultspec_core.logging_config.configure_logging`.
+    Honors the configured ``log_level`` setting (``WARNING`` by default) when
+    no explicit ``level``/``debug``/``quiet`` is provided, then delegates to
+    :func:`vaultspec_core.logging_config.configure_logging`. An unrecognised
+    level name degrades to ``INFO`` rather than raising.
 
     Args:
         level: Explicit log level (e.g. ``logging.INFO`` or ``"DEBUG"``).
@@ -740,10 +741,10 @@ def configure_logging(
         quiet: When ``True``, forces level to ``WARNING``.
     """
     if level is None and not debug and not quiet:
-        from .config import EnvVar
+        from .config import get_config
 
-        env_level = os.environ.get(EnvVar.LOG_LEVEL, "WARNING").upper()
-        level = getattr(logging, env_level, logging.INFO)
+        configured = str(get_config().log_level).upper()
+        level = getattr(logging, configured, logging.INFO)
 
     _core_configure_logging(level=level, debug=debug, quiet=quiet)
 
