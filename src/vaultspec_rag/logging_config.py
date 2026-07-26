@@ -24,6 +24,7 @@ from vaultspec_core.logging_config import (  # pyright: ignore[reportMissingType
 )
 
 from ._managed_log_sink import RawRotatingLogSink
+from ._test_isolation import enforce_pytest_singleton_containment
 
 __all__ = [
     "DEFAULT_MANAGED_LOG_LINES",
@@ -756,17 +757,6 @@ def configure_logging(
     _core_configure_logging(level=level, debug=debug, quiet=quiet)
 
 
-def _enforce_daemon_log_containment(
-    path: str | os.PathLike[str],
-    *,
-    operation: str,
-) -> None:
-    """Fail before a daemon-log filesystem effect escapes pytest isolation."""
-    from ._test_isolation import enforce_pytest_singleton_containment
-
-    enforce_pytest_singleton_containment(path, operation=operation)
-
-
 def _canonical_daemon_log_path(path: str | os.PathLike[str]) -> Path:
     """Return one comparison spelling for a guarded daemon log path."""
     resolved = Path(path).expanduser().resolve(strict=False)
@@ -779,7 +769,7 @@ def _contained_daemon_log_path(
     operation: str,
 ) -> Path:
     """Validate a daemon-log path and return its canonical spelling."""
-    _enforce_daemon_log_containment(path, operation=operation)
+    enforce_pytest_singleton_containment(path, operation=operation)
     return _canonical_daemon_log_path(path)
 
 
