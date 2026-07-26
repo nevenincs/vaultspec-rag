@@ -25,7 +25,10 @@ from ._constants import (
     logger,
     tget,
 )
-from ._inspect import load_pyproject
+from ._inspect import (
+    _get_tool_subtable,  # pyright: ignore[reportPrivateUsage]  # intra-package helper
+    load_pyproject,
+)
 from ._mutate import write_doc_preserving_shape
 
 if TYPE_CHECKING:
@@ -108,31 +111,17 @@ def _iter_dep_lists(doc: TOMLDocument) -> list[tuple[str, list[object]]]:
     return found
 
 
-def _extract_pep_optional_deps(
-    project: TableLike, found: list[tuple[str, list[object]]]
+def _extract_named_dep_lists(
+    table: TableLike | TOMLDocument,
+    key: str,
+    label_template: str,
+    found: list[tuple[str, list[object]]],
 ) -> None:
-    optional = tget(project, "optional-dependencies")
-    if isinstance(optional, _TABLE_LIKE_TYPES):
-        for name, group in optional.items():  # pyright: ignore[reportUnknownVariableType]  # tomlkit items() yields Unknown pairs
-            if isinstance(group, list):
-                found.append(
-                    (
-                        f"[project.optional-dependencies].{name}",
-                        cast("list[object]", group),
-                    )
-                )
-
-
-def _extract_pep_groups(
-    doc: TOMLDocument, found: list[tuple[str, list[object]]]
-) -> None:
-    groups = tget(doc, "dependency-groups")
+    groups = tget(table, key)
     if isinstance(groups, _TABLE_LIKE_TYPES):
         for name, group in groups.items():  # pyright: ignore[reportUnknownVariableType]  # tomlkit items() yields Unknown pairs
             if isinstance(group, list):
-                found.append(
-                    (f"[dependency-groups].{name}", cast("list[object]", group))
-                )
+                found.append((label_template.format(name), cast("list[object]", group)))
 
 
 def _extract_pep_deps(doc: TOMLDocument, found: list[tuple[str, list[object]]]) -> None:
@@ -141,8 +130,13 @@ def _extract_pep_deps(doc: TOMLDocument, found: list[tuple[str, list[object]]]) 
         deps = tget(project, "dependencies")
         if isinstance(deps, list):
             found.append(("[project].dependencies", cast("list[object]", deps)))
-        _extract_pep_optional_deps(project, found)
-    _extract_pep_groups(doc, found)
+        _extract_named_dep_lists(
+            project,
+            "optional-dependencies",
+            "[project.optional-dependencies].{}",
+            found,
+        )
+    _extract_named_dep_lists(doc, "dependency-groups", "[dependency-groups].{}", found)
 
 
 def _extract_uv_deps(tool: TableLike, found: list[tuple[str, list[object]]]) -> None:
@@ -270,13 +264,7 @@ def has_direct_torch_dep(pyproject: Path) -> tuple[bool, str]:
 
 
 def _tool_vaultspec_rag(doc: TOMLDocument) -> TableLike | None:
-    tool = tget(doc, "tool")
-    if not isinstance(tool, _TABLE_LIKE_TYPES):
-        return None
-    rag = tget(tool, "vaultspec-rag")
-    if not isinstance(rag, _TABLE_LIKE_TYPES):
-        return None
-    return rag
+    return _get_tool_subtable(doc, "vaultspec-rag")
 
 
 # The canonical location string for the PEP 621 project-deps surface.
