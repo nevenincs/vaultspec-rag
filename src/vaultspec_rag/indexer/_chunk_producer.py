@@ -41,9 +41,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
     from multiprocessing.context import BaseContext
 
+    from .._store_models import CodeChunk
     from ..job_control import RunControl
     from ..progress import ProgressReporter
-    from ..store import CodeChunk
     from ._chunk_worker import FileChunkResult
     from ._preprocess_config import PreprocessContext, PreprocessRule
     from ._streaming import CodeFileSegment

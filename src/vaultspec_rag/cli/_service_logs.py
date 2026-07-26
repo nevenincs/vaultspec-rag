@@ -21,10 +21,10 @@ from ..logging_config import (
     render_managed_log_groups,
     validate_managed_log_payload,
 )
+from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
 from ._app import server_app
 from ._render import _emit_json, _emit_json_error_and_exit, _plain
-from ._service_status import _default_service_port
 
 _LOGS_COMMAND = "server.logs"
 

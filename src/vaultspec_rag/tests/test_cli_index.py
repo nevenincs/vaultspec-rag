@@ -999,6 +999,27 @@ def _index_refused_by_the_real_disk_preflight(
     return _index
 
 
+@pytest.fixture
+def project_refused_by_the_disk_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """A project whose in-process index run fails the real disk preflight.
+
+    One trigger site shared by both refusal tests rather than one apiece. The
+    setup is identical for the two, and this is the only place in this file
+    that stands anything in for production, so duplicating it would have
+    doubled that surface to say the same thing twice.
+    """
+    project = tmp_path / "project"
+    (project / ".vaultspec").mkdir(parents=True)
+    monkeypatch.setattr(
+        "vaultspec_rag.index",
+        _index_refused_by_the_real_disk_preflight(project),
+    )
+    return project
+
+
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 class TestDiskPreflightRefusal:
     """The in-process index path surfaces a disk-preflight refusal as one
@@ -1011,8 +1032,7 @@ class TestDiskPreflightRefusal:
 
     def test_json_mode_emits_disk_preflight_failed(
         self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        project_refused_by_the_disk_preflight: Path,
     ) -> None:
         """A refused preflight is one classified envelope, exit 1.
 
@@ -1029,13 +1049,7 @@ class TestDiskPreflightRefusal:
         restoring the branch passes.
         """
 
-        project = tmp_path / "project"
-        (project / ".vaultspec").mkdir(parents=True)
-        monkeypatch.setattr(
-            "vaultspec_rag.index",
-            _index_refused_by_the_real_disk_preflight(project),
-        )
-
+        project = project_refused_by_the_disk_preflight
         result = runner.invoke(
             app,
             ["--target", str(project), "index", "--type", "vault", "--json"],
@@ -1058,8 +1072,7 @@ class TestDiskPreflightRefusal:
 
     def test_human_mode_prints_the_refusal(
         self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        project_refused_by_the_disk_preflight: Path,
     ) -> None:
         """Human mode prints the store's own wording, exit 1.
 
@@ -1074,13 +1087,7 @@ class TestDiskPreflightRefusal:
         apart, so the classification is bound by the ``--json`` sibling and
         this test binds only the wording that reaches the operator.
         """
-        project = tmp_path / "project"
-        (project / ".vaultspec").mkdir(parents=True)
-        monkeypatch.setattr(
-            "vaultspec_rag.index",
-            _index_refused_by_the_real_disk_preflight(project),
-        )
-
+        project = project_refused_by_the_disk_preflight
         result = runner.invoke(
             app,
             ["--target", str(project), "index", "--type", "vault"],

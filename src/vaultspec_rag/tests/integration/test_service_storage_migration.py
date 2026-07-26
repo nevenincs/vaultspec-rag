@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ... import store_schema
+from ..._store_models import root_collection_prefix
 from ...cli._service_storage import _migrate_name_map
 from ...server._routes_storage import _shape_survey_payload
 from ...storage_manifest import record_root
@@ -16,7 +17,6 @@ from ...storage_ops import (
     migrate_collections,
     prune_orphaned,
 )
-from ...store import root_collection_prefix
 from ._helpers import provisioned_qdrant_binary, serve_qdrant
 
 if TYPE_CHECKING:

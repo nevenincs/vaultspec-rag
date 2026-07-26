@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..._store_models import root_collection_prefix
 from ...config import reset_config
 from ...qdrant_runtime._constants import QdrantProvisionAction
 from ...qdrant_runtime._provision import provision
@@ -26,7 +27,6 @@ from ...storage_ops import (
     migrate_collections,
     prune_orphaned,
 )
-from ...store import root_collection_prefix
 from .._ports import free_loopback_port
 
 if TYPE_CHECKING:
@@ -214,9 +214,10 @@ def test_ensure_table_records_manifest_and_survey_shows_live(
 
     from qdrant_client import QdrantClient
 
+    from ..._store_models import root_collection_prefix
     from ...config import EnvVar, reset_config
     from ...storage_manifest import load_manifest
-    from ...store import VaultStore, root_collection_prefix
+    from ...store import VaultStore
 
     root = tmp_path / "live-project"
     root.mkdir()

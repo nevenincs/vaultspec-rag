@@ -20,7 +20,7 @@ import typer
 import vaultspec_rag.cli as _cli
 
 from .._process_probe import iter_process_info, pid_is_zombie
-from ..serviceclient._discovery import _delete_service_status
+from ..serviceclient._discovery import _delete_service_status, _read_service_status
 from ..serviceclient._transport import _try_http_health
 from ._app import server_app
 from ._core import logger
@@ -34,7 +34,6 @@ from ._service_lifecycle import (
     _process_line,
     _should_unlink_discovery_file,
 )
-from ._service_status import _read_service_status
 
 __all__ = [
     "_fail_still_running",

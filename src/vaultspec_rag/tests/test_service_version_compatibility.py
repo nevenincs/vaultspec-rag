@@ -84,7 +84,8 @@ def health_service() -> Iterator[Any]:
 
 def _publish_health(state: Any, **fields: object) -> None:
     """Set the served ``/health`` body and record the matching discovery file."""
-    from ..cli._service_status import _status_file, _write_service_status
+    from ..cli._service_status import _write_service_status
+    from ..serviceclient._discovery import _status_file
 
     payload: dict[str, object] = {
         "status": "ready",
@@ -184,7 +185,8 @@ def test_readiness_report_publishes_this_installs_release() -> None:
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_the_cli_parent_stamps_the_release_into_the_discovery_file() -> None:
     """The spawn-time write records the release that launched the daemon."""
-    from ..cli._service_status import _read_service_status, _write_service_status
+    from ..cli._service_status import _write_service_status
+    from ..serviceclient._discovery import _read_service_status
 
     _write_service_status(os.getpid(), 1)
     status = _read_service_status()
@@ -313,7 +315,7 @@ def test_mcp_tools_refuse_a_foreign_release_with_the_same_code(
     from ..mcp._tools import search_vault
 
     _publish_health(health_service, **{SERVICE_VERSION_FIELD: _FOREIGN_RELEASE})
-    from ..cli._service_status import _status_file
+    from ..serviceclient._discovery import _status_file
 
     status_path = _status_file()
     document = json.loads(status_path.read_text(encoding="utf-8"))
@@ -370,10 +372,10 @@ def test_an_unreadable_status_file_degrades_rather_than_reads_absent() -> None:
     Reporting absence would invite a caller to start a second daemon that must
     then lose the machine race, so the verdict is degraded with the reason.
     """
-    from ..cli._service_status import _status_file
     from ..serviceclient._discovery import (
         DISCOVERY_REASON_POINTER_INCOMPATIBLE,
         DISCOVERY_STATE_DEGRADED,
+        _status_file,
         resolve_machine_service,
     )
 
@@ -440,7 +442,8 @@ def test_doctor_ignores_the_release_when_no_daemon_was_observed() -> None:
 
 def _record_foreign_daemon(port: int) -> None:
     """Publish a discovery file naming a live daemon of another release."""
-    from ..cli._service_status import _status_file, _write_service_status
+    from ..cli._service_status import _write_service_status
+    from ..serviceclient._discovery import _status_file
 
     _write_service_status(os.getpid(), port)
     status_path = _status_file()

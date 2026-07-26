@@ -1,9 +1,9 @@
 """Document-preprocessing glue for the codebase indexer (#185).
 
-Pure functions that resolve ``.vaultragpreprocess.toml`` into compiled rules,
-build the per-run preprocess context, and score worker results into the
-run's ok/skip tallies. Split out of ``_codebase_indexer`` so the preprocess
-plumbing lives apart from the GPU chunk/embed pipeline; the
+Pure functions that build the per-run preprocess context from an already
+resolved config or policy snapshot, clear the output cache, and score worker
+results into the run's ok/skip tallies. Split out of ``_codebase_indexer`` so
+the preprocess plumbing lives apart from the GPU chunk/embed pipeline; the
 ``CodebaseIndexer`` methods delegate here and own the per-run state.
 """
 
@@ -15,7 +15,6 @@ from ._preprocess_cache import clear_preprocess_cache, preprocess_cache_dir
 from ._preprocess_config import (
     PreprocessConfig,
     PreprocessContext,
-    load_preprocess_rules,
 )
 
 if TYPE_CHECKING:
@@ -24,19 +23,6 @@ if TYPE_CHECKING:
     from . import _chunk_worker
     from ._chunk_worker import FileChunkResult
     from ._resolved_policy import ResolvedIndexPolicy
-
-
-def build_preprocess_rules(root_dir: pathlib.Path) -> PreprocessConfig:
-    """Resolve ``.vaultragpreprocess.toml`` into compiled preprocess rules.
-
-    Root-only resolution, mirroring ``build_vaultragignore_spec``: read
-    fresh from the project root on each call so an edited config is picked
-    up on the next scan. Degrades to an empty config on any defect.
-
-    Returns:
-        The resolved :class:`PreprocessConfig` (empty when no rules apply).
-    """
-    return load_preprocess_rules(root_dir)
 
 
 def clear_preprocess_cache_for(data_root: pathlib.Path) -> None:

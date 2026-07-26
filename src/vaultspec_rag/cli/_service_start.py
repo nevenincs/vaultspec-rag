@@ -29,6 +29,7 @@ from ..serviceclient._compat import (
 from ..serviceclient._discovery import (
     SERVICE_PHASE_WARMING,
     _delete_service_status,
+    _read_service_status,
 )
 from ..serviceclient._transport import _try_http_health
 from ._app import _global_target, server_app
@@ -58,7 +59,6 @@ from ._service_lifecycle import (
 )
 from ._service_status import (
     _log_file,
-    _read_service_status,
     _service_phase,
     _update_service_metadata,
     _update_service_token,

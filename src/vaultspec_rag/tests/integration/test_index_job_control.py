@@ -53,9 +53,9 @@ if TYPE_CHECKING:
 
     from _pytest.tmpdir import TempPathFactory
 
+    from ..._store_models import VaultDocument
     from ...job_manager import JobManager
     from ...service import ProjectSlot, ServiceRegistry
-    from ...store import VaultDocument
 
 pytestmark = pytest.mark.integration
 

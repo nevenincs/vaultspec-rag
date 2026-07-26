@@ -81,9 +81,10 @@ def test_a_document_run_refreshes_the_persisted_activity_clock(
     it opened.
     """
     del isolated_status_dir
+    from ..._store_models import root_collection_prefix
     from ...indexer import DocumentIndexer
     from ...storage_manifest import load_manifest, record_root
-    from ...store import VaultStore, root_collection_prefix
+    from ...store import VaultStore
 
     (tmp_path / "reference.txt").write_text(
         "Server-mode document material for the activity clock.", encoding="utf-8"

@@ -220,9 +220,9 @@ def _survey_from_service(
     With ``root``, the route narrows to that root's namespace and its
     ``queried_root`` (the service-computed prefix) is returned alongside.
     """
+    from ..serviceclient._discovery import _default_service_port
     from ..serviceclient._transport import _try_http_admin
     from ..storage_survey import NamespaceSurvey
-    from ._service_status import _default_service_port
 
     args: dict[str, object] = {"root": root} if root else {}
     if fresh:
@@ -345,7 +345,7 @@ def storage_survey(
             if root is not None:
                 import pathlib
 
-                from ..store import root_collection_prefix
+                from .._store_models import root_collection_prefix
 
                 prefix = root_collection_prefix(root)
                 queried_root = {
@@ -459,7 +459,7 @@ def storage_delete(
     if root is not None:
         import pathlib
 
-        from ..store import root_collection_prefix
+        from .._store_models import root_collection_prefix
 
         resolved = str(pathlib.Path(root).resolve())
         prefix = root_collection_prefix(resolved)
@@ -754,8 +754,7 @@ def _migrate_name_map(root: str, *, to_server: bool) -> dict[str, str]:
     carrying the source's generation history across.
     """
     from .. import store_schema
-    from .._store_models import resolve_served_code_collection
-    from ..store import root_collection_prefix
+    from .._store_models import resolve_served_code_collection, root_collection_prefix
 
     prefix = root_collection_prefix(root)
     bases = store_schema.collection_names()
@@ -920,8 +919,8 @@ def _rekey_manifest_on_migrate(
     """
     if preview or not any(r.status == "migrated" for r in results):
         return
+    from .._store_models import root_collection_prefix
     from ..storage_manifest import rekey_prefix
-    from ..store import root_collection_prefix
 
     try:
         prefix = root_collection_prefix(root)

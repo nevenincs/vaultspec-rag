@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import cast
 
 from . import store_schema
-from .store import root_collection_prefix
+from ._store_models import root_collection_prefix
 
 __all__ = [
     "ManifestEntry",

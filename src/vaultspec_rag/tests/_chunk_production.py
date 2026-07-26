@@ -28,9 +28,9 @@ if TYPE_CHECKING:
     import pathlib
 
     from .. import CodebaseIndexer
+    from .._store_models import CodeChunk
     from ..indexer._chunk_worker import FileChunkResult
     from ..progress import ProgressReporter
-    from ..store import CodeChunk
 
 
 def produce_file_results(

@@ -48,7 +48,7 @@ from ._import_probe import assert_fresh_import_excludes, import_probe_source
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ..store import CodeChunk
+    from .._store_models import CodeChunk
 
 pytestmark = [pytest.mark.unit]
 

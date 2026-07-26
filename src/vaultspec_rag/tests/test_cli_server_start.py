@@ -183,7 +183,8 @@ class TestStartReorderAndGuards:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            from ..cli._service_status import _status_file, _write_service_status
+            from ..cli._service_status import _write_service_status
+            from ..serviceclient._discovery import _status_file
 
             _write_service_status(os.getpid(), port)
             sf = _status_file()
@@ -218,7 +219,8 @@ class TestStartReorderAndGuards:
         # ``already_starting`` and the warming phase, never ``machine_owned``
         # exit 1 and never a plain ``already_running`` (#237). The recorded
         # pid is this live python process; port 1 is silent.
-        from ..cli._service_status import _status_file, _write_service_status
+        from ..cli._service_status import _write_service_status
+        from ..serviceclient._discovery import _status_file
 
         _write_service_status(os.getpid(), 1)
         sf = _status_file()

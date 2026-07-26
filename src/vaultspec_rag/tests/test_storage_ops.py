@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from .._store_models import root_collection_prefix
 from ..job_models import JobOutcomeStatus
 from ..storage_identity import load_identity, record_identity
 from ..storage_manifest import (
@@ -38,7 +39,6 @@ from ..storage_ops import (
     sweep_archive,
 )
 from ..storage_survey import NamespaceSurvey, is_temp_rooted
-from ..store import root_collection_prefix
 from ..store_schema import (
     SERVER_SEGMENT_NUMBER,
     STORAGE_SCHEMA_VERSION,
@@ -1494,9 +1494,9 @@ class TestActiveIndexPrefixes:
         self, tmp_path: Path
     ) -> None:
         from .. import jobs
+        from .._store_models import root_collection_prefix
         from ..job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
         from ..storage_ops import _active_index_prefixes
-        from ..store import root_collection_prefix
 
         jobs.reset()
         try:

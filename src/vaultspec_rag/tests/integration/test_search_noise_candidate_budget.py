@@ -6,9 +6,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..._store_models import CodeChunk
 from ...search._noise import NoisePolicy
 from ...search._searcher import VaultSearcher
-from ...store import CodeChunk, VaultStore
+from ...store import VaultStore
 
 if TYPE_CHECKING:
     from collections.abc import Generator

@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import pytest
 
-from ..store import (
+from .._store_models import (
     CodeChunk,
-    VaultChunk,
     VaultDocument,
+)
+from ..store import (
+    VaultChunk,
     _code_chunk_payload,
     _vault_chunk_payload,
     _vault_doc_payload,

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from .._store_models import root_collection_prefix
 from ..storage_manifest import (
     SnapshotCollection,
     StorageSnapshotManifest,
@@ -26,7 +27,6 @@ from ..storage_manifest import (
     reverse_map,
     write_snapshot_manifest,
 )
-from ..store import root_collection_prefix
 from ..store_schema import STORAGE_SCHEMA_VERSION, CollectionIdentity
 
 if TYPE_CHECKING:

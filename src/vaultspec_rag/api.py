@@ -13,19 +13,8 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from ._public_index import DocumentScanResult, scan_documents
-from ._public_search import (
-    CodeCombinedSearchFilters,
-    DocumentCombinedSearchFilters,
-    VaultCombinedSearchFilters,
-    search_combined,
-    search_combined_timed,
-    search_documents,
-    search_documents_timed,
-)
 from ._source_types import PublicSourceType, parse_source_type
 from ._units import bytes_to_mib
-from .graph_cache import GraphCache
 from .progress import NullProgressReporter
 from .registry import get_registry
 
@@ -46,12 +35,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "AllIndexOutcomes",
-    "CodeCombinedSearchFilters",
-    "DocumentCombinedSearchFilters",
-    "DocumentScanResult",
     "DomainIndexOutcome",
-    "GraphCache",
-    "VaultCombinedSearchFilters",
     "clean",
     "get_readiness",
     "get_related",
@@ -66,13 +50,8 @@ __all__ = [
     "run_quality_probe",
     "scan_codebase",
     "scan_codebase_files",
-    "scan_documents",
     "search_codebase",
     "search_codebase_timed",
-    "search_combined",
-    "search_combined_timed",
-    "search_documents",
-    "search_documents_timed",
     "search_vault",
     "search_vault_timed",
 ]
@@ -1101,10 +1080,10 @@ def get_service_state(
     """
     from datetime import datetime
 
+    from ._store_locks import VaultStoreLockedError
     from .config import get_config
     from .registry import get_registry
     from .service import RegistryFullError
-    from .store import VaultStoreLockedError
 
     root = _resolve(root_dir)
 

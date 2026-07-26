@@ -20,8 +20,9 @@ from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs
     parse_vault_metadata,
 )
 
+from .._store_models import VaultDocument
 from ..job_control import NO_RUN_CONTROL
-from ..store import VaultChunk, VaultDocument
+from ..store import VaultChunk
 from ._chunking import TextSplitter
 
 if TYPE_CHECKING:

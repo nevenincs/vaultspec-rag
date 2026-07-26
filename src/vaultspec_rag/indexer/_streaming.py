@@ -21,13 +21,20 @@ if TYPE_CHECKING:
     import threading
     from collections.abc import Callable, Iterable, Iterator, Sequence
 
-    from .._store_models import DocumentChunk
+    from .._store_models import (
+        CodeChunk,
+        DocumentChunk,
+        VaultDocument,
+    )
     from .._store_writes import StoreWritePolicy
     from ..embeddings import EmbeddingModel
     from ..job_control import RunControl
     from ..memory_probe import MemoryProbe
     from ..progress import ProgressReporter
-    from ..store import CodeChunk, VaultChunk, VaultDocument, VaultStore
+    from ..store import (
+        VaultChunk,
+        VaultStore,
+    )
     from ._reuse import DonorReuseContext
 
 logger = logging.getLogger(__name__)

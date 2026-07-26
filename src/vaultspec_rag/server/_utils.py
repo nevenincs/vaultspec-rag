@@ -35,8 +35,8 @@ from ._state import (
 )
 
 if TYPE_CHECKING:
+    from .._store_locks import VaultStoreLockedError
     from ..service import RegistryFullError
-    from ..store import VaultStoreLockedError
 
 logger = logging.getLogger("vaultspec_rag.server")
 

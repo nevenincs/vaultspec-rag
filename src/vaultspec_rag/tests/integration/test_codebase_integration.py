@@ -14,9 +14,10 @@ if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
 
+    from ..._store_models import CodeChunk
     from ...embeddings import EmbeddingModel
     from ...indexer import CodebaseIndexer
-    from ...store import CodeChunk, VaultStore
+    from ...store import VaultStore
     from ..conftest import RagComponentsWithManifest
 
 pytestmark = [pytest.mark.integration]
@@ -95,8 +96,8 @@ def code_project(
 
 def _stored_partial_chunk(path: str, chunk_id: str) -> CodeChunk:
     """Return one real-store-valid remnant of an interrupted publication."""
+    from ..._store_models import CodeChunk
     from ...config import get_config
-    from ...store import CodeChunk
 
     return CodeChunk(
         id=chunk_id,
