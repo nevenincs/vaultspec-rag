@@ -26,6 +26,10 @@ from ..serviceclient._compat import (
     ServiceVersionVerdict,
     classify_service_version,
 )
+from ..serviceclient._discovery import (
+    SERVICE_PHASE_WARMING,
+    _delete_service_status,
+)
 from ..serviceclient._transport import _try_http_health
 from ._app import _global_target, server_app
 from ._core import logger
@@ -53,8 +57,6 @@ from ._service_lifecycle import (
     _should_unlink_discovery_file,
 )
 from ._service_status import (
-    SERVICE_PHASE_WARMING,
-    _delete_service_status,
     _log_file,
     _read_service_status,
     _service_phase,

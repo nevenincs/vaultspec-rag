@@ -17,18 +17,16 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ..._machine_lock import (
+    acquire_machine_lock,
     acquire_machine_lock_lease,
     delete_machine_discovery,
     machine_discovery_path,
+    machine_lock_live_holder,
     publish_machine_discovery,
+    release_machine_lock,
     release_machine_lock_lease,
 )
-from ...cli._process import (
-    _port_is_listening,
-    acquire_machine_lock,
-    machine_lock_live_holder,
-    release_machine_lock,
-)
+from ...cli._process import _port_is_listening
 from ...config import EnvVar
 from ._helpers import _get_ephemeral_port, _get_ephemeral_qdrant_port
 from ._machine_lock_holder import spawn_foreign_machine_lock_holder

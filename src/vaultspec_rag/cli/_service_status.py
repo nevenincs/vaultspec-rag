@@ -21,10 +21,7 @@ from ..serviceclient._compat import SERVICE_VERSION_FIELD, local_package_version
 from ..serviceclient._discovery import (
     SERVICE_DISCOVERY_SCHEMA,
     SERVICE_DISCOVERY_VERSION,
-    SERVICE_PHASE_RUNNING,
-    SERVICE_PHASE_WARMING,
     _default_service_port,
-    _delete_service_status,
     _discovery_timestamp,
     _merge_service_status,
     _read_service_status,
@@ -37,11 +34,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 __all__ = [
-    "SERVICE_PHASE_RUNNING",
-    "SERVICE_PHASE_WARMING",
     "_append_lifecycle_shutdown_log",
     "_default_service_port",
-    "_delete_service_status",
     "_log_file",
     "_read_service_status",
     "_service_phase",
