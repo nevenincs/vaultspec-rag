@@ -84,10 +84,29 @@ either. The run was abandoned rather than reported, and it was killed partly
 because the contention was mutual: the daemon's own 61-chunk job made no
 progress for fifteen minutes while the two processes fought over the device.
 
-The window could not be held. Automatic updates were restarted externally three
-times - 00:20:31, 00:38:37 and 00:57:02 - each within ten to twenty minutes of
-being stopped, on a machine with other active sessions. That is the real
-blocker for this Step and it is a scheduling problem, not a technical one.
+The window could not be held, and the reason is mechanical rather than social.
+Automatic updates came back three times - 00:20:31, 00:38:37 and 00:57:02 -
+each within ten to twenty minutes of being stopped. This was first written up
+as other sessions deliberately reclaiming the machine. That reading was wrong
+and is corrected here, because it would send the next run off to negotiate with
+people over a problem no negotiation can fix.
+
+Stopping automatic updates for a root does not keep its watcher stopped. The
+search and reindex routes warm a project slot and re-register its watcher as a
+side effect, so any search issued against that root by anyone re-arms it within
+seconds. On a machine where other sessions are searching, a quiesce is undone by
+ordinary read traffic.
+
+Idle eviction pulls in the same direction from the other side. A project slot
+untouched for the idle TTL is evicted, and eviction stops that project's
+watcher, so a watched root can also go quiet with nobody having asked. The
+service log records these as an eviction with reason `idle` beside the watcher
+stop, which is how the two causes are told apart after the fact.
+
+The consequence for this Step: stopping watchers is not a sufficient quiesce.
+An exclusive window on a shared machine means stopping the service itself for
+the duration, and any slowdown must be checked against the active job list
+before it is attributed to a cadence change.
 
 ## Notes
 
@@ -178,3 +197,12 @@ it:
   halves the capacity-derived CUDA ceiling and already failed one code rebuild
   outright at that ceiling. Either stop the service for the window or route the
   runs through it.
+- The quiesce precondition listed above is necessary but NOT sufficient, and
+  following it alone will produce another contaminated run. Stopping automatic
+  updates per root does not keep those watchers stopped: a search or reindex
+  against a root re-registers its watcher as a side effect of warming the
+  project slot, so any other session's read traffic re-arms it. Treat "stop
+  updates for every watched root" as step one, then confirm the job list is
+  actually empty immediately before each arm and again after it, and discard any
+  arm that overlapped an admitted job. Where the measurement genuinely needs the
+  device to itself, stop the service for the window instead.
