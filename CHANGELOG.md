@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.11](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.10...vaultspec-rag-v0.3.11) (2026-07-26)
+
+
+### Bug Fixes
+
+* **cli:** drop the sys re-export kept only for a test rebind ([57232be](https://github.com/nevenincs/vaultspec-rag/commit/57232be1b9cca726b99e41f57075976ac2313526))
+* **client:** say so when a request bound falls back to its default ([d5dee89](https://github.com/nevenincs/vaultspec-rag/commit/d5dee896f32cc77be1ea9b765eac83ed7858c707))
+* **cli:** fail a stop that could not stop the service ([14a4369](https://github.com/nevenincs/vaultspec-rag/commit/14a43691ddf702aa3749bf70a925d72979013c15))
+* **config:** reject a bad setting at startup instead of ignoring or crashing ([9f97f85](https://github.com/nevenincs/vaultspec-rag/commit/9f97f85d386576084810d2559eb84985e5b25b0c))
+* **index:** report no progress on the JSON path ([269ce2a](https://github.com/nevenincs/vaultspec-rag/commit/269ce2a28c77ee143c05cc7af5af313311b0bdf1))
+* **logging:** a mistyped level must not make the service noisier ([4d2ec35](https://github.com/nevenincs/vaultspec-rag/commit/4d2ec35ee7d940dde5036df29084f1df397ab980))
+* **service:** clear the degraded verdict once a later run succeeds ([63cfc84](https://github.com/nevenincs/vaultspec-rag/commit/63cfc84c4a6c133f28149490adec03ffc7f912cd))
+* **service:** read a live higher-privilege daemon as alive, not dead ([045497d](https://github.com/nevenincs/vaultspec-rag/commit/045497dbbe15a60c9bac11b87b7e5c1bc7aead47))
+* **service:** report the real watcher state from updates start ([0c97a80](https://github.com/nevenincs/vaultspec-rag/commit/0c97a80f076023ef08831b8eba0d12896bf9904e))
+* **watcher:** stop reporting a running job as a failed one ([1cec6dd](https://github.com/nevenincs/vaultspec-rag/commit/1cec6dd44ca5d836baecfdcbadc858f99559fc58))
+
 ## [0.3.10](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.9...vaultspec-rag-v0.3.10) (2026-07-26)
 
 
