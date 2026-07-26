@@ -31,13 +31,23 @@ logger = logging.getLogger(__name__)
 #: as one during set arithmetic over the sidecar's file entries.
 PUBLISHED_POINTS_KEY = "__code_published_points__"
 
+#: Reserved sidecar key carrying the number of distinct files the collection
+#: held points for when the publication was written. Recorded beside the point
+#: count because the two fail independently: a collection can hold a plausible
+#: number of points spread across a fraction of the files the same sidecar
+#: names, and no comparison of point counts can see that.
+PUBLISHED_FILES_KEY = "__code_published_files__"
+
 __all__ = [
+    "PUBLISHED_FILES_KEY",
     "PUBLISHED_POINTS_KEY",
     "BreadthShortfall",
+    "FileBreadthShortfall",
     "code_breadth_shortfall",
+    "code_file_breadth_shortfall",
     "code_meta_path",
-    "parse_published_points",
-    "read_published_points",
+    "parse_reserved_count",
+    "read_reserved_count",
 ]
 
 
@@ -72,8 +82,33 @@ class BreadthShortfall(NamedTuple):
         }
 
 
-def parse_published_points(raw: Mapping[str, object]) -> int | None:
-    """Return the point count a sidecar mapping claims, or ``None`` for no claim.
+class FileBreadthShortfall(NamedTuple):
+    """A code publication covering fewer files than the same sidecar names.
+
+    Distinct from :class:`BreadthShortfall`, which compares point counts across
+    time. This compares two figures written by one publication, so it holds
+    whether or not the collection has lost anything since.
+    """
+
+    named: int
+    covered: int
+
+    @property
+    def missing(self) -> int:
+        """Files the sidecar names that the publication did not cover."""
+        return self.named - self.covered
+
+    def as_index_state_block(self) -> dict[str, int]:
+        """Return the canonical ``index_state["file_shortfall"]`` block."""
+        return {
+            "named_count": self.named,
+            "covered_count": self.covered,
+            "missing_count": self.missing,
+        }
+
+
+def parse_reserved_count(raw: Mapping[str, object], key: str) -> int | None:
+    """Return the count *key* claims in a sidecar mapping, or ``None`` for none.
 
     ``None`` means the sidecar predates the key or carries an unusable value.
     That is a "cannot tell" and must never be read as a shortfall: treating
@@ -83,16 +118,16 @@ def parse_published_points(raw: Mapping[str, object]) -> int | None:
     writer stamps a string, but a sidecar this build did not write can carry
     anything, and that is exactly the case the unusable-value branch exists for.
     """
-    value = raw.get(PUBLISHED_POINTS_KEY)
+    value = raw.get(key)
     if value is None:
         return None
     if not isinstance(value, (str, int)):
-        logger.debug("unusable published point count %r in code sidecar", value)
+        logger.debug("unusable %s %r in code sidecar", key, value)
         return None
     try:
         count = int(value)
     except ValueError:
-        logger.debug("unusable published point count %r in code sidecar", value)
+        logger.debug("unusable %s %r in code sidecar", key, value)
         return None
     return count if count >= 0 else None
 
@@ -105,12 +140,12 @@ def code_meta_path(root: pathlib.Path) -> pathlib.Path:
     return root / cfg.data_dir / cfg.code_index_metadata_file
 
 
-def read_published_points(root: pathlib.Path) -> int | None:
-    """Return the point count *root*'s published code index claims.
+def _read_meta(root: pathlib.Path) -> dict[str, object] | None:
+    """Return *root*'s parsed code sidecar, or ``None`` when it cannot be read.
 
-    ``None`` when the sidecar is absent, unreadable, or silent on breadth. Every
-    such case is a "cannot tell" rather than a claim of zero, so a caller cannot
-    mistake an unreadable sidecar for a destroyed index.
+    One reader, so a caller needing both a reserved count and the file entries
+    pays a single parse and cannot observe the two halves from different reads
+    of a file another process is replacing.
     """
     path = code_meta_path(root)
     try:
@@ -120,7 +155,18 @@ def read_published_points(root: pathlib.Path) -> int | None:
         return None
     if not isinstance(raw, dict):
         return None
-    return parse_published_points(cast("dict[str, object]", raw))
+    return cast("dict[str, object]", raw)
+
+
+def read_reserved_count(root: pathlib.Path, key: str) -> int | None:
+    """Return the count *key* claims in *root*'s published code sidecar.
+
+    ``None`` when the sidecar is absent, unreadable, or silent on that key.
+    Every such case is a "cannot tell" rather than a claim of zero, so a caller
+    cannot mistake an unreadable sidecar for a destroyed index.
+    """
+    raw = _read_meta(root)
+    return None if raw is None else parse_reserved_count(raw, key)
 
 
 def code_breadth_shortfall(
@@ -139,7 +185,39 @@ def code_breadth_shortfall(
     search path that has already counted the collection pays no second round
     trip - which is the only reason this check is affordable on every query.
     """
-    published = read_published_points(root)
+    published = read_reserved_count(root, PUBLISHED_POINTS_KEY)
     if published is None or live_count >= published:
         return None
     return BreadthShortfall(published=published, live=live_count)
+
+
+def code_file_breadth_shortfall(
+    root: pathlib.Path,
+) -> FileBreadthShortfall | None:
+    """Return the file-breadth shortfall *root*'s sidecar admits to, or ``None``.
+
+    Compares two figures the sidecar already carries: how many files it names as
+    indexed, and how many distinct files the collection actually held points for
+    when that publication was written. Both come from one read, so this costs a
+    single file parse and no query - which is why it is affordable on a search
+    path where counting distinct paths in the collection would not be.
+
+    This is the comparison a point count cannot express. A publication that
+    covers a fraction of the files it names still writes a self-consistent point
+    count, because the count it stamps is the fragment's own. Only the file
+    figures disagree.
+
+    ``None`` covers "complete" and "cannot tell" alike: a sidecar written before
+    this key existed has nothing to compare against and must not be reported as
+    incomplete for that reason.
+    """
+    raw = _read_meta(root)
+    if raw is None:
+        return None
+    covered = parse_reserved_count(raw, PUBLISHED_FILES_KEY)
+    if covered is None:
+        return None
+    named = sum(1 for key in raw if not key.startswith("__"))
+    if covered >= named:
+        return None
+    return FileBreadthShortfall(named=named, covered=covered)
