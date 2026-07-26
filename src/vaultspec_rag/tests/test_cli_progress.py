@@ -343,4 +343,3 @@ class TestSharedConsoleWiring:
         """Both modes are reachable through the one construction site."""
         assert _build_console(interactive=True, file=io.StringIO()).is_interactive
         assert not _build_console(interactive=False, file=io.StringIO()).is_interactive
-
