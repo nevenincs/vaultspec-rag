@@ -35,6 +35,7 @@ from ._service_lifecycle import (
 from ._service_status import _delete_service_status, _read_service_status
 
 __all__ = [
+    "_fail_still_running",
     "_fail_stop",
     "_initiator_fields",
     "_reclaim_machine_singleton",
@@ -43,6 +44,7 @@ __all__ = [
     "_stop_success",
     "_terminate_and_confirm",
     "service_stop",
+    "still_running_remediation_for",
 ]
 
 _STOP_COMMAND = "service.stop"
@@ -56,7 +58,7 @@ _STOP_GRACEFUL_DRAIN_SECONDS = 20.0
 _STOP_TERMINATION_BUDGET_SECONDS = 45.0
 
 
-def _reclaim_machine_singleton() -> int | None:
+def _reclaim_machine_singleton() -> tuple[int, _cli.TerminationResult] | None:
     """Reclaim a resident machine-lock holder that has no discoverable status file.
 
     The machine singleton lock is vaultspec-rag-exclusive and machine-scoped, so
@@ -68,9 +70,13 @@ def _reclaim_machine_singleton() -> int | None:
     confirmed holder
     makes ``server stop`` the real recovery the start refusal points to.
 
-    Returns the reclaimed holder pid, or ``None`` when no reclaimable
-    vaultspec-rag holder is found. The ``_is_our_service`` executable check
-    guards against terminating an unrelated process after pid reuse.
+    Returns the reclaimed holder pid PAIRED WITH the termination outcome, or
+    ``None`` when no reclaimable vaultspec-rag holder is found. The outcome
+    travels with the pid because a reclaim that could not kill the holder has
+    not freed the machine, and reporting it as reclaimed would send the
+    operator into the same start-fails-on-a-held-port dead end the status-file
+    path used to produce. The ``_is_our_service`` executable check guards
+    against terminating an unrelated process after pid reuse.
     """
     from .._machine_lock import machine_lock_live_holder
 
@@ -81,8 +87,7 @@ def _reclaim_machine_singleton() -> int | None:
         and _cli._is_pid_alive(holder)
         and _cli._is_our_service(holder)
     ):
-        _terminate_and_confirm(holder)
-        return holder
+        return holder, _terminate_and_confirm(holder)
     return None
 
 
@@ -203,7 +208,9 @@ def _clean_orphaned_machine_pointer() -> bool:
     return True
 
 
-def _terminate_and_confirm(pid: int, *, console_group_signal: bool = True) -> None:
+def _terminate_and_confirm(
+    pid: int, *, console_group_signal: bool = True
+) -> _cli.TerminationResult:
     """Terminate *pid*, confirm its exit, then clear its discovery records.
 
     ``console_group_signal`` MUST be False for a DISCOVERED pid the caller did
@@ -211,9 +218,16 @@ def _terminate_and_confirm(pid: int, *, console_group_signal: bool = True) -> No
     arbitrary pid that is not a known group leader is undefined and can be
     delivered to the CALLER's own console group, so a discovered target is
     force-killed by pid via ``TerminateProcess`` instead.
+
+    Returns the confirmed outcome. The name promised confirmation long before
+    the code delivered it: the survivor case fell through to the same success
+    the killed case took, so a daemon this process had no permission to signal
+    was reported stopped while it kept the port, and the next ``server start``
+    failed on that port. Callers MUST raise ``_fail_still_running`` when the
+    returned result is still alive.
     """
     _refuse_terminate_from_unisolated_test()
-    _cli._terminate_pid(
+    result = _cli._terminate_pid(
         pid,
         timeout=_STOP_TERMINATION_BUDGET_SECONDS,
         graceful_drain=_stop_graceful_drain_seconds(),
@@ -226,11 +240,17 @@ def _terminate_and_confirm(pid: int, *, console_group_signal: bool = True) -> No
             break
         time.sleep(0.1)
 
+    if _cli._is_pid_alive(pid):
+        # Nothing below applies to a survivor. Its discovery records still
+        # describe a live daemon, so removing them would strand it, and a
+        # shutdown attribution line for a termination that never happened is a
+        # false audit trail.
+        return _cli.TerminationResult(alive=True, signal_denied=result.signal_denied)
+
     # A forced kill leaves the daemon's own pointer behind. Now that its holder
     # is gone the singleton is free, so reclaim it and remove the record rather
     # than leaving a pointer that advertises a dead process.
-    if not _cli._is_pid_alive(pid):
-        _clean_orphaned_machine_pointer()
+    _clean_orphaned_machine_pointer()
 
     # On Windows this is always a force-kill: the daemon is spawned detached
     # from any shell, so this separate stop process shares no console with it
@@ -247,6 +267,77 @@ def _terminate_and_confirm(pid: int, *, console_group_signal: bool = True) -> No
         pid=pid,
         platform=sys.platform,
         **_initiator_fields(),
+    )
+    return _cli.TerminationResult(alive=False, signal_denied=False)
+
+
+def _still_running_remediation() -> tuple[str, ...]:
+    """Name the privilege change that makes a refused termination possible."""
+    return still_running_remediation_for(sys.platform)
+
+
+def still_running_remediation_for(platform: str) -> tuple[str, ...]:
+    """Return the refused-termination next actions on *platform*.
+
+    A refused kill is not a transient the operator can wait out or retry into
+    success, so the next actions have to point at the only thing that changes
+    the outcome: running the stop with a token that may signal the daemon.
+
+    The platform is an argument for the same reason it is one on
+    ``graceful_drain_seconds_for``: the rule is about the platform, not about
+    the host running the code, so both branches stay statable - and testable -
+    on either kind of machine, while a host can only ever exercise one.
+    """
+    if platform == "win32":
+        return (
+            "Re-run this command from an elevated (Administrator) terminal, or "
+            "from the terminal the service was started in.",
+        )
+    return (
+        "Re-run this command as the user that started the service, or with "
+        "elevated privileges (for example under sudo).",
+    )
+
+
+def _fail_still_running(
+    json_mode: bool,
+    *,
+    pid: int,
+    result: _cli.TerminationResult,
+    port: int | None = None,
+) -> typer.Exit:
+    """Report a stop that did not stop the service, and RETURN the exit to raise.
+
+    The discovery file is deliberately left in place by every caller of this
+    helper. Deleting it while the daemon still listens is what turned a refused
+    kill into an unrecoverable state: the operator was told the service had
+    stopped, the next ``server start`` failed on a port it no longer had a
+    record for, and ``server stop`` could no longer find the pid to retry.
+    """
+    if result.signal_denied:
+        cause = (
+            f"The operating system refused this process permission to "
+            f"terminate process {pid} (it runs at a privilege this terminal "
+            f"cannot signal), so the service is still running."
+        )
+        error = "terminate_permission_denied"
+    else:
+        cause = (
+            f"Process {pid} did not exit within the "
+            f"{_STOP_TERMINATION_BUDGET_SECONDS:.0f}s termination budget, so "
+            f"the service is still running."
+        )
+        error = "terminate_timeout"
+    data: dict[str, object] = {"pid": pid, "signal_denied": result.signal_denied}
+    if port is not None:
+        data["port"] = port
+    return _fail_stop(
+        json_mode,
+        error=error,
+        message="Service stop failed",
+        human_lines=(cause, "The discovery record was left in place."),
+        next_actions=_still_running_remediation(),
+        **data,
     )
 
 
@@ -358,7 +449,9 @@ def _stop_service_on_port(port: int, json_mode: bool = False) -> None:
             port=port,
         )
 
-    _terminate_and_confirm(pid)
+    result = _terminate_and_confirm(pid)
+    if result.alive:
+        raise _fail_still_running(json_mode, pid=pid, result=result, port=port)
 
     # Remove the discovery file only when it points at the port we just stopped,
     # so stopping a non-default-port service never erases a different config's
@@ -580,15 +673,25 @@ def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
 
     reaped: list[int] = []
     survivors: list[int] = []
+    denied = False
     for pid in matched:
         if pid in protected or not _cli._is_our_service(pid):
             continue
         # Discovered pid, not one we spawned: force-kill by pid, never a
         # console-group CTRL_BREAK that could reach the operator's own console.
-        _terminate_and_confirm(pid, console_group_signal=False)
+        result = _terminate_and_confirm(pid, console_group_signal=False)
+        denied = denied or result.signal_denied
         (reaped if _pid_terminated(pid) else survivors).append(pid)
 
     if survivors:
+        # A refused kill and a stubborn one need different next actions: no
+        # amount of re-running fixes a privilege the terminal does not have.
+        cause = (
+            "The operating system refused this process permission to terminate "
+            "them; they run at a privilege this terminal cannot signal."
+            if denied
+            else "They did not exit within the termination budget."
+        )
         raise _fail_stop(
             json_mode,
             error="orphan_reap_incomplete",
@@ -596,10 +699,16 @@ def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
             human_lines=(
                 f"Reaped {len(reaped)} orphan daemon(s) on port {port}; "
                 f"{len(survivors)} would not terminate: {survivors}.",
+                cause,
             ),
-            next_actions=(f"vaultspec-rag server status --port {port} --verbose",),
+            next_actions=(
+                _still_running_remediation()
+                if denied
+                else (f"vaultspec-rag server status --port {port} --verbose",)
+            ),
             reaped=len(reaped),
             survivors=survivors,
+            signal_denied=denied,
             port=port,
         )
     _stop_success(
@@ -715,16 +824,19 @@ def service_stop(
         # singleton that would otherwise deadlock `server start`.
         reclaimed = _reclaim_machine_singleton()
         if reclaimed is not None:
+            holder, result = reclaimed
+            if result.alive:
+                raise _fail_still_running(json_mode, pid=holder, result=result)
             _stop_success(
                 json_mode,
                 status="reclaimed",
                 human_title="Service stopped",
                 human_lines=(
-                    f"Reclaimed the resident machine service (pid {reclaimed}); "
+                    f"Reclaimed the resident machine service (pid {holder}); "
                     "it held the singleton lock without a discoverable status "
                     "file.",
                 ),
-                pid=reclaimed,
+                pid=holder,
                 **_initiator_fields(),
             )
             return
@@ -770,7 +882,9 @@ def service_stop(
             port=port,
         )
 
-    _terminate_and_confirm(pid)
+    result = _terminate_and_confirm(pid)
+    if result.alive:
+        raise _fail_still_running(json_mode, pid=pid, result=result, port=port)
     _delete_service_status()
     _stop_success(
         json_mode,

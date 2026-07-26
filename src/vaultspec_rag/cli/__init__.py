@@ -57,6 +57,7 @@ from ._core import console
 from ._gpu_errors import _cpu_only_message, _no_gpu_message, _no_torch_message
 from ._http_search import _try_http_reindex, _try_http_search
 from ._process import (
+    TerminationResult,
     _heartbeat_age_seconds,
     _is_our_service,
     _is_pid_alive,
@@ -83,6 +84,7 @@ from ._service_status import (
 )
 
 __all__ = [
+    "TerminationResult",
     "_append_lifecycle_shutdown_log",
     "_cpu_only_message",
     "_display_search_results",
