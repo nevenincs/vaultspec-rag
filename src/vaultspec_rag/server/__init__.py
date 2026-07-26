@@ -15,15 +15,15 @@ MCP app.
 This module was split into a package (``server/``) from a former
 monolith. The verbatim public surface - the
 response models, the shared globals, and the ``_``-prefixed helpers
-tests import or monkeypatch directly - is re-exported here unchanged
-through an explicit ``__all__``.
+the submodules reach through this namespace - is re-exported here
+unchanged through an explicit ``__all__``.
 
 Import order is load-bearing and mirrors the ``cli`` split:
 
 1. ``_state`` first - owns the process-wide globals (``_registry``,
    ``_watcher_*``, ``_SERVICE_TOKEN``, ``_http_mode``, ``_start_time``).
-   These names live in *this* package namespace because that is what
-   tests rebind (e.g. ``server._http_mode = True``).
+   These names live in *this* package namespace because that is where
+   every consumer reads them, so a runtime reassignment is observed.
 2. Leaf helper submodules (``_models``, ``_utils``, ``_lifecycle``,
    ``_lifespan``, ``_watcher``) - pure logic.
 3. ``_main`` - the console-script ``main`` entry point.
@@ -31,8 +31,7 @@ Import order is load-bearing and mirrors the ``cli`` split:
 Reassigned globals (``_http_mode``, ``_SERVICE_TOKEN``, ``_start_time``,
 ``_registry``) are read by submodules at call time through
 ``import vaultspec_rag.server as _m`` so a rebind on this package
-namespace is observed - the same discipline the ``cli`` split uses for
-monkeypatched names.
+namespace is observed - the same discipline the ``cli`` split uses.
 """
 
 from __future__ import annotations
