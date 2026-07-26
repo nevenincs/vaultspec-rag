@@ -91,8 +91,7 @@ because it governs a future contributor's decision to copy the mechanism across.
 
 `[[2026-07-23-ci-self-hosted-gpu-runner-adr]]` decides a tier split with the GPU
 tier on a self-hosted runner behind a trusted-event gate. The `gpu-tests` job
-exists at `.github/workflows/ci.yml:145-222`: `runs-on: [self-hosted, windows,
-gpu, cuda]`, a CUDA visibility check, Qdrant binary provisioning, `HF_TOKEN` from
+exists at `.github/workflows/ci.yml:145-222`: `runs-on: [self-hosted, windows, gpu, cuda]`, a CUDA visibility check, Qdrant binary provisioning, `HF_TOKEN` from
 a repo secret, and the tier driven through the shared `just dev test gpu` recipe
 (`justfile:289-324`), with `.github/actionlint.yaml` enumerating the custom
 labels.
@@ -168,9 +167,7 @@ the Qdrant binary on disk) and the live service.
 ### mcp-sync-tools-already-retired | low | retired in place; archiving would take 77 documents
 
 `[[2026-03-07-mcp-sync-tools-adr]]` is the strongest retirement candidate by age
-and is already retired correctly: frontmatter carries `superseded_by:
-'2026-06-18-mcp-service-client-adr'` and its heading reads `(**status:**
-`superseded`)`. It is the one supersession marker among the nine, and it needs no
+and is already retired correctly: frontmatter carries `superseded_by: '2026-06-18-mcp-service-client-adr'` and its heading reads `(**status:** `superseded`)`. It is the one supersession marker among the nine, and it needs no
 further action.
 
 Archiving it is not available as a targeted operation and would be destructive.
