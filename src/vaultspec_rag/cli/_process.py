@@ -375,10 +375,6 @@ def _service_child_env(
     # but is case-insensitive for lookups.
     _excluded = str(EnvVar.RAG_ROOT).upper()
     env = {k: v for k, v in os.environ.items() if k.upper() != _excluded}
-    # Mark this as the resident daemon so code running inside the service can
-    # distinguish itself from an interactive in-process CLI, independent of the
-    # storage backend.
-    env[EnvVar.SERVICE_DAEMON.value] = "1"
     if watch is not None:
         env[EnvVar.WATCH_ENABLED.value] = "1" if watch else "0"
     if watch_debounce_ms is not None:
