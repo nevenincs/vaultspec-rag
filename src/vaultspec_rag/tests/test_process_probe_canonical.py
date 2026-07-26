@@ -245,3 +245,45 @@ class TestLoopbackHttpHasOneOpener:
         names = {path.name for path in _production_sources()}
         stale = sorted(set(self._ALLOWED_OPENERS) - names)
         assert not stale, f"opener allowlist names missing modules: {stale}"
+
+
+class TestDiscoveryFilenameHasOneSpelling:
+    """``service.json`` is spelled once, in ``config``.
+
+    Five sites hardcoded it while ``_machine_lock`` already had a private
+    constant for the same string. The reader that makes this matter is the
+    indexer's sensitive-pattern list: the discovery file carries the service
+    token, and a rename that missed that one entry would start indexing a
+    credential nobody remembered was in the file.
+    """
+
+    def test_no_module_hardcodes_the_discovery_filename(self) -> None:
+        offenders = [
+            f"{path.relative_to(_PACKAGE_ROOT).as_posix()}:{number}"
+            for path in _production_sources()
+            if path.name != "config.py"
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            )
+            if '"service.json"' in line or "'service.json'" in line
+        ]
+        assert not offenders, (
+            f"hardcoded discovery filename at {offenders}; import "
+            "config.SERVICE_STATUS_FILENAME so every reader renames together"
+        )
+
+    def test_every_reader_resolves_the_same_file(self) -> None:
+        # The constant alone does not prove the readers agree - they resolve
+        # the DIRECTORY separately, and that is where they could still diverge.
+        from ..config import SERVICE_STATUS_FILENAME
+        from ..server._lifecycle import _status_file_path
+        from ..server._state import _SENSITIVE_PATTERNS
+        from ..serviceclient._discovery import _status_file
+
+        assert _status_file() == _status_file_path(), (
+            "the client and the daemon must resolve one discovery file"
+        )
+        assert SERVICE_STATUS_FILENAME in _SENSITIVE_PATTERNS, (
+            "the discovery file carries the service token and must stay in the "
+            "indexer's sensitive-pattern list"
+        )
