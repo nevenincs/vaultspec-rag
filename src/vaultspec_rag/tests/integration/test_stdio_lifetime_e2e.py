@@ -32,11 +32,18 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.integration]
 
 EXPECTED_TOOLS = {
-    "search_vault",
-    "search_codebase",
+    "clean_all",
+    "clean_documents",
     "get_code_file",
-    "reindex_vault",
+    "get_index_status",
+    "reindex_all",
     "reindex_codebase",
+    "reindex_documents",
+    "reindex_vault",
+    "search_codebase",
+    "search_combined",
+    "search_documents",
+    "search_vault",
 }
 
 _SHIM_CMD = [sys.executable, "-c", "from vaultspec_rag.server import main; main()"]
