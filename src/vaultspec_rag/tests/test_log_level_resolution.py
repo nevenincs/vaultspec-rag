@@ -12,12 +12,11 @@ import logging
 import os
 
 import pytest
-
-from ..config import EnvVar, rag_default
 from vaultspec_core.logging_config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
     reset_logging,
 )
 
+from ..config import EnvVar, rag_default
 from ..logging_config import configure_logging
 
 pytestmark = [pytest.mark.unit]
