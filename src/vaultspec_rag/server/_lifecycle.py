@@ -49,6 +49,7 @@ __all__ = [
 import vaultspec_rag.server as _m
 
 from .._runtime_identity import interpreter_fields
+from ..config import SERVICE_STATUS_FILENAME
 from ..logging_config import log_event
 from ..serviceclient._discovery import (
     SERVICE_DISCOVERY_SCHEMA,
@@ -91,16 +92,19 @@ def _resolve_log_path() -> Path:
 
 
 def _status_file_path() -> Path:
-    """Resolve the same ``service.json`` path the CLI parent writes.
+    """Resolve the same discovery-file path the client reads.
 
-    The CLI ``cli._status_file()`` builds this path from
-    ``cfg.status_dir``; the daemon mirrors that resolution so it can
-    own end-of-life cleanup without cross-importing from cli.
+    Shares the filename with every other reader via
+    ``config.SERVICE_STATUS_FILENAME``, but resolves the directory itself
+    rather than calling ``serviceclient._discovery._status_file()``: that one
+    CREATES the status directory as a side effect of resolving it, which is
+    wrong on the daemon's shutdown path, where this is used to remove the file
+    it is about to stop publishing.
     """
     from ..config import get_config
 
     cfg = get_config()
-    return Path(cfg.status_dir).expanduser() / "service.json"
+    return Path(cfg.status_dir).expanduser() / SERVICE_STATUS_FILENAME
 
 
 def _qdrant_discovery_fields() -> dict[str, object]:
@@ -367,7 +371,7 @@ class _DiscoveryPublisher:
                     "service.lifecycle",
                     "cleanup_failed",
                     severity=logging.WARNING,
-                    path=self.lease.path.parent / "service.json",
+                    path=self.lease.path.parent / SERVICE_STATUS_FILENAME,
                     error=exc,
                 )
             else:

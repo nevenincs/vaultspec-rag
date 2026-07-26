@@ -32,6 +32,7 @@ import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ..config import SERVICE_STATUS_FILENAME
 from ..serviceclient._discovery import HEARTBEAT_STALENESS_SECONDS
 
 __all__ = [
@@ -141,7 +142,7 @@ _SENSITIVE_PATTERNS: tuple[str, ...] = (
     "*.key",
     "*credentials*",
     "*secrets*",
-    "service.json",
+    SERVICE_STATUS_FILENAME,
 )
 
 _SENSITIVE_DIRS: tuple[str, ...] = (

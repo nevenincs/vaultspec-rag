@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+from .._loopback_http import LOOPBACK_OPENER
 from .._process_probe import (
     START_TIME_TOLERANCE_SECONDS,
     pid_alive,
@@ -40,7 +41,6 @@ from .._process_probe import (
 )
 from ..config import EnvVar, get_config
 from ._constants import (
-    LOOPBACK_OPENER,
     MANIFEST_FILENAME,
     QDRANT_ASSET_SHA256,
     QDRANT_SERVER_VERSION,

@@ -62,7 +62,6 @@ _MACHINE_LOCK_FILENAME = "service.lock"
 # VAULTSPEC_RAG_STATUS_DIR can still find the one running service. It is distinct
 # from the per-STATUS_DIR ``service.json`` (a different directory), and the daemon
 # writes the SAME versioned discovery payload to both on each heartbeat.
-_MACHINE_DISCOVERY_FILENAME = "service.json"
 
 # The byte offset the OS lock is taken at. On Windows ``msvcrt.locking`` is
 # MANDATORY - a locked byte cannot be read by another process - so the lock byte
@@ -111,7 +110,9 @@ def machine_discovery_path() -> Path:
     discover the one running service. The daemon writes the versioned discovery
     payload here on each heartbeat and removes it on shutdown.
     """
-    return machine_lock_path().parent / _MACHINE_DISCOVERY_FILENAME
+    from .config import SERVICE_STATUS_FILENAME
+
+    return machine_lock_path().parent / SERVICE_STATUS_FILENAME
 
 
 def read_machine_discovery() -> dict[str, object] | None:
@@ -133,7 +134,9 @@ def read_machine_discovery() -> dict[str, object] | None:
 
 def _lease_discovery_path(lease: MachineLockLease) -> Path:
     """Return the discovery pointer governed by *lease*."""
-    return lease.path.parent / _MACHINE_DISCOVERY_FILENAME
+    from .config import SERVICE_STATUS_FILENAME
+
+    return lease.path.parent / SERVICE_STATUS_FILENAME
 
 
 def _require_active_lease(
