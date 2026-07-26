@@ -21,7 +21,7 @@ between a deliberate side-effect import and one a later reader deletes as unused
 What this package does export is the small set of names reached through the
 package namespace rather than from the module that defines them, because a
 rebind must be observed: ``console`` and the process helpers
-(``_is_pid_alive``, ``_is_our_service``, ``_terminate_pid``, ``_log_file``) are
+(``_is_pid_alive``, ``_is_our_service``, ``_terminate_pid``) are
 read at call time through ``import vaultspec_rag.cli as _cli`` by their
 consumers, so ``monkeypatch.setattr(cli, name, …)`` reaches them. ``sys`` is
 re-exported for the same reason - tests set ``cli.sys.platform``. Everything

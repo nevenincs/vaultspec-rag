@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import subprocess
 import sys
 import typing
 
 import pytest
 
-from ..cli._process import _DEFAULT_GRACEFUL_DRAIN_SECONDS
-from ..cli._service_stop import (
-    _STOP_GRACEFUL_DRAIN_SECONDS,
-    _STOP_TERMINATION_BUDGET_SECONDS,
-)
 from ._cli_helpers import (
     _ANSI_RE,
     EnvVar,
@@ -701,26 +698,27 @@ class TestServiceProjectsCli:
         assert "reason=" not in envelope["message"]
 
 
-class TestWinShutdownLog:
-    """CLI appends a lifecycle shutdown line on win32.
+class TestLifecycleShutdownLog:
+    """The CLI-side lifecycle shutdown line, written on every platform.
 
-    The daemon's atexit / lifespan ``finally`` never fire under
-    Windows ``TerminateProcess`` (which is what ``os.kill(SIGTERM)``
-    becomes on win32). The CLI parent emits a mirror line so the
-    audit trail stays uniform with POSIX.
+    A Windows stop is always a force-kill - the daemon is spawned
+    console-detached, so it never runs its own atexit or lifespan
+    ``finally`` - and the CLI parent emits a mirror line so the audit
+    trail stays uniform with POSIX. The attribution it carries (who ran
+    the stop) is worth having everywhere, so the line is unconditional.
     """
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def test_append_writes_expected_format(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        from .. import cli
+    @pytest.mark.usefixtures("isolated_status_dir")
+    def test_append_writes_expected_format(self) -> None:
+        """The line lands in the log file the production resolver picks.
 
-        log_path = tmp_path / "service.log"
-        monkeypatch.setattr(cli, "_log_file", lambda: log_path)
+        Proven able to fail: dropping ``f"reason={reason}"`` from the parts
+        list in ``_append_lifecycle_shutdown_log`` fails the
+        ``reason=cli_terminate`` assertion below; restoring it passes.
+        """
+        from .. import cli
 
         cli._append_lifecycle_shutdown_log(
             "cli_terminate",
@@ -728,7 +726,7 @@ class TestWinShutdownLog:
             platform="win32",
         )
 
-        content = log_path.read_text(encoding="utf-8")
+        content = cli._log_file().read_text(encoding="utf-8")
         lines = content.splitlines()
         assert len(lines) == 1
         line = lines[0]
@@ -738,21 +736,28 @@ class TestWinShutdownLog:
         assert "pid=123" in line
         assert "platform=win32" in line
 
+    @pytest.mark.usefixtures("isolated_status_dir")
     def test_append_oserror_is_suppressed_and_debug_logged(
         self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
-    ):
+    ) -> None:
         """OSError on the append must NOT crash the shutdown path.
 
-        No-swallow rule: the helper must debug-log the exception so
-        the suppression is observable.
+        The unwritable log is real: a directory occupies the path the
+        resolver returns, so the append raises from the same ``open`` call
+        an operator's permission or device failure would. Pointing the
+        status dir somewhere absent would not do it - the resolver creates
+        the directory it returns.
+
+        No-swallow rule: the helper must debug-log the exception so the
+        suppression is observable. Proven able to fail: deleting the
+        ``logger.debug`` call in the ``except OSError`` branch fails the
+        debug-record assertion; restoring it passes.
         """
         from .. import cli
 
-        missing_dir = tmp_path / "nonexistent" / "service.log"
-        monkeypatch.setattr(cli, "_log_file", lambda: missing_dir)
+        occupied = cli._log_file()
+        occupied.mkdir(parents=True, exist_ok=True)
 
         with caplog.at_level("DEBUG", logger="vaultspec_rag.cli"):
             cli._append_lifecycle_shutdown_log("cli_terminate", pid=42)
@@ -767,142 +772,73 @@ class TestWinShutdownLog:
         assert debug_records, (
             "OSError on append must be debug-logged per the no-swallow rule"
         )
-        # The log file was never created (the parent directory does
-        # not exist) - confirms the exception path was exercised.
-        assert not missing_dir.exists()
+        # Nothing was written where the append failed - confirms the
+        # exception path, not a silently relocated write.
+        assert occupied.is_dir()
+        assert not any(occupied.iterdir())
 
-    def test_service_stop_emits_log_on_win32(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        """End-to-end: ``server stop`` on win32 appends the line."""
+    @pytest.mark.usefixtures("isolated_singleton_dirs")
+    def test_service_stop_terminates_the_recorded_process_and_logs_it(self) -> None:
+        """``server stop`` really stops the recorded process and attributes it.
+
+        The service is a real child process recorded in a real discovery
+        file, so the identity confirmation, the termination, the liveness
+        poll, and the log append are all production code deciding the
+        outcome. The child is a Python interpreter, which is what the
+        tokenless identity fallback confirms as ours, and it is spawned into
+        its own process group so the Windows ``CTRL_BREAK_EVENT`` reaches it
+        and cannot reach the test runner's console group.
+
+        Proven able to fail, both directions: removing the
+        ``_append_lifecycle_shutdown_log`` call from ``_terminate_and_confirm``
+        fails the "must write the attribution audit line" assertion, and
+        returning early from ``_terminate_pid`` leaves the child running and
+        fails the "must have stopped the process" assertion. Restoring each
+        returns the test to green.
+
+        What this does NOT bind, checked rather than assumed: returning True
+        unconditionally from ``_is_our_service`` still passes here, because a
+        confirmed identity is this path's precondition rather than its
+        subject. The refusal to stop an unconfirmable process is covered
+        where a live foreign pid is the recorded one.
+        """
         from .. import cli
 
-        status_dir = tmp_path / "status"
-        status_dir.mkdir()
-        log_path = status_dir / "service.log"
-
-        os.environ[EnvVar.STATUS_DIR] = str(status_dir)
+        creationflags = (
+            subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
+        )
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(120)"],
+            creationflags=creationflags,
+        )
         try:
-            # Set up a status file pointing at the current process so
-            # _is_our_service returns True for the test.
-            _write_service_status(pid=os.getpid(), port=18999)
-
-            # Treat the current process as the service so service_stop
-            # walks past the validation guard, into the stubbed termination,
-            # the unlink, and the new log-append branch we want to exercise.
-            def _stub_is_our_service(*_a: object, **_kw: object) -> bool:
-                return True
-
-            budgets: list[tuple[float, float, bool]] = []
-
-            def _stub_terminate_pid(
-                _pid: int,
-                timeout: float = 4.0,
-                *,
-                graceful_drain: float = 2.0,
-                console_group_signal: bool = True,
-            ) -> None:
-                budgets.append((timeout, graceful_drain, console_group_signal))
-
-            def _stub_is_pid_alive(_pid: int) -> bool:
-                return False
-
-            monkeypatch.setattr(cli, "_is_our_service", _stub_is_our_service)
-            monkeypatch.setattr(cli, "_terminate_pid", _stub_terminate_pid)
-            # The post-terminate poll iterates until _is_pid_alive returns
-            # False; stub False so the wait collapses immediately.
-            monkeypatch.setattr(cli, "_is_pid_alive", _stub_is_pid_alive)
+            _write_service_status(pid=child.pid, port=_find_free_port())
 
             result = runner.invoke(app, ["server", "stop"])
+
             assert result.exit_code == 0, result.output
-            assert f"Process ID: {os.getpid()}" in result.output
+            assert f"Process ID: {child.pid}" in result.output
             assert "PID:" not in result.output
-            # A console-detached daemon can never receive a console control
-            # event, so Windows must not spend the long drain waiting for a
-            # graceful shutdown that cannot be signalled; it goes straight to
-            # the forced kill and reclaims the pointer afterwards.
-            # Normal stop keeps the console-group path (True); only the orphan
-            # reap, which force-kills discovered pids it did not spawn, passes
-            # console_group_signal=False.
-            assert budgets == [
-                (
-                    _STOP_TERMINATION_BUDGET_SECONDS,
-                    _DEFAULT_GRACEFUL_DRAIN_SECONDS,
-                    True,
-                )
-            ]
-            assert _DEFAULT_GRACEFUL_DRAIN_SECONDS < _STOP_GRACEFUL_DRAIN_SECONDS
-            assert log_path.exists(), (
-                f"Expected CLI to create {log_path}; result: {result.output}"
+            assert not cli._is_pid_alive(child.pid), (
+                "a stop that reports success must have stopped the process"
             )
-
-            content = log_path.read_text(encoding="utf-8")
-            assert "event=shutdown" in content
-            assert "reason=cli_terminate" in content
-            assert f"pid={os.getpid()}" in content
-            assert f"platform={sys.platform}" in content
         finally:
-            os.environ.pop(EnvVar.STATUS_DIR, None)
+            with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+                child.kill()
+                child.wait(timeout=10)
 
-    def test_service_stop_emits_log_on_posix_too(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        """POSIX also gets the CLI-side initiator line (emitted on every platform)."""
-        from .. import cli
-
-        status_dir = tmp_path / "status"
-        status_dir.mkdir()
-        log_path = status_dir / "service.log"
-
-        os.environ[EnvVar.STATUS_DIR] = str(status_dir)
-        try:
-            _write_service_status(pid=os.getpid(), port=18999)
-
-            def _stub_is_our_service(*_a: object, **_kw: object) -> bool:
-                return True
-
-            def _stub_terminate_pid(
-                _pid: int,
-                timeout: float = 4.0,
-                *,
-                graceful_drain: float = 2.0,
-                console_group_signal: bool = True,
-            ) -> None:
-                assert timeout > graceful_drain
-                # Normal stop keeps the console-group path; the reap uses False.
-                assert console_group_signal is True
-
-            def _stub_is_pid_alive(_pid: int) -> bool:
-                return False
-
-            monkeypatch.setattr(cli, "_is_our_service", _stub_is_our_service)
-            monkeypatch.setattr(cli, "_terminate_pid", _stub_terminate_pid)
-            monkeypatch.setattr(cli, "_is_pid_alive", _stub_is_pid_alive)
-
-            result = runner.invoke(app, ["server", "stop"])
-            assert result.exit_code == 0, result.output
-            assert f"Process ID: {os.getpid()}" in result.output
-            assert "PID:" not in result.output
-
-            # The CLI-side initiator attribution is emitted on every
-            # platform; POSIX additionally gets the daemon's own clean
-            # shutdown line via the lifespan finally.
-            assert log_path.exists(), (
-                "every platform's stop must write the attribution audit line"
-            )
-            content = log_path.read_text(encoding="utf-8")
-            assert "event=shutdown" in content
-            assert "reason=cli_terminate" in content
-            assert f"platform={sys.platform}" in content
-            assert "initiator_pid" in content
-            assert "initiator_cmd" in content
-            assert "initiator_cwd" in content
-        finally:
-            os.environ.pop(EnvVar.STATUS_DIR, None)
+        log_path = cli._log_file()
+        assert log_path.exists(), (
+            "a terminating stop must write the attribution audit line"
+        )
+        content = log_path.read_text(encoding="utf-8")
+        assert "event=shutdown" in content
+        assert "reason=cli_terminate" in content
+        assert f"pid={child.pid}" in content
+        assert f"platform={sys.platform}" in content
+        assert f"initiator_pid={os.getpid()}" in content
+        assert "initiator_cmd=" in content
+        assert f"initiator_cwd={os.getcwd()}" in content
 
 
 class TestPlatformDrainBudget:
