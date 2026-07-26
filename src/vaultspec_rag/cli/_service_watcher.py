@@ -14,6 +14,7 @@ from ..serviceclient._transport import _try_http_admin
 from ._app import server_watcher_app
 from ._cli_format import _counted_unit, _project_name
 from ._render import (
+    _address_line,
     _display_service_not_running,
     _emit_json,
     _emit_json_error_and_exit,
@@ -58,7 +59,7 @@ def _resolve_project_argument(project: str) -> str:
 
 
 def _print_update_address(port: int) -> None:
-    _plain(f"Address: http://127.0.0.1:{port}")
+    _plain(_address_line(port))
 
 
 def _print_update_project(project: str) -> None:

@@ -12,6 +12,7 @@ from ..serviceclient._transport import _try_http_admin
 from ._app import CLIState, app
 from ._cli_format import _counted_unit, _format_mb
 from ._render import (
+    _address_line,
     _emit_json,
     _emit_json_error_and_exit,
     _format_local_index_busy_message,
@@ -221,7 +222,7 @@ def _render_status_text(
     ]
     if service_port is not None:
         lines.append("Server: running")
-        lines.append(f"Address: http://127.0.0.1:{service_port}")
+        lines.append(_address_line(service_port))
         lines.append("Server details:")
     next_action = _status_next_action(vault_count, code_count, document_count)
     for line in lines:

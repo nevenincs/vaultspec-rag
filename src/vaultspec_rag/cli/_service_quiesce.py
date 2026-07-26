@@ -15,7 +15,12 @@ import typer
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
 from ._app import server_app
-from ._render import _emit_json, _emit_json_error_and_exit, _plain
+from ._render import (
+    _address_line,
+    _emit_json,
+    _emit_json_error_and_exit,
+    _plain,
+)
 
 _PAUSE_COMMAND = "service.pause"
 _RESUME_COMMAND = "service.resume"
@@ -87,7 +92,7 @@ def _fail_unreachable(command: str, json_mode: bool, *, port: int | None) -> Non
             command, "service_unreachable", message, 1, data={"port": port}
         )
     if port is not None:
-        _plain(f"Address: http://127.0.0.1:{port}")
+        _plain(_address_line(port))
     _plain(message)
     raise typer.Exit(1)
 

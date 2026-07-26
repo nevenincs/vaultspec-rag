@@ -13,6 +13,7 @@ from ..serviceclient._transport import _try_http_admin
 from ._app import server_projects_app
 from ._cli_format import _counted_unit, _project_name
 from ._render import (
+    _address_line,
     _display_service_not_running,
     _emit_json,
     _emit_json_error_and_exit,
@@ -112,7 +113,7 @@ def _print_projects_summary(
     port: int | None = None,
 ) -> None:
     if port is not None:
-        _plain(f"Address: http://127.0.0.1:{port}")
+        _plain(_address_line(port))
     if not projects:
         _cli.console.print(
             f"Capacity: 0 of {max_projects} projects loaded",
@@ -215,7 +216,7 @@ def _print_project_unload_result(
     status: str,
     next_action: str | None = None,
 ) -> None:
-    _plain(f"Address: http://127.0.0.1:{port}")
+    _plain(_address_line(port))
     _plain(f"Project: {_project_name(project)}")
     _plain(f"Path: {project}", soft_wrap=True)
     _plain(f"Unload: {status}")

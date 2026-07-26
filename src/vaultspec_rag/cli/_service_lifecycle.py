@@ -31,7 +31,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 __all__ = [
-    "_address_line",
     "_fail_lifecycle",
     "_lifecycle_success",
     "_print_detail_line",
@@ -123,10 +122,6 @@ def _lifecycle_success(
 
 def _process_line(pid: object) -> str:
     return f"Process ID: {pid}"
-
-
-def _address_line(port: object) -> str:
-    return f"Address: http://127.0.0.1:{port}"
 
 
 def _print_detail_line(label: str, value: object) -> None:

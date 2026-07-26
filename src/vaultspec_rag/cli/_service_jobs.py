@@ -39,6 +39,7 @@ from ._cli_format import (
 )
 from ._process import _call_interruptibly
 from ._render import (
+    _address_line,
     _display_service_not_running,
     _emit_json,
     _emit_json_error_and_exit,
@@ -542,7 +543,7 @@ def _render_jobs_header(
 ) -> None:
     """Print the opening lines both the populated and empty views share."""
     _plain("Jobs")
-    _plain(f"Address: http://127.0.0.1:{port}")
+    _plain(_address_line(port))
     _plain(f"Displayed: {shown_count}")
     _plain(f"Total: {_job_count_text(total)}")
     _plain(counts_line)
@@ -948,7 +949,7 @@ def _render_job_result_detail(job: dict[str, object]) -> None:
 
 def _render_job_detail(job: dict[str, object], *, port: int | None = None) -> None:
     if port is not None:
-        _plain(f"Address: http://127.0.0.1:{port}")
+        _plain(_address_line(port))
     _cli.console.print(f"Job {job.get('id', '')!s}")
     _cli.console.print(f"Operation: {_operation_label(job)}")
     _cli.console.print(f"Project: {_project_label(job)}")
