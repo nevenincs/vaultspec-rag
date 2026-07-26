@@ -26,6 +26,18 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 import vaultspec_rag.cli as _cli
 
+from .._process_probe import (
+    bounded_call,
+    iter_process_info,
+    pid_alive,
+    pid_cmdline,
+    pid_image_matches,
+    pid_image_path,
+    pid_listens_on_loopback_port,
+    pid_matches_start_time,
+    pid_start_time,
+    send_signal,
+)
 from .._win32 import (
     WIN_CREATE_BREAKAWAY_FROM_JOB,
     WIN_CREATE_NEW_PROCESS_GROUP,
@@ -33,7 +45,6 @@ from .._win32 import (
     WIN_DETACHED_PROCESS,
 )
 from ..config import EnvVar
-from ..qdrant_runtime._resolve import pid_alive, pid_image_path
 from ..serviceclient._discovery import HEARTBEAT_STALENESS_SECONDS
 from ..serviceclient._transport import _try_http_health
 from ._core import logger
@@ -88,35 +99,6 @@ class TerminationResult:
 
     alive: bool
     signal_denied: bool
-
-
-def _send_termination_signal(pid: int, sig: int) -> bool:
-    """Deliver *sig* to *pid*; return whether permission was refused.
-
-    Separates the three ways a kill can fail to land, which the previous
-    blanket ``suppress(OSError)`` collapsed into one silent pass:
-
-    - ``ProcessLookupError`` - the target already exited. Not a denial; the
-      caller's liveness check resolves it as success.
-    - ``PermissionError`` - the target runs at a privilege this process cannot
-      signal (a daemon launched from an elevated shell, or owned by another
-      user). Reported so the caller can say so and name the remedy.
-    - any other ``OSError`` - notably a Windows ``CTRL_BREAK_EVENT`` aimed at a
-      pid that leads no console group, which is expected for a
-      console-detached daemon and is meant to fall through to the escalation.
-
-    Every branch is debug-logged so a swallowed signal stays observable.
-    """
-    try:
-        os.kill(pid, sig)
-    except ProcessLookupError as exc:
-        logger.debug("pid %s already gone when signalling %s: %s", pid, sig, exc)
-    except PermissionError as exc:
-        logger.debug("pid %s refused signal %s: %s", pid, sig, exc)
-        return True
-    except OSError as exc:
-        logger.debug("signal %s to pid %s failed: %s", sig, pid, exc)
-    return False
 
 
 class DaemonBreakawayError(RuntimeError):
@@ -205,20 +187,12 @@ def _is_our_service(
         if image is None:
             return True  # can't query → fall back to PID-alive trust
         return "python" in image.lower()
-    try:
-        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace")
-        return "vaultspec_rag" in cmdline
-    except (OSError, ValueError) as exc:
-        # Non-procfs systems (BSD, macOS without /proc) - fall back
-        # to PID-alive trust. The exception is logged, never discarded
-        # silently.
-        logger.debug(
-            "cmdline read failed for pid=%d: %s; falling back to PID-alive trust",
-            pid,
-            exc,
-            exc_info=True,
-        )
+    cmdline = pid_cmdline(pid)
+    if cmdline is None:
+        # Non-procfs systems (BSD, macOS without /proc) - fall back to
+        # PID-alive trust. `pid_cmdline` logged why it could not read.
         return True
+    return "vaultspec_rag" in cmdline
 
 
 def _port_is_available(port: int) -> bool:
@@ -594,7 +568,7 @@ def _spawn_service(
     finally:
         os.close(log_fd)  # child has the fd now (or the spawn failed)
     if deadline is not None and time.monotonic() >= deadline:
-        launcher_start_time = _process_start_time(proc.pid)
+        launcher_start_time = pid_start_time(proc.pid, timeout=_PROBE_BUDGET_SECONDS)
         cleanup_error = _cleanup_late_service_spawn(
             launcher_pid=proc.pid,
             launcher_start_time=launcher_start_time,
@@ -644,7 +618,9 @@ def _cleanup_late_service_spawn(
         remaining = deadline - time.monotonic()
         if remaining <= 0.0:
             break
-        if _pid_matches_start_time(candidate, candidates[candidate]):
+        if pid_matches_start_time(
+            candidate, candidates[candidate], timeout=_PROBE_BUDGET_SECONDS
+        ):
             # Arbitrary discovered pid, not a known process-group leader: a
             # Windows CTRL_BREAK to it is unsafe (see _terminate_pid).
             _terminate_pid(candidate, timeout=remaining, console_group_signal=False)
@@ -659,7 +635,7 @@ def _cleanup_late_service_spawn(
         live = [
             pid
             for pid, start_time in candidates.items()
-            if _pid_matches_start_time(pid, start_time)
+            if pid_matches_start_time(pid, start_time, timeout=_PROBE_BUDGET_SECONDS)
         ]
         if not live:
             return ""
@@ -672,7 +648,7 @@ def _cleanup_late_service_spawn(
     survivors = sorted(
         pid
         for pid, start_time in candidates.items()
-        if _pid_matches_start_time(pid, start_time)
+        if pid_matches_start_time(pid, start_time, timeout=_PROBE_BUDGET_SECONDS)
     )
     if survivors:
         detail = f"late service processes survived: {survivors}; {last_error}"
@@ -710,9 +686,7 @@ def _discover_late_service_pids(
     # remaining budget on a daemon thread so a single stuck read cannot block
     # the cleanup past its deadline; a timed-out scan yields no candidates and a
     # legible reason, exactly as an errored scan does.
-    from ..qdrant_runtime._resolve import _bounded_call
-
-    scanned = _bounded_call(
+    scanned = bounded_call(
         lambda: _scan_witness_pids(port=port, launch_token=launch_token),
         timeout=max(0.0, budget),
         fallback=_SCAN_TIMED_OUT,
@@ -739,12 +713,9 @@ _SCAN_TIMED_OUT = "__late_spawn_scan_timed_out__"
 
 def _scan_witness_pids(*, port: int, launch_token: str) -> dict[int, float] | str:
     """Return witness pids by argv, or an error string. Runs under a budget."""
-    import psutil
-
     found: dict[int, float] = {}
     try:
-        for process in psutil.process_iter(["pid", "cmdline", "create_time"]):
-            info = cast("dict[str, object]", process.info)
+        for info in iter_process_info(["pid", "cmdline", "create_time"]):
             created = info.get("create_time")
             if (
                 not isinstance(created, int | float)
@@ -786,30 +757,6 @@ def _is_service_command(
         argv[index : index + len(expected)] == expected
         for index in range(len(argv) - len(expected) + 1)
     )
-
-
-def _process_start_time(pid: int) -> float:
-    """Return a process-incarnation witness, or zero when it is unreadable.
-
-    Delegates to the shared, time-bounded ``pid_start_time`` rather than reading
-    ``psutil`` directly: the direct read is unbounded and a stalled probe would
-    block the whole late-spawn cleanup past its deadline. A read that exceeds
-    the per-probe budget returns zero, which callers already treat as "cannot
-    confirm this incarnation".
-    """
-    if pid <= 0:
-        return 0.0
-    from ..qdrant_runtime._resolve import pid_start_time
-
-    return pid_start_time(pid, timeout=_PROBE_BUDGET_SECONDS)
-
-
-def _pid_matches_start_time(pid: int, expected: float) -> bool:
-    """Return whether *pid* is still the exact witnessed launch member."""
-    if expected <= 0.0:
-        return False
-    current = _process_start_time(pid)
-    return current > 0.0 and abs(current - expected) <= 1e-6
 
 
 def _spawn_windows(
@@ -934,14 +881,14 @@ def _terminate_pid(
     qdrant_identity = _owned_qdrant_identity(pid, deadline=deadline)
     if sys.platform == "win32":
         if console_group_signal:
-            denied = _send_termination_signal(pid, signal.CTRL_BREAK_EVENT)
+            denied = send_signal(pid, signal.CTRL_BREAK_EVENT)
         else:
             # TerminateProcess: targets this exact pid, never a console
             # group, so a stray with no known process group cannot block
             # the caller or signal it by accident.
-            denied = _send_termination_signal(pid, signal.SIGTERM)
+            denied = send_signal(pid, signal.SIGTERM)
     else:
-        denied = _send_termination_signal(pid, signal.SIGTERM)
+        denied = send_signal(pid, signal.SIGTERM)
     # Allow graceful drain before force-killing. On POSIX this CLI is normally
     # the daemon's parent, so reap an exited child promptly instead of treating
     # its zombie record as a live process that still needs SIGKILL.
@@ -959,7 +906,7 @@ def _terminate_pid(
         # refusal is the one worth reporting even when the graceful attempt
         # failed for an unrelated reason (a console event that could never
         # reach a detached daemon).
-        denied = _send_termination_signal(pid, escalation) or denied
+        denied = send_signal(pid, escalation) or denied
         _wait_for_child_exit(
             pid,
             timeout=max(0.0, deadline - time.monotonic()),
@@ -997,9 +944,6 @@ def _owned_qdrant_identity(
     from ..config import get_config
     from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
     from ..qdrant_runtime._resolve import (
-        pid_image_is_qdrant,
-        pid_listens_on_loopback_port,
-        pid_matches_start_time,
         probe_qdrant_endpoint,
         read_qdrant_identity,
     )
@@ -1037,7 +981,7 @@ def _owned_qdrant_identity(
         remaining <= 0
         or recorded_storage != expected_storage
         or identity.version != QDRANT_SERVER_VERSION
-        or not pid_image_is_qdrant(identity.qdrant_pid, timeout=remaining)
+        or not pid_image_matches(identity.qdrant_pid, "qdrant", timeout=remaining)
     ):
         return None
     remaining = deadline - time.monotonic()
@@ -1070,9 +1014,6 @@ def _reap_owned_qdrant(
     from ..config import get_config
     from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
     from ..qdrant_runtime._resolve import (
-        pid_image_is_qdrant,
-        pid_listens_on_loopback_port,
-        pid_matches_start_time,
         probe_qdrant_endpoint,
         read_qdrant_identity,
         reap_qdrant_orphan,
@@ -1101,7 +1042,7 @@ def _reap_owned_qdrant(
     ):
         return
     remaining = deadline - time.monotonic()
-    if remaining <= 0 or not pid_image_is_qdrant(qdrant_pid, timeout=remaining):
+    if remaining <= 0 or not pid_image_matches(qdrant_pid, "qdrant", timeout=remaining):
         return
     remaining = deadline - time.monotonic()
     if remaining <= 0 or not pid_listens_on_loopback_port(

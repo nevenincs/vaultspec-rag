@@ -14,12 +14,12 @@ import time
 
 import pytest
 
+from ..._process_probe import pid_image_matches
 from ...qdrant_runtime._resolve import (
     QdrantEndpointProbe,
     QdrantIdentity,
     decide_qdrant_action,
     pid_alive,
-    pid_image_is_qdrant,
     pid_start_time,
     reap_qdrant_orphan,
 )
@@ -137,7 +137,7 @@ class TestReapTargetImageGuard:
 
     def test_this_python_process_is_not_a_qdrant_target(self) -> None:
         # The reap guard checks the target's image; this test process is python.
-        assert pid_image_is_qdrant(os.getpid()) is False
+        assert pid_image_matches(os.getpid(), "qdrant") is False
 
     def test_dead_pid_is_not_a_qdrant_target(self) -> None:
-        assert pid_image_is_qdrant(2_000_000_000) is False
+        assert pid_image_matches(2_000_000_000, "qdrant") is False

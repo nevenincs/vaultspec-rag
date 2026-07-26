@@ -24,6 +24,7 @@ from itertools import islice
 from typing import TYPE_CHECKING, Final, cast
 
 from ._job_errors import JobError, JobErrorKind, classify_error_text
+from ._process_probe import pid_alive, pid_is_zombie, pid_start_time
 from ._store_locks import FileLock
 
 if TYPE_CHECKING:
@@ -862,15 +863,12 @@ def _classify_failure(error: BaseException) -> tuple[JobErrorKind, bool]:
 
 
 def _process_identity() -> tuple[int, float]:
-    import psutil
-
     pid = os.getpid()
-    try:
-        create_time = float(psutil.Process(pid).create_time())
-    except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess) as exc:
+    create_time = pid_start_time(pid)
+    if create_time <= 0.0:
         raise WatcherRetryStateError(
             "current watcher process identity cannot be established"
-        ) from exc
+        )
     return pid, _finite_positive("process create time", create_time)
 
 
@@ -929,21 +927,24 @@ def _recovery_marker_is_consumable(
 
 
 def _process_identity_is_live(pid: int, create_time: float) -> bool:
-    import psutil
+    """Return whether *pid* is still the exact recorded owner incarnation.
 
-    try:
-        process = psutil.Process(pid)
-        return process.is_running() and math.isclose(
-            float(process.create_time()),
-            create_time,
-            rel_tol=0.0,
-            abs_tol=0.01,
-        )
-    except (psutil.NoSuchProcess, psutil.ZombieProcess):
+    The recorded time came back through a persisted JSON record rather than
+    from a fresh read, so this passes the wider tolerance the round-trip
+    needs instead of the exact-match default.
+
+    An unreadable owner fails OPEN (live): a failure to prove danglingness
+    must never authorize a second writer. That is the opposite default from
+    the reap paths, which fail closed rather than kill on an unproven
+    witness - both are "never act on what you could not confirm", pointed at
+    the action each path would otherwise take wrongly.
+    """
+    if not pid_alive(pid) or pid_is_zombie(pid):
         return False
-    except psutil.AccessDenied:
-        # A failure to prove danglingness must never authorize a second writer.
+    live_start = pid_start_time(pid)
+    if live_start <= 0.0:
         return True
+    return math.isclose(live_start, create_time, rel_tol=0.0, abs_tol=0.01)
 
 
 @contextmanager

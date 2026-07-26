@@ -366,7 +366,8 @@ def _cleanup_forced_stop_harness(
     qdrant_pid: int,
 ) -> None:
     """Clean only the real processes owned by the POSIX forced-stop harness."""
-    from ...qdrant_runtime._resolve import pid_alive, reap_qdrant_orphan
+    from ..._process_probe import pid_alive
+    from ...qdrant_runtime._resolve import reap_qdrant_orphan
 
     if _is_pid_alive(service.pid):
         service.kill()
@@ -521,7 +522,7 @@ def test_live_service_readiness_expiry_uses_reserved_cleanup_budget(
     tmp_path: Path,
 ) -> None:
     """A real readiness expiry tears down service and Qdrant inside the envelope."""
-    from ...qdrant_runtime._resolve import pid_alive
+    from ..._process_probe import pid_alive
 
     acquisition_env = {
         EnvVar.HF_HUB_OFFLINE.value: None,
@@ -777,10 +778,8 @@ if sys.platform == "win32":
         tmp_path: Path,
     ) -> None:
         """Late-spawn cleanup finds the daemon even when its launcher PID differs."""
-        from ...cli._process import (
-            _cleanup_late_service_spawn,
-            _process_start_time,
-        )
+        from ..._process_probe import pid_start_time
+        from ...cli._process import _cleanup_late_service_spawn
 
         acquisition_env = {
             EnvVar.HF_HUB_OFFLINE.value: None,
@@ -816,7 +815,7 @@ if sys.platform == "win32":
 
             cleanup_error = _cleanup_late_service_spawn(
                 launcher_pid=launcher_pid,
-                launcher_start_time=_process_start_time(launcher_pid),
+                launcher_start_time=pid_start_time(launcher_pid),
                 port=port,
                 launch_token=launch_token,
                 timeout=15.0,
@@ -832,10 +831,8 @@ if sys.platform == "win32":
         tmp_path: Path,
     ) -> None:
         """Only the exact launch token and PID incarnation authorize signalling."""
-        from ...cli._process import (
-            _cleanup_late_service_spawn,
-            _process_start_time,
-        )
+        from ..._process_probe import pid_start_time
+        from ...cli._process import _cleanup_late_service_spawn
 
         with _service_env(tmp_path):
             port = _get_ephemeral_port()
@@ -881,7 +878,7 @@ if sys.platform == "win32":
                 )
                 error = _cleanup_late_service_spawn(
                     launcher_pid=owned.pid,
-                    launcher_start_time=_process_start_time(owned.pid),
+                    launcher_start_time=pid_start_time(owned.pid),
                     port=port,
                     launch_token=owned_token,
                     timeout=5.0,
@@ -1063,8 +1060,8 @@ if sys.platform != "win32":
         tampered_field: str,
     ) -> None:
         """Ordinary startup refuses a real orphan with any mismatched witness."""
+        from ..._process_probe import pid_start_time
         from ...qdrant_runtime._resolve import (
-            pid_start_time,
             read_qdrant_identity,
             reap_qdrant_orphan,
         )
@@ -1172,10 +1169,10 @@ if sys.platform != "win32":
         child_witness: str,
     ) -> None:
         """A missing or recycled-child witness cannot authorize signalling."""
+        from ..._process_probe import pid_start_time
         from ...config import get_config
         from ...qdrant_runtime._constants import QDRANT_SERVER_VERSION
         from ...qdrant_runtime._resolve import (
-            pid_start_time,
             reap_qdrant_orphan,
             write_qdrant_identity,
         )

@@ -36,6 +36,7 @@ import sys
 import threading
 import time
 
+from .._process_probe import pid_alive
 from ..config import EnvVar
 
 logger = logging.getLogger("vaultspec_rag.server")
@@ -437,21 +438,8 @@ def _posix_watchdog(initial_ppid: int, extra_pids: tuple[int, ...]) -> None:
         if ppid != initial_ppid:
             _exit_on_ancestor_death(initial_ppid, "parent")
         for pid in extra_pids:
-            if not _pid_alive(pid):
+            if not pid_alive(pid):
                 _exit_on_ancestor_death(pid, "explicit-parent")
-
-
-def _pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        logger.exception("stdio watchdog: liveness probe failed for pid %d", pid)
-        return True
-    return True
 
 
 def install_stdio_lifetime_watchdog(

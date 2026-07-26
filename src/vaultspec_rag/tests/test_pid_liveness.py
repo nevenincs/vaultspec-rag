@@ -11,7 +11,7 @@ because a fake returns whichever handle the fake was told to return and would
 pass against the very conflation this guards.
 
 MUTATION PROOF, run in one uninterrupted sequence: replacing the
-``GetLastError`` comparison in ``qdrant_runtime/_resolve.py:pid_alive`` with a
+``GetLastError`` comparison in ``_process_probe.py:pid_alive`` with a
 bare ``return False`` - the behaviour before this guard existed - fails
 ``test_a_process_we_cannot_open_counts_as_alive`` on its own
 ``assert pid_alive(...) is True``, and fails nothing else in this file;
@@ -29,7 +29,7 @@ import sys
 
 import pytest
 
-from vaultspec_rag.qdrant_runtime._resolve import pid_alive
+from vaultspec_rag._process_probe import pid_alive
 
 pytestmark = [pytest.mark.unit]
 
