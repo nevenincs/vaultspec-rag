@@ -312,6 +312,50 @@ def still_running_remediation_for(platform: str) -> tuple[str, ...]:
     )
 
 
+def _unreachable_owner_detail(pid: int) -> str:
+    """Name WHY a signal was refused, when the OS will say that much.
+
+    A refused kill has two shapes that need different responses, and the
+    refusal alone does not separate them. ``PROCESS_QUERY_LIMITED_INFORMATION``
+    is the least access Windows grants, and it is grantable across integrity
+    levels - so an elevated same-user daemon still opens. Being refused even
+    that means the target is not this operator's to inspect at all: another
+    account, or the services session.
+
+    That distinction is the whole diagnosis. Without it an operator reads
+    "permission refused", knows they never ran anything as Administrator,
+    concludes the stop path is lying, and goes looking in the wrong place -
+    which is exactly what happened. Returns an empty string when the process
+    IS openable (an ordinary privilege gap) or off Windows, so the caller adds
+    a sentence only when it carries information.
+    """
+    if sys.platform != "win32":
+        return ""
+    from .._process_probe import (
+        PROCESS_QUERY_LIMITED_INFORMATION,
+        close_process_handle,
+        open_process_handle,
+    )
+
+    # An ABSENT pid is unopenable too, and `open_process_handle` collapses
+    # refused and absent by design. Asking liveness first is what separates
+    # them: `pid_alive` reads access-denied as alive and a vacant pid as dead,
+    # so a stop that raced the daemon's own exit never gets told the process
+    # belongs to someone else.
+    if not _cli._is_pid_alive(pid):
+        return ""
+    handle = open_process_handle(pid, PROCESS_QUERY_LIMITED_INFORMATION)
+    if handle is not None:
+        close_process_handle(handle)
+        return ""
+    return (
+        f"This command cannot open process {pid} even to read its basic "
+        "details, which means it belongs to another account or runs in the "
+        "services session (session 0) rather than your desktop session. "
+        "Nothing this terminal does will change that."
+    )
+
+
 def _fail_still_running(
     json_mode: bool,
     *,
@@ -345,11 +389,18 @@ def _fail_still_running(
     data: dict[str, object] = {"pid": pid, "signal_denied": result.signal_denied}
     if port is not None:
         data["port"] = port
+    detail = _unreachable_owner_detail(pid) if result.signal_denied else ""
+    if detail:
+        data["owner_unreachable"] = True
     return _fail_stop(
         json_mode,
         error=error,
         message="Service stop failed",
-        human_lines=(cause, "The discovery record was left in place."),
+        human_lines=(
+            cause,
+            *((detail,) if detail else ()),
+            "The discovery record was left in place.",
+        ),
         next_actions=_still_running_remediation(),
         **data,
     )

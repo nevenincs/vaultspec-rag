@@ -435,6 +435,17 @@ class TestStopThatDidNotStop:
         assert lines, "a refused stop must always name a next action"
         assert expected in " ".join(lines).lower()
 
+    def test_an_ordinary_process_gets_no_unreachable_owner_claim(self) -> None:
+        # The detail asserts something strong - "another account, or session
+        # 0" - so a false positive would misdiagnose every ordinary refused
+        # kill and send the operator chasing a privilege boundary that is not
+        # there. A process this one can plainly open must produce nothing.
+        import os
+
+        from ..cli._service_stop import _unreachable_owner_detail
+
+        assert _unreachable_owner_detail(os.getpid()) == ""
+
     def test_remediation_never_offers_the_originating_console(self) -> None:
         # Permission to signal is carried by the access token, not by the
         # console, so "re-run from the terminal the service was started in"
