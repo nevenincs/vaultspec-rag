@@ -42,10 +42,11 @@ from ._run_ledger import (
 from ._run_policy import DurableProgressKind
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
 
     from _typeshed import DataclassInstance
 
+    from . import _config_epoch
     from ._content_policy import ContentKind
     from ._resolved_policy import ResolvedIndexPolicy
     from ._run_ledger import RunGeneration, RunLedger
@@ -146,6 +147,45 @@ class RunCheckpointBase:
                 exc,
             )
             raise
+
+    def publish_metadata_transition(
+        self,
+        publish: Callable[[_config_epoch.ContentKindFingerprints], int],
+    ) -> int:
+        """Advance the durable finalization phase around one metadata publish.
+
+        The phase walk is identical for every source type and both subclasses
+        carried a copy of it. Only *publish* differs - the code sidecar records
+        published point and file counts, the document sidecar records retained
+        point ids and a policy snapshot - so that is the one thing passed in.
+
+        The transition is DURABLE: it moves the generation from
+        ``STALE_RECONCILED`` to ``METADATA_PUBLISHED`` and that survives a
+        restart. Two copies of it could disagree about when metadata is
+        publishable and the disagreement would persist across runs.
+
+        Returns the row count *publish* reported, or ``0`` when this generation
+        is not in a publishable phase.
+        """
+        phase = self.generation.finalization_phase
+        if phase is FinalizationPhase.INGESTING:
+            self.generation = self.ledger.advance_finalization(
+                self.generation_id,
+                FinalizationPhase.STALE_RECONCILED,
+            )
+            phase = self.generation.finalization_phase
+        if phase is not FinalizationPhase.STALE_RECONCILED:
+            return 0
+        count = publish(self.policy.fingerprints_for(self._content_kind))
+        self.generation = self.ledger.advance_finalization(
+            self.generation_id,
+            FinalizationPhase.METADATA_PUBLISHED,
+        )
+        self.run_policy.record_durable_progress(
+            kind=DurableProgressKind.FINALIZATION_PHASE_COMMITTED,
+            label=f"{self._kind_label} metadata publication",
+        )
+        return count
 
     def record_confirmed_deletion(
         self,

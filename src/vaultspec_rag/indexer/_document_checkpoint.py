@@ -16,7 +16,6 @@ from ._file_state import FileStateKind
 from ._run_ledger import (
     CommitUnit,
     CommitUnitKind,
-    FinalizationPhase,
     RunLedger,
     RunLedgerCompatibilityError,
     RunOperation,
@@ -185,34 +184,17 @@ class DocumentRunCheckpoint(RunCheckpointBase):
 
     def publish_metadata(self, meta_path: Path) -> int:
         """Publish converged document rows and advance the durable phase."""
-        phase = self.generation.finalization_phase
-        if phase is FinalizationPhase.INGESTING:
-            self.generation = self.ledger.advance_finalization(
-                self.generation_id,
-                FinalizationPhase.STALE_RECONCILED,
+        return self.publish_metadata_transition(
+            lambda fingerprints: publish_document_meta_from_file_states(
+                meta_path,
+                self.ledger.iter_file_states(self.generation_id),
+                point_ids_for_path=lambda path: self.ledger.iter_retained_point_ids(
+                    self.generation_id,
+                    rel_path=path,
+                ),
+                generation_id=self.generation_id,
+                membership_fingerprint=fingerprints.membership,
+                content_fingerprint=fingerprints.content,
+                policy_snapshot=self.policy.fingerprints.snapshot,
             )
-            phase = self.generation.finalization_phase
-        if phase is not FinalizationPhase.STALE_RECONCILED:
-            return 0
-        fingerprints = self.policy.fingerprints_for(ContentKind.DOCUMENT)
-        count = publish_document_meta_from_file_states(
-            meta_path,
-            self.ledger.iter_file_states(self.generation_id),
-            point_ids_for_path=lambda path: self.ledger.iter_retained_point_ids(
-                self.generation_id,
-                rel_path=path,
-            ),
-            generation_id=self.generation_id,
-            membership_fingerprint=fingerprints.membership,
-            content_fingerprint=fingerprints.content,
-            policy_snapshot=self.policy.fingerprints.snapshot,
         )
-        self.generation = self.ledger.advance_finalization(
-            self.generation_id,
-            FinalizationPhase.METADATA_PUBLISHED,
-        )
-        self.run_policy.record_durable_progress(
-            kind=DurableProgressKind.FINALIZATION_PHASE_COMMITTED,
-            label="document metadata publication",
-        )
-        return count

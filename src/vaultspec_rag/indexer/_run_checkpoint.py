@@ -14,7 +14,6 @@ from ._run_ledger import (
     INDEX_RUN_LEDGER_FILENAME,
     CommitUnit,
     CommitUnitKind,
-    FinalizationPhase,
     RunLedger,
     RunLedgerCompatibilityError,
     RunOperation,
@@ -294,31 +293,14 @@ class CodeRunCheckpoint(RunCheckpointBase):
         caller after storage reconciliation, so the sidecar records the breadth
         it actually describes rather than an estimate.
         """
-        phase = self.generation.finalization_phase
-        if phase is FinalizationPhase.INGESTING:
-            self.generation = self.ledger.advance_finalization(
-                self.generation_id,
-                FinalizationPhase.STALE_RECONCILED,
+        return self.publish_metadata_transition(
+            lambda fingerprints: publish_meta_from_file_states(
+                meta_path,
+                self.ledger.iter_file_states(self.generation_id),
+                generation_id=self.generation_id,
+                membership_epoch=fingerprints.membership,
+                content_epoch=fingerprints.content,
+                published_points_count=published_points,
+                published_files_count=published_files,
             )
-            phase = self.generation.finalization_phase
-        if phase is not FinalizationPhase.STALE_RECONCILED:
-            return 0
-        fingerprints = self.policy.fingerprints_for(ContentKind.CODE)
-        count = publish_meta_from_file_states(
-            meta_path,
-            self.ledger.iter_file_states(self.generation_id),
-            generation_id=self.generation_id,
-            membership_epoch=fingerprints.membership,
-            content_epoch=fingerprints.content,
-            published_points_count=published_points,
-            published_files_count=published_files,
         )
-        self.generation = self.ledger.advance_finalization(
-            self.generation_id,
-            FinalizationPhase.METADATA_PUBLISHED,
-        )
-        self.run_policy.record_durable_progress(
-            kind=DurableProgressKind.FINALIZATION_PHASE_COMMITTED,
-            label="code metadata publication",
-        )
-        return count
