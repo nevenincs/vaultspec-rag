@@ -18,19 +18,16 @@ be a re-export with no caller. They are named in ``__all__`` because the import
 exists for its effect rather than for a symbol, and that is the difference
 between a deliberate side-effect import and one a later reader deletes as unused.
 
-What this package does export is the small set of names reached through the
-package namespace rather than from the module that defines them, because a
-rebind must be observed: ``console`` and the process helpers
-(``_is_pid_alive``, ``_is_our_service``, ``_terminate_pid``) are
-read at call time through ``import vaultspec_rag.cli as _cli`` by their
-consumers, so ``monkeypatch.setattr(cli, name, …)`` reaches them. ``sys`` is
-re-exported for the same reason - tests set ``cli.sys.platform``. Everything
-else is imported from the module that owns it.
+What this package does export is the small set of names its own consumers reach
+through the package namespace rather than from the module that defines them:
+``console`` and the process helpers (``_is_pid_alive``, ``_is_our_service``,
+``_terminate_pid``) are read at call time through
+``import vaultspec_rag.cli as _cli``, so a rebind of one of them is observed by
+every caller instead of only by those importing afterwards. Everything else is
+imported from the module that owns it.
 """
 
 from __future__ import annotations
-
-import sys
 
 # Command submodules, imported purely so their decorators register against the
 # apps ``_app`` nests. Nothing here is re-exported.
@@ -126,5 +123,4 @@ __all__ = [
     "app",
     "console",
     "run_cli",
-    "sys",
 ]
