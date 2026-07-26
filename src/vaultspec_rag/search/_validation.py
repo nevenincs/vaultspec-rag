@@ -201,47 +201,18 @@ def _supplied_filters(
     )
 
 
-def _reject_code_filters_for_non_code(search_type: str, offending: list[str]) -> None:
+def _reject_filters_for_mismatched_search_type(
+    kind: str, search_type: str, offending: list[str]
+) -> None:
     if not offending:
         return
     offending_flags = _format_flags(offending)
     raise InvalidFilterForSearchTypeError(
-        f"code-search filters ({', '.join(sorted(offending_flags))}) require "
-        f"--type code; got --type {search_type}.",
-        filter_kind="code",
-        offending_filters=offending_flags,
-    )
-
-
-def _reject_vault_filters_for_non_vault(
-    search_type: str, vault_supplied: list[str]
-) -> None:
-    if not vault_supplied:
-        return
-    offending_flags = _format_flags(vault_supplied)
-    raise InvalidFilterForSearchTypeError(
         (
-            f"vault-search filters ({', '.join(sorted(offending_flags))}) "
-            f"require --type vault; got --type {search_type}."
+            f"{kind}-search filters ({', '.join(sorted(offending_flags))}) "
+            f"require --type {kind}; got --type {search_type}."
         ),
-        filter_kind="vault",
-        offending_filters=offending_flags,
-    )
-
-
-def _reject_document_filters_for_non_document(
-    search_type: str,
-    document_supplied: list[str],
-) -> None:
-    if not document_supplied:
-        return
-    offending_flags = _format_flags(document_supplied)
-    raise InvalidFilterForSearchTypeError(
-        (
-            f"document-search filters ({', '.join(sorted(offending_flags))}) "
-            f"require --type document; got --type {search_type}."
-        ),
-        filter_kind="document",
+        filter_kind=kind,
         offending_filters=offending_flags,
     )
 
@@ -317,13 +288,14 @@ def validate_search_filters(
     )
 
     if canonical not in {PublicSourceType.CODE, PublicSourceType.COMBINED}:
-        _reject_code_filters_for_non_code(
-            canonical_name, [*code_supplied, *glob_supplied, *postproc_supplied]
+        _reject_filters_for_mismatched_search_type(
+            "code", canonical_name, [*code_supplied, *glob_supplied, *postproc_supplied]
         )
     if canonical not in {PublicSourceType.VAULT, PublicSourceType.COMBINED}:
-        _reject_vault_filters_for_non_vault(canonical_name, vault_supplied)
+        _reject_filters_for_mismatched_search_type(
+            "vault", canonical_name, vault_supplied
+        )
     if canonical not in {PublicSourceType.DOCUMENT, PublicSourceType.COMBINED}:
-        _reject_document_filters_for_non_document(
-            canonical_name,
-            document_supplied,
+        _reject_filters_for_mismatched_search_type(
+            "document", canonical_name, document_supplied
         )
