@@ -34,14 +34,11 @@ _ROOT_UNRESOLVED = "project_root_unresolved"
 
 def _requested_root(project_root: str | None) -> Path | None:
     """Return the explicitly named root, from the argument or the env var."""
-    import os
+    from .._named_root import env_named_root
 
-    from ..config import EnvVar
-
-    for candidate in (project_root, os.environ.get(EnvVar.RAG_ROOT)):
-        if candidate and candidate.strip():
-            return Path(candidate.strip()).expanduser()
-    return None
+    if project_root and project_root.strip():
+        return Path(project_root.strip()).expanduser()
+    return env_named_root()
 
 
 def _resolve_project_root(project_root: str | None) -> str:
