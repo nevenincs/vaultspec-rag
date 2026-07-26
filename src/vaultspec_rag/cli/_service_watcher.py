@@ -9,9 +9,9 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from ..serviceclient._transport import _try_http_admin
 from ._app import server_watcher_app
 from ._cli_format import _counted_unit, _project_name
-from ._http_search import _try_http_admin
 from ._render import (
     _display_service_not_running,
     _emit_json,

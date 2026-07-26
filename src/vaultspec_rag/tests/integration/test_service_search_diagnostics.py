@@ -20,9 +20,13 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import CallToolResult, TextContent
 
-from ...cli._http_search import _do_http_call, _timeout_diagnostics, _try_http_search
 from ...job_manager import JobManager
 from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
+from ...serviceclient._transport import (
+    _do_http_call,
+    _timeout_diagnostics,
+    _try_http_search,
+)
 from .._ports import free_loopback_port
 from ..corpus import build_synthetic_vault
 from .conftest import _live_service_context

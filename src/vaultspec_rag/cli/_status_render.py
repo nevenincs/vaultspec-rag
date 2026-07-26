@@ -24,9 +24,9 @@ from ..serviceclient._status import (
     LivenessSignals,
     compose_discovery_status,
 )
+from ..serviceclient._transport import _try_http_admin, _try_http_health
 from ._app import server_app
 from ._cli_format import NOT_REPORTED
-from ._http_search import _try_http_admin, _try_http_health
 from ._process import (
     _HEARTBEAT_STALENESS_SECONDS,
     _heartbeat_age_seconds,

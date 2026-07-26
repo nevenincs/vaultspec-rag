@@ -24,10 +24,13 @@ from ..cli import (
     _write_service_status,
     app,
 )
-from ..cli._http_search import DEFAULT_SEARCH_TIMEOUT_SECONDS, _get_search_timeout
 from ..config import EnvVar
 from ..config import reset_config as reset_rag_config
 from ..serviceclient._compat import DataPlaneService, classify_service_version
+from ..serviceclient._transport import (
+    DEFAULT_SEARCH_TIMEOUT_SECONDS,
+    _get_search_timeout,
+)
 from ..torch_config._constants import TorchConfigAction
 from ._http_stubs import QuietHandler
 

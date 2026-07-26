@@ -380,8 +380,8 @@ class TestCliMcpFastPath:
         # The invariant is the HTTP fast path stays synchronous (urllib),
         # because Typer handlers are sync and the MCP offloads these blocking
         # calls onto a worker thread. The wire client was factored into the
-        # import-light serviceclient package, so inspect that module (the CLI
-        # _http_search shim only re-exports it).
+        # import-light serviceclient package, so inspect that module - which
+        # the CLI now imports from directly.
         src = inspect.getsource(_transport)
         assert "urllib.request" in src, (
             "the HTTP fast path must use synchronous urllib.request instead "

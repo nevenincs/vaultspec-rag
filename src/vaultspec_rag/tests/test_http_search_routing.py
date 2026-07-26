@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from ..cli._http_search import _logs_route_path
+from ..serviceclient._transport import _logs_route_path
 
 pytestmark = [pytest.mark.unit]
 

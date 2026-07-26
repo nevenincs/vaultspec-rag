@@ -13,10 +13,10 @@ import vaultspec_rag.cli as _cli
 
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from ..serviceclient._compat import resolve_data_plane_service
+from ..serviceclient._transport import _get_search_timeout, _try_http_search
 from ..store import VaultStoreLockedError
 from ._app import CLIState, app
 from ._gpu_errors import _handle_gpu_error
-from ._http_search import _get_search_timeout, _try_http_search
 from ._render import (
     _display_port_unreachable_error,
     _display_search_results,

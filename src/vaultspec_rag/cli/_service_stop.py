@@ -19,9 +19,9 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from ..serviceclient._transport import _try_http_health
 from ._app import server_app
 from ._core import logger
-from ._http_search import _try_http_health
 from ._process import (
     _DEFAULT_GRACEFUL_DRAIN_SECONDS,
     _port_is_listening,
