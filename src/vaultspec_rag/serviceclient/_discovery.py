@@ -163,7 +163,9 @@ def _status_file() -> Path:
     Returns:
         Path to ``{status_dir}/service.json``.
     """
-    return _status_dir() / "service.json"
+    from ..config import SERVICE_STATUS_FILENAME
+
+    return _status_dir() / SERVICE_STATUS_FILENAME
 
 
 def _try_lock_fd(fd: int) -> bool:
