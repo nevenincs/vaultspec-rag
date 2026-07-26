@@ -94,7 +94,6 @@ class FileLock:
 
     def acquire(self) -> bool:
         import os
-        import sys
 
         self.last_error = None
         self.last_error_stage = None
@@ -105,47 +104,22 @@ class FileLock:
             self.last_error_stage = "open"
             return False
 
-        if sys.platform == "win32":
-            import msvcrt
+        from ._fd_lock import lock_fd_exclusive
 
-            try:
-                msvcrt.locking(self.fd, msvcrt.LK_NBLCK, 1)
-                return True
-            except OSError as exc:
-                self.last_error = exc
-                self.last_error_stage = "lock"
-                self.close()
-                return False
-        else:
-            import fcntl
-
-            try:
-                fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return True
-            except OSError as exc:
-                self.last_error = exc
-                self.last_error_stage = "lock"
-                self.close()
-                return False
+        try:
+            lock_fd_exclusive(self.fd)
+        except OSError as exc:
+            self.last_error = exc
+            self.last_error_stage = "lock"
+            self.close()
+            return False
+        return True
 
     def release(self) -> None:
-        import os
-        import sys
+        from ._fd_lock import unlock_fd
 
         if self.fd is not None:
-            if sys.platform == "win32":
-                import msvcrt
-
-                try:
-                    os.lseek(self.fd, 0, os.SEEK_SET)
-                    msvcrt.locking(self.fd, msvcrt.LK_UNLCK, 1)
-                except OSError:
-                    pass
-            else:
-                import fcntl
-
-                with suppress(OSError):
-                    fcntl.flock(self.fd, fcntl.LOCK_UN)
+            unlock_fd(self.fd)
             self.close()
 
     def close(self) -> None:

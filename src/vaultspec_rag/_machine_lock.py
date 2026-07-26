@@ -29,7 +29,6 @@ import contextlib
 import json
 import logging
 import os
-import sys
 import tempfile
 import threading
 from dataclasses import dataclass
@@ -233,19 +232,10 @@ def _machine_lock_holder(path: Path) -> int:
 
 def _try_lock_exclusive(fd: int) -> bool:
     """Take a non-blocking exclusive OS lock on *fd*; return whether acquired."""
-    if sys.platform == "win32":
-        import msvcrt
-
-        os.lseek(fd, _LOCK_OFFSET, os.SEEK_SET)
-        try:
-            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-        except OSError:
-            return False
-        return True
-    import fcntl
+    from ._fd_lock import lock_fd_exclusive
 
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_fd_exclusive(fd, offset=_LOCK_OFFSET)
     except OSError:
         return False
     return True
@@ -253,16 +243,9 @@ def _try_lock_exclusive(fd: int) -> bool:
 
 def _unlock(fd: int) -> None:
     """Release the OS lock on *fd* (best effort)."""
-    with contextlib.suppress(OSError):
-        if sys.platform == "win32":
-            import msvcrt
+    from ._fd_lock import unlock_fd
 
-            os.lseek(fd, _LOCK_OFFSET, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(fd, fcntl.LOCK_UN)
+    unlock_fd(fd, offset=_LOCK_OFFSET)
 
 
 def acquire_machine_lock_lease() -> tuple[MachineLockLease | None, int]:

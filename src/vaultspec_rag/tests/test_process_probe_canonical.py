@@ -346,3 +346,56 @@ class TestDiskFullVocabularyHasOneHome:
         assert classify_write_error(RuntimeError("connection reset by peer")) == (
             "transient"
         )
+
+
+class TestFdLockHasOneImplementation:
+    """The ``msvcrt``/``fcntl`` branch lives only in ``_fd_lock``.
+
+    Three modules carried it: the machine singleton lock, the status-write
+    lock, and the store's exclusive lock. Only the platform call was shared -
+    each caller's policy around it (which file, which byte, what contention
+    means) differs for real reasons and stayed where it was.
+    """
+
+    def test_no_module_calls_the_platform_lock_directly(self) -> None:
+        offenders = [
+            f"{path.relative_to(_PACKAGE_ROOT).as_posix()}:{number}"
+            for path in _production_sources()
+            if path.name != "_fd_lock.py"
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            )
+            if ("msvcrt.locking(" in line or "fcntl.flock(" in line)
+            and not line.lstrip().startswith("#")
+        ]
+        assert not offenders, (
+            f"direct advisory-lock call at {offenders}; use "
+            "_fd_lock.lock_fd_exclusive / unlock_fd so the platform branch "
+            "has one implementation"
+        )
+
+    def test_the_offset_is_honoured_so_a_locked_payload_stays_readable(
+        self, tmp_path: Path
+    ) -> None:
+        # The machine lock locks its OWN payload file, and relies on the byte
+        # sitting past the JSON because a Windows lock makes the byte
+        # unreadable. If offset were ignored, that file would become
+        # unreadable to the contender that needs the holder pid for its
+        # refusal message - a regression no import check would see.
+        import os
+
+        from .._fd_lock import lock_fd_exclusive, unlock_fd
+
+        target = tmp_path / "payload.lock"
+        held = os.open(target, os.O_RDWR | os.O_CREAT, 0o600)
+        other = os.open(target, os.O_RDWR)
+        try:
+            os.ftruncate(held, 1 << 21)
+            lock_fd_exclusive(held, offset=1 << 20)
+            # A different byte of the same file is still lockable.
+            lock_fd_exclusive(other, offset=0)
+            unlock_fd(other, offset=0)
+        finally:
+            unlock_fd(held, offset=1 << 20)
+            os.close(other)
+            os.close(held)

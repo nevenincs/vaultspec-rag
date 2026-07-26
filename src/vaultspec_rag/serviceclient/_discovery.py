@@ -9,10 +9,10 @@ publications so neither process can erase authoritative fields from the other.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
-import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -169,45 +169,29 @@ def _status_file() -> Path:
 
 
 def _try_lock_fd(fd: int) -> bool:
-    """Take the OS advisory lock on *fd*; True when held, False when unavailable.
+    """Take the OS advisory lock on *fd*; raise ``OSError`` when contended.
 
-    A platform with no advisory-lock primitive (only reachable when the
-    platform string is simulated; every real posix host ships ``fcntl``)
-    reports success unlocked rather than failing the status write.
+    Returns True only on success. A platform with no advisory-lock primitive
+    (only reachable when the platform string is simulated; every real posix
+    host ships ``fcntl``) reports success UNLOCKED rather than failing the
+    status write - tolerable here because this serialises a status merge, not
+    a singleton whose second holder would corrupt state.
     """
-    if sys.platform == "win32":
-        try:
-            import msvcrt
-        except ImportError:
-            logger.debug("no msvcrt; status write proceeds unlocked")
-            return True
-        os.lseek(fd, 0, os.SEEK_SET)
-        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-        return True
+    from .._fd_lock import lock_fd_exclusive
+
     try:
-        import fcntl
+        lock_fd_exclusive(fd)
     except ImportError:
-        logger.debug("no fcntl; status write proceeds unlocked")
-        return True
-    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        logger.debug("no advisory-lock primitive; status write proceeds unlocked")
     return True
 
 
 def _unlock_fd(fd: int) -> None:
     """Release the OS advisory lock taken by :func:`_try_lock_fd`."""
-    if sys.platform == "win32":
-        try:
-            import msvcrt
-        except ImportError:
-            return
-        os.lseek(fd, 0, os.SEEK_SET)
-        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-        return
-    try:
-        import fcntl
-    except ImportError:
-        return
-    fcntl.flock(fd, fcntl.LOCK_UN)
+    from .._fd_lock import unlock_fd
+
+    with contextlib.suppress(ImportError):
+        unlock_fd(fd)
 
 
 @contextmanager
