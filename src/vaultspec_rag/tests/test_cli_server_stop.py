@@ -26,13 +26,15 @@ import sys
 import pytest
 from typer.testing import CliRunner
 
-from ..cli import _log_file, app
+from ..cli import TerminationResult, _log_file, app
+from ..cli import _service_stop as _service_stop_module
 from ..cli._service_lifecycle import (
     _fail_stop,
     _initiator_fields,
     _stop_success,
     _terminate_and_confirm,
 )
+from ..cli._service_stop import _fail_still_running, still_running_remediation_for
 
 pytestmark = [pytest.mark.unit]
 
@@ -278,3 +280,156 @@ class TestShutdownAttribution:
         assert f"initiator_pid={os.getpid()}" in content
         assert "initiator_cmd=" in content
         assert f"initiator_cwd={os.getcwd()}" in content
+
+
+class TestStopThatDidNotStop:
+    """A stop that leaves the service running is a failure, not a success.
+
+    The regression: ``_terminate_pid`` wrapped every ``os.kill`` in a blanket
+    ``suppress(OSError)`` and returned ``None``, so a ``PermissionError`` from a
+    daemon launched at a privilege the terminal could not signal was
+    indistinguishable from a successful kill. ``_terminate_and_confirm`` never
+    confirmed, ``service_stop`` deleted the discovery file and printed "Service
+    stopped" with exit 0, and the next ``server start`` failed on a port held by
+    a service the operator had just been told was stopped - with no discovery
+    record left to retry against.
+
+    Like ``orphan_reap_incomplete`` above, the denied-kill shape cannot be
+    staged live (it needs a process this test run has no permission to signal,
+    and manufacturing one requires elevation), so the envelope is pinned at the
+    helper and the call-site contract is pinned structurally.
+    """
+
+    def test_permission_denied_envelope(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import typer
+
+        exc = _fail_still_running(
+            True,
+            pid=4242,
+            result=TerminationResult(alive=True, signal_denied=True),
+            port=8766,
+        )
+        assert isinstance(exc, typer.Exit)
+        assert exc.exit_code == 1
+        env = json.loads(capsys.readouterr().out)
+        assert env["ok"] is False
+        assert env["command"] == "service.stop"
+        # A refused kill and a stubborn one need different operator actions, so
+        # they are different error codes rather than one "stop failed".
+        assert env["error"] == "terminate_permission_denied"
+        assert env["data"] == {"pid": 4242, "signal_denied": True, "port": 8766}
+
+    def test_timeout_envelope_is_a_distinct_error(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        exc = _fail_still_running(
+            True, pid=4242, result=TerminationResult(alive=True, signal_denied=False)
+        )
+        assert exc.exit_code == 1
+        env = json.loads(capsys.readouterr().out)
+        assert env["error"] == "terminate_timeout"
+        assert env["data"] == {"pid": 4242, "signal_denied": False}
+
+    def test_human_mode_exits_one_and_names_the_remedy(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        exc = _fail_still_running(
+            False, pid=4242, result=TerminationResult(alive=True, signal_denied=True)
+        )
+        assert exc.exit_code == 1
+        out = capsys.readouterr().out
+        # Human mode must not leak an envelope, and must say the record was
+        # kept: an operator who reads "stopped" and finds no record has no
+        # pid to retry against.
+        assert '"ok"' not in out
+        assert "still running" in out.lower()
+        assert "left in place" in out.lower()
+        # A refused kill is not waited out; only a privilege change fixes it.
+        assert "elevated" in out.lower()
+
+    @pytest.mark.usefixtures("isolated_singleton_dirs")
+    def test_terminate_pid_reports_a_child_it_really_killed(self) -> None:
+        # The success direction against a real process: a child this test may
+        # signal must come back alive=False with no denial recorded.
+        from ..cli import _is_pid_alive, _terminate_pid
+
+        if sys.platform == "win32":
+            child = subprocess.Popen(
+                ["cmd.exe", "/c", "ping -n 60 127.0.0.1 >nul"],
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+            )
+        else:
+            child = subprocess.Popen(["sleep", "60"])
+        try:
+            result = _terminate_pid(child.pid, timeout=15.0)
+            assert result.alive is False, "a killed child must not report alive"
+            assert result.signal_denied is False, (
+                "a child this process may signal must record no denial"
+            )
+            assert not _is_pid_alive(child.pid)
+        finally:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=10)
+
+    def test_dead_pid_is_not_reported_as_a_permission_denial(self) -> None:
+        # "Already gone" and "not allowed to touch it" both used to vanish into
+        # the same suppress(). They mean opposite things: one resolves as
+        # success, the other is the fault this class exists for.
+        #
+        # Which except-branch carries "gone" is platform-specific, so this
+        # asserts the OUTCOME rather than the branch: POSIX raises
+        # ProcessLookupError, while Windows os.kill goes through
+        # TerminateProcess and raises a bare OSError (WinError 87,
+        # ERROR_INVALID_PARAMETER). Only the generic branch is reachable here,
+        # and that is the branch a mutation must break to falsify this.
+        import signal as signal_module
+
+        from ..cli._process import _send_termination_signal
+
+        assert _send_termination_signal(99999999, signal_module.SIGTERM) is False, (
+            "an absent pid is gone, not a privilege problem"
+        )
+
+    def test_no_call_site_discards_the_termination_outcome(self) -> None:
+        # The structural guard on the actual regression. The old code called
+        # _terminate_and_confirm as a bare statement and threw the outcome
+        # away; every caller must now branch on it, so a bare-expression call
+        # is the defect returning and fails here rather than in production.
+        import ast
+        from pathlib import Path
+
+        source = Path(_service_stop_module.__file__).read_text(encoding="utf-8")
+        discarded = [
+            node.lineno
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "_terminate_and_confirm"
+        ]
+        assert not discarded, (
+            f"_terminate_and_confirm outcome discarded at line(s) {discarded}; "
+            "every call site must branch on result.alive"
+        )
+
+    @pytest.mark.parametrize(
+        ("platform", "expected"),
+        [
+            ("win32", "elevated (administrator) terminal"),
+            ("linux", "user that started the service"),
+            ("darwin", "user that started the service"),
+        ],
+    )
+    def test_remediation_is_correct_on_every_platform(
+        self, platform: str, expected: str
+    ) -> None:
+        # Both branches are statable on either kind of host, so neither goes
+        # unverified just because CI runs on one of them. A Windows operator
+        # needs elevation; a POSIX one needs the owning user or sudo, and
+        # telling either the other one's remedy sends them nowhere.
+        lines = still_running_remediation_for(platform)
+        assert lines, "a refused stop must always name a next action"
+        assert expected in " ".join(lines).lower()

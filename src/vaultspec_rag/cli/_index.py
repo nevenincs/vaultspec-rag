@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, cast
 
 if TYPE_CHECKING:
     import pathlib
+    from contextlib import AbstractContextManager
 
     from .._public_index import DocumentScanResult
     from ..api import AllIndexOutcomes
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
         AdmissionSample,
         ContentScanResult,
     )
+    from ..progress import ProgressReporter
 
 import typer
 
@@ -688,11 +690,22 @@ def _try_in_process_indexing(
     target: pathlib.Path,
     json_mode: bool,
 ) -> None:
+    import contextlib
+
     import vaultspec_rag
 
-    from ..progress import RichProgressReporter
+    from ..progress import NullProgressReporter, RichProgressReporter
 
-    with RichProgressReporter(_cli.console) as reporter:
+    # Progress is human output and stdout is the result channel, so a --json
+    # run reports none of it. Emitting it there put prose ahead of the envelope
+    # on the one path that promises exactly one structured document, and a
+    # broker parsing stdout got a syntax error instead of an outcome.
+    reporter_ctx: AbstractContextManager[ProgressReporter] = (
+        contextlib.nullcontext(NullProgressReporter())
+        if json_mode
+        else RichProgressReporter(_cli.console)
+    )
+    with reporter_ctx as reporter:
         reporter.phase_start("resolve workspace", 1)
         reporter.advance(1)
         reporter.phase_end()
