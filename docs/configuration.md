@@ -1,6 +1,8 @@
 # Configuration reference
 
-This page lists every `VAULTSPEC_RAG_*` environment variable vaultspec-rag reads. It gives the matching CLI flag where one exists and the rules for parsing values.
+This page lists every `VAULTSPEC_RAG_*` environment variable vaultspec-rag declares. It gives the matching CLI flag where one exists and the rules for parsing values.
+
+Every variable name, type, and default below is checked against the shipped settings object by a test in the suite, so a knob cannot be added, renamed, or re-defaulted without this page failing until it is updated.
 
 See also:
 
@@ -14,51 +16,54 @@ See also:
 
 Each setting resolves through a fixed precedence: CLI flag > environment variable > persisted local-only marker > built-in default.
 
-The persisted local-only marker applies only to backend selection. It lives at `{status_dir}/local-only.json` and is written by `install --local-only`. A later `server start` with no flag or environment variable then still selects the on-disk store.
+The persisted local-only marker applies only to backend selection. It lives at `{status_dir}/local-only.json` and is written by `install --local-only` - `server start --local-only` applies to that run without persisting. A later `server start` with no flag and no environment variable then still selects the on-disk store.
+
+Five variables sit outside this chain and parse their values their own way; they have their own section below.
 
 ## Backend selection
 
 These variables choose between the supervised Qdrant server (the default) and the on-disk store. They also configure a remote or managed server.
 
-| Variable                            | Type    | Default                                  | Controls                                                       | CLI flag                   |
-| ----------------------------------- | ------- | ---------------------------------------- | -------------------------------------------------------------- | -------------------------- |
-| `VAULTSPEC_RAG_QDRANT_SERVER`       | boolean | `1` (true)                               | Server-first default backend                                   | `--qdrant` / `--no-qdrant` |
-| `VAULTSPEC_RAG_LOCAL_ONLY`          | boolean | `0` (false)                              | On-disk store opt-out; overrides the server default            | `--local-only`             |
-| `VAULTSPEC_RAG_QDRANT_PORT`         | integer | `8765`                                   | Managed server HTTP port (gRPC binds one below)                | -                          |
-| `VAULTSPEC_RAG_QDRANT_URL`          | string  | none                                     | Remote or managed server URL; selects server mode in the store | -                          |
-| `VAULTSPEC_RAG_QDRANT_API_KEY`      | string  | none                                     | Remote server API key                                          | -                          |
-| `VAULTSPEC_RAG_QDRANT_BINARY`       | string  | none                                     | Operator-supplied binary path (air-gapped escape hatch)        | -                          |
-| `VAULTSPEC_RAG_QDRANT_STORAGE_DIR`  | string  | `~/.vaultspec-rag/qdrant-server/storage` | Shared multi-root server storage                               | -                          |
-| `VAULTSPEC_RAG_QDRANT_QUANTIZATION` | string  | none                                     | Vector quantization (`scalar`, `turbo`, or `product`)          | -                          |
+| Variable                             | Type    | Default                                  | Controls                                                               | CLI flag                   |
+| ------------------------------------ | ------- | ---------------------------------------- | ---------------------------------------------------------------------- | -------------------------- |
+| `VAULTSPEC_RAG_QDRANT_SERVER`        | boolean | `1` (true)                               | Server-first default backend                                           | `--qdrant` / `--no-qdrant` |
+| `VAULTSPEC_RAG_LOCAL_ONLY`           | boolean | `0` (false)                              | On-disk store opt-out; overrides the server default                    | `--local-only`             |
+| `VAULTSPEC_RAG_QDRANT_PORT`          | integer | `8765`                                   | Managed server HTTP port (gRPC binds one below)                        | -                          |
+| `VAULTSPEC_RAG_QDRANT_URL`           | string  | none                                     | Remote or managed server URL; selects server mode in the store         | -                          |
+| `VAULTSPEC_RAG_QDRANT_API_KEY`       | string  | none                                     | Remote server API key                                                  | -                          |
+| `VAULTSPEC_RAG_QDRANT_BINARY`        | string  | none                                     | Operator-supplied binary path (air-gapped escape hatch)                | -                          |
+| `VAULTSPEC_RAG_QDRANT_STORAGE_DIR`   | string  | `~/.vaultspec-rag/qdrant-server/storage` | Shared multi-root server storage                                       | -                          |
+| `VAULTSPEC_RAG_QDRANT_QUANTIZATION`  | string  | none                                     | Vector quantization (`scalar`, `turbo`, or `product`)                  | -                          |
+| `VAULTSPEC_RAG_QDRANT_READY_TIMEOUT` | float   | `300`                                    | Seconds the supervisor waits for the managed server to accept requests | -                          |
 
 ## Core variables
 
-The tables in this section, together with the backend selection table, list every `VAULTSPEC_RAG_*` variable vaultspec-rag reads.
+The tables in this section, together with the backend selection table, list every `VAULTSPEC_RAG_*` variable resolved through the standard chain.
 
 ### Project and data locations
 
-| Variable                        | Type | Default                   | Controls                                                  | CLI flag        |
-| ------------------------------- | ---- | ------------------------- | --------------------------------------------------------- | --------------- |
-| `VAULTSPEC_RAG_ROOT`            | path | current working directory | Project root used to resolve `.vault/` and indexing scope | `--target`      |
-| `VAULTSPEC_RAG_DATA_DIR`        | path | `.vault/data/search-data` | Directory holding the on-disk store and index metadata    | `--data-dir`    |
-| `VAULTSPEC_RAG_QDRANT_DIR`      | path | `qdrant`                  | On-disk store subdirectory inside the data dir            | `--storage-dir` |
-| `VAULTSPEC_RAG_INDEX_META`      | path | `index_meta.json`         | Vault index metadata filename inside the data dir         | -               |
-| `VAULTSPEC_RAG_CODE_INDEX_META` | path | `code_index_meta.json`    | Codebase index metadata filename inside the data dir      | -               |
+| Variable                        | Type | Default                   | Controls                                               | CLI flag        |
+| ------------------------------- | ---- | ------------------------- | ------------------------------------------------------ | --------------- |
+| `VAULTSPEC_RAG_DATA_DIR`        | path | `.vault/data/search-data` | Directory holding the on-disk store and index metadata | `--data-dir`    |
+| `VAULTSPEC_RAG_QDRANT_DIR`      | path | `qdrant`                  | On-disk store subdirectory inside the data dir         | `--storage-dir` |
+| `VAULTSPEC_RAG_INDEX_META`      | path | `index_meta.json`         | Vault index metadata filename inside the data dir      | -               |
+| `VAULTSPEC_RAG_CODE_INDEX_META` | path | `code_index_meta.json`    | Codebase index metadata filename inside the data dir   | -               |
 
 ### Service runtime and logging
 
-| Variable                                 | Type    | Default            | Controls                                                        | CLI flag                              |
-| ---------------------------------------- | ------- | ------------------ | --------------------------------------------------------------- | ------------------------------------- |
-| `VAULTSPEC_RAG_STATUS_DIR`               | path    | `~/.vaultspec-rag` | Directory for service status, marker, binary, and log files     | `--status-dir`                        |
-| `VAULTSPEC_RAG_LOG_FILE`                 | path    | `service.log`      | Resident service log filename inside the status dir             | `--log-file`                          |
-| `VAULTSPEC_RAG_PORT`                     | integer | `8766`             | HTTP service port and MCP fast path                             | `--port`                              |
-| `VAULTSPEC_RAG_LOG_LEVEL`                | string  | `WARNING`          | Root logger level                                               | `--verbose` (INFO), `--debug` (DEBUG) |
-| `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS` | integer | `1800`             | Seconds an idle project slot stays resident before eviction     | -                                     |
-| `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS`     | integer | `16`               | Maximum simultaneously cached project slots                     | -                                     |
-| `VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES`    | integer | `10485760`         | Active-file size threshold for each managed log source (10 MiB) | -                                     |
-| `VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT` | integer | `5`                | Rotated backups retained for each managed log source            | -                                     |
+| Variable                                 | Type    | Default             | Controls                                                                  | CLI flag                              |
+| ---------------------------------------- | ------- | ------------------- | ------------------------------------------------------------------------- | ------------------------------------- |
+| `VAULTSPEC_RAG_STATUS_DIR`               | path    | `~/.vaultspec-rag`  | Directory for service status, marker, binary, and log files               | `--status-dir`                        |
+| `VAULTSPEC_RAG_LOG_FILE`                 | path    | `service.log`       | Resident service log filename inside the status dir                       | `--log-file`                          |
+| `VAULTSPEC_RAG_PORT`                     | integer | `8766`              | HTTP service port and MCP fast path                                       | `--port`                              |
+| `VAULTSPEC_RAG_LOG_LEVEL`                | string  | `WARNING`           | Root logger level                                                         | `--verbose` (INFO), `--debug` (DEBUG) |
+| `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS` | integer | `1800`              | Seconds an idle project slot stays resident before eviction               | -                                     |
+| `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS`     | integer | `16`                | Maximum simultaneously cached project slots                               | -                                     |
+| `VAULTSPEC_RAG_ADMIN_TIMEOUT`            | float   | `30`                | Client connection and read budget for lifecycle and admin calls (seconds) | -                                     |
+| `VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES`    | integer | `10485760` (10 MiB) | Active-file size threshold for each managed log source                    | -                                     |
+| `VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT` | integer | `5`                 | Rotated backups retained for each managed log source                      | -                                     |
 
-The policy applies independently to `service.log` and `qdrant.log`. With the defaults, each source keeps one active file and five backups. The aggregate budget is approximately 120 MiB.
+The log policy applies independently to `service.log` and `qdrant.log`. With the defaults, each source keeps one active file and five backups. The aggregate budget is approximately 120 MiB.
 
 ### Job lifecycle
 
@@ -78,44 +83,62 @@ A transient store-write failure (disk pressure, a write-ahead-log stall) is retr
 | `VAULTSPEC_RAG_STORE_WRITE_RETRY_BASE_SECONDS`  | float   | `0.5`   | Initial backoff before the first store-write retry       | -        |
 | `VAULTSPEC_RAG_STORE_WRITE_RETRY_MAX_SECONDS`   | float   | `8`     | Maximum backoff between store-write retries              | -        |
 
+### Model selection
+
+Changing a model against an index built with another one is an operator decision with consequences: the stored vectors belong to the previous model's space. Reindex after any change here. A dense width that disagrees with the dense model is rejected by the store on the first upsert rather than silently written.
+
+| Variable                            | Type    | Default                     | Controls                                       | CLI flag |
+| ----------------------------------- | ------- | --------------------------- | ---------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_EMBEDDING_MODEL`     | string  | `Qwen/Qwen3-Embedding-0.6B` | Dense embedding model id                       | -        |
+| `VAULTSPEC_RAG_EMBEDDING_DIMENSION` | integer | `1024`                      | Dense vector width; must match the dense model | -        |
+| `VAULTSPEC_RAG_SPARSE_MODEL`        | string  | `naver/splade-v3`           | SPLADE sparse model id                         | -        |
+| `VAULTSPEC_RAG_RERANKER_MODEL`      | string  | `BAAI/bge-reranker-v2-m3`   | CrossEncoder reranker model id                 | -        |
+
 ### Embedding and reranking
 
-| Variable                                         | Type    | Default | Controls                                            | CLI flag |
-| ------------------------------------------------ | ------- | ------- | --------------------------------------------------- | -------- |
-| `VAULTSPEC_RAG_EMBEDDING_BATCH_SIZE`             | integer | `64`    | Outer batch size fed to the embedding pipeline      | -        |
-| `VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE`      | integer | `32`    | Vault inner encode sub-batch size                   | -        |
-| `VAULTSPEC_RAG_EMBEDDING_CODE_ENCODE_BATCH_SIZE` | integer | `32`    | Code inner encode sub-batch size                    | -        |
-| `VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH`         | integer | `2048`  | Hard cap on sequence length advertised to the model | -        |
-| `VAULTSPEC_RAG_MAX_EMBED_CHARS`                  | integer | `8000`  | Character cap applied to each text before encoding  | -        |
-| `VAULTSPEC_RAG_RERANKER_MAX_LENGTH`              | integer | `1024`  | Reranker token bound                                | -        |
-| `VAULTSPEC_RAG_VAULT_CHUNK_CHARS`                | integer | `3000`  | Vault chunk character budget                        | -        |
+| Variable                                             | Type    | Default | Controls                                            | CLI flag |
+| ---------------------------------------------------- | ------- | ------- | --------------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_EMBEDDING_BATCH_SIZE`                 | integer | `64`    | Outer batch size fed to the embedding pipeline      | -        |
+| `VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE`          | integer | `32`    | Vault inner encode sub-batch size                   | -        |
+| `VAULTSPEC_RAG_EMBEDDING_CODE_ENCODE_BATCH_SIZE`     | integer | `32`    | Code inner encode sub-batch size                    | -        |
+| `VAULTSPEC_RAG_EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE` | integer | `12`    | Document inner encode sub-batch size                | -        |
+| `VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH`             | integer | `2048`  | Hard cap on sequence length advertised to the model | -        |
+| `VAULTSPEC_RAG_MAX_EMBED_CHARS`                      | integer | `8000`  | Character cap applied to each text before encoding  | -        |
+| `VAULTSPEC_RAG_RERANKER_MAX_LENGTH`                  | integer | `1024`  | Reranker token bound                                | -        |
+| `VAULTSPEC_RAG_RERANKER_BATCH_SIZE`                  | integer | `32`    | Candidate pairs per reranker forward pass           | -        |
+| `VAULTSPEC_RAG_VAULT_CHUNK_CHARS`                    | integer | `3000`  | Vault chunk character budget                        | -        |
 
 ### Indexing
 
-| Variable                                 | Type    | Default              | Controls                                          | CLI flag |
-| ---------------------------------------- | ------- | -------------------- | ------------------------------------------------- | -------- |
-| `VAULTSPEC_RAG_INDEX_CHUNK_WORKERS`      | integer | `0` (auto)           | Code-chunk process-pool size                      | -        |
-| `VAULTSPEC_RAG_INDEX_PARALLEL_MIN_BYTES` | integer | `8388608`            | Auto-parallel chunking threshold in bytes (8 MiB) | -        |
-| `VAULTSPEC_RAG_INDEX_REUSE`              | boolean | `1` (true)           | Reuse sibling-namespace vectors across worktrees  | -        |
-| `VAULTSPEC_RAG_INDEX_CACHE_FLUSH_SLICES` | integer | `8`                  | CUDA allocator flush cadence in slices            | -        |
-| `VAULTSPEC_RAG_DENSE_BACKEND`            | string  | `torch`              | Dense encoder backend (`onnx` experimental)       | -        |
-| `VAULTSPEC_RAG_DENSE_ONNX_FILE`          | string  | `onnx/model_O4.onnx` | ONNX model file relative path                     | -        |
+| Variable                                    | Type    | Default              | Controls                                                            | CLI flag |
+| ------------------------------------------- | ------- | -------------------- | ------------------------------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_INDEX_CHUNK_WORKERS`         | integer | `0` (auto)           | Code-chunk process-pool size                                        | -        |
+| `VAULTSPEC_RAG_INDEX_PARALLEL_MIN_BYTES`    | integer | `8388608` (8 MiB)    | Auto-parallel chunking threshold in bytes                           | -        |
+| `VAULTSPEC_RAG_INDEX_REUSE`                 | boolean | `1` (true)           | Reuse sibling-namespace vectors across worktrees                    | -        |
+| `VAULTSPEC_RAG_INDEX_CACHE_FLUSH_SLICES`    | integer | `8`                  | CUDA allocator flush cadence on the codebase encode path, in slices | -        |
+| `VAULTSPEC_RAG_VAULT_CACHE_FLUSH_SLICES`    | integer | `1`                  | CUDA allocator flush cadence on the vault encode path, in slices    | -        |
+| `VAULTSPEC_RAG_DOCUMENT_CACHE_FLUSH_SLICES` | integer | `1`                  | CUDA allocator flush cadence on the document encode path, in slices | -        |
+| `VAULTSPEC_RAG_DENSE_BACKEND`               | string  | `torch`              | Dense encoder backend (`onnx` experimental)                         | -        |
+| `VAULTSPEC_RAG_DENSE_ONNX_FILE`             | string  | `onnx/model_O4.onnx` | ONNX model file relative path                                       | -        |
 
 ### Index resource bounds and memory ceilings
 
 These bound one index run's segment/queue geometry, its memory use, and its liveness. The defaults suit a managed multi-root service; lower them on a smaller host.
 
-| Variable                                          | Type    | Default           | Controls                                                              | CLI flag |
-| ------------------------------------------------- | ------- | ----------------- | --------------------------------------------------------------------- | -------- |
-| `VAULTSPEC_RAG_INDEX_SEGMENT_MAX_CHUNKS`          | integer | `64`              | Chunks per index upsert segment                                       | -        |
-| `VAULTSPEC_RAG_INDEX_SEGMENT_MAX_BYTES`           | integer | `8388608`         | Byte cap per index upsert segment (8 MiB)                             | -        |
-| `VAULTSPEC_RAG_INDEX_QUEUE_MAX_CHUNKS`            | integer | `512`             | Chunks buffered in the producer-to-consumer index queue               | -        |
-| `VAULTSPEC_RAG_INDEX_QUEUE_MAX_BYTES`             | integer | `134217728`       | Byte cap on the buffered index queue, applying backpressure (128 MiB) | -        |
-| `VAULTSPEC_RAG_INDEX_NO_PROGRESS_TIMEOUT_SECONDS` | float   | `900`             | Seconds without index progress before the run is failed               | -        |
-| `VAULTSPEC_RAG_INDEX_RSS_CEILING_MB`              | float   | `16384`           | Resident-memory ceiling enforced at index checkpoints (MiB)           | -        |
-| `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB`             | float   | `12288`           | CUDA-memory ceiling enforced at index checkpoints (MiB)               | -        |
-| `VAULTSPEC_RAG_INDEX_CUDA_ALLOCATOR_FRACTION`     | float   | `0.8`             | Fraction of CUDA memory the index allocator may reserve               | -        |
-| `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE`             | string  | `managed-service` | Index resource profile advertised to the service                      | -        |
+The CUDA ceiling is derived from the real device by default rather than fixed: at `0` the ceiling is the device's total memory minus `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MB`, so a larger card gets a larger budget without any tuning. Setting a positive value is an authoritative override that raises or lowers the effective ceiling.
+
+| Variable                                          | Type    | Default               | Controls                                                                   | CLI flag |
+| ------------------------------------------------- | ------- | --------------------- | -------------------------------------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_INDEX_SEGMENT_MAX_CHUNKS`          | integer | `64`                  | Chunks per index upsert segment                                            | -        |
+| `VAULTSPEC_RAG_INDEX_SEGMENT_MAX_BYTES`           | integer | `8388608` (8 MiB)     | Byte cap per index upsert segment                                          | -        |
+| `VAULTSPEC_RAG_INDEX_QUEUE_MAX_CHUNKS`            | integer | `512`                 | Chunks buffered in the producer-to-consumer index queue                    | -        |
+| `VAULTSPEC_RAG_INDEX_QUEUE_MAX_BYTES`             | integer | `134217728` (128 MiB) | Byte cap on the buffered index queue, applying backpressure                | -        |
+| `VAULTSPEC_RAG_INDEX_NO_PROGRESS_TIMEOUT_SECONDS` | float   | `900`                 | Seconds without index progress before the run is failed                    | -        |
+| `VAULTSPEC_RAG_INDEX_RSS_CEILING_MB`              | float   | `16384`               | Resident-memory ceiling enforced at index checkpoints (MiB)                | -        |
+| `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB`             | float   | `0` (auto-derive)     | CUDA-memory ceiling override in MiB; `0` derives one from the device       | -        |
+| `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MB`            | float   | `2048`                | Memory reserved below the device total when the ceiling auto-derives (MiB) | -        |
+| `VAULTSPEC_RAG_INDEX_CUDA_ALLOCATOR_FRACTION`     | float   | `0.8`                 | Fraction of CUDA memory the index allocator may reserve                    | -        |
+| `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE`             | string  | `managed-service`     | Index resource profile advertised to the service                           | -        |
 
 ### Concurrency limits
 
@@ -126,18 +149,19 @@ These bound one index run's segment/queue geometry, its memory use, and its live
 
 ### Search and model toggles
 
-| Variable                                     | Type    | Default                      | Controls                                                                                                                                                    | CLI flag                                 |
-| -------------------------------------------- | ------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `VAULTSPEC_RAG_SPARSE_ENABLED`               | boolean | `1` (true)                   | SPLADE sparse vectors on/off                                                                                                                                | -                                        |
-| `VAULTSPEC_RAG_VAULT_INTENT_DEFAULT`         | string  | `orientation`                | Default vault ranking intent when a search names none (`orientation` surfaces active ADRs and grounding; `debugging` surfaces execution records and audits) | -                                        |
-| `VAULTSPEC_RAG_VAULT_INTENT_RANKING_ENABLED` | boolean | `1` (true)                   | Intent-aware vault re-ranking on/off (`0` restores the bare-reranker ordering)                                                                              | -                                        |
-| `VAULTSPEC_RAG_VAULT_INTENT_TYPE_CAP`        | integer | `4`                          | Maximum results of one doc type on a vault page (`0` disables the cap)                                                                                      | -                                        |
-| `VAULTSPEC_RAG_RERANKER_ENABLED`             | boolean | `1` (true)                   | CrossEncoder rerank on/off                                                                                                                                  | -                                        |
-| `VAULTSPEC_RAG_SEARCH_TIMEOUT`               | float   | `300`                        | Connection and read budget for service-handled searches (seconds)                                                                                           | `--timeout`                              |
-| `VAULTSPEC_RAG_CODE_NOISE_HIDE_DOMAINS`      | string  | `worktree,generated`         | Code domains hidden from results by default                                                                                                                 | -                                        |
-| `VAULTSPEC_RAG_CODE_NOISE_DEMOTE_DOMAINS`    | string  | `tests,docs,locale,vendored` | Code domains demoted (not hidden) by default                                                                                                                | -                                        |
-| `VAULTSPEC_RAG_CODE_NOISE_DEMOTE_PENALTY`    | float   | `0.3`                        | Score subtracted from a demoted code result                                                                                                                 | -                                        |
-| `VAULTSPEC_RAG_DEDUP_LOCALES_DEFAULT`        | boolean | `1` (true)                   | Collapse locale-variant code results by default                                                                                                             | `--dedup-locales` / `--no-dedup-locales` |
+| Variable                                     | Type    | Default                      | Controls                                                                             | CLI flag                                 |
+| -------------------------------------------- | ------- | ---------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------- |
+| `VAULTSPEC_RAG_SPARSE_ENABLED`               | boolean | `1` (true)                   | SPLADE sparse vectors on/off                                                         | -                                        |
+| `VAULTSPEC_RAG_VAULT_INTENT_DEFAULT`         | string  | `orientation`                | Default vault ranking intent when a search names none (`orientation` or `debugging`) | -                                        |
+| `VAULTSPEC_RAG_VAULT_INTENT_RANKING_ENABLED` | boolean | `1` (true)                   | Intent-aware vault re-ranking on/off (`0` restores the bare-reranker ordering)       | -                                        |
+| `VAULTSPEC_RAG_VAULT_INTENT_TYPE_CAP`        | integer | `4`                          | Maximum results of one doc type on a vault page (`0` disables the cap)               | -                                        |
+| `VAULTSPEC_RAG_RERANKER_ENABLED`             | boolean | `1` (true)                   | CrossEncoder rerank on/off                                                           | -                                        |
+| `VAULTSPEC_RAG_SEARCH_TIMEOUT`               | float   | `300`                        | Client connection and read budget for service-handled searches (seconds)             | `--timeout`                              |
+| `VAULTSPEC_RAG_CODE_NOISE_HIDE_DOMAINS`      | string  | `worktree,generated`         | Code domains hidden from results by default                                          | -                                        |
+| `VAULTSPEC_RAG_CODE_NOISE_DEMOTE_DOMAINS`    | string  | `tests,docs,locale,vendored` | Code domains demoted (not hidden) by default                                         | -                                        |
+| `VAULTSPEC_RAG_CODE_NOISE_DEMOTE_PENALTY`    | float   | `0.3`                        | Score subtracted from a demoted code result                                          | -                                        |
+| `VAULTSPEC_RAG_DEDUP_LOCALES_DEFAULT`        | boolean | `1` (true)                   | Collapse locale-variant code results by default                                      | `--dedup-locales` / `--no-dedup-locales` |
+| `VAULTSPEC_RAG_GRAPH_TTL_SECONDS`            | float   | `300`                        | Vault graph cache lifetime backing link and grounding lookups (seconds)              | -                                        |
 
 ### Automatic updates
 
@@ -155,12 +179,6 @@ A failed auto-reindex retries with exponential backoff and a circuit breaker tha
 | `VAULTSPEC_RAG_WATCH_RETRY_MAX_SECONDS`         | float   | `1800`  | Maximum backoff between auto-reindex retries          | -        |
 | `VAULTSPEC_RAG_WATCH_RETRY_JITTER_FRACTION`     | float   | `0.1`   | Random jitter fraction added to each retry backoff    | -        |
 | `VAULTSPEC_RAG_WATCH_CIRCUIT_FAILURE_THRESHOLD` | integer | `3`     | Consecutive failures before the watch circuit opens   | -        |
-
-### Stdio MCP lifetime
-
-| Variable                       | Type    | Default    | Controls                                                                | CLI flag       |
-| ------------------------------ | ------- | ---------- | ----------------------------------------------------------------------- | -------------- |
-| `VAULTSPEC_RAG_STDIO_WATCHDOG` | boolean | `1` (true) | Stdio shim self-reap when its spawning process chain breaks (`0` = off) | `--parent-pid` |
 
 ### Storage maintenance (auto-prune)
 
@@ -182,49 +200,62 @@ The daemon's scheduled storage-maintenance cycle - see the [storage and maintena
 
 ### Preprocessing
 
-| Variable                                     | Type    | Default    | Controls                                                          | CLI flag          |
-| -------------------------------------------- | ------- | ---------- | ----------------------------------------------------------------- | ----------------- |
-| `VAULTSPEC_RAG_PREPROCESS`                   | string  | unset      | `off` disables all preprocessing; wins over everything            | `--no-preprocess` |
-| `VAULTSPEC_RAG_PREPROCESS_MAX_EMITTED_BYTES` | integer | `10485760` | Cap on text a preprocess hook may emit per file in bytes (10 MiB) | -                 |
-| `VAULTSPEC_RAG_HTML_STRIP`                   | boolean | `1` (true) | Strip tags from `.html` to plain text before chunking             | -                 |
+| Variable                                     | Type    | Default             | Controls                                                  | CLI flag |
+| -------------------------------------------- | ------- | ------------------- | --------------------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_PREPROCESS_MAX_EMITTED_BYTES` | integer | `10485760` (10 MiB) | Cap on text a preprocess hook may emit per file, in bytes | -        |
+| `VAULTSPEC_RAG_HTML_STRIP`                   | boolean | `1` (true)          | Strip tags from `.html` to plain text before chunking     | -        |
+
+## Variables with their own parsing rules
+
+These five do not resolve through the chain above and do not follow the boolean rule in [Type coercion](#type-coercion). Each is read at its own call site with the rule stated here. Two of them are not operator knobs at all.
+
+| Variable                       | Type    | Default           | Controls                                                                                                                                                                                                   | CLI flag          |
+| ------------------------------ | ------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `VAULTSPEC_RAG_PREPROCESS`     | string  | unset             | `off` disables all preprocessing and wins over every other source; any other value, including unset, leaves rules enabled                                                                                  | `--no-preprocess` |
+| `VAULTSPEC_RAG_STDIO_WATCHDOG` | boolean | enabled           | Stdio shim self-reap when its spawning process chain breaks. Only `0`, `false`, `off`, and `no` (case-insensitive) disable it; every other value, including unset, leaves it on                            | -                 |
+| `VAULTSPEC_RAG_MEMORY_PROBE`   | boolean | disabled          | Diagnostic memory sampler. Any non-empty value other than `0` enables it, so `false` and `off` enable it too                                                                                               | -                 |
+| `VAULTSPEC_RAG_ROOT`           | path    | working directory | Project root for the stdio MCP server. The CLI overwrites it from the resolved workspace, and the resident HTTP daemon has it stripped, so setting it changes neither                                      | `--target`        |
+| `VAULTSPEC_RAG_SERVICE_DAEMON` | string  | unset             | Marker the CLI sets to `1` in the daemon's own environment so resident code can tell itself apart from an interactive CLI. Not an operator knob; setting it by hand misreports a CLI process as the daemon | -                 |
 
 ## Config-only keys
 
-These keys exist in the configuration loader but read no environment variable. Set them through a config source, not the environment.
+These keys exist in the configuration loader and read no environment variable of their own. Set them through a config source, not the environment.
 
-| Config key            | Type    | Default                     | Controls                       |
-| --------------------- | ------- | --------------------------- | ------------------------------ |
-| `graph_ttl_seconds`   | float   | `300.0`                     | Vault graph cache time to live |
-| `embedding_model`     | string  | `Qwen/Qwen3-Embedding-0.6B` | Dense model                    |
-| `embedding_dimension` | integer | `1024`                      | Dense vector dimension         |
-| `sparse_model`        | string  | `naver/splade-v3`           | Sparse model                   |
-| `reranker_model`      | string  | `BAAI/bge-reranker-v2-m3`   | Reranker model                 |
-| `reranker_batch_size` | integer | `32`                        | Reranker batch size            |
+| Config key                       | Type    | Default   | Controls                                                                                                                  |
+| -------------------------------- | ------- | --------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `document_chunk_chars_per_token` | integer | `3`       | Chars-per-token ratio converting the model's token window into a document chunk budget                                    |
+| `document_chunk_overlap_chars`   | integer | `256`     | Overlap carried across a document chunk boundary                                                                          |
+| `preprocess_mode`                | string  | `default` | Two-state preprocessing mode; the environment reaches it through `VAULTSPEC_RAG_PREPROCESS` rather than a direct override |
 
 ## Type coercion
 
 The loader parses each value on first access. An invalid integer or float raises at that point, not at startup.
 
-- Booleans: the strings `1`, `true`, and `yes` (case-insensitive) parse as true; anything else parses as false.
+- Booleans: the strings `1`, `true`, and `yes` (case-insensitive) parse as true; anything else, including `on`, parses as false.
 - Integers and floats: parsed with `int()` and `float()`; non-numeric strings raise on first read.
 - Paths: relative paths resolve against the project root; absolute paths are used as given. Use forward slashes on Windows.
+- Empty values: for a setting whose default is a string or a path, an empty or whitespace-only value is treated as unset and falls back to the default. This keeps an unexpanded `VAR="$UNSET"` from repointing a managed directory at the working directory.
 
 An unset variable falls back to the built-in default.
 
+The five variables in [Variables with their own parsing rules](#variables-with-their-own-parsing-rules) are the exceptions; read their rules there rather than assuming the boolean rule above.
+
 ## Hugging Face cache
 
-vaultspec-rag downloads its dense, sparse, and reranker model files through the Hugging Face Hub. The Hub client honours its own environment variables, which vaultspec-rag does not wrap. These are third-party variables (no `VAULTSPEC_RAG_` prefix), so they sit outside the reference tables above:
+vaultspec-rag downloads its dense, sparse, and reranker model files through the Hugging Face Hub. These are third-party variables (no `VAULTSPEC_RAG_` prefix), so they sit outside the reference tables above. Most are honoured by the Hub client itself; the Controls column notes where vaultspec-rag reads or defaults one itself.
 
-| Variable                         | Type    | Controls                                      |
-| -------------------------------- | ------- | --------------------------------------------- |
-| `HF_HOME`                        | path    | Hub cache root (where model files are stored) |
-| `HF_ENDPOINT`                    | string  | Hub mirror base URL                           |
-| `HF_HUB_DOWNLOAD_TIMEOUT`        | integer | Per-file download timeout                     |
-| `HF_HUB_OFFLINE`                 | boolean | Cache-only mode; no network access to the Hub |
-| `TRANSFORMERS_OFFLINE`           | boolean | Cache-only model loading for Transformers     |
-| `DISABLE_SAFETENSORS_CONVERSION` | boolean | Skip on-the-fly safetensors conversion        |
+| Variable                         | Type    | Controls                                                                          |
+| -------------------------------- | ------- | --------------------------------------------------------------------------------- |
+| `HF_HOME`                        | path    | Hub cache root. Read directly when reporting cache location; falls back to `~/.cache/huggingface` |
+| `HF_ENDPOINT`                    | string  | Hub mirror base URL                                                               |
+| `HF_HUB_DOWNLOAD_TIMEOUT`        | integer | Per-file download timeout. The service defaults it to `300` when unset            |
+| `HF_HUB_OFFLINE`                 | boolean | Cache-only mode; no network access to the Hub                                     |
+| `TRANSFORMERS_OFFLINE`           | boolean | Cache-only model loading for Transformers                                         |
+| `DISABLE_SAFETENSORS_CONVERSION` | boolean | Skip on-the-fly safetensors conversion                                            |
 
-`HF_HUB_OFFLINE` is the authoritative offline switch; vaultspec-rag also honours `TRANSFORMERS_OFFLINE`, and when either is set it loads every model cache-only. See the [Hugging Face environment variable reference](https://huggingface.co/docs/huggingface_hub/en/package_reference/environment_variables).
+`HF_HUB_OFFLINE` is the authoritative offline switch; vaultspec-rag also honours `TRANSFORMERS_OFFLINE`, and when either is set to `1`, `true`, `yes`, or `on` it loads every model cache-only. See the [Hugging Face environment variable reference](https://huggingface.co/docs/huggingface_hub/en/package_reference/environment_variables).
+
+Searches additionally quiet the Hub and Transformers loggers by defaulting `HF_HUB_DISABLE_PROGRESS_BARS`, `TRANSFORMERS_NO_ADVISORY_WARNINGS`, and `TRANSFORMERS_VERBOSITY` when they are unset. Set them yourself to keep the library output.
 
 ## Tuning for memory and speed
 
@@ -232,8 +263,9 @@ On a small GPU, the dense and sparse encoders halve their batch size and retry o
 
 To fit a smaller GPU:
 
-- Lower `VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE` and `VAULTSPEC_RAG_EMBEDDING_CODE_ENCODE_BATCH_SIZE` (default 32 each).
+- Lower the inner encode sub-batches: `VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE` and `VAULTSPEC_RAG_EMBEDDING_CODE_ENCODE_BATCH_SIZE` (32 each), and `VAULTSPEC_RAG_EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE` (12, smaller because document fragments fill the model's whole window).
 - Cap `VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH` (default 2048) to shrink padded-attention memory.
+- Raise `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MB` to leave more of the device outside the indexing budget, or set `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB` to pin an explicit ceiling.
 - Set `VAULTSPEC_RAG_QDRANT_QUANTIZATION` to `scalar` to compress the stored vectors.
 - Turn off a model to free the most memory. Set `VAULTSPEC_RAG_SPARSE_ENABLED=0` to drop the SPLADE encoder, or `VAULTSPEC_RAG_RERANKER_ENABLED=0` to drop the CrossEncoder.
 
@@ -247,10 +279,10 @@ Each variable's default and meaning is listed in the preceding variable tables.
 
 ## Examples
 
-Pin the project root for a single search invocation:
+Point a single command at another project:
 
 ```bash
-VAULTSPEC_RAG_ROOT=/srv/projects/acme vaultspec-rag search "billing flow"
+vaultspec-rag --target /srv/projects/acme search "billing flow"
 ```
 
 Bind the HTTP service to a non-default port:
