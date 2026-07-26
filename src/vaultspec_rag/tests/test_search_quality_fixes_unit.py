@@ -78,4 +78,3 @@ class TestMergeKeepsIdentityCoherent:
         assert len(merged) == 1
         _text, _ls, _le, _nt, fn, cls = merged[0]
         assert (fn, cls) == ("g", None)
-
