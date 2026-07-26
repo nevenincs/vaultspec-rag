@@ -2,36 +2,29 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from .. import store_schema
-from ._checkpoint_common import (
-    classify_interrupted_generation,
-    configuration_fingerprint,
-)
+from ._checkpoint_common import RunCheckpointBase, configuration_fingerprint
 from ._code_meta import CODE_EMBED_SCHEMA, publish_meta_from_file_states
 from ._content_policy import AdmissionDisposition, AdmissionReason, ContentKind
-from ._file_state import FileState, FileStateKind
+from ._file_state import FileState
 from ._run_ledger import (
     INDEX_RUN_LEDGER_FILENAME,
     CommitUnit,
     CommitUnitKind,
     FinalizationPhase,
-    RunGeneration,
     RunLedger,
     RunLedgerCompatibilityError,
-    RunLedgerStateError,
     RunOperation,
     RunSignature,
-    RunTerminalState,
     index_run_ledger_path,
 )
 from ._run_policy import DurableProgressKind, RunPolicy
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterable, Mapping
+    from collections.abc import Iterable, Mapping
     from pathlib import Path
 
     from ._resolved_policy import ResolvedIndexPolicy
@@ -81,14 +74,11 @@ class CodeRunConfiguration:
 
 
 @dataclass(slots=True)
-class CodeRunCheckpoint:
+class CodeRunCheckpoint(RunCheckpointBase):
     """One code generation's durable segment and publication authority."""
 
-    ledger: RunLedger
-    generation: RunGeneration
-    policy: ResolvedIndexPolicy
-    run_policy: RunPolicy
-    resumed_units: int = 0
+    _content_kind: ClassVar[ContentKind] = ContentKind.CODE
+    _kind_label: ClassVar[str] = "code"
 
     @classmethod
     def open(
@@ -138,29 +128,6 @@ class CodeRunCheckpoint:
             policy=policy,
             run_policy=run_policy,
         )
-
-    @property
-    def generation_id(self) -> str:
-        """Return the stable active generation identifier."""
-        return self.generation.generation_id
-
-    @property
-    def ingestion_complete(self) -> bool:
-        """Return whether this generation must resume finalization, not ingestion."""
-        return self.generation.finalization_phase is not FinalizationPhase.INGESTING
-
-    @contextmanager
-    def preserve_incomplete_generation(self) -> Generator[None]:
-        """Classify an interrupted attempt without hiding its original failure."""
-        try:
-            yield
-        except BaseException as exc:
-            self.generation = classify_interrupted_generation(
-                self.ledger,
-                self.generation,
-                exc,
-            )
-            raise
 
     def unit_for(self, segment: CodeFileSegment, source_digest: str) -> CommitUnit:
         """Project one deterministic streaming segment into ledger evidence."""
@@ -239,57 +206,6 @@ class CodeRunCheckpoint:
                 )
         return inserted
 
-    def record_confirmed_deletion(
-        self,
-        rel_path: str,
-        point_ids: tuple[str, ...],
-    ) -> bool:
-        """Checkpoint one idempotent path deletion after storage confirmation."""
-        unit = CommitUnit(
-            rel_path=rel_path,
-            kind=CommitUnitKind.DELETE_PATH,
-            source_digest=None,
-            segment_ordinal=0,
-            is_file_end=True,
-            point_ids=tuple(sorted(point_ids)),
-        )
-        inserted = self.ledger.record_storage_confirmed_unit(
-            self.generation_id,
-            unit,
-        )
-        if inserted:
-            self.run_policy.record_durable_progress(
-                kind=DurableProgressKind.LEDGER_UNIT_COMMITTED,
-                label=f"code deletion {rel_path}",
-            )
-        self.ledger.record_path_deleted(self.generation_id, rel_path)
-        return inserted
-
-    def record_confirmed_stale_deletion(
-        self,
-        rel_path: str,
-        point_ids: tuple[str, ...],
-    ) -> bool:
-        """Checkpoint removal of superseded points while retaining the path."""
-        unit = CommitUnit(
-            rel_path=rel_path,
-            kind=CommitUnitKind.DELETE_STALE,
-            source_digest=None,
-            segment_ordinal=0,
-            is_file_end=True,
-            point_ids=tuple(sorted(point_ids)),
-        )
-        inserted = self.ledger.record_storage_confirmed_unit(
-            self.generation_id,
-            unit,
-        )
-        if inserted:
-            self.run_policy.record_durable_progress(
-                kind=DurableProgressKind.LEDGER_UNIT_COMMITTED,
-                label=f"stale code deletion {rel_path}",
-            )
-        return inserted
-
     def drifted_indexed_paths(
         self,
         current_digests: Mapping[str, str],
@@ -365,26 +281,6 @@ class CodeRunCheckpoint:
             ),
         )
 
-    def record_processing_failure(
-        self,
-        rel_path: str,
-        state: FileStateKind,
-        detail: str,
-        *,
-        content_hash: str | None = None,
-    ) -> None:
-        """Replace carried convergence with one explicit unresolved outcome."""
-        self.ledger.record_file_state(
-            self.generation_id,
-            FileState.failed(
-                rel_path,
-                state,
-                ContentKind.CODE,
-                detail,
-                content_hash=content_hash,
-            ),
-        )
-
     def publish_metadata(
         self,
         meta_path: Path,
@@ -426,38 +322,3 @@ class CodeRunCheckpoint:
             label="code metadata publication",
         )
         return count
-
-    def publish_generation(self) -> RunGeneration:
-        """Certify generation publication and compact prior compatible rows."""
-        phase = self.generation.finalization_phase
-        if phase in (
-            FinalizationPhase.INGESTING,
-            FinalizationPhase.STALE_RECONCILED,
-        ):
-            raise RunLedgerStateError(
-                "metadata must be durably published before generation publication"
-            )
-        if phase is FinalizationPhase.METADATA_PUBLISHED:
-            self.generation = self.ledger.advance_finalization(
-                self.generation_id,
-                FinalizationPhase.GENERATION_PUBLISHED,
-            )
-        if self.generation.terminal_state is RunTerminalState.RUNNING:
-            self.generation = self.ledger.finish_generation(
-                self.generation_id,
-                RunTerminalState.SUCCEEDED,
-            )
-        if self.generation.finalization_phase is not FinalizationPhase.COMPACTED:
-            self.ledger.compact(self.generation_id)
-        self.generation = self.ledger.generation(self.generation_id)
-        self.run_policy.record_durable_progress(
-            kind=DurableProgressKind.FINALIZATION_PHASE_COMMITTED,
-            label="code generation publication",
-        )
-        return self.generation
-
-    def _record_indexed_file(self, rel_path: str, source_digest: str) -> None:
-        self.ledger.record_file_state(
-            self.generation_id,
-            FileState.indexed(rel_path, ContentKind.CODE, source_digest),
-        )
