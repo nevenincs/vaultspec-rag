@@ -39,6 +39,14 @@ it reads as off, the way a shell spells "not on", and off is the safe
 direction. For a *numeric* setting it has no defensible reading at all and is
 rejected like any other malformed input.
 
+Flags spell their two states the same way everywhere in this project, whether
+or not they resolve through this module: the token table lives in
+``_env_values`` and every switch reads it, so ``off`` cannot disable one
+feature while enabling another. What a reader outside this module may still
+choose is what to do with a word that spells neither state - this module
+rejects it, a safety backstop leaves itself armed, a third-party variable
+defers to its owning library - and each such reader says why where it lives.
+
 Two settings resolve outside the generic path because their behaviour is not
 a plain override; each says why where it is defined.
 """
@@ -60,6 +68,8 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  
 from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
     get_config as get_base_config,
 )
+
+from ._env_values import BOOL_SHAPE, parse_bool, rejection
 
 logger = logging.getLogger(__name__)
 
@@ -112,14 +122,18 @@ class EnvVar(StrEnum):
     Each member's value is the full env var name.  This enum is the
     single source of truth - no other module should use bare string
     literals when reading or writing env vars for RAG configuration.
+
+    Two admission rules apply, and they are not the same rule. A
+    ``VAULTSPEC_RAG_*`` name is this project's own, so it earns a member by
+    being *read* somewhere in production: a first-party name nobody reads
+    configures nothing, and declaring one advertises a knob that does not
+    exist. A third-party name is owned by the library that honours it, so it
+    earns a member by being *named* anywhere in this codebase, production or
+    harness - the member exists to keep that literal in one place, and the
+    behaviour behind it is the owning library's whether we read it or not.
     """
 
     RAG_ROOT = "VAULTSPEC_RAG_ROOT"
-    # Set only in the detached HTTP daemon's environment (by _service_child_env)
-    # so code running inside the resident service can distinguish itself from an
-    # interactive in-process CLI; the signal is independent of the storage
-    # backend so a --local-only daemon is still recognized.
-    SERVICE_DAEMON = "VAULTSPEC_RAG_SERVICE_DAEMON"
     DATA_DIR = "VAULTSPEC_RAG_DATA_DIR"
     QDRANT_DIR = "VAULTSPEC_RAG_QDRANT_DIR"
     INDEX_META = "VAULTSPEC_RAG_INDEX_META"
@@ -140,8 +154,9 @@ class EnvVar(StrEnum):
     # Diagnostic memory probe on/off switch. Named here so this enum stays the
     # authoritative list, but deliberately absent from the defaults map: the
     # probe module is reachable from spawn workers and must not pull this
-    # module into their import chain, and it reads the raw value with its own
-    # "any non-empty, non-zero string" rule rather than a bool coercion.
+    # module into their import chain. It reads the raw value itself, through
+    # the same shared boolean table this module coerces with, so the spellings
+    # cannot drift from the ones every other flag accepts.
     MEMORY_PROBE = "VAULTSPEC_RAG_MEMORY_PROBE"
     MANAGED_LOG_MAX_BYTES = "VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES"
     MANAGED_LOG_BACKUP_COUNT = "VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT"
@@ -211,8 +226,9 @@ class EnvVar(StrEnum):
     DOCUMENT_CHUNK_CHARS_PER_TOKEN = "VAULTSPEC_RAG_DOCUMENT_CHUNK_CHARS_PER_TOKEN"
     DOCUMENT_CHUNK_OVERLAP_CHARS = "VAULTSPEC_RAG_DOCUMENT_CHUNK_OVERLAP_CHARS"
     HTML_STRIP = "VAULTSPEC_RAG_HTML_STRIP"
-    # Stdio shim lifetime watchdog kill switch;
-    # "0"/"false"/"off"/"no" disables the ancestor-death backstop.
+    # Stdio shim lifetime watchdog kill switch. Reads the shared boolean
+    # table, but fails safe rather than rejecting: only an explicit falsey
+    # spelling disarms the ancestor-death backstop.
     STDIO_WATCHDOG = "VAULTSPEC_RAG_STDIO_WATCHDOG"
     # Vault document chunking knob.
     VAULT_CHUNK_CHARS = "VAULTSPEC_RAG_VAULT_CHUNK_CHARS"
@@ -290,10 +306,15 @@ def hf_cache_only() -> bool:
     either value and pass ``local_files_only=True`` explicitly to model
     constructors. Normal product construction remains online-capable when both
     variables are unset.
+
+    These two variables belong to the Hub and Transformers, not to this
+    project, so a word neither table recognises is read as "not offline"
+    rather than rejected: refusing a value the owning library accepts would
+    break an install whose configuration this module has no authority over.
+    The library reports its own opinion of a bad value.
     """
-    enabled_values = {"1", "true", "yes", "on"}
     return any(
-        os.environ.get(var.value, "").strip().lower() in enabled_values
+        parse_bool(os.environ.get(var.value, "")) is True
         for var in (EnvVar.HF_HUB_OFFLINE, EnvVar.TRANSFORMERS_OFFLINE)
     )
 
@@ -388,22 +409,11 @@ _OPEN_UNIT_INTERVAL = _NumericBound(
     maximum=1.0,
 )
 
-#: Accepted spellings for a boolean setting. Anything else is a typo and is
-#: refused: treating an unrecognised word as false is exactly the silent
-#: substitution this module refuses to make, and it disables features quietly.
-#: The empty string is the one exception, and reads as off - ``VAR=`` is how a
-#: shell spells "not on", and off is the safe direction to resolve it in.
-_TRUE_TOKENS: frozenset[str] = frozenset({"1", "true", "yes", "on"})
-_FALSE_TOKENS: frozenset[str] = frozenset({"0", "false", "no", "off", ""})
-_BOOL_SHAPE = "one of " + ", ".join(
-    sorted(token for token in _TRUE_TOKENS | _FALSE_TOKENS if token)
-)
-
 
 def _rejection(
     key: str, shape: str, value: object, source: EnvVar | None
 ) -> ValueError:
-    """Build the one rejection message shape this module emits.
+    """Build this module's rejection, naming both the variable and the key.
 
     Args:
         key: The settings key that failed.
@@ -415,7 +425,7 @@ def _rejection(
         A ``ValueError`` naming the variable, the key, the value and the shape.
     """
     where = key if source is None else f"{source.value} ({key})"
-    return ValueError(f"{where} must be {shape}, got {value!r}")
+    return rejection(where, shape, value)
 
 
 # Mapping from _RAG_DEFAULTS key → EnvVar member for env override lookup.
@@ -1324,12 +1334,10 @@ class VaultSpecConfigWrapper:
         """
         default = self._RAG_DEFAULTS[name]
         if isinstance(default, bool):
-            token = raw.strip().lower()
-            if token in _TRUE_TOKENS:
-                return True
-            if token in _FALSE_TOKENS:
-                return False
-            raise _rejection(name, _BOOL_SHAPE, raw, source)
+            flag = parse_bool(raw)
+            if flag is None:
+                raise _rejection(name, BOOL_SHAPE, raw, source)
+            return flag
         bound = _SETTING_BOUNDS.get(name)
         if bound is not None:
             try:
