@@ -45,6 +45,11 @@ __all__ = [
 ]
 
 
+#: Restated rather than imported from the settings module on purpose: this
+#: module is reachable from spawn workers, which re-import their whole chain,
+#: and the settings module pulls the vaultspec-core config package with it. A
+#: guard test asserts this string still equals the settings enum member, so the
+#: copy cannot drift.
 ENV_VAR = "VAULTSPEC_RAG_MEMORY_PROBE"
 
 # Module-level caches for hot-path samplers. ``current_rss_mb`` and
