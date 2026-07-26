@@ -604,10 +604,9 @@ class TestStartPathProvisionProgress:
         self,
         monkeypatch: pytest.MonkeyPatch,
         isolated_status_dir: Path,
+        capsys: pytest.CaptureFixture[str],
     ):
         """A first-use download reports its bytes through the start reporter."""
-        import vaultspec_rag.cli as _cli
-
         from ..cli._service_start import _ensure_qdrant_binary
         from ..qdrant_runtime._resolve import resolve_binary
 
@@ -619,20 +618,18 @@ class TestStartPathProvisionProgress:
         calls = self._substitute_download(monkeypatch, succeeds=True)
 
         buffer = io.StringIO()
-        console = _build_console(interactive=False, file=buffer)
-        # The success lines print through the shared console; pointing it at the
-        # same buffer is what the reporter's own placement rule requires and
-        # what lets one assertion see everything the operator would.
-        monkeypatch.setattr(_cli, "console", console)
         reporter = _reporter(buffer, interactive=False)
         with reporter:
             _ensure_qdrant_binary(auto_provision=True, progress=reporter)
 
         assert calls == ["provision"], "the interception was never reached"
+        # Two sinks because production uses two: the byte-level progress goes to
+        # the reporter, and the completion line to the shared console. Reading
+        # each where it is actually written keeps the shared console untouched.
         plain = _plain(buffer.getvalue())
         assert "4.0 MiB of 31.0 MiB" in plain
         assert "Verifying the Qdrant download checksum" in plain
-        assert "Installed Qdrant server" in plain
+        assert "Installed Qdrant server" in _plain(capsys.readouterr().out)
 
     def test_a_failed_provision_stays_one_envelope_in_json_mode(
         self,
