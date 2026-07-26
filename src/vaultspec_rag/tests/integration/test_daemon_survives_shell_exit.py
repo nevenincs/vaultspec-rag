@@ -35,10 +35,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ...cli._process import DaemonBreakawayError, _spawn_windows
-from ...cli._service_lifecycle import (
-    _existing_service_running,
-    _should_unlink_discovery_file,
-)
+from ...cli._service_lifecycle import _should_unlink_discovery_file
+from ...cli._service_start import _existing_service_running
 from ...serviceclient._discovery import (
     SERVICE_DISCOVERY_SCHEMA,
     SERVICE_DISCOVERY_VERSION,

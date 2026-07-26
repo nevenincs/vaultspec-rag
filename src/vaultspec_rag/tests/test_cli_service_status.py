@@ -855,7 +855,7 @@ class TestServiceDaemonHelpers:
         assert stalled_status != fresh_status
 
     def test_service_status_distinguishes_waiting_from_processing(self):
-        from ..cli._service_lifecycle import (
+        from ..cli._status_labels import (
             _status_busy_label,
             _status_jobs_label,
             _status_queue_label,

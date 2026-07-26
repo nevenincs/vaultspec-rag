@@ -127,9 +127,8 @@ def _live_service_axis() -> dict[str, object]:
     from ..serviceclient._compat import classify_service_version
     from ..serviceclient._discovery import resolve_machine_service
     from ..serviceclient._status import STATUS_STOPPED, compose_discovery_status
-    from ._service_lifecycle import _evaluate_service_signals
     from ._service_status import _read_service_status
-    from ._status_render import _liveness_from_resolution
+    from ._status_render import _evaluate_service_signals, _liveness_from_resolution
 
     status = _read_service_status()
     if status is None:

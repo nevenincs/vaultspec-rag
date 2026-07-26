@@ -32,37 +32,13 @@ if TYPE_CHECKING:
 
 __all__ = [
     "_address_line",
-    "_caller_ephemeral_warning",
-    "_compute_state",
-    "_ephemeral_env_warning",
-    "_evaluate_service_signals",
-    "_existing_service_running",
-    "_explicit_port_state",
     "_fail_lifecycle",
-    "_fail_start",
-    "_fail_stop",
-    "_initiator_fields",
     "_lifecycle_success",
     "_print_detail_line",
     "_print_lifecycle_lines",
     "_print_lifecycle_next_actions",
     "_process_line",
-    "_reclaim_machine_singleton",
-    "_service_pid_on_port",
     "_should_unlink_discovery_file",
-    "_start_success",
-    "_status_busy_label",
-    "_status_env_label",
-    "_status_jobs_label",
-    "_status_next_action",
-    "_status_queue_label",
-    "_stop_service_on_port",
-    "_stop_success",
-    "_tail_daemon_log",
-    "_terminate_and_confirm",
-    "service_start",
-    "service_status",
-    "service_stop",
     "service_warmup",
 ]
 
@@ -277,40 +253,3 @@ def service_warmup() -> None:
                     total=len(models),
                 ),
             )
-
-
-# Facade: import the split command modules so their ``server_app`` commands
-# register on import, and re-export every name that tests and ``cli.__init__``
-# continue to import from ``cli._service_lifecycle``. These imports sit below
-# the primitives above so the leaf modules can import those primitives from
-# here without an unresolved-name cycle.
-from ._service_start import (  # noqa: E402
-    _caller_ephemeral_warning,
-    _ephemeral_env_warning,
-    _existing_service_running,
-    _fail_start,
-    _start_success,
-    _tail_daemon_log,
-    service_start,
-)
-from ._service_stop import (  # noqa: E402
-    _fail_stop,
-    _initiator_fields,
-    _reclaim_machine_singleton,
-    _service_pid_on_port,
-    _stop_service_on_port,
-    _stop_success,
-    _terminate_and_confirm,
-    service_stop,
-)
-from ._status_render import (  # noqa: E402
-    _compute_state,
-    _evaluate_service_signals,
-    _explicit_port_state,
-    _status_busy_label,
-    _status_env_label,
-    _status_jobs_label,
-    _status_next_action,
-    _status_queue_label,
-    service_status,
-)
