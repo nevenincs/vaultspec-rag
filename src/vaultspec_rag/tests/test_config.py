@@ -11,6 +11,8 @@ import pytest
 
 from .._job_errors import JobError, JobErrorKind
 from ..config import (
+    _ENV_OVERRIDE_MAP,
+    _SETTING_BOUNDS,
     EnvVar,
     VaultSpecConfigWrapper,
     get_config,
@@ -1340,4 +1342,146 @@ def test_index_reuse_enabled_reset_config_picks_up_change() -> None:
         assert second.index_reuse_enabled is False
     finally:
         restore_env(EnvVar.INDEX_REUSE, prev)
+        reset_config()
+
+
+def test_malformed_numeric_env_is_rejected_at_construction_by_name() -> None:
+    # The malformed value must not reach a caller as the shipped default, and
+    # the message must be enough to fix the mistake without reading the source.
+    # Mutation: returning the default instead of raising in _coerce_env's
+    # except branch turns this into DID NOT RAISE.
+    prev = set_env(EnvVar.CODE_NOISE_DEMOTE_PENALTY, "notanumber")
+    try:
+        reset_config()
+        with pytest.raises(ValueError) as excinfo:
+            get_config()
+        message = str(excinfo.value)
+        assert EnvVar.CODE_NOISE_DEMOTE_PENALTY.value in message
+        assert "code_noise_demote_penalty" in message
+        assert "notanumber" in message
+        assert "finite non-negative number" in message
+    finally:
+        restore_env(EnvVar.CODE_NOISE_DEMOTE_PENALTY, prev)
+        reset_config()
+
+
+def test_negative_idle_ttl_is_rejected_while_zero_is_admitted() -> None:
+    # Zero means "evict as soon as idle" and stays legal; a negative TTL is
+    # meaningless and used to be returned verbatim. Mutation: widening the
+    # service_idle_ttl_seconds bound below zero turns this into DID NOT RAISE.
+    prev = set_env(EnvVar.SERVICE_IDLE_TTL_SECONDS, "0")
+    try:
+        reset_config()
+        assert get_config().service_idle_ttl_seconds == 0
+
+        os.environ[EnvVar.SERVICE_IDLE_TTL_SECONDS.value] = "-5"
+        reset_config()
+        with pytest.raises(ValueError, match="service_idle_ttl_seconds"):
+            get_config()
+    finally:
+        restore_env(EnvVar.SERVICE_IDLE_TTL_SECONDS, prev)
+        reset_config()
+
+
+def test_construction_reports_every_unusable_setting_together() -> None:
+    # Reporting only the first mistake makes an operator restart once per typo.
+    # Mutation: raising problems[0] unconditionally drops the second name.
+    prev_ttl = set_env(EnvVar.SERVICE_IDLE_TTL_SECONDS, "-5")
+    prev_batch = set_env(EnvVar.EMBEDDING_BATCH_SIZE, "0")
+    try:
+        reset_config()
+        with pytest.raises(ValueError) as excinfo:
+            get_config()
+        message = str(excinfo.value)
+        assert "service_idle_ttl_seconds" in message
+        assert "embedding_batch_size" in message
+    finally:
+        restore_env(EnvVar.SERVICE_IDLE_TTL_SECONDS, prev_ttl)
+        restore_env(EnvVar.EMBEDDING_BATCH_SIZE, prev_batch)
+        reset_config()
+
+
+def test_every_ranged_setting_rejects_a_malformed_environment_value() -> None:
+    # A sweep, so a knob added later cannot quietly opt out of coercion.
+    # Mutation: returning the default instead of raising in _coerce_env's
+    # except branch fails on the first key in the table.
+    for key, bound in _SETTING_BOUNDS.items():
+        env_var = _ENV_OVERRIDE_MAP.get(key)
+        assert env_var is not None, f"{key} declares a range but no env var"
+        prev = set_env(env_var, "notavalue")
+        try:
+            reset_config()
+            with pytest.raises(ValueError) as excinfo:
+                get_config()
+            message = str(excinfo.value)
+            assert env_var.value in message, key
+            assert bound.shape in message, key
+        finally:
+            restore_env(env_var, prev)
+            reset_config()
+
+
+def test_every_flag_rejects_an_unrecognised_token() -> None:
+    # An unrecognised word used to read as false, so one typo silently turned a
+    # feature off. Mutation: restoring membership in the truthy set as the whole
+    # rule (unrecognised means false) turns this into DID NOT RAISE.
+    defaults: dict[str, object] = VaultSpecConfigWrapper._RAG_DEFAULTS  # pyright: ignore[reportPrivateUsage]
+    flags = [key for key, value in defaults.items() if isinstance(value, bool)]
+    assert flags, "expected the settings table to carry boolean flags"
+    for key in flags:
+        env_var = _ENV_OVERRIDE_MAP.get(key)
+        assert env_var is not None, f"{key} is a flag with no env var"
+        prev = set_env(env_var, "treu")
+        try:
+            reset_config()
+            with pytest.raises(ValueError) as excinfo:
+                get_config()
+            assert env_var.value in str(excinfo.value), key
+        finally:
+            restore_env(env_var, prev)
+            reset_config()
+
+
+def test_document_chunk_ratio_resolves_through_the_canonical_map() -> None:
+    prev = set_env(EnvVar.DOCUMENT_CHUNK_CHARS_PER_TOKEN, "4")
+    try:
+        reset_config()
+        cfg = get_config()
+        assert cfg.document_chunk_chars_per_token == 4
+        assert cfg.document_chunk_chars == cfg.embedding_max_seq_length * 4
+    finally:
+        restore_env(EnvVar.DOCUMENT_CHUNK_CHARS_PER_TOKEN, prev)
+        reset_config()
+
+
+def test_document_chunk_overlap_stays_below_the_derived_budget() -> None:
+    # The coupling no per-key range can express: an overlap at or above the
+    # derived budget consumes a whole chunk and never advances the split.
+    # Mutation: deleting the comparison in document_chunk_overlap_chars turns
+    # the second half into DID NOT RAISE.
+    prev = set_env(EnvVar.DOCUMENT_CHUNK_OVERLAP_CHARS, "512")
+    try:
+        reset_config()
+        assert get_config().document_chunk_overlap_chars == 512
+
+        os.environ[EnvVar.DOCUMENT_CHUNK_OVERLAP_CHARS.value] = "999999"
+        reset_config()
+        with pytest.raises(ValueError, match="smaller than the derived"):
+            get_config()
+    finally:
+        restore_env(EnvVar.DOCUMENT_CHUNK_OVERLAP_CHARS, prev)
+        reset_config()
+
+
+def test_preprocess_kill_switch_beats_an_explicit_configured_mode() -> None:
+    # Why preprocess_mode cannot be a plain map entry: the env var is a kill
+    # switch, not a carrier of the setting's value, and it must win over an
+    # explicit override that the generic path ranks ABOVE the environment.
+    # Mutation: deleting the env check from the property returns "default".
+    prev = set_env(EnvVar.PREPROCESS, "off")
+    try:
+        reset_config()
+        assert get_config({"preprocess_mode": "default"}).preprocess_mode == "off"
+    finally:
+        restore_env(EnvVar.PREPROCESS, prev)
         reset_config()
