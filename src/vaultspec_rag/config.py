@@ -2,6 +2,45 @@
 
 Provides RAG-specific defaults and bridges the gap when the base vaultspec
 VaultSpecConfig is missing RAG-specific attributes.
+
+Resolution order for a RAG settings key is CLI override, then environment
+variable, then the shipped default.
+
+Coercion and validation policy
+------------------------------
+One rule governs every setting this module owns: **reject loudly, never
+repair and never ignore.** Concretely:
+
+- A value is coerced to the type of its shipped default. Text that does not
+  parse as that type is an error, never a reason to fall back to the default:
+  a silent fallback leaves the operator's typo in place and the wrong value
+  running in production, which is the failure this policy exists to prevent.
+- Numeric settings declare their admissible range in ``_SETTING_BOUNDS``, and
+  an out-of-range value is rejected rather than clamped. Clamping substitutes
+  a value nobody asked for, which is the same silent substitution as ignoring
+  the typo, only harder to notice afterwards.
+- Every rejection names the environment variable the value came from (when it
+  came from one), the settings key, the offending value, and the shape that
+  was expected, so the message alone is enough to fix the mistake.
+- Validation runs eagerly across the whole table when a config is built, and
+  reports every problem it finds in one error. A daemon therefore fails at
+  startup with the complete list instead of dying mid-flight the first time
+  some rarely-read knob is touched. The same validator also runs on each read,
+  so no access path can hand back a value that never passed it.
+- Every numeric default must declare a range. An import-time check enforces
+  this, so a new numeric knob cannot quietly land without one.
+
+Empty text is the one value that is not simply refused, and what it means
+depends on the setting's type. For a *string* setting it is treated as absent,
+because ``VAR="$UNSET"`` exports an empty string and ``Path("")`` resolves to
+the working directory - which would repoint the managed-directory blast radius
+(delete, clean) at wherever the operator happened to be standing. For a *flag*
+it reads as off, the way a shell spells "not on", and off is the safe
+direction. For a *numeric* setting it has no defensible reading at all and is
+rejected like any other malformed input.
+
+Two settings resolve outside the generic path because their behaviour is not
+a plain override; each says why where it is defined.
 """
 
 from __future__ import annotations
@@ -27,7 +66,6 @@ logger = logging.getLogger(__name__)
 #: The two-state document-preprocessing mode.
 #: ``default`` runs a root's rules directly; ``off`` is the kill switch.
 PreprocessMode = Literal["default", "off"]
-IndexSupportProfile = Literal["managed-service", "embedded-local"]
 
 _VALID_PREPROCESS_MODES: frozenset[str] = frozenset({"default", "off"})
 _VALID_INDEX_SUPPORT_PROFILES: frozenset[str] = frozenset(
@@ -167,6 +205,11 @@ class EnvVar(StrEnum):
     # kill switch (``=off``); resolved into ``preprocess_mode``.
     PREPROCESS = "VAULTSPEC_RAG_PREPROCESS"
     PREPROCESS_MAX_EMITTED_BYTES = "VAULTSPEC_RAG_PREPROCESS_MAX_EMITTED_BYTES"
+    # Document split budget knobs. The effective chunk bound is the dense
+    # model's token window times the chars-per-token ratio, so both are plain
+    # overrides resolved through the generic path.
+    DOCUMENT_CHUNK_CHARS_PER_TOKEN = "VAULTSPEC_RAG_DOCUMENT_CHUNK_CHARS_PER_TOKEN"
+    DOCUMENT_CHUNK_OVERLAP_CHARS = "VAULTSPEC_RAG_DOCUMENT_CHUNK_OVERLAP_CHARS"
     HTML_STRIP = "VAULTSPEC_RAG_HTML_STRIP"
     # Stdio shim lifetime watchdog kill switch;
     # "0"/"false"/"off"/"no" disables the ancestor-death backstop.
@@ -254,6 +297,126 @@ def hf_cache_only() -> bool:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _NumericBound:
+    """The admissible numeric range for one settings key.
+
+    ``shape`` is the human phrase that completes "<name> must be ...", so the
+    rejection message and the range it describes can never drift apart.
+    """
+
+    shape: str
+    integral: bool
+    minimum: float
+    minimum_exclusive: bool = False
+    maximum: float | None = None
+
+    def parse(self, raw: str) -> object:
+        """Parse environment text into this bound's numeric type."""
+        return int(raw) if self.integral else float(raw)
+
+    def admits(self, value: object) -> bool:
+        """Return whether *value* is inside this bound."""
+        # bool is an int subclass; a flag is never a numeric setting.
+        if isinstance(value, bool):
+            return False
+        if self.integral:
+            if not isinstance(value, int):
+                return False
+        elif not isinstance(value, (int, float)) or not math.isfinite(value):
+            return False
+        numeric = float(value)
+        if self.minimum_exclusive:
+            if numeric <= self.minimum:
+                return False
+        elif numeric < self.minimum:
+            return False
+        return self.maximum is None or numeric <= self.maximum
+
+    def narrow(self, value: object) -> object:
+        """Return *value* as this bound's declared type."""
+        return int(cast("int", value)) if self.integral else float(cast("float", value))
+
+
+@dataclass(frozen=True, slots=True)
+class _ChoiceBound:
+    """The admissible names for one enumerated settings key.
+
+    Comparison and the returned value are both case-folded and stripped, so an
+    operator's stray whitespace or capitalisation resolves rather than being
+    rejected, while an unrecognised name is still refused.
+    """
+
+    shape: str
+    allowed: frozenset[str]
+
+    def parse(self, raw: str) -> object:
+        """Return environment text unchanged; narrowing normalises it."""
+        return raw
+
+    def admits(self, value: object) -> bool:
+        """Return whether *value* names one of the allowed choices."""
+        return isinstance(value, str) and value.strip().lower() in self.allowed
+
+    def narrow(self, value: object) -> object:
+        """Return the normalised choice name."""
+        return cast("str", value).strip().lower()
+
+
+type _SettingBound = _NumericBound | _ChoiceBound
+
+_POSITIVE_INT = _NumericBound("a positive integer", integral=True, minimum=1)
+_NON_NEGATIVE_INT = _NumericBound("a non-negative integer", integral=True, minimum=0)
+_TCP_PORT = _NumericBound(
+    "a TCP port between 1 and 65535", integral=True, minimum=1, maximum=65535
+)
+_POSITIVE_NUMBER = _NumericBound(
+    "a finite positive number", integral=False, minimum=0.0, minimum_exclusive=True
+)
+_NON_NEGATIVE_NUMBER = _NumericBound(
+    "a finite non-negative number", integral=False, minimum=0.0
+)
+_CLOSED_UNIT_INTERVAL = _NumericBound(
+    "a finite number between 0 and 1", integral=False, minimum=0.0, maximum=1.0
+)
+_OPEN_UNIT_INTERVAL = _NumericBound(
+    "a finite number greater than 0 and no greater than 1",
+    integral=False,
+    minimum=0.0,
+    minimum_exclusive=True,
+    maximum=1.0,
+)
+
+#: Accepted spellings for a boolean setting. Anything else is a typo and is
+#: refused: treating an unrecognised word as false is exactly the silent
+#: substitution this module refuses to make, and it disables features quietly.
+#: The empty string is the one exception, and reads as off - ``VAR=`` is how a
+#: shell spells "not on", and off is the safe direction to resolve it in.
+_TRUE_TOKENS: frozenset[str] = frozenset({"1", "true", "yes", "on"})
+_FALSE_TOKENS: frozenset[str] = frozenset({"0", "false", "no", "off", ""})
+_BOOL_SHAPE = "one of " + ", ".join(
+    sorted(token for token in _TRUE_TOKENS | _FALSE_TOKENS if token)
+)
+
+
+def _rejection(
+    key: str, shape: str, value: object, source: EnvVar | None
+) -> ValueError:
+    """Build the one rejection message shape this module emits.
+
+    Args:
+        key: The settings key that failed.
+        shape: The human phrase describing what was expected.
+        value: The offending value, rendered for the operator.
+        source: The environment variable the value came from, when it did.
+
+    Returns:
+        A ``ValueError`` naming the variable, the key, the value and the shape.
+    """
+    where = key if source is None else f"{source.value} ({key})"
+    return ValueError(f"{where} must be {shape}, got {value!r}")
+
+
 # Mapping from _RAG_DEFAULTS key → EnvVar member for env override lookup.
 _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "data_dir": EnvVar.DATA_DIR,
@@ -319,9 +482,12 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "watch_debounce_ms": EnvVar.WATCH_DEBOUNCE_MS,
     "watch_cooldown_s": EnvVar.WATCH_COOLDOWN_S,
     # Document-preprocessing hook knobs (#185). ``preprocess_mode`` is
-    # resolved from two env vars with precedence in a dedicated property, so
-    # it is deliberately absent from this single-var override map.
+    # deliberately absent from this single-var override map: its env var is a
+    # kill switch whose value is not the setting's value, so it is resolved by
+    # a transform rather than a plain override.
     "preprocess_max_emitted_bytes": EnvVar.PREPROCESS_MAX_EMITTED_BYTES,
+    "document_chunk_chars_per_token": EnvVar.DOCUMENT_CHUNK_CHARS_PER_TOKEN,
+    "document_chunk_overlap_chars": EnvVar.DOCUMENT_CHUNK_OVERLAP_CHARS,
     "html_strip": EnvVar.HTML_STRIP,
     # Vault chunking + reranker input knobs.
     "vault_chunk_chars": EnvVar.VAULT_CHUNK_CHARS,
@@ -369,6 +535,105 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "storage_reconcile_budget_seconds": EnvVar.STORAGE_RECONCILE_BUDGET_SECONDS,
     # First-class local-backend opt-out knob.
     "local_only": EnvVar.LOCAL_ONLY,
+}
+
+
+# Admissible range for every settings key that has one. A key absent from this
+# table carries no range (paths, model names, free-form strings, flags); a key
+# whose default is numeric MUST be present, which the import-time check below
+# the class enforces so a new knob cannot land without a declared range.
+#
+# Zero is admitted only where it means something: an in-band "auto" or
+# "disabled" sentinel documented at the default, or a bound whose lower end is
+# genuinely nothing. Everywhere else it is refused along with the negatives.
+_SETTING_BOUNDS: dict[str, _SettingBound] = {
+    # Service lifecycle. A zero idle TTL means "evict as soon as idle", which
+    # is a coherent request; a negative one is not.
+    "mcp_port": _TCP_PORT,
+    "qdrant_port": _TCP_PORT,
+    "service_idle_ttl_seconds": _NON_NEGATIVE_INT,
+    "service_max_projects": _POSITIVE_INT,
+    "service_search_timeout_seconds": _POSITIVE_NUMBER,
+    "service_admin_timeout_seconds": _POSITIVE_NUMBER,
+    "qdrant_ready_timeout_seconds": _POSITIVE_NUMBER,
+    "graph_ttl_seconds": _NON_NEGATIVE_NUMBER,
+    # Managed log retention. Zero backups is a bounded no-history mode; a zero
+    # rollover threshold would make every source unbounded.
+    "managed_log_max_bytes": _POSITIVE_INT,
+    "managed_log_backup_count": _NON_NEGATIVE_INT,
+    # Indexing job lifecycle.
+    "job_max_nonterminal": _POSITIVE_INT,
+    "job_shutdown_timeout_seconds": _POSITIVE_NUMBER,
+    # Store operation timeout and bounded write retry.
+    "store_operation_timeout_seconds": _POSITIVE_NUMBER,
+    "store_write_retry_attempts": _POSITIVE_INT,
+    "store_write_retry_base_seconds": _POSITIVE_NUMBER,
+    "store_write_retry_max_seconds": _POSITIVE_NUMBER,
+    # Resource-bounded indexing and watcher-retry policy.
+    "index_segment_max_chunks": _POSITIVE_INT,
+    "index_segment_max_bytes": _POSITIVE_INT,
+    "index_queue_max_chunks": _POSITIVE_INT,
+    "index_queue_max_bytes": _POSITIVE_INT,
+    "index_no_progress_timeout_seconds": _POSITIVE_NUMBER,
+    "watch_retry_base_seconds": _POSITIVE_NUMBER,
+    "watch_retry_max_seconds": _POSITIVE_NUMBER,
+    "watch_retry_jitter_fraction": _CLOSED_UNIT_INTERVAL,
+    "watch_circuit_failure_threshold": _POSITIVE_INT,
+    # Memory ceilings. The CUDA ceiling's zero means "auto-derive from the
+    # device", so it admits zero where the RSS ceiling does not.
+    "index_rss_ceiling_mb": _POSITIVE_NUMBER,
+    "index_cuda_ceiling_mb": _NON_NEGATIVE_NUMBER,
+    "index_cuda_headroom_mb": _POSITIVE_NUMBER,
+    "index_cuda_allocator_fraction": _OPEN_UNIT_INTERVAL,
+    "index_support_profile": _ChoiceBound(
+        "one of " + ", ".join(sorted(_VALID_INDEX_SUPPORT_PROFILES)),
+        frozenset(_VALID_INDEX_SUPPORT_PROFILES),
+    ),
+    # Embedding and reranking throughput. A zero batch encodes nothing.
+    "embedding_dimension": _POSITIVE_INT,
+    "embedding_batch_size": _POSITIVE_INT,
+    "embedding_encode_batch_size": _POSITIVE_INT,
+    "embedding_code_encode_batch_size": _POSITIVE_INT,
+    "embedding_document_encode_batch_size": _POSITIVE_INT,
+    "embedding_max_seq_length": _POSITIVE_INT,
+    "max_embed_chars": _POSITIVE_INT,
+    "reranker_batch_size": _POSITIVE_INT,
+    "reranker_max_length": _POSITIVE_INT,
+    "vault_chunk_chars": _POSITIVE_INT,
+    # Codebase-index parallelism. Zero workers selects the auto path, and a
+    # zero parallel threshold parallelises every tree.
+    "index_chunk_workers": _NON_NEGATIVE_INT,
+    "index_parallel_min_bytes": _NON_NEGATIVE_INT,
+    "index_cache_flush_slices": _POSITIVE_INT,
+    "vault_cache_flush_slices": _POSITIVE_INT,
+    "document_cache_flush_slices": _POSITIVE_INT,
+    # Worker-thread pool partitioning. A zero limiter admits no callers.
+    "search_concurrency": _POSITIVE_INT,
+    "index_job_concurrency": _POSITIVE_INT,
+    # Intent-aware vault ranking. A zero type cap disables the cap.
+    "vault_intent_type_cap": _NON_NEGATIVE_INT,
+    # Code-search noise profile. A zero penalty disables demotion.
+    "code_noise_demote_penalty": _NON_NEGATIVE_NUMBER,
+    # Filesystem watcher. Zero means "no delay" for both, not "disabled".
+    "watch_debounce_ms": _NON_NEGATIVE_INT,
+    "watch_cooldown_s": _NON_NEGATIVE_NUMBER,
+    # Document preprocessing and splitting.
+    "preprocess_max_emitted_bytes": _POSITIVE_INT,
+    "document_chunk_chars_per_token": _POSITIVE_INT,
+    "document_chunk_overlap_chars": _POSITIVE_INT,
+    # Scheduled storage maintenance. The per-cycle caps admit zero, which is
+    # the same as the feature's own off switch; the grace windows admit zero
+    # so a harness can exercise reclamation without waiting, and the ephemeral
+    # idle window documents zero as its disable value.
+    "storage_autoprune_interval_minutes": _POSITIVE_NUMBER,
+    "storage_autoprune_grace_hours": _NON_NEGATIVE_NUMBER,
+    "storage_autoprune_grace_hours_data": _NON_NEGATIVE_NUMBER,
+    "storage_autoprune_archive_retention_days": _NON_NEGATIVE_NUMBER,
+    "storage_autoprune_archive_max_gb": _NON_NEGATIVE_NUMBER,
+    "storage_autoprune_max_per_cycle": _NON_NEGATIVE_INT,
+    "storage_autoprune_ephemeral_idle_hours": _NON_NEGATIVE_NUMBER,
+    "storage_reconcile_max_per_cycle": _NON_NEGATIVE_INT,
+    "storage_reconcile_budget_seconds": _POSITIVE_NUMBER,
 }
 
 
@@ -475,9 +740,14 @@ class VaultSpecConfigWrapper:
     2. Environment variable (via ``_ENV_OVERRIDE_MAP``)
     3. ``_RAG_DEFAULTS`` value
 
+    The resolved value is then coerced and range-checked under the module's
+    coercion and validation policy, both on construction and on every read.
+
     Attributes:
         _RAG_DEFAULTS: Default values for RAG-specific configuration
             keys not present on the base ``VaultSpecConfig``.
+        _SETTING_BOUNDS: Module-level table of admissible ranges, keyed by
+            settings key; every numeric default must appear in it.
         _base: The underlying ``VaultSpecConfig`` instance that
             provides project-level settings.
     """
@@ -896,9 +1166,15 @@ class VaultSpecConfigWrapper:
 
         Args:
             base: The base ``VaultSpecConfig`` to wrap.
+            rag_overrides: Optional CLI-supplied values for RAG settings keys.
 
         Returns:
             None.
+
+        Raises:
+            ValueError: If any setting is malformed or out of range. Raising
+                here means a daemon refuses to start on a bad value instead of
+                failing later, mid-flight, on the first read of that knob.
         """
         self._base = base
         self._rag_overrides = {
@@ -906,139 +1182,16 @@ class VaultSpecConfigWrapper:
             for key, value in (rag_overrides or {}).items()
             if key in self._RAG_DEFAULTS
         }
+        self._validate_settings()
 
-    @property
-    def managed_log_max_bytes(self) -> int:
-        """Return the positive per-source rollover threshold in bytes.
-
-        A zero or negative threshold would make every managed source
-        unbounded, contradicting the managed-log retention contract.
-
-        Raises:
-            ValueError: If the configured value is not a positive integer.
-        """
-        value: object = self._resolve_rag_default("managed_log_max_bytes")
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            msg = f"managed_log_max_bytes must be a positive integer, got {value!r}"
-            raise ValueError(msg)
-        return value
-
-    @property
-    def managed_log_backup_count(self) -> int:
-        """Return the non-negative retained-backup count per source.
-
-        Zero remains useful as a bounded no-history mode: the active file is
-        truncated at each threshold instead of keeping numbered generations.
-
-        Raises:
-            ValueError: If the configured value is not a non-negative integer.
-        """
-        value: object = self._resolve_rag_default("managed_log_backup_count")
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            msg = (
-                "managed_log_backup_count must be a non-negative integer, "
-                f"got {value!r}"
-            )
-            raise ValueError(msg)
-        return value
-
-    @property
-    def job_max_nonterminal(self) -> int:
-        """Return the positive bound on retained nonterminal jobs.
-
-        Raises:
-            ValueError: If the configured value is not a positive integer.
-        """
-        value: object = self._resolve_rag_default("job_max_nonterminal")
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            msg = f"job_max_nonterminal must be a positive integer, got {value!r}"
-            raise ValueError(msg)
-        return value
-
-    @property
-    def job_shutdown_timeout_seconds(self) -> float:
-        """Return the finite positive cooperative job-shutdown window.
-
-        Raises:
-            ValueError: If the configured value is not a finite positive number.
-        """
-        value: object = self._resolve_rag_default("job_shutdown_timeout_seconds")
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-            or value <= 0
-        ):
-            msg = (
-                "job_shutdown_timeout_seconds must be a finite positive number, "
-                f"got {value!r}"
-            )
-            raise ValueError(msg)
-        return float(value)
-
-    @staticmethod
-    def _positive_int(name: str, value: object) -> int:
-        """Return a positive integer config value."""
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            msg = f"{name} must be a positive integer, got {value!r}"
-            raise ValueError(msg)
-        return value
-
-    @staticmethod
-    def _finite_positive(name: str, value: object) -> float:
-        """Return a finite positive numeric config value."""
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-            or value <= 0
-        ):
-            msg = f"{name} must be a finite positive number, got {value!r}"
-            raise ValueError(msg)
-        return float(value)
-
-    @staticmethod
-    def _finite_non_negative(name: str, value: object) -> float:
-        """Return a finite non-negative numeric config value.
-
-        Zero is admitted so a knob can carry an in-band sentinel (e.g. the CUDA
-        ceiling's ``0`` meaning "auto-derive from the device").
-        """
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-            or value < 0
-        ):
-            msg = f"{name} must be a finite non-negative number, got {value!r}"
-            raise ValueError(msg)
-        return float(value)
-
-    @property
-    def store_operation_timeout_seconds(self) -> float:
-        """Return the finite positive timeout for one store operation."""
-        return self._finite_positive(
-            "store_operation_timeout_seconds",
-            self._resolve_rag_default("store_operation_timeout_seconds"),
-        )
-
-    @property
-    def store_write_retry_attempts(self) -> int:
-        """Return the positive maximum attempt count for one store write."""
-        return self._positive_int(
-            "store_write_retry_attempts",
-            self._resolve_rag_default("store_write_retry_attempts"),
-        )
+    # Settings whose only constraint is a range resolve through the generic
+    # path and declare that range in ``_SETTING_BOUNDS``. The properties below
+    # exist only where a value is constrained by ANOTHER setting, which a
+    # per-key range cannot express.
 
     def _store_write_retry_bounds(self) -> tuple[float, float]:
-        base = self._finite_positive(
-            "store_write_retry_base_seconds",
-            self._resolve_rag_default("store_write_retry_base_seconds"),
-        )
-        maximum = self._finite_positive(
-            "store_write_retry_max_seconds",
-            self._resolve_rag_default("store_write_retry_max_seconds"),
-        )
+        base = float(self._resolve_rag_default("store_write_retry_base_seconds"))
+        maximum = float(self._resolve_rag_default("store_write_retry_max_seconds"))
         if maximum < base:
             msg = (
                 "store_write_retry_max_seconds must be greater than or equal to "
@@ -1049,23 +1202,17 @@ class VaultSpecConfigWrapper:
 
     @property
     def store_write_retry_base_seconds(self) -> float:
-        """Return the finite positive initial store-write retry delay."""
+        """Return the initial store-write retry delay, never above the maximum."""
         return self._store_write_retry_bounds()[0]
 
     @property
     def store_write_retry_max_seconds(self) -> float:
-        """Return the finite positive maximum store-write retry delay."""
+        """Return the maximum store-write retry delay, never below the base."""
         return self._store_write_retry_bounds()[1]
 
     def _index_chunk_bounds(self) -> tuple[int, int]:
-        segment = self._positive_int(
-            "index_segment_max_chunks",
-            self._resolve_rag_default("index_segment_max_chunks"),
-        )
-        queue = self._positive_int(
-            "index_queue_max_chunks",
-            self._resolve_rag_default("index_queue_max_chunks"),
-        )
+        segment = int(self._resolve_rag_default("index_segment_max_chunks"))
+        queue = int(self._resolve_rag_default("index_queue_max_chunks"))
         if queue < segment:
             msg = (
                 "index_queue_max_chunks must be greater than or equal to "
@@ -1075,14 +1222,8 @@ class VaultSpecConfigWrapper:
         return segment, queue
 
     def _index_byte_bounds(self) -> tuple[int, int]:
-        segment = self._positive_int(
-            "index_segment_max_bytes",
-            self._resolve_rag_default("index_segment_max_bytes"),
-        )
-        queue = self._positive_int(
-            "index_queue_max_bytes",
-            self._resolve_rag_default("index_queue_max_bytes"),
-        )
+        segment = int(self._resolve_rag_default("index_segment_max_bytes"))
+        queue = int(self._resolve_rag_default("index_queue_max_bytes"))
         if queue < segment:
             msg = (
                 "index_queue_max_bytes must be greater than or equal to "
@@ -1093,7 +1234,7 @@ class VaultSpecConfigWrapper:
 
     @property
     def index_segment_max_chunks(self) -> int:
-        """Return the positive chunk bound for one durable file segment."""
+        """Return the chunk bound for one durable file segment."""
         return self._index_chunk_bounds()[0]
 
     @property
@@ -1103,7 +1244,7 @@ class VaultSpecConfigWrapper:
 
     @property
     def index_segment_max_bytes(self) -> int:
-        """Return the positive byte bound for one durable file segment."""
+        """Return the byte bound for one durable file segment."""
         return self._index_byte_bounds()[0]
 
     @property
@@ -1112,32 +1253,21 @@ class VaultSpecConfigWrapper:
         return self._index_byte_bounds()[1]
 
     @property
-    def document_chunk_chars_per_token(self) -> int:
-        """Return the declared conservative chars-per-token conversion ratio."""
-        return self._positive_int(
-            "document_chunk_chars_per_token",
-            self._resolve_rag_default("document_chunk_chars_per_token"),
-        )
-
-    @property
     def document_chunk_overlap_chars(self) -> int:
-        """Return the positive overlap carried across document chunk bounds."""
-        overlap = self._positive_int(
-            "document_chunk_overlap_chars",
-            self._resolve_rag_default("document_chunk_overlap_chars"),
-        )
-        chunk_chars = self._positive_int(
-            "embedding_max_seq_length",
-            self._resolve_rag_default("embedding_max_seq_length"),
-        ) * self._positive_int(
-            "document_chunk_chars_per_token",
-            self._resolve_rag_default("document_chunk_chars_per_token"),
-        )
-        if overlap >= chunk_chars:
+        """Return the overlap carried across document chunk bounds.
+
+        Kept off the generic path because the ceiling is not a fixed number
+        but the derived chunk budget, itself the product of two other
+        settings: an overlap at or above it would consume a whole chunk and
+        never advance the split. A per-key range cannot express that.
+        """
+        overlap = int(self._resolve_rag_default("document_chunk_overlap_chars"))
+        budget = self.document_chunk_chars
+        if overlap >= budget:
             msg = (
                 "document_chunk_overlap_chars must be smaller than the derived "
                 f"document chunk budget, got overlap={overlap}, "
-                f"budget={chunk_chars}"
+                f"budget={budget}"
             )
             raise ValueError(msg)
         return overlap
@@ -1148,33 +1278,17 @@ class VaultSpecConfigWrapper:
 
         The budget is the dense model's token window multiplied by the
         declared chars-per-token ratio, never a hardcoded character count,
-        so it tracks a model change instead of silently drifting.
+        so it tracks a model change instead of silently drifting. Derived,
+        not configured: it has no default and no environment variable of its
+        own, only the two settings it multiplies.
         """
-        return (
-            self._positive_int(
-                "embedding_max_seq_length",
-                self._resolve_rag_default("embedding_max_seq_length"),
-            )
-            * self.document_chunk_chars_per_token
-        )
-
-    @property
-    def index_no_progress_timeout_seconds(self) -> float:
-        """Return the finite positive durable no-progress deadline."""
-        return self._finite_positive(
-            "index_no_progress_timeout_seconds",
-            self._resolve_rag_default("index_no_progress_timeout_seconds"),
+        return int(self.embedding_max_seq_length) * int(
+            self.document_chunk_chars_per_token
         )
 
     def _watch_retry_bounds(self) -> tuple[float, float]:
-        base = self._finite_positive(
-            "watch_retry_base_seconds",
-            self._resolve_rag_default("watch_retry_base_seconds"),
-        )
-        maximum = self._finite_positive(
-            "watch_retry_max_seconds",
-            self._resolve_rag_default("watch_retry_max_seconds"),
-        )
+        base = float(self._resolve_rag_default("watch_retry_base_seconds"))
+        maximum = float(self._resolve_rag_default("watch_retry_max_seconds"))
         if maximum < base:
             msg = (
                 "watch_retry_max_seconds must be greater than or equal to "
@@ -1185,98 +1299,73 @@ class VaultSpecConfigWrapper:
 
     @property
     def watch_retry_base_seconds(self) -> float:
-        """Return the finite positive initial watcher retry delay."""
+        """Return the initial watcher retry delay, never above the maximum."""
         return self._watch_retry_bounds()[0]
 
     @property
     def watch_retry_max_seconds(self) -> float:
-        """Return the finite positive maximum watcher retry delay."""
+        """Return the maximum watcher retry delay, never below the base."""
         return self._watch_retry_bounds()[1]
 
-    @property
-    def watch_retry_jitter_fraction(self) -> float:
-        """Return the finite watcher jitter fraction in the closed unit interval."""
-        value: object = self._resolve_rag_default("watch_retry_jitter_fraction")
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-            or not 0.0 <= value <= 1.0
-        ):
-            msg = (
-                "watch_retry_jitter_fraction must be a finite number between "
-                f"0 and 1, got {value!r}"
-            )
-            raise ValueError(msg)
-        return float(value)
+    def _coerce_env(self, name: str, raw: str, source: EnvVar) -> object:
+        """Parse an environment string into the settings key's declared type.
 
-    @property
-    def watch_circuit_failure_threshold(self) -> int:
-        """Return failures admitted before the watcher circuit opens."""
-        return self._positive_int(
-            "watch_circuit_failure_threshold",
-            self._resolve_rag_default("watch_circuit_failure_threshold"),
-        )
+        Args:
+            name: The settings key being resolved.
+            raw: The raw environment value.
+            source: The environment variable it was read from.
 
-    @property
-    def index_rss_ceiling_mb(self) -> float:
-        """Return the finite positive absolute process RSS ceiling in MiB."""
-        return self._finite_positive(
-            "index_rss_ceiling_mb",
-            self._resolve_rag_default("index_rss_ceiling_mb"),
-        )
+        Returns:
+            The parsed value.
 
-    @property
-    def index_cuda_ceiling_mb(self) -> float:
-        """Return the CUDA ceiling override in MiB (``0`` = auto-derive)."""
-        return self._finite_non_negative(
-            "index_cuda_ceiling_mb",
-            self._resolve_rag_default("index_cuda_ceiling_mb"),
-        )
+        Raises:
+            ValueError: If *raw* does not parse as the key's type.
+        """
+        default = self._RAG_DEFAULTS[name]
+        if isinstance(default, bool):
+            token = raw.strip().lower()
+            if token in _TRUE_TOKENS:
+                return True
+            if token in _FALSE_TOKENS:
+                return False
+            raise _rejection(name, _BOOL_SHAPE, raw, source)
+        bound = _SETTING_BOUNDS.get(name)
+        if bound is not None:
+            try:
+                return bound.parse(raw)
+            except ValueError:
+                raise _rejection(name, bound.shape, raw, source) from None
+        return raw
 
-    @property
-    def index_cuda_headroom_mb(self) -> float:
-        """Return the memory reserved below device total for the auto ceiling."""
-        return self._finite_positive(
-            "index_cuda_headroom_mb",
-            self._resolve_rag_default("index_cuda_headroom_mb"),
-        )
+    def _checked(self, name: str, value: object, source: EnvVar | None) -> object:
+        """Return *value* narrowed to the key's declared range.
 
-    @property
-    def index_cuda_allocator_fraction(self) -> float:
-        """Return the process-wide CUDA allocator fraction in ``(0, 1]``."""
-        value = self._finite_positive(
-            "index_cuda_allocator_fraction",
-            self._resolve_rag_default("index_cuda_allocator_fraction"),
-        )
-        if value > 1.0:
-            msg = (
-                "index_cuda_allocator_fraction must be less than or equal to 1, "
-                f"got {value!r}"
-            )
-            raise ValueError(msg)
-        return value
+        Args:
+            name: The settings key being resolved.
+            value: The resolved value, from any source.
+            source: The environment variable it came from, when it came from one.
 
-    @property
-    def index_support_profile(self) -> IndexSupportProfile:
-        """Return the selected named indexing support profile."""
-        value: object = self._resolve_rag_default("index_support_profile")
-        if not isinstance(value, str):
-            msg = f"index_support_profile must be a string, got {value!r}"
-            raise ValueError(msg)
-        normalized = value.strip().lower()
-        if normalized not in _VALID_INDEX_SUPPORT_PROFILES:
-            allowed = ", ".join(sorted(_VALID_INDEX_SUPPORT_PROFILES))
-            msg = f"index_support_profile must be one of {allowed}, got {value!r}"
-            raise ValueError(msg)
-        return cast("IndexSupportProfile", normalized)
+        Returns:
+            The value narrowed to the declared type, or unchanged when the key
+            declares no range.
 
-    def _resolve_rag_default(self, name: str) -> Any:
+        Raises:
+            ValueError: If the key declares a range and *value* is outside it.
+        """
+        bound = _SETTING_BOUNDS.get(name)
+        if bound is None:
+            return value
+        if not bound.admits(value):
+            raise _rejection(name, bound.shape, value, source)
+        return bound.narrow(value)
+
+    def _raw_rag_setting(self, name: str) -> tuple[object, EnvVar | None]:
+        """Resolve *name* through the precedence chain without validating it."""
         if name in self._rag_overrides:
-            return self._rag_overrides[name]
+            return self._rag_overrides[name], None
         # 1. CLI override via base config
         try:
-            return getattr(self._base, name)
+            return getattr(self._base, name), None
         except AttributeError as exc:
             # Base config doesn't carry RAG-specific knob; fall
             # through to env var, then to module default. Debug
@@ -1300,15 +1389,11 @@ class VaultSpecConfigWrapper:
                     # the managed-dir blast radius (delete/clean) into the working
                     # dir. Treat it as absent (fall through to the module
                     # default), matching the persistence helpers' ``or DEFAULT``.
+                    # The sole silent-fallback carve-out; every other malformed
+                    # value is rejected.
                     pass
-                elif isinstance(default, bool):
-                    return env_val.lower() in ("1", "true", "yes")
-                elif isinstance(default, int):
-                    return int(env_val)
-                elif isinstance(default, float):
-                    return float(env_val)
                 else:
-                    return env_val
+                    return self._coerce_env(name, env_val, env_key), env_key
 
         # 2.5. Persisted runtime selection (local_only only). When
         # ``install --local-only`` wrote the marker, a later
@@ -1319,10 +1404,68 @@ class VaultSpecConfigWrapper:
         if name == "local_only":
             persisted = read_persisted_local_only()
             if persisted is not None:
-                return persisted
+                return persisted, None
 
         # 3. Default
-        return self._RAG_DEFAULTS[name]
+        return self._RAG_DEFAULTS[name], None
+
+    def _resolve_rag_default(self, name: str) -> Any:
+        value, source = self._raw_rag_setting(name)
+        return self._checked(name, value, source)
+
+    def _validate_settings(self) -> None:
+        """Reject every unusable setting at construction, all of them at once.
+
+        Reporting the whole list beats failing on the first: an operator
+        editing a deployment environment fixes one round of mistakes, not one
+        mistake per restart. Only keys that declare a constraint are swept -
+        a free-form path or model name has nothing to check - plus the
+        cross-setting relations no per-key range can express.
+
+        Raises:
+            ValueError: If any setting is malformed or out of range.
+        """
+        problems: list[str] = []
+
+        def record(exc: ValueError) -> None:
+            # The relation checks re-resolve keys the sweep already visited, so
+            # one bad value can surface twice. Report it once.
+            message = str(exc)
+            if message not in problems:
+                problems.append(message)
+
+        keys = [
+            *_SETTING_BOUNDS,
+            *(
+                key
+                for key, default in self._RAG_DEFAULTS.items()
+                if isinstance(default, bool)
+            ),
+        ]
+        for key in keys:
+            try:
+                self._resolve_rag_default(key)
+            except ValueError as exc:
+                record(exc)
+        relations = (
+            self._store_write_retry_bounds,
+            self._index_chunk_bounds,
+            self._index_byte_bounds,
+            self._watch_retry_bounds,
+            lambda: self.document_chunk_overlap_chars,
+        )
+        for relation in relations:
+            try:
+                relation()
+            except ValueError as exc:
+                record(exc)
+
+        if not problems:
+            return
+        if len(problems) == 1:
+            raise ValueError(problems[0])
+        listed = "\n".join(f"  - {problem}" for problem in problems)
+        raise ValueError(f"{len(problems)} unusable settings:\n{listed}")
 
     def effective_server_mode(self) -> bool:
         """Return whether the supervised server backend is in effect.
@@ -1346,19 +1489,25 @@ class VaultSpecConfigWrapper:
     def preprocess_mode(self) -> PreprocessMode:
         """Resolve the two-state document-preprocessing mode.
 
-        Unlike the single-var knobs in ``_ENV_OVERRIDE_MAP``, the mode is
-        derived from the env var read live here so a flag forwarded into the
-        daemon env (``server start --no-preprocess``) takes effect without a
-        config rebuild:
+        Kept off the generic override map because this is a transform, not an
+        override. ``VAULTSPEC_RAG_PREPROCESS`` is a kill switch: its value is
+        not the setting's value, only ``off`` means anything, and it has to
+        beat a CLI override that the generic path deliberately ranks ABOVE the
+        environment - an operator must always be able to silence a root's
+        rules. Reading it live also lets a flag forwarded into the daemon
+        environment take effect without rebuilding the config. Resolution is:
 
-        - ``VAULTSPEC_RAG_PREPROCESS=off`` forces ``off`` - the kill switch
-          wins over everything, so an operator can always silence a root's
-          rules.
+        - ``VAULTSPEC_RAG_PREPROCESS=off`` forces ``off``, beating everything.
         - otherwise the base-config/CLI override, then the module default
           (``default``, on).
 
-        An unrecognised configured value degrades to ``default`` with a
-        warning rather than raising.
+        An unrecognised configured mode degrades to ``default`` with a warning
+        instead of being rejected, the one place this module bends its own
+        rule. Rejecting here would refuse to start the daemon over a knob whose
+        safe reading is the shipped one, and the degrade is announced rather
+        than silent. The value cannot arrive from the environment anyway - the
+        kill switch is the only env input - so an operator typo cannot reach
+        this branch.
 
         Returns:
             One of ``"default"`` or ``"off"``.
@@ -1383,6 +1532,9 @@ class VaultSpecConfigWrapper:
         2. Environment variable (via ``_ENV_OVERRIDE_MAP``)
         3. ``_RAG_DEFAULTS`` fallback
 
+        Whichever source wins, the value is coerced and range-checked before it
+        is returned, so no access path can hand back an unvalidated setting.
+
         Args:
             name: The attribute name to look up.
 
@@ -1392,6 +1544,7 @@ class VaultSpecConfigWrapper:
         Raises:
             AttributeError: If *name* is not a RAG default and is
                 also missing from the base config.
+            ValueError: If the resolved value is malformed or out of range.
         """
         if name in self._RAG_DEFAULTS:
             return self._resolve_rag_default(name)
@@ -1492,4 +1645,27 @@ _rag_status_dir_default: object = VaultSpecConfigWrapper._RAG_DEFAULTS[  # pyrig
 if _rag_status_dir_default != _STATUS_DIR_DEFAULT:
     raise RuntimeError(
         "status_dir default drifted between persistence layer and config defaults"
+    )
+
+
+# Every numeric setting must declare its admissible range, and every declared
+# range must belong to a real setting. Checked at import so a new knob cannot
+# land without a range - the omission that let a negative TTL and a zero batch
+# size through - and so a renamed key cannot leave an orphaned entry behind.
+_all_defaults: dict[str, object] = VaultSpecConfigWrapper._RAG_DEFAULTS  # pyright: ignore[reportPrivateUsage]
+_unbounded_numeric = sorted(
+    key
+    for key, value in _all_defaults.items()
+    if isinstance(value, (int, float))
+    and not isinstance(value, bool)
+    and key not in _SETTING_BOUNDS
+)
+if _unbounded_numeric:
+    raise RuntimeError(
+        "numeric settings declare no admissible range: " + ", ".join(_unbounded_numeric)
+    )
+_orphaned_bounds = sorted(set(_SETTING_BOUNDS) - set(_all_defaults))
+if _orphaned_bounds:
+    raise RuntimeError(
+        "bounds declared for unknown settings: " + ", ".join(_orphaned_bounds)
     )
