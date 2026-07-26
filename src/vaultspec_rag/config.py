@@ -664,6 +664,14 @@ _LOCAL_ONLY_MARKER_FILENAME = "local-only.json"
 # without importing the class they feed.
 _STATUS_DIR_DEFAULT = "~/.vaultspec-rag"
 
+#: Name of the service discovery file, in the managed status directory and
+#: beside the machine lock. It is one fact with several readers - the client
+#: resolves it, the daemon cleans it up, the machine pointer publishes it, and
+#: the indexer treats it as SENSITIVE because it carries the service token.
+#: Spelled once so a rename cannot quietly leave that last reader behind,
+#: indexing a credential nobody remembered was in this file.
+SERVICE_STATUS_FILENAME = "service.json"
+
 
 def _status_dir_path() -> Path:
     """Resolve the managed service directory, honouring the env override.
