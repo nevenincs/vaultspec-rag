@@ -18,7 +18,7 @@ Each setting resolves through a fixed precedence: CLI flag > environment variabl
 
 The persisted local-only marker applies only to backend selection. It lives at `{status_dir}/local-only.json` and is written by `install --local-only` - `server start --local-only` applies to that run without persisting. A later `server start` with no flag and no environment variable then still selects the on-disk store.
 
-Five variables sit outside this chain and parse their values their own way; they have their own section below.
+Four variables sit outside this chain and resolve their values their own way; they have their own section below.
 
 ## Backend selection
 
@@ -209,15 +209,16 @@ The daemon's scheduled storage-maintenance cycle - see the [storage and maintena
 
 ## Variables with their own parsing rules
 
-These five do not resolve through the chain above and do not follow the boolean rule in [Type coercion](#type-coercion). Each is read at its own call site with the rule stated here. Two of them are not operator knobs at all.
+These four do not resolve through the chain above. Each is read at its own call site with the rule stated here. One of them is not an operator knob at all.
 
-| Variable                       | Type    | Default           | Controls                                                                                                                                                                                                   | CLI flag          |
-| ------------------------------ | ------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| `VAULTSPEC_RAG_PREPROCESS`     | string  | unset             | `off` disables all preprocessing and wins over every other source; any other value, including unset, leaves rules enabled                                                                                  | `--no-preprocess` |
-| `VAULTSPEC_RAG_STDIO_WATCHDOG` | boolean | enabled           | Stdio shim self-reap when its spawning process chain breaks. Only `0`, `false`, `off`, and `no` (case-insensitive) disable it; every other value, including unset, leaves it on                            | -                 |
-| `VAULTSPEC_RAG_MEMORY_PROBE`   | boolean | disabled          | Diagnostic memory sampler. Any non-empty value other than `0` enables it, so `false` and `off` enable it too                                                                                               | -                 |
-| `VAULTSPEC_RAG_ROOT`           | path    | working directory | Project root for the stdio MCP server. The CLI overwrites it from the resolved workspace, and the resident HTTP daemon has it stripped, so setting it changes neither                                      | `--target`        |
-| `VAULTSPEC_RAG_SERVICE_DAEMON` | string  | unset             | Marker the CLI sets to `1` in the daemon's own environment so resident code can tell itself apart from an interactive CLI. Not an operator knob; setting it by hand misreports a CLI process as the daemon | -                 |
+The two booleans among them accept the same spellings as every other boolean - that part does not vary anywhere in vaultspec-rag. What they resolve differently is everything *else*: an empty value, and a word that spells neither state. The Controls column below states each one's rule, and the reason for it.
+
+| Variable                       | Type    | Default           | Controls                                                                                                                                                                                                                                                     | CLI flag          |
+| ------------------------------ | ------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `VAULTSPEC_RAG_PREPROCESS`     | string  | unset             | `off` disables all preprocessing and wins over every other source; any other value, including unset, leaves rules enabled                                                                                                                                    | `--no-preprocess` |
+| `VAULTSPEC_RAG_STDIO_WATCHDOG` | boolean | enabled           | Stdio shim self-reap when its spawning process chain breaks. Only an explicit `0`, `false`, `off`, or `no` disables it; unset, empty, and any unrecognised word all leave it **armed**, because disarming it by accident strands orphaned shim processes      | -                 |
+| `VAULTSPEC_RAG_MEMORY_PROBE`   | boolean | disabled          | Diagnostic memory sampler. Follows the standard boolean rule in full, rejection included: unset and empty leave it off, and an unrecognised word is rejected rather than guessed at                                                                          | -                 |
+| `VAULTSPEC_RAG_ROOT`           | path    | working directory | Project root for the stdio MCP server. The CLI overwrites it from the resolved workspace, and the resident HTTP daemon has it stripped, so setting it changes neither                                                                                        | `--target`        |
 
 ## Config-only keys
 
@@ -231,14 +232,14 @@ These keys exist in the configuration loader and read no environment variable of
 
 The loader parses and validates every value when the settings are built, so a rejected value is reported once at startup rather than when the setting it belongs to happens to be read. One unusable value anywhere makes the whole settings object unbuildable.
 
-- Booleans: `1`, `true`, `yes` and `on` parse as true; `0`, `false`, `no` and `off` parse as false (case-insensitive). Any other value is rejected with a message naming the variable and listing the accepted spellings, so a typo such as `treu` is refused instead of silently reading as false and turning the feature off.
+- Booleans: `1`, `true`, `yes` and `on` parse as true; `0`, `false`, `no` and `off` parse as false (case-insensitive). These spellings are the same for **every** boolean vaultspec-rag reads, including the ones in [Variables with their own parsing rules](#variables-with-their-own-parsing-rules) - no variable reads `off` as on. Any other value is rejected with a message naming the variable and listing the accepted spellings, so a typo such as `treu` is refused instead of silently reading as false and turning the feature off.
 - Integers and floats: parsed with `int()` and `float()`; a non-numeric value is rejected the same way.
 - Paths: relative paths resolve against the project root; absolute paths are used as given. Use forward slashes on Windows.
-- Empty values: for a setting whose default is a string or a path, an empty or whitespace-only value is treated as unset and falls back to the default. This keeps an unexpanded `VAR="$UNSET"` from repointing a managed directory at the working directory. A boolean does **not** share that protection: an empty value reads as false, so an unexpanded `VAR="$UNSET"` on a boolean turns that setting off rather than leaving its default in place.
+- Empty values: for a setting whose default is a string or a path, an empty or whitespace-only value is treated as unset and falls back to the default. This keeps an unexpanded `VAR="$UNSET"` from repointing a managed directory at the working directory. A boolean does **not** share that protection: an empty value reads as false, so an unexpanded `VAR="$UNSET"` on a boolean turns that setting off rather than leaving its default in place. `VAULTSPEC_RAG_STDIO_WATCHDOG` is the single exception, and says why in its own row.
 
 An unset variable falls back to the built-in default.
 
-The five variables in [Variables with their own parsing rules](#variables-with-their-own-parsing-rules) are the exceptions; read their rules there rather than assuming the boolean rule above.
+The four variables in [Variables with their own parsing rules](#variables-with-their-own-parsing-rules) are resolved at their own call sites. The boolean *spellings* above still apply to the two booleans among them; what those two decide differently is how an empty or unrecognised value resolves, which their section states individually.
 
 ## Hugging Face cache
 
