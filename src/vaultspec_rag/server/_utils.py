@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import fnmatch
 import logging
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -113,11 +112,9 @@ def _default_root() -> Path:
             "the multi-tenant service has no default project"
         )
         raise ProjectRootRequiredError(msg)
-    from ..config import EnvVar
+    from .._named_root import env_named_root
 
-    root_env = os.environ.get(EnvVar.RAG_ROOT)
-    root = Path(root_env).resolve() if root_env else Path.cwd().resolve()
-    return _validate_vault_root(root)
+    return _validate_vault_root((env_named_root() or Path.cwd()).resolve())
 
 
 def _is_sensitive_path(rel_path: str) -> bool:
