@@ -57,7 +57,7 @@ def _resolve_server_url(command: str, json_mode: bool) -> str:
             _emit_json_error_and_exit(command, "server_mode_required", message, 2)
         _plain_line(message)
         raise typer.Exit(2)
-    return str(getattr(cfg, "qdrant_url", "") or f"http://127.0.0.1:{cfg.qdrant_port}")
+    return cfg.effective_qdrant_url
 
 
 def _run_storage_op[T](

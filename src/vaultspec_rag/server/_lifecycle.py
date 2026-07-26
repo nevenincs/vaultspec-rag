@@ -713,7 +713,7 @@ def _storage_maintenance_tick_sync() -> None:
     job_id = _jobs_registry.record_start(
         "maintenance", "schedule", command="storage_maintenance"
     )
-    url = str(cfg.qdrant_url or "") or f"http://127.0.0.1:{cfg.qdrant_port}"
+    url = cfg.effective_qdrant_url
     client = QdrantClient(url=url, timeout=_QDRANT_CLIENT_OP_TIMEOUT_SECONDS)
     now = datetime.now(UTC)
     try:
@@ -791,7 +791,7 @@ def _storage_survey_warm_sync() -> None:
     cfg = get_config()
     if not cfg.effective_server_mode():
         return
-    url = str(cfg.qdrant_url or "") or f"http://127.0.0.1:{cfg.qdrant_port}"
+    url = cfg.effective_qdrant_url
     client = QdrantClient(url=url, timeout=_QDRANT_CLIENT_OP_TIMEOUT_SECONDS)
     try:
         surveys = gather_survey(client, server_storage_collections_dir())

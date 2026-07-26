@@ -432,3 +432,63 @@ class TestOperatorAddressLineHasOneTemplate:
         from ..cli._render import _address_line
 
         assert _address_line(8766) == "Address: http://127.0.0.1:8766"
+
+
+class TestConfigDefaultsResolveInConfig:
+    """A default belongs where the setting does, not at the point of use.
+
+    Two settings had their fallback spelled at the call site instead: the
+    Qdrant base URL (four identical expressions plus a variant) and the
+    Hugging Face cache location (two). The HF one had already gone wrong -
+    an operator who set ``HF_HOME`` was told a failed download's leftovers
+    were in ``~/.cache/huggingface``, which is not where they are.
+    """
+
+    def test_no_module_rebuilds_the_qdrant_url_fallback(self) -> None:
+        # Keys on the loopback fallback, not on reading qdrant_url: several
+        # modules legitimately read it WITHOUT a fallback to ask a different
+        # question - "is a remote configured?" - and must not be flagged.
+        offenders = [
+            f"{path.relative_to(_PACKAGE_ROOT).as_posix()}:{number}"
+            for path in _production_sources()
+            if path.name != "config.py"
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            )
+            if "qdrant_port}" in line and "127.0.0.1" in line
+        ]
+        assert not offenders, (
+            f"inline Qdrant URL fallback at {offenders}; read "
+            "get_config().effective_qdrant_url"
+        )
+
+    def test_no_module_hardcodes_the_hf_cache_default(self) -> None:
+        offenders = [
+            f"{path.relative_to(_PACKAGE_ROOT).as_posix()}:{number}"
+            for path in _production_sources()
+            if path.name != "config.py"
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            )
+            if "~/.cache/huggingface" in line
+        ]
+        assert not offenders, (
+            f"hardcoded HF cache default at {offenders}; read "
+            "get_config().hf_cache_location so a set HF_HOME is honoured"
+        )
+
+    def test_the_hf_cache_location_follows_the_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The behaviour the hardcoded default got wrong. Asserted through the
+        # config property, which is what every reporting site now calls.
+        from ..config import EnvVar, get_config, reset_config
+
+        monkeypatch.setenv(EnvVar.HF_HOME.value, "/tmp/hf-elsewhere")
+        reset_config()
+        try:
+            assert get_config().hf_cache_location == "/tmp/hf-elsewhere"
+        finally:
+            monkeypatch.delenv(EnvVar.HF_HOME.value, raising=False)
+            reset_config()
+        assert get_config().hf_cache_location == "~/.cache/huggingface"

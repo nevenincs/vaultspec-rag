@@ -393,7 +393,7 @@ class EmbeddingModel:
 
         logger.info(
             "HF cache: %s",
-            os.environ.get(EnvVar.HF_HOME, "~/.cache/huggingface"),
+            cfg.hf_cache_location,
         )
 
         model_kwargs: dict[str, object] = {

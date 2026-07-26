@@ -1220,6 +1220,32 @@ class VaultSpecConfigWrapper:
         return base, maximum
 
     @property
+    def effective_qdrant_url(self) -> str:
+        """Return the Qdrant base URL to talk to, configured or defaulted.
+
+        Server mode sets ``qdrant_url``; otherwise the managed child is on
+        loopback at ``qdrant_port``. Four callers spelled this fallback
+        themselves and a fifth spelled a variant of it, so "which Qdrant" was
+        answered five times in four modules - and a caller that forgot the
+        fallback would silently address an empty URL.
+        """
+        return str(self.qdrant_url or "") or f"http://127.0.0.1:{self.qdrant_port}"
+
+    @property
+    def hf_cache_location(self) -> str:
+        """Return where Hugging Face keeps its model cache, for reporting.
+
+        ``HF_HOME`` is the library's own switch; this only reports where the
+        cache WILL be, so the operator can see it in the daemon log and in the
+        embedding load. The default is Hugging Face's, restated here because
+        the library does not expose it - which is exactly why two modules had
+        it typed out separately.
+        """
+        import os
+
+        return os.environ.get(EnvVar.HF_HOME.value, "~/.cache/huggingface")
+
+    @property
     def store_write_retry_base_seconds(self) -> float:
         """Return the initial store-write retry delay, never above the maximum."""
         return self._store_write_retry_bounds()[0]

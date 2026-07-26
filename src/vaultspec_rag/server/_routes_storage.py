@@ -58,7 +58,7 @@ def _fetch_surveys() -> list[NamespaceSurvey]:
     from ..storage_ops import gather_survey, server_storage_collections_dir
 
     cfg = get_config()
-    url = str(cfg.qdrant_url or "") or f"http://127.0.0.1:{cfg.qdrant_port}"
+    url = cfg.effective_qdrant_url
     client = QdrantClient(url=url)
     try:
         return gather_survey(client, server_storage_collections_dir())
