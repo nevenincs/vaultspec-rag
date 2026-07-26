@@ -19,6 +19,7 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from .._process_probe import iter_process_info, pid_is_zombie
 from ..serviceclient._discovery import _delete_service_status
 from ..serviceclient._transport import _try_http_health
 from ._app import server_app
@@ -513,26 +514,10 @@ def _orphan_daemon_pids(port: int) -> dict[int, int]:
             daemon that loses the singleton race to the orphan the scan never
             saw. An unachieved reap must be a fault, never a quiet zero.
     """
-    import psutil
-
     marker = ["-m", "vaultspec_rag.server", "--port", str(port)]
     found: dict[int, int] = {}
-    try:
-        processes = list(psutil.process_iter(["pid", "ppid", "cmdline"]))
-    except Exception as exc:
-        logger.warning("orphan scan could not enumerate processes: %s", exc)
-        raise OSError(f"could not enumerate processes: {exc}") from exc
-    for process in processes:
-        try:
-            info = cast("dict[str, object]", process.info)
-            raw = info.get("cmdline")
-        except (psutil.NoSuchProcess, psutil.AccessDenied) as exc:
-            # Normal while walking a live process table: a process can exit
-            # mid-scan, and another user's process is not inspectable. Skipping
-            # one such process is correct; skipping the whole scan is not, which
-            # is why only these two are caught and only around this read.
-            logger.debug("orphan scan skipped a process: %s", exc)
-            continue
+    for info in iter_process_info(["pid", "ppid", "cmdline"]):
+        raw = info.get("cmdline")
         if not isinstance(raw, list):
             continue
         argv = [str(item) for item in cast("list[object]", raw)]
@@ -564,16 +549,7 @@ def _pid_terminated(pid: int) -> bool:
     """
     if not _cli._is_pid_alive(pid):
         return True
-    if sys.platform == "win32":
-        return False
-    import psutil
-
-    try:
-        return psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
-    except psutil.NoSuchProcess:
-        return True
-    except psutil.Error:
-        return False
+    return pid_is_zombie(pid)
 
 
 def _guard_unconfirmed_port_holder(

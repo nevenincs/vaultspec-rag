@@ -13,7 +13,6 @@ Resolution order for the binary the service will execute:
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import os
@@ -29,6 +28,16 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+from .._process_probe import (
+    START_TIME_TOLERANCE_SECONDS,
+    pid_alive,
+    pid_image_matches,
+    pid_listens_on_loopback_port,
+    pid_matches_start_time,
+    pid_start_time,
+    reap_if_child,
+    send_signal,
+)
 from ..config import EnvVar, get_config
 from ._constants import (
     LOOPBACK_OPENER,
@@ -43,7 +52,6 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "QdrantEndpointProbe",
     "QdrantIdentity",
-    "_bounded_call",
     "asset_for_platform",
     "binary_filename",
     "classify_qdrant_state",
@@ -51,11 +59,6 @@ __all__ = [
     "has_provisioned_binary",
     "owner_pid_is_live_owner",
     "owner_pid_witness_state",
-    "pid_alive",
-    "pid_image_is_qdrant",
-    "pid_listens_on_loopback_port",
-    "pid_matches_start_time",
-    "pid_start_time",
     "probe_qdrant_endpoint",
     "qdrant_bin_dir",
     "qdrant_identity_path",
@@ -66,8 +69,6 @@ __all__ = [
     "verify_attachable",
     "write_qdrant_identity",
 ]
-
-_START_TIME_TOLERANCE_SECONDS = 1e-6
 
 
 @dataclass(frozen=True)
@@ -311,216 +312,6 @@ def read_qdrant_identity() -> QdrantIdentity | None:
         return None
 
 
-#: ``PROCESS_QUERY_LIMITED_INFORMATION`` - the least access that answers
-#: "does this pid exist and what is its image", and the only one grantable
-#: across integrity levels, so a probe of a higher-privilege process fails
-#: with ``ERROR_ACCESS_DENIED`` (which means alive) rather than not at all.
-PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-
-
-def win_kernel32() -> Any:
-    """Return ``kernel32`` with its process-handle signatures declared once.
-
-    ``ctypes.windll.kernel32`` is a process-global cache shared by every module
-    that touches it, and its function objects default to a 32-bit ``c_int``
-    return. A Windows ``HANDLE`` is pointer-sized, so the default TRUNCATES it,
-    and the truncated value handed back to ``GetExitCodeProcess`` or
-    ``CloseHandle`` is sign-extended into a different, invalid handle: the call
-    fails, a live process reads as dead, and the real kernel object leaks.
-    Declaring the widths here, once, is what keeps every caller correct - the
-    alternative is each site remembering, and the sites that forgot are what
-    made this function necessary.
-    """
-    import ctypes
-    from ctypes import wintypes
-
-    kernel32 = ctypes.windll.kernel32
-    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
-    kernel32.OpenProcess.restype = wintypes.HANDLE
-    kernel32.GetExitCodeProcess.argtypes = (
-        wintypes.HANDLE,
-        ctypes.POINTER(wintypes.DWORD),
-    )
-    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
-    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
-    kernel32.CloseHandle.restype = wintypes.BOOL
-    kernel32.QueryFullProcessImageNameW.argtypes = (
-        wintypes.HANDLE,
-        wintypes.DWORD,
-        wintypes.LPWSTR,
-        ctypes.POINTER(wintypes.DWORD),
-    )
-    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
-    return kernel32
-
-
-def pid_image_path(pid: int) -> str | None:
-    """Return *pid*'s full executable path, or ``None`` when unreadable.
-
-    ``None`` is genuinely "could not tell" - the process is gone, or runs at a
-    privilege this process cannot open - and is never evidence about what the
-    image IS. Callers deciding whether to trust or kill a pid must treat it as
-    unknown, not as a mismatch.
-    """
-    if pid <= 0:
-        return None
-    if sys.platform != "win32":
-        try:
-            return os.readlink(f"/proc/{pid}/exe")
-        except OSError as exc:
-            logger.debug("image path unreadable for pid %d: %s", pid, exc)
-            return None
-    import ctypes
-    from ctypes import wintypes
-
-    kernel32 = win_kernel32()
-    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-    if not handle:
-        logger.debug(
-            "cannot open pid %d for image inspection: error %d",
-            pid,
-            kernel32.GetLastError(),
-        )
-        return None
-    try:
-        size = wintypes.DWORD(32768)
-        buf = ctypes.create_unicode_buffer(size.value)
-        if not kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
-            logger.debug("image name query failed for pid %d", pid)
-            return None
-        return buf.value
-    finally:
-        kernel32.CloseHandle(handle)
-
-
-def pid_alive(pid: int) -> bool:
-    """Return whether *pid* is a live process (cross-platform, best-effort).
-
-    Used to tell a live storage owner from a dead one when classifying an
-    orphan, and to tell a live daemon from a dead one before its discovery
-    file is removed. A permission error means the process exists but is not
-    ours to signal, which still counts as alive.
-    """
-    if pid <= 0:
-        return False
-    if sys.platform == "win32":
-        import ctypes
-
-        still_active = 259
-        error_access_denied = 5
-        kernel32 = win_kernel32()
-        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if not handle:
-            # A null handle carries two opposite facts, and the error code is
-            # the only thing that separates them. ERROR_ACCESS_DENIED means
-            # the process exists and runs at a privilege this one cannot
-            # open - alive, and the case the POSIX branch below already got
-            # right. Every other code (ERROR_INVALID_PARAMETER for a pid
-            # nothing occupies) means genuinely absent. Reading them as one
-            # reports a live higher-privilege daemon dead, and callers that
-            # delete state for a confirmed-dead holder then destroy a running
-            # service's. GetLastError is read before any other FFI call so
-            # nothing overwrites the thread's last-error value.
-            return kernel32.GetLastError() == error_access_denied
-        try:
-            code = ctypes.c_ulong()
-            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
-                return False
-            return code.value == still_active
-        finally:
-            kernel32.CloseHandle(handle)
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
-
-
-def _bounded_call[T](
-    operation: Callable[[], T],
-    *,
-    timeout: float | None,
-    fallback: T,
-    label: str,
-) -> T:
-    """Run a potentially blocking local inspection inside an optional budget."""
-    if timeout is None:
-        return operation()
-    if timeout <= 0.0:
-        return fallback
-
-    import queue
-    import threading
-
-    outcomes: queue.Queue[tuple[bool, object]] = queue.Queue(maxsize=1)
-
-    def run() -> None:
-        try:
-            outcomes.put((True, operation()))
-        except BaseException as exc:
-            outcomes.put((False, exc))
-
-    threading.Thread(target=run, daemon=True, name=f"vaultspec-{label}").start()
-    try:
-        succeeded, value = outcomes.get(timeout=timeout)
-    except queue.Empty:
-        logger.debug("%s exceeded its %.3fs inspection budget", label, timeout)
-        return fallback
-    if not succeeded:
-        logger.debug("%s failed: %s", label, value)
-        return fallback
-    return cast("T", value)
-
-
-def pid_start_time(pid: int, *, timeout: float | None = None) -> float:
-    """Return *pid*'s process creation time (epoch seconds), or ``0.0``.
-
-    The pid-reuse witness: two processes that share a recycled pid have
-    different creation times, so comparing this against a recorded value tells a
-    surviving original owner from an unrelated process that inherited its pid.
-    ``0.0`` means the time could not be read (no such process, or no permission)
-    and the caller must not treat it as a match.
-    """
-    if pid <= 0:
-        return 0.0
-
-    def inspect() -> float:
-        import psutil
-
-        try:
-            return float(psutil.Process(pid).create_time())
-        except Exception as exc:  # psutil raises NoSuchProcess/AccessDenied/etc.
-            logger.debug("could not read start time for pid %d: %s", pid, exc)
-            return 0.0
-
-    return _bounded_call(
-        inspect,
-        timeout=timeout,
-        fallback=0.0,
-        label=f"pid-{pid}-start-time",
-    )
-
-
-def pid_matches_start_time(
-    pid: int,
-    expected_start_time: float,
-    *,
-    timeout: float | None = None,
-) -> bool:
-    """Return whether *pid* is the exact witnessed process incarnation."""
-    if expected_start_time <= 0.0:
-        return False
-    live_start = pid_start_time(pid, timeout=timeout)
-    return (
-        live_start > 0.0
-        and abs(live_start - expected_start_time) <= _START_TIME_TOLERANCE_SECONDS
-    )
-
-
 def owner_pid_is_live_owner(identity: QdrantIdentity | None) -> bool:
     """Return whether *identity*'s owner pid is the live original owner.
 
@@ -546,7 +337,7 @@ def owner_pid_witness_state(
     live_start = pid_start_time(identity.owner_pid, timeout=timeout)
     if live_start <= 0.0:
         return "unknown"
-    if abs(live_start - identity.owner_start_time) <= _START_TIME_TOLERANCE_SECONDS:
+    if abs(live_start - identity.owner_start_time) <= START_TIME_TOLERANCE_SECONDS:
         return "live"
     return "replaced"
 
@@ -579,41 +370,31 @@ def _reap_on_windows(
     return None
 
 
-def _reap_if_child(pid: int) -> None:
-    """Collapse a zombie child we parent so liveness stops reading it as alive.
-
-    When the reap target happens to be a direct child of this process - the
-    only case in which a signalled process lingers as an un-reaped zombie -
-    ``waitpid`` clears its process-table entry, so a subsequent ``os.kill(pid,
-    0)`` liveness probe correctly reports it gone. When the target is not our
-    child (the normal case: an orphan from a dead prior owner, reparented to
-    init), ``waitpid`` raises ``ChildProcessError`` (ECHILD), which is expected
-    and ignored. ``WNOHANG`` never blocks.
-    """
-    with contextlib.suppress(ChildProcessError, OSError):
-        os.waitpid(pid, os.WNOHANG)
-
-
 def _reap_on_posix(
     pid: int,
     *,
     deadline: float,
     target_gone: Callable[[], bool],
 ) -> bool | None:
-    """Signal the process on POSIX, escalating SIGTERM to SIGKILL."""
+    """Signal the process on POSIX, escalating SIGTERM to SIGKILL.
+
+    Signalling goes through the shared helper so a refused kill is logged as a
+    refusal rather than disappearing into a blanket ``suppress(OSError)``. This
+    path had the identical swallow the CLI stop path did; the caller here still
+    decides purely on ``target_gone``, so the visible behaviour is unchanged
+    and the denial is no longer silent.
+    """
     import signal
 
     if target_gone():
         return True
-    with contextlib.suppress(OSError):
-        os.kill(pid, signal.SIGTERM)
+    send_signal(pid, signal.SIGTERM)
     while time.monotonic() < deadline and not target_gone():
-        _reap_if_child(pid)
+        reap_if_child(pid)
         time.sleep(0.1)
     if not target_gone():
-        with contextlib.suppress(OSError):
-            os.kill(pid, signal.SIGKILL)
-        _reap_if_child(pid)
+        send_signal(pid, signal.SIGKILL)
+        reap_if_child(pid)
     return None
 
 
@@ -666,96 +447,6 @@ def reap_qdrant_orphan(
     while _time.monotonic() < deadline and not target_is_gone_or_replaced():
         _time.sleep(0.1)
     return target_is_gone_or_replaced()
-
-
-def pid_image_is_qdrant(pid: int, *, timeout: float | None = None) -> bool:
-    """Return whether *pid* is a live process whose executable is qdrant.
-
-    A reap target's pid comes from a now-dead owner's identity record; on a busy
-    machine that pid may have been recycled by an unrelated process. Reaping
-    must confirm the target is actually a qdrant process (not a recycled pid)
-    before issuing a hard kill, so an unrelated process is never killed.
-    """
-    if not pid_alive(pid):
-        return False
-    if sys.platform == "win32":
-        import subprocess
-
-        if timeout is not None and timeout <= 0.0:
-            return False
-        try:
-            result = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired:
-            logger.debug(
-                "qdrant image inspection for pid %d exceeded %.3fs",
-                pid,
-                timeout,
-            )
-            return False
-        return "qdrant" in result.stdout.lower()
-    # Match the executable image only, mirroring the Windows tasklist image
-    # check. Scanning the full cmdline would flag any process whose argv merely
-    # mentions qdrant - a pytest run of a qdrant test, a `server qdrant install`
-    # invocation - and a false positive here would target an unrelated process
-    # for a hard kill. The exe symlink is the authoritative image; comm (the
-    # image name, world-readable) is the fallback when exe is unreadable.
-    try:
-        exe_name = Path(os.readlink(f"/proc/{pid}/exe")).name
-        if "qdrant" in exe_name.lower():
-            return True
-    except OSError:
-        pass
-    try:
-        comm = Path(f"/proc/{pid}/comm").read_text(encoding="utf-8")
-    except OSError:
-        return False
-    return "qdrant" in comm.strip().lower()
-
-
-def pid_listens_on_loopback_port(
-    pid: int,
-    port: int,
-    *,
-    timeout: float | None = None,
-) -> bool:
-    """Return whether this exact process owns the loopback listening port."""
-    if pid <= 0 or port <= 0:
-        return False
-
-    def inspect() -> bool:
-        import psutil
-
-        try:
-            connections = psutil.Process(pid).net_connections(kind="tcp")
-        except Exception as exc:
-            logger.debug(
-                "could not inspect TCP listener ownership for pid %d port %d: %s",
-                pid,
-                port,
-                exc,
-            )
-            return False
-        for connection in connections:
-            if connection.status != psutil.CONN_LISTEN:
-                continue
-            address = connection.laddr
-            host = str(address.ip)
-            if int(address.port) == port and host in {"127.0.0.1", "::1"}:
-                return True
-        return False
-
-    return _bounded_call(
-        inspect,
-        timeout=timeout,
-        fallback=False,
-        label=f"pid-{pid}-listener",
-    )
 
 
 def write_qdrant_identity(
@@ -908,7 +599,7 @@ def _verify_attach_identity_witnesses(
         timeout=remaining(),
     ):
         return False, "managed child process incarnation does not match its witness"
-    if not pid_image_is_qdrant(identity.qdrant_pid, timeout=remaining()):
+    if not pid_image_matches(identity.qdrant_pid, "qdrant", timeout=remaining()):
         return False, "witnessed managed child image is not Qdrant"
     if not pid_listens_on_loopback_port(
         identity.qdrant_pid,

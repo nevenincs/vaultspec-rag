@@ -387,9 +387,9 @@ class TestStopThatDidNotStop:
         # and that is the branch a mutation must break to falsify this.
         import signal as signal_module
 
-        from ..cli._process import _send_termination_signal
+        from .._process_probe import send_signal
 
-        assert _send_termination_signal(99999999, signal_module.SIGTERM) is False, (
+        assert send_signal(99999999, signal_module.SIGTERM) is False, (
             "an absent pid is gone, not a privilege problem"
         )
 

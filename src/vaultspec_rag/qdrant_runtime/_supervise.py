@@ -956,13 +956,12 @@ def _reap_orphan_before_spawn(
     this runs inside daemon startup while the machine singleton lock is held, so
     an unbounded inspection wedges the daemon in ``warming`` with no way out.
     """
-    from ._resolve import (
-        pid_image_is_qdrant,
+    from .._process_probe import (
+        pid_image_matches,
         pid_listens_on_loopback_port,
         pid_matches_start_time,
-        probe_qdrant_endpoint,
-        reap_qdrant_orphan,
     )
+    from ._resolve import probe_qdrant_endpoint, reap_qdrant_orphan
 
     if identity is None:
         raise RuntimeError(
@@ -1029,8 +1028,8 @@ def _reap_orphan_before_spawn(
     # Confirm the recorded child pid is still a qdrant process before the hard
     # kill: the pid came from a dead owner's record and may have been recycled by
     # an unrelated process, which must never be killed.
-    if target <= 0 or not pid_image_is_qdrant(
-        target, timeout=remaining("the child image witness")
+    if target <= 0 or not pid_image_matches(
+        target, "qdrant", timeout=remaining("the child image witness")
     ):
         raise RuntimeError(
             f"qdrant orphan on port {qport}: recorded child pid {target} is "
