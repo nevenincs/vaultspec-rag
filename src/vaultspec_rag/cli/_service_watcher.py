@@ -128,6 +128,81 @@ def _watcher_admin_error(
     raise typer.Exit(1)
 
 
+#: How the service describes a root whose watcher is not running, and why.
+#: A request the service recorded but has not yet honoured is reported as not
+#: achieved, so the caller is never told automatic updates are on while they
+#: are still off.
+_UPDATES_STATE_PHRASES = {
+    "pending": (
+        "another start for this project is still finishing, "
+        "so this request is queued behind it"
+    ),
+    "queued_behind_drain": (
+        "the previous watcher for this project is still stopping, "
+        "so this request is queued behind it"
+    ),
+    "disabled": "automatic updates are switched off for this service",
+    "unavailable": "the service did not start one",
+}
+
+_UPDATES_STATE_ERRORS = {
+    "pending": "updates_pending",
+    "queued_behind_drain": "updates_pending",
+    "disabled": "updates_disabled",
+    "unavailable": "updates_not_started",
+}
+
+
+def _updates_next_actions(status: str, port: int) -> list[str]:
+    """Return the remediation a caller can act on for one unachieved state."""
+    if status == "disabled":
+        return ["vaultspec-rag server start --updates"]
+    if status in ("pending", "queued_behind_drain"):
+        return [f"vaultspec-rag server updates status --port {port}"]
+    return [
+        f"vaultspec-rag server status --port {port}",
+        f"vaultspec-rag server logs --limit 200 --port {port}",
+    ]
+
+
+def _updates_state_not_achieved(
+    command: str,
+    json_mode: bool,
+    result: dict[str, object],
+    port: int,
+    project: str,
+    *,
+    verb_phrase: str,
+) -> None:
+    """Emit one result for a request the service did not achieve, and exit 1.
+
+    Both modes converge here so the human text and the JSON envelope name the
+    same state, and neither reports success for a watcher that is not running.
+    """
+    raw_status = str(result.get("status") or "")
+    if raw_status in _UPDATES_STATE_PHRASES:
+        status = raw_status
+    elif result.get("watch_enabled") is False:
+        status = "disabled"
+    else:
+        status = "unavailable"
+    reason = _UPDATES_STATE_PHRASES[status]
+    if json_mode:
+        _emit_json_error_and_exit(
+            command,
+            _UPDATES_STATE_ERRORS[status],
+            f"Automatic index updates {verb_phrase}: {reason}.",
+            1,
+            data=result,
+        )
+    _print_update_result(port, verb_phrase, project)
+    _plain(f"Reason: {reason}.")
+    _plain("Next actions:")
+    for action in _updates_next_actions(status, port):
+        _plain(f"  {action}")
+    raise typer.Exit(1)
+
+
 _UPDATES_STATUS_COMMAND = "service.updates.status"
 _UPDATES_START_COMMAND = "service.updates.start"
 _UPDATES_STOP_COMMAND = "service.updates.stop"
@@ -217,22 +292,25 @@ def service_watcher_start(
             root=resolved_project,
         )
         return
-    started = bool(result.get("started", False))
-    enabled = bool(result.get("watch_enabled", False))
+    if not bool(result.get("started", False)):
+        _updates_state_not_achieved(
+            _UPDATES_START_COMMAND,
+            json_mode,
+            result,
+            resolved_port,
+            resolved_project,
+            verb_phrase="not started",
+        )
+        return
     if json_mode:
         _emit_json(True, _UPDATES_START_COMMAND, data=result)
         return
-    if started:
-        _print_update_result(resolved_port, "started", resolved_project)
-    elif not enabled:
-        _print_update_result(
-            resolved_port,
-            "disabled; this project will update when requested",
-            resolved_project,
-        )
-        _plain("Next action: vaultspec-rag server start --updates")
-    else:
-        _print_update_result(resolved_port, "could not start", resolved_project)
+    already = str(result.get("status") or "") == "already_running"
+    _print_update_result(
+        resolved_port,
+        "already running" if already else "started",
+        resolved_project,
+    )
     raise typer.Exit(0)
 
 
@@ -353,17 +431,19 @@ def service_watcher_timing(
             root=resolved_project,
         )
         return
-    restarted = bool(result.get("restarted", False))
+    if not bool(result.get("restarted", False)):
+        _updates_state_not_achieved(
+            _UPDATES_TIMING_COMMAND,
+            json_mode,
+            result,
+            resolved_port,
+            resolved_project,
+            verb_phrase="timing not applied",
+        )
+        return
     if json_mode:
         _emit_json(True, _UPDATES_TIMING_COMMAND, data=result)
         return
-    if restarted:
-        _print_update_result(resolved_port, "timing updated", resolved_project)
-        _print_update_timing(result)
-    else:
-        _print_update_result(
-            resolved_port,
-            "disabled; this project will update when requested",
-            resolved_project,
-        )
+    _print_update_result(resolved_port, "timing updated", resolved_project)
+    _print_update_timing(result)
     raise typer.Exit(0)

@@ -444,6 +444,142 @@ def test_updates_project_commands_resolve_relative_project(
     assert "Path: ." not in result.output
 
 
+def test_updates_start_already_running_is_success() -> None:
+    """An already-satisfied start is success, so a broker can start blindly."""
+    payload: dict[str, object] = {
+        "started": True,
+        "status": "already_running",
+        "watch_enabled": True,
+    }
+    with _updates_http_server(payload) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "updates", "start", _TEST_PROJECT_ROOT, "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert _label_values(result.output)["Automatic index updates"] == "already running"
+
+
+@pytest.mark.parametrize("status", ["queued_behind_drain", "pending"])
+def test_updates_start_not_yet_running_exits_non_zero(status: str) -> None:
+    """A start the service only recorded must not read as success.
+
+    Mutation this catches: treating a recorded-but-unhonoured start as
+    achieved. The exit code is the assertion - a zero exit here is exactly
+    the failure that leaves a project silently unindexed.
+    """
+    payload: dict[str, object] = {
+        "started": False,
+        "status": status,
+        "watch_enabled": True,
+    }
+    with _updates_http_server(payload) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "updates", "start", _TEST_PROJECT_ROOT, "--port", str(port)],
+        )
+
+    assert result.exit_code == 1, result.output
+    assert _label_values(result.output)["Automatic index updates"] == "not started"
+    joined = " ".join(line.strip() for line in result.output.splitlines())
+    assert "queued behind it" in joined
+    assert f"vaultspec-rag server updates status --port {port}" in result.output
+
+
+@pytest.mark.parametrize("status", ["queued_behind_drain", "pending"])
+def test_updates_start_not_yet_running_json_exits_non_zero(status: str) -> None:
+    payload: dict[str, object] = {
+        "started": False,
+        "status": status,
+        "watch_enabled": True,
+    }
+    with _updates_http_server(payload) as (_server, port):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "updates",
+                "start",
+                _TEST_PROJECT_ROOT,
+                "--port",
+                str(port),
+                "--json",
+            ],
+        )
+
+    assert result.exit_code == 1, result.output
+    # One envelope on this exit path, so a whole-stdout parse must succeed.
+    envelope = json.loads(result.stdout)
+    assert envelope["ok"] is False
+    assert envelope["command"] == "service.updates.start"
+    assert envelope["error"] == "updates_pending"
+    assert envelope["data"]["status"] == status
+
+
+def test_updates_start_disabled_exits_non_zero_with_enable_action() -> None:
+    payload: dict[str, object] = {
+        "started": False,
+        "status": "disabled",
+        "watch_enabled": False,
+    }
+    with _updates_http_server(payload) as (_server, port):
+        human = runner.invoke(
+            app,
+            ["server", "updates", "start", _TEST_PROJECT_ROOT, "--port", str(port)],
+        )
+    with _updates_http_server(payload) as (_server, port):
+        json_mode = runner.invoke(
+            app,
+            [
+                "server",
+                "updates",
+                "start",
+                _TEST_PROJECT_ROOT,
+                "--port",
+                str(port),
+                "--json",
+            ],
+        )
+
+    assert human.exit_code == 1, human.output
+    assert "vaultspec-rag server start --updates" in human.output
+    assert json_mode.exit_code == 1, json_mode.output
+    envelope = json.loads(json_mode.stdout)
+    assert envelope["ok"] is False
+    assert envelope["error"] == "updates_disabled"
+
+
+def test_updates_timing_not_yet_applied_exits_non_zero() -> None:
+    payload: dict[str, object] = {
+        "restarted": False,
+        "status": "queued_behind_drain",
+        "debounce_ms": 500,
+        "cooldown_s": 2.0,
+    }
+    with _updates_http_server(payload) as (_server, port):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "updates",
+                "timing",
+                _TEST_PROJECT_ROOT,
+                "--update-delay-ms",
+                "500",
+                "--port",
+                str(port),
+                "--json",
+            ],
+        )
+
+    assert result.exit_code == 1, result.output
+    envelope = json.loads(result.stdout)
+    assert envelope["ok"] is False
+    assert envelope["command"] == "service.updates.timing"
+    assert envelope["error"] == "updates_pending"
+
+
 def test_updates_timing_help_uses_user_facing_timing_flags() -> None:
     result = runner.invoke(app, ["server", "updates", "timing", "--help"])
     assert result.exit_code == 0

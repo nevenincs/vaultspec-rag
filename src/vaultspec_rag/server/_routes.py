@@ -2002,6 +2002,13 @@ async def storage_survey_route(request: Request) -> JSONResponse:
 
 
 async def start_watcher_route(request: Request) -> JSONResponse:
+    """Start automatic updates for one root and report the state achieved.
+
+    ``started`` answers only "is a watcher watching this root now". When
+    another owner still holds the root - a draining stop, an in-flight warm -
+    the start is recorded and ``status`` names that owner instead, so a caller
+    is never told updates are back on while they are still off.
+    """
     denied = require_token(request)
     if denied is not None:
         return denied
@@ -2013,11 +2020,12 @@ async def start_watcher_route(request: Request) -> JSONResponse:
 
     cfg = get_config()
     target = Path(root).resolve()
-    started = _m._ensure_watcher(target)
+    outcome = _m._ensure_watcher(target)
     return JSONResponse(
         {
             "root": str(target),
-            "started": started,
+            "started": outcome.running,
+            "status": outcome.value,
             "watch_enabled": bool(cfg.watch_enabled),
         }
     )
@@ -2039,6 +2047,13 @@ async def stop_watcher_route(request: Request) -> JSONResponse:
 
 
 async def reconfigure_watcher_route(request: Request) -> JSONResponse:
+    """Restart one root's watcher with new timing and report the state achieved.
+
+    The stop that precedes the restart leaves the old generation draining, so
+    ``restarted`` reports whether a watcher carrying the new timing is running
+    on return, and ``status`` names the owner still holding the root when it
+    is not.
+    """
     denied = require_token(request)
     if denied is not None:
         return denied
@@ -2053,16 +2068,15 @@ async def reconfigure_watcher_route(request: Request) -> JSONResponse:
     cfg = get_config()
     target = Path(root).resolve()
     _m._stop_watcher(target)
-    restarted = _m._ensure_watcher(
-        target, debounce_ms=debounce_ms, cooldown_s=cooldown_s
-    )
+    outcome = _m._ensure_watcher(target, debounce_ms=debounce_ms, cooldown_s=cooldown_s)
 
     db_ms = int(debounce_ms) if debounce_ms is not None else int(cfg.watch_debounce_ms)
     db_cs = float(cooldown_s) if cooldown_s is not None else float(cfg.watch_cooldown_s)
     return JSONResponse(
         {
             "root": str(target),
-            "restarted": bool(restarted),
+            "restarted": outcome.running,
+            "status": outcome.value,
             "debounce_ms": db_ms,
             "cooldown_s": db_cs,
         }

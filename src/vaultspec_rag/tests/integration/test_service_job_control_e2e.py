@@ -33,6 +33,7 @@ from ...job_models import (
     JobState,
 )
 from ...registry import get_registry
+from ...server import WatcherStartOutcome
 from ...server import _lifespan as server_lifespan
 from ...server._routes import ROUTES
 from ...serviceclient._transport import (
@@ -314,7 +315,10 @@ def _watcher_attempt_owns_runtime(snapshot: JobSnapshot) -> bool:
 
 async def _start_real_watcher(root: Path) -> None:
     resolved = root.resolve()
-    assert server._ensure_watcher(resolved, debounce_ms=50, cooldown_s=0.0)
+    assert (
+        server._ensure_watcher(resolved, debounce_ms=50, cooldown_s=0.0)
+        is WatcherStartOutcome.STARTED
+    )
     assert resolved in server._watcher_tasks
     await asyncio.sleep(0.3)
 
