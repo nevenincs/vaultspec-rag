@@ -192,7 +192,7 @@ def _persist_active_snapshot() -> None:
     """
     import json as _json
 
-    from .job_persistence import PersistenceWriteError, _atomic_replace
+    from ._atomic_write import replace_durably
 
     with _lock:
         active = [
@@ -216,8 +216,8 @@ def _persist_active_snapshot() -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(_json.dumps({"active": active}), encoding="utf-8")
-        _atomic_replace(tmp, path)
-    except (OSError, PersistenceWriteError):
+        replace_durably(tmp, path)
+    except OSError:
         logger.debug("could not persist active-jobs snapshot", exc_info=True)
 
 

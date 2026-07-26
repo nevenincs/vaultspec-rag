@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from .._atomic_write import replace_atomically
+
 if TYPE_CHECKING:
     from collections.abc import Generator, Mapping
 
@@ -315,7 +317,7 @@ def _merge_service_status(
         tmp = path.with_name(f"{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
         try:
             tmp.write_text(json.dumps(data), encoding="utf-8")
-            os.replace(str(tmp), str(path))
+            replace_atomically(str(tmp), str(path))
         finally:
             tmp.unlink(missing_ok=True)
         return data
@@ -351,7 +353,7 @@ def _replace_service_status(
                 handle.write(encoded)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.replace(tmp, path)
+            replace_atomically(tmp, path)
         finally:
             tmp.unlink(missing_ok=True)
     return data

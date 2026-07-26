@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from typing import TYPE_CHECKING, cast
+
+from ._atomic_write import replace_atomically
 
 if TYPE_CHECKING:
     import pathlib
@@ -75,4 +76,4 @@ def record_generation_stamps(stamps: Mapping[str, str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(".tmp")
     tmp_path.write_text(json.dumps(dict(stamps), indent=2), encoding="utf-8")
-    os.replace(tmp_path, path)
+    replace_atomically(tmp_path, path)

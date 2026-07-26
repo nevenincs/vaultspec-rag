@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
+from .._atomic_write import replace_atomically
 from ..store_schema import CONFORMING, NONCONFORMING, UNVERIFIABLE
 
 if TYPE_CHECKING:
@@ -190,7 +191,7 @@ def write_store_format(storage_dir: Path, version: str) -> Path:
         ),
         encoding="utf-8",
     )
-    os.replace(tmp, path)
+    replace_atomically(tmp, path)
     logger.debug("stamped qdrant store format at %s as version %s", path, version)
     return path
 

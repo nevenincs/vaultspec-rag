@@ -23,6 +23,7 @@ from enum import StrEnum
 from itertools import islice
 from typing import TYPE_CHECKING, Final, cast
 
+from ._atomic_write import replace_atomically
 from ._job_errors import JobError, JobErrorKind, classify_error_text
 from ._process_probe import pid_alive, pid_is_zombie, pid_start_time
 from ._store_locks import FileLock
@@ -355,7 +356,7 @@ class WatcherRetryPolicy:
                 json.dump(payload, stream, allow_nan=False, separators=(",", ":"))
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, marker)
+            replace_atomically(temporary, marker)
             _fsync_parent_best_effort(marker)
         except OSError as exc:
             with suppress(OSError):
@@ -1028,7 +1029,7 @@ def _write_state(path: Path, state: WatcherRetryState) -> None:
             )
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(tmp, path)
+        replace_atomically(tmp, path)
         _fsync_parent_best_effort(path)
     except OSError as exc:
         raise _state_io_failure("write", path, exc) from exc

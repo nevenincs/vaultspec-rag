@@ -17,6 +17,7 @@ from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStub
     init_paths,
 )
 
+from .._atomic_write import replace_atomically
 from ..builtins import list_builtins
 
 
@@ -794,7 +795,7 @@ def _restore_regular_file(path: Path, payload: bytes, mode: int | None) -> None:
             os.fsync(stream.fileno())
         if mode is not None:
             os.chmod(temporary, mode, follow_symlinks=False)
-        os.replace(temporary, path)
+        replace_atomically(temporary, path)
     finally:
         if descriptor >= 0:
             os.close(descriptor)
