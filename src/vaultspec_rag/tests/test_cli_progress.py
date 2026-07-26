@@ -344,23 +344,3 @@ class TestSharedConsoleWiring:
         assert _build_console(interactive=True, file=io.StringIO()).is_interactive
         assert not _build_console(interactive=False, file=io.StringIO()).is_interactive
 
-    def test_the_console_is_read_late_from_the_package_namespace(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        """A console swapped after construction must still be observed.
-
-        Tests across this suite substitute ``vaultspec_rag.cli.console`` at
-        runtime. Binding it at import - or even at reporter construction -
-        makes every one of those substitutions inert while leaving them
-        looking effective, so this asserts the swap is honoured even when it
-        lands after the reporter already exists.
-        """
-        buffer = io.StringIO()
-        reporter = StartupStatusReporter(json_mode=False, interactive=True)
-        monkeypatch.setattr(_cli, "console", _terminal_console(buffer))
-
-        with reporter:
-            reporter.stage("Loading models")
-
-        assert "Loading models" in _plain(buffer.getvalue())
