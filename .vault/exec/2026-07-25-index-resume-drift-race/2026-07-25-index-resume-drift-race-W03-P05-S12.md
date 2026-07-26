@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#index-resume-drift-race'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-26'
 step_id: 'S12'
 related:
   - "[[2026-07-25-index-resume-drift-race-plan]]"

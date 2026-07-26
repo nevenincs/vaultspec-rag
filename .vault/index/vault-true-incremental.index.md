@@ -4,7 +4,7 @@ tags:
   - '#index'
   - '#vault-true-incremental'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-26'
 related:
   - '[[2026-07-24-vault-true-incremental-adr]]'
   - '[[2026-07-25-vault-true-incremental-plan]]'

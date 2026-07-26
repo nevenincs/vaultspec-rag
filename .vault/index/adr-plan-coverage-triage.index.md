@@ -4,7 +4,7 @@ tags:
   - '#index'
   - '#adr-plan-coverage-triage'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-26'
 related:
   - '[[2026-07-25-adr-plan-coverage-triage-audit]]'
 ---
