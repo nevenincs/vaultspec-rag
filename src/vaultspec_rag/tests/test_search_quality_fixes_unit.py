@@ -112,16 +112,40 @@ class TestEmptyQueryRejected:
             headers={"Authorization": f"Bearer {token}"},
         )
 
-    def test_empty_query_returns_400(self, _search_app: tuple[httpx.Client, str]):
+    def test_empty_query_is_rejected_as_empty(
+        self, _search_app: tuple[httpx.Client, str]
+    ):
+        """An empty query is refused on emptiness, not on something later.
+
+        The request also carries a nonexistent root, which the very next
+        guard refuses with the same status and the same ``bad_request``
+        code. Asserting only those two passes whichever guard fired, so
+        the branch is pinned by its own message.
+
+        Proven able to fail: dropping the empty-query guard lets the
+        request reach root resolution, which refuses it identically apart
+        from the message - failing the message assertion while status and
+        error code still read 400 / bad_request. Restored, it passes.
+        """
         client, token = _search_app
         resp = self._post(client, token, "")
         assert resp.status_code == 400
         assert resp.json()["error"] == "bad_request"
+        assert "query is empty" in resp.json()["message"]
 
-    def test_whitespace_query_returns_400(self, _search_app: tuple[httpx.Client, str]):
+    def test_whitespace_query_is_rejected_as_empty(
+        self, _search_app: tuple[httpx.Client, str]
+    ):
+        """Whitespace is empty too, and is refused by the same branch.
+
+        Proven able to fail: the same mutation as the sibling test - the
+        message assertion is what distinguishes this refusal from the root
+        one that would otherwise absorb it. Restored, it passes.
+        """
         client, token = _search_app
         resp = self._post(client, token, "   \t  ")
         assert resp.status_code == 400
+        assert "query is empty" in resp.json()["message"]
 
     def test_filter_only_query_is_not_empty(
         self, _search_app: tuple[httpx.Client, str]

@@ -560,34 +560,60 @@ class TestGatherStorageSurveyCached:
         assert payload["returned"] == 1
         assert payload["namespaces"][0]["status"] == "orphaned"
 
-    def test_fresh_recomputes_and_publishes(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_a_walked_result_replaces_the_snapshot_it_answers_from(self) -> None:
+        """A fresh walk is adopted whole, and the answer carries its stamp.
+
+        The stale entry is not merged away or aged out: republishing swaps
+        the entire slot, so a namespace the walk no longer sees is gone
+        from the next reader's view. The stamp equality is what makes the
+        payload and the slot the same observation rather than two.
+
+        Proven able to fail: dropping the publish leaves the stale ``t1``
+        snapshot in the slot, so the assertion that the slot now names the
+        walked prefix reports the stale one instead. Restored, it passes.
+        """
         from ..server import _routes
         from ..server._state import survey_snapshot
 
-        self._publish([_survey("r" + "a" * 12 + "_")], computed_at="t1")
-        fetched = [_survey("r" + "b" * 12 + "_", status="live")]
-        monkeypatch.setattr(_routes, "_fetch_surveys", lambda: fetched)
-        payload = _routes._gather_storage_survey(None, 200, fresh=True)
+        stale = "r" + "a" * 12 + "_"
+        walked = "r" + "b" * 12 + "_"
+        self._publish([_survey(stale)], computed_at="t1")
+
+        payload = _routes._publish_and_shape_survey(
+            [_survey(walked, status="live")], None, 200, None
+        )
+
         assert payload["source"] == "fresh"
-        assert payload["namespaces"][0]["prefix"] == "r" + "b" * 12 + "_"
+        assert payload["namespaces"][0]["prefix"] == walked
         snapshot = survey_snapshot()
         assert snapshot is not None
         assert snapshot.computed_at == payload["computed_at"]
-        assert [s.prefix for s in snapshot.surveys] == ["r" + "b" * 12 + "_"]
+        assert [s.prefix for s in snapshot.surveys] == [walked]
 
-    def test_cold_cache_falls_back_to_fresh_compute(
-        self, monkeypatch: pytest.MonkeyPatch
+    def test_a_fresh_request_refuses_the_snapshot_it_would_otherwise_serve(
+        self,
     ) -> None:
+        """``fresh=true`` must walk even with a warm slot; a cold slot always does.
+
+        ``None`` here is the instruction to walk the store, so this states
+        both halves of what sends the route down that path. The warm case
+        is the one that matters: a published snapshot is exactly what a
+        caller passing ``fresh`` is trying to get past.
+
+        Proven able to fail: dropping the ``fresh`` arm returns the warm
+        snapshot's shaped payload, so the assertion that a fresh request
+        yields no cached answer reports a dict instead of None. Restored,
+        it passes.
+        """
         from ..server import _routes
 
-        monkeypatch.setattr(
-            _routes, "_fetch_surveys", lambda: [_survey("r" + "d" * 12 + "_")]
-        )
-        payload = _routes._gather_storage_survey(None, 200)
-        assert payload["source"] == "fresh"
-        assert payload["returned"] == 1
+        assert _routes._serve_survey_from_snapshot(None, 200, None, fresh=False) is None
+
+        self._publish([_survey("r" + "d" * 12 + "_")], computed_at="t1")
+        assert _routes._serve_survey_from_snapshot(None, 200, None, fresh=True) is None
+        warm = _routes._serve_survey_from_snapshot(None, 200, None, fresh=False)
+        assert warm is not None
+        assert warm["source"] == "cache"
 
 
 def _temp_survey(
