@@ -950,6 +950,7 @@ __all__ = [
     "_projects_list_contract_server",
     "_projects_unload_contract_server",
     "_read_service_status",
+    "_reindex_contract_server",
     "_running_service_record",
     "_search_output_contract_server",
     "_search_records",
@@ -991,10 +992,14 @@ def _reindex_contract_server() -> tuple[
                 self.end_headers()
                 return
             try:
-                body = json.loads(raw) if raw else {}
+                parsed: object = json.loads(raw) if raw else {}
             except ValueError:
-                body = {}
-            requests.append(body if isinstance(body, dict) else {})
+                parsed = {}
+            requests.append(
+                typing.cast("dict[str, object]", parsed)
+                if isinstance(parsed, dict)
+                else {}
+            )
             payload = {
                 "ok": True,
                 "added": 1,
@@ -1014,3 +1019,39 @@ def _reindex_contract_server() -> tuple[
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, thread, requests
+
+
+@contextlib.contextmanager
+def _store_locked_by_another_process(root: Path) -> typing.Generator[None]:
+    """Hold *root*'s store open in a separate process for the block's duration.
+
+    The lock is per process, not per handle: a second ``VaultStore`` in THIS
+    interpreter opens happily, so a same-interpreter holder proves nothing.
+    Only a genuinely foreign holder makes the production path raise, which is
+    the condition the locked-store message exists to report.
+    """
+    import subprocess
+    import sys
+    import textwrap
+
+    holder = textwrap.dedent(f"""
+        import pathlib, time
+        from vaultspec_rag import VaultStore
+        VaultStore(pathlib.Path(r"{root}"))
+        print("held", flush=True)
+        time.sleep(120)
+    """)
+    process = subprocess.Popen(
+        [sys.executable, "-c", holder],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert process.stdout is not None
+        if process.stdout.readline().strip() != "held":
+            msg = "the holder process never took the store lock"
+            raise AssertionError(msg)
+        yield
+    finally:
+        process.kill()
+        process.wait(timeout=10)
