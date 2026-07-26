@@ -7,7 +7,6 @@ import typing
 
 import pytest
 
-from ..serviceclient._compat import SERVICE_VERSION_FIELD, local_package_version
 from ._cli_helpers import (
     _hold_local_index_lock,
     _no_service,
@@ -920,71 +919,36 @@ finally:
 
         assert len(requests) == 1
 
-    def test_index_auto_delegates_when_service_running(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """If service is running, index auto-delegates to it."""
+    def test_index_auto_delegates_when_service_running(self, tmp_path: Path) -> None:
+        """A discovered, live daemon takes the index rather than running locally.
+
+        Same real discovery as the search case: a status record naming this
+        process and a real port, and a bound server that records what it was
+        asked to do. The substituted version asserted the CLI called a function
+        someone replaced, which could not notice discovery moving.
+
+        Proven able to fail: removing the service record leaves nothing to
+        discover, the CLI indexes locally, and the request log stays empty.
+        """
+        from ._cli_helpers import _reindex_contract_server, _running_service_record
+
         (tmp_path / ".vaultspec").mkdir()
+        server, thread, requests = _reindex_contract_server()
+        try:
+            port = server.server_address[1]
+            with _running_service_record(tmp_path / "status", port):
+                runner.invoke(
+                    app,
+                    ["--target", str(tmp_path), "index", "--type", "vault"],
+                )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
-        def _stub_read_status_idx() -> dict[str, object]:
-            return {
-                "pid": 12345,
-                "port": 8766,
-                "service_token": "token123",
-                SERVICE_VERSION_FIELD: local_package_version(),
-            }
-
-        def _stub_is_our_service_idx(
-            _pid: int, _port: int, _expected_token: str | None
-        ) -> bool:
-            return True
-
-        monkeypatch.setattr(
-            "vaultspec_rag.serviceclient._discovery._read_service_status",
-            _stub_read_status_idx,
-        )
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._is_our_service",
-            _stub_is_our_service_idx,
-        )
-
-        called: list[tuple[str, int]] = []
-
-        def mock_try_reindex(
-            reindex_type: str,
-            _rebuild: bool,
-            port: int,
-            _target: str,
-            *,
-            initiator_kind: str,
-        ) -> dict[str, object]:
-            assert initiator_kind == "cli"
-            called.append((reindex_type, port))
-            return {
-                "ok": True,
-                "added": 1,
-                "updated": 0,
-                "removed": 0,
-                "total": 1,
-                "duration_ms": 10,
-            }
-
-        monkeypatch.setattr(
-            "vaultspec_rag.cli._index._try_http_reindex", mock_try_reindex
-        )
-
-        runner.invoke(
-            app,
-            [
-                "--target",
-                str(tmp_path),
-                "index",
-                "--type",
-                "vault",
-            ],
-        )
-        assert len(called) == 1
-        assert called[0] == ("vault", 8766)
+        assert len(requests) == 1
+        assert requests[0].get("type") == "vault"
+        assert requests[0].get("initiator_kind") == "cli"
 
     def test_auto_delegation_prefers_machine_global_resolution(
         self, tmp_path: Path

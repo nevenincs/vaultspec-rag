@@ -967,3 +967,50 @@ __all__ = [
     "reset_rag_config",
     "runner",
 ]
+
+
+def _reindex_contract_server() -> tuple[
+    typing.Any, typing.Any, list[dict[str, object]]
+]:
+    """Serve the reindex route, recording each request body it was sent.
+
+    Records the decoded body rather than the path, because what a delegation
+    test needs to assert is which source the CLI asked to be reindexed and on
+    whose behalf - both of which travel in the body, not the URL.
+    """
+    import threading
+
+    requests: list[dict[str, object]] = []
+
+    class _ReindexContractHandler(QuietHandler):
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length)
+            if self.path != "/reindex":
+                self.send_response(404)
+                self.end_headers()
+                return
+            try:
+                body = json.loads(raw) if raw else {}
+            except ValueError:
+                body = {}
+            requests.append(body if isinstance(body, dict) else {})
+            payload = {
+                "ok": True,
+                "added": 1,
+                "updated": 0,
+                "removed": 0,
+                "total": 1,
+                "duration_ms": 10,
+            }
+            encoded = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _ReindexContractHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests

@@ -413,27 +413,34 @@ class TestSearchSafetyContract:
         assert "RAG service" not in data["message"]
         assert "file watcher" not in data["message"]
 
-    def test_search_mcp_timeout_diagnostics(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        """Timeout in client inside _try_http_search returns http_search_timeout."""
+    def test_search_mcp_timeout_diagnostics(self, tmp_path: Path):
+        """A search that outlasts its bound reports http_search_timeout.
+
+        The stall is real: a bound server accepts the request and sleeps past
+        the deadline, so the timeout is raised by the transport under test
+        rather than by a substitute programmed to raise it. Substituting the
+        call proved the caller maps an exception someone constructed, which is
+        a different claim from the transport producing one.
+
+        Proven able to fail: raising the timeout above the server's sleep lets
+        the request complete and the error is no longer http_search_timeout.
+        """
         from ..cli import _try_http_search
 
-        def mock_timeout(*_args: object, **_kwargs: object) -> None:
-            raise TimeoutError("connection timed out")
-
-        monkeypatch.setattr(
-            "vaultspec_rag.serviceclient._transport._do_http_call", mock_timeout
-        )
-
-        res = _try_http_search(
-            query="test",
-            search_type="vault",
-            top_k=5,
-            port=8766,
-            project_root=str(tmp_path),
-            timeout=0.01,
-        )
+        server, thread = _slow_search_contract_server()
+        try:
+            res = _try_http_search(
+                query="test",
+                search_type="vault",
+                top_k=5,
+                port=server.server_address[1],
+                project_root=str(tmp_path),
+                timeout=0.01,
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
         assert isinstance(res, dict)
         assert res["ok"] is False
         assert res["error"] == "http_search_timeout"
