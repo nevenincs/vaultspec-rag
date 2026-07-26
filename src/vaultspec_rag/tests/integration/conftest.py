@@ -43,6 +43,38 @@ from ..corpus import build_synthetic_vault
 
 _MAX_STARTUP_CLEANUP_RESERVE_SECONDS = 15.0
 
+
+@pytest.fixture(scope="session", autouse=True)
+def _pin_index_cuda_ceiling() -> Generator[None]:
+    """Pin the indexing CUDA ceiling for every in-process integration test.
+
+    ``_service_env`` pins the same figure for spawned daemons; this covers the
+    tests that index inside the pytest process, where no child env is built.
+
+    Without it the ceiling is derived from free device memory when the budget
+    is built, so a neighbouring CUDA process decides whether these tests pass.
+    See ``INTEGRATION_CUDA_CEILING_MB`` for the measurements behind the value.
+
+    Session-scoped and set before any config is cached, so a later
+    ``reset_config()`` re-reads it rather than dropping back to derivation. An
+    explicit setting already in the environment is left alone, which is what
+    lets an operator reproduce a ceiling failure by exporting their own.
+    """
+    from ._helpers import INTEGRATION_CUDA_CEILING_MB
+
+    key = EnvVar.INDEX_CUDA_CEILING_MB.value
+    previous = os.environ.get(key)
+    if previous is None:
+        os.environ[key] = str(INTEGRATION_CUDA_CEILING_MB)
+        reset_config()
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(key, None)
+            reset_config()
+
+
 #: Upper bound on the graceful-exit courtesy wait during teardown before
 #: escalating to a hard, pid-targeted force-kill. Kept short because the
 #: graceful console signal often never reaches a stub-relaunched descendant

@@ -184,6 +184,28 @@ def _get_ephemeral_port() -> int:
         return s.getsockname()[1]
 
 
+#: Absolute indexing CUDA ceiling, in MiB, pinned for every integration run.
+#:
+#: Left unset, the ceiling is derived from FREE device memory at the moment the
+#: budget is built: ``min(baseline + free - headroom, total - headroom)``. That
+#: is the right rule for a daemon that owns its machine, and the wrong one for
+#: a test host, because any other CUDA process collapses it. Observed on this
+#: box with a second suite running: a 6301 MiB resident baseline drove the
+#: ceiling to 0.0 and 144.9 MiB while the jobs' own demand was unchanged at
+#: 2172 and 4609 MiB net - fifteen unrelated watcher and reindex tests went red
+#: on nothing but a neighbour's allocation.
+#:
+#: A positive value is an authoritative operator override, so pinning it makes
+#: the bound deterministic without disabling it: a job whose own demand runs
+#: past this figure is still refused. Sized to clear the largest legitimate
+#: demand seen (4609 MiB) with margin, and to leave room above the resident
+#: models on the 16 GiB device the suite targets.
+#:
+#: Tests that assert the ceiling FIRES pass their own figure through the config
+#: overrides, which beat the environment, so this default cannot mask them.
+INTEGRATION_CUDA_CEILING_MB = 6144
+
+
 def _get_ephemeral_qdrant_port() -> int:
     """Return a free port whose grpc sibling (port-1) is also free.
 
@@ -304,6 +326,7 @@ def _service_env(
     env_key = "VAULTSPEC_RAG_STATUS_DIR"
     storage_key = "VAULTSPEC_RAG_QDRANT_STORAGE_DIR"
     qdrant_port_key = "VAULTSPEC_RAG_QDRANT_PORT"
+    cuda_ceiling_key = "VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB"
     updates: dict[str, str | None] = {
         env_key: str(tmp_path),
     }
@@ -317,6 +340,8 @@ def _service_env(
         updates[storage_key] = str(tmp_path / "qdrant-server" / "storage")
     if qdrant_port_key not in overrides:
         updates[qdrant_port_key] = str(_get_ephemeral_qdrant_port())
+    if cuda_ceiling_key not in overrides:
+        updates[cuda_ceiling_key] = str(INTEGRATION_CUDA_CEILING_MB)
     updates.update(overrides)
 
     # Snapshot every distinct key exactly once before the first mutation.
