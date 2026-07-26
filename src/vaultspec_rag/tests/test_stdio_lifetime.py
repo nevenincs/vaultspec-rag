@@ -67,7 +67,7 @@ class TestWatchdogDisabled:
         os.environ[lifetime.STDIO_WATCHDOG_ENV] = value
         assert lifetime.watchdog_disabled() is True
 
-    @pytest.mark.parametrize("value", ["", "1", "true", "on"])
+    @pytest.mark.parametrize("value", ["", "1", "true", "on", " YES "])
     def test_enabling_values(self, value: str) -> None:
         os.environ[lifetime.STDIO_WATCHDOG_ENV] = value
         assert lifetime.watchdog_disabled() is False
