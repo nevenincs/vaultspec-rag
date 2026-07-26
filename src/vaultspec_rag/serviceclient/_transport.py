@@ -46,6 +46,9 @@ from .._source_types import PublicSourceType, SourceTypeParseError, parse_source
 from ..config import get_config, rag_default
 
 if TYPE_CHECKING:
+    # The job-source vocabulary has one declaration, the canonical enum.
+    # Annotation-only, so the client does not import the domain at runtime.
+    from ..job_models import JobSource
     from ._discovery import MachineResolution
 
 logger = logging.getLogger(__name__)
@@ -93,7 +96,6 @@ type ReindexType = PublicSourceType | str
 type ReindexInitiator = Literal["cli", "mcp"]
 type DocumentSearchFilters = dict[str, str | None]
 type HTTPMethod = Literal["GET", "POST", "PUT", "DELETE"]
-type JobSource = Literal["vault", "code"]
 type JobMode = Literal["incremental", "rebuild"]
 type DesiredJobState = Literal["running", "paused", "cancelled"]
 type JobControlMode = Literal["graceful", "force"]

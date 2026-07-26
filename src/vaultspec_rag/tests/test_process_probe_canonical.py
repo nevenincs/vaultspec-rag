@@ -793,6 +793,19 @@ class TestNoSymbolKeptAliveForTests:
     symbol alive for tests.
     """
 
+    #: Client-transport calls that reach a real service route this project's
+    #: own CLI has not adopted yet. They are not test conveniences duplicating
+    #: a production path - each covers a capability no production caller can
+    #: otherwise reach - so deleting them would drop client coverage of a live
+    #: route. An entry needs that justification, not merely a passing test.
+    _CLIENT_SURFACE: ClassVar[dict[str, str]] = {
+        "_try_http_create_job": (
+            "creates a job with start_paused and an idempotency key; "
+            "_try_http_reindex, the path the CLI uses, has neither parameter, "
+            "so no production caller can create a paused job"
+        ),
+    }
+
     def test_no_private_symbol_is_reachable_only_from_tests(self) -> None:
         import ast
         import re
@@ -801,8 +814,27 @@ class TestNoSymbolKeptAliveForTests:
         production: list[str] = []
         for path in _production_sources():
             text = path.read_text(encoding="utf-8")
-            production.append(text)
-            for node in ast.walk(ast.parse(text)):
+            tree = ast.parse(text)
+            # An __all__ listing is a declaration of intent, not a use.
+            # Counting it as one hid an exported symbol that nothing imported
+            # and only tests called - the case this test exists to catch.
+            exported = [
+                (node.lineno, node.end_lineno or node.lineno)
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id == "__all__"
+                    for target in node.targets
+                )
+            ]
+            production.append(
+                "\n".join(
+                    line
+                    for number, line in enumerate(text.split("\n"), start=1)
+                    if not any(lo <= number <= hi for lo, hi in exported)
+                )
+            )
+            for node in ast.walk(tree):
                 if (
                     isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
                     and node.name.startswith("_")
@@ -826,10 +858,15 @@ class TestNoSymbolKeptAliveForTests:
             if used == 0 and re.search(word, test_blob):
                 orphans[name] = sites
 
-        assert not orphans, (
-            f"private symbol(s) reachable only from tests: {orphans}. Delete "
-            "them and repoint the tests at the production entry point - a "
-            "test-only path proves nothing about the path production runs"
+        unexplained = {
+            name: sites
+            for name, sites in orphans.items()
+            if name not in self._CLIENT_SURFACE
+        }
+        assert not unexplained, (
+            f"private symbol(s) reachable only from tests: {unexplained}. "
+            "Delete them and repoint the tests at the production entry point - "
+            "a test-only path proves nothing about the path production runs"
         )
 
 

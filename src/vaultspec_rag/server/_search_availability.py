@@ -7,9 +7,14 @@ import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from qdrant_client.http.exceptions import UnexpectedResponse
+
+if TYPE_CHECKING:
+    # The convergence-mode vocabulary has one declaration, in the transport.
+    # Annotation-only, so the client is not imported at runtime.
+    from ..serviceclient._transport import JobMode
 
 __all__ = [
     "SearchResponseClassification",
@@ -18,7 +23,7 @@ __all__ = [
 ]
 
 type IndexSource = Literal["vault", "code", "document"]
-type JobMode = Literal["incremental", "rebuild"]
+# One declaration of the convergence-mode vocabulary; the transport owns it.
 
 _CANONICAL_NONTERMINAL_STATES = frozenset(
     {"queued", "running", "pausing", "paused", "cancelling"}
