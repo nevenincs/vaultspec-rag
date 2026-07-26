@@ -528,6 +528,15 @@ class TestStartPathProvisionProgress:
         Returns:
             A list appended to on each call, so a test can assert the
             interception was actually reached.
+
+        Why this one stays, having asked whether it could be driven for real:
+        the provisioner refuses any source that is not https on a host in the
+        pinned allow-list, and verifies the archive against a committed digest
+        before extracting. A locally served archive therefore fails on the
+        scheme, then the host, and could never match the digest anyway - the
+        security design makes a substitute source unusable on purpose, so the
+        download path cannot be staged. What is asserted here is the progress
+        the operator sees, and only the trigger is the test's.
         """
         from ..qdrant_runtime import _provision as _provision_module
         from ..qdrant_runtime._constants import (
