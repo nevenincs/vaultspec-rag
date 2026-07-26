@@ -107,6 +107,8 @@ Changing a model against an index built with another one is an operator decision
 | `VAULTSPEC_RAG_RERANKER_MAX_LENGTH`                  | integer | `1024`  | Reranker token bound                                | -        |
 | `VAULTSPEC_RAG_RERANKER_BATCH_SIZE`                  | integer | `32`    | Candidate pairs per reranker forward pass           | -        |
 | `VAULTSPEC_RAG_VAULT_CHUNK_CHARS`                    | integer | `3000`  | Vault chunk character budget                        | -        |
+| `VAULTSPEC_RAG_DOCUMENT_CHUNK_CHARS_PER_TOKEN`        | integer | `3`     | Chars-per-token ratio turning the model's token window into a document chunk budget | -        |
+| `VAULTSPEC_RAG_DOCUMENT_CHUNK_OVERLAP_CHARS`          | integer | `256`   | Overlap carried across a document chunk boundary    | -        |
 
 ### Indexing
 
@@ -223,18 +225,16 @@ These keys exist in the configuration loader and read no environment variable of
 
 | Config key                       | Type    | Default   | Controls                                                                                                                  |
 | -------------------------------- | ------- | --------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `document_chunk_chars_per_token` | integer | `3`       | Chars-per-token ratio converting the model's token window into a document chunk budget                                    |
-| `document_chunk_overlap_chars`   | integer | `256`     | Overlap carried across a document chunk boundary                                                                          |
 | `preprocess_mode`                | string  | `default` | Two-state preprocessing mode; the environment reaches it through `VAULTSPEC_RAG_PREPROCESS` rather than a direct override |
 
 ## Type coercion
 
-The loader parses each value on first access. An invalid integer or float raises at that point, not at startup.
+The loader parses and validates every value when the settings are built, so a rejected value is reported once at startup rather than when the setting it belongs to happens to be read. One unusable value anywhere makes the whole settings object unbuildable.
 
-- Booleans: the strings `1`, `true`, and `yes` (case-insensitive) parse as true; anything else, including `on`, parses as false.
-- Integers and floats: parsed with `int()` and `float()`; non-numeric strings raise on first read.
+- Booleans: `1`, `true`, `yes` and `on` parse as true; `0`, `false`, `no` and `off` parse as false (case-insensitive). Any other value is rejected with a message naming the variable and listing the accepted spellings, so a typo such as `treu` is refused instead of silently reading as false and turning the feature off.
+- Integers and floats: parsed with `int()` and `float()`; a non-numeric value is rejected the same way.
 - Paths: relative paths resolve against the project root; absolute paths are used as given. Use forward slashes on Windows.
-- Empty values: for a setting whose default is a string or a path, an empty or whitespace-only value is treated as unset and falls back to the default. This keeps an unexpanded `VAR="$UNSET"` from repointing a managed directory at the working directory.
+- Empty values: for a setting whose default is a string or a path, an empty or whitespace-only value is treated as unset and falls back to the default. This keeps an unexpanded `VAR="$UNSET"` from repointing a managed directory at the working directory. A boolean does **not** share that protection: an empty value reads as false, so an unexpanded `VAR="$UNSET"` on a boolean turns that setting off rather than leaving its default in place.
 
 An unset variable falls back to the built-in default.
 
