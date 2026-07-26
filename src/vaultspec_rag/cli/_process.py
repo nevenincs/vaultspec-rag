@@ -39,6 +39,7 @@ from .._win32 import (
     WIN_DETACHED_PROCESS,
 )
 from ..config import EnvVar
+from ..qdrant_runtime._resolve import pid_alive
 from ..serviceclient._discovery import HEARTBEAT_STALENESS_SECONDS
 from ..serviceclient._transport import _try_http_health
 from ._core import logger
@@ -81,47 +82,11 @@ class DaemonBreakawayError(RuntimeError):
     """
 
 
-def _is_pid_alive(pid: int) -> bool:
-    """Check whether a process with the given PID is still running.
-
-    Args:
-        pid: Process ID to check.
-
-    Returns:
-        True if the process exists and is running.
-
-    """
-    if pid <= 0:
-        return False
-    if sys.platform == "win32":
-        import ctypes
-
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.OpenProcess(
-            0x1000,  # PROCESS_QUERY_LIMITED_INFORMATION
-            False,
-            pid,
-        )
-        if not handle:
-            return False
-        try:
-            exit_code = ctypes.c_ulong()
-            if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
-                return exit_code.value == 259  # STILL_ACTIVE
-            return False
-        finally:
-            kernel32.CloseHandle(handle)
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError as exc:
-        logger.debug("pid %s not running: %s", pid, exc)
-        return False
-    except PermissionError as exc:
-        # Permission denied means the process exists but isn't
-        # owned by us - still "alive" for liveness purposes.
-        logger.debug("pid %s alive but signal denied: %s", pid, exc)
-        return True
-    return True
+#: Service liveness is the same question the qdrant runtime already answers
+#: for a storage owner, down to the access-denied-means-alive rule, so it has
+#: one implementation and this module publishes it under the name the package
+#: namespace exposes for substitution.
+_is_pid_alive = pid_alive
 
 
 def _is_our_service(
@@ -1057,7 +1022,6 @@ def _reap_owned_qdrant(
     from ..config import get_config
     from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
     from ..qdrant_runtime._resolve import (
-        pid_alive,
         pid_image_is_qdrant,
         pid_listens_on_loopback_port,
         pid_matches_start_time,

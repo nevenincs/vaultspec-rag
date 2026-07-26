@@ -315,8 +315,9 @@ def pid_alive(pid: int) -> bool:
     """Return whether *pid* is a live process (cross-platform, best-effort).
 
     Used to tell a live storage owner from a dead one when classifying an
-    orphan. A permission error means the process exists but is not ours to
-    signal, which still counts as alive.
+    orphan, and to tell a live daemon from a dead one before its discovery
+    file is removed. A permission error means the process exists but is not
+    ours to signal, which still counts as alive.
     """
     if pid <= 0:
         return False
@@ -325,10 +326,21 @@ def pid_alive(pid: int) -> bool:
 
         process_query_limited = 0x1000
         still_active = 259
+        error_access_denied = 5
         kernel32 = ctypes.windll.kernel32
         handle = kernel32.OpenProcess(process_query_limited, False, pid)
         if not handle:
-            return False
+            # A null handle carries two opposite facts, and the error code is
+            # the only thing that separates them. ERROR_ACCESS_DENIED means
+            # the process exists and runs at a privilege this one cannot
+            # open - alive, and the case the POSIX branch below already got
+            # right. Every other code (ERROR_INVALID_PARAMETER for a pid
+            # nothing occupies) means genuinely absent. Reading them as one
+            # reports a live higher-privilege daemon dead, and callers that
+            # delete state for a confirmed-dead holder then destroy a running
+            # service's. GetLastError is read before any other FFI call so
+            # nothing overwrites the thread's last-error value.
+            return kernel32.GetLastError() == error_access_denied
         try:
             code = ctypes.c_ulong()
             if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
