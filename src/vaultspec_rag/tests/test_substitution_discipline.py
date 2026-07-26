@@ -32,7 +32,7 @@ _NEEDLES = ("monkeypatch." + "setattr", "monkeypatch." + "delattr")
 # reader hitting a failure learns what bar a new entry has to clear.
 _ALLOWED: dict[str, tuple[int, str]] = {
     "test_cli_index.py": (
-        2,
+        1,
         "the disk floor is a per-profile compile-time constant with no config "
         "override, so a real run cannot be driven under it; production's own "
         "ensure_disk_headroom raises, classifies and words the refusal",
