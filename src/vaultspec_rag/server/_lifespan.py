@@ -182,7 +182,7 @@ def _reconcile_storage_manifest(
         from qdrant_client import QdrantClient
 
         cfg = get_config()
-        url = str(cfg.qdrant_url or "") or f"http://127.0.0.1:{cfg.qdrant_port}"
+        url = cfg.effective_qdrant_url
         client = QdrantClient(url=url, timeout=timeout)
         try:
             names = [c.name for c in client.get_collections().collections]
@@ -417,7 +417,7 @@ async def _start_components(
     # HF cache status
     from ..config import EnvVar, get_config
 
-    hf_home = os.environ.get(EnvVar.HF_HOME, "~/.cache/huggingface")
+    hf_home = get_config().hf_cache_location
     logger.info("HF cache: %s", hf_home)
 
     # The package-level registry is intentionally stable across supported

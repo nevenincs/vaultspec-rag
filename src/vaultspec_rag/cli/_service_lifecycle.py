@@ -1,15 +1,11 @@
-"""``server`` lifecycle: shared primitives, ``warmup``, and the command facade.
+"""``server`` lifecycle: the shared primitives and the ``warmup`` command.
 
-Holds the console primitives and the discovery-file decision helper shared by
-the start, stop, and status renderers, plus the ``warmup`` command. The start,
-stop, and status paths live in ``_service_start``, ``_service_stop``, and
-``_status_render``; this module imports them at the bottom so their
-``server_app`` commands register and re-exports the names that tests and
-``cli.__init__`` continue to import from ``cli._service_lifecycle``.
-
-The primitives are defined before the facade imports so the intentional cycle
-resolves: the leaf modules import these primitives from here while this module
-imports the leaf commands from them.
+Holds the console primitives and the discovery-file decision helper the start,
+stop, and status renderers share, plus ``warmup``. Those verbs live in
+``_service_start``, ``_service_stop``, and ``_status_render``, and import these
+primitives from here; nothing is imported back, so this module exports only
+what it defines and the cycle that used to need a trailing import block is
+gone. ``cli.__init__`` registers the verb modules for their decorators.
 """
 
 from __future__ import annotations
@@ -143,11 +139,18 @@ def _should_unlink_discovery_file(pid_alive: bool) -> bool:
 
 
 def _warmup_failure_detail(repo_id: str, exc: Exception) -> str:
-    """Explain a failed model fetch as an operator-actionable line."""
+    """Explain a failed model fetch as an operator-actionable line.
+
+    The cache location comes from the config rather than a default spelled
+    inline: an operator who set ``HF_HOME`` was previously sent to the
+    library's default directory to clean up a partial download that is not
+    there.
+    """
     msg = str(exc)
     if "401" in msg or "403" in msg or "GatedRepo" in msg:
         return f"{repo_id} auth required; run huggingface-cli login"
-    return f"{repo_id} failed: {exc} (partial cache may remain in ~/.cache/huggingface)"
+    cache = get_config().hf_cache_location
+    return f"{repo_id} failed: {exc} (partial cache may remain in {cache})"
 
 
 def _warmup_fetch_model(
