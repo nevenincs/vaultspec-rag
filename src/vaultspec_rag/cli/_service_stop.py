@@ -284,6 +284,17 @@ def still_running_remediation_for(platform: str) -> tuple[str, ...]:
     success, so the next actions have to point at the only thing that changes
     the outcome: running the stop with a token that may signal the daemon.
 
+    Permission is a property of the ACCESS TOKEN, never of the console. An
+    earlier Windows remediation offered "the terminal the service was started
+    in" as an alternative, which sends the operator somewhere that cannot help:
+    the shell that spawned a daemon holds no right over it that any other shell
+    with the same token lacks, and where the daemon runs under a different
+    account or in the services session, no shell of the operator's own token
+    can signal it at all. That clause confused this refusal with the unrelated
+    console-group one - a ``CTRL_BREAK_EVENT`` really does depend on a shared
+    console, but that is a DELIVERY failure that escalates to
+    ``TerminateProcess`` and never reaches this helper.
+
     The platform is an argument for the same reason it is one on
     ``graceful_drain_seconds_for``: the rule is about the platform, not about
     the host running the code, so both branches stay statable - and testable -
@@ -291,8 +302,9 @@ def still_running_remediation_for(platform: str) -> tuple[str, ...]:
     """
     if platform == "win32":
         return (
-            "Re-run this command from an elevated (Administrator) terminal, or "
-            "from the terminal the service was started in.",
+            "Re-run this command from an elevated (Administrator) terminal, "
+            "which can signal a process owned by another account or running in "
+            "the services session (session 0).",
         )
     return (
         "Re-run this command as the user that started the service, or with "
@@ -318,8 +330,9 @@ def _fail_still_running(
     if result.signal_denied:
         cause = (
             f"The operating system refused this process permission to "
-            f"terminate process {pid} (it runs at a privilege this terminal "
-            f"cannot signal), so the service is still running."
+            f"terminate process {pid} (it runs under an account or privilege "
+            f"level this command's token cannot signal), so the service is "
+            f"still running."
         )
         error = "terminate_permission_denied"
     else:
@@ -664,7 +677,8 @@ def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
         # amount of re-running fixes a privilege the terminal does not have.
         cause = (
             "The operating system refused this process permission to terminate "
-            "them; they run at a privilege this terminal cannot signal."
+            "them; they run under an account or privilege level this command's "
+            "token cannot signal."
             if denied
             else "They did not exit within the termination budget."
         )

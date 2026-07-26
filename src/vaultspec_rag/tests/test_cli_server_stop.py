@@ -434,3 +434,14 @@ class TestStopThatDidNotStop:
         lines = still_running_remediation_for(platform)
         assert lines, "a refused stop must always name a next action"
         assert expected in " ".join(lines).lower()
+
+    def test_remediation_never_offers_the_originating_console(self) -> None:
+        # Permission to signal is carried by the access token, not by the
+        # console, so "re-run from the terminal the service was started in"
+        # names a place that cannot change the outcome - and is flatly
+        # unreachable when the daemon runs under another account or in
+        # session 0. Restoring that clause is the regression this catches.
+        for platform in ("win32", "linux", "darwin"):
+            text = " ".join(still_running_remediation_for(platform)).lower()
+            assert "terminal the service was started in" not in text
+            assert "shell the service was started in" not in text
