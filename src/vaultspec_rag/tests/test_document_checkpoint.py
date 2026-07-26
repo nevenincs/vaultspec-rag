@@ -11,8 +11,8 @@ MUTATION PROOF, run in one uninterrupted sequence: flipping the document
 checkpoint's content kind to the code kind fails
 ``test_record_processing_failure_records_the_document_content_kind`` and
 ``test_record_indexed_file_is_reachable_through_a_confirmed_slice`` on their
-own kind assertions, and fails nothing else here. Restoring it returns all
-nine to green. Re-run that mutation before loosening any assertion below.
+own kind assertions, and fails nothing else here. Restoring it returns the
+file to green. Re-run that mutation before loosening any assertion below.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..indexer._checkpoint_common import RunCheckpointBase
 from ..indexer._content_policy import (
     ContentKind,
     RootContentPolicy,
@@ -33,6 +34,7 @@ from ..indexer._document_checkpoint import (
 )
 from ..indexer._file_state import FileStateKind
 from ..indexer._resolved_policy import resolve_index_policy
+from ..indexer._run_checkpoint import CodeRunCheckpoint
 from ..indexer._run_ledger import (
     CommitUnit,
     FinalizationPhase,
@@ -227,3 +229,35 @@ def test_publish_generation_refuses_before_metadata_is_durable(tmp_path: Path) -
         RunLedgerStateError, match=r"metadata must be.*before generation publication"
     ):
         checkpoint.publish_generation()
+
+
+def test_both_checkpoints_stay_slotted_under_the_shared_base() -> None:
+    """Neither subclass may reacquire a per-instance ``__dict__``.
+
+    A checkpoint is held per run and its field set is fixed, so both classes
+    are slotted deliberately. Inheritance makes that fragile in a way nothing
+    else here would catch: a subclass of a slotted dataclass that loses its
+    own ``slots=True`` still inherits a working ``__init__``, still reports
+    identical ``dataclasses.fields()``, and still passes every behavioural
+    test - while silently growing a ``__dict__`` for every instance. Linting
+    and type checking see nothing either, because the class is still a valid
+    dataclass. Only ``__slots__`` itself tells the truth.
+
+    Mutation-proven: dropping ``slots=True`` from either subclass's decorator
+    turns its ``__slots__`` from ``()`` into a missing attribute and fails
+    this test on that class's assertion.
+    """
+    assert RunCheckpointBase.__slots__ == (
+        "ledger",
+        "generation",
+        "policy",
+        "run_policy",
+        "resumed_units",
+    )
+    for subclass in (CodeRunCheckpoint, DocumentRunCheckpoint):
+        assert subclass.__slots__ == (), (
+            f"{subclass.__name__} added slots of its own or lost slots=True"
+        )
+        assert "__dict__" not in subclass.__dict__, (
+            f"{subclass.__name__} reacquired a per-instance __dict__"
+        )
