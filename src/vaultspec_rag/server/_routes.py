@@ -84,6 +84,7 @@ if TYPE_CHECKING:
     from ..indexer._document_indexer import DocumentIndexPreflight
     from ..job_control import QuiesceGate
     from ..job_models import JobInitiator, JobSpec
+    from ..storage_survey import NamespaceSurvey
 
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -1858,6 +1859,62 @@ async def get_watcher_state_route(request: Request) -> JSONResponse:
 _STORAGE_SURVEY_STATUSES = frozenset({"live", "orphaned", "unknown", "unverifiable"})
 
 
+def _serve_survey_from_snapshot(
+    status_filter: str | None,
+    limit: int,
+    root: str | None,
+    *,
+    fresh: bool,
+) -> dict[str, Any] | None:
+    """Shape the cached answer, or ``None`` when the caller must walk.
+
+    The admission rule for the daemon-held snapshot, stated apart from the
+    walk it spares: a ``fresh`` request never consults the slot even when
+    one is published, and a cold slot has no answer to give. ``None`` in
+    both cases is the instruction to compute.
+    """
+    from ._state import survey_snapshot
+
+    if fresh:
+        return None
+    snapshot = survey_snapshot()
+    if snapshot is None:
+        return None
+    return _shape_survey_payload(
+        list(snapshot.surveys),
+        status_filter,
+        limit,
+        root,
+        computed_at=snapshot.computed_at,
+        source="cache",
+    )
+
+
+def _publish_and_shape_survey(
+    surveys: list[NamespaceSurvey],
+    status_filter: str | None,
+    limit: int,
+    root: str | None,
+) -> dict[str, Any]:
+    """Adopt freshly walked surveys as the snapshot and shape the answer.
+
+    Publishing is what makes the walk worth its cost: the whole result is
+    stamped and installed, so the next caller is served from cache again
+    and the answer this caller receives carries the same stamp the slot
+    now holds. Takes the surveys as a reading so the adoption rule is
+    stated over what was walked rather than over the walking.
+    """
+    from datetime import UTC, datetime
+
+    from ._state import publish_survey_snapshot
+
+    computed_at = datetime.now(UTC).isoformat()
+    publish_survey_snapshot(surveys, computed_at=computed_at)
+    return _shape_survey_payload(
+        surveys, status_filter, limit, root, computed_at=computed_at, source="fresh"
+    )
+
+
 def _gather_storage_survey(
     status_filter: str | None,
     limit: int,
@@ -1873,27 +1930,10 @@ def _gather_storage_survey(
     triggers the full walk, whose result is published so subsequent callers
     are served from cache again.
     """
-    from datetime import UTC, datetime
-
-    from ._state import publish_survey_snapshot, survey_snapshot
-
-    if not fresh:
-        snapshot = survey_snapshot()
-        if snapshot is not None:
-            return _shape_survey_payload(
-                list(snapshot.surveys),
-                status_filter,
-                limit,
-                root,
-                computed_at=snapshot.computed_at,
-                source="cache",
-            )
-    surveys = _fetch_surveys()
-    computed_at = datetime.now(UTC).isoformat()
-    publish_survey_snapshot(surveys, computed_at=computed_at)
-    return _shape_survey_payload(
-        surveys, status_filter, limit, root, computed_at=computed_at, source="fresh"
-    )
+    cached = _serve_survey_from_snapshot(status_filter, limit, root, fresh=fresh)
+    if cached is not None:
+        return cached
+    return _publish_and_shape_survey(_fetch_surveys(), status_filter, limit, root)
 
 
 async def storage_survey_route(request: Request) -> JSONResponse:
