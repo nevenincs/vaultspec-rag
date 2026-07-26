@@ -26,12 +26,6 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 import vaultspec_rag.cli as _cli
 
-from .._machine_lock import (
-    acquire_machine_lock,
-    machine_lock_live_holder,
-    machine_lock_path,
-    release_machine_lock,
-)
 from .._win32 import (
     WIN_CREATE_BREAKAWAY_FROM_JOB,
     WIN_CREATE_NEW_PROCESS_GROUP,
@@ -65,10 +59,6 @@ __all__ = [
     "_service_child_env",
     "_spawn_service",
     "_terminate_pid",
-    "acquire_machine_lock",
-    "machine_lock_live_holder",
-    "machine_lock_path",
-    "release_machine_lock",
 ]
 
 

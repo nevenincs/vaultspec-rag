@@ -17,7 +17,12 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
-from ..serviceclient._discovery import MachineResolution, resolve_machine_service
+from ..serviceclient._discovery import (
+    SERVICE_PHASE_WARMING,
+    MachineResolution,
+    _delete_service_status,
+    resolve_machine_service,
+)
 from ..serviceclient._status import (
     STATUS_STOPPED,
     DiscoveryStatus,
@@ -45,9 +50,7 @@ from ._service_lifecycle import (
     _should_unlink_discovery_file,
 )
 from ._service_status import (
-    SERVICE_PHASE_WARMING,
     _default_service_port,
-    _delete_service_status,
     _read_service_status,
     _service_phase,
 )
