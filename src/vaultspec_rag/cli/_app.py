@@ -9,7 +9,6 @@ runs.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -23,6 +22,7 @@ from vaultspec_core.config.workspace import (  # pyright: ignore[reportMissingTy
 
 import vaultspec_rag.cli as _cli
 
+from .._named_root import env_named_root
 from ..config import EnvVar
 from ..logging_config import configure_logging
 from ._render import _plain
@@ -192,8 +192,7 @@ class CLIState:
     """Shared state container for CLI commands and sub-applications.
 
     Initialized by the main callback and passed via ``typer.Context.obj``
-    to all subcommands. Holds validated workspace metadata and sets the
-    ``VAULTSPEC_ROOT`` environment variable for downstream services.
+    to all subcommands. Holds validated workspace metadata.
 
     Attributes:
         layout: The resolved workspace layout containing validated
@@ -212,7 +211,6 @@ class CLIState:
         """
         self.layout = layout
         self.target = layout.target_dir
-        os.environ[EnvVar.RAG_ROOT] = str(self.target)
 
 
 def version_callback(value: bool) -> None:
@@ -311,6 +309,17 @@ def main(
         typer.echo(ctx.get_help())
         raise typer.Exit(0)
 
+    # Precedence for the project this invocation addresses: the flag, then the
+    # environment, then whatever the workspace resolver makes of the working
+    # directory. The environment sits in the middle because exporting
+    # ``VAULTSPEC_RAG_ROOT`` names a project as deliberately as typing the
+    # flag does, and the working directory names nothing - it is wherever the
+    # shell happened to be. Reading it here, before any workspace is resolved,
+    # is what makes that possible: the variable decides *which* project a
+    # configuration is built for, so it cannot be resolved alongside the
+    # settings that are read out of that project.
+    named_target = target if target is not None else env_named_root()
+
     if ctx.invoked_subcommand in (
         "test",
         "quality",
@@ -321,20 +330,29 @@ def main(
         # These subcommands either operate without a resolved
         # workspace (test/quality/server) or resolve their own via
         # core's resolver (install/uninstall). Even so, stash the
-        # global ``--target`` (if any) on ctx.obj so the install /
-        # uninstall handlers can read it. Click consumes group
-        # options before subcommand options, so the global value
-        # would otherwise be silently dropped if the user invoked
+        # named root (if any) on ctx.obj so the install / uninstall
+        # handlers can read it. Click consumes group options before
+        # subcommand options, so the global value would otherwise be
+        # silently dropped if the user invoked
         # ``vaultspec-rag --target /path install`` instead of
         # ``vaultspec-rag install --target /path``.
-        ctx.obj = {"target": target}
+        ctx.obj = {"target": named_target}
         return
 
     try:
-        layout = resolve_workspace(target_override=target)
+        layout = resolve_workspace(target_override=named_target)
         ctx.obj = CLIState(layout)
     except WorkspaceError as e:
-        _plain(f"Error: {e}")
+        if target is None and named_target is not None:
+            # Attribute the failure to the variable: an operator who passed no
+            # flag has no other way to learn that the environment chose the
+            # directory being complained about.
+            _plain(
+                f"Error: {EnvVar.RAG_ROOT.value} names {named_target}, which is "
+                f"not a usable workspace: {e}"
+            )
+        else:
+            _plain(f"Error: {e}")
         raise typer.Exit(code=1) from None
 
 
