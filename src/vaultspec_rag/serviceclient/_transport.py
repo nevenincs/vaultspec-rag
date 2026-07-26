@@ -21,9 +21,11 @@ this transport addresses only loopback, no service route emits a 3xx, and the
 standard library would otherwise copy the bearer credential onto whatever host a
 redirect named.
 
-This module imports only stdlib plus the lightweight filter validator from
-``..search._validation`` (which itself imports nothing heavy). It loads no
-Torch, no models, and no store, so importing it is import-light.
+This module imports only stdlib, the lightweight filter validator from
+``..search._validation`` (which itself imports nothing heavy), and the settings
+module for the request bounds below. It loads no Torch, no models, and no
+store, so importing it is import-light. Both real entry points, the CLI and the
+MCP, have already loaded the settings module before they reach this one.
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ import urllib.request
 from typing import TYPE_CHECKING, Any, Final, Literal, NoReturn, cast
 
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
+from ..config import EnvVar, rag_default
 
 if TYPE_CHECKING:
     from ._discovery import MachineResolution
@@ -72,8 +75,15 @@ __all__ = [
     "resolve_service_port",
 ]
 
-DEFAULT_SEARCH_TIMEOUT_SECONDS = 300.0
-DEFAULT_ADMIN_TIMEOUT_SECONDS = 30.0
+#: Client-side request bounds. The values live in the settings defaults so the
+#: settings object stays the one home for them; these names remain because
+#: callers and tests import them.
+DEFAULT_SEARCH_TIMEOUT_SECONDS: float = float(
+    rag_default("service_search_timeout_seconds")
+)
+DEFAULT_ADMIN_TIMEOUT_SECONDS: float = float(
+    rag_default("service_admin_timeout_seconds")
+)
 #: Bound for the health probe. Matches the command-line probe it replaces, so
 #: repointed call sites wait exactly as long as they did before.
 DEFAULT_HEALTH_TIMEOUT_SECONDS = 5.0
@@ -216,7 +226,7 @@ def _is_timeout(exc: BaseException) -> bool:
 def _get_admin_timeout(timeout: float | None = None) -> float:
     resolved = timeout
     if timeout is None:
-        env_timeout = os.environ.get("VAULTSPEC_RAG_ADMIN_TIMEOUT")
+        env_timeout = os.environ.get(EnvVar.SERVICE_ADMIN_TIMEOUT.value)
         if env_timeout:
             try:
                 resolved = float(env_timeout)
@@ -946,7 +956,7 @@ def _try_http_vault_document(
 def _get_search_timeout(timeout: float | None) -> float:
     resolved = timeout
     if timeout is None:
-        env_timeout = os.environ.get("VAULTSPEC_RAG_SEARCH_TIMEOUT")
+        env_timeout = os.environ.get(EnvVar.SERVICE_SEARCH_TIMEOUT.value)
         if env_timeout:
             try:
                 resolved = float(env_timeout)

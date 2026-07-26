@@ -92,6 +92,19 @@ class EnvVar(StrEnum):
     LOG_LEVEL = "VAULTSPEC_RAG_LOG_LEVEL"
     SERVICE_IDLE_TTL_SECONDS = "VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS"
     SERVICE_MAX_PROJECTS = "VAULTSPEC_RAG_SERVICE_MAX_PROJECTS"
+    # Client-side request bounds. Registered here so this enum stays the one
+    # authoritative list of settings; the thin client parses them leniently
+    # and falls back to the shipped default rather than raising.
+    SERVICE_SEARCH_TIMEOUT = "VAULTSPEC_RAG_SEARCH_TIMEOUT"
+    SERVICE_ADMIN_TIMEOUT = "VAULTSPEC_RAG_ADMIN_TIMEOUT"
+    # Managed qdrant readiness bound, operator-tunable for very large stores.
+    QDRANT_READY_TIMEOUT = "VAULTSPEC_RAG_QDRANT_READY_TIMEOUT"
+    # Diagnostic memory probe on/off switch. Named here so this enum stays the
+    # authoritative list, but deliberately absent from the defaults map: the
+    # probe module is reachable from spawn workers and must not pull this
+    # module into their import chain, and it reads the raw value with its own
+    # "any non-empty, non-zero string" rule rather than a bool coercion.
+    MEMORY_PROBE = "VAULTSPEC_RAG_MEMORY_PROBE"
     MANAGED_LOG_MAX_BYTES = "VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES"
     MANAGED_LOG_BACKUP_COUNT = "VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT"
     # Service-domain indexing job lifecycle bounds.
@@ -120,6 +133,15 @@ class EnvVar(StrEnum):
     INDEX_CUDA_ALLOCATOR_FRACTION = "VAULTSPEC_RAG_INDEX_CUDA_ALLOCATOR_FRACTION"
     INDEX_SUPPORT_PROFILE = "VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE"
     # Wall-clock + memory tuning knobs introduced in #68 Track B.
+    # Model identity and the dense width that must accompany it. Overriding a
+    # model against an index built with another one is an operator decision
+    # with consequences: the stored vectors belong to the old model's space.
+    # A width that disagrees with the model is rejected by the server on the
+    # first upsert rather than silently stored, so the mismatch is loud.
+    EMBEDDING_MODEL = "VAULTSPEC_RAG_EMBEDDING_MODEL"
+    EMBEDDING_DIMENSION = "VAULTSPEC_RAG_EMBEDDING_DIMENSION"
+    SPARSE_MODEL = "VAULTSPEC_RAG_SPARSE_MODEL"
+    RERANKER_MODEL = "VAULTSPEC_RAG_RERANKER_MODEL"
     EMBEDDING_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_BATCH_SIZE"
     EMBEDDING_ENCODE_BATCH_SIZE = "VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE"
     EMBEDDING_MAX_SEQ_LENGTH = "VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH"
@@ -162,6 +184,9 @@ class EnvVar(StrEnum):
     DEDUP_LOCALES_DEFAULT = "VAULTSPEC_RAG_DEDUP_LOCALES_DEFAULT"
     # Reranker input token bound.
     RERANKER_MAX_LENGTH = "VAULTSPEC_RAG_RERANKER_MAX_LENGTH"
+    RERANKER_BATCH_SIZE = "VAULTSPEC_RAG_RERANKER_BATCH_SIZE"
+    # Vault-graph cache lifetime.
+    GRAPH_TTL_SECONDS = "VAULTSPEC_RAG_GRAPH_TTL_SECONDS"
     # Worker-thread pool partitioning.
     SEARCH_CONCURRENCY = "VAULTSPEC_RAG_SEARCH_CONCURRENCY"
     INDEX_JOB_CONCURRENCY = "VAULTSPEC_RAG_INDEX_JOB_CONCURRENCY"
@@ -241,6 +266,9 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "log_level": EnvVar.LOG_LEVEL,
     "service_idle_ttl_seconds": EnvVar.SERVICE_IDLE_TTL_SECONDS,
     "service_max_projects": EnvVar.SERVICE_MAX_PROJECTS,
+    "service_search_timeout_seconds": EnvVar.SERVICE_SEARCH_TIMEOUT,
+    "service_admin_timeout_seconds": EnvVar.SERVICE_ADMIN_TIMEOUT,
+    "qdrant_ready_timeout_seconds": EnvVar.QDRANT_READY_TIMEOUT,
     "managed_log_max_bytes": EnvVar.MANAGED_LOG_MAX_BYTES,
     "managed_log_backup_count": EnvVar.MANAGED_LOG_BACKUP_COUNT,
     "job_max_nonterminal": EnvVar.JOB_MAX_NONTERMINAL,
@@ -265,6 +293,12 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "index_support_profile": EnvVar.INDEX_SUPPORT_PROFILE,
     # Performance tuning knobs - surface them via env vars too so
     # deploy-time tuning does not require CLI flags or config file edits.
+    "embedding_model": EnvVar.EMBEDDING_MODEL,
+    "embedding_dimension": EnvVar.EMBEDDING_DIMENSION,
+    "sparse_model": EnvVar.SPARSE_MODEL,
+    "reranker_model": EnvVar.RERANKER_MODEL,
+    "reranker_batch_size": EnvVar.RERANKER_BATCH_SIZE,
+    "graph_ttl_seconds": EnvVar.GRAPH_TTL_SECONDS,
     "embedding_batch_size": EnvVar.EMBEDDING_BATCH_SIZE,
     "embedding_encode_batch_size": EnvVar.EMBEDDING_ENCODE_BATCH_SIZE,
     "embedding_max_seq_length": EnvVar.EMBEDDING_MAX_SEQ_LENGTH,
@@ -648,6 +682,15 @@ class VaultSpecConfigWrapper:
         "log_level": "WARNING",
         "service_idle_ttl_seconds": 1800,
         "service_max_projects": 16,
+        # Client-side request bounds, in seconds. The search bound is generous
+        # because a cold rebuild-class query can sit behind model load; the
+        # admin bound covers lifecycle calls that should answer promptly.
+        "service_search_timeout_seconds": 300.0,
+        "service_admin_timeout_seconds": 30.0,
+        # Readiness bound for the managed qdrant child. A large store was
+        # measured opening in ~131 s, so this is generous by design; operators
+        # with larger stores raise it rather than patching the supervisor.
+        "qdrant_ready_timeout_seconds": 300.0,
         # Per-source retention policy for every operational log managed by the
         # resident service. Service and Qdrant each receive this full budget;
         # the values are not divided across sources.
@@ -1374,6 +1417,26 @@ class VaultSpecConfigWrapper:
 
 
 _cached_config: VaultSpecConfigWrapper | None = None
+
+
+def rag_default(key: str) -> Any:
+    """Return the shipped default for *key*, ignoring env and CLI overrides.
+
+    The settings defaults are the one home for these values. Call sites that
+    need the fallback for a leniently-parsed setting read it from here rather
+    than restating the number, so a default can never drift between the
+    settings object and the module that consumes it.
+
+    Args:
+        key: A ``_RAG_DEFAULTS`` settings key.
+
+    Returns:
+        The shipped default value for that key.
+
+    Raises:
+        KeyError: When *key* is not a known settings key.
+    """
+    return VaultSpecConfigWrapper._RAG_DEFAULTS[key]  # pyright: ignore[reportPrivateUsage]
 
 
 def get_config(
