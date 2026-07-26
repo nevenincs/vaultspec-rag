@@ -182,23 +182,44 @@ def _is_timeout(exc: BaseException) -> bool:
     return False
 
 
-def _get_admin_timeout(timeout: float | None = None) -> float:
-    """Return the admin-call bound, resolved leniently from the settings.
+def _resolve_timeout(
+    timeout: float | None,
+    *,
+    setting: str,
+    label: str,
+    default: float,
+) -> float:
+    """Return a call bound, resolved leniently from the settings.
 
     An unusable configured bound - malformed, empty, non-finite or
-    non-positive - degrades to the shipped default rather than raising, so
-    an operator typo slows nothing down and breaks no lifecycle verb.
+    non-positive - degrades to the shipped default rather than raising, so an
+    operator typo slows nothing down and turns no call into a crash. The
+    degrade is logged; see :func:`_warn_unusable_settings`.
+
+    The admin and search bounds resolved this identically, differing only in
+    which setting they read, the word in the warning, and which default they
+    fall back to.
     """
     resolved = timeout
     if timeout is None:
         try:
-            resolved = float(get_config().service_admin_timeout_seconds)
+            resolved = float(getattr(get_config(), setting))
         except (TypeError, ValueError) as exc:
-            _warn_unusable_settings("admin", exc)
-            return DEFAULT_ADMIN_TIMEOUT_SECONDS
+            _warn_unusable_settings(label, exc)
+            return default
     if resolved is None or not math.isfinite(resolved) or resolved <= 0:
-        return DEFAULT_ADMIN_TIMEOUT_SECONDS
+        return default
     return resolved
+
+
+def _get_admin_timeout(timeout: float | None = None) -> float:
+    """Return the admin-call bound."""
+    return _resolve_timeout(
+        timeout,
+        setting="service_admin_timeout_seconds",
+        label="admin",
+        default=DEFAULT_ADMIN_TIMEOUT_SECONDS,
+    )
 
 
 def _format_timeout_seconds(timeout: float) -> str:
@@ -928,23 +949,13 @@ def _warn_unusable_settings(bound: str, exc: BaseException) -> None:
 
 
 def _get_search_timeout(timeout: float | None) -> float:
-    """Return the search-call bound, resolved leniently from the settings.
-
-    An unusable configured bound - malformed, empty, non-finite or
-    non-positive - degrades to the shipped default rather than raising, so
-    an operator typo never turns a search into a crash. The degrade is
-    logged; see :func:`_warn_unusable_settings`.
-    """
-    resolved = timeout
-    if timeout is None:
-        try:
-            resolved = float(get_config().service_search_timeout_seconds)
-        except (TypeError, ValueError) as exc:
-            _warn_unusable_settings("search", exc)
-            return DEFAULT_SEARCH_TIMEOUT_SECONDS
-    if resolved is None or not math.isfinite(resolved) or resolved <= 0:
-        return DEFAULT_SEARCH_TIMEOUT_SECONDS
-    return resolved
+    """Return the search-call bound."""
+    return _resolve_timeout(
+        timeout,
+        setting="service_search_timeout_seconds",
+        label="search",
+        default=DEFAULT_SEARCH_TIMEOUT_SECONDS,
+    )
 
 
 def _probe_unavailable(kind: str, exc: Exception) -> dict[str, object]:

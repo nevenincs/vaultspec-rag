@@ -60,7 +60,10 @@ import os
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
     VaultSpecConfig as BaseConfig,
@@ -1208,16 +1211,41 @@ class VaultSpecConfigWrapper:
     # exist only where a value is constrained by ANOTHER setting, which a
     # per-key range cannot express.
 
-    def _store_write_retry_bounds(self) -> tuple[float, float]:
-        base = float(self._resolve_rag_default("store_write_retry_base_seconds"))
-        maximum = float(self._resolve_rag_default("store_write_retry_max_seconds"))
-        if maximum < base:
+    def _ordered_bounds[T: (int, float)](
+        self,
+        lower_key: str,
+        upper_key: str,
+        *,
+        convert: Callable[[Any], T],
+        lower_label: str,
+        upper_label: str,
+    ) -> tuple[T, T]:
+        """Resolve a lower/upper setting pair, refusing an inverted one.
+
+        Four settings pairs validated themselves with the same nine lines,
+        differing only in the two keys, the numeric type, and the two words
+        naming each end in the error. The message is assembled to the same
+        shape those four produced, so an operator's existing failure text is
+        unchanged.
+        """
+        lower = convert(self._resolve_rag_default(lower_key))
+        upper = convert(self._resolve_rag_default(upper_key))
+        if upper < lower:
             msg = (
-                "store_write_retry_max_seconds must be greater than or equal to "
-                f"store_write_retry_base_seconds, got maximum={maximum}, base={base}"
+                f"{upper_key} must be greater than or equal to {lower_key}, "
+                f"got {upper_label}={upper}, {lower_label}={lower}"
             )
             raise ValueError(msg)
-        return base, maximum
+        return lower, upper
+
+    def _store_write_retry_bounds(self) -> tuple[float, float]:
+        return self._ordered_bounds(
+            "store_write_retry_base_seconds",
+            "store_write_retry_max_seconds",
+            convert=float,
+            lower_label="base",
+            upper_label="maximum",
+        )
 
     @property
     def effective_qdrant_url(self) -> str:
@@ -1256,26 +1284,22 @@ class VaultSpecConfigWrapper:
         return self._store_write_retry_bounds()[1]
 
     def _index_chunk_bounds(self) -> tuple[int, int]:
-        segment = int(self._resolve_rag_default("index_segment_max_chunks"))
-        queue = int(self._resolve_rag_default("index_queue_max_chunks"))
-        if queue < segment:
-            msg = (
-                "index_queue_max_chunks must be greater than or equal to "
-                f"index_segment_max_chunks, got queue={queue}, segment={segment}"
-            )
-            raise ValueError(msg)
-        return segment, queue
+        return self._ordered_bounds(
+            "index_segment_max_chunks",
+            "index_queue_max_chunks",
+            convert=int,
+            lower_label="segment",
+            upper_label="queue",
+        )
 
     def _index_byte_bounds(self) -> tuple[int, int]:
-        segment = int(self._resolve_rag_default("index_segment_max_bytes"))
-        queue = int(self._resolve_rag_default("index_queue_max_bytes"))
-        if queue < segment:
-            msg = (
-                "index_queue_max_bytes must be greater than or equal to "
-                f"index_segment_max_bytes, got queue={queue}, segment={segment}"
-            )
-            raise ValueError(msg)
-        return segment, queue
+        return self._ordered_bounds(
+            "index_segment_max_bytes",
+            "index_queue_max_bytes",
+            convert=int,
+            lower_label="segment",
+            upper_label="queue",
+        )
 
     @property
     def index_segment_max_chunks(self) -> int:
@@ -1332,15 +1356,13 @@ class VaultSpecConfigWrapper:
         )
 
     def _watch_retry_bounds(self) -> tuple[float, float]:
-        base = float(self._resolve_rag_default("watch_retry_base_seconds"))
-        maximum = float(self._resolve_rag_default("watch_retry_max_seconds"))
-        if maximum < base:
-            msg = (
-                "watch_retry_max_seconds must be greater than or equal to "
-                f"watch_retry_base_seconds, got maximum={maximum}, base={base}"
-            )
-            raise ValueError(msg)
-        return base, maximum
+        return self._ordered_bounds(
+            "watch_retry_base_seconds",
+            "watch_retry_max_seconds",
+            convert=float,
+            lower_label="base",
+            upper_label="maximum",
+        )
 
     @property
     def watch_retry_base_seconds(self) -> float:

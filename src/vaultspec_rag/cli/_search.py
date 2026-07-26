@@ -146,6 +146,25 @@ def _handle_service_success(
     _render_partial_domain_failures(payload)
 
 
+def _shortfall_figures(
+    payload: dict[str, object], key: str
+) -> dict[str, object] | None:
+    """Return ``index_state[key]`` when it is a figures dict, else ``None``.
+
+    The two shortfall warnings share this extraction and nothing else: their
+    prose describes independent failures, so only the guard is common. A
+    missing field means complete or unknowable, and warning on either would
+    train the reader to ignore the warning.
+    """
+    index_state = payload.get("index_state")
+    if not isinstance(index_state, dict):
+        return None
+    figures = cast("dict[str, object]", index_state).get(key)
+    if not isinstance(figures, dict):
+        return None
+    return cast("dict[str, object]", figures)
+
+
 def _render_breadth_shortfall(payload: dict[str, object]) -> None:
     """Warn that the index answering this search is demonstrably incomplete.
 
@@ -154,13 +173,9 @@ def _render_breadth_shortfall(payload: dict[str, object]) -> None:
     complete or unknowable, and warning on either would train the reader to
     ignore the warning.
     """
-    index_state = payload.get("index_state")
-    if not isinstance(index_state, dict):
+    figures = _shortfall_figures(payload, "shortfall")
+    if figures is None:
         return
-    shortfall = cast("dict[str, object]", index_state).get("shortfall")
-    if not isinstance(shortfall, dict):
-        return
-    figures = cast("dict[str, object]", shortfall)
     live = figures.get("live_count")
     published = figures.get("published_count")
     missing = figures.get("missing_count")
@@ -184,13 +199,9 @@ def _render_file_breadth_shortfall(payload: dict[str, object]) -> None:
     a publication covering a fraction of the files it names still stamps a
     self-consistent point count, so this fires where that one cannot.
     """
-    index_state = payload.get("index_state")
-    if not isinstance(index_state, dict):
+    figures = _shortfall_figures(payload, "file_shortfall")
+    if figures is None:
         return
-    shortfall = cast("dict[str, object]", index_state).get("file_shortfall")
-    if not isinstance(shortfall, dict):
-        return
-    figures = cast("dict[str, object]", shortfall)
     named = figures.get("named_count")
     covered = figures.get("covered_count")
     missing = figures.get("missing_count")
