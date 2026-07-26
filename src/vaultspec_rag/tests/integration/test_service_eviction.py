@@ -40,6 +40,7 @@ def _make_vault_project(root: Path, *, label: str) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     vault = root / ".vault" / "research"
     vault.mkdir(parents=True, exist_ok=True)
+    (root / ".vaultspec").mkdir(parents=True, exist_ok=True)
     (vault / "doc.md").write_text(
         f'---\ntags:\n  - "#research"\n  - "#{label}"\n'
         f"date: 2026-04-12\n---\n\n# {label}\n\nContent for {label}.\n",
