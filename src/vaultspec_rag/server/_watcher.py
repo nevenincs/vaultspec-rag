@@ -12,11 +12,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from enum import StrEnum
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 __all__ = [
+    "WatcherStartOutcome",
     "_ensure_watcher",
     "_ensure_watcher_soon",
     "_stop_all_watchers",
@@ -34,6 +36,51 @@ if TYPE_CHECKING:
     from ..service import ProjectSlot, ServiceRegistry
 
 logger = logging.getLogger("vaultspec_rag.server")
+
+
+class WatcherStartOutcome(StrEnum):
+    """What a start request achieved for one root, at the moment it returned.
+
+    A start request is answered without waiting: an owner that has not yet
+    released (a draining stop, an in-flight warm) can hold the real start for
+    as long as the shutdown bound allows, and holding the caller for that
+    window would outlive its own request deadline. The outcome therefore
+    separates "a watcher is running" from "a start is owed", so an operator is
+    never told automatic indexing is back when it is not yet.
+    """
+
+    #: A watcher was already running for the root when the request arrived.
+    ALREADY_RUNNING = "already_running"
+    #: This request published the watcher; it is running on return.
+    STARTED = "started"
+    #: Another start for the root is mid-flight; this request's overrides were
+    #: recorded and that start will publish them.
+    PENDING = "pending"
+    #: A stop is still draining; the start is queued behind it and publishes
+    #: once the old generation releases.
+    QUEUED_BEHIND_DRAIN = "queued_behind_drain"
+    #: Watching is switched off for the service; no watcher will start.
+    DISABLED = "disabled"
+    #: No watcher, and none owed: a stop superseded the request, the owning
+    #: registry was replaced, or the service is shutting down.
+    UNAVAILABLE = "unavailable"
+
+    @property
+    def running(self) -> bool:
+        """Whether a watcher is running for the root on return."""
+        return self in (
+            WatcherStartOutcome.ALREADY_RUNNING,
+            WatcherStartOutcome.STARTED,
+        )
+
+    @property
+    def pending(self) -> bool:
+        """Whether a start is still owed to the root by another owner."""
+        return self in (
+            WatcherStartOutcome.PENDING,
+            WatcherStartOutcome.QUEUED_BEHIND_DRAIN,
+        )
+
 
 #: Strong references to in-flight deferred watcher starts so the event
 #: loop cannot garbage-collect them mid-flight.
@@ -223,7 +270,7 @@ def _ensure_watcher(
     *,
     debounce_ms: int | None = None,
     cooldown_s: float | None = None,
-) -> bool:
+) -> WatcherStartOutcome:
     """Launch a filesystem watcher for *root* as a background asyncio task.
 
     Safe to call repeatedly - starts at most one watcher per root.
@@ -233,6 +280,10 @@ def _ensure_watcher(
     Must be called from the async event loop thread (not from a
     worker thread).
 
+    The call never waits for another owner to release, so a request that
+    arrives while a stop drains, or while another start warms, records its
+    overrides and returns a pending outcome rather than a running one.
+
     Args:
         root: Project root directory to watch.
         debounce_ms: Optional debounce override (ms); falls back to
@@ -241,9 +292,8 @@ def _ensure_watcher(
             ``cfg.watch_cooldown_s`` when ``None``.
 
     Returns:
-        ``True`` if a watcher is running for *root* on return (newly
-        started or already present); ``False`` if watching is disabled
-        or the service is shutting down.
+        The :class:`WatcherStartOutcome` describing the root's real state on
+        return. Only ``running`` outcomes mean a watcher is watching.
     """
     from ..config import get_config
 
@@ -252,33 +302,33 @@ def _ensure_watcher(
     # pull-only and no watcher is ever started - including explicit
     # start/reconfigure requests.
     if not cfg.watch_enabled:
-        return False
+        return WatcherStartOutcome.DISABLED
     root = root.resolve()
     drain: _WatcherDrain | None = None
     generation: int | None = None
     owner_registry: ServiceRegistry | None = None
     with _m._watcher_lock:
         if root in _m._watcher_tasks:
-            return True
+            return WatcherStartOutcome.ALREADY_RUNNING
         if (
             root in _deferred_watcher_roots
             or root in _suppressed_deferred_watcher_roots
         ):
             _deferred_watcher_restarts[root] = (debounce_ms, cooldown_s)
-            return True
+            return WatcherStartOutcome.PENDING
         if root in _watcher_drains:
             _watcher_restarts[root] = (debounce_ms, cooldown_s)
             drain = _watcher_drains[root]
         elif root in _watcher_starting_generations:
             _watcher_starting_restarts[root] = (debounce_ms, cooldown_s)
-            return True
+            return WatcherStartOutcome.PENDING
         else:
             generation = _watcher_stop_generations.get(root, 0)
             _watcher_starting_generations[root] = generation
             owner_registry = _m._registry
     if drain is not None:
         _schedule_watcher_drain(root, drain)
-        return True
+        return WatcherStartOutcome.QUEUED_BEHIND_DRAIN
     assert generation is not None and owner_registry is not None
     # Preserve the package's rebindable ``_registry.peek_project`` ownership
     # seam while the private helper performs the potentially cold open.
@@ -300,7 +350,7 @@ def _warm_and_publish_watcher(
     debounce_ms: int | None,
     cooldown_s: float | None,
     expected_generation: int,
-) -> bool:
+) -> WatcherStartOutcome:
     """Cold-open a slot, then atomically publish only the valid generation."""
     # Resolve the project slot OUTSIDE the lock - peek_project() has its own
     # per-root locking and can take 50-200ms on cold start.
@@ -321,12 +371,12 @@ def _warm_and_publish_watcher(
             and restart is None
         ):
             _forget_stop_generation_if_idle(root)
-            return False
+            return WatcherStartOutcome.UNAVAILABLE
         requested_debounce, requested_cooldown = restart or (
             debounce_ms,
             cooldown_s,
         )
-        started = _start_watcher_locked(
+        outcome = _start_watcher_locked(
             root,
             slot=slot,
             registry=registry,
@@ -335,9 +385,9 @@ def _warm_and_publish_watcher(
             cooldown_s=requested_cooldown,
             expected_generation=_watcher_stop_generations.get(root, 0),
         )
-        if not started:
+        if not (outcome.running or outcome.pending):
             _forget_stop_generation_if_idle(root)
-        return started
+        return outcome
 
 
 def _start_watcher_locked(
@@ -349,19 +399,19 @@ def _start_watcher_locked(
     debounce_ms: int | None,
     cooldown_s: float | None,
     expected_generation: int,
-) -> bool:
+) -> WatcherStartOutcome:
     """Publish a warmed watcher while ``_watcher_lock`` still owns its epoch."""
     if _watcher_stop_generations.get(root, 0) != expected_generation:
-        return False
+        return WatcherStartOutcome.UNAVAILABLE
     if root in _m._watcher_tasks:
-        return True
+        return WatcherStartOutcome.ALREADY_RUNNING
     if root in _watcher_drains:
         _watcher_restarts[root] = (debounce_ms, cooldown_s)
-        return True
+        return WatcherStartOutcome.QUEUED_BEHIND_DRAIN
     if registry is not _m._registry or getattr(registry, "_shutting_down", False):
-        return False
+        return WatcherStartOutcome.UNAVAILABLE
     if not bool(cfg.watch_enabled):
-        return False
+        return WatcherStartOutcome.DISABLED
 
     from ..watcher import watch_and_reindex
 
@@ -390,7 +440,7 @@ def _start_watcher_locked(
     _m._watcher_stops[root] = stop_event
     task.add_done_callback(partial(_watcher_task_done, root))
     log_event(logger, "service.watcher", "task_started", root=root)
-    return True
+    return WatcherStartOutcome.STARTED
 
 
 def _stop_watcher(root: Path) -> asyncio.Task[bool] | None:

@@ -106,6 +106,7 @@ from ._utils import (
     _validate_vault_root,
 )
 from ._watcher import (
+    WatcherStartOutcome,
     _ensure_watcher,
     _ensure_watcher_soon,
     _stop_all_watchers,
@@ -124,6 +125,7 @@ __all__ = [
     "ProjectRootRequiredError",
     "SearchResponse",
     "SearchResultItem",
+    "WatcherStartOutcome",
     "_DiscoveryPublisher",
     "_clamp_top_k",
     "_daemon_log_capture",

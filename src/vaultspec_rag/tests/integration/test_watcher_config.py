@@ -17,6 +17,7 @@ import pytest
 
 from ... import server
 from ...config import EnvVar, get_config, reset_config
+from ...server import WatcherStartOutcome
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -99,7 +100,7 @@ async def test_failed_watcher_task_is_removed_from_running_registry(
         corrupt.write_text("{not-json", encoding="utf-8")
 
         with caplog.at_level(logging.INFO, logger="vaultspec_rag.server"):
-            assert server._ensure_watcher(root)
+            assert server._ensure_watcher(root) is WatcherStartOutcome.STARTED
             for _ in range(20):
                 await asyncio.sleep(0.05)
                 if root.resolve() not in server._watcher_tasks:
