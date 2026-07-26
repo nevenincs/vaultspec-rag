@@ -63,8 +63,6 @@ __all__ = [
 # ``tasklist``, a hung psutil probe) fails startup with a named cause instead
 # of holding the machine singleton lock indefinitely.
 _REAP_BUDGET_DEFAULT_SECONDS = 30.0
-_READY_TIMEOUT_DEFAULT_SECONDS = 300.0
-_READY_TIMEOUT_ENV = "VAULTSPEC_RAG_QDRANT_READY_TIMEOUT"
 _STOP_TIMEOUT_SECONDS = 10.0
 # How many of the child's most-recent output lines to retain in memory so a
 # non-ready exit can be reported with its cause (a Rust panic, a bind error, a
@@ -200,14 +198,17 @@ def _ready_timeout_seconds() -> float:
     or non-positive value falls back to the default rather than failing
     startup.
     """
-    raw = os.environ.get(_READY_TIMEOUT_ENV)
+    from ..config import EnvVar, rag_default
+
+    default = float(rag_default("qdrant_ready_timeout_seconds"))
+    raw = os.environ.get(EnvVar.QDRANT_READY_TIMEOUT.value)
     if raw is None:
-        return _READY_TIMEOUT_DEFAULT_SECONDS
+        return default
     try:
         value = float(raw)
     except ValueError:
-        return _READY_TIMEOUT_DEFAULT_SECONDS
-    return value if value > 0 else _READY_TIMEOUT_DEFAULT_SECONDS
+        return default
+    return value if value > 0 else default
 
 
 # Environment variables the qdrant child inherits. Least privilege: only
