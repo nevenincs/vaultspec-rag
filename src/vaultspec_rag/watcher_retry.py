@@ -631,10 +631,17 @@ class WatcherRetryPolicy:
             return committed
 
     def _retry_delay(self, failures: int, *, random_unit: float) -> float:
-        exponent = min(max(0, failures - 1), 62)
-        nominal = min(self._max_seconds, self._base_seconds * (2.0**exponent))
-        jitter = nominal * self._jitter_fraction * ((2.0 * random_unit) - 1.0)
-        return min(self._max_seconds, max(0.0, nominal + jitter))
+        # Failures are counted from one, so the first failure waits the base.
+        # The exponent ceiling lives in the shared computation.
+        from ._backoff import jittered_backoff
+
+        return jittered_backoff(
+            max(0, failures - 1),
+            base=self._base_seconds,
+            cap=self._max_seconds,
+            fraction=self._jitter_fraction,
+            random_unit=random_unit,
+        )
 
     def _validate_authority(self, state: WatcherRetryState) -> None:
         if state.canonical_root != self._root or state.source != self._source:

@@ -35,6 +35,8 @@ import sys
 import time
 from typing import TYPE_CHECKING
 
+from ._backoff import jittered_backoff
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
@@ -74,13 +76,6 @@ def _is_sharing_violation(exc: OSError) -> bool:
     )
 
 
-def _backoff_seconds(attempt: int) -> float:
-    """Return the jittered wait before retrying *attempt*."""
-    nominal = min(_MAX_SLEEP_SECONDS, _BASE_SECONDS * (2**attempt))
-    jitter = nominal * _JITTER_FRACTION * (2.0 * random.random() - 1.0)
-    return max(0.0, nominal + jitter)
-
-
 def _retrying(replace: Callable[[], None]) -> None:
     """Run *replace* through the bounded sharing-violation ladder."""
     for attempt in range(_ATTEMPTS):
@@ -89,7 +84,17 @@ def _retrying(replace: Callable[[], None]) -> None:
         except OSError as exc:
             last = attempt + 1 >= _ATTEMPTS
             if _is_sharing_violation(exc) and not last:
-                time.sleep(_backoff_seconds(attempt))
+                # The ladder numbers attempts from zero, so the attempt index
+                # is the exponent with no offset.
+                time.sleep(
+                    jittered_backoff(
+                        attempt,
+                        base=_BASE_SECONDS,
+                        cap=_MAX_SLEEP_SECONDS,
+                        fraction=_JITTER_FRACTION,
+                        random_unit=random.random(),
+                    )
+                )
                 continue
             raise
         else:
