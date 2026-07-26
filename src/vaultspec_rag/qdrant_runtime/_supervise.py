@@ -28,10 +28,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from .._loopback_http import LOOPBACK_OPENER
 from .._managed_log_sink import RawRotatingLogSink
 from .._win32 import WIN_CREATE_NEW_PROCESS_GROUP, WIN_CREATE_NO_WINDOW
 from ._constants import (
-    LOOPBACK_OPENER,
     QDRANT_SERVER_VERSION,
     QdrantRuntimeState,
 )

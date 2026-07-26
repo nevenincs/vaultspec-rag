@@ -39,8 +39,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import TYPE_CHECKING, Any, Final, Literal, NoReturn, cast
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, cast
 
+from .._loopback_http import LOOPBACK_OPENER
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from ..config import get_config, rag_default
 
@@ -96,47 +97,6 @@ type JobSource = Literal["vault", "code"]
 type JobMode = Literal["incremental", "rebuild"]
 type DesiredJobState = Literal["running", "paused", "cancelled"]
 type JobControlMode = Literal["graceful", "force"]
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """Refuse HTTP redirects on every request this transport makes.
-
-    The transport addresses only ``127.0.0.1`` at a caller-supplied port, and no
-    service route emits a 3xx, so a redirect means something other than the
-    intended service answered. Following one would let that responder choose
-    where the request goes: the standard library copies request headers onto the
-    redirect target without comparing hosts or stripping credentials, so a
-    redirected token-gated call would carry the bearer credential off-host, and a
-    redirected health call would report another host's state as this service's.
-
-    Returning ``None`` declines the redirect, which leaves the 3xx to surface as
-    an ordinary HTTP error through the caller's existing handling.
-    """
-
-    def redirect_request(
-        self,
-        req: urllib.request.Request,
-        fp: object,
-        code: int,
-        msg: str,
-        headers: object,
-        newurl: str,
-    ) -> urllib.request.Request | None:
-        _ = req, fp, code, msg, headers, newurl
-        return None
-
-
-#: The one opener every request in this module goes through. It refuses
-#: redirects, and it empties the proxy map so a ``http_proxy`` environment
-#: variable cannot route a loopback request off the host: the standard library
-#: does not bypass loopback automatically, so without this an operator's proxy
-#: setting would carry the bearer credential to an arbitrary peer and let that
-#: peer's body be adopted as the service's answer - the same two consequences
-#: redirect refusal exists to prevent, reached without any redirect. The
-#: qdrant runtime's loopback openers are built the same way.
-_OPENER: Final = urllib.request.build_opener(
-    _NoRedirect, urllib.request.ProxyHandler({})
-)
 
 
 class ServiceUnavailableError(RuntimeError):
@@ -285,7 +245,7 @@ def _try_http_health(
     """
     url = f"http://127.0.0.1:{port}/health"
     try:
-        with _OPENER.open(url, timeout=timeout) as resp:
+        with LOOPBACK_OPENER.open(url, timeout=timeout) as resp:
             parsed: object = json.loads(_read_service_response(resp).decode("utf-8"))
         if not isinstance(parsed, dict):
             # Valid JSON that is not an object is not a health answer. Passing
@@ -327,7 +287,7 @@ def _fetch_health_token(port: int, timeout: float | None = None) -> str:
     url = f"http://127.0.0.1:{port}/health"
     try:
         req = urllib.request.Request(url, method="GET")
-        with _OPENER.open(
+        with LOOPBACK_OPENER.open(
             req, timeout=timeout or DEFAULT_ADMIN_TIMEOUT_SECONDS
         ) as resp:
             data: object = json.loads(_read_service_response(resp).decode("utf-8"))
@@ -380,7 +340,7 @@ def _send_call(
     propagate to the caller's unreachable handling.
     """
     try:
-        with _OPENER.open(req, timeout=timeout) as resp:
+        with LOOPBACK_OPENER.open(req, timeout=timeout) as resp:
             body = cast(
                 "dict[str, object]",
                 json.loads(_read_service_response(resp).decode("utf-8")),
