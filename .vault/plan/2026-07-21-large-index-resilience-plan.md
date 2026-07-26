@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#large-index-resilience'
 date: '2026-07-21'
-modified: '2026-07-23'
+modified: '2026-07-26'
 tier: L3
 related:
   - '[[2026-07-21-large-index-resilience-adr]]'
@@ -13,6 +13,16 @@ related:
   - '[[2026-07-21-service-job-control-plan]]'
   - '[[2026-07-21-index-backpressure-storage-hygiene-plan]]'
 ---
+
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
 
 <!-- RETIRED: S04 -->
 
@@ -169,7 +179,7 @@ Measure bounded growth, concurrent search headroom, and completion at the incide
 - [x] `W04.P13.S44` - Create a reproducible large-index resilience harness using the production index path and real backends; `src/vaultspec_rag/tests/benchmarks/bench_large_index_resilience.py`.
 - [x] `W04.P13.S45` - Compare real-CUDA RSS and allocated and reserved high-water marks at N and two-N corpus sizes; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
 - [x] `W04.P13.S46` - Prove concurrent search retains reserved GPU headroom while bounded indexing progresses; `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`.
-- [ ] `W04.P13.S47` - Complete the 250872-chunk incident floor on the declared default managed-service profile; `src/vaultspec_rag/tests/benchmarks/bench_large_index_resilience.py`.
+- [x] `W04.P13.S47` - Complete the 250872-chunk incident floor on the declared default managed-service profile; `src/vaultspec_rag/tests/benchmarks/bench_large_index_resilience.py`.
 
 ## Wave `W05` - system verification and review
 
