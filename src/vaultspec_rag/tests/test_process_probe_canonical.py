@@ -399,3 +399,36 @@ class TestFdLockHasOneImplementation:
             unlock_fd(held, offset=1 << 20)
             os.close(other)
             os.close(held)
+
+
+class TestOperatorAddressLineHasOneTemplate:
+    """The "Address:" line is built by ``_render._address_line`` alone.
+
+    ``_address_line`` already existed and already had eight callers while eight
+    OTHER sites hand-built the identical f-string - a half-adopted canonical,
+    which is worse than none: it reads as if the template is owned, so the next
+    author copies whichever form they happened to see.
+    """
+
+    def test_no_module_hand_builds_the_address_line(self) -> None:
+        offenders = [
+            f"{path.relative_to(_PACKAGE_ROOT).as_posix()}:{number}"
+            for path in _production_sources()
+            if path.name != "_render.py"
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            )
+            if "Address: http://127.0.0.1:" in line
+        ]
+        assert not offenders, (
+            f"hand-built operator address line at {offenders}; call "
+            "_render._address_line(port) so the label and host rendering "
+            "cannot disagree across the CLI's own output"
+        )
+
+    def test_the_template_still_renders_what_operators_parse(self) -> None:
+        # The string itself is the contract - operators and docs read it - so
+        # centralising must not quietly reword it.
+        from ..cli._render import _address_line
+
+        assert _address_line(8766) == "Address: http://127.0.0.1:8766"

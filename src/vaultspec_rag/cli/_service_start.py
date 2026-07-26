@@ -49,8 +49,8 @@ from ._process import (
     _spawn_service,
 )
 from ._progress import StartupStatusReporter
+from ._render import _address_line
 from ._service_lifecycle import (
-    _address_line,
     _fail_lifecycle,
     _lifecycle_success,
     _print_lifecycle_lines,

@@ -39,7 +39,7 @@ from ._process import (
     _heartbeat_age_seconds,
     _port_is_listening,
 )
-from ._render import _emit_json, _plain
+from ._render import _address_line, _emit_json, _plain
 from ._service_jobs import (
     _human_progress,
     _operation_label,
@@ -47,7 +47,6 @@ from ._service_jobs import (
     _stale_progress_label,
 )
 from ._service_lifecycle import (
-    _address_line,
     _print_detail_line,
     _should_unlink_discovery_file,
 )

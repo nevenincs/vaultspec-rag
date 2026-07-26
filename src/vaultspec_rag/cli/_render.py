@@ -126,9 +126,19 @@ def _emit_json_error_and_exit(
     raise typer.Exit(code=code)
 
 
+def _address_line(port: object) -> str:
+    """Return the operator's "Address:" line for a loopback service port.
+
+    One template with sixteen callers. Eight of them used to build the string
+    inline, so the label, the host rendering, and the scheme were a rename
+    away from disagreeing across the CLI's own output.
+    """
+    return f"Address: http://127.0.0.1:{port}"
+
+
 def _display_service_not_running(port: int | None = None) -> None:
     if port is not None:
-        _plain(f"Address: http://127.0.0.1:{port}")
+        _plain(_address_line(port))
     _plain("Service is not running. Start it with `vaultspec-rag server start`.")
 
 
