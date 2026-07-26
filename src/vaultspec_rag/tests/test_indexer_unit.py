@@ -524,7 +524,7 @@ class TestIncrementalIndexMetadata:
         with open(src, "rb") as f:
             content_hash = hashlib.file_digest(f, "blake2b").hexdigest()
         meta = {"mod.py": content_hash}
-        indexer._write_meta(meta, policy=indexer._resolve_operation_policy())
+        indexer._write_meta(meta, policy=indexer.resolve_policy_snapshot())
 
         # Reload and verify types. The reserved embed-format marker is
         # stamped on disk but stripped from the loaded mapping, so every
@@ -568,7 +568,7 @@ class TestIncrementalIndexUnhashedFiles:
         # Writing current_hashes directly (the fix) must not raise.
         indexer._write_meta(
             current_hashes,
-            policy=indexer._resolve_operation_policy(),
+            policy=indexer.resolve_policy_snapshot(),
         )
 
         loaded = indexer._load_meta()
@@ -837,7 +837,7 @@ class TestHashingPermissionError:
             good_hash = hashlib.file_digest(f, "blake2b").hexdigest()
 
         meta = {"good.py": good_hash}
-        indexer._write_meta(meta, policy=indexer._resolve_operation_policy())
+        indexer._write_meta(meta, policy=indexer.resolve_policy_snapshot())
 
         # Verify the meta was written correctly
         loaded = indexer._load_meta()
@@ -855,7 +855,7 @@ class TestHashingPermissionError:
             "foo.py": "a" * 64,
             "bar/baz.rs": "b" * 64,
         }
-        indexer._write_meta(hashes, policy=indexer._resolve_operation_policy())
+        indexer._write_meta(hashes, policy=indexer.resolve_policy_snapshot())
         # The loaded mapping is exactly the hashes: the embed-format
         # marker is stamped on disk but never surfaces in id math.
         assert indexer._load_meta() == hashes
@@ -959,7 +959,7 @@ class TestCodebaseMetaRoundTrip:
         indexer._meta_path = meta_path
 
         hashes = {"src/foo.py": "abc123", "src/bar.py": "def456"}
-        policy = indexer._resolve_operation_policy()
+        policy = indexer.resolve_policy_snapshot()
         indexer._write_meta(hashes, policy=policy)
 
         assert meta_path.exists()
@@ -979,7 +979,7 @@ class TestCodebaseMetaRoundTrip:
         indexer._meta_path = meta_path
 
         hashes = {"src/foo.py": "aaa", "lib/baz.rs": "bbb"}
-        indexer._write_meta(hashes, policy=indexer._resolve_operation_policy())
+        indexer._write_meta(hashes, policy=indexer.resolve_policy_snapshot())
         assert indexer._load_meta() == hashes
 
     def test_load_meta_returns_empty_when_missing(self, tmp_path: Path) -> None:

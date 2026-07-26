@@ -85,7 +85,7 @@ def _make_indexer(root: Path) -> CodebaseIndexer:
 
 def _stamp(indexer: CodebaseIndexer) -> tuple[str, str]:
     """Resolve current epochs and persist a sidecar stamped with them."""
-    policy = indexer._resolve_operation_policy()
+    policy = indexer.resolve_policy_snapshot()
     membership, content = indexer._compute_code_epochs(policy)
     indexer._membership_epoch = membership
     indexer._content_epoch = content
@@ -97,7 +97,7 @@ def _stamp(indexer: CodebaseIndexer) -> tuple[str, str]:
 
 
 def _classify_current(indexer: CodebaseIndexer) -> str:
-    policy = indexer._resolve_operation_policy()
+    policy = indexer.resolve_policy_snapshot()
     membership, content = indexer._compute_code_epochs(policy)
     return indexer._classify_config_drift(membership, content)
 
@@ -430,7 +430,7 @@ class TestScopedSnapshot:
     def test_scoped_scan_uses_resolved_ignore_snapshot(self, tmp_path: Path) -> None:
         (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
         indexer = _make_indexer(tmp_path)
-        policy = indexer._resolve_operation_policy()
+        policy = indexer.resolve_policy_snapshot()
         (tmp_path / ".vaultragignore").write_text("a.py\n", encoding="utf-8")
         indexer._begin_preprocess_run(policy)
         to_hash, _delete = indexer._scan_changed_paths(
@@ -442,7 +442,7 @@ class TestScopedSnapshot:
         (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
         (tmp_path / ".vaultragignore").write_text("a.py\n", encoding="utf-8")
         indexer = _make_indexer(tmp_path)
-        policy = indexer._resolve_operation_policy()
+        policy = indexer.resolve_policy_snapshot()
         indexer._begin_preprocess_run(policy)
         to_hash, deleted = indexer._scan_changed_paths(
             [tmp_path / "a.py"], NullProgressReporter(), policy

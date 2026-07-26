@@ -214,7 +214,7 @@ def _assert_published_snapshot(
     published = indexer._read_meta_raw()
     assert published[MEMBERSHIP_EPOCH_KEY] == entry_code.membership
     assert published[CONTENT_EPOCH_KEY] == entry_code.content
-    fresh_policy = indexer._resolve_operation_policy()
+    fresh_policy = indexer.resolve_policy_snapshot()
     fresh_code = fresh_policy.fingerprints_for(ContentKind.CODE)
     assert fresh_policy.fingerprints.snapshot != entry_policy.fingerprints.snapshot
     assert not fresh_policy.html_strip

@@ -415,12 +415,13 @@ class CodebaseIndexer:
             )
             yield segment
 
-    def _resolve_operation_policy(self) -> ResolvedIndexPolicy:
-        """Resolve and validate one immutable snapshot before mutation authority."""
-        return self._discovery.resolve_policy()
-
     def resolve_policy_snapshot(self) -> ResolvedIndexPolicy:
-        """Resolve immutable watcher/preflight authority without mutation."""
+        """Resolve one immutable policy snapshot before any mutation authority.
+
+        The single way to resolve this indexer's policy. A private twin with an
+        identical body existed alongside it, reached only from tests - so the
+        path the tests exercised was not the path production ran.
+        """
         return self._discovery.resolve_policy()
 
     def preflight_content(

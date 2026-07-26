@@ -66,7 +66,7 @@ class TestBlake2bFileHashing:
         # Round-trip: write and load back
         indexer._write_meta(
             {"test.py": digest},
-            policy=indexer._resolve_operation_policy(),
+            policy=indexer.resolve_policy_snapshot(),
         )
         loaded = indexer._load_meta()
         assert loaded["test.py"] == digest

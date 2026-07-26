@@ -92,7 +92,7 @@ def _assert_discovery_parity(
     tmp_path: Path,
 ) -> tuple[ContentScanResult, set[str]]:
     """Assert full and scoped discovery agree on admitted source paths."""
-    resolved = indexer._resolve_operation_policy()
+    resolved = indexer.resolve_policy_snapshot()
     full_scan = indexer.scan_content(sample_limit=len(paths))
     full = {path.relative_to(tmp_path).as_posix() for path in full_scan.files}
     scoped, rejected = indexer._scan_changed_paths(
@@ -116,7 +116,7 @@ def _assert_disposition_parity(
     full_scan: ContentScanResult,
 ) -> dict[str, object]:
     """Assert full-scan counts and samples match per-path classification."""
-    resolved = indexer._resolve_operation_policy()
+    resolved = indexer.resolve_policy_snapshot()
     dispositions = {item.path: item for item in full_scan.samples}
     scoped_dispositions = {
         relative: indexer._classify_file(path, relative, resolved).disposition
