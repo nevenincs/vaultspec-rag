@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import getpass
 import logging
-import os
-import sys
 import threading
 import time
 import uuid
@@ -20,10 +17,13 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from anyio.to_thread import run_sync as _run_in_thread
 
 if TYPE_CHECKING:
+    import os
+
     import anyio
 
 from . import job_persistence as _job_persistence
 from ._job_errors import classify_error_text
+from ._runtime_identity import process_identity_fields
 from .concurrency import get_encode_limiter, get_index_limiter
 from .config import get_config
 from .job_control import (
@@ -2963,15 +2963,7 @@ class JobManager:
 
     @staticmethod
     def _process_runtime_snapshot() -> JobRuntimeSnapshot:
-        return JobRuntimeSnapshot(
-            pid=os.getpid(),
-            parent_pid=os.getppid(),
-            user=getpass.getuser(),
-            executable=sys.executable,
-            prefix=sys.prefix,
-            base_prefix=sys.base_prefix,
-            virtual_env=os.environ.get("VIRTUAL_ENV"),
-        )
+        return JobRuntimeSnapshot(**process_identity_fields())
 
     @staticmethod
     def _process_resource_snapshot() -> ProcessResourceSnapshot:

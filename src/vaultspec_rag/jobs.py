@@ -6,10 +6,8 @@ along with async task execution helpers for background reindexing.
 
 from __future__ import annotations
 
-import getpass
 import logging
 import os
-import sys
 import threading
 import time
 import uuid
@@ -21,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from anyio.to_thread import run_sync as _run_in_thread
 
 from ._job_errors import STALL_THRESHOLD_SECONDS, classify_error_text
+from ._runtime_identity import process_identity_fields
 from .job_control import NO_RUN_CONTROL
 from .job_manager import (
     MAX_RECORDS,
@@ -268,7 +267,7 @@ def restore_interrupted() -> int:
             "reuse": None,
             "drift": None,
             "initiator": data.get("initiator"),
-            "runtime": _runtime_context(),
+            "runtime": process_identity_fields(),
             "resources": {"started": None, "finished": None},
         }
         with _lock:
@@ -288,18 +287,6 @@ def restore_interrupted() -> int:
     # running set so a second restart does not re-restore the same jobs.
     _persist_active_snapshot()
     return restored
-
-
-def _runtime_context() -> dict[str, object]:
-    return {
-        "pid": os.getpid(),
-        "parent_pid": os.getppid(),
-        "user": getpass.getuser(),
-        "executable": sys.executable,
-        "prefix": sys.prefix,
-        "base_prefix": sys.base_prefix,
-        "virtual_env": os.environ.get("VIRTUAL_ENV"),
-    }
 
 
 def resource_snapshot() -> dict[str, object]:
@@ -382,7 +369,7 @@ def record_start(
             "command": command or f"{trigger}_{source}_index",
             "project_root": str(project_root) if project_root is not None else None,
         },
-        "runtime": _runtime_context(),
+        "runtime": process_identity_fields(),
         "resources": {
             "started": resource_snapshot(),
             "finished": None,
