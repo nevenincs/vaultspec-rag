@@ -554,23 +554,109 @@ class TestNoStructurallyIdenticalFunctions:
     #: (sorted tuple of "module:function") -> reason the shape is not shared
     #: behaviour. Shrink this as groups are merged; adding an entry to silence
     #: the check rather than to record a judgement defeats it.
+    #: Why a group of identical-looking bodies is NOT shared behaviour. The
+    #: reasons cluster, so they are named once and applied, rather than
+    #: sixteen near-identical sentences - which would be this file committing
+    #: the duplication it exists to prevent.
+    _PARAMETERISATION = (
+        "A named entry point supplying its own constants to an implementation "
+        "that is ALREADY shared. Merging further would push those constants "
+        "out to every call site, which is the opposite of the goal."
+    )
+    _OPTIONAL_ATTR = (
+        "Python's missing optional-chaining: `x = self._attr; return x.f() if "
+        "x is not None else None`. A generic helper reads worse than the two "
+        "lines, and the classes involved share no base to hang it on."
+    )
+    _FIND_FIRST = (
+        "Linear search for the first item matching an attribute. A generic "
+        "finder costs more in indirection than the four lines it saves."
+    )
+    _DISTINCT_PROSE = (
+        "Same rendering shape, different diagnosis. What differs is the "
+        "operator-facing sentences, so merging would mean passing prose in as "
+        "arguments."
+    )
+    _SMALL_GUARD = (
+        "A two-line accessor or guard whose computation, return type, or "
+        "error message differs. The shape is shared; nothing else is."
+    )
+    _SERIALISATION = (
+        "Both build a dict literal from their own fields. The shape of "
+        "`to_dict` is not behaviour that can be shared - the fields are "
+        "unrelated."
+    )
+
     _ALLOWED_SHAPES: ClassVar[dict[tuple[str, ...], str]] = {
         (
             "cli/_search.py:_render_breadth_shortfall",
             "cli/_search.py:_render_file_breadth_shortfall",
-        ): (
-            "Same rendering shape, different diagnosis. One reports a POINT "
-            "shortfall and the other a FILE-coverage shortfall; they fail "
-            "independently, since a publication covering a fraction of the "
-            "files it names still stamps a self-consistent point count. Only "
-            "the extraction guard was shared (_shortfall_figures); what "
-            "remains is two different sentences explaining two different "
-            "failures, and merging them would mean passing the prose in as "
-            "arguments."
-        ),
+        ): _DISTINCT_PROSE,
+        (
+            "_readiness.py:dimension",
+            "commands/_provision.py:result_for",
+        ): _FIND_FIRST,
+        (
+            "indexer/_preprocess_config.py:match",
+            "indexer/_resolved_policy.py:match_preprocess",
+        ): _FIND_FIRST,
+        (
+            "cli/_preprocess.py:_format_failure_handling",
+            "cli/_preprocess.py:_status_effect_line",
+            "server/_search_availability.py:_normalized_mode",
+        ): _SMALL_GUARD,
+        (
+            "commands/_mcp_topology.py:_require_identity",
+            "commands/_mcp_topology.py:_require_unchanged",
+        ): _SMALL_GUARD,
+        (
+            "watcher.py:dirty_paths",
+            "watcher.py:pending_count",
+        ): _SMALL_GUARD,
+        (
+            "commands/_provision.py:to_dict",
+            "indexer/_drift_owner.py:snapshot",
+        ): _SERIALISATION,
+        (
+            "indexer/_codebase_indexer.py:_reuse_snapshot",
+            "indexer/_document_indexer.py:_reuse_snapshot",
+            "indexer/_generation_lifecycle.py:drift_snapshot",
+        ): _OPTIONAL_ATTR,
+        (
+            "indexer/_codebase_indexer.py:memory_budget_snapshot",
+            "indexer/_document_indexer.py:memory_budget_snapshot",
+        ): _OPTIONAL_ATTR,
+        (
+            "cli/_service_start.py:_fail_start",
+            "cli/_service_stop.py:_fail_stop",
+        ): _PARAMETERISATION,
+        (
+            "cli/_service_start.py:_start_success",
+            "cli/_service_stop.py:_stop_success",
+        ): _PARAMETERISATION,
+        (
+            "indexer/_content_discovery.py:resolve_policy",
+            "indexer/_document_indexer.py:resolve_policy_snapshot",
+        ): _PARAMETERISATION,
+        (
+            "store.py:_retrieve",
+            "store.py:_scroll",
+        ): _PARAMETERISATION,
+        (
+            "store.py:ensure_document_table",
+            "store.py:ensure_table",
+        ): _PARAMETERISATION,
+        (
+            "store.py:get_all_document_content_ids",
+            "store.py:get_all_ids",
+        ): _PARAMETERISATION,
+        (
+            "store.py:scroll_code_content",
+            "store.py:scroll_document_content",
+        ): _PARAMETERISATION,
     }
 
-    _MIN_NODES: ClassVar[int] = 60
+    _MIN_NODES: ClassVar[int] = 20
 
     def test_no_large_duplicate_function_bodies(self) -> None:
         import ast

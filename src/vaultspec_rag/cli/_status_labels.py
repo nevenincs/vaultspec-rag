@@ -278,15 +278,22 @@ DOMAIN_INDEX_FAMILY = "domain_index"
 _HISTORICAL_FAMILIES = frozenset({FAILED_JOB_FAMILY})
 
 
-def _health_jobs(health: dict[str, object] | None) -> dict[str, object]:
+def _health_section(health: dict[str, object] | None, key: str) -> dict[str, object]:
+    """Return ``health[key]`` when it is a dict, else an empty one.
+
+    Every caller then does ``.get(...)`` on the result, so returning ``{}``
+    rather than ``None`` for an absent or malformed section is what keeps the
+    readers free of a second layer of isinstance checks. The jobs and qdrant
+    sections had a copy of this each, differing only in the key.
+    """
     if not isinstance(health, dict):
         return {}
-    jobs = health.get("jobs")
-    return cast("dict[str, object]", jobs) if isinstance(jobs, dict) else {}
+    section = health.get(key)
+    return cast("dict[str, object]", section) if isinstance(section, dict) else {}
 
 
 def _last_failed_record(health: dict[str, object] | None) -> dict[str, object]:
-    record = _health_jobs(health).get("last_failed")
+    record = _health_section(health, "jobs").get("last_failed")
     return cast("dict[str, object]", record) if isinstance(record, dict) else {}
 
 
@@ -372,7 +379,7 @@ def _stalled_jobs_finding(
     now: float,
 ) -> DegradedFinding | None:
     _ = now
-    stalled = _health_jobs(health).get("stalled")
+    stalled = _health_section(health, "jobs").get("stalled")
     if not isinstance(stalled, int) or stalled <= 0:
         return None
     return DegradedFinding(
@@ -382,19 +389,12 @@ def _stalled_jobs_finding(
     )
 
 
-def _health_qdrant(health: dict[str, object] | None) -> dict[str, object]:
-    if not isinstance(health, dict):
-        return {}
-    qdrant = health.get("qdrant")
-    return cast("dict[str, object]", qdrant) if isinstance(qdrant, dict) else {}
-
-
 def _vector_service_finding(
     health: dict[str, object] | None,
     now: float,
 ) -> DegradedFinding | None:
     _ = now
-    if _health_qdrant(health).get("alive") is not False:
+    if _health_section(health, "qdrant").get("alive") is not False:
         return None
     return DegradedFinding(
         cause="the vector storage service is not live",
@@ -444,7 +444,7 @@ def _quarantine_finding(
     now: float,
 ) -> DegradedFinding | None:
     _ = now
-    entries = _health_qdrant(health).get("quarantined")
+    entries = _health_section(health, "qdrant").get("quarantined")
     if not isinstance(entries, list) or not entries:
         return None
     return DegradedFinding(
@@ -464,7 +464,7 @@ def _store_format_finding(
     now: float,
 ) -> DegradedFinding | None:
     _ = now
-    migrated_from = _health_qdrant(health).get("migrated_from")
+    migrated_from = _health_section(health, "qdrant").get("migrated_from")
     if not isinstance(migrated_from, str) or not migrated_from:
         return None
     return DegradedFinding(
