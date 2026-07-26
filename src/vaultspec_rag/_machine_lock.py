@@ -20,7 +20,7 @@ The lock file lives alongside the machine-global managed Qdrant storage (the
 shared hardware), NOT under the per-instance status dir, so it is machine-wide
 even when ``VAULTSPEC_RAG_STATUS_DIR`` is overridden (the dashboard's
 project-local case) - while ``VAULTSPEC_RAG_QDRANT_STORAGE_DIR`` still relocates
-it for tests.
+it, because the lock belongs with the storage it guards.
 """
 
 from __future__ import annotations
