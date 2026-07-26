@@ -390,11 +390,20 @@ def _try_in_process_search(
     # "Searching..." status spinner: the search returns an empty, actionable
     # result either way, and the spinner's control codes otherwise leak into
     # non-interactive (captured / piped) output as a spurious first line.
-    counts = {
-        PublicSourceType.VAULT: get_registry().vault_doc_count(target),
-        PublicSourceType.CODE: get_registry().code_chunk_count(target),
-        PublicSourceType.DOCUMENT: get_registry().document_chunk_count(target),
-    }
+    # Counting opens the local store, so it can raise the locked-store error
+    # just as the search itself can. It sits inside the same guard for that
+    # reason: outside it the error escaped uncaught and the command exited
+    # non-zero with no output at all, so the routing-mode message this path
+    # exists to print never reached an operator whose store was actually busy.
+    try:
+        counts = {
+            PublicSourceType.VAULT: get_registry().vault_doc_count(target),
+            PublicSourceType.CODE: get_registry().code_chunk_count(target),
+            PublicSourceType.DOCUMENT: get_registry().document_chunk_count(target),
+        }
+    except VaultStoreLockedError as exc:
+        _handle_vaultstore_locked_error(exc, json_mode)
+        return []
     has_index = (
         any(counts.values())
         if search_type is PublicSourceType.COMBINED
