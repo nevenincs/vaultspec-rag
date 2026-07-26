@@ -18,7 +18,7 @@ import time
 from functools import partial
 from typing import TYPE_CHECKING, NamedTuple
 
-from .._index_breadth import PUBLISHED_POINTS_KEY
+from .._index_breadth import PUBLISHED_FILES_KEY, PUBLISHED_POINTS_KEY
 from .._job_errors import JobError, JobErrorKind
 from .._store_models import (
     generation_code_collection,
@@ -1538,6 +1538,7 @@ class CodebaseIndexer:
                             metadata,
                             policy=policy,
                             published_points=self.store.count_code(),
+                            published_files=self.store.count_code_files(),
                         )
                     else:
                         reconcile_generation_storage(
@@ -2414,6 +2415,7 @@ class CodebaseIndexer:
         *,
         policy: ResolvedIndexPolicy,
         published_points: int | None = None,
+        published_files: int | None = None,
     ) -> None:
         """Atomically write content-hash metadata to the sidecar JSON file.
 
@@ -2444,6 +2446,10 @@ class CodebaseIndexer:
         stamped[CONTENT_EPOCH_KEY] = content
         if published_points is not None:
             stamped[PUBLISHED_POINTS_KEY] = str(published_points)
+        # Stamped on the incremental path too, so a sidecar this writer
+        # produces is comparable rather than reading as "cannot tell".
+        if published_files is not None:
+            stamped[PUBLISHED_FILES_KEY] = str(published_files)
         tmp_path.write_text(json.dumps(stamped, indent=2), encoding="utf-8")
         os.replace(tmp_path, self._meta_path)
 
