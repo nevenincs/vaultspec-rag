@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     import pathlib
@@ -56,9 +56,10 @@ def load_generation_stamps() -> dict[str, str]:
         return {}
     if not isinstance(raw, dict):
         return {}
+    entries = cast("dict[object, object]", raw)
     return {
-        str(name): str(seen)
-        for name, seen in raw.items()
+        name: seen
+        for name, seen in entries.items()
         if isinstance(name, str) and isinstance(seen, str) and name and seen
     }
 
