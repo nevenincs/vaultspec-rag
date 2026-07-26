@@ -90,7 +90,6 @@ if TYPE_CHECKING:
     from ..store import VaultStore
     from ._chunk_worker import FileChunkResult
     from ._preprocess_config import (
-        PreprocessConfig,
         PreprocessContext,
     )
     from ._resolved_policy import ResolvedIndexPolicy
@@ -519,21 +518,6 @@ class CodebaseIndexer:
             )
             changed_paths = None
         return changed_paths, False
-
-    def _build_preprocess_rules(self) -> PreprocessConfig:
-        """Resolve ``.vaultragpreprocess.toml`` into compiled preprocess rules.
-
-        Kept as a method (delegating to :func:`_preprocess_glue`) so callers
-        and tests can monkeypatch the root-only resolution.
-        """
-        return _preprocess_glue.build_preprocess_rules(self.root_dir)
-
-    def preprocess_config(self) -> PreprocessConfig:
-        """Resolve the project's preprocess rules (public accessor, #185).
-
-        Used by the watcher to make its change filter preprocess-aware.
-        """
-        return self._build_preprocess_rules()
 
     def _resolve_preprocess_context(
         self,
