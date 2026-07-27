@@ -98,9 +98,15 @@ dev = [
   # The test suite imports `mcp` (it tests the optional MCP server surface), so
   # the dev environment provides it even though it is not a core dependency.
   "mcp>=1.28.1",
+  "bandit>=1.9.4",
   "basedpyright>=1.39",
-  "flake8>=7.3.0",
-  "flake8-cognitive-complexity>=0.1.0",
+  # Cognitive complexity. Implements the Sonar cognitive-complexity
+  # specification and is configured from `[tool.complexipy]` below, which
+  # replaced a flake8 plugin driven by command-line flags from a wrapper
+  # script. It also scores markedly stricter than the plugin did: the tree's
+  # worst function measured 20 under the plugin and 44 under this.
+  "complexipy>=6.2",
+  "deptry>=0.25.1",
   "identify>=2.0.0",
   "mdformat>=1.0.0",
   "mdformat-frontmatter>=2.0.10",
@@ -112,9 +118,14 @@ dev = [
   "pytest-reportlog>=0.4.0",
   "pytest-timeout>=2.4.0",
   "pytest-xdist>=3.8.0",
+  # Module length and the class-shape design limits ruff has no rule for
+  # (C0302, R0902, R0904, R0916). Everything else pylint would report is
+  # already covered by ruff and stays disabled.
+  "pylint>=4.0",
   "radon>=6.0.1",
   "ruff>=0.15.2",
   "ty>=0.0.15",
+  "vulture>=2.16",
   "xenon>=0.9.3",
 ]
 
@@ -184,8 +195,8 @@ target-version = "py313"
   # NOTE: preview is deliberately OFF here — enabling it globally changes the
   # behavior of stable rules (e.g. F401 submodule tracking) and surfaces
   # findings in src/ owned by the remediation campaign. The preview-only
-  # nesting-depth rule (PLR1702) is gated separately via
-  # tools/complexity_gate.py with a scoped `--select PLR1702 --preview` run.
+  # nesting-depth rule (PLR1702) is gated separately by `just dev lint
+  # nesting`, which runs a scoped `--select PLR1702 --preview` instead.
   ignore = ["TID252"]
   select = [
     "E",       # pycodestyle errors
@@ -227,7 +238,7 @@ target-version = "py313"
     # Ruff defaults: max-args=5, max-returns=6, max-branches=12,
     # max-statements=50, max-nested-blocks=5.
     # max-nested-blocks feeds PLR1702 (preview-only), which is enforced by
-    # tools/complexity_gate.py via `ruff check --select PLR1702 --preview`.
+    # `just dev lint nesting` via `ruff check --select PLR1702 --preview`.
     [tool.ruff.lint.pylint]
     max-args = 23         # baseline worst: 23 (44 functions exceed default 5)
     max-nested-blocks = 6 # baseline worst: 6 (indexer/_streaming.py)
@@ -271,3 +282,107 @@ typeCheckingMode = "strict"
   [[tool.basedpyright.executionEnvironments]]
   reportPrivateUsage = false
   root = "src/vaultspec_rag/tests"
+
+# Cognitive complexity — how much state a reader must hold to follow a
+# function, as distinct from the number of paths through it that `xenon`
+# measures. Nesting compounds the score here, so a deeply-indented function
+# ranks far worse than a flat one with the same branch count.
+#
+# BASELINE-CALIBRATED (captured 2026-07-27): 25 is the current worst
+# production function. Ratchet DOWN as hotspots are paid off; never raise.
+# Long-term target: 15, the tool's own default.
+#
+# Production only. The tree's worst score overall is 44, in a test that walks
+# the AST of every module to prove a structural invariant; that shape is
+# inherent to the guard, not debt to pay down. Tests are measured by
+# `just dev audit complexity` instead, which reports without failing.
+[tool.complexipy]
+exclude = ["**/tests/**"]
+max-complexity-allowed = 25
+
+# pylint runs with every check off except the four that ruff has no rule for.
+# It is not a second general-purpose linter here — enabling more would produce
+# findings ruff already reports, under a different code, with no new signal.
+[tool.pylint.main]
+ignore-paths = [".*[\\/]tests[\\/].*"]
+jobs = 0
+
+[tool.pylint."messages control"]
+disable = ["all"]
+# C0302 too-many-lines            — module length; ruff has no rule for it
+# R0902 too-many-instance-attributes — class state a reader must track
+# R0904 too-many-public-methods   — class surface area
+# R0916 too-many-boolean-expressions — condition legibility
+enable = ["C0302", "R0902", "R0904", "R0916"]
+
+# Module length. This replaced a bespoke script that reimplemented the same
+# count; the ceiling is a ratchet, not a target — lower it whenever an
+# extraction lands, and never raise it.
+#
+# Census (2026-07-27, 469 modules — 195 production, 274 test):
+#
+#     over 3400:   0        <- the enforced ceiling; the tree meets it
+#     over 3000:   2 (both test modules)
+#     over 2000:  11
+#     over 1200:  36
+#     over 1000:  50
+#     over  500: 116        <- where modules should settle
+#
+# Longest production module: job_manager.py at 2955 lines.
+[tool.pylint.format]
+max-module-lines = 3400
+
+# BASELINE-CALIBRATED (captured 2026-07-27): each sits at the current worst
+# offender, so the gate is green today and can only be ratcheted DOWN.
+# pylint defaults: max-attributes=7, max-public-methods=20, max-bool-expr=5.
+[tool.pylint.design]
+max-attributes = 28     # baseline worst: 28 (58 classes exceed the default 7)
+max-bool-expr = 9       # baseline worst: 9  (8 conditions exceed the default 5)
+max-public-methods = 39 # baseline worst: 39 (4 classes exceed the default 20)
+
+# Dead code. Advisory, not gating: vulture infers reachability and cannot see
+# dynamic dispatch, so a finding is a lead to confirm rather than a verdict.
+# Confidence 80 drops the guess-heavy tier that reports decorated and
+# lazily-bound callables as unused.
+[tool.vulture]
+exclude = ["*/tests/*", "*test_*.py"]
+ignore_decorators = [
+  "@app.command",
+  "@app.callback",
+  "@service_app.command",
+  "@click.command",
+  "@click.group",
+  "@pytest.fixture",
+  "@field_validator",
+  "@model_validator",
+  "@property",
+]
+# `__exit__` fixes the names of its three trailing parameters, so a context
+# manager that ignores them reports each as an unused variable. The signature
+# is the protocol, not a choice.
+ignore_names = ["exc_type", "exc_val", "exc_tb"]
+min_confidence = 80
+paths = ["src/vaultspec_rag"]
+
+# Security. Advisory: this project spawns subprocesses (the vector-store
+# binary, the managed daemon) and builds store filter expressions by
+# construction, so the subprocess and SQL families report the design rather
+# than a defect. They stay ENABLED and are read per finding — suppressing a
+# family wholesale would also hide the first real one.
+#
+# The test tree is excluded by the `-x` flag in the `just dev audit security`
+# recipe, NOT by an `exclude_dirs` key here. bandit reads `skips` from this
+# table but silently ignores `exclude_dirs` from it: configured here the scan
+# returns 320 findings, 280 of them inside the tree this was meant to exclude.
+# A suppression that does not suppress is worse than none, so the exclusion
+# lives where it demonstrably takes effect.
+[tool.bandit]
+# B101: `assert` is pytest's contract, and the excluded test tree is where it
+# is load-bearing. Production invariants that must survive `-O` raise instead.
+skips = ["B101"]
+
+# Dependency drift. Reports imports that resolve only transitively — a
+# transitive bump can withdraw one without any change here.
+[tool.deptry]
+extend_exclude = [".*[\\/]tests[\\/].*"]
+known_first_party = ["vaultspec_rag"]
