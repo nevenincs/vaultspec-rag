@@ -11,6 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from .._store_models import DocumentLocatorKind
 from ..capabilities import BackendCapabilities
 
 
@@ -19,7 +20,7 @@ class DocumentLocatorItem(BaseModel):
 
     model_config = {"from_attributes": True}
 
-    kind: Literal["byte", "page", "sheet", "line", "char", "none"]
+    kind: DocumentLocatorKind
     value: int | str
     end: int | str | None = None
 

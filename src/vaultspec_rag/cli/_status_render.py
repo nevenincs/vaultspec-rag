@@ -39,7 +39,11 @@ from ..serviceclient._status import (
     LivenessSignals,
     compose_discovery_status,
 )
-from ..serviceclient._transport import _try_http_admin, _try_http_health
+from ..serviceclient._transport import (
+    _probe_unavailable,
+    _try_http_admin,
+    _try_http_health,
+)
 from ._app import JSON_OPTION_HELP, server_app
 from ._cli_format import NOT_REPORTED
 from ._process import (
@@ -633,11 +637,7 @@ def _status_jobs_summary(port: int, port_listening: bool) -> dict[str, object]:
             _try_http_admin("get_jobs", {"limit": 5}, port),
         )
     except Exception as exc:
-        return {
-            "available": False,
-            "error": exc.__class__.__name__,
-            "message": str(exc),
-        }
+        return _probe_unavailable("jobs", exc)
 
 
 def _status_next_action(

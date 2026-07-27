@@ -14,6 +14,8 @@ from qdrant_client.http.exceptions import UnexpectedResponse
 from .._operator_commands import server_jobs_command
 
 if TYPE_CHECKING:
+    from .._source_types import IndexSource
+
     # The convergence-mode vocabulary is the domain's, not the client's.
     # Annotation-only, so job_models is not imported at runtime.
     from ..job_models import JobMode
@@ -24,7 +26,6 @@ __all__ = [
     "classify_search_response",
 ]
 
-type IndexSource = Literal["vault", "code", "document"]
 # One declaration of the convergence-mode vocabulary; the transport owns it.
 
 _CANONICAL_NONTERMINAL_STATES = frozenset(

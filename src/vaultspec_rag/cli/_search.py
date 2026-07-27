@@ -19,7 +19,11 @@ from .._operator_commands import (
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from .._store_locks import VaultStoreLockedError
 from ..serviceclient._compat import resolve_data_plane_service
-from ..serviceclient._transport import _get_search_timeout, _try_http_search
+from ..serviceclient._transport import (
+    _get_search_timeout,
+    _try_http_search,
+    document_search_filters,
+)
 from ._app import CLIState, JsonMode, app
 from ._gpu_errors import _handle_gpu_error
 from ._render import (
@@ -1170,12 +1174,12 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             exclude_paths=exclude_paths,
             dedup_locales=dedup_locales,
             prefer=prefer,
-            document_filters={
-                "source_path": source_path,
-                "extractor_id": extractor_id,
-                "extractor_version": extractor_version,
-                "locator_kind": locator_kind,
-            },
+            document_filters=document_search_filters(
+                source_path=source_path,
+                extractor_id=extractor_id,
+                extractor_version=extractor_version,
+                locator_kind=locator_kind,
+            ),
         )
         if service_results is not None:
             _handle_service_results(

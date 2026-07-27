@@ -958,6 +958,28 @@ def _get_search_timeout(timeout: float | None) -> float:
     )
 
 
+def document_search_filters(
+    *,
+    source_path: str | None,
+    extractor_id: str | None,
+    extractor_version: str | None,
+    locator_kind: str | None,
+) -> DocumentSearchFilters:
+    """Return the document filter mapping the service accepts.
+
+    Three call sites - the CLI search verb and both MCP document tools - built
+    this dict from the same four arguments. The keys are the schema's
+    DOCUMENT_FILTER_KEYS; what was copied is the projection of arguments onto
+    them, so a fifth filter would have had to be remembered in three places.
+    """
+    return {
+        "source_path": source_path,
+        "extractor_id": extractor_id,
+        "extractor_version": extractor_version,
+        "locator_kind": locator_kind,
+    }
+
+
 def _probe_unavailable(kind: str, exc: Exception) -> dict[str, object]:
     logger.debug("%s diagnostic probe failed: %s", kind, exc, exc_info=True)
     return {

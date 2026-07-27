@@ -24,6 +24,7 @@ from .._operator_commands import (
     server_start_command,
     server_status_command,
 )
+from ..commands._models import _SYNC_COUNTERS
 from ._cli_format import _counted_unit
 
 if TYPE_CHECKING:
@@ -576,14 +577,7 @@ def _render_sync_summary(added: int, updated: int, removed: int) -> None:
 def _render_provider_outcome(provider: str, outcome: dict[str, object]) -> None:
     parts = [
         f"{label} {outcome[label]}"
-        for label in (
-            "added",
-            "updated",
-            "unchanged",
-            "skipped",
-            "pruned",
-            "errored",
-        )
+        for label in _SYNC_COUNTERS
         if isinstance(outcome.get(label), int) and outcome[label]
     ]
     summary = ", ".join(parts) if parts else "no changes"

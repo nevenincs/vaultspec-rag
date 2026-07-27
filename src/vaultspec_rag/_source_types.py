@@ -5,9 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Final
+from typing import Final, Literal
 
 __all__ = [
+    "INDEX_SOURCES",
+    "IndexSource",
     "PublicSourceType",
     "SourceTypeParseError",
     "parse_source_type",
@@ -29,6 +31,23 @@ _ALIASES: Final = MappingProxyType(
         "docs": PublicSourceType.VAULT,
         "all": PublicSourceType.COMBINED,
     }
+)
+
+
+#: The concrete index sources - every PublicSourceType except COMBINED, which
+#: names a fan-out rather than a corpus. Eight sites wrote this triple out,
+#: one of them already declaring it under this name inside the server package,
+#: where the store and the CLI could not import it without inverting the
+#: layering. A plain alias, not a ``type`` statement, so Typer and Pydantic can
+#: both resolve it.
+IndexSource = Literal["vault", "code", "document"]
+
+#: The same vocabulary at runtime, derived from the enum so the two cannot
+#: drift. A guard pins the pair.
+INDEX_SOURCES: tuple[str, ...] = tuple(
+    member.value
+    for member in PublicSourceType
+    if member is not PublicSourceType.COMBINED
 )
 
 

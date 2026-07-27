@@ -58,7 +58,10 @@ _EVENT_TOKEN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
 _FIELD_TOKEN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _BARE_VALUE_RE = re.compile(r"^[A-Za-z0-9_./:@\\-]+$")
 
-type ManagedLogSource = Literal["service", "qdrant", "all"]
+#: A plain alias, not a ``type`` statement: Typer resolves the Literal
+#: object but cannot unwrap a TypeAliasType, and the log verb annotates
+#: its --source option with this.
+ManagedLogSource = Literal["service", "qdrant", "all"]
 type ManagedLogGroupSource = Literal["service", "qdrant"]
 
 

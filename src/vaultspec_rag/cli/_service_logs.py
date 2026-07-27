@@ -8,13 +8,14 @@ to the same reader, filter, and tail helpers for retained local files.
 from __future__ import annotations
 
 import sys
-from typing import Annotated, Literal, cast
+from typing import Annotated, cast
 
 import typer
 
 from ..logging_config import (
     DEFAULT_MANAGED_LOG_LINES,
     ManagedLogGroup,
+    ManagedLogSource,
     clamp_managed_log_lines,
     managed_log_filters,
     query_managed_logs,
@@ -62,7 +63,7 @@ def service_logs(
         ),
     ] = DEFAULT_MANAGED_LOG_LINES,
     source: Annotated[
-        Literal["service", "qdrant", "all"],
+        ManagedLogSource,
         typer.Option(
             "--source",
             help="Managed log source: service, qdrant, or all.",
