@@ -10,12 +10,12 @@ handler, which applies the clamp and predicate this module provides.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import cast
 
 from .. import jobs as _jobs
 from .._job_errors import STALL_THRESHOLD_SECONDS, remediation
-from ..job_models import JobState
+from ..job_models import JobCapabilities, JobState
 
 __all__ = [
     "_clamp_limit",
@@ -326,6 +326,59 @@ def _job_stalled(record: dict[str, object], now: float) -> bool:
     return age is not None and age >= STALL_THRESHOLD_SECONDS
 
 
+def _countable_progress(record: dict[str, object]) -> tuple[int, int] | None:
+    """Return ``(completed, total)`` when the job reports countable work.
+
+    Work is countable only when the service published a total, that total is
+    positive, and the count has not already reached it. A step reporting a
+    count with no total is progress an operator can read but not a basis for
+    an estimate.
+    """
+    progress = _job_mapping(record, "progress")
+    completed = progress.get("completed")
+    total = progress.get("total")
+    if isinstance(completed, bool) or not isinstance(completed, int):
+        return None
+    if isinstance(total, bool) or not isinstance(total, int):
+        return None
+    if total <= 0 or completed >= total or completed < 0:
+        return None
+    return completed, total
+
+
+def _job_completion_estimate(
+    record: dict[str, object],
+) -> tuple[float | None, float | None]:
+    """Return ``(rate_per_second, remaining_seconds)`` for one job.
+
+    Both are ``None`` unless the job is actually doing work now. Queued,
+    waiting, paused, transitional and terminal jobs are all inert or
+    finished, and an estimate over any of them describes work that is not
+    happening. ``None`` is the honest answer, and is rendered as unknown
+    rather than as zero.
+
+    The two answer different questions and are reported independently. The
+    rate is a measurement, and is published for any advancing step. The
+    remaining time is a projection, and needs a completion point: a step
+    reporting a count with no total is real throughput an operator can read,
+    but there is nothing to subtract it from, so it carries a rate and no
+    estimate rather than suppressing both.
+    """
+    if job_state(record) != JobState.RUNNING.value or _job_is_waiting(record):
+        return None, None
+    identifier = record.get("id")
+    if not isinstance(identifier, str) or not identifier:
+        return None, None
+    rate = _jobs.progress_rate(identifier)
+    if rate is None or rate <= 0:
+        return None, None
+    counts = _countable_progress(record)
+    if counts is None:
+        return round(rate, 3), None
+    completed, total = counts
+    return round(rate, 3), round((total - completed) / rate, 1)
+
+
 def _round_measure(value: object) -> float | None:
     """Round a megabyte or second measure to operator precision, or drop it."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -374,6 +427,26 @@ def _job_resilience(record: dict[str, object]) -> dict[str, object] | None:
     }
 
 
+def _activity_record_capabilities(state: str) -> dict[str, object]:
+    """Report the operations an activity record actually supports.
+
+    An activity record carries no runtime handle, so nothing can be paused,
+    resumed, cancelled or retried through it. Deletion is the one verb that
+    reaches it, and only once it has finished. Emitting this alongside the
+    canonical shape is what lets a client tell a deletable row from a stuck
+    one without knowing which registry answered.
+    """
+    return asdict(
+        JobCapabilities(
+            pausable=False,
+            resumable=False,
+            cancellable=False,
+            retryable=False,
+            deletable=state in _TERMINAL_STATES,
+        )
+    )
+
+
 def _job_with_liveness(
     record: dict[str, object],
     *,
@@ -387,6 +460,8 @@ def _job_with_liveness(
         enriched.pop("resilience", None)
     state = job_state(record)
     enriched["state"] = state
+    if "capabilities" not in record:
+        enriched["capabilities"] = _activity_record_capabilities(state)
     enriched["phase"] = _job_phase(record, state)
     enriched["source"] = _job_source(record)
     enriched["trigger"] = _job_trigger(record)
@@ -407,6 +482,9 @@ def _job_with_liveness(
     )
     enriched["control_pending_age_seconds"] = _control_pending_age_seconds(record, now)
     enriched["stalled"] = _job_stalled(record, now)
+    rate, remaining = _job_completion_estimate(record)
+    enriched["progress_rate_per_second"] = rate
+    enriched["estimated_remaining_seconds"] = remaining
     resources = record.get("resources")
     if isinstance(resources, dict):
         resources_map = cast("dict[str, object]", resources)
@@ -478,9 +556,7 @@ def _job_matches(
             _job_id_matches(record, filters.job_id),
             not filters.failed or record_state == JobState.FAILED.value,
             _job_updated_since(
-                record,
-                since_seconds=filters.since_seconds,
-                now=filters.now,
+                record, since_seconds=filters.since_seconds, now=filters.now
             ),
             filters.phase is None or _job_phase(record, record_state) == filters.phase,
             filters.state is None or record_state == filters.state,
@@ -637,8 +713,13 @@ def _prioritise_running_jobs(
         state = job_state(record)
         priorities = {
             **dict.fromkeys(_TRANSITIONAL_STATES, 0),
-            "running": 1, "queued": 2, "paused": 3,
-            "failed": 4, "interrupted": 4, "cancelled": 5, "succeeded": 6,
+            "running": 1,
+            "queued": 2,
+            "paused": 3,
+            "failed": 4,
+            "interrupted": 4,
+            "cancelled": 5,
+            "succeeded": 6,
         }
         return priorities.get(state, 7)
 

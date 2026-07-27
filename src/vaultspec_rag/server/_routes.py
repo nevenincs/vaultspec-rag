@@ -641,20 +641,25 @@ async def create_job_route(request: Request) -> JSONResponse:
 
 
 async def job_detail_route(request: Request) -> JSONResponse:
-    """Return one full, exact-ID canonical job resource."""
+    """Return one full, exact-ID job resource from either registry.
+
+    Resolves against the same union ``GET /jobs`` lists. Reading only canonical
+    history here is what made an activity record listable but unaddressable,
+    and every control verb resolves through this route.
+    """
     denied = require_token(request)
     if denied is not None:
         return denied
-    from ..jobs import get_job_manager
+    from ..jobs import find_job
 
     job_id = str(request.path_params["job_id"])
-    snapshot = get_job_manager().get(job_id)
-    if snapshot is None:
+    record = find_job(job_id)
+    if record is None:
         return job_error("get", "job_not_found", "The job was not found.")
     return JSONResponse(
         {
             "ok": True,
-            "job": _job_with_liveness(snapshot.to_dict(), now=time.time()),
+            "job": _job_with_liveness(record, now=time.time()),
         }
     )
 
@@ -764,10 +769,10 @@ async def delete_job_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
-    from ..jobs import get_job_manager
+    from ..jobs import delete_job
 
     outcome = await _run_in_thread(
-        get_job_manager().delete,
+        delete_job,
         str(request.path_params["job_id"]),
     )
     return _job_response(outcome)
