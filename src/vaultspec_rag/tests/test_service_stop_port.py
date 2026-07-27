@@ -35,17 +35,21 @@ from ._ports import free_loopback_port
 if TYPE_CHECKING:
     from pathlib import Path
 
-#: Budget for one `server stop --orphans` subprocess, measured at 3.2-3.6s on a
-#: host with ~1700 processes: CLI startup, one process-table sweep, and the
-#: second-long loopback identity probes.
+#: Budget for one `server stop --orphans` subprocess. Currently measured at
+#: 3.2-3.6s on a host with ~1700 processes - CLI startup, one process-table
+#: sweep, and the second-long loopback identity probes - because the sweep now
+#: reads a process's `ppid` only when its command line already matched. Reading
+#: it for every process cost a full-system snapshot EACH on Windows and put a
+#: single reap at 65-86s.
 #:
-#: This was 240s while the sweep read every process's `ppid` eagerly, which on
-#: Windows costs a full-system snapshot PER PROCESS and put a single reap at
-#: 65-86s. Reading that attribute only for the processes whose command line
-#: already matched cut the sweep to well under a second, and the budget follows
-#: it down. Keep the headroom generous - a busy host is not a hung reap - but
-#: not so generous that a genuinely wedged sweep parks the suite for minutes.
-_REAP_SUBPROCESS_BUDGET_SECONDS = 60.0
+#: The budget deliberately does NOT track that measurement down. It is a
+#: ceiling, not a wait: a passing guard never spends it, so headroom is free,
+#: while too little of it fails the guard on `TimeoutExpired` before a single
+#: safety assertion runs - reporting a failure that says nothing about whether
+#: the reap spares the singleton, which is the only thing these exist to check.
+#: That is not hypothetical; it is why this was raised off 60s in the first
+#: place. Lower it only to a figure a LOADED host can still meet.
+_REAP_SUBPROCESS_BUDGET_SECONDS = 240.0
 
 #: How long a witness daemon stays alive. It must outlive the WHOLE guard, not
 #: just the reap: the guard sweeps the process table once in-process to
