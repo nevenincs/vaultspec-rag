@@ -690,6 +690,25 @@ def _status_dir_path() -> Path:
     return Path(raw).expanduser()
 
 
+def managed_status_dir() -> Path:
+    """Return the managed service directory, resolved through the config.
+
+    Nine sites resolved this for themselves - five inline, plus named helpers
+    in the manifest and the discovery client - and had settled on two
+    spellings, ``Path(cfg.status_dir)`` and ``Path(str(cfg.status_dir))``. The
+    attribute is a ``str``, so the two are identical and the ``str()`` was
+    defensive typing that spread by copying.
+
+    Distinct from :func:`_status_dir_path` above, and deliberately so. That one
+    reads the environment directly because it belongs to the layer that FEEDS
+    the config; this one goes through the config so a ``--status-dir``
+    override on the command line is honoured. A consumer that read the
+    environment directly would put its file somewhere the rest of the service
+    is not looking.
+    """
+    return Path(str(get_config().status_dir)).expanduser()
+
+
 def _local_only_marker_path() -> Path:
     """Return the path of the persisted local-only marker file."""
     return _status_dir_path() / _LOCAL_ONLY_MARKER_FILENAME

@@ -25,6 +25,7 @@ from vaultspec_core.logging_config import (  # pyright: ignore[reportMissingType
 
 from ._managed_log_sink import RawRotatingLogSink
 from ._test_isolation import enforce_pytest_singleton_containment
+from .config import managed_status_dir
 
 __all__ = [
     "DEFAULT_MANAGED_LOG_LINES",
@@ -173,10 +174,8 @@ def _resolve_status_dir(status_dir: Path | None) -> Path:
     """
     if status_dir is not None:
         return status_dir
-    from .config import get_config
 
-    cfg = get_config()
-    return Path(cfg.status_dir).expanduser()
+    return managed_status_dir()
 
 
 def _managed_log_source(raw: str) -> ManagedLogSource:

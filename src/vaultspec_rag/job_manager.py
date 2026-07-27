@@ -25,7 +25,7 @@ from . import job_persistence as _job_persistence
 from ._job_errors import classify_error_text
 from ._runtime_identity import process_identity_fields
 from .concurrency import get_encode_limiter, get_index_limiter
-from .config import get_config
+from .config import get_config, managed_status_dir
 from .job_control import (
     CancelRequested,
     PauseRequested,
@@ -261,10 +261,7 @@ class JobManager:
         self._max_terminal_history = max_terminal_history
         self._max_idempotency = resolved_max + max_terminal_history
         if state_path is _CONFIGURED_STATE_PATH:
-            self._state_path = (
-                Path(str(get_config().status_dir)).expanduser()
-                / _MANAGED_STATE_FILENAME
-            )
+            self._state_path = managed_status_dir() / _MANAGED_STATE_FILENAME
         else:
             resolved_path = cast("str | os.PathLike[str] | None", state_path)
             self._state_path = (

@@ -49,7 +49,7 @@ __all__ = [
 import vaultspec_rag.server as _m
 
 from .._runtime_identity import interpreter_fields
-from ..config import SERVICE_STATUS_FILENAME
+from ..config import SERVICE_STATUS_FILENAME, managed_status_dir
 from ..logging_config import log_event
 from ..serviceclient._discovery import (
     HEARTBEAT_STALENESS_SECONDS,
@@ -81,7 +81,7 @@ def _resolve_log_path() -> Path:
     from ..config import get_config
 
     cfg = get_config()
-    status_dir = Path(cfg.status_dir).expanduser()
+    status_dir = managed_status_dir()
     from .._test_isolation import enforce_pytest_managed_singleton_containment
 
     enforce_pytest_managed_singleton_containment(
@@ -102,10 +102,8 @@ def _status_file_path() -> Path:
     wrong on the daemon's shutdown path, where this is used to remove the file
     it is about to stop publishing.
     """
-    from ..config import get_config
 
-    cfg = get_config()
-    return Path(cfg.status_dir).expanduser() / SERVICE_STATUS_FILENAME
+    return managed_status_dir() / SERVICE_STATUS_FILENAME
 
 
 def _qdrant_discovery_fields() -> dict[str, object]:

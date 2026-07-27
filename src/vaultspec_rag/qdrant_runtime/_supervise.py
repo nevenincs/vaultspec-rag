@@ -37,6 +37,7 @@ from .._win32 import (
     assign_process_to_job,
     create_kill_on_close_job,
 )
+from ..config import managed_status_dir
 from ._constants import (
     QDRANT_SERVER_VERSION,
     QdrantRuntimeState,
@@ -1027,7 +1028,7 @@ def start_supervised_from_config() -> QdrantSupervisor:
     cfg = get_config()
     qport = int(cfg.qdrant_port)
     storage_dir = Path(str(cfg.qdrant_storage_dir)).expanduser()
-    log_path = Path(str(cfg.status_dir)).expanduser() / "qdrant.log"
+    log_path = managed_status_dir() / "qdrant.log"
     log_max_bytes = int(cfg.managed_log_max_bytes)
     log_backup_count = int(cfg.managed_log_backup_count)
 
