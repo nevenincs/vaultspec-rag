@@ -134,6 +134,28 @@ class _WatcherReconciliation:
     graph_cache: GraphCache
 
 
+@dataclass(frozen=True, slots=True)
+class _UnstartedFailure:
+    """The manager and durable-retry identity of one dispatch failure."""
+
+    manager: _jobs.JobManager
+    job_id: str
+    attempt: int
+    message: str
+    action: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class _TransitionLogContext:
+    """State accumulated while releasing one observed watcher job."""
+
+    watcher_owned: bool
+    pending_count: int
+    replacement_delay: float
+    error: BaseException | None
+
+
 @dataclass(slots=True)
 class _WatcherConvergenceSlot:
     """Thread-safe ownership of one root/source convergence generation."""
@@ -1274,12 +1296,14 @@ async def _submit_watcher_job(
     if bound.status is JobOutcomeStatus.ERROR:
         await _finish_unstarted_watcher_failure(
             slot,
-            manager=manager,
-            job_id=job_id,
-            attempt=snapshot.attempt.number,
-            message=bound.message,
-            action="record_dispatch_bind_failure",
-            reason="dispatch_bind_failed",
+            _UnstartedFailure(
+                manager=manager,
+                job_id=job_id,
+                attempt=snapshot.attempt.number,
+                message=bound.message,
+                action="record_dispatch_bind_failure",
+                reason="dispatch_bind_failed",
+            ),
         )
         return
 
@@ -1287,12 +1311,14 @@ async def _submit_watcher_job(
     if dispatched.status is JobOutcomeStatus.ERROR:
         await _finish_unstarted_watcher_failure(
             slot,
-            manager=manager,
-            job_id=job_id,
-            attempt=snapshot.attempt.number,
-            message=dispatched.message,
-            action="record_dispatch_failure",
-            reason="dispatch_failed",
+            _UnstartedFailure(
+                manager=manager,
+                job_id=job_id,
+                attempt=snapshot.attempt.number,
+                message=dispatched.message,
+                action="record_dispatch_failure",
+                reason="dispatch_failed",
+            ),
         )
         return
 
@@ -1315,38 +1341,32 @@ async def _submit_watcher_job(
 
 async def _finish_unstarted_watcher_failure(
     slot: _WatcherConvergenceSlot,
-    *,
-    manager: _jobs.JobManager,
-    job_id: str,
-    attempt: int,
-    message: str,
-    action: str,
-    reason: str,
+    failure: _UnstartedFailure,
 ) -> None:
     """Durably settle an orchestration failure before releasing its slot."""
     await _run_in_thread(
-        partial(manager.fail_unstarted, job_id, result=message),
+        partial(failure.manager.fail_unstarted, failure.job_id, result=failure.message),
     )
-    failure = RuntimeError(message)
+    error = RuntimeError(failure.message)
     retry_state = await _settle_retry_failure(
         slot,
-        failure,
-        attempt=attempt,
-        action=action,
+        error,
+        attempt=failure.attempt,
+        action=failure.action,
     )
-    failed = await _run_in_thread(manager.get, job_id)
+    failed = await _run_in_thread(failure.manager.get, failure.job_id)
     await _run_in_thread(
         partial(
-            manager.update_terminal_resilience,
-            job_id,
-            attempt=attempt,
+            failure.manager.update_terminal_resilience,
+            failure.job_id,
+            attempt=failure.attempt,
             resilience=_retry_resilience(
                 retry_state,
                 base=failed.resilience if failed is not None else None,
             ),
         )
     )
-    failed = await _run_in_thread(manager.get, job_id)
+    failed = await _run_in_thread(failure.manager.get, failure.job_id)
     observed_terminal = (
         failed is not None
         and failed.state.is_terminal
@@ -1354,19 +1374,19 @@ async def _finish_unstarted_watcher_failure(
             slot,
             failed,
             now=time.monotonic(),
-            error=failure,
+            error=error,
         )
     )
     if observed_terminal:
         await _run_in_thread(
-            partial(_jobs.record_finish, job_id, error=message),
+            partial(_jobs.record_finish, failure.job_id, error=failure.message),
         )
         return
     _schedule_replacement(
         slot,
         now=time.monotonic(),
-        reason=reason,
-        error=message,
+        reason=failure.reason,
+        error=failure.message,
     )
 
 
@@ -1915,10 +1935,12 @@ def _observe_managed_job(
     _log_managed_transition(
         slot,
         snapshot,
-        watcher_owned=watcher_owned,
-        pending_count=pending_count,
-        replacement_delay=replacement_delay,
-        error=error,
+        _TransitionLogContext(
+            watcher_owned=watcher_owned,
+            pending_count=pending_count,
+            replacement_delay=replacement_delay,
+            error=error,
+        ),
     )
     return True
 
@@ -1926,11 +1948,7 @@ def _observe_managed_job(
 def _log_managed_transition(
     slot: _WatcherConvergenceSlot,
     snapshot: JobSnapshot,
-    *,
-    watcher_owned: bool,
-    pending_count: int,
-    replacement_delay: float,
-    error: BaseException | None,
+    context: _TransitionLogContext,
 ) -> None:
     if snapshot.state is JobState.PAUSED:
         log_event(
@@ -1939,9 +1957,9 @@ def _log_managed_transition(
             "reindex_paused",
             source=slot.source.value,
             job_id=snapshot.id,
-            pending_paths=pending_count,
+            pending_paths=context.pending_count,
         )
-    elif snapshot.state is JobState.SUCCEEDED and watcher_owned:
+    elif snapshot.state is JobState.SUCCEEDED and context.watcher_owned:
         log_event(
             logger,
             "service.watcher",
@@ -1949,7 +1967,7 @@ def _log_managed_transition(
             source=slot.source.value,
             job_id=snapshot.id,
             result=snapshot.result,
-            pending_paths=pending_count,
+            pending_paths=context.pending_count,
         )
     elif snapshot.state is JobState.CANCELLED:
         log_event(
@@ -1958,8 +1976,8 @@ def _log_managed_transition(
             "replacement_scheduled",
             source=slot.source.value,
             job_id=snapshot.id,
-            replacement_backoff_seconds=f"{replacement_delay:.0f}",
-            pending_paths=pending_count,
+            replacement_backoff_seconds=f"{context.replacement_delay:.0f}",
+            pending_paths=context.pending_count,
         )
     elif snapshot.state is JobState.SUCCEEDED:
         log_event(
@@ -1968,7 +1986,7 @@ def _log_managed_transition(
             "coalesced_job_completed",
             source=slot.source.value,
             job_id=snapshot.id,
-            pending_paths=pending_count,
+            pending_paths=context.pending_count,
         )
     elif not snapshot.state.is_terminal:
         # Queued, running, pausing and cancelling are progress, not outcomes.
@@ -1982,7 +2000,7 @@ def _log_managed_transition(
             source=slot.source.value,
             job_id=snapshot.id,
             state=snapshot.state.value,
-            pending_paths=pending_count,
+            pending_paths=context.pending_count,
         )
     else:
         log_event(
@@ -1990,12 +2008,12 @@ def _log_managed_transition(
             "service.watcher",
             "reindex_failed",
             severity=logging.ERROR,
-            exc_info=error is not None,
+            exc_info=context.error is not None,
             source=slot.source.value,
             job_id=snapshot.id,
             state=snapshot.state.value,
-            error=error or snapshot.result,
-            pending_paths=pending_count,
+            error=context.error or snapshot.result,
+            pending_paths=context.pending_count,
         )
 
 
