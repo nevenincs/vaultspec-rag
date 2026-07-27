@@ -828,7 +828,7 @@ def _render_status_detail(
         _process_identity_label(pid_alive, pid_is_ours),
     )
     _print_detail_line("Identity check", _get_token_label(token_match))
-    _print_detail_line("Network", _network_label(port_listening, pid_alive))
+    _print_detail_line("Network", _network_label(port_listening))
     if heartbeat_age is None:
         _print_detail_line("Heartbeat", "absent")
     else:

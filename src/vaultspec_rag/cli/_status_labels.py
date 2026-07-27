@@ -76,12 +76,15 @@ def _process_identity_label(pid_alive: bool, pid_is_ours: bool) -> str:
     return "not verified because the process is not running"
 
 
-def _network_label(port_listening: bool, pid_alive: bool) -> str:
-    if port_listening:
-        return "accepting connections"
-    if pid_alive:
-        return "not accepting connections"
-    return "not accepting connections"
+def _network_label(port_listening: bool) -> str:
+    """Say whether the port is answering, and nothing else.
+
+    It used to take ``pid_alive`` and branch on it to the same string the
+    fallback already returned, so the argument could not change the answer.
+    Whether the process is up is its own line on the status surface, one row
+    above this one, which is where an operator reads it.
+    """
+    return "accepting connections" if port_listening else "not accepting connections"
 
 
 def _plain_status_label(state: str) -> str:
