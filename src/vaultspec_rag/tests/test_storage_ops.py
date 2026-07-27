@@ -1435,7 +1435,9 @@ class TestPreDropRecount:
         assert client.snapshotted == []
         assert client.deleted == []
 
-    def test_data_tier_defers_when_the_archive_is_torn(self, tmp_path: Path) -> None:
+    def test_data_tier_fails_when_the_completed_archive_is_torn(
+        self, tmp_path: Path
+    ) -> None:
         prefix = _orphaned_namespace(tmp_path, now=_NOW)
         collection = _collection_of(prefix)
         client = _CycleClient(
@@ -1445,8 +1447,9 @@ class TestPreDropRecount:
         )
         result = _run_cycle(client, tmp_path)
         decision = next(d for d in result.decisions if d.prefix == prefix)
-        assert decision.action == "deferred"
-        assert decision.reason == "points_changed_during_archive"
+        assert decision.action == "failed"
+        assert decision.reason is not None
+        assert decision.reason.startswith("archive_failed:")
         assert client.snapshotted == [collection]
         assert client.deleted == []
 

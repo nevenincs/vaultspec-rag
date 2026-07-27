@@ -7,9 +7,9 @@ from typing import Any, cast
 import click
 import typer
 from tomlkit.exceptions import ParseError
+from typer._types import TyperChoice
 from typer.core import TyperCommand, TyperOption
 from typer.main import TyperPath
-from typer._types import TyperChoice
 from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
     InstallMode,
 )
@@ -109,9 +109,10 @@ class _InstallCommand(TyperCommand):
                     default=None,
                     help=(
                         "Provisioning mode: 'tool' (default, launched via uvx), "
-                        "'dependency' (a runtime project dependency resolved through the "
-                        "project's own venv, ships in built distributions), or 'dev' "
-                        "(the default dev dependency group; renders like dependency but "
+                        "'dependency' (a runtime project dependency resolved "
+                        "through the project's own venv, ships in built "
+                        "distributions), or 'dev' (the default dev dependency "
+                        "group; renders like dependency but "
                         "does not ship in built distributions). Auto-detected from "
                         "pyproject.toml when omitted."
                     ),
@@ -153,7 +154,10 @@ class _InstallCommand(TyperCommand):
                     param_decls=["--sync"],
                     default=False,
                     is_flag=True,
-                    help="Run `uv sync --reinstall-package torch` after PyTorch configuration changes are applied.",
+                    help=(
+                        "Run `uv sync --reinstall-package torch` after PyTorch "
+                        "configuration changes are applied."
+                    ),
                 ),
                 TyperOption(
                     param_decls=["--provision/--no-provision"],
@@ -191,7 +195,10 @@ class _InstallCommand(TyperCommand):
                     param_decls=["--skip-torch"],
                     default=False,
                     is_flag=True,
-                    help="Skip the PyTorch provisioning step (finer than --local-only).",
+                    help=(
+                        "Skip the PyTorch provisioning step "
+                        "(finer than --local-only)."
+                    ),
                 ),
                 TyperOption(
                     param_decls=["--skip-models"],
