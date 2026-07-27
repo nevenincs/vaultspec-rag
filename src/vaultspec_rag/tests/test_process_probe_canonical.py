@@ -1835,3 +1835,71 @@ class TestOneVocabularyHasOneType:
             "type, or the copies need a hand-written translation that goes "
             "stale the moment either side gains a member"
         )
+
+
+class TestDesiredJobStateHasOneStatement:
+    """The operator-intent vocabulary is stated by its enum and nowhere else.
+
+    ``DesiredJobState`` has three members, and they were written out five
+    times: the enum, two ``Literal`` aliases mirroring it for typing (one
+    sharing the enum's own name), a runtime membership set in the HTTP route,
+    and again inside that route's error sentence.
+
+    The set was the one that mattered. The route already called
+    ``DesiredJobState(state)`` two lines further down, so the enum was the
+    real validator and the set was a pre-check restating it - a fourth member
+    would have been accepted by the domain and rejected at the API boundary
+    with ``invalid_desired_state``.
+    """
+
+    def test_no_module_relists_the_desired_states(self) -> None:
+        from ..job_models import DesiredJobState
+
+        members = frozenset(member.value for member in DesiredJobState)
+        offenders: list[str] = []
+        for path in _production_sources():
+            if path.name == "job_models.py":
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Tuple | ast.List | ast.Set):
+                    continue
+                literals = {
+                    element.value
+                    for element in node.elts
+                    if isinstance(element, ast.Constant)
+                    and isinstance(element.value, str)
+                }
+                if members <= literals:
+                    offenders.append(f"{path.name}:{node.lineno}")
+        assert not offenders, (
+            f"the desired-state vocabulary is relisted at {offenders}; check "
+            "membership against DesiredJobState so a new intent is not "
+            "accepted by the domain and refused at the route"
+        )
+
+    def test_the_route_admits_exactly_the_declared_states(self) -> None:
+        """Adding a member must widen the route with no edit to the route.
+
+        Proven able to fail: restoring the literal set in ``_set_desired_state``
+        fails the relist scan above, and pinning this assertion to today's
+        three members would pass a stale check - so it asks the module for
+        them instead.
+        """
+        import inspect
+
+        from ..job_models import DesiredJobState
+        from ..server import _routes
+
+        source = inspect.getsource(_routes)
+        assert "set(DesiredJobState)" in source, (
+            "the route must test membership against the enum, not a literal set"
+        )
+        # The sentence an operator reads is built from the same members.
+        assert all(
+            f"'{member}'" in source or "for member in DesiredJobState" in source
+            for member in DesiredJobState
+        )
