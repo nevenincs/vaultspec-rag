@@ -1152,14 +1152,16 @@ def _install_run_unchecked(
 
     if provision:
         _run_provisioning(
-            target=target,
-            report=report,
-            dry_run=dry_run,
-            local_only=local_only,
-            provision_skip=provision_skip,
-            assume_yes=assume_yes,
-            sync_after=sync_after,
-            confirm=confirm,
+            _ProvisioningRequest(
+                target,
+                report,
+                dry_run,
+                local_only,
+                provision_skip,
+                assume_yes,
+                sync_after,
+                confirm,
+            )
         )
 
         # Persist the local-only runtime selection so the resident service
@@ -1197,17 +1199,19 @@ def _persist_runtime_selection(report: InstallReport, local_only: bool) -> None:
         )
 
 
-def _run_provisioning(
-    *,
-    target: Path,
-    report: InstallReport,
-    dry_run: bool,
-    local_only: bool,
-    provision_skip: set[str] | None,
-    assume_yes: bool,
-    sync_after: bool,
-    confirm: ConfirmFn | None,
-) -> None:
+@dataclass(frozen=True, slots=True)
+class _ProvisioningRequest:
+    target: Path
+    report: InstallReport
+    dry_run: bool
+    local_only: bool
+    provision_skip: set[str] | None
+    assume_yes: bool
+    sync_after: bool
+    confirm: ConfirmFn | None
+
+
+def _run_provisioning(request: _ProvisioningRequest) -> None:
     """Run the provisioning front door and attach its outcome to the report.
 
     Torch is already configured by the enrollment torch step above (its
@@ -1225,24 +1229,24 @@ def _run_provisioning(
     # The enrollment torch step already ran (and is reported on its own
     # report fields); fold "torch" into the front door's skip set so its
     # torch result is an honest opted-out, never a misleading re-run.
-    skip = set(provision_skip or set())
+    skip = set(request.provision_skip or set())
     skip.add("torch")
 
     outcome = provision_dependencies(
-        target,
-        local_only=local_only,
+        request.target,
+        local_only=request.local_only,
         skip=skip,
-        dry_run=dry_run,
+        dry_run=request.dry_run,
         configure_torch=False,
-        assume_yes=assume_yes,
-        sync_after=sync_after,
-        confirm=confirm,
+        assume_yes=request.assume_yes,
+        sync_after=request.sync_after,
+        confirm=request.confirm,
     )
-    report.provision_outcome = outcome
+    request.report.provision_outcome = outcome
     if not outcome.ok:
         failed = [r for r in outcome.steps if r.action == "failed"]
         for result in failed:
-            report.warnings.append(
+            request.report.warnings.append(
                 f"provisioning step {result.step} failed: {result.detail}"
             )
 
