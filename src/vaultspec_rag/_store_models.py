@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, NamedTuple, cast
 
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from . import store_schema
 
 __all__ = [
+    "ROOT_COLLECTION_PREFIX_RE",
     "CodeChunk",
     "DocumentChunk",
     "DocumentLocator",
@@ -45,6 +47,22 @@ __all__ = [
 #: schema and the server model each carried their own copy, one of them
 #: under a second name.
 DocumentLocatorKind = Literal["byte", "page", "sheet", "line", "char", "none"]
+
+#: Bytes of blake2b digest in a root prefix. Six render as twelve hex chars.
+_ROOT_PREFIX_DIGEST_BYTES = 6
+
+#: Matches the root prefix at the head of a collection name.
+#:
+#: Two modules recognised the prefix by compiling ``r[0-9a-f]{12}_`` for
+#: themselves, which restates the writer's digest size as a hex-digit count in
+#: a place nothing connects to it. Widening the digest would have left both
+#: readers matching a prefix the writer no longer produces - and the failure is
+#: a silent one, because an unmatched name simply looks like it belongs to no
+#: root. Built from the same constant the builder hashes with, so the two
+#: cannot disagree.
+ROOT_COLLECTION_PREFIX_RE = re.compile(
+    r"^(r[0-9a-f]{" + str(_ROOT_PREFIX_DIGEST_BYTES * 2) + r"}_)"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,7 +195,9 @@ def root_collection_prefix(root_dir: pathlib.Path | str) -> str:
     elif raw.startswith("\\\\?\\"):
         raw = raw[4:]
     resolved = os.path.normcase(str(_pathlib.Path(raw).resolve()))
-    digest = hashlib.blake2b(resolved.encode("utf-8"), digest_size=6).hexdigest()
+    digest = hashlib.blake2b(
+        resolved.encode("utf-8"), digest_size=_ROOT_PREFIX_DIGEST_BYTES
+    ).hexdigest()
     return f"r{digest}_"
 
 

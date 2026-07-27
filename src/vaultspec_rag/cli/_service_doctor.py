@@ -23,13 +23,9 @@ from typing import Annotated, cast
 import typer
 
 from ..api import get_readiness
+from ..commands._mode import RAG_DISTRIBUTION_NAME
 from ._app import JSON_ENVELOPE_OPTION_HELP, server_app
 from ._render import _emit_json, _plain
-
-#: The distribution name rag's own doctor rows read from the shared per-package
-#: ``.vaultspec/workspace.json`` map, so a mixed workspace's ``vaultspec-core``
-#: sibling entry is never mistaken for rag's own.
-_RAG_PACKAGE = "vaultspec-rag"
 
 
 @server_app.command(
@@ -260,17 +256,19 @@ def _mode_floor_axis(target: Path) -> dict[str, object] | None:
             read_package_declaration,
         )
 
-        declaration = read_package_declaration(target, _RAG_PACKAGE)
+        declaration = read_package_declaration(target, RAG_DISTRIBUTION_NAME)
         if declaration is None:
             return None
-        mode_mismatch = collect_mode_mismatch_state(target, package=_RAG_PACKAGE)
+        mode_mismatch = collect_mode_mismatch_state(
+            target, package=RAG_DISTRIBUTION_NAME
+        )
         floor, running, minimum = collect_version_floor_state(
-            target, package=_RAG_PACKAGE
+            target, package=RAG_DISTRIBUTION_NAME
         )
     except Exception:
         return None
     return {
-        "package": _RAG_PACKAGE,
+        "package": RAG_DISTRIBUTION_NAME,
         "declared_mode": declaration.install_mode.value,
         "mode_mismatch": mode_mismatch.value,
         "version_floor": floor.value,

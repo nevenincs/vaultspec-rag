@@ -19,6 +19,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -827,6 +828,162 @@ class TestAtomicReplaceHasOneImplementation:
         from .._atomic_write import replace_atomically, replace_durably
 
         assert replace_atomically is not replace_durably
+
+
+class TestRootPrefixFormatHasOneSpelling:
+    """The root-prefix shape is written once, by the module that builds it.
+
+    Four modules recognised the prefix by writing ``r[0-9a-f]{12}_`` out for
+    themselves. The twelve is not a free choice: it is the builder's six-byte
+    blake2b digest rendered as hex, restated as a digit count somewhere nothing
+    connects it to the digest. Widening the digest leaves every reader matching
+    a prefix the writer no longer produces, and nothing raises - an unmatched
+    collection name just looks like it belongs to no root.
+
+    The fourth copy is why this is checked by shape rather than by string. It
+    was ``^r[0-9a-f]{12}_$`` where the others were ``^(r[0-9a-f]{12}_)``, so a
+    scan comparing pattern text saw three copies and one unrelated pattern.
+    """
+
+    def test_no_module_but_the_builder_writes_the_prefix_shape(self) -> None:
+        """Any regex naming a 12-hex run after ``r`` is another copy."""
+        shape = re.compile(r"r\[0-9a-f\]\{\d+\}_")
+        offenders: list[str] = []
+        for path in _every_production_file():
+            if path.name == "_store_models.py":
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            offenders.extend(
+                f"{path.name}:{node.lineno}"
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and shape.search(node.value)
+            )
+        assert not offenders, (
+            f"the root-prefix shape is written outside its builder at "
+            f"{offenders}; use ROOT_COLLECTION_PREFIX_RE, or the digit count "
+            "and the builder's digest size drift apart silently"
+        )
+
+    def test_the_pattern_matches_what_the_builder_emits(self) -> None:
+        """The coupling itself, asserted rather than trusted.
+
+        Proven able to fail: changing ``_ROOT_PREFIX_DIGEST_BYTES`` alone fails
+        this, because the builder's output length moves and the pattern -
+        derived from the same constant - moves with it only if the derivation
+        is real. Hard-coding the pattern back to ``{12}`` fails it too.
+        """
+        from .._store_models import ROOT_COLLECTION_PREFIX_RE, root_collection_prefix
+
+        emitted = root_collection_prefix(Path(tempfile.gettempdir()))
+        assert ROOT_COLLECTION_PREFIX_RE.fullmatch(emitted), emitted
+        assert ROOT_COLLECTION_PREFIX_RE.match(emitted + "vault")
+
+    def test_the_delete_gate_rejects_a_trailing_newline(self) -> None:
+        """``$`` accepts one; a gate guarding a wipe must not.
+
+        The copy this replaced was ``$``-anchored and matched with ``match``,
+        and ``$`` also matches immediately before a trailing newline - so a
+        prefix ending in one passed the canonical check. The shared pattern is
+        used with ``fullmatch``, which does not.
+
+        Proven able to fail: swapping ``fullmatch`` for ``match`` in
+        ``_is_canonical_prefix`` fails this on the newline assertion below.
+        """
+        from ..storage_ops import _is_canonical_prefix
+
+        assert _is_canonical_prefix("r0123456789ab_")
+        assert not _is_canonical_prefix("r0123456789ab_\n")
+        assert not _is_canonical_prefix("")
+        assert not _is_canonical_prefix("r")
+
+
+class TestOperatorVerdictVocabularyHasOneHome:
+    """The words and exit codes an operator sees are the service domain's.
+
+    The service composes a verdict; the CLI walks its own signal ladder and
+    reaches a finer state token - a dead pid told apart from a reused one,
+    where the service says ``crashed`` for both. That difference is real and
+    stays. What was duplicated is everything around it: three labels typed out
+    in both places, and the broker-facing exit codes written as bare integers
+    in the entry point while the domain module defined them as constants and
+    documented them as a contract.
+
+    Both costs are quiet. Two wordings for one condition means the same daemon
+    is explained differently depending on which path an operator arrived
+    through. A bare ``4`` in a return tuple is unsearchable, so a contract
+    change reaches the constant and misses every literal spelling of it.
+    """
+
+    #: Verdict exit codes, and the module allowed to write them as integers.
+    _CONTRACT_OWNER = "_status.py"
+    _CONTRACT_CODES: ClassVar[frozenset[int]] = frozenset({3, 5})
+
+    def test_no_entry_point_respells_a_verdict_label(self) -> None:
+        """A second spelling of a label the service already produces."""
+        from ..serviceclient import _status
+
+        owned = {
+            _status.LABEL_WARMING,
+            _status.LABEL_CRASHED_PORT_SILENT,
+            _status.LABEL_CRASHED_HEARTBEAT_STALE,
+        }
+        offenders: list[str] = []
+        for path in _every_production_file():
+            if path.name == self._CONTRACT_OWNER:
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            offenders.extend(
+                f"{path.name}:{node.lineno} spells {node.value!r}"
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and node.value in owned
+            )
+        assert not offenders, (
+            f"an operator verdict label is spelled outside the service domain "
+            f"at {offenders}; import it, so one condition cannot be described "
+            "in two wordings depending on which surface reported it"
+        )
+
+    def test_the_status_renderer_names_its_exit_codes(self) -> None:
+        """The renderer must not restate the contract as bare integers.
+
+        Restricted to the codes that only ever mean a verdict. ``0`` and ``4``
+        are excluded deliberately: they are ordinary integers that appear all
+        over any module, so requiring a name for them would flag arithmetic
+        and indices rather than the contract.
+        """
+        from ..cli import _status_render
+
+        source = Path(_status_render.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        offenders: list[str] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Return) or node.value is None:
+                continue
+            if not isinstance(node.value, ast.Tuple):
+                continue
+            offenders.extend(
+                f"line {node.lineno} returns a bare {element.value}"
+                for element in node.value.elts
+                if isinstance(element, ast.Constant)
+                and isinstance(element.value, int)
+                and not isinstance(element.value, bool)
+                and element.value in self._CONTRACT_CODES
+            )
+        assert not offenders, (
+            f"the status renderer returns a verdict exit code as a literal: "
+            f"{offenders}; use the EXIT_* constant, because a bare integer is "
+            "unsearchable when the broker-facing contract changes"
+        )
 
 
 class TestSidecarKeysAreNamedNotSpelled:
