@@ -29,7 +29,12 @@ from ._code_meta import (
     EMBED_SCHEMA_KEY,
     MEMBERSHIP_EPOCH_KEY,
 )
-from ._consumer_pipeline import CodeConsumerPipeline, CodePipelineLimits
+from ._consumer_pipeline import (
+    CodeConsumerPipeline,
+    CodePipelineBindings,
+    CodePipelineLimits,
+    CodePipelineRun,
+)
 from ._content_discovery import (
     DEFAULT_SCAN_SAMPLE_LIMIT as _DEFAULT_SCAN_SAMPLE_LIMIT,
 )
@@ -182,20 +187,22 @@ class CodebaseIndexer:
             read_meta_raw=self._read_meta_raw,
         )
         self._consumer_pipeline = CodeConsumerPipeline(
-            self.root_dir,
-            self.model,
-            self.store,
-            self._producer,
-            self._lifecycle,
-            gpu_lock=self._gpu_lock,
-            begin_memory_budget=self._support_budget.begin_memory_budget,
-            sample_memory_budget=self._support_budget.sample_memory_budget,
-            forward_peak_recording=self._support_budget.forward_peak_recording,
-            fail_cuda_oom=self._support_budget.fail_cuda_oom,
-            begin_support_measurement=self._support_budget.begin_support_measurement,
-            measure_code_segments=self._support_budget.measure_code_segments,
-            record_extracted_bytes=self._support_budget.record_extracted_bytes,
-            record_preprocess_result=self._record_preprocess_result,
+            CodePipelineBindings(
+                root_dir=self.root_dir,
+                model=self.model,
+                store=self.store,
+                producer=self._producer,
+                lifecycle=self._lifecycle,
+                gpu_lock=self._gpu_lock,
+                begin_memory_budget=self._support_budget.begin_memory_budget,
+                sample_memory_budget=self._support_budget.sample_memory_budget,
+                forward_peak_recording=self._support_budget.forward_peak_recording,
+                fail_cuda_oom=self._support_budget.fail_cuda_oom,
+                begin_support_measurement=self._support_budget.begin_support_measurement,
+                measure_code_segments=self._support_budget.measure_code_segments,
+                record_extracted_bytes=self._support_budget.record_extracted_bytes,
+                record_preprocess_result=self._record_preprocess_result,
+            )
         )
         self._incremental_commit = CodeIncrementalCommit(
             self.store,
@@ -557,13 +564,15 @@ class CodebaseIndexer:
         """
         result = self._consumer_pipeline.run(
             paths,
-            reporter=reporter,
-            checkpoint=checkpoint,
-            limits=limits,
-            content_epoch=self._content_epoch,
-            code_build_target=self._code_build_target,
-            ingest_wait=ingest_wait,
-            run_control=run_control,
+            CodePipelineRun(
+                reporter=reporter,
+                checkpoint=checkpoint,
+                limits=limits,
+                content_epoch=self._content_epoch,
+                code_build_target=self._code_build_target,
+                ingest_wait=ingest_wait,
+                run_control=run_control,
+            ),
         )
         self._reuse_stats = result.reuse_stats
         return result.new_ids, result.total, result.metadata

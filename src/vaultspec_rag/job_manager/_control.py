@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -38,6 +39,16 @@ if TYPE_CHECKING:
     from .. import job_persistence as _job_persistence
 
 logger = logging.getLogger("vaultspec_rag.jobs")
+
+
+@dataclass(frozen=True, slots=True)
+class _AttemptTerminal:
+    attempt: int
+    task: asyncio.Task[Any]
+    state: JobState
+    result: str | None = None
+    error_kind: str | None = None
+    reuse: dict[str, object] | None = None
 
 
 class JobManagerControl(JobManagerState):
@@ -351,18 +362,7 @@ class JobManagerControl(JobManagerState):
         with self._lock:
             managed = self._active.get(job_id)
             if managed is None:
-                terminal = self._get_terminal_locked(job_id)
-                if terminal is not None:
-                    return JobOutcome(
-                        command=command,
-                        status=JobOutcomeStatus.OK,
-                        code="terminal_state_preserved",
-                        message=(
-                            "The job is already terminal; its first outcome was kept."
-                        ),
-                        job=self._snapshot_locked(terminal),
-                    )
-                return self._error(command, "job_not_found", "The job was not found.")
+                return self._missing_acknowledgement_target_locked(command, job_id)
             if (
                 managed.snapshot.attempt.number != attempt
                 or managed.runtime.task is not task
@@ -403,68 +403,103 @@ class JobManagerControl(JobManagerState):
                 state is JobState.PAUSING
                 and managed.snapshot.desired_state is DesiredJobState.RUNNING
             ):
-                self._queue_resumed_attempt_locked(managed, now=now)
-                persistence_error = self._persist_locked()
-                if persistence_error is not None:
-                    return self._persistence_error(
-                        command,
-                        persistence_error,
-                        self._snapshot_locked(managed),
-                    )
-                return JobOutcome(
-                    command=command,
-                    status=JobOutcomeStatus.ACCEPTED,
-                    code="resume_requeued",
-                    message="The unwound job queued a new reconciliation attempt.",
-                    job=self._snapshot_locked(managed),
-                )
-
-            acknowledged_state = (
-                JobState.PAUSED if state is JobState.PAUSING else JobState.CANCELLED
-            )
-            self._replace_snapshot_locked(
-                managed,
-                state=acknowledged_state,
-                desired_state=(
-                    DesiredJobState.PAUSED
-                    if acknowledged_state is JobState.PAUSED
-                    else DesiredJobState.CANCELLED
-                ),
-                now=now,
-                control_acknowledged_at=now,
-                finished_at=now if acknowledged_state.is_terminal else None,
-            )
-            if acknowledged_state.is_terminal:
-                self._archive_terminal_locked(managed)
-            persistence_error = self._persist_locked()
-            if persistence_error is not None:
-                return self._persistence_error(
+                return self._complete_resumed_control_locked(
                     command,
-                    persistence_error,
-                    self._snapshot_locked(managed),
+                    managed,
+                    now,
                 )
-            return JobOutcome(
-                command=command,
-                status=JobOutcomeStatus.OK,
-                code="control_acknowledged",
-                message=f"The job acknowledged {acknowledged_state.value}.",
-                job=self._snapshot_locked(managed),
+            return self._complete_control_acknowledgement_locked(
+                command,
+                managed,
+                state,
+                now,
             )
+
+    def _missing_acknowledgement_target_locked(
+        self,
+        command: str,
+        job_id: str,
+    ) -> JobOutcome:
+        terminal = self._get_terminal_locked(job_id)
+        if terminal is None:
+            return self._error(command, "job_not_found", "The job was not found.")
+        return JobOutcome(
+            command=command,
+            status=JobOutcomeStatus.OK,
+            code="terminal_state_preserved",
+            message="The job is already terminal; its first outcome was kept.",
+            job=self._snapshot_locked(terminal),
+        )
+
+    def _complete_resumed_control_locked(
+        self,
+        command: str,
+        managed: ManagedJob,
+        now: float,
+    ) -> JobOutcome:
+        self._queue_resumed_attempt_locked(managed, now=now)
+        persistence_error = self._persist_locked()
+        if persistence_error is not None:
+            return self._persistence_error(
+                command,
+                persistence_error,
+                self._snapshot_locked(managed),
+            )
+        return JobOutcome(
+            command=command,
+            status=JobOutcomeStatus.ACCEPTED,
+            code="resume_requeued",
+            message="The unwound job queued a new reconciliation attempt.",
+            job=self._snapshot_locked(managed),
+        )
+
+    def _complete_control_acknowledgement_locked(
+        self,
+        command: str,
+        managed: ManagedJob,
+        state: JobState,
+        now: float,
+    ) -> JobOutcome:
+        acknowledged_state = (
+            JobState.PAUSED if state is JobState.PAUSING else JobState.CANCELLED
+        )
+        self._replace_snapshot_locked(
+            managed,
+            state=acknowledged_state,
+            desired_state=(
+                DesiredJobState.PAUSED
+                if acknowledged_state is JobState.PAUSED
+                else DesiredJobState.CANCELLED
+            ),
+            now=now,
+            control_acknowledged_at=now,
+            finished_at=now if acknowledged_state.is_terminal else None,
+        )
+        if acknowledged_state.is_terminal:
+            self._archive_terminal_locked(managed)
+        persistence_error = self._persist_locked()
+        if persistence_error is not None:
+            return self._persistence_error(
+                command,
+                persistence_error,
+                self._snapshot_locked(managed),
+            )
+        return JobOutcome(
+            command=command,
+            status=JobOutcomeStatus.OK,
+            code="control_acknowledged",
+            message=f"The job acknowledged {acknowledged_state.value}.",
+            job=self._snapshot_locked(managed),
+        )
 
     def finish_attempt(
         self,
         job_id: str,
-        *,
-        attempt: int,
-        task: asyncio.Task[Any],
-        state: JobState,
-        result: str | None = None,
-        error_kind: str | None = None,
-        reuse: dict[str, object] | None = None,
+        terminal: _AttemptTerminal,
     ) -> JobOutcome:
         """Commit one attempt's terminal outcome with first-writer-wins semantics."""
         command = "finish_attempt"
-        if not state.is_terminal:
+        if not terminal.state.is_terminal:
             raise ValueError("attempt completion requires a terminal state")
         with self._lock:
             managed = self._active.get(job_id)
@@ -480,8 +515,8 @@ class JobManagerControl(JobManagerState):
                     )
                 return self._error(command, "job_not_found", "The job was not found.")
             if (
-                managed.snapshot.attempt.number != attempt
-                or managed.runtime.task is not task
+                managed.snapshot.attempt.number != terminal.attempt
+                or managed.runtime.task is not terminal.task
             ):
                 return JobOutcome(
                     command=command,
@@ -495,17 +530,17 @@ class JobManagerControl(JobManagerState):
             managed.runtime = JobRuntimeOwner(task=None, control=None)
             self._replace_snapshot_locked(
                 managed,
-                state=state,
+                state=terminal.state,
                 desired_state=(
                     DesiredJobState.CANCELLED
-                    if state is JobState.CANCELLED
+                    if terminal.state is JobState.CANCELLED
                     else managed.snapshot.desired_state
                 ),
                 now=now,
                 finished_at=now,
-                result=result,
-                error_kind=error_kind,
-                reuse=reuse,
+                result=terminal.result,
+                error_kind=terminal.error_kind,
+                reuse=terminal.reuse,
             )
             self._archive_terminal_locked(managed)
             persistence_error = self._persist_locked()
@@ -519,7 +554,7 @@ class JobManagerControl(JobManagerState):
                 command=command,
                 status=JobOutcomeStatus.OK,
                 code="job_finished",
-                message=f"The job finished as {state.value}.",
+                message=f"The job finished as {terminal.state.value}.",
                 job=self._snapshot_locked(managed),
             )
 
@@ -591,15 +626,7 @@ class JobManagerControl(JobManagerState):
             backup = self._capture_state_locked()
             parent = self._get_terminal_locked(job_id)
             if parent is None:
-                active = self._active.get(job_id)
-                if active is not None:
-                    return self._error(
-                        command,
-                        "job_not_terminal",
-                        "Only terminal jobs can be retried.",
-                        active,
-                    )
-                return self._error(command, "job_not_found", "The job was not found.")
+                return self._missing_retry_target_locked(command, job_id)
             if not parent.snapshot.state.is_retryable:
                 return self._error(
                     command,
@@ -673,6 +700,17 @@ class JobManagerControl(JobManagerState):
                 message="A linked retry job was admitted.",
                 job=retried,
             )
+
+    def _missing_retry_target_locked(self, command: str, job_id: str) -> JobOutcome:
+        active = self._active.get(job_id)
+        if active is None:
+            return self._error(command, "job_not_found", "The job was not found.")
+        return self._error(
+            command,
+            "job_not_terminal",
+            "Only terminal jobs can be retried.",
+            active,
+        )
 
     def delete(self, job_id: str) -> JobOutcome:
         """Delete retained terminal history; never cancel nonterminal work."""
