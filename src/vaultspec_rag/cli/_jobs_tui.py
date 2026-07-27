@@ -23,7 +23,7 @@ from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import DataTable, Footer, RichLog, Static
 
-from ..job_models import DesiredJobState
+from ..job_models import DesiredJobState, JobState
 from ..serviceclient._transport import (
     _try_http_admin,
     _try_http_delete_job,
@@ -84,6 +84,17 @@ _STATE_ACTIONS: dict[str, tuple[str, DesiredJobState]] = {
     "stop": ("cancellable", DesiredJobState.CANCELLED),
 }
 _PLAIN_ACTIONS: dict[str, str] = {"retry": "retryable", "delete": "deletable"}
+
+# Derived from the canonical enum rather than listed again here, so a state
+# added there cannot quietly start reading as non-terminal in this view.
+_TERMINAL_STATES = frozenset(state.value for state in JobState if state.is_terminal)
+
+# Estimate fields a service older than this view does not publish at all.
+# Absent is not the same answer as present-and-null: null is the service
+# declining to estimate this job, absent is a service that never estimates.
+# Reading them the same way would tell an operator their jobs are all
+# unmeasurable when the truth is that their daemon predates the measurement.
+_ESTIMATE_KEY = "estimated_remaining_seconds"
 
 _STATE_STYLES: dict[str, str] = {
     "active": "bold green",
@@ -166,12 +177,23 @@ def _state_cell(
     running = str(job.get("phase", "")) == "running" and not _job_is_waiting(job)
     glyph = f"{frame} " if running else "  "
     desired = job.get("desired_state")
+    state = job.get("state")
     if pending is not None:
         # A requested control is not an observed one. Saying so keeps the
         # view honest across the window where the service has not yet
         # acknowledged the request.
         second, second_style = f" {pending} requested", "italic yellow"
-    elif isinstance(desired, str) and desired and desired != job.get("state"):
+    elif (
+        isinstance(desired, str)
+        and desired
+        and desired != state
+        # A terminal job is not transitioning anywhere. Restored jobs in
+        # particular carry the desired state they held when the daemon died -
+        # an interrupted job still reads ``desired_state: running`` - and
+        # painting an arrow there advertises a transition that will never
+        # happen, on work that is already over.
+        and str(state) not in _TERMINAL_STATES
+    ):
         second, second_style = f" → {desired}", "italic yellow"
     else:
         second, second_style = "", "dim"
@@ -310,6 +332,7 @@ class JobsTuiApp(App[None]):
         self._pending: dict[str, tuple[str, str | None]] = {}
         self._last_refresh: float | None = None
         self._last_error: str | None = None
+        self._service_estimates = True
         self._show_log = False
         self._bar_cells = 0
         self._column_cells: dict[str, int] = {}
@@ -440,6 +463,9 @@ class JobsTuiApp(App[None]):
         ]
         self._last_error = None
         self._last_refresh = time.time()
+        # A service that publishes the key for no job at all predates the
+        # estimate. Saying so once beats every row reading as unmeasurable.
+        self._service_estimates = not jobs or any(_ESTIMATE_KEY in job for job in jobs)
         self._jobs = jobs
         self._reconcile_pending()
         self._layout_columns()
@@ -548,6 +574,11 @@ class JobsTuiApp(App[None]):
                 line.append(f" ({_compact_duration(age)} ago)", style="bold yellow")
         else:
             line.append("\nloading", style="dim")
+        if not self._service_estimates:
+            # Said once in the header rather than implied by every row's
+            # empty estimate, which reads as unmeasurable work instead of
+            # an older daemon.
+            line.append("  ·  this service does not report time estimates", style="dim")
         summary = self.query("#summary")
         if summary:
             summary.only_one(Static).update(line)
