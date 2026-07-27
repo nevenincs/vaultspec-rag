@@ -705,42 +705,44 @@ def _detect_mode_flip(
     return mcp_mode_flipped
 
 
-def _prepare_mcp_transition(
-    target: Path,
-    report: InstallReport,
-    mode: InstallMode,
-    *,
-    install_mcp: bool,
-    skip: set[str],
-    dry_run: bool,
-    explicit_mode: bool,
-    configure_torch: bool,
-) -> tuple[bool, bool]:
+@dataclass(frozen=True, slots=True)
+class _McpTransitionRequest:
+    target: Path
+    report: InstallReport
+    mode: InstallMode
+    install_mcp: bool
+    skip: set[str]
+    dry_run: bool
+    explicit_mode: bool
+    configure_torch: bool
+
+
+def _prepare_mcp_transition(request: _McpTransitionRequest) -> tuple[bool, bool]:
     """Preflight and, for real runs, commit MCP placement and package mode."""
-    mcp_skipped = "mcp" in skip
+    mcp_skipped = "mcp" in request.skip
     if not mcp_skipped and not _reconcile_mcp_extra(
         _McpExtraRequest(
-            target,
-            report,
-            mode,
-            enabled=install_mcp,
+            request.target,
+            request.report,
+            request.mode,
+            enabled=request.install_mcp,
             dry_run=True,
-            record_torch_inspect_error=configure_torch,
+            record_torch_inspect_error=request.configure_torch,
         )
     ):
         return False, False
 
     mode_flipped = _detect_mode_flip(
-        target,
-        mode,
-        skip=skip,
-        explicit=explicit_mode,
+        request.target,
+        request.mode,
+        skip=request.skip,
+        explicit=request.explicit_mode,
     )
-    if dry_run:
+    if request.dry_run:
         return True, mode_flipped
     if mcp_skipped:
-        if "core" not in skip:
-            persist_rag_mode(target, mode)
+        if "core" not in request.skip:
+            persist_rag_mode(request.target, request.mode)
         return True, False
     return True, mode_flipped
 
@@ -1012,14 +1014,16 @@ def _install_run_unchecked(
     # failure stops the operation before source, package mode, provider config,
     # ownership, or lock state can change.
     transition_ready, mcp_mode_flipped = _prepare_mcp_transition(
-        target,
-        report,
-        resolved.mode,
-        install_mcp=install_mcp,
-        skip=skip,
-        dry_run=dry_run,
-        explicit_mode=mode is not None,
-        configure_torch=configure_torch,
+        _McpTransitionRequest(
+            target,
+            report,
+            resolved.mode,
+            install_mcp,
+            skip,
+            dry_run,
+            mode is not None,
+            configure_torch,
+        )
     )
     if not transition_ready:
         return report
