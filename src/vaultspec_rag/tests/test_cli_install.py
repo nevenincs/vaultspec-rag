@@ -28,7 +28,7 @@ class TestCpuOnlyMessageRendering:
 
         from rich.console import Console
 
-        from ..cli import _cpu_only_message
+        from ..cli._gpu_errors import _cpu_only_message
 
         buf = io.StringIO()
         Console(file=buf, force_terminal=False, color_system=None, width=120).print(
@@ -70,7 +70,7 @@ class TestNoGpuMessageRendering:
 
         from rich.console import Console
 
-        from ..cli import _no_gpu_message
+        from ..cli._gpu_errors import _no_gpu_message
 
         buf = io.StringIO()
         Console(file=buf, force_terminal=False, color_system=None, width=120).print(
@@ -107,7 +107,7 @@ class TestNoTorchMessageRendering:
 
         from rich.console import Console
 
-        from ..cli import _no_torch_message
+        from ..cli._gpu_errors import _no_torch_message
 
         buf = io.StringIO()
         Console(file=buf, force_terminal=False, color_system=None, width=120).print(
@@ -142,6 +142,7 @@ class TestRenderInstallReport:
         from rich.console import Console
 
         from .. import cli as cli_mod
+        from ..cli._render import _render_install_report
 
         buf = io.StringIO()
         original = cli_mod.console
@@ -149,7 +150,7 @@ class TestRenderInstallReport:
             file=buf, force_terminal=False, color_system=None, width=200
         )
         try:
-            cli_mod._render_install_report(report)
+            _render_install_report(report)
         finally:
             cli_mod.console = original
         return buf.getvalue()
@@ -343,6 +344,7 @@ class TestRenderUninstallReport:
         from rich.console import Console
 
         from .. import cli as cli_mod
+        from ..cli._render import _render_uninstall_report
 
         buf = io.StringIO()
         original = cli_mod.console
@@ -350,7 +352,7 @@ class TestRenderUninstallReport:
             file=buf, force_terminal=False, color_system=None, width=200
         )
         try:
-            cli_mod._render_uninstall_report(report)
+            _render_uninstall_report(report)
         finally:
             cli_mod.console = original
         return buf.getvalue()

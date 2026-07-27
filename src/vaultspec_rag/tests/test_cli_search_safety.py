@@ -316,7 +316,7 @@ class TestSearchSafetyContract:
 
     def test_suppress_hf_progress_sets_env(self, monkeypatch: pytest.MonkeyPatch):
         """_suppress_hf_progress sets the HF env vars idempotently."""
-        from ..cli import _suppress_hf_progress
+        from ..cli._search import _suppress_hf_progress
 
         monkeypatch.delenv("HF_HUB_DISABLE_PROGRESS_BARS", raising=False)
         monkeypatch.delenv("TRANSFORMERS_VERBOSITY", raising=False)
@@ -432,7 +432,7 @@ class TestSearchSafetyContract:
         Proven able to fail: raising the timeout above the server's sleep lets
         the request complete and the error is no longer http_search_timeout.
         """
-        from ..cli import _try_http_search
+        from ..serviceclient._transport import _try_http_search
 
         server, thread = _slow_search_contract_server()
         try:

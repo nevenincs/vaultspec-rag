@@ -287,7 +287,7 @@ def _wait_for_qdrant_publication(
 ) -> dict[str, object]:
     """Wait boundedly for the authoritative pre-warmup Qdrant status."""
     from ..._process_probe import pid_alive
-    from ...cli import _read_service_status
+    from ...cli._service_status import _read_service_status
 
     deadline = time.monotonic() + timeout
     last: dict[str, object] | None = None
@@ -324,7 +324,7 @@ def _resolve_owned_pids(*, port: int, fallback_pid: int) -> tuple[int, int | Non
     ``fallback_pid`` (the spawned process). The qdrant pid is returned when the
     status file records a valid integer, else ``None``.
     """
-    from ...cli import _read_service_status
+    from ...cli._service_status import _read_service_status
 
     status = _read_service_status()
     raw_daemon_pid = (
@@ -354,7 +354,7 @@ def _cleanup_service_process(
     timeout: float,
 ) -> None:
     """Terminate and verify one test-owned service inside the supplied budget."""
-    from ...cli import _terminate_pid
+    from ...cli._process import _terminate_pid
     from ._helpers import _wait_for_exit
 
     daemon_pid, qdrant_pid = _resolve_owned_pids(port=port, fallback_pid=pid)
@@ -476,7 +476,8 @@ def _live_service_context(
     watch: bool = False,
 ) -> Generator[tuple[int, Path]]:
     """Start the real service under one model-to-readiness deadline envelope."""
-    from ...cli import _spawn_service, _write_service_status
+    from ...cli._process import _spawn_service
+    from ...cli._service_status import _write_service_status
     from ._helpers import (
         _get_ephemeral_port,
         _poll_health,

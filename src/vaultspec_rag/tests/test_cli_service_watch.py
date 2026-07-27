@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from ..cli import _service_child_env
+from ..cli._process import _service_child_env
 from ..config import EnvVar
 from ._scaffold import restore_env, set_env
 

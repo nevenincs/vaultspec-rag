@@ -26,8 +26,9 @@ import sys
 import pytest
 from typer.testing import CliRunner
 
-from ..cli import TerminationResult, _log_file, app
+from ..cli import TerminationResult, app
 from ..cli import _service_stop as _service_stop_module
+from ..cli._service_status import _log_file
 from ..cli._service_stop import (
     _fail_still_running,
     _fail_stop,
@@ -165,7 +166,7 @@ class TestStopLiveOutcomes:
     def test_dead_recorded_pid_is_cleaned_json(self) -> None:
         # A discovery file recording a confirmed-dead pid is stale state the
         # stop removes: status `cleaned`, exit 0.
-        from ..cli import _write_service_status
+        from ..cli._service_status import _write_service_status
 
         probe = subprocess.run(
             [sys.executable, "-c", "import os; print(os.getpid())"],
@@ -196,7 +197,7 @@ class TestStopLiveOutcomes:
         # would confirm a python child as ours (and the resulting terminate
         # sends CTRL_BREAK to the shared process group on Windows, killing
         # the test run itself).
-        from ..cli import _write_service_status
+        from ..cli._service_status import _write_service_status
 
         if sys.platform == "win32":
             child_args = ["cmd.exe", "/c", "ping -n 60 127.0.0.1 >nul"]
@@ -363,7 +364,7 @@ class TestStopThatDidNotStop:
         # The success direction against a real process: a child this test may
         # signal must come back alive=False with no denial recorded.
         from .._process_probe import pid_alive
-        from ..cli import _terminate_pid
+        from ..cli._process import _terminate_pid
 
         if sys.platform == "win32":
             child = subprocess.Popen(

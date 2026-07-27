@@ -104,7 +104,8 @@ async def test_start_watcher_disabled_is_pull_only(
     tmp_path: Path,
     request: pytest.FixtureRequest,
 ) -> None:
-    from ...cli import _spawn_service, _write_service_status
+    from ...cli._process import _spawn_service
+    from ...cli._service_status import _write_service_status
     from ._helpers import _get_ephemeral_port, _poll_health, _service_env
     from .conftest import _cleanup_service_process
 

@@ -395,10 +395,10 @@ class TestMcpFastPath:
         The server here is genuinely listening and genuinely answering with
         something unusable, which is the condition being discriminated.
         """
-        from .. import cli as cli_mod
+        from ..serviceclient._transport import _try_http_search
 
         with _misbehaving_service() as port:
-            result = cli_mod._try_http_search("q", "code", 5, port, "/tmp/proj")
+            result = _try_http_search("q", "code", 5, port, "/tmp/proj")
 
         assert isinstance(result, dict)
         assert result.get("ok") is False
@@ -409,10 +409,10 @@ class TestMcpFastPath:
 
     def test_live_but_broken_reindex_returns_structured_error(self) -> None:
         """Same discrimination for _try_http_reindex."""
-        from .. import cli as cli_mod
+        from ..serviceclient._transport import _try_http_reindex
 
         with _misbehaving_service() as port:
-            result = cli_mod._try_http_reindex(
+            result = _try_http_reindex(
                 "vault", False, port, "/tmp/proj", initiator_kind="cli"
             )
 
@@ -426,13 +426,13 @@ class TestMcpFastPath:
         system rather than a substituted transport - which is the only way to
         know the caller still reads a real refusal as a dead service.
         """
-        from .. import cli as cli_mod
+        from ..serviceclient._transport import _try_http_search
 
         with contextlib.closing(__import__("socket").socket()) as probe:
             probe.bind(("127.0.0.1", 0))
             dead_port = probe.getsockname()[1]
 
-        result = cli_mod._try_http_search("q", "code", 5, dead_port, "/tmp/proj")
+        result = _try_http_search("q", "code", 5, dead_port, "/tmp/proj")
         assert result is None
 
 

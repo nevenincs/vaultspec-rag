@@ -28,14 +28,12 @@ import pytest
 from typer.testing import CliRunner
 
 from ..._process_probe import pid_alive
-from ...cli import (
-    _port_is_listening,
+from ...cli import app
+from ...cli._process import _port_is_listening, _spawn_service, _terminate_pid
+from ...cli._service_status import (
     _read_service_status,
-    _spawn_service,
     _status_file,
-    _terminate_pid,
     _write_service_status,
-    app,
 )
 from ...config import EnvVar
 from .._model_setup import (
@@ -260,8 +258,8 @@ def _signalable_live_service(
     qdrant_source: tuple[Path, Path],
 ) -> Generator[tuple[int, int]]:
     """Run the real daemon in a Windows-signalable process group."""
-    from ...cli import _write_service_status
     from ...cli._process import _service_child_env
+    from ...cli._service_status import _write_service_status
     from .conftest import _cleanup_service_process
 
     offline_env = {

@@ -36,14 +36,8 @@ namespace is observed - the same discipline the ``cli`` split uses.
 
 from __future__ import annotations
 
-# Re-export ``BackendCapabilities`` from its home module so the
-# pre-split ``from . import BackendCapabilities``
-# import keeps resolving.
-from ..capabilities import BackendCapabilities
-
 # 2. Leaf helpers (no decorators).
 from ._lifecycle import (
-    _DiscoveryPublisher,
     _heartbeat_loop,
     _heartbeat_tick_sync,
     _install_daemon_shutdown_hooks,
@@ -70,7 +64,6 @@ from ._models import (
 
 # 1. State globals
 from ._state import (
-    _HEARTBEAT_INTERVAL_SECONDS,
     _SERVICE_TOKEN,
     _daemon_log_capture,
     _daemon_process,
@@ -94,14 +87,8 @@ from ._state import (
 )
 from ._utils import (
     ProjectRootRequiredError,
-    _clamp_top_k,
-    _default_root,
-    _is_sensitive_path,
     _local_store_locked_error_dict,
     _registry_full_error_dict,
-    _resolve_root,
-    _validate_query,
-    _validate_vault_root,
 )
 from ._watcher import (
     WatcherStartOutcome,
@@ -113,9 +100,7 @@ from ._watcher import (
 )
 
 __all__ = [
-    "_HEARTBEAT_INTERVAL_SECONDS",
     "_SERVICE_TOKEN",
-    "BackendCapabilities",
     "HealthResponse",
     "IndexResponse",
     "IndexStatus",
@@ -123,18 +108,14 @@ __all__ = [
     "SearchResponse",
     "SearchResultItem",
     "WatcherStartOutcome",
-    "_DiscoveryPublisher",
-    "_clamp_top_k",
     "_daemon_log_capture",
     "_daemon_process",
-    "_default_root",
     "_ensure_watcher",
     "_ensure_watcher_soon",
     "_heartbeat_loop",
     "_heartbeat_tick_sync",
     "_http_mode",
     "_install_daemon_shutdown_hooks",
-    "_is_sensitive_path",
     "_launch_token",
     "_lifecycle_log",
     "_local_store_locked_error_dict",
@@ -143,7 +124,6 @@ __all__ = [
     "_registry",
     "_registry_full_error_dict",
     "_resolve_log_path",
-    "_resolve_root",
     "_service_port",
     "_shutdown_hooks_installed",
     "_shutdown_recorded",
@@ -155,8 +135,6 @@ __all__ = [
     "_storage_maintenance_tick_sync",
     "_storage_survey_warm_sync",
     "_survey_warmup_task",
-    "_validate_query",
-    "_validate_vault_root",
     "_wait_for_watcher_cleanup",
     "_watcher_lock",
     "_watcher_stops",

@@ -63,6 +63,38 @@ def _production_sources() -> list[Path]:
     ]
 
 
+def _every_production_file() -> list[Path]:
+    """Every production module, including the canonical home.
+
+    ``_production_sources`` omits the canonical home, which is right for a
+    "does anyone else do this" scan and wrong for building an index of who
+    reads what: a file left out of that index reads as nobody.
+    """
+    return [path for path in _PACKAGE_ROOT.rglob("*.py") if "tests" not in path.parts]
+
+
+def _module_name(path: Path) -> str:
+    """Return the dotted module name for *path*, dropping a trailing package part."""
+    parts = list(path.relative_to(_PACKAGE_ROOT).with_suffix("").parts)
+    if parts and parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join([_PACKAGE_ROOT.name, *parts])
+
+
+def _absolute_import(node: ast.ImportFrom, module: str, is_package: bool) -> str:
+    """Resolve a possibly-relative ``ImportFrom`` to an absolute module name."""
+    base = node.module or ""
+    if not node.level:
+        return base
+    parts = module.split(".")
+    if not is_package:
+        parts = parts[:-1]
+    above = node.level - 1
+    if above:
+        parts = parts[:-above] if above <= len(parts) else []
+    return ".".join([*parts, base]) if base else ".".join(parts)
+
+
 def _offenders(predicate) -> list[str]:
     found: list[str] = []
     for path in _production_sources():
@@ -795,6 +827,97 @@ class TestAtomicReplaceHasOneImplementation:
         from .._atomic_write import replace_atomically, replace_durably
 
         assert replace_atomically is not replace_durably
+
+
+class TestNoFacadeReExportServesOnlyTests:
+    """A package ``__init__`` re-exports a private name only if production reads it.
+
+    Twenty-eight such entries had accumulated across the ``cli`` and ``server``
+    packages, and not one had a production reader by any route. Production
+    already imported each from the module that owns it, so the facade entry
+    existed for tests alone - and a symbol reachable only that way tells you
+    nothing about the code that ships, while making the package look like the
+    home of behaviour defined elsewhere.
+
+    Reads are resolved, not guessed, because two shapes count and missing
+    either one gives the wrong answer in opposite directions. A from-import
+    must resolve to EXACTLY the facade package. An attribute read must go
+    through a name the AST shows bound to that same package - the discipline
+    ``server`` uses deliberately, where submodules reach mutable globals via
+    ``import vaultspec_rag.server as _m`` so a rebind is observed. Thirty-two
+    ``server`` entries are load-bearing for that reason and must survive this.
+
+    Scoped to private names. A public name in a package ``__init__`` is API
+    for consumers outside this tree, and no internal reader is expected.
+    """
+
+    @staticmethod
+    def _facade_reads() -> set[tuple[str, str]]:
+        """Return every ``(package, name)`` production reaches through a facade."""
+        reads: set[tuple[str, str]] = set()
+        for path in _every_production_file():
+            module = _module_name(path)
+            is_package = path.name == "__init__.py"
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            aliases: dict[str, str] = {}
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for entry in node.names:
+                        if entry.name.startswith("vaultspec_rag"):
+                            bound = entry.asname or entry.name.split(".")[0]
+                            aliases[bound] = entry.name
+                    continue
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                target = _absolute_import(node, module, is_package)
+                for entry in node.names:
+                    reads.add((target, entry.name))
+                    aliases[entry.asname or entry.name] = f"{target}.{entry.name}"
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Attribute)
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id in aliases
+                ):
+                    reads.add((aliases[node.value.id], node.attr))
+        return reads
+
+    def test_no_private_re_export_lacks_a_production_reader(self) -> None:
+        reads = self._facade_reads()
+        offenders: list[str] = []
+        for path in _every_production_file():
+            if path.name != "__init__.py":
+                continue
+            package = _module_name(path)
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            used_here = {
+                node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+            } | {
+                node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+            }
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom) or not (node.module or ""):
+                    continue
+                for entry in node.names:
+                    name = entry.asname or entry.name
+                    if not name.startswith("_") or name.startswith("__"):
+                        continue
+                    if name in used_here:
+                        continue
+                    if (package, name) in reads:
+                        continue
+                    offenders.append(f"{package}.{name} (line {node.lineno})")
+        assert not offenders, (
+            f"these private names are re-exported with no production reader: "
+            f"{offenders}; import them from the module that owns them and "
+            "delete the entry, so a test cannot be the only reason one exists"
+        )
 
 
 class TestNoSymbolKeptAliveForTests:

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from ...cli import _spawn_service, _terminate_pid
+from ...cli._process import _spawn_service, _terminate_pid
 from ._helpers import (
     _get_ephemeral_port,
     _poll_health,
