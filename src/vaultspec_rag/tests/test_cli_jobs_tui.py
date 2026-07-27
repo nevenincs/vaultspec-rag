@@ -93,11 +93,17 @@ def _job(
 
 
 def _finished_job(job_id: str) -> dict[str, object]:
-    """Build a job in the state most of an operator's list is actually in."""
+    """Build a job in the state most of an operator's list is actually in.
+
+    ``phase`` is the compatibility label and ``state`` the canonical one, and
+    they are not the same vocabulary: completed work is phase ``finished`` and
+    state ``succeeded``. A fixture that puts the phase word in both fields
+    matches no canonical state at all, and every count over it reads zero.
+    """
     return _job(
         job_id,
         phase="finished",
-        state="finished",
+        state="succeeded",
         remaining=None,
         rate=None,
         capabilities={
@@ -109,6 +115,14 @@ def _finished_job(job_id: str) -> dict[str, object]:
             "force_killable": False,
         },
     )
+
+
+def _summarise(records: list[dict[str, object]]) -> dict[str, object]:
+    """Tally records by canonical state, in the shape the service publishes."""
+    states = [str(record.get("state", "")) for record in records]
+    return {name: states.count(name) for name in set(states)} | {
+        "states": {name: states.count(name) for name in set(states)}
+    }
 
 
 class _JobService:
@@ -184,6 +198,9 @@ class _JobService:
                         "jobs": page,
                         "total": len(held),
                         "returned": len(page),
+                        # Tallied over everything held, exactly as the service
+                        # does - the page is not the population.
+                        "summary": _summarise(held),
                     }
                 )
 
@@ -289,6 +306,42 @@ def _app(
 def _screen_text(app: JobsTuiApp) -> str:
     """Return what the interface actually painted, as text."""
     return "\n".join(strip.text for strip in app.screen._compositor.render_strips())
+
+
+def _line_with(painted: str, needle: str) -> str:
+    """Return the first painted line carrying *needle*, or an empty string."""
+    for line in painted.splitlines():
+        if needle in line:
+            return line
+    return ""
+
+
+def _header_line(app: JobsTuiApp) -> str:
+    """Return the painted jobs header line.
+
+    Found by its content rather than by its position: this screen carries
+    other bars, and which one lands on the first row is not this file's
+    business. An index would silently start asserting about a neighbour.
+    """
+    for line in _screen_text(app).splitlines():
+        if "Jobs on port" in line:
+            return line
+    return ""
+
+
+def _row_line(app: JobsTuiApp, *needles: str) -> str | None:
+    """Return the painted line carrying every one of *needles*, or ``None``.
+
+    A row's second line holds the state cell's second line beside that job's
+    own id, so requiring both pins the assertion to the row. Searching the
+    whole screen instead would be satisfied by the toast and the header, which
+    carry the same words - and those are exactly what the row is supposed to
+    outlive.
+    """
+    for line in _screen_text(app).splitlines():
+        if all(needle in line for needle in needles):
+            return line
+    return None
 
 
 @pytest.fixture
@@ -797,7 +850,7 @@ class TestMotionMeansSomething:
             for _ in range(6):
                 await asyncio.sleep(_SPINNER_INTERVAL)
                 await pilot.pause()
-                frames.append(_screen_text(app).splitlines()[0])
+                frames.append(_header_line(app))
 
         assert all("· Jobs on port" in frame for frame in frames), (
             "a settled view must show a still glyph, not an animation"
@@ -821,13 +874,13 @@ class TestMotionMeansSomething:
                 pilot,
                 app,
                 lambda text: any(
-                    char in text.splitlines()[0] for char in _SPINNER_FRAMES
+                    char in _line_with(text, "Jobs on port") for char in _SPINNER_FRAMES
                 ),
                 "an animated header glyph",
             )
             await _settle(pilot)
 
-        assert "Jobs on port" in painted.splitlines()[0]
+        assert "Jobs on port" in _line_with(painted, "Jobs on port")
 
     @pytest.mark.asyncio
     async def test_a_row_whose_progress_has_stalled_does_not_animate(
@@ -905,6 +958,36 @@ class TestDurableRequestState:
         )
 
     @pytest.mark.asyncio
+    async def test_a_settled_row_shows_the_request_without_waiting_for_an_answer(
+        self, control_service: _JobService
+    ) -> None:
+        """The keystroke repaints the row; nothing else is going to.
+
+        A running row is repainted by the frame tick anyway, so it would hide
+        this. Most of an operator's list is finished work, which nothing
+        animates and nothing else redraws - so if the keystroke does not paint
+        the request there, the row sits unchanged until the service answers,
+        and on a slow control that is seconds of an interface that looks dead.
+
+        Proven able to fail: removing the repaint from ``_mark_pending`` leaves
+        the row on its old state until the answer arrives, and fails in
+        ``_await_painted`` on the "delete requested" needle; restored, it
+        passes.
+        """
+        control_service.control_delay = 0.6
+        app = _app(control_service, [_finished_job("job00000")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            await _settle(pilot)
+            await pilot.press("d")
+            await _await_painted(pilot, app, "delete requested")
+            row = _row_line(app, "delete requested", "job00000 · tool")
+
+        assert row is not None, (
+            "the row must carry the request before the service has answered"
+        )
+
+    @pytest.mark.asyncio
     async def test_a_refusal_stays_on_the_row_and_in_the_header(
         self, control_service: _JobService
     ) -> None:
@@ -927,10 +1010,11 @@ class TestDurableRequestState:
                 await asyncio.sleep(_SPINNER_INTERVAL)
                 await pilot.pause()
             painted = _screen_text(app)
+            # Pinned to the row: the toast and the header carry the same words,
+            # and outliving those two is the whole point.
+            row = _row_line(app, "delete refused", "job00000 · tool")
 
-        assert " delete refused" in painted, (
-            "the row must keep saying the control was refused"
-        )
+        assert row is not None, "the row itself must keep saying it was refused"
         assert "delete refused: The job is still running." in painted, (
             "the reason must stay readable in the header, not only in a toast"
         )
@@ -1195,6 +1279,61 @@ class TestHeaderCounts:
         )
 
     @pytest.mark.asyncio
+    async def test_the_counters_describe_the_service_not_the_page(
+        self, control_service: _JobService
+    ) -> None:
+        """Counts tallied from the page move only when the page moves.
+
+        The service tallies every record matching the filter. Re-tallying the
+        twenty on screen gives numbers that describe neither the list nor the
+        service: deleting one of a hundred and seventy-nine finished jobs
+        changes nothing an operator can see, because the page refills and its
+        own tally is unchanged.
+
+        Proven able to fail: tallying ``self._jobs`` instead of the published
+        summary reports the five rows on the page and fails on the
+        succeeded-count assertion by name; restored, it passes.
+        """
+        jobs = [_finished_job(f"job{index:05d}") for index in range(12)]
+        jobs.append(_job("running00"))
+        app = _app(control_service, jobs, limit=5)
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "succeeded 12" in painted, (
+            "the counters must describe every record the service holds, not "
+            "the five that happen to be on the page"
+        )
+        assert "running 1" in painted
+        assert "showing 5 of 13" in painted
+
+    @pytest.mark.asyncio
+    async def test_a_state_with_no_counter_of_its_own_is_still_counted(
+        self, control_service: _JobService
+    ) -> None:
+        """Numbers that silently drop a state sum to nothing in particular.
+
+        A restored record reads ``interrupted`` and a cancelled one
+        ``cancelled``; neither has a counter of its own. Omitting them leaves
+        an operator unable to tell a missing state from a zero one.
+        """
+        jobs = [
+            _job("aaaaaaaa0000", phase="interrupted", state="interrupted"),
+            _job("bbbbbbbb0000", phase="cancelled", state="cancelled"),
+            _finished_job("cccccccc0000"),
+        ]
+        app = _app(control_service, jobs)
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "succeeded 1" in painted
+        assert "other 2" in painted, (
+            "states without a counter of their own must still be accounted for"
+        )
+
+    @pytest.mark.asyncio
     async def test_a_service_publishing_no_total_claims_none(
         self, control_service: _JobService
     ) -> None:
@@ -1252,8 +1391,14 @@ class TestLogPane:
             await _ready(pilot, app)
             await _await_painted(pilot, app, "a logged line for abc123def456")
             await pilot.press("down")
-            painted = await _await_painted(pilot, app, "a logged line for def456abc123")
+            await _await_painted(pilot, app, "a logged line for def456abc123")
+            # The frame is read once both fetches have finished, so the
+            # assertion below is about where the pane settled rather than
+            # about whichever frame happened to be caught mid-swap.
+            await _settle(pilot)
+            painted = _screen_text(app)
 
+        assert "a logged line for def456abc123" in painted
         assert "Log · def456ab" in painted
         assert "a logged line for abc123def456" not in painted, (
             "the previous job's lines must not survive the selection moving"
@@ -1322,6 +1467,10 @@ async def _ready(pilot: typing.Any, app: JobsTuiApp) -> None:
             and table.only_one(DataTable).row_count == len(app._jobs)
             and app._bar_cells > 0
             and app._divided_width == table.only_one(DataTable).size.width
+            # A row must be selected too. Every control acts on the selection,
+            # so a test that starts pressing keys before one exists is testing
+            # a frame no operator ever sees.
+            and app.selected_id
         ):
             settled_at = None
             await asyncio.sleep(0.02)

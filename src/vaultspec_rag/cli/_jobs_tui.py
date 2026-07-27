@@ -24,6 +24,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import DataTable, Footer, RichLog, Static
+from textual.worker import WorkerState
 
 from ..job_models import DesiredJobState, JobState
 from ..serviceclient._transport import (
@@ -33,6 +34,11 @@ from ..serviceclient._transport import (
     _try_http_set_job_desired_state,
 )
 from ._cli_format import _compact_duration
+from ._jobs_tui_status import (
+    ServiceStatusBar,
+    ServiceStatusHeader,
+    fetch_service_status,
+)
 from ._service_jobs import (
     _human_progress,
     _job_is_waiting,
@@ -84,6 +90,15 @@ _GONE_CODES = frozenset({"job_not_found", "not_found"})
 _REFRESH_GROUP = "jobs-refresh"
 _LOG_GROUP = "jobs-log"
 _CONTROL_GROUP = "jobs-control"
+# The service header polls on its own group. Textual cancels a whole group
+# when an exclusive worker in it starts, so anything sharing a group with the
+# controls can destroy a control request before it is ever sent.
+_STATUS_GROUP = "jobs-service-status"
+_REQUEST_GROUPS = frozenset({_REFRESH_GROUP, _LOG_GROUP, _CONTROL_GROUP})
+# The service is far less volatile than the job list, so it is polled at a
+# multiple of the job interval rather than on every refresh.
+_STATUS_REFRESH_MULTIPLE = 5
+_ACTIVE_WORKER_STATES = frozenset({WorkerState.PENDING, WorkerState.RUNNING})
 
 # Columns are laid out by relative weight, never by a fixed size: the table
 # divides whatever width the terminal reports among these shares, so the same
@@ -148,6 +163,18 @@ _ACTION_REASONS: dict[str, str] = {
     "job_retry": "Only a finished or failed job can be retried.",
     "job_delete": "Only a finished or failed job can be deleted.",
 }
+
+# Header counters, as (label, the canonical state they count). The service
+# tallies these over every record matching the filter; the same names index
+# both its summary and a record's own ``state``, so the fallback tally of the
+# page on screen is the same reading of the same field.
+_SUMMARY_BUCKETS: tuple[tuple[str, str], ...] = (
+    ("running", "running"),
+    ("queued", "queued"),
+    ("paused", "paused"),
+    ("failed", "failed"),
+    ("succeeded", "succeeded"),
+)
 
 _STATE_STYLES: dict[str, str] = {
     "active": "bold green",
@@ -470,6 +497,9 @@ class JobsTuiApp(App[None]):
         # Without it a deletion is invisible: the next refresh backfills the
         # freed slot from the remainder and the list looks untouched.
         self._total: int | None = None
+        # The service's own tally over every record matching the filter, which
+        # is the only count that describes more than the page on screen.
+        self._summary: object = None
         self._last_refresh: float | None = None
         self._last_error: str | None = None
         # The outcome of the last control, kept in the header until another
@@ -478,9 +508,6 @@ class JobsTuiApp(App[None]):
         self._last_outcome: tuple[str, str] | None = None
         self._service_estimates = True
         self._frame = 0
-        # Requests currently out. The header glyph turns only while this is
-        # non-zero, so motion on screen means a request is actually in flight.
-        self._inflight = 0
         # Fetches are stamped and applied newest-first. Cancelling a thread
         # worker does not stop the OS thread it is running on, so a poll the
         # next one superseded still delivers its answer - and with a two-second
@@ -498,6 +525,7 @@ class JobsTuiApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Static(id="summary")
+        yield ServiceStatusBar(id="servicestatus")
         with Horizontal(id="body"):
             yield DataTable(id="jobs", cursor_type="row", zebra_stripes=True)
             with Vertical(id="logpane"):
@@ -607,8 +635,19 @@ class JobsTuiApp(App[None]):
         self._render_summary()
 
     def _busy(self) -> bool:
-        """Report whether a request this view issued is still outstanding."""
-        return self._inflight > 0
+        """Report whether a request this view issued is still outstanding.
+
+        Read from the worker registry rather than from a counter this code
+        raises and lowers. A counter drifts: an exclusive poll cancels the one
+        before it, and a worker cancelled before its body ran never reaches the
+        callback that would lower the count. The header would then animate for
+        the rest of the session over a view where nothing is happening, which
+        is the exact defect the still glyph exists to remove.
+        """
+        return any(
+            worker.group in _REQUEST_GROUPS and worker.state in _ACTIVE_WORKER_STATES
+            for worker in self.workers
+        )
 
     def _animating(self) -> bool:
         return self._busy() or any(_row_animates(job) for job in self._jobs)
@@ -649,7 +688,6 @@ class JobsTuiApp(App[None]):
     def refresh_jobs(self) -> None:
         """Issue a stamped fetch. The stamp is what orders the answers."""
         self._generation += 1
-        self._inflight += 1
         self._fetch_jobs(self._generation)
 
     @work(thread=True, exclusive=True, group=_REFRESH_GROUP)
@@ -658,8 +696,23 @@ class JobsTuiApp(App[None]):
         result = self._fetch()
         self.call_from_thread(self._apply_result, result, generation)
 
+    @work(thread=True, exclusive=True, group=_STATUS_GROUP)
+    def refresh_service_status(self) -> None:
+        """Poll what the service *is*, beside what it is doing.
+
+        Never raises: an unreachable or older service returns a result whose
+        unlearnable fields are ``None``, and the header renders those as absent
+        rather than as zero.
+        """
+        result = fetch_service_status(self._port)
+        self.call_from_thread(self._apply_service_status, result)
+
+    def _apply_service_status(self, result: ServiceStatusHeader) -> None:
+        bar = self.query("#servicestatus")
+        if bar:
+            bar.only_one(ServiceStatusBar).show(result)
+
     def _apply_result(self, result: dict[str, object] | None, generation: int) -> None:
-        self._inflight = max(0, self._inflight - 1)
         if generation <= self._applied_generation:
             # A slower fetch that the newest applied one already superseded.
             # Its payload predates what is on screen.
@@ -694,6 +747,7 @@ class JobsTuiApp(App[None]):
         self._service_estimates = not jobs or any(_ESTIMATE_KEY in job for job in jobs)
         self._jobs = jobs
         self._total = _count(payload.get("total"))
+        self._summary = payload.get("summary")
         self._reconcile_pending(generation, previous)
         self._layout_columns()
         self._render_rows()
@@ -872,17 +926,41 @@ class JobsTuiApp(App[None]):
         if job_id != self.selected_id:
             self.selected_id = job_id
 
+    def _header_counts(self) -> list[tuple[str, int]]:
+        """Count what the service holds, not what fits on the page.
+
+        The service tallies every record matching the filter; the page is at
+        most twenty of them. Re-tallying the page produces numbers that
+        describe neither the list nor the service and that do not move when
+        anything outside the page changes - so a deletion from a
+        two-hundred-record history shows nowhere at all.
+
+        The residue is named rather than dropped. Counters that quietly omit
+        every state they have no bucket for sum to nothing in particular, and
+        an operator cannot tell a missing state from a zero one.
+        """
+        summary = self._summary
+        if isinstance(summary, dict):
+            counted = cast("dict[str, object]", summary)
+            counts = [
+                (label, _count(counted.get(key)) or 0)
+                for label, key in _SUMMARY_BUCKETS
+            ]
+            tallied = sum(count for _label, count in counts)
+            scope = self._total if self._total is not None else tallied
+        else:
+            states = [str(job.get("state", "")) for job in self._jobs]
+            counts = [(label, states.count(key)) for label, key in _SUMMARY_BUCKETS]
+            scope = len(self._jobs)
+        other = scope - sum(count for _label, count in counts)
+        if other > 0:
+            counts.append(("other", other))
+        return counts
+
     def _render_summary(self) -> None:
-        counts = {"active": 0, "waiting": 0, "failed": 0, "finished": 0}
-        for job in self._jobs:
-            label = _phase_label(job)
-            if label in counts:
-                counts[label] += 1
         line = Text(f"{self._header_glyph()} Jobs on port {self._port}", style="bold")
-        line.append(
-            f"   active {counts['active']}  waiting {counts['waiting']}"
-            f"  failed {counts['failed']}  finished {counts['finished']}"
-        )
+        for label, count in self._header_counts():
+            line.append(f"   {label} {count}")
         shown = len(self._jobs)
         if self._total is None:
             line.append(f"   showing {shown}")
@@ -939,7 +1017,6 @@ class JobsTuiApp(App[None]):
         if not title:
             return
         title.only_one(Static).update(f"Log · {job_id[:8]}")
-        self._inflight += 1
         self.fetch_logs(job_id)
 
     @work(thread=True, exclusive=True, group=_LOG_GROUP)
@@ -952,7 +1029,6 @@ class JobsTuiApp(App[None]):
         self.call_from_thread(self._apply_logs, job_id, result)
 
     def _apply_logs(self, job_id: str, result: dict[str, object] | None) -> None:
-        self._inflight = max(0, self._inflight - 1)
         if job_id != self.selected_id:
             return
         if result is None or result.get("ok") is False:
@@ -1149,7 +1225,6 @@ class JobsTuiApp(App[None]):
         the two is the whole window in which an operator decides whether
         anything is wired up at all.
         """
-        self._inflight += 1
         self._pending[_job_id(job)] = _Pending(
             action, expected, "requested", "", self._generation
         )
@@ -1161,7 +1236,6 @@ class JobsTuiApp(App[None]):
         action: str,
         result: dict[str, object] | None,
     ) -> None:
-        self._inflight = max(0, self._inflight - 1)
         short = job_id[:8] or "job"
         if result is None:
             self._settle(
