@@ -6,13 +6,13 @@ is a contract that out-of-process consumers (notably the dashboard engine's
 direct-Qdrant embedding read) depend on. This module is the one place that
 shape is defined: the version, the vector constants, the typed payloads, the
 index tuples, the effective wire descriptor, and the consumer compatibility
-helper. Every ``upsert``/``ensure`` call site in ``store.py`` builds its payload
+helper. Every ``upsert``/``ensure`` call site in ``store_ingest.py`` builds its payload
 and index set from here rather than from inline literals, so the shape cannot
 drift between the writer, the reader, the wire, and the reference.
 
 It is a **neutral torch-free leaf**: it depends only on the config (read lazily
 inside :func:`describe_storage_schema`), never imports torch or the embedding
-model, and is importable by both ``store.py`` and the server routes with no
+model, and is importable by both ``store_runtime.py`` and the server routes with no
 ``store`` <-> ``server`` cycle. Keeping it torch-free is what lets the
 process-wide ``/readiness`` report advertise the descriptor without loading a
 model or touching the GPU.
@@ -81,7 +81,8 @@ DOCUMENT_COLLECTION = "document_docs"
 DENSE_VECTOR_NAME = "dense"
 SPARSE_VECTOR_NAME = "sparse"
 # The qdrant ``Distance`` member name for the dense vector (string form so this
-# leaf never imports qdrant_client). store.py maps it to ``models.Distance``.
+# leaf never imports qdrant_client). The collection owner maps it to
+# ``models.Distance``.
 DENSE_DISTANCE = "Cosine"
 # Default dense dimension (Qwen3-Embedding-0.6B). This is the DEFAULT; the
 # EFFECTIVE dimension is read from config in describe_storage_schema because an
@@ -104,7 +105,7 @@ SERVER_SEGMENT_NUMBER = 2
 # Point-ID schemes, named for the reference and the consumer recipe (documented,
 # not enforced here): a vault document keys on its stem (relative path without
 # extension), a vault chunk on ``{doc_id}#c{ordinal}``, a code chunk on its
-# chunk id. All three are hashed to the stable Qdrant point id by store.py.
+# chunk id. All three are hashed to the stable Qdrant point id by store_ingest.py.
 VAULT_DOC_ID_SCHEME = "doc_id"
 VAULT_CHUNK_ID_SCHEME = "doc_id#c{ordinal}"
 CODE_CHUNK_ID_SCHEME = "chunk_id"
@@ -215,9 +216,10 @@ class DocumentChunkPayload(TypedDict):
     extractor_version: str | None
 
 
-# Canonical payload index sets, per collection and qdrant schema type. store.py's
-# ``ensure_table`` / ``ensure_code_table`` create exactly these indexes; the
-# drift test asserts the live collection's indexed fields equal these tuples.
+# Canonical payload index sets, per collection and qdrant schema type. The
+# collection owner's ``ensure_table`` / ``ensure_code_table`` create exactly
+# these indexes; the drift test asserts the live collection's indexed fields
+# equal these tuples.
 # A change to an index set that alters query semantics bumps the version.
 VAULT_KEYWORD_INDEXES: tuple[str, ...] = (
     "doc_type",
@@ -516,32 +518,45 @@ def assert_compatible(
             "reason": f"unknown required storage domain {unknown[0]!r}",
         }
     for domain in required_domains:
-        block = _as_str_dict(descriptor.get(domain))
-        if not block:
+        reason = _domain_compatibility_reason(
+            descriptor,
+            domain=domain,
+            dense_vector_name=dense_vector_name,
+            expected_dense_dim=expected_dense_dim,
+        )
+        if reason is not None:
             return {
                 "compatible": False,
-                "reason": f"descriptor carries no {domain!r} storage domain",
-            }
-        vectors = _as_str_dict(block.get("vectors"))
-        dense = _as_str_dict(vectors.get("dense"))
-        if dense.get("name") != dense_vector_name:
-            return {
-                "compatible": False,
-                "reason": (
-                    f"no dense vector named {dense_vector_name!r} in the "
-                    f"{domain!r} storage domain"
-                ),
-            }
-        actual_dim = dense.get("dim")
-        if actual_dim != expected_dense_dim:
-            return {
-                "compatible": False,
-                "reason": (
-                    f"{domain!r} dense dimension {actual_dim} does not match "
-                    f"the consumer's expected {expected_dense_dim}"
-                ),
+                "reason": reason,
             }
     return {"compatible": True, "reason": ""}
+
+
+def _domain_compatibility_reason(
+    descriptor: dict[str, Any],
+    *,
+    domain: str,
+    dense_vector_name: str,
+    expected_dense_dim: int,
+) -> str | None:
+    """Return one domain's first incompatible storage shape, if any."""
+    block = _as_str_dict(descriptor.get(domain))
+    if not block:
+        return f"descriptor carries no {domain!r} storage domain"
+    vectors = _as_str_dict(block.get("vectors"))
+    dense = _as_str_dict(vectors.get("dense"))
+    if dense.get("name") != dense_vector_name:
+        return (
+            f"no dense vector named {dense_vector_name!r} in the "
+            f"{domain!r} storage domain"
+        )
+    actual_dim = dense.get("dim")
+    if actual_dim != expected_dense_dim:
+        return (
+            f"{domain!r} dense dimension {actual_dim} does not match "
+            f"the consumer's expected {expected_dense_dim}"
+        )
+    return None
 
 
 # Conformance verdicts. Three, not two: the absence of evidence is its own
