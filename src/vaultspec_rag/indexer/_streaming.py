@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from .._store_models import (
         CodeChunk,
         DocumentChunk,
+        VaultChunk,
         VaultDocument,
     )
     from .._store_writes import StoreWritePolicy
@@ -31,10 +32,7 @@ if TYPE_CHECKING:
     from ..job_control import RunControl
     from ..memory_probe import MemoryProbe
     from ..progress import ProgressReporter
-    from ..store import (
-        VaultChunk,
-        VaultStore,
-    )
+    from ..store_runtime import VaultStore
     from ._reuse import DonorReuseContext
 
 logger = logging.getLogger(__name__)
@@ -346,20 +344,34 @@ def _adopt_donor_vectors(
     return [chunk for chunk, _text in misses], [text for _chunk, text in misses]
 
 
-def _encode_slice_vector_fields(
-    *,
-    chunks: Sequence[CodeChunk | DocumentChunk | VaultChunk],
-    slice_texts: list[str],
-    model: EmbeddingModel,
-    gpu_lock: threading.Lock | None,
-    sparse_enabled: bool,
-    encode_batch_size: int | None,
-    after_encode: Callable[[], None] | None = None,
-    after_forward: Callable[[str], None] | None = None,
-    on_cuda_oom: Callable[[BaseException], None] | None = None,
-    reuse: DonorReuseContext | None = None,
-) -> None:
+@dataclass(frozen=True, slots=True)
+class _VectorEncodeRequest:
+    """All model and lifecycle inputs for one bounded vector encode."""
+
+    chunks: Sequence[CodeChunk | DocumentChunk | VaultChunk]
+    slice_texts: list[str]
+    model: EmbeddingModel
+    gpu_lock: threading.Lock | None
+    sparse_enabled: bool
+    encode_batch_size: int | None
+    after_encode: Callable[[], None] | None = None
+    after_forward: Callable[[str], None] | None = None
+    on_cuda_oom: Callable[[BaseException], None] | None = None
+    reuse: DonorReuseContext | None = None
+
+
+def _encode_slice_vector_fields(request: _VectorEncodeRequest) -> None:
     """Populate one bounded slice, dropping all array/tensor owners on return."""
+    chunks = request.chunks
+    slice_texts = request.slice_texts
+    model = request.model
+    gpu_lock = request.gpu_lock
+    sparse_enabled = request.sparse_enabled
+    encode_batch_size = request.encode_batch_size
+    after_encode = request.after_encode
+    after_forward = request.after_forward
+    on_cuda_oom = request.on_cuda_oom
+    reuse = request.reuse
     if reuse is not None:
         chunks, slice_texts = _adopt_donor_vectors(
             reuse,
@@ -619,14 +631,18 @@ def _encode_and_upsert_vault_slice(
     try:
         run_control.checkpoint()
         _encode_slice_vector_fields(
-            chunks=slice_chunks,
-            slice_texts=[f"{chunk.title}\n\n{chunk.text}" for chunk in slice_chunks],
-            model=model,
-            gpu_lock=gpu_lock,
-            sparse_enabled=sparse_enabled,
-            encode_batch_size=None,
-            after_encode=_after_encode,
-            reuse=reuse,
+            _VectorEncodeRequest(
+                chunks=slice_chunks,
+                slice_texts=[
+                    f"{chunk.title}\n\n{chunk.text}" for chunk in slice_chunks
+                ],
+                model=model,
+                gpu_lock=gpu_lock,
+                sparse_enabled=sparse_enabled,
+                encode_batch_size=None,
+                after_encode=_after_encode,
+                reuse=reuse,
+            )
         )
         run_control.checkpoint()
         if writer is None:
@@ -833,15 +849,17 @@ def encode_and_upsert_document_slice(
     try:
         run_control.checkpoint()
         _encode_slice_vector_fields(
-            chunks=slice_chunks,
-            slice_texts=[_document_embed_text(chunk) for chunk in slice_chunks],
-            model=model,
-            gpu_lock=gpu_lock,
-            sparse_enabled=bool(get_config().sparse_enabled),
-            encode_batch_size=encode_batch_size,
-            after_forward=after_forward,
-            on_cuda_oom=on_cuda_oom,
-            reuse=reuse,
+            _VectorEncodeRequest(
+                chunks=slice_chunks,
+                slice_texts=[_document_embed_text(chunk) for chunk in slice_chunks],
+                model=model,
+                gpu_lock=gpu_lock,
+                sparse_enabled=bool(get_config().sparse_enabled),
+                encode_batch_size=encode_batch_size,
+                after_forward=after_forward,
+                on_cuda_oom=on_cuda_oom,
+                reuse=reuse,
+            )
         )
         run_control.checkpoint()
         if writer is None:
@@ -1434,15 +1452,17 @@ def encode_and_upsert_code_slice(
     try:
         run_control.checkpoint()
         _encode_slice_vector_fields(
-            chunks=slice_chunks,
-            slice_texts=[_code_embed_text(chunk) for chunk in slice_chunks],
-            model=model,
-            gpu_lock=gpu_lock,
-            sparse_enabled=bool(cfg.sparse_enabled),
-            encode_batch_size=encode_batch_size,
-            after_forward=after_forward,
-            on_cuda_oom=on_cuda_oom,
-            reuse=reuse,
+            _VectorEncodeRequest(
+                chunks=slice_chunks,
+                slice_texts=[_code_embed_text(chunk) for chunk in slice_chunks],
+                model=model,
+                gpu_lock=gpu_lock,
+                sparse_enabled=bool(cfg.sparse_enabled),
+                encode_batch_size=encode_batch_size,
+                after_forward=after_forward,
+                on_cuda_oom=on_cuda_oom,
+                reuse=reuse,
+            )
         )
         run_control.checkpoint()
         store.upsert_code_chunks(
