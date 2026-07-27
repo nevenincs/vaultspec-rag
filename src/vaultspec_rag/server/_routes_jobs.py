@@ -10,12 +10,12 @@ handler, which applies the clamp and predicate this module provides.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import cast
 
 from .. import jobs as _jobs
 from .._job_errors import STALL_THRESHOLD_SECONDS, remediation
-from ..job_models import JobState
+from ..job_models import JobCapabilities, JobState
 
 __all__ = [
     "_clamp_limit",
@@ -374,6 +374,26 @@ def _job_resilience(record: dict[str, object]) -> dict[str, object] | None:
     }
 
 
+def _activity_record_capabilities(state: str) -> dict[str, object]:
+    """Report the operations an activity record actually supports.
+
+    An activity record carries no runtime handle, so nothing can be paused,
+    resumed, cancelled or retried through it. Deletion is the one verb that
+    reaches it, and only once it has finished. Emitting this alongside the
+    canonical shape is what lets a client tell a deletable row from a stuck
+    one without knowing which registry answered.
+    """
+    return asdict(
+        JobCapabilities(
+            pausable=False,
+            resumable=False,
+            cancellable=False,
+            retryable=False,
+            deletable=state in _TERMINAL_STATES,
+        )
+    )
+
+
 def _job_with_liveness(
     record: dict[str, object],
     *,
@@ -387,6 +407,8 @@ def _job_with_liveness(
         enriched.pop("resilience", None)
     state = job_state(record)
     enriched["state"] = state
+    if "capabilities" not in record:
+        enriched["capabilities"] = _activity_record_capabilities(state)
     enriched["phase"] = _job_phase(record, state)
     enriched["source"] = _job_source(record)
     enriched["trigger"] = _job_trigger(record)
