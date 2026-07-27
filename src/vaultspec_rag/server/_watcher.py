@@ -41,6 +41,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger("vaultspec_rag.server")
 
 
+@dataclass(frozen=True, slots=True)
+class _WarmWatcherRequest:
+    root: Path
+    registry: ServiceRegistry
+    cfg: VaultSpecConfigWrapper
+    debounce_ms: int | None
+    cooldown_s: float | None
+    expected_generation: int
+
+
+@dataclass(frozen=True, slots=True)
+class _StartWatcherRequest:
+    root: Path
+    slot: ProjectSlot
+    registry: ServiceRegistry
+    cfg: VaultSpecConfigWrapper
+    debounce_ms: int | None
+    cooldown_s: float | None
+    expected_generation: int
+
+
 class WatcherStartOutcome(StrEnum):
     """What a start request achieved for one root, at the moment it returned.
 
@@ -247,13 +268,10 @@ async def _run_deferred_watcher_start(
         else:
             debounce_ms, cooldown_s = restart or (None, None)
             _start_watcher_locked(
-                root,
-                slot=slot,
-                registry=owner_registry,
-                cfg=get_config(),
-                debounce_ms=debounce_ms,
-                cooldown_s=cooldown_s,
-                expected_generation=_watcher_stop_generations.get(root, 0),
+                _StartWatcherRequest(
+                    root, slot, owner_registry, get_config(), debounce_ms,
+                    cooldown_s, _watcher_stop_generations.get(root, 0),
+                )
             )
 
 
@@ -336,27 +354,22 @@ def _ensure_watcher(
     # Preserve the package's rebindable ``_registry.peek_project`` ownership
     # seam while the private helper performs the potentially cold open.
     return _warm_and_publish_watcher(
-        root,
-        registry=owner_registry,
-        cfg=cfg,
-        debounce_ms=debounce_ms,
-        cooldown_s=cooldown_s,
-        expected_generation=generation,
+        _WarmWatcherRequest(
+            root, owner_registry, cfg, debounce_ms, cooldown_s, generation
+        )
     )
 
 
 def _warm_and_publish_watcher(
-    root: Path,
-    *,
-    registry: ServiceRegistry,
-    cfg: VaultSpecConfigWrapper,
-    debounce_ms: int | None,
-    cooldown_s: float | None,
-    expected_generation: int,
+    request: _WarmWatcherRequest,
 ) -> WatcherStartOutcome:
     """Cold-open a slot, then atomically publish only the valid generation."""
     # Resolve the project slot OUTSIDE the lock - peek_project() has its own
     # per-root locking and can take 50-200ms on cold start.
+    root, registry, cfg, debounce_ms, cooldown_s, expected_generation = (
+        request.root, request.registry, request.cfg, request.debounce_ms,
+        request.cooldown_s, request.expected_generation,
+    )
     try:
         slot = registry.peek_project(root)
     except BaseException:
@@ -380,30 +393,22 @@ def _warm_and_publish_watcher(
             cooldown_s,
         )
         outcome = _start_watcher_locked(
-            root,
-            slot=slot,
-            registry=registry,
-            cfg=cfg,
-            debounce_ms=requested_debounce,
-            cooldown_s=requested_cooldown,
-            expected_generation=_watcher_stop_generations.get(root, 0),
+            _StartWatcherRequest(
+                root, slot, registry, cfg, requested_debounce,
+                requested_cooldown, _watcher_stop_generations.get(root, 0),
+            )
         )
         if not (outcome.running or outcome.pending):
             _forget_stop_generation_if_idle(root)
         return outcome
 
 
-def _start_watcher_locked(
-    root: Path,
-    *,
-    slot: ProjectSlot,
-    registry: ServiceRegistry,
-    cfg: VaultSpecConfigWrapper,
-    debounce_ms: int | None,
-    cooldown_s: float | None,
-    expected_generation: int,
-) -> WatcherStartOutcome:
+def _start_watcher_locked(request: _StartWatcherRequest) -> WatcherStartOutcome:
     """Publish a warmed watcher while ``_watcher_lock`` still owns its epoch."""
+    root, slot, registry, cfg, debounce_ms, cooldown_s, expected_generation = (
+        request.root, request.slot, request.registry, request.cfg,
+        request.debounce_ms, request.cooldown_s, request.expected_generation,
+    )
     if _watcher_stop_generations.get(root, 0) != expected_generation:
         return WatcherStartOutcome.UNAVAILABLE
     if root in _m._watcher_tasks:
@@ -614,12 +619,10 @@ async def _drain_watcher(root: Path, drain: _WatcherDrain) -> bool:
             debounce_ms, cooldown_s = restart
             try:
                 _warm_and_publish_watcher(
-                    root,
-                    registry=restart_registry,
-                    cfg=get_config(),
-                    debounce_ms=debounce_ms,
-                    cooldown_s=cooldown_s,
-                    expected_generation=restart_generation,
+                    _WarmWatcherRequest(
+                        root, restart_registry, get_config(), debounce_ms,
+                        cooldown_s, restart_generation,
+                    )
                 )
             except Exception:
                 logger.exception("Deferred watcher restart failed for %s", root)
