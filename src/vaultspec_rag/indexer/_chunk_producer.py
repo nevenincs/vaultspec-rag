@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+from dataclasses import dataclass
 import multiprocessing
 import os
 import queue
@@ -49,6 +50,19 @@ if TYPE_CHECKING:
     from ._streaming import CodeFileSegment
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class _PoolDrainRequest:
+    """Mutable worker-window state while results are drained in submission order."""
+
+    pool: ProcessPoolExecutor
+    pending: set[Future[FileChunkResult]]
+    paths_iter: Iterator[pathlib.Path]
+    publish_result: Callable[[FileChunkResult], bool]
+    consumer_failed: Callable[[], bool]
+    reporter: ProgressReporter
+    run_control: RunControl
 
 # Polling bound for cooperative control while the parent waits on CPU workers
 # or either pipeline side waits on the bounded producer/consumer queue.
@@ -536,46 +550,20 @@ class CodeChunkProducer:
             with spawn_pool(max_workers=workers, mp_context=ctx) as pool:
                 pending: set[Future[FileChunkResult]] = set()
                 try:
-                    for path in itertools.islice(paths_iter, window):
-                        run_control.checkpoint()
-                        pending.add(
-                            pool.submit(
-                                _chunk_worker.chunk_and_hash_file,
-                                path,
-                                self._root_dir,
-                                self._prep_ctx(),
-                                self._chunk_execution_policy,
-                            )
+                    self._submit_pool_window(
+                        pool, itertools.islice(paths_iter, window), pending, run_control
+                    )
+                    consumer_died, advanced = self._drain_pending_pool(
+                        _PoolDrainRequest(
+                            pool=pool,
+                            pending=pending,
+                            paths_iter=paths_iter,
+                            publish_result=publish_result,
+                            consumer_failed=consumer_failed,
+                            reporter=reporter,
+                            run_control=run_control,
                         )
-                        run_control.checkpoint()
-                    while pending and not consumer_died:
-                        run_control.checkpoint()
-                        if consumer_failed():
-                            consumer_died = True
-                            break
-                        done, pending = wait(
-                            pending,
-                            timeout=CONTROL_POLL_SECONDS,
-                            return_when=FIRST_COMPLETED,
-                        )
-                        run_control.checkpoint()
-                        for future in done:
-                            died, advanced_inc = self._process_future(
-                                future,
-                                pool,
-                                pending,
-                                paths_iter,
-                                publish_result,
-                                reporter,
-                                run_control=run_control,
-                            )
-                            advanced += advanced_inc
-                            if died:
-                                consumer_died = True
-                                break
-                    if consumer_died:
-                        for future in pending:
-                            future.cancel()
+                    )
                 except BaseException:
                     for future in pending:
                         future.cancel()
@@ -583,6 +571,61 @@ class CodeChunkProducer:
         except BrokenProcessPool:
             broke = True
         return broke, consumer_died, advanced
+
+    def _submit_pool_window(
+        self,
+        pool: ProcessPoolExecutor,
+        paths: Iterator[pathlib.Path],
+        pending: set[Future[FileChunkResult]],
+        run_control: RunControl,
+    ) -> None:
+        """Fill the initial bounded worker window before waiting on results."""
+        for path in paths:
+            run_control.checkpoint()
+            pending.add(
+                pool.submit(
+                    _chunk_worker.chunk_and_hash_file,
+                    path,
+                    self._root_dir,
+                    self._prep_ctx(),
+                    self._chunk_execution_policy,
+                )
+            )
+            run_control.checkpoint()
+
+    def _drain_pending_pool(self, request: _PoolDrainRequest) -> tuple[bool, int]:
+        """Drain submitted workers, stopping immediately when the consumer dies."""
+        advanced = 0
+        consumer_died = False
+        while request.pending and not consumer_died:
+            request.run_control.checkpoint()
+            if request.consumer_failed():
+                consumer_died = True
+                break
+            done, request.pending = wait(
+                request.pending,
+                timeout=CONTROL_POLL_SECONDS,
+                return_when=FIRST_COMPLETED,
+            )
+            request.run_control.checkpoint()
+            for future in done:
+                died, advanced_inc = self._process_future(
+                    future,
+                    request.pool,
+                    request.pending,
+                    request.paths_iter,
+                    request.publish_result,
+                    request.reporter,
+                    run_control=request.run_control,
+                )
+                advanced += advanced_inc
+                if died:
+                    consumer_died = True
+                    break
+        if consumer_died:
+            for future in request.pending:
+                future.cancel()
+        return consumer_died, advanced
 
     def _process_future(
         self,
