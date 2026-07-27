@@ -44,6 +44,8 @@ from ..benchmarks.bench_large_index_resilience import (
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
 
+    from sentence_transformers import CrossEncoder
+
     from ...embeddings import EmbeddingModel
     from ...job_manager import JobManager
     from ...service import ProjectSlot, ServiceRegistry
@@ -562,6 +564,7 @@ class TestLargeIndexSearchHeadroom:
         self,
         tmp_path: Path,
         embedding_model: EmbeddingModel,
+        shared_reranker: CrossEncoder,
     ) -> None:
         from concurrent.futures import ThreadPoolExecutor
 
@@ -593,6 +596,7 @@ class TestLargeIndexSearchHeadroom:
                 embedding_model,
                 store,
                 gpu_lock=gpu_lock,
+                reranker=shared_reranker,
             )
             index_started = threading.Event()
             index_finished = threading.Event()
