@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
 
 from ..._store_models import root_collection_prefix
+from ...qdrant_runtime._constants import (
+    WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON,
+)
 from ...storage_manifest import (
     load_manifest,
     record_collection_identity,
@@ -146,12 +150,18 @@ def test_restore_preview_and_recovery_carry_archived_identity(
                 dry_run=False,
             ),
         )
-        assert restored.status == "restored"
-        assert int(client.count(collection_name=destination_name).count) == 1
-        entry = load_manifest()[destination_prefix]
-        assert entry.storage_schema_version == STORAGE_SCHEMA_VERSION
-        assert entry.collections == (destination_name,)
-        assert entry.collection_identity[destination_name] == identity
+        if sys.platform == "win32":
+            assert restored.status == "refused"
+            assert restored.reason == WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON
+            assert not client.collection_exists(destination_name)
+            assert destination_prefix not in load_manifest()
+        else:
+            assert restored.status == "restored"
+            assert int(client.count(collection_name=destination_name).count) == 1
+            entry = load_manifest()[destination_prefix]
+            assert entry.storage_schema_version == STORAGE_SCHEMA_VERSION
+            assert entry.collections == (destination_name,)
+            assert entry.collection_identity[destination_name] == identity
     finally:
         client.close()
 
@@ -232,21 +242,27 @@ def test_restore_rolls_back_after_a_real_corrupt_snapshot_failure(
         destination_root.mkdir()
         destination_prefix = root_collection_prefix(destination_root)
 
-        from qdrant_client.http.exceptions import (
-            ResponseHandlingException,
-            UnexpectedResponse,
+        request = RestoreRequest(
+            archive,
+            destination_root,
+            local_mode=False,
+            dry_run=False,
         )
-
-        with pytest.raises((ResponseHandlingException, UnexpectedResponse)):
-            restore_archive(
-                client,
-                RestoreRequest(
-                    archive,
-                    destination_root,
-                    local_mode=False,
-                    dry_run=False,
-                ),
+        if sys.platform == "win32":
+            refusal = restore_archive(client, request)
+            assert refusal.status == "refused"
+            assert refusal.reason == WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON
+        else:
+            from qdrant_client.http.exceptions import (
+                ResponseHandlingException,
+                UnexpectedResponse,
             )
+
+            with pytest.raises((ResponseHandlingException, UnexpectedResponse)):
+                restore_archive(
+                    client,
+                    request,
+                )
 
         assert not client.collection_exists(f"{destination_prefix}aaa")
         assert not client.collection_exists(f"{destination_prefix}zzz")
