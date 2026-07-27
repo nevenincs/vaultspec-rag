@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
 from .. import store_schema
 from .._atomic_write import JsonWriteOptions, write_json_atomically
@@ -33,6 +33,25 @@ __all__ = [
 DOCUMENT_META_FILENAME = "document_index_meta.json"
 DOCUMENT_META_SCHEMA_VERSION = 2
 DOCUMENT_EMBED_SCHEMA = 1
+
+
+class _DocumentMetaPublishOptions(TypedDict, total=False):
+    point_ids_for_path: Callable[[str], Iterable[str]]
+    generation_id: str
+    membership_fingerprint: str
+    content_fingerprint: str
+    policy_snapshot: str
+
+
+@dataclass(frozen=True, slots=True)
+class _DocumentMetaPublishRequest:
+    meta_path: Path
+    states: Iterable[FileState]
+    point_ids_for_path: Callable[[str], Iterable[str]]
+    generation_id: str
+    membership_fingerprint: str
+    content_fingerprint: str
+    policy_snapshot: str
 
 
 class DocumentMetadataError(ValueError):
@@ -223,15 +242,32 @@ def write_document_meta(meta_path: Path, metadata: DocumentIndexMetadata) -> Non
 def publish_document_meta_from_file_states(
     meta_path: Path,
     states: Iterable[FileState],
-    *,
-    point_ids_for_path: Callable[[str], Iterable[str]],
-    generation_id: str,
-    membership_fingerprint: str,
-    content_fingerprint: str,
-    policy_snapshot: str,
+    **options: Unpack[_DocumentMetaPublishOptions],
+) -> int:
+    """Atomically publish one complete document manifest from ledger evidence."""
+    return _publish_document_meta_from_file_states(
+        _DocumentMetaPublishRequest(meta_path, states, **options)
+    )
+
+
+def _publish_document_meta_from_file_states(
+    request: _DocumentMetaPublishRequest,
 ) -> int:
     """Atomically publish one complete document manifest from ledger evidence."""
     from ._file_state import iter_publishable_states
+
+    (
+        meta_path, states, point_ids_for_path, generation_id,
+        membership_fingerprint, content_fingerprint, policy_snapshot,
+    ) = (
+        request.meta_path,
+        request.states,
+        request.point_ids_for_path,
+        request.generation_id,
+        request.membership_fingerprint,
+        request.content_fingerprint,
+        request.policy_snapshot,
+    )
 
     files: list[DocumentFileMetadata] = []
     for rel_path, content_hash in iter_publishable_states(states):
