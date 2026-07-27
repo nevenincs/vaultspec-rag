@@ -401,15 +401,14 @@ def search_vault(request: VaultSearchRequest) -> list[SearchResult]:
     Returns:
         Ranked list of SearchResult objects.
     """
-    from .search import validate_search_filters
+    from .search import SearchFilterOptions, validate_search_filters
 
-    validate_search_filters(
-        "vault",
+    validate_search_filters("vault", SearchFilterOptions(
         doc_type=request.doc_type,
         feature=request.feature,
         date=request.date,
         tag=request.tag,
-    )
+    ))
     root = _resolve(request.root_dir)
     registry = get_registry()
     # An empty or unbuilt vault index needs no query encoding: short-circuit
@@ -436,15 +435,14 @@ def search_vault_timed(
     request: VaultSearchRequest,
 ) -> tuple[list[SearchResult], dict[str, float]]:
     """Search the vault and return phase timings for service diagnostics."""
-    from .search import validate_search_filters
+    from .search import SearchFilterOptions, validate_search_filters
 
-    validate_search_filters(
-        "vault",
+    validate_search_filters("vault", SearchFilterOptions(
         doc_type=request.doc_type,
         feature=request.feature,
         date=request.date,
         tag=request.tag,
-    )
+    ))
     root = _resolve(request.root_dir)
     registry = get_registry()
     # Empty/unbuilt index: return an empty result without loading the model.
@@ -487,10 +485,9 @@ def search_codebase(request: CodebaseSearchRequest) -> list[SearchResult]:
     Returns:
         Ranked list of SearchResult objects.
     """
-    from .search import validate_search_filters
+    from .search import SearchFilterOptions, validate_search_filters
 
-    validate_search_filters(
-        "code",
+    validate_search_filters("code", SearchFilterOptions(
         language=request.language,
         path=request.path,
         node_type=request.node_type,
@@ -503,7 +500,7 @@ def search_codebase(request: CodebaseSearchRequest) -> list[SearchResult]:
         exclude_domains=request.exclude_domains,
         only_domains=request.only_domains,
         include_domains=request.include_domains,
-    )
+    ))
     root = _resolve(request.root_dir)
     registry = get_registry()
     # Empty/unbuilt code index: return an empty result without loading the model.
@@ -560,10 +557,9 @@ def search_codebase_timed(
     request: CodebaseSearchRequest,
 ) -> tuple[list[SearchResult], dict[str, float]]:
     """Search codebase and return phase timings for service diagnostics."""
-    from .search import validate_search_filters
+    from .search import SearchFilterOptions, validate_search_filters
 
-    validate_search_filters(
-        "code",
+    validate_search_filters("code", SearchFilterOptions(
         language=request.language,
         path=request.path,
         node_type=request.node_type,
@@ -576,7 +572,7 @@ def search_codebase_timed(
         exclude_domains=request.exclude_domains,
         only_domains=request.only_domains,
         include_domains=request.include_domains,
-    )
+    ))
     root = _resolve(request.root_dir)
     registry = get_registry()
     # Empty/unbuilt code index: return an empty result without loading the model.

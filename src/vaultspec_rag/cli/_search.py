@@ -529,12 +529,12 @@ def _validate_and_handle_filters(
     from ..search import (
         InvalidFilterForSearchTypeError,
         InvalidPreferValueError,
+        SearchFilterOptions,
         validate_search_filters,
     )
 
     try:
-        validate_search_filters(
-            search_type,
+        validate_search_filters(search_type, SearchFilterOptions(
             language=language,
             path=path,
             node_type=node_type,
@@ -552,7 +552,7 @@ def _validate_and_handle_filters(
             extractor_id=extractor_id,
             extractor_version=extractor_version,
             locator_kind=locator_kind,
-        )
+        ))
     except InvalidPreferValueError as exc:
         msg = str(exc)
         if json_mode:

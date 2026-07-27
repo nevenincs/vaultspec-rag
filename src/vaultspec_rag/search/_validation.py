@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from .. import store_schema
 from .._domain import DOMAINS
 from .._source_types import PublicSourceType, parse_source_type
@@ -17,6 +19,32 @@ INDEXABLE_DOC_TYPES: frozenset[str] = frozenset(
 # The code-result noise domains a caller may name in --exclude-domain /
 # --only-domain / --include-domain. Mirrors ``_domain.DOMAINS``.
 SELECTABLE_DOMAINS: frozenset[str] = frozenset(DOMAINS)
+
+
+@dataclass(frozen=True, slots=True)
+class SearchFilterOptions:
+    """All optional filters accepted by a public search surface."""
+
+    language: str | None = None
+    path: str | None = None
+    node_type: str | None = None
+    function_name: str | None = None
+    class_name: str | None = None
+    doc_type: str | None = None
+    feature: str | None = None
+    date: str | None = None
+    tag: str | None = None
+    include_paths: list[str] | None = None
+    exclude_paths: list[str] | None = None
+    dedup_locales: bool | None = None
+    prefer: str | None = None
+    exclude_domains: list[str] | None = None
+    only_domains: list[str] | None = None
+    include_domains: list[str] | None = None
+    source_path: str | None = None
+    extractor_id: str | None = None
+    extractor_version: str | None = None
+    locator_kind: str | None = None
 
 
 class InvalidPreferValueError(ValueError):
@@ -120,27 +148,7 @@ def _validate_doc_type(doc_type: str | None) -> None:
 
 
 def _supplied_filters(
-    *,
-    language: str | None,
-    path: str | None,
-    node_type: str | None,
-    function_name: str | None,
-    class_name: str | None,
-    doc_type: str | None,
-    feature: str | None,
-    date: str | None,
-    tag: str | None,
-    include_paths: list[str] | None,
-    exclude_paths: list[str] | None,
-    dedup_locales: bool | None,
-    prefer: str | None,
-    exclude_domains: list[str] | None,
-    only_domains: list[str] | None,
-    include_domains: list[str] | None,
-    source_path: str | None,
-    extractor_id: str | None,
-    extractor_version: str | None,
-    locator_kind: str | None,
+    options: SearchFilterOptions,
 ) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
     """Return code, vault, document, glob, and postprocess filter names."""
     # Keyed off the schema's filter vocabulary rather than a second list of the
@@ -149,19 +157,19 @@ def _supplied_filters(
     # is what would let a filter meant for another search type slip through
     # unreported.
     supplied_values: dict[str, object] = {
-        "language": language,
-        "path": path,
-        "node_type": node_type,
-        "function_name": function_name,
-        "class_name": class_name,
-        "doc_type": doc_type,
-        "feature": feature,
-        "date": date,
-        "tag": tag,
-        "source_path": source_path,
-        "extractor_id": extractor_id,
-        "extractor_version": extractor_version,
-        "locator_kind": locator_kind,
+        "language": options.language,
+        "path": options.path,
+        "node_type": options.node_type,
+        "function_name": options.function_name,
+        "class_name": options.class_name,
+        "doc_type": options.doc_type,
+        "feature": options.feature,
+        "date": options.date,
+        "tag": options.tag,
+        "source_path": options.source_path,
+        "extractor_id": options.extractor_id,
+        "extractor_version": options.extractor_version,
+        "locator_kind": options.locator_kind,
     }
 
     def _supplied(keys: tuple[str, ...]) -> list[str]:
@@ -173,19 +181,19 @@ def _supplied_filters(
     glob_supplied = [
         flag
         for flag, supplied in (
-            ("include_path", bool(include_paths)),
-            ("exclude_path", bool(exclude_paths)),
-            ("exclude_domain", bool(exclude_domains)),
-            ("only_domain", bool(only_domains)),
-            ("include_domain", bool(include_domains)),
+            ("include_path", bool(options.include_paths)),
+            ("exclude_path", bool(options.exclude_paths)),
+            ("exclude_domain", bool(options.exclude_domains)),
+            ("only_domain", bool(options.only_domains)),
+            ("include_domain", bool(options.include_domains)),
         )
         if supplied
     ]
     postproc_supplied = [
         flag
         for flag, supplied in (
-            ("dedup_locales", dedup_locales is not None),
-            ("prefer", prefer is not None),
+            ("dedup_locales", options.dedup_locales is not None),
+            ("prefer", options.prefer is not None),
         )
         if supplied
     ]
@@ -216,27 +224,7 @@ def _reject_filters_for_mismatched_search_type(
 
 def validate_search_filters(
     search_type: str | PublicSourceType,
-    *,
-    language: str | None = None,
-    path: str | None = None,
-    node_type: str | None = None,
-    function_name: str | None = None,
-    class_name: str | None = None,
-    doc_type: str | None = None,
-    feature: str | None = None,
-    date: str | None = None,
-    tag: str | None = None,
-    include_paths: list[str] | None = None,
-    exclude_paths: list[str] | None = None,
-    dedup_locales: bool | None = None,
-    prefer: str | None = None,
-    exclude_domains: list[str] | None = None,
-    only_domains: list[str] | None = None,
-    include_domains: list[str] | None = None,
-    source_path: str | None = None,
-    extractor_id: str | None = None,
-    extractor_version: str | None = None,
-    locator_kind: str | None = None,
+    options: SearchFilterOptions = SearchFilterOptions(),
 ) -> None:
     """Validate that the search filters match the requested search_type.
 
@@ -247,12 +235,12 @@ def validate_search_filters(
     """
     canonical = parse_source_type(search_type, allow_aliases=True)
     canonical_name = canonical.value
-    _validate_prefer(prefer)
-    _validate_doc_type(doc_type)
+    _validate_prefer(options.prefer)
+    _validate_doc_type(options.doc_type)
     _validate_domains(
-        exclude_domains=exclude_domains,
-        only_domains=only_domains,
-        include_domains=include_domains,
+        exclude_domains=options.exclude_domains,
+        only_domains=options.only_domains,
+        include_domains=options.include_domains,
     )
 
     (
@@ -261,28 +249,7 @@ def validate_search_filters(
         document_supplied,
         glob_supplied,
         postproc_supplied,
-    ) = _supplied_filters(
-        language=language,
-        path=path,
-        node_type=node_type,
-        function_name=function_name,
-        class_name=class_name,
-        doc_type=doc_type,
-        feature=feature,
-        date=date,
-        tag=tag,
-        include_paths=include_paths,
-        exclude_paths=exclude_paths,
-        dedup_locales=dedup_locales,
-        prefer=prefer,
-        exclude_domains=exclude_domains,
-        only_domains=only_domains,
-        include_domains=include_domains,
-        source_path=source_path,
-        extractor_id=extractor_id,
-        extractor_version=extractor_version,
-        locator_kind=locator_kind,
-    )
+    ) = _supplied_filters(options)
 
     if canonical not in {PublicSourceType.CODE, PublicSourceType.COMBINED}:
         _reject_filters_for_mismatched_search_type(

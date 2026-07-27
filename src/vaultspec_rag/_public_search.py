@@ -112,13 +112,14 @@ def search_documents_timed(
     request: DocumentSearchRequest,
 ) -> tuple[list[DocumentSearchResult], dict[str, float]]:
     """Search documents and return canonical service timing fields."""
-    validate_search_filters(
-        PublicSourceType.DOCUMENT,
+    from .search import SearchFilterOptions
+
+    validate_search_filters(PublicSourceType.DOCUMENT, SearchFilterOptions(
         source_path=request.source_path,
         extractor_id=request.extractor_id,
         extractor_version=request.extractor_version,
         locator_kind=request.locator_kind,
-    )
+    ))
     root = pathlib.Path(request.root_dir).resolve()
     registry = get_registry()
     indexed_count = registry.document_chunk_count(root)
@@ -228,8 +229,9 @@ def search_combined_timed(
     request: CombinedSearchRequest,
 ) -> tuple[CombinedSearchOutcome, dict[str, float]]:
     """Search all domains under one lease with explicit partial outcomes."""
-    validate_search_filters(
-        PublicSourceType.COMBINED,
+    from .search import SearchFilterOptions
+
+    validate_search_filters(PublicSourceType.COMBINED, SearchFilterOptions(
         language=request.code_filters.language,
         path=request.code_filters.path,
         node_type=request.code_filters.node_type,
@@ -250,7 +252,7 @@ def search_combined_timed(
         extractor_id=request.document_filters.extractor_id,
         extractor_version=request.document_filters.extractor_version,
         locator_kind=request.document_filters.locator_kind,
-    )
+    ))
     root = pathlib.Path(request.root_dir).resolve()
     registry = get_registry()
     counts, count_failures, timings = _count_combined_domains(root)

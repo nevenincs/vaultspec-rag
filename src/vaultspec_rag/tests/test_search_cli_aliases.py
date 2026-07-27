@@ -33,6 +33,6 @@ def test_search_type_docs_alias_uses_canonical_vault_validation() -> None:
 
 
 def test_docs_search_type_accepts_document_filters() -> None:
-    from ..search import validate_search_filters
+    from ..search import SearchFilterOptions, validate_search_filters
 
-    validate_search_filters("docs", doc_type="adr")
+    validate_search_filters("docs", SearchFilterOptions(doc_type="adr"))

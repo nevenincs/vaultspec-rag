@@ -393,19 +393,18 @@ class TestFilterValidation:
     pytestmark: ClassVar = [pytest.mark.unit]
 
     def test_valid_vault_filters(self):
-        from ..search import validate_search_filters
+        from ..search import SearchFilterOptions, validate_search_filters
 
         # Should not raise
-        validate_search_filters(
-            "vault", doc_type="adr", feature="auth", date="2026-06-05", tag="test"
-        )
+        validate_search_filters("vault", SearchFilterOptions(
+            doc_type="adr", feature="auth", date="2026-06-05", tag="test"
+        ))
 
     def test_valid_code_filters(self):
-        from ..search import validate_search_filters
+        from ..search import SearchFilterOptions, validate_search_filters
 
         # Should not raise
-        validate_search_filters(
-            "code",
+        validate_search_filters("code", SearchFilterOptions(
             language="python",
             path="src/api.py",
             node_type="def",
@@ -415,27 +414,31 @@ class TestFilterValidation:
             exclude_paths=["tests/*"],
             dedup_locales=True,
             prefer="prod",
-        )
+        ))
 
     def test_invalid_prefer_value(self):
         from ..search import (
             InvalidPreferValueError,
+            SearchFilterOptions,
             validate_search_filters,
         )
 
         with pytest.raises(InvalidPreferValueError) as excinfo:
-            validate_search_filters("code", prefer="invalid_prefer")
+            validate_search_filters("code", SearchFilterOptions(prefer="invalid_prefer"))
         assert "invalid_prefer" in str(excinfo.value)
         assert excinfo.value.prefer_value == "invalid_prefer"
 
     def test_code_filters_on_vault_type(self):
         from ..search import (
             InvalidFilterForSearchTypeError,
+            SearchFilterOptions,
             validate_search_filters,
         )
 
         with pytest.raises(InvalidFilterForSearchTypeError) as excinfo:
-            validate_search_filters("vault", language="python", path="src/api.py")
+            validate_search_filters(
+                "vault", SearchFilterOptions(language="python", path="src/api.py")
+            )
         assert excinfo.value.filter_kind == "code"
         assert "--language" in excinfo.value.offending_filters
         assert "--path" in excinfo.value.offending_filters
@@ -444,11 +447,12 @@ class TestFilterValidation:
     def test_vault_filters_on_code_type(self):
         from ..search import (
             InvalidFilterForSearchTypeError,
+            SearchFilterOptions,
             validate_search_filters,
         )
 
         with pytest.raises(InvalidFilterForSearchTypeError) as excinfo:
-            validate_search_filters("code", doc_type="adr")
+            validate_search_filters("code", SearchFilterOptions(doc_type="adr"))
         assert excinfo.value.filter_kind == "vault"
         assert "--doc-type" in excinfo.value.offending_filters
         assert "vault-search filters" in str(excinfo.value)

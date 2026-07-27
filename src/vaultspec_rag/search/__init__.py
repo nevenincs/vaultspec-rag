@@ -19,6 +19,7 @@ from ._searcher import VaultSearcher
 from ._validation import (
     InvalidFilterForSearchTypeError,
     InvalidPreferValueError,
+    SearchFilterOptions,
     validate_search_filters,
 )
 
@@ -29,6 +30,7 @@ __all__ = [
     "InvalidPreferValueError",
     "ParsedQuery",
     "SearchDomainOutcome",
+    "SearchFilterOptions",
     "SearchResult",
     "VaultSearcher",
     "parse_query",
