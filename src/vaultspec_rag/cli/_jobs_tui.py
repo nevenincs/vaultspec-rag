@@ -47,7 +47,7 @@ from ._service_jobs_presentation import (
     project_label,
     stale_progress_label,
 )
-from ._service_jobs_query import job_is_waiting
+from ._service_jobs_query import job_is_waiting, job_revision
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -215,13 +215,6 @@ def _capability(job: dict[str, object], flag: str) -> bool:
     if not isinstance(capabilities, dict):
         return True
     return cast("dict[str, object]", capabilities).get(flag) is not False
-
-
-def _job_revision(job: dict[str, object]) -> int | None:
-    revision = job.get("revision")
-    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
-        return None
-    return revision
 
 
 def _fit(value: str, cells: int) -> str:
@@ -1141,7 +1134,7 @@ class JobsTuiApp(App[None]):
         job = self._actionable(action)
         if job is None:
             return
-        revision = _job_revision(job)
+        revision = job_revision(job)
         if revision is None:
             self.notify("The service reported no revision for this job.")
             return

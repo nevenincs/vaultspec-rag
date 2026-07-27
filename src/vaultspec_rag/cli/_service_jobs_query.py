@@ -228,6 +228,13 @@ def jobs_from_result(result: dict[str, object]) -> list[object]:
     return cast("list[object]", raw_jobs) if isinstance(raw_jobs, list) else []
 
 
+def job_revision(job: dict[str, object]) -> int | None:
+    revision = job.get("revision")
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
+        return None
+    return revision
+
+
 def fetch_jobs_result(spec: JobsQuery) -> dict[str, object] | None:
     return _try_http_admin("get_jobs", _jobs_args(spec), spec.port)
 
