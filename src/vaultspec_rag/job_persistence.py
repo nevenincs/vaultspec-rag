@@ -371,18 +371,7 @@ def _validate_persisted_lifecycle(job: JobSnapshot) -> None:
     if job.state not in {JobState.QUEUED, JobState.PAUSED}:
         return
     resources = job.resources
-    if (
-        job.runtime.task_active
-        or job.runtime.worker_active
-        or any(
-            (
-                resources.index_capacity_held,
-                resources.project_lease_held,
-                resources.writer_lock_held,
-                resources.pipeline_active,
-            )
-        )
-    ):
+    if job.runtime.task_active or job.runtime.worker_active or resources.holds_anything:
         raise ValueError(f"job {job.id}: inactive state retains live resources")
 
 

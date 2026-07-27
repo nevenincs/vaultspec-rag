@@ -690,6 +690,26 @@ def _status_dir_path() -> Path:
     return Path(raw).expanduser()
 
 
+def configured_model_repos() -> tuple[tuple[str, str], ...]:
+    """Return every model repo this build needs, label first.
+
+    Three sites listed the same three settings: readiness, provisioning, and
+    the warmup verb - the first two bare, the third with the labels it prints.
+    A fourth model would have had to be remembered in all three before it was
+    provisioned, warmed, or reported.
+
+    The label travels with the repo because it is the only part a caller
+    cannot derive, and dropping it is what made two of the copies look
+    different from the third.
+    """
+    cfg = get_config()
+    return (
+        ("Dense (Qwen3)", str(cfg.embedding_model)),
+        ("Sparse (SPLADE)", str(cfg.sparse_model)),
+        ("Reranker (CrossEncoder)", str(cfg.reranker_model)),
+    )
+
+
 def managed_status_dir() -> Path:
     """Return the managed service directory, resolved through the config.
 

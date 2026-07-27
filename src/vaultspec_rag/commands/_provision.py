@@ -390,14 +390,9 @@ def provision_models(
             detail="huggingface_hub is not installed; cannot ensure models",
         )
 
-    from ..config import get_config
+    from ..config import configured_model_repos
 
-    cfg = get_config()
-    repos = [
-        str(cfg.embedding_model),
-        str(cfg.sparse_model),
-        str(cfg.reranker_model),
-    ]
+    repos = [repo for _label, repo in configured_model_repos()]
 
     missing = [
         repo for repo in repos if try_to_load_from_cache(repo, "config.json") is None
