@@ -26,7 +26,7 @@ from ._content_policy import (
     classify_content,
 )
 from ._preprocess_config import OnError, PreprocessRule, load_preprocess_rules
-from ._preprocess_schema import UNIT_TEXT_MAX_CHARS
+from ._preprocess_schema import UNIT_TEXT_MAX_CHARS, validate_max_emitted_bytes
 
 if TYPE_CHECKING:
     import pathlib
@@ -380,13 +380,7 @@ class ResolvedIndexPolicy:
         html_strip = cast("object", self.html_strip)
         if not isinstance(html_strip, bool):
             raise ValueError("html_strip must be a boolean")
-        max_emitted_bytes = cast("object", self.max_emitted_bytes)
-        if (
-            isinstance(max_emitted_bytes, bool)
-            or not isinstance(max_emitted_bytes, int)
-            or max_emitted_bytes <= 0
-        ):
-            raise ValueError("max_emitted_bytes must be a positive integer")
+        validate_max_emitted_bytes(cast("object", self.max_emitted_bytes))
         if self.execution_mode not in {"default", "off"}:
             raise ValueError(
                 f"unknown preprocess execution mode {self.execution_mode!r}"

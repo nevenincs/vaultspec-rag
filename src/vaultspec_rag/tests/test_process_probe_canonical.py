@@ -830,6 +830,103 @@ class TestAtomicReplaceHasOneImplementation:
         assert replace_atomically is not replace_durably
 
 
+class TestVectorWidthAndCapHaveOneResolver:
+    """The sparse width and the emitted-output cap are decided in one place.
+
+    Both indexers resolved the sparse width inline, in blocks identical down to
+    the strict ``type(...) is not int`` test - seven statements each, inside
+    two different methods in two files that never import each other. That shape
+    is why no earlier scan saw it: every structural comparison here reads whole
+    function bodies, and this was a fragment of two larger ones.
+
+    The cap was worse than duplicated, it was divergent. The resolved policy
+    rejected anything that was not an ``int``; the cache identity only rejected
+    ``bool`` and non-positive values, so a float passed the cache check and
+    compared fine against zero. The shared validator uses the stricter rule,
+    which narrows the cache path - the only safe direction for a check that
+    exists to catch a value config did not coerce.
+    """
+
+    def test_no_indexer_resolves_the_sparse_width_itself(self) -> None:
+        """A second resolver is a second answer to the collection's width."""
+        offenders: list[str] = []
+        for path in _every_production_file():
+            if path.name == "store_schema.py":
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            offenders.extend(
+                f"{path.name}:{node.lineno}"
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and "no valid output dimension" in node.value
+            )
+        assert not offenders, (
+            f"the sparse width is resolved outside store_schema at {offenders}; "
+            "call effective_sparse_dim, so the width a collection is built "
+            "with comes from one place like the dense width already does"
+        )
+
+    def test_a_model_reporting_true_is_not_read_as_width_one(self) -> None:
+        """Why the resolver tests ``type`` rather than ``isinstance``.
+
+        ``bool`` subclasses ``int``, so an ``isinstance`` check would accept
+        ``True`` and build a collection accepting exactly one sparse term.
+
+        Proven able to fail: relaxing ``type(value) is not int`` to
+        ``not isinstance(value, int)`` fails this on the ``True`` case.
+        """
+        from .._store_models import root_collection_prefix  # noqa: F401
+        from ..store_schema import effective_sparse_dim
+
+        class _Model:
+            def __init__(self, value: object) -> None:
+                self.sparse_dimension = value
+
+        for bad in (True, False, 2.5, "30522", None, 0, -1):
+            with pytest.raises(RuntimeError, match="no valid output dimension"):
+                effective_sparse_dim(_Model(bad))
+        assert effective_sparse_dim(_Model(30522)) == 30522
+
+    def test_the_cap_check_is_the_strict_one_everywhere(self) -> None:
+        """The divergence the two copies had: a float passed one of them.
+
+        Proven able to fail: dropping the ``isinstance(value, int)`` clause
+        reproduces the cache's weaker check and fails this on the float.
+        """
+        from ..indexer._preprocess_schema import validate_max_emitted_bytes
+
+        assert validate_max_emitted_bytes(10 * 1024 * 1024) == 10 * 1024 * 1024
+        for bad in (2.5, 1e7, True, False, 0, -1, "5", None):
+            with pytest.raises(ValueError, match="positive integer"):
+                validate_max_emitted_bytes(bad)
+
+    def test_the_cap_rule_is_stated_once(self) -> None:
+        """A second statement of the rule is how the two drifted apart."""
+        offenders: list[str] = []
+        for path in _every_production_file():
+            if path.name == "_preprocess_schema.py":
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            offenders.extend(
+                f"{path.name}:{node.lineno}"
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Constant)
+                and node.value == "max_emitted_bytes must be a positive integer"
+            )
+        assert not offenders, (
+            f"the emitted-cap rule is stated outside its validator at "
+            f"{offenders}; call validate_max_emitted_bytes, because the two "
+            "copies it replaced did not agree on what an integer is"
+        )
+
+
 class TestMcpFailureIsRecordedOneWay:
     """The install/uninstall pair words a topology refusal once, and records it once.
 
