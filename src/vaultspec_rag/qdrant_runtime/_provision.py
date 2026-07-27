@@ -21,8 +21,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from datetime import UTC, datetime
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, cast
 

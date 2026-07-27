@@ -675,7 +675,11 @@ def _validated_managed_log_group(
 ) -> ManagedLogGroup | None:
     """Validate one exact source group from the live response."""
     data = cast("dict[str, object]", raw) if isinstance(raw, dict) else None
-    lines = _validated_managed_log_lines(data.get("lines"), limit=limit) if data else None
+    lines = (
+        _validated_managed_log_lines(data.get("lines"), limit=limit)
+        if data
+        else None
+    )
     if data is None or data.get("source") != expected_source or lines is None:
         return None
     group: ManagedLogGroup = {"source": expected_source, "lines": lines}
