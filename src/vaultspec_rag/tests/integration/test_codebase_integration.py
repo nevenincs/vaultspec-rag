@@ -299,6 +299,7 @@ class TestIncrementalPublicationRecovery:
         code_project: _CodeProject,
     ) -> None:
         """A rebuild-incomplete generation resumes its confirmed collection."""
+        from ..._store_models import generation_code_collection
         from ...indexer import _chunk_worker
         from ...indexer._run_ledger_models import RunOperation, RunTerminalState
         from ...indexer._streaming import (
@@ -325,8 +326,16 @@ class TestIncrementalPublicationRecovery:
             run_control=RunControlToken(),
         )
 
-        store.drop_code_table()
+        # A clean rebuild writes into the collection named for its generation
+        # and leaves the served one answering reads, so an interrupted attempt
+        # is reproduced by seeding the generation collection, not the served
+        # one.
+        build_target = generation_code_collection(
+            store.CODE_TABLE_NAME,
+            checkpoint.generation_id,
+        )
         store.ensure_code_table()
+        store.ensure_code_table(build_target)
         chunked = _chunk_worker.chunk_and_hash_file(source, root)
         segments = tuple(
             iter_code_file_segments(
@@ -346,7 +355,11 @@ class TestIncrementalPublicationRecovery:
                 _stored_partial_chunk(segment.path, chunk.id)
                 for chunk in segment.chunks
             )
-            store.upsert_code_chunks(list(stored_chunks), write_policy=None)
+            store.upsert_code_chunks(
+                list(stored_chunks),
+                write_policy=None,
+                collection=build_target,
+            )
             stored_segment = CodeFileSegment(
                 path=segment.path,
                 ordinal=segment.ordinal,
@@ -375,6 +388,16 @@ class TestIncrementalPublicationRecovery:
         )
 
         assert set(store.get_all_code_ids()) == expected_ids
+        # Chunk identities are deterministic, so matching ids alone cannot tell
+        # a resumed generation from one that re-encoded the whole file into a
+        # fresh collection. The seeded marker content can: it survives only
+        # where the confirmed points themselves were carried through.
+        rows, _ = store.scroll_code_content(
+            source_paths={segment.path for segment in segments}
+        )
+        assert {str(row["payload"]["content"]) for row in rows} == {
+            "interrupted_publication = True"
+        }
         resumed = checkpoint.ledger.generation(checkpoint.generation_id)
         assert resumed.complete
 
