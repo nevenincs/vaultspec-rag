@@ -151,7 +151,9 @@ def _freeze_option(value: object) -> CanonicalOption:
         )
     if isinstance(value, (datetime.date, datetime.time)):
         return _freeze_temporal(value)
-    scalar_tags: tuple[tuple[type[object], Literal["bool", "int", "float", "str"]], ...] = (
+    scalar_tags: tuple[
+        tuple[type[object], Literal["bool", "int", "float", "str"]], ...
+    ] = (
         (bool, "bool"),
         (int, "int"),
         (float, "float"),
