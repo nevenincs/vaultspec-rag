@@ -13,12 +13,14 @@ pytestmark = [pytest.mark.unit]
 
 
 def test_search_index_state_uses_selected_source_preflight_count() -> None:
-    from ..server._routes_search import _search_index_state
+    from ..server._routes_search import SearchIndexStateInput, _search_index_state
 
     state = _search_index_state(
-        indexed_count=37,
-        requested_root="C:/work/project",
-        search_type="codebase",
+        SearchIndexStateInput(
+            indexed_count=37,
+            requested_root="C:/work/project",
+            search_type="codebase",
+        )
     )
 
     assert state == {
@@ -121,13 +123,15 @@ def test_search_index_state_carries_a_published_breadth_shortfall() -> None:
     green. Its companion pins the opposite direction under a different
     mutation, so neither can pass on a constant.
     """
-    from ..server._routes_search import _search_index_state
+    from ..server._routes_search import SearchIndexStateInput, _search_index_state
 
     state = _search_index_state(
-        indexed_count=4,
-        requested_root="C:/work/project",
-        search_type="codebase",
-        published_points=421.0,
+        SearchIndexStateInput(
+            indexed_count=4,
+            requested_root="C:/work/project",
+            search_type="codebase",
+            published_points=421.0,
+        )
     )
 
     assert state["shortfall"] == {
@@ -153,12 +157,14 @@ def test_search_index_state_omits_the_shortfall_when_breadth_is_unknown() -> Non
     production call instead of on the assertion, which proves the branch
     raises, not that the test is watching it.
     """
-    from ..server._routes_search import _search_index_state
+    from ..server._routes_search import SearchIndexStateInput, _search_index_state
 
     state = _search_index_state(
-        indexed_count=4,
-        requested_root="C:/work/project",
-        search_type="codebase",
+        SearchIndexStateInput(
+            indexed_count=4,
+            requested_root="C:/work/project",
+            search_type="codebase",
+        )
     )
 
     assert "shortfall" not in state
@@ -180,14 +186,16 @@ def test_one_projection_backs_the_shortfall_block_on_both_search_paths() -> None
     literals are what pin the key names a renderer looks up.
     """
     from .._index_breadth import BreadthShortfall
-    from ..server._routes_search import _search_index_state
+    from ..server._routes_search import SearchIndexStateInput, _search_index_state
 
     block = BreadthShortfall(published=421, live=4).as_index_state_block()
     daemon_state = _search_index_state(
-        indexed_count=4,
-        requested_root="C:/work/project",
-        search_type="codebase",
-        published_points=421.0,
+        SearchIndexStateInput(
+            indexed_count=4,
+            requested_root="C:/work/project",
+            search_type="codebase",
+            published_points=421.0,
+        )
     )
 
     assert block == {
@@ -215,13 +223,15 @@ def test_the_daemon_route_renders_the_service_domain_index_state() -> None:
     """
     from .._index_breadth import BreadthShortfall
     from .._search_state import search_index_state
-    from ..server._routes_search import _search_index_state
+    from ..server._routes_search import SearchIndexStateInput, _search_index_state
 
     routed = _search_index_state(
-        indexed_count=4,
-        requested_root="C:/work/project",
-        search_type="codebase",
-        published_points=421.0,
+        SearchIndexStateInput(
+            indexed_count=4,
+            requested_root="C:/work/project",
+            search_type="codebase",
+            published_points=421.0,
+        )
     )
 
     assert routed == search_index_state(
@@ -251,13 +261,13 @@ def test_the_search_summary_names_a_demonstrated_shortfall() -> None:
     prevent.
 
     Proven able to fail: returning ``found`` unconditionally from
-    ``_search_summary`` fails this test on the shortfall-figure assertion
+    ``search_summary`` fails this test on the shortfall-figure assertion
     below, not on a crash; restoring returns it to green. Its companion pins
     the opposite direction, so neither passes on a constant string.
     """
-    from ..server._routes import _search_summary
+    from ..server._routes import search_summary
 
-    summary = _search_summary(
+    summary = search_summary(
         5,
         {"shortfall": {"published_count": 421, "live_count": 4, "missing_count": 417}},
     )
@@ -276,13 +286,13 @@ def test_the_search_summary_names_a_file_breadth_shortfall() -> None:
     returned an unqualified count here, while the command line warned - so the
     agent-facing surface was the one consumer that never learned.
 
-    Proven able to fail: restricting ``_search_summary`` to the ``shortfall``
+    Proven able to fail: restricting ``search_summary`` to the ``shortfall``
     key fails this test on the deficit assertion below, not on a crash;
     restoring the shared walker returns it to green.
     """
-    from ..server._routes import _search_summary
+    from ..server._routes import search_summary
 
-    summary = _search_summary(
+    summary = search_summary(
         5,
         {
             "file_shortfall": {
@@ -305,9 +315,9 @@ def test_both_shortfall_kinds_reach_the_summary_together() -> None:
     ``shortfall_warnings`` fails this test on the file-deficit assertion,
     while its point-deficit companion above stays green.
     """
-    from ..server._routes import _search_summary
+    from ..server._routes import search_summary
 
-    summary = _search_summary(
+    summary = search_summary(
         5,
         {
             "shortfall": {
@@ -335,12 +345,12 @@ def test_the_search_summary_stays_plain_over_an_index_with_no_shortfall() -> Non
     sentence that matters.
 
     Proven able to fail: making the warning unconditional in
-    ``_search_summary`` fails this test on the equality below; restoring
+    ``search_summary`` fails this test on the equality below; restoring
     returns it to green.
     """
-    from ..server._routes import _search_summary
+    from ..server._routes import search_summary
 
-    assert _search_summary(5, {}) == "Found 5 relevant items."
+    assert search_summary(5, {}) == "Found 5 relevant items."
 
 
 def test_the_mcp_output_model_preserves_the_shortfall_summary() -> None:
@@ -393,7 +403,10 @@ def test_a_path_filter_note_survives_classification_into_the_empty_block(
     on the unavailable path, so a note carried on the searched body is exactly
     the kind of thing that can be dropped in transit without any test noticing.
     """
-    from ..server._routes_search import _classify_search_result
+    from ..server._routes_search import (
+        SearchAvailabilityContext,
+        _classify_search_result,
+    )
 
     searched: dict[str, object] = {
         "results": [],
@@ -413,11 +426,13 @@ def test_a_path_filter_note_survives_classification_into_the_empty_block(
 
     classification = _classify_search_result(
         searched,
-        job_snapshot_before=[],
-        root=tmp_path,
-        source="code",
-        request_id="0" * 32,
-        port=8766,
+        SearchAvailabilityContext(
+            job_snapshot_before=[],
+            root=tmp_path,
+            source="code",
+            request_id="0" * 32,
+            port=8766,
+        ),
     )
 
     assert classification.status_code == 200

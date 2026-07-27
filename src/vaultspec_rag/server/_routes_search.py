@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -84,6 +85,41 @@ _BAD_REQUEST_EMPTY_QUERY = JSONResponse(
 )
 
 
+@dataclass(frozen=True, slots=True)
+class SearchIndexStateInput:
+    """Measurements required to render the canonical index-state block."""
+
+    indexed_count: int | float
+    requested_root: object
+    search_type: PublicSourceType | str
+    published_points: float | None = None
+    named_files: float | None = None
+    covered_files: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SearchAvailabilityContext:
+    """Stable request facts used while classifying search availability."""
+
+    job_snapshot_before: list[dict[str, object]]
+    root: Path
+    source: IndexSource
+    request_id: str
+    port: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class SearchRequest:
+    """Normalized user input for one search execution."""
+
+    root: Path
+    query: str
+    top_k: int
+    payload: dict[str, Any]
+    search_type: PublicSourceType
+    request_id: str
+
+
 def _bad_request_invalid_root(exc: ValueError) -> JSONResponse:
     return JSONResponse(
         {
@@ -116,15 +152,7 @@ def _unsupported_search_feedback(
     return JSONResponse(envelope, status_code=400)
 
 
-def _search_index_state(
-    *,
-    indexed_count: int | float,
-    requested_root: object,
-    search_type: PublicSourceType | str,
-    published_points: float | None = None,
-    named_files: float | None = None,
-    covered_files: float | None = None,
-) -> dict[str, object]:
+def _search_index_state(input: SearchIndexStateInput) -> dict[str, object]:
     """Adapt this route's carried figures onto the service-domain block.
 
     The route owns no part of the shape. It converts the published-point
@@ -134,21 +162,23 @@ def _search_index_state(
     from .._index_breadth import BreadthShortfall, FileBreadthShortfall
     from .._search_state import search_index_state
 
-    count = int(indexed_count)
+    count = int(input.indexed_count)
     shortfall = (
         None
-        if published_points is None
-        else BreadthShortfall(published=int(published_points), live=count)
+        if input.published_points is None
+        else BreadthShortfall(published=int(input.published_points), live=count)
     )
     file_shortfall = (
         None
-        if named_files is None or covered_files is None
-        else FileBreadthShortfall(named=int(named_files), covered=int(covered_files))
+        if input.named_files is None or input.covered_files is None
+        else FileBreadthShortfall(
+            named=int(input.named_files), covered=int(input.covered_files)
+        )
     )
     return search_index_state(
         indexed_count=count,
-        requested_root=requested_root,
-        search_type=search_type,
+        requested_root=input.requested_root,
+        search_type=input.search_type,
         shortfall=shortfall,
         file_shortfall=file_shortfall,
     )
@@ -201,12 +231,7 @@ def _empty_search_diagnostics(
 
 def _classify_search_result(
     result: dict[str, object],
-    *,
-    job_snapshot_before: list[dict[str, object]],
-    root: Path,
-    source: IndexSource,
-    request_id: str,
-    port: int | None,
+    context: SearchAvailabilityContext,
 ) -> SearchResponseClassification:
     """Apply availability classification and stable-empty diagnostics."""
     from ._routes import canonical_job_snapshot
@@ -214,19 +239,19 @@ def _classify_search_result(
     index_state = cast("dict[str, object]", result.get("index_state", {}))
     classification = classify_search_response(
         result,
-        before_snapshot=job_snapshot_before,
+        before_snapshot=context.job_snapshot_before,
         after_snapshot=canonical_job_snapshot(),
-        requested_root=root,
-        source=source,
-        request_id=request_id,
+        requested_root=context.root,
+        source=context.source,
+        request_id=context.request_id,
         index_state=index_state,
-        port=port,
+        port=context.port,
     )
     if classification.status_code == 200 and not classification.response["results"]:
         raw_path_filter = classification.response.get("path_filter")
         classification.response["empty"] = _empty_search_diagnostics(
             index_state,
-            port=port,
+            port=context.port,
             path_filter=cast("dict[str, object]", raw_path_filter)
             if isinstance(raw_path_filter, dict)
             else None,
@@ -236,40 +261,32 @@ def _classify_search_result(
 
 def _classify_collection_disappearance(
     exc: UnexpectedResponse,
-    *,
-    job_snapshot_before: list[dict[str, object]],
-    root: Path,
-    source: IndexSource,
-    request_id: str,
-    port: int | None,
+    context: SearchAvailabilityContext,
 ) -> SearchResponseClassification | None:
     """Classify one instantaneous missing-collection search observation."""
     from ._routes import canonical_job_snapshot
 
     return classify_qdrant_collection_disappearance(
         exc,
-        before_snapshot=job_snapshot_before,
+        before_snapshot=context.job_snapshot_before,
         after_snapshot=canonical_job_snapshot(),
-        requested_root=root,
-        source=source,
-        request_id=request_id,
+        requested_root=context.root,
+        source=context.source,
+        request_id=context.request_id,
         index_state=_search_index_state(
-            indexed_count=0,
-            requested_root=root,
-            search_type=source,
+            SearchIndexStateInput(
+                indexed_count=0,
+                requested_root=context.root,
+                search_type=context.source,
+            )
         ),
-        port=port,
+        port=context.port,
     )
 
 
 async def _run_search_with_availability(
     run: Callable[[], dict[str, object]],
-    *,
-    job_snapshot_before: list[dict[str, object]],
-    root: Path,
-    source: IndexSource,
-    request_id: str,
-    port: int | None,
+    context: SearchAvailabilityContext,
 ) -> tuple[dict[str, object], SearchResponseClassification | None]:
     """Run retrieval and recover only an evidenced collection disappearance."""
     try:
@@ -277,11 +294,7 @@ async def _run_search_with_availability(
     except UnexpectedResponse as exc:
         classification = _classify_collection_disappearance(
             exc,
-            job_snapshot_before=job_snapshot_before,
-            root=root,
-            source=source,
-            request_id=request_id,
-            port=port,
+            context,
         )
         if classification is None:
             raise
@@ -332,11 +345,7 @@ def _complete_classified_search(
 
 
 def _dispatch_public_search(
-    root: Path,
-    query: str,
-    top_k: int,
-    payload: dict[str, Any],
-    search_type: PublicSourceType,
+    request: SearchRequest,
     notes: dict[str, object],
 ) -> tuple[list[Any], dict[str, float], Any | None]:
     """Dispatch one canonical source without adapter fallback."""
@@ -351,108 +360,98 @@ def _dispatch_public_search(
     )
     from ..api import CodebaseSearchRequest, VaultSearchRequest
 
-    if search_type is PublicSourceType.VAULT:
+    if request.search_type is PublicSourceType.VAULT:
         results, timings = vaultspec_rag.search_vault_timed(VaultSearchRequest(
-            root_dir=root,
-            query=query,
-            top_k=top_k,
-            doc_type=payload.get("doc_type"),
-            feature=payload.get("feature"),
-            date=payload.get("date"),
-            tag=payload.get("tag"),
-            intent=payload.get("intent"),
-            like_ids=payload.get("like_ids"),
-            unlike_ids=payload.get("unlike_ids"),
+            root_dir=request.root,
+            query=request.query,
+            top_k=request.top_k,
+            doc_type=request.payload.get("doc_type"),
+            feature=request.payload.get("feature"),
+            date=request.payload.get("date"),
+            tag=request.payload.get("tag"),
+            intent=request.payload.get("intent"),
+            like_ids=request.payload.get("like_ids"),
+            unlike_ids=request.payload.get("unlike_ids"),
         ))
         return results, timings, None
-    if search_type is PublicSourceType.CODE:
+    if request.search_type is PublicSourceType.CODE:
         results, timings = vaultspec_rag.search_codebase_timed(CodebaseSearchRequest(
-            root_dir=root,
-            query=query,
-            top_k=top_k,
-            language=payload.get("language"),
-            path=payload.get("path"),
-            node_type=payload.get("node_type"),
-            function_name=payload.get("function_name"),
-            class_name=payload.get("class_name"),
-            include_paths=payload.get("include_paths"),
-            exclude_paths=payload.get("exclude_paths"),
-            dedup_locales=payload.get("dedup_locales"),
-            prefer=payload.get("prefer"),
-            exclude_domains=payload.get("exclude_domains"),
-            only_domains=payload.get("only_domains"),
-            include_domains=payload.get("include_domains"),
-            like_ids=payload.get("like_ids"),
-            unlike_ids=payload.get("unlike_ids"),
+            root_dir=request.root,
+            query=request.query,
+            top_k=request.top_k,
+            language=request.payload.get("language"),
+            path=request.payload.get("path"),
+            node_type=request.payload.get("node_type"),
+            function_name=request.payload.get("function_name"),
+            class_name=request.payload.get("class_name"),
+            include_paths=request.payload.get("include_paths"),
+            exclude_paths=request.payload.get("exclude_paths"),
+            dedup_locales=request.payload.get("dedup_locales"),
+            prefer=request.payload.get("prefer"),
+            exclude_domains=request.payload.get("exclude_domains"),
+            only_domains=request.payload.get("only_domains"),
+            include_domains=request.payload.get("include_domains"),
+            like_ids=request.payload.get("like_ids"),
+            unlike_ids=request.payload.get("unlike_ids"),
             notes=notes,
         ))
         return results, timings, None
-    if search_type is PublicSourceType.DOCUMENT:
+    if request.search_type is PublicSourceType.DOCUMENT:
         results, timings = vaultspec_rag.search_documents_timed(
             DocumentSearchRequest(
-                root_dir=root,
-                query=query,
-                top_k=top_k,
-                source_path=payload.get("source_path"),
-                extractor_id=payload.get("extractor_id"),
-                extractor_version=payload.get("extractor_version"),
-                locator_kind=payload.get("locator_kind"),
+                root_dir=request.root,
+                query=request.query,
+                top_k=request.top_k,
+                source_path=request.payload.get("source_path"),
+                extractor_id=request.payload.get("extractor_id"),
+                extractor_version=request.payload.get("extractor_version"),
+                locator_kind=request.payload.get("locator_kind"),
             )
         )
         return results, timings, None
     combined, timings = vaultspec_rag.search_combined_timed(
         CombinedSearchRequest(
-            root_dir=root,
-            query=query,
-            top_k=top_k,
+            root_dir=request.root,
+            query=request.query,
+            top_k=request.top_k,
             vault_filters=VaultCombinedSearchFilters(
-                doc_type=payload.get("doc_type"),
-                feature=payload.get("feature"),
-                date=payload.get("date"),
-                tag=payload.get("tag"),
-                intent=payload.get("intent"),
+                doc_type=request.payload.get("doc_type"),
+                feature=request.payload.get("feature"),
+                date=request.payload.get("date"),
+                tag=request.payload.get("tag"),
+                intent=request.payload.get("intent"),
             ),
             code_filters=CodeCombinedSearchFilters(
-                language=payload.get("language"),
-                path=payload.get("path"),
-                node_type=payload.get("node_type"),
-                function_name=payload.get("function_name"),
-                class_name=payload.get("class_name"),
-                include_paths=tuple(payload.get("include_paths") or ()),
-                exclude_paths=tuple(payload.get("exclude_paths") or ()),
-                dedup_locales=payload.get("dedup_locales"),
-                prefer=payload.get("prefer"),
-                exclude_domains=tuple(payload.get("exclude_domains") or ()),
-                only_domains=tuple(payload.get("only_domains") or ()),
-                include_domains=tuple(payload.get("include_domains") or ()),
+                language=request.payload.get("language"),
+                path=request.payload.get("path"),
+                node_type=request.payload.get("node_type"),
+                function_name=request.payload.get("function_name"),
+                class_name=request.payload.get("class_name"),
+                include_paths=tuple(request.payload.get("include_paths") or ()),
+                exclude_paths=tuple(request.payload.get("exclude_paths") or ()),
+                dedup_locales=request.payload.get("dedup_locales"),
+                prefer=request.payload.get("prefer"),
+                exclude_domains=tuple(request.payload.get("exclude_domains") or ()),
+                only_domains=tuple(request.payload.get("only_domains") or ()),
+                include_domains=tuple(request.payload.get("include_domains") or ()),
             ),
             document_filters=DocumentCombinedSearchFilters(
-                source_path=payload.get("source_path"),
-                extractor_id=payload.get("extractor_id"),
-                extractor_version=payload.get("extractor_version"),
-                locator_kind=payload.get("locator_kind"),
+                source_path=request.payload.get("source_path"),
+                extractor_id=request.payload.get("extractor_id"),
+                extractor_version=request.payload.get("extractor_version"),
+                locator_kind=request.payload.get("locator_kind"),
             ),
         )
     )
     return combined.results, timings, combined
 
 
-def _execute_search_request(
-    *,
-    root: Path,
-    query: str,
-    top_k: int,
-    payload: dict[str, Any],
-    search_type: PublicSourceType,
-    request_id: str,
-) -> dict[str, object]:
+def _execute_search_request(request: SearchRequest) -> dict[str, object]:
     """Execute and serialize one search off the event loop."""
     try:
         notes: dict[str, object] = {}
         phase_started = time.perf_counter()
-        results, phase_timing, combined = _dispatch_public_search(
-            root, query, top_k, payload, search_type, notes
-        )
+        results, phase_timing, combined = _dispatch_public_search(request, notes)
         search_seconds = time.perf_counter() - phase_started
         phase_started = time.perf_counter()
         indexed_count = (
@@ -460,16 +459,18 @@ def _execute_search_request(
                 int(phase_timing.get(f"{source}_indexed_count", 0.0))
                 for source in INDEX_SOURCES
             )
-            if search_type is PublicSourceType.COMBINED
+            if request.search_type is PublicSourceType.COMBINED
             else int(phase_timing["indexed_count"])
         )
         index_state = _search_index_state(
-            indexed_count=indexed_count,
-            requested_root=root,
-            search_type=search_type,
-            published_points=phase_timing.get("published_points"),
-            named_files=phase_timing.get("named_files"),
-            covered_files=phase_timing.get("covered_files"),
+            SearchIndexStateInput(
+                indexed_count=indexed_count,
+                requested_root=request.root,
+                search_type=request.search_type,
+                published_points=phase_timing.get("published_points"),
+                named_files=phase_timing.get("named_files"),
+                covered_files=phase_timing.get("covered_files"),
+            )
         )
         index_state_seconds = time.perf_counter() - phase_started
         phase_started = time.perf_counter()
@@ -483,7 +484,7 @@ def _execute_search_request(
             for result in results
         ]
         response: dict[str, object] = {
-            "request_id": request_id,
+            "request_id": request.request_id,
             "results": items,
             "summary": search_summary(len(results), index_state),
             "filtered": notes.get("dropped_domains"),
@@ -529,11 +530,15 @@ def _execute_search_request(
 
 
 async def search_route(request: Request) -> JSONResponse:
-    from ._routes import canonical_job_snapshot
-
+    """Authenticate then dispatch one normalized search request."""
     denied = require_token(request)
     if denied is not None:
         return denied
+    return await _search_route_response(request)
+
+
+async def _search_route_response(request: Request) -> JSONResponse:
+    from ._routes import canonical_job_snapshot
 
     payload = await request.json()
     request_id = uuid.uuid4().hex
@@ -562,10 +567,7 @@ async def search_route(request: Request) -> JSONResponse:
     except ValueError as exc:
         return _bad_request_invalid_root(exc)
 
-    job_snapshot_before = canonical_job_snapshot()
-    search_source = search_type.value
-    run = partial(
-        _execute_search_request,
+    search_request = SearchRequest(
         root=root,
         query=query,
         top_k=top_k,
@@ -573,6 +575,14 @@ async def search_route(request: Request) -> JSONResponse:
         search_type=search_type,
         request_id=request_id,
     )
+    availability_context = SearchAvailabilityContext(
+        job_snapshot_before=canonical_job_snapshot(),
+        root=root,
+        source=cast('Literal["vault", "code", "document"]', search_type.value),
+        request_id=request_id,
+        port=request.url.port,
+    )
+    run = partial(_execute_search_request, search_request)
 
     started = time.perf_counter()
     if search_type is PublicSourceType.COMBINED:
@@ -581,11 +591,7 @@ async def search_route(request: Request) -> JSONResponse:
     else:
         result, classification = await _run_search_with_availability(
             run,
-            job_snapshot_before=job_snapshot_before,
-            root=root,
-            source=cast('Literal["vault", "code", "document"]', search_source),
-            request_id=request_id,
-            port=request.url.port,
+            availability_context,
         )
     total_seconds = time.perf_counter() - started
     _m.incr("search_total")
@@ -604,17 +610,13 @@ async def search_route(request: Request) -> JSONResponse:
             cast("dict[str, object]", timing)["server_total_seconds"] = total_seconds
         classification = _classify_search_result(
             result,
-            job_snapshot_before=job_snapshot_before,
-            root=root,
-            source=cast('Literal["vault", "code", "document"]', search_source),
-            request_id=request_id,
-            port=request.url.port,
+            availability_context,
         )
     if classification is not None:
         result, response_status = _complete_classified_search(
             classification,
             root=root,
-            source=cast('Literal["vault", "code", "document"]', search_source),
+            source=availability_context.source,
             request_id=request_id,
             total_seconds=total_seconds,
         )
