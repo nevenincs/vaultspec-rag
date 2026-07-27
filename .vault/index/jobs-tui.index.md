@@ -7,6 +7,7 @@ date: '2026-07-27'
 modified: '2026-07-27'
 related:
   - '[[2026-07-27-jobs-tui-adr]]'
+  - '[[2026-07-27-jobs-tui-audit]]'
   - '[[2026-07-27-jobs-tui-plan]]'
   - '[[2026-07-27-jobs-tui-research]]'
 ---
@@ -20,6 +21,10 @@ Auto-generated index of all documents tagged with `#jobs-tui`.
 ### adr
 
 - `2026-07-27-jobs-tui-adr` - `jobs-tui` adr: `the live jobs view becomes an owned-screen interface` | (**status:** `accepted`)
+
+### audit
+
+- `2026-07-27-jobs-tui-audit` - `jobs-tui` audit: `what shipped, and what blocks releasing it`
 
 ### plan
 
