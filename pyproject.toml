@@ -364,19 +364,18 @@ ignore_decorators = [
 #
 # - exc_type/exc_val/exc_tb: `__exit__` fixes the names of its three trailing
 #   parameters, so a context manager that ignores them reports each as unused.
-# - existing_path/new_path: positional-only parameters of the MoveFileExW
-#   Protocol, which mirrors the Windows API signature it types.
 # - SupportedLanguage: imported under TYPE_CHECKING and referenced only from
 #   the string form `cast("SupportedLanguage", ...)`, which vulture does not
 #   resolve. Deleting the import breaks type checking.
-ignore_names = [
-  "exc_type",
-  "exc_val",
-  "exc_tb",
-  "existing_path",
-  "new_path",
-  "SupportedLanguage",
-]
+#
+# Two further names were listed here and have been REMOVED, because listing
+# them was the mistake this comment exists to prevent. They were the parameters
+# of a Protocol that typed a Windows call which had already moved to another
+# module: the Protocol had no remaining user and was dead. Reading the site
+# showed the names were fixed by a signature, which is true and irrelevant -
+# the question the scanner was actually asking is whether anything still uses
+# the thing they belong to. Follow a finding up to its owner before listing it.
+ignore_names = ["exc_type", "exc_val", "exc_tb", "SupportedLanguage"]
 min_confidence = 80
 paths = ["src/vaultspec_rag"]
 
