@@ -289,7 +289,9 @@ class CodeIncrementalCommit:
             request.run_control.checkpoint()
             publication_span = (
                 (
-                    request.checkpoint.run_policy.protected("incremental code replacement")
+                    request.checkpoint.run_policy.protected(
+                        "incremental code replacement"
+                    )
                     if request.checkpoint is not None
                     else request.run_control.protected()
                 )
