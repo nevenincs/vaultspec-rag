@@ -130,14 +130,6 @@ def _freeze_option(value: object) -> CanonicalOption:
     """Freeze one option with explicit type tags for hashing and pickling."""
     if value is None:
         return ("none", None)
-    if isinstance(value, bool):
-        return ("bool", value)
-    if isinstance(value, int):
-        return ("int", value)
-    if isinstance(value, float):
-        return ("float", repr(value))
-    if isinstance(value, str):
-        return ("str", value)
     if isinstance(value, Mapping):
         mapping = cast("Mapping[object, object]", value)
         items: list[tuple[str, CanonicalOption]] = []
@@ -158,6 +150,16 @@ def _freeze_option(value: object) -> CanonicalOption:
         )
     if isinstance(value, (datetime.date, datetime.time)):
         return _freeze_temporal(value)
+    scalar_tags: tuple[tuple[type[object], Literal["bool", "int", "float", "str"]], ...] = (
+        (bool, "bool"),
+        (int, "int"),
+        (float, "float"),
+        (str, "str"),
+    )
+    for scalar_type, tag in scalar_tags:
+        if isinstance(value, scalar_type):
+            payload = repr(value) if tag == "float" else value
+            return tag, payload
     raise TypeError(
         f"unsupported preprocess option type {type(value).__module__}."
         f"{type(value).__qualname__}"
@@ -178,31 +180,54 @@ def _thaw_temporal(
     return datetime.datetime.fromisoformat(payload)
 
 
+def _thaw_none(payload: object) -> None:
+    if payload is not None:
+        raise TypeError("canonical none payload must be None")
+    return None
+
+
+def _thaw_bool(payload: object) -> bool:
+    if not isinstance(payload, bool):
+        raise TypeError("canonical bool payload must be a bool")
+    return payload
+
+
+def _thaw_int(payload: object) -> int:
+    if isinstance(payload, bool) or not isinstance(payload, int):
+        raise TypeError("canonical int payload must be an int")
+    return payload
+
+
+def _thaw_str(payload: object) -> str:
+    if not isinstance(payload, str):
+        raise TypeError("canonical str payload must be a string")
+    return payload
+
+
+def _thaw_float(payload: object) -> float:
+    if not isinstance(payload, str):
+        raise TypeError("canonical float payload must be a string")
+    return float(payload)
+
+
 def _thaw_scalar(tag: _ScalarTag, payload: object) -> object:
     """Validate and materialize one canonical scalar."""
-    if tag == "none":
-        if payload is not None:
-            raise TypeError("canonical none payload must be None")
-        return None
-    if tag == "bool":
-        if not isinstance(payload, bool):
-            raise TypeError("canonical bool payload must be a bool")
-        return payload
-    if tag == "int":
-        if isinstance(payload, bool) or not isinstance(payload, int):
-            raise TypeError("canonical int payload must be an int")
-        return payload
-    if tag == "str":
-        if not isinstance(payload, str):
-            raise TypeError("canonical str payload must be a string")
-        return payload
-    if tag == "float":
-        if not isinstance(payload, str):
-            raise TypeError("canonical float payload must be a string")
-        return float(payload)
     if tag in {"date", "time", "datetime"}:
-        return _thaw_temporal(tag, payload)
-    raise TypeError(f"unknown canonical preprocess option tag {tag!r}")
+        return _thaw_temporal(
+            cast('Literal["date", "time", "datetime"]', tag),
+            payload,
+        )
+    scalar_thawers = {
+        "none": _thaw_none,
+        "bool": _thaw_bool,
+        "int": _thaw_int,
+        "str": _thaw_str,
+        "float": _thaw_float,
+    }
+    try:
+        return scalar_thawers[tag](payload)
+    except KeyError:
+        raise TypeError(f"unknown canonical preprocess option tag {tag!r}") from None
 
 
 def _thaw_option(value: CanonicalOption) -> object:
