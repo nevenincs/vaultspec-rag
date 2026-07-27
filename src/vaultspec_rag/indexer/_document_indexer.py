@@ -11,7 +11,7 @@ import pathlib
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict, Unpack
 
 from .._job_errors import JobError, JobErrorKind
 from ..index_profiles import get_index_support_profile
@@ -270,6 +270,19 @@ class _DocumentMetadataReplacement:
     checkpoint: DocumentRunCheckpoint
 
 
+class _DocumentIndexerOptions(TypedDict, total=False):
+    gpu_lock: threading.Lock | None
+    extra_excludes: list[str] | None
+    content_policy: RootContentPolicy | None
+
+
+@dataclass(frozen=True, slots=True)
+class _DocumentIndexerConfig:
+    gpu_lock: threading.Lock | None = None
+    extra_excludes: list[str] | None = None
+    content_policy: RootContentPolicy | None = None
+
+
 class DocumentIndexer:
     """Index only paths explicitly admitted to the document domain."""
 
@@ -278,17 +291,15 @@ class DocumentIndexer:
         root_dir: pathlib.Path,
         model: EmbeddingModel,
         store: VaultStore,
-        *,
-        gpu_lock: threading.Lock | None = None,
-        extra_excludes: list[str] | None = None,
-        content_policy: RootContentPolicy | None = None,
+        **options: Unpack[_DocumentIndexerOptions],
     ) -> None:
+        config = _DocumentIndexerConfig(**options)
         self.root_dir = root_dir.resolve()
         self.model = model
         self.store = store
-        self._gpu_lock = gpu_lock
-        self._extra_excludes = tuple(extra_excludes or ())
-        self._content_policy = content_policy or RootContentPolicy(
+        self._gpu_lock = config.gpu_lock
+        self._extra_excludes = tuple(config.extra_excludes or ())
+        self._content_policy = config.content_policy or RootContentPolicy(
             SourceProfileVersion.CONVENTIONAL_V1
         )
         self._writer_lock = threading.RLock()
