@@ -850,6 +850,20 @@ class TestRepeatedStatementRunsStayMerged:
     Counting is by TOP-LEVEL statement, so a nested ``if`` or ``for`` body
     counts as one. A seven-statement run here is therefore a larger fragment
     than the number suggests.
+
+    The two groups sitting just under the bound have been read, so the next
+    person to lower it inherits the verdict rather than re-deriving it:
+
+    * ``_progress`` and ``_run_policy`` constructors. Different classes,
+      different fields, the same shape only because blinding erases the names -
+      a run of attribute assignments is what every constructor looks like. Not
+      duplication, and no bound distinguishes it from one that is.
+    * ``job_dispatch`` code and document attempt runners. Genuine: two parallel
+      implementations differing by which admission call and which indexer they
+      use, where the sixth matched statement is the whole ``try`` body. Merging
+      them means parameterising the job execution path by source, which is a
+      real change to the path that runs every index job and wants its own
+      iteration rather than a hurried one.
     """
 
     _MIN_RUN: ClassVar[int] = 7
