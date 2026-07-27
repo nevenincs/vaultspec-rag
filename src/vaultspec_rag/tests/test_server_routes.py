@@ -10,7 +10,6 @@ mocks; the descriptor is torch-free so these stay in the unit gate.
 from __future__ import annotations
 
 import time
-from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -22,9 +21,10 @@ from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..job_models import JobSource
 from ..server import health_handler
+from ._job_records import activity_record
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterator
+    from collections.abc import Iterator
     from pathlib import Path
 
     import httpx
@@ -84,26 +84,6 @@ def _begin_generation() -> None:
 
     mod._start_time = time.monotonic()
     mod._start_wall_time = time.time()
-
-
-@contextmanager
-def _activity_record(record_id: str) -> Generator[dict[str, object]]:
-    """Yield one live activity record for in-place edit, under the jobs lock.
-
-    The records these tests need cannot be produced by waiting: the stall
-    threshold is five minutes, and no verb backdates a timestamp or writes a
-    stamp the daemon did not produce. Only the edited field moves - the record
-    is the one ``record_start``/``record_progress`` built, and every code path
-    that reads it stays real.
-    """
-    from .. import jobs
-
-    with jobs._lock:
-        for record in jobs._records:
-            if record["id"] == record_id:
-                yield record
-                return
-    raise AssertionError(f"no activity record with id {record_id}")
 
 
 class TestReadinessDescriptor:
@@ -254,7 +234,7 @@ class TestHealthFailureGenerationBound:
 
         running_id = record_start(JobSource.CODE, "watcher")
         record_progress(running_id, "embed", 3, 20)
-        with _activity_record(running_id) as record:
+        with activity_record(running_id) as record:
             progress = cast("dict[str, Any]", record["progress"])
             progress["last_updated"] -= STALL_THRESHOLD_SECONDS + 60.0
         time.sleep(_CLOCK_TICK_GAP_SECONDS)
@@ -279,7 +259,7 @@ class TestHealthFailureGenerationBound:
 
         failed_id = record_start(JobSource.CODE, "tool")
         record_finish(failed_id, error=_DISK_FULL)
-        with _activity_record(failed_id) as record:
+        with activity_record(failed_id) as record:
             record["finished_at"] = stamp
         time.sleep(_CLOCK_TICK_GAP_SECONDS)
         _begin_generation()
