@@ -16,7 +16,7 @@ from .._operator_commands import (
 )
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
-from ._app import server_watcher_app
+from ._app import JsonMode, server_watcher_app
 from ._cli_format import _counted_unit, _project_name
 from ._render import (
     _address_line,
@@ -221,10 +221,7 @@ def service_watcher_status(
         int | None,
         typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
-    ] = False,
+    json_mode: JsonMode = False,
 ) -> None:
     """Show automatic index update settings and projects."""
     resolved_port = port if port is not None else _default_service_port()
@@ -268,10 +265,7 @@ def service_watcher_start(
         int | None,
         typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
-    ] = False,
+    json_mode: JsonMode = False,
 ) -> None:
     """Start automatic index updates for a project."""
     resolved_port = port if port is not None else _default_service_port()
@@ -330,10 +324,7 @@ def service_watcher_stop(
         int | None,
         typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
-    ] = False,
+    json_mode: JsonMode = False,
 ) -> None:
     """Stop automatic index updates for a project."""
     resolved_port = port if port is not None else _default_service_port()
@@ -399,10 +390,7 @@ def service_watcher_timing(
         int | None,
         typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
-    ] = False,
+    json_mode: JsonMode = False,
 ) -> None:
     """Change automatic index update timing."""
     resolved_port = port if port is not None else _default_service_port()

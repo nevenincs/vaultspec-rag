@@ -1639,3 +1639,89 @@ class TestSearchFilterVocabularyHasOneHome:
             "the code filter must take its whitelist from store_schema, the "
             "same way the document filter does"
         )
+
+
+class TestJsonOptionHasOneDeclaration:
+    """Every verb's ``--json`` flag is declared in one place.
+
+    Thirty-three verbs declared it for themselves and had reached four
+    wordings and two declaration styles: the storage verbs were still on the
+    pre-``Annotated`` form with a terser sentence, so ``--help`` described the
+    same flag differently depending on which verb an operator ran it on.
+
+    One wording is deliberately kept separate. The lifecycle verbs promise
+    exactly one structured envelope on every exit path, success or failure -
+    a stronger contract than "machine-readable output", not a reworded one.
+    """
+
+    def test_no_verb_spells_the_json_help_text(self) -> None:
+        """Composing on the shared sentence is fine; restating it is not.
+
+        Keyed on the exact canonical sentences rather than the words they
+        start with: a first attempt matched any string opening "Emit one
+        structured" and flagged a dry-run docstring that happens to begin the
+        same way.
+        """
+        from ..cli._app import JSON_ENVELOPE_OPTION_HELP, JSON_OPTION_HELP
+
+        sentences = (JSON_OPTION_HELP, JSON_ENVELOPE_OPTION_HELP)
+        offenders = [
+            f"{path.name}:{number}"
+            for path in _production_sources()
+            if path.name != "_app.py"
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            )
+            if any(f'"{sentence}' in line for sentence in sentences)
+        ]
+        assert not offenders, (
+            f"a hand-written --json help string at {offenders}; annotate the "
+            "parameter with JsonMode or JsonEnvelopeMode, or compose on "
+            "JSON_OPTION_HELP when the verb has more to say"
+        )
+
+    def test_no_verb_builds_its_own_json_option(self) -> None:
+        """A second ``typer.Option("--json", ...)`` is a second declaration."""
+        offenders: list[str] = []
+        for path in _production_sources():
+            if path.name == "_app.py":
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            for node in ast.walk(tree):
+                if not (
+                    isinstance(node, ast.Call)
+                    and _is_attr_call(node, "typer", "Option")
+                ):
+                    continue
+                if not any(
+                    isinstance(arg, ast.Constant) and arg.value == "--json"
+                    for arg in node.args
+                ):
+                    continue
+                # Composing on a canonical constant is the supported way for a
+                # verb to say more; restating the sentence is not.
+                composes = any(
+                    isinstance(inner, ast.Name)
+                    and inner.id in {"JSON_OPTION_HELP", "JSON_ENVELOPE_OPTION_HELP"}
+                    for inner in ast.walk(node)
+                )
+                if not composes:
+                    offenders.append(f"{path.name}:{node.lineno}")
+        assert not offenders, (
+            f"a second --json option declaration at {offenders}; use the "
+            "JsonMode / JsonEnvelopeMode annotations from _app"
+        )
+
+    def test_the_two_contracts_stay_distinct(self) -> None:
+        """Flattening the lifecycle promise into the general one loses it.
+
+        Proven able to fail: pointing JSON_ENVELOPE_OPTION_HELP at
+        JSON_OPTION_HELP fails this test on the inequality below.
+        """
+        from ..cli._app import JSON_ENVELOPE_OPTION_HELP, JSON_OPTION_HELP
+
+        assert JSON_ENVELOPE_OPTION_HELP != JSON_OPTION_HELP
+        assert "one structured" in JSON_ENVELOPE_OPTION_HELP

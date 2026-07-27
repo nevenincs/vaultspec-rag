@@ -16,7 +16,7 @@ from .._source_types import PublicSourceType, SourceTypeParseError, parse_source
 from .._store_locks import VaultStoreLockedError
 from ..serviceclient._compat import resolve_data_plane_service
 from ..serviceclient._transport import _get_search_timeout, _try_http_search
-from ._app import CLIState, app
+from ._app import CLIState, JsonMode, app
 from ._gpu_errors import _handle_gpu_error
 from ._render import (
     _display_port_unreachable_error,
@@ -1077,13 +1077,7 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             help=("Show model loading and progress messages during local search."),
         ),
     ] = False,
-    json_mode: Annotated[
-        bool,
-        typer.Option(
-            "--json",
-            help=("Emit JSON for scripts and automation instead of human text."),
-        ),
-    ] = False,
+    json_mode: JsonMode = False,
     timeout: Annotated[
         float | None,
         typer.Option(

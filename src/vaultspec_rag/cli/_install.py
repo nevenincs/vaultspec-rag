@@ -13,7 +13,7 @@ from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStub
 
 import vaultspec_rag.cli as _cli
 
-from ._app import _global_target, app
+from ._app import JsonMode, _global_target, app
 from ._render import _plain, _render_install_report, _render_uninstall_report
 
 # Group name used when ``--torch-group`` is passed without an explicit
@@ -213,10 +213,7 @@ def handle_install(
             help="Skip the Qdrant server binary provisioning step.",
         ),
     ] = False,
-    json_output: Annotated[
-        bool,
-        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
-    ] = False,
+    json_output: JsonMode = False,
 ) -> None:
     """Set up vaultspec-rag in a workspace.
 
@@ -390,10 +387,7 @@ def handle_uninstall(
             help="Skip confirmation prompts.",
         ),
     ] = False,
-    json_output: Annotated[
-        bool,
-        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
-    ] = False,
+    json_output: JsonMode = False,
 ) -> None:
     """Remove vaultspec-rag setup from a workspace.
 

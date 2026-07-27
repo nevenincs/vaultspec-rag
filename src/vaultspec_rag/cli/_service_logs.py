@@ -23,7 +23,7 @@ from ..logging_config import (
 )
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
-from ._app import server_app
+from ._app import JsonMode, server_app
 from ._render import _emit_json, _emit_json_error_and_exit, _plain
 
 _LOGS_COMMAND = "server.logs"
@@ -83,10 +83,7 @@ def service_logs(
             help="Use this live service port before reading retained local logs.",
         ),
     ] = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
-    ] = False,
+    json_mode: JsonMode = False,
 ) -> None:
     """Show grouped raw service and Qdrant logs live or offline."""
     filters = managed_log_filters(job_id=job_id, contains=contains)

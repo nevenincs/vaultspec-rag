@@ -36,7 +36,7 @@ from ..serviceclient._discovery import (
     _read_service_status,
 )
 from ..serviceclient._transport import _try_http_health
-from ._app import _global_target, server_app
+from ._app import JSON_ENVELOPE_OPTION_HELP, _global_target, server_app
 from ._core import logger
 from ._gpu_errors import (
     RuntimeEnvKind,
@@ -673,8 +673,8 @@ def service_start(
         typer.Option(
             "--json",
             help=(
-                "Emit one machine-readable outcome envelope instead of human "
-                "text. An already-running owned service is the success "
+                f"{JSON_ENVELOPE_OPTION_HELP} "
+                "An already-running owned service is the success "
                 "`already_running` (exit 0), so a supervising broker can attach "
                 "rather than treating it as a fault."
             ),

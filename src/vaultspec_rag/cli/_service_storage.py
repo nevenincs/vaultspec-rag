@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, cast
 import typer
 
 from .._units import human_bytes
-from ._app import server_storage_app
+from ._app import JsonMode, server_storage_app
 from ._progress import StartupStatusReporter
 from ._render import _emit_json, _emit_json_error_and_exit, _plain_line
 
@@ -261,9 +261,7 @@ def _survey_from_service(
     ),
 )
 def storage_survey(
-    json_mode: bool = typer.Option(
-        False, "--json", help="Emit JSON for scripts instead of human text."
-    ),
+    json_mode: JsonMode = False,
     orphaned_only: bool = typer.Option(
         False, "--orphaned", help="Show only orphaned namespaces (prune candidates)."
     ),
@@ -414,7 +412,7 @@ def storage_delete(
     ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Apply the deletion."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview without deleting."),
-    json_mode: bool = typer.Option(False, "--json", help="Emit JSON for scripts."),
+    json_mode: JsonMode = False,
     allow_unknown: bool = typer.Option(
         False,
         "--allow-unknown",
@@ -532,7 +530,7 @@ def storage_prune(
             "crashes (unloadable by the server; filesystem delete)."
         ),
     ),
-    json_mode: bool = typer.Option(False, "--json", help="Emit JSON for scripts."),
+    json_mode: JsonMode = False,
 ) -> None:
     """Reclaim all orphaned namespaces; never touches unknown or live ones."""
     from ..storage_ops import (
@@ -671,7 +669,7 @@ def storage_reconcile(
             "by a later run, since mid-flight sizes are meaningless."
         ),
     ),
-    json_mode: bool = typer.Option(False, "--json", help="Emit JSON for scripts."),
+    json_mode: JsonMode = False,
 ) -> None:
     """Converge pre-existing collections onto the bounded geometry.
 
@@ -792,7 +790,7 @@ def storage_migrate(
     ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Apply the migration."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview without copying."),
-    json_mode: bool = typer.Option(False, "--json", help="Emit JSON for scripts."),
+    json_mode: JsonMode = False,
 ) -> None:
     """Copy a root's namespaced collections between the local and server stores."""
     from qdrant_client import QdrantClient

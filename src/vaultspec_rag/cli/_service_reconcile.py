@@ -23,7 +23,7 @@ from ..serviceclient._status import (
     reconcile_discovery,
 )
 from ..serviceclient._transport import _try_http_health
-from ._app import server_app
+from ._app import JSON_OPTION_HELP, server_app
 from ._progress import StartupStatusReporter
 from ._render import _emit_json
 from ._service_lifecycle import (
@@ -61,7 +61,7 @@ def service_reconcile(
         typer.Option(
             "--json",
             help=(
-                "Emit JSON for scripts instead of human text. Preserves exit "
+                f"{JSON_OPTION_HELP} Preserves exit "
                 "codes 0 (converged) and 1 (not converged)."
             ),
         ),

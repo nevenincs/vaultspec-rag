@@ -22,7 +22,7 @@ from ..qdrant_runtime._constants import (
 from ..qdrant_runtime._provision import provision, provisioned_versions
 from ..qdrant_runtime._resolve import probe_qdrant_endpoint, resolve_binary
 from ..serviceclient._discovery import _read_service_status
-from ._app import server_qdrant_app
+from ._app import JsonMode, server_qdrant_app
 from ._progress import StartupStatusReporter
 from ._render import _emit_json, _plain_line
 
@@ -86,10 +86,7 @@ def qdrant_install(
             ),
         ),
     ] = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
-    ] = False,
+    json_mode: JsonMode = False,
 ) -> None:
     """Install the managed Qdrant server."""
     # A first install downloads a native archive, hashes it, and unpacks it,
@@ -238,10 +235,7 @@ def qdrant_status(
             help="Qdrant HTTP port to check.",
         ),
     ] = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
-    ] = False,
+    json_mode: JsonMode = False,
 ) -> None:
     """Show Qdrant runtime install and liveness state."""
     payload = _qdrant_status_payload(port)
@@ -281,10 +275,7 @@ def qdrant_clean(
         bool,
         typer.Option("--dry-run", help="Preview what would be removed."),
     ] = False,
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
-    ] = False,
+    json_mode: JsonMode = False,
 ) -> None:
     """Remove managed Qdrant installs (gated on ``--yes``)."""
     targets = [
@@ -405,10 +396,7 @@ def qdrant_quarantine(
         bool,
         typer.Option("--dry-run", help="Preview the move without touching the store."),
     ] = False,
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
-    ] = False,
+    json_mode: JsonMode = False,
 ) -> None:
     """List the shared store's collections, or quarantine a named one.
 

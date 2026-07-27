@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Any, cast
 
 import typer
 
 from .._operator_commands import server_status_command
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
-from ._app import CLIState, app
+from ._app import CLIState, JsonMode, app
 from ._cli_format import _counted_unit, _format_mb
 from ._render import (
     _address_line,
@@ -295,13 +295,7 @@ def _service_index_status(target: object) -> tuple[dict[str, object], int] | Non
 )
 def handle_status(
     ctx: typer.Context,
-    json_mode: Annotated[
-        bool,
-        typer.Option(
-            "--json",
-            help=("Emit JSON for scripts instead of human text."),
-        ),
-    ] = False,
+    json_mode: JsonMode = False,
 ) -> None:
     """Show project index counts, index data location, and compute device."""
     state: CLIState = ctx.obj

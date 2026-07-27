@@ -28,7 +28,11 @@ from ..logging_config import configure_logging
 from ._render import _plain
 
 __all__ = [
+    "JSON_ENVELOPE_OPTION_HELP",
+    "JSON_OPTION_HELP",
     "CLIState",
+    "JsonEnvelopeMode",
+    "JsonMode",
     "_global_target",
     "app",
     "main",
@@ -41,6 +45,28 @@ __all__ = [
     "server_storage_app",
     "server_watcher_app",
     "version_callback",
+]
+
+
+#: How every verb describes ``--json``. Thirty-three declarations spelled this
+#: for themselves and had reached four wordings, so the same flag was
+#: documented differently depending on which verb an operator ran ``--help``
+#: on - including two declaration STYLES, with the storage verbs still on the
+#: pre-``Annotated`` form and a terser sentence.
+JSON_OPTION_HELP = "Emit JSON for scripts instead of human text."
+
+#: The lifecycle verbs promise something stronger and say so: exactly one
+#: structured envelope on every exit path, success or failure. That is a
+#: different contract from "machine-readable output", not a reworded one, so
+#: it stays a separate sentence rather than being flattened into the above.
+JSON_ENVELOPE_OPTION_HELP = "Emit one structured JSON outcome."
+
+#: The ``--json`` flag itself. A verb that needs to say more about its own
+#: JSON behaviour composes on top of the shared sentence rather than restating
+#: it, so the first clause an operator reads is the same everywhere.
+JsonMode = Annotated[bool, typer.Option("--json", help=JSON_OPTION_HELP)]
+JsonEnvelopeMode = Annotated[
+    bool, typer.Option("--json", help=JSON_ENVELOPE_OPTION_HELP)
 ]
 
 

@@ -31,7 +31,7 @@ from ..serviceclient._transport import (
     _try_http_retry_job,
     _try_http_set_job_desired_state,
 )
-from ._app import server_app, server_job_app
+from ._app import JSON_OPTION_HELP, JsonEnvelopeMode, server_app, server_job_app
 from ._cli_format import (
     _format_mb,
     _format_milliseconds,
@@ -1372,10 +1372,7 @@ def service_job_show(
         int | None,
         typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit one structured JSON outcome."),
-    ] = False,
+    json_mode: JsonEnvelopeMode = False,
 ) -> None:
     """Show one exact job resource; human output accepts a unique prefix."""
     command = _job_control_command("show")
@@ -1399,10 +1396,7 @@ def service_job_pause(
         int | None,
         typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit one structured JSON outcome."),
-    ] = False,
+    json_mode: JsonEnvelopeMode = False,
 ) -> None:
     """Request a cooperative pause for one job."""
     _set_job_state("pause", job_id, "paused", port=port, json_mode=json_mode)
@@ -1415,10 +1409,7 @@ def service_job_resume(
         int | None,
         typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit one structured JSON outcome."),
-    ] = False,
+    json_mode: JsonEnvelopeMode = False,
 ) -> None:
     """Resume one paused job through reconciliation."""
     _set_job_state("resume", job_id, "running", port=port, json_mode=json_mode)
@@ -1431,10 +1422,7 @@ def service_job_stop(
         int | None,
         typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit one structured JSON outcome."),
-    ] = False,
+    json_mode: JsonEnvelopeMode = False,
     force: Annotated[
         bool,
         typer.Option(
@@ -1461,10 +1449,7 @@ def service_job_retry(
         int | None,
         typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit one structured JSON outcome."),
-    ] = False,
+    json_mode: JsonEnvelopeMode = False,
 ) -> None:
     """Create a linked retry for one retryable terminal job."""
     command = _job_control_command("retry")
@@ -1491,10 +1476,7 @@ def service_job_delete(
         int | None,
         typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit one structured JSON outcome."),
-    ] = False,
+    json_mode: JsonEnvelopeMode = False,
 ) -> None:
     """Delete one terminal job from retained history."""
     command = _job_control_command("delete")
@@ -1564,7 +1546,7 @@ def service_jobs(
         typer.Option(
             "--json",
             help=(
-                "Emit JSON for scripts instead of human text. Always use this "
+                f"{JSON_OPTION_HELP} Always use this "
                 "for scripted waits: the human summary line unconditionally "
                 "contains the words 'active' and 'waiting'."
             ),
