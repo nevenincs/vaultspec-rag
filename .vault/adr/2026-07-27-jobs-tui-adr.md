@@ -3,13 +3,14 @@ tags:
   - '#adr'
   - '#jobs-tui'
 date: '2026-07-27'
-modified: '2026-07-27'
+modified: '2026-07-28'
 related:
   - "[[2026-07-27-jobs-tui-research]]"
   - "[[2026-06-11-service-jobs-operability-adr]]"
   - "[[2026-07-21-service-job-control-adr]]"
   - "[[2026-07-24-operator-feedback-hardening-adr]]"
   - "[[2026-07-21-managed-log-contract-adr]]"
+  - '[[2026-07-27-jobs-tui-interrupt-and-terminal-handoff-reference]]'
 ---
 
 # `jobs-tui` adr: `the live jobs view becomes an owned-screen interface` | (**status:** `accepted`)
@@ -25,6 +26,13 @@ is `2026-07-27-jobs-tui-research`.
 A decision is needed on four points that record leaves open: the rendering stack and how it
 is carried, whether the new view replaces the existing one, where a completion estimate is
 computed, and whether an operator-facing "reschedule" authorises new service behaviour.
+
+Implementation surfaced a fifth point neither record anticipated: replacing the reprint loop
+replaces its exit contract too. The loop reported the conventional interrupted status on
+Ctrl+C, while an owned-screen application absorbs the interrupt into its own event loop and
+returns normally - and it holds terminal state, the alternate screen and the cursor, that
+only an unwind gives back. What the command reports on the way out, and what it owes the
+terminal, is measured in `2026-07-27-jobs-tui-interrupt-and-terminal-handoff-reference`.
 
 ## Considerations
 
@@ -46,6 +54,16 @@ computed, and whether an operator-facing "reschedule" authorises new service beh
   (`2026-07-21-managed-log-contract-adr`), so a live pane cannot pull an unbounded tail.
 - Nothing in the service defers, re-times, or requeues live work
   (`2026-07-27-jobs-tui-research`).
+- The live path is refused in combination with structured output, so no caller can request it
+  and parse an envelope from it
+  (`2026-07-27-jobs-tui-interrupt-and-terminal-handoff-reference`).
+- Both an interrupted status and a normal one are reachable on this command depending only on
+  who handles the signal: absent the interface, the entry point's own guard reports the
+  conventional interrupted status
+  (`2026-07-27-jobs-tui-interrupt-and-terminal-handoff-reference`).
+- Status and stream cleanliness cannot distinguish an application that unwound from one that
+  exited without unwinding; only the terminal teardown sequence can
+  (`2026-07-27-jobs-tui-interrupt-and-terminal-handoff-reference`).
 
 ## Considered options
 
@@ -73,6 +91,20 @@ A service-computed windowed rate was chosen.
 semantics need their own admission interaction and cross-restart persistence, which is a
 separate decision. Mapping the affordance onto the shipped retry was chosen.
 
+**Interrupt status.** Restoring the reprint loop's interrupted status was rejected. It would
+have to be manufactured, by catching an interrupt the interface has already absorbed and
+re-reporting it, in order to describe a failure that did not occur: the operator asked to see
+the jobs and saw them. It would also make Ctrl+C and the quit binding report differently for
+the same gesture - leaving the view - on a surface where they are the same gesture. The
+argument for it is consistency with every other interrupt in this CLI, which is real but
+weaker here, because no caller can read this command's status programmatically at all.
+Reporting success on the operator leaving the view was chosen, matching the quit binding.
+
+**Terminal handoff.** Treating the screen as the terminal's problem was rejected. The
+application takes the alternate screen and the cursor, and an exit path that skips the unwind
+returns neither, leaving a working shell rendering as a dead one. Requiring every exit path
+to complete the unwind was chosen, and made a verified obligation rather than an assumed one.
+
 ## Constraints
 
 - The structured and one-shot paths keep their current contract. Only the live path changes.
@@ -92,6 +124,13 @@ separate decision. Mapping the affordance onto the shipped retry was chosen.
   path.
 - Tests assert on rendered output driven through real key presses.
 - The CLI path stays free of compute imports, as it is today.
+- Leaving the view is a success. An interrupt and the quit binding report the same status,
+  and the command's documented exit line carries no interrupted status.
+- Every exit path completes the unwind: the alternate screen is left and the cursor restored
+  before the process ends. This holds for the interrupt as much as for the quit binding.
+- The handoff is verified on the bytes the child actually emits, ordered - entering the screen
+  before leaving it, restoring the cursor after - and never on a status alone, which cannot
+  distinguish an unwind from a hard exit.
 
 ## Implementation
 
@@ -112,6 +151,13 @@ retry, delete - each enabled from the selected job's capability flags and disabl
 than hidden when unavailable. An animated indicator distinguishes a view that is refreshing
 from one that has frozen. Width breakpoints place the log pane beside the table on a wide
 terminal and collapse it into tabs on a narrow one.
+
+The interrupt needs no handler. The application absorbs it and returns, and the value of
+adding one would be to report a failure that did not happen. The obligation that does need
+code is the guard: a spawned CLI on its own console, a genuine console control event, and
+assertions over the child's raw bytes for the ordered teardown, since a substituted sleep
+raising a constructed exception exercises none of the delivery path and no status can
+evidence an unwind.
 
 ## Rationale
 
@@ -134,6 +180,22 @@ Gating actions on published capability flags rather than on phase is what makes 
 control honest. The alternative shows an operator a control that the service will reject, and
 the rejection arrives after the keystroke rather than before it.
 
+The exit status follows from what the command is for. A status describes whether the caller
+got what they asked for, and an operator who watched the jobs and then left got exactly that;
+an interrupted status here would be describing the keystroke rather than the outcome. The
+consistency argument against this is the strongest one available and is worth stating
+plainly: this command now reports its interrupt differently from every other command in the
+CLI. It is accepted because the surface it applies to cannot be read programmatically, so the
+distinction has no consumer to serve, and because on an owned screen Ctrl+C is the same
+gesture as the quit binding rather than an abort of work in progress.
+
+What replaces it as the real obligation is the terminal handoff, which is the thing an
+operator actually suffers when it is wrong. A status is invisible to someone watching a
+screen; a shell left on the alternate buffer with a hidden cursor looks broken. That failure
+is reachable from an exit path that skips the unwind while still reporting success and
+printing no traceback, so nothing about the status or the streams can catch it. Only the
+teardown bytes can, which is why the guard reads them and why the record names them.
+
 ## Consequences
 
 The base install grows by four small pure-Python packages. Every install carries them,
@@ -153,3 +215,18 @@ them are unaffected.
 Deferred scheduling remains unavailable, and the interface will not imply otherwise. If it is
 wanted later it arrives as its own decision rather than as an affordance retrofitted onto
 retry.
+
+The previous interrupted status on this command is gone, and a caller that distinguished it
+from success no longer can. Nothing supported could have been that caller, since the live path
+refuses structured output, but a script testing the status of an interactive command it should
+not have been running will now read success.
+
+This command's interrupt reports differently from the rest of the CLI, where the entry point's
+guard still reports the conventional interrupted status. That divergence is deliberate and
+scoped to the owned-screen surface; it is not licence to change any other command's interrupt,
+and a second interface would inherit this record's reasoning rather than the entry point's.
+
+Verifying the handoff costs a real spawned process on its own console per run, which is slower
+and more elaborate than any in-process substitute, and the technique is platform-specific.
+The assertions read escape sequences, so a rendering stack that changed how it takes and
+releases the screen would require updating them - deliberately, and visibly in the diff.

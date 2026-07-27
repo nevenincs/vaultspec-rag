@@ -8,6 +8,7 @@ modified: '2026-07-27'
 related:
   - '[[2026-07-27-jobs-tui-adr]]'
   - '[[2026-07-27-jobs-tui-audit]]'
+  - '[[2026-07-27-jobs-tui-interrupt-and-terminal-handoff-reference]]'
   - '[[2026-07-27-jobs-tui-plan]]'
   - '[[2026-07-27-jobs-tui-research]]'
 ---
@@ -29,6 +30,10 @@ Auto-generated index of all documents tagged with `#jobs-tui`.
 ### plan
 
 - `2026-07-27-jobs-tui-plan` - `jobs-tui` plan
+
+### reference
+
+- `2026-07-27-jobs-tui-interrupt-and-terminal-handoff-reference` - `jobs-tui` reference: `interrupt and terminal handoff`
 
 ### research
 
