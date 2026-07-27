@@ -29,6 +29,8 @@ if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
 
+    from sentence_transformers import CrossEncoder
+
     from ...embeddings import EmbeddingModel
     from ...indexer import CodebaseIndexer, IndexResult
     from ...indexer._preprocess_config import PreprocessRule
@@ -231,11 +233,12 @@ def _assert_snapshot_search(
     root: Path,
     model: EmbeddingModel,
     store: VaultStore,
+    reranker: CrossEncoder,
 ) -> None:
     """Assert searchable content carries entry-snapshot transformation evidence."""
     from ... import VaultSearcher
 
-    searcher = VaultSearcher(root, model, store)
+    searcher = VaultSearcher(root, model, store, reranker=reranker)
     hits = searcher.search_codebase(
         "immutable operation snapshot publication worker shaping marker",
         top_k=5,
@@ -290,6 +293,11 @@ def test_config_edit_during_extraction_cannot_change_active_snapshot(
             assert store.get_code_ids_by_paths({"a_payload.blob", "z_markup.html"})
             _assert_active_snapshot(indexer, entry_policy, entry_rule)
             _assert_published_snapshot(indexer, entry_policy)
-            _assert_snapshot_search(tmp_path, rag_components["model"], store)
+            _assert_snapshot_search(
+                tmp_path,
+                rag_components["model"],
+                store,
+                rag_components["reranker"],
+            )
         finally:
             store.close()

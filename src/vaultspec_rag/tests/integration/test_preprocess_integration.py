@@ -35,6 +35,8 @@ if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
     from pathlib import Path
 
+    from sentence_transformers import CrossEncoder
+
     from ...embeddings import EmbeddingModel
     from ...indexer import CodebaseIndexer
     from ...store import VaultStore
@@ -96,6 +98,7 @@ class _PreprocProject(TypedDict):
     code_indexer: CodebaseIndexer
     store: VaultStore
     model: EmbeddingModel
+    reranker: CrossEncoder
     root: Path
 
 
@@ -411,7 +414,11 @@ def preproc_project(
     store = VaultStore(tmp_path)
     code_indexer = CodebaseIndexer(tmp_path, model, store)
     yield _PreprocProject(
-        code_indexer=code_indexer, store=store, model=model, root=tmp_path
+        code_indexer=code_indexer,
+        store=store,
+        model=model,
+        reranker=rag_components["reranker"],
+        root=tmp_path,
     )
     store.close()
 
@@ -435,6 +442,7 @@ class TestPreprocessEndToEnd:
             preproc_project["root"],
             preproc_project["model"],
             preproc_project["store"],
+            reranker=preproc_project["reranker"],
         )
         results = searcher.search_codebase("quarterly revenue margin", top_k=5)
         assert results
@@ -466,6 +474,7 @@ class TestPreprocessEndToEnd:
             preproc_project["root"],
             preproc_project["model"],
             preproc_project["store"],
+            reranker=preproc_project["reranker"],
         )
         results = searcher.search_codebase(
             "regional sales territory breakdown", top_k=5
@@ -749,7 +758,9 @@ class TestPreprocessEndToEnd:
                 reporter=NullProgressReporter(),
                 preflight=indexer.preflight_content(),
             )
-            searcher = VaultSearcher(tmp_path, model, store)
+            searcher = VaultSearcher(
+                tmp_path, model, store, reranker=rag_components["reranker"]
+            )
             results = searcher.search_codebase(
                 "passthrough sentinel logistics", top_k=5
             )
@@ -799,7 +810,9 @@ class TestPreprocessEndToEnd:
                 reporter=NullProgressReporter(),
                 preflight=indexer.preflight_content(),
             )
-            searcher = VaultSearcher(tmp_path, model, store)
+            searcher = VaultSearcher(
+                tmp_path, model, store, reranker=rag_components["reranker"]
+            )
             assert any(
                 "alpha" in r.snippet
                 for r in searcher.search_codebase("unique token alpha", top_k=5)

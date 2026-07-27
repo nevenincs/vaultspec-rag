@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from pytest import TempPathFactory
+    from sentence_transformers import CrossEncoder
 
     from ...embeddings import EmbeddingModel
     from ...indexer import VaultIndexer
@@ -25,6 +26,7 @@ from ..corpus import build_synthetic_vault
 @pytest.fixture(scope="session")
 def _bench_components(  # pyright: ignore[reportUnusedFunction]
     embedding_model: EmbeddingModel,
+    shared_reranker: CrossEncoder,
     tmp_path_factory: TempPathFactory,
 ) -> Generator[RagComponentsWithManifest]:
     """Session-scoped RAG components for benchmarks (48-doc corpus)."""
@@ -36,6 +38,7 @@ def _bench_components(  # pyright: ignore[reportUnusedFunction]
         components.__class__(  # type: ignore[call-arg]
             **components,  # type: ignore[misc]
             manifest=manifest,
+            reranker=shared_reranker,
         ),
     )
     components["store"].close()
@@ -65,7 +68,9 @@ def searcher(_bench_components: RagComponentsWithManifest) -> VaultSearcher:
     from ... import VaultSearcher
 
     comp = _bench_components
-    return VaultSearcher(comp["root"], comp["model"], comp["store"])
+    return VaultSearcher(
+        comp["root"], comp["model"], comp["store"], reranker=comp["reranker"]
+    )
 
 
 @pytest.fixture(scope="session")

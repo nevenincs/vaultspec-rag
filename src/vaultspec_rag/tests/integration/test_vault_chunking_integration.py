@@ -22,6 +22,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
+    from sentence_transformers import CrossEncoder
+
     from ... import VaultIndexer, VaultStore
     from ...embeddings import EmbeddingModel
 
@@ -32,6 +34,7 @@ class _ChunkedCorpus(TypedDict):
     indexer: VaultIndexer
     long_doc_id: str
     model: EmbeddingModel
+    reranker: CrossEncoder
 
 
 #: A needle phrase placed deep past the old 8000-char embed horizon.
@@ -79,6 +82,7 @@ def _build_indexed_root(
 @pytest.fixture(scope="module")
 def chunked_corpus(
     embedding_model: EmbeddingModel,
+    shared_reranker: CrossEncoder,
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[_ChunkedCorpus]:
     root = tmp_path_factory.mktemp("chunked-vault")
@@ -89,6 +93,7 @@ def chunked_corpus(
         "indexer": indexer,
         "long_doc_id": long_doc_id,
         "model": embedding_model,
+        "reranker": shared_reranker,
     }
     store.close()
 
@@ -111,6 +116,7 @@ class TestChunkedVaultLayout:
             chunked_corpus["root"],
             chunked_corpus["model"],
             chunked_corpus["store"],
+            reranker=chunked_corpus["reranker"],
         )
         results = searcher.search_vault(
             "heliotrope calibration winch lubrication",
@@ -131,6 +137,7 @@ class TestChunkedVaultLayout:
             chunked_corpus["root"],
             chunked_corpus["model"],
             chunked_corpus["store"],
+            reranker=chunked_corpus["reranker"],
         )
         results = searcher.search_vault(
             "routine operational guidance restated",
