@@ -830,6 +830,91 @@ class TestAtomicReplaceHasOneImplementation:
         assert replace_atomically is not replace_durably
 
 
+class TestSearchPhaseKeysAreNamed:
+    """A timings phase key is written once, not at every site that uses it.
+
+    Seven keys were spelled as literals across twenty-three sites - at each
+    recording site and again at each site that read one back to sum a total.
+    Three of them were recorded from three different searches.
+
+    A phase key is a wire name. Renaming one recording site and not its reader
+    does not raise: the phase drops out of the total, and the search reports a
+    smaller number than the work took. That is the failure this prevents, and
+    it is invisible to every test that only checks results.
+    """
+
+    def test_no_search_module_spells_a_phase_key(self) -> None:
+        """A literal key is a spelling the reader of the total cannot follow."""
+        from ..search import _result_shaping
+
+        owned = {
+            value
+            for name, value in vars(_result_shaping).items()
+            if name.startswith("PHASE_") and isinstance(value, str)
+        }
+        assert owned, "no phase keys found; the scan is looking wrongly"
+        offenders: list[str] = []
+        for path in _every_production_file():
+            if path.name == "_result_shaping.py":
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            # Only LOOKUP positions. The same string is also an HTTP
+            # response field name in the search route, and that is a separate
+            # contract - the wire shape a consumer parses, not the internal
+            # key a phase was recorded under. Flagging it would force the two
+            # to move together, which is the opposite of what is wanted.
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                callee = node.func
+                name = (
+                    callee.attr
+                    if isinstance(callee, ast.Attribute)
+                    else getattr(callee, "id", "")
+                )
+                # Suffix match, not equality: the searcher imports the
+                # recorder aliased as ``_record_seconds``, and an earlier
+                # version of this check matched only the bare name - so a
+                # mutation putting the literal straight back sailed past it.
+                if not (
+                    name == "get"
+                    or name.endswith("record_seconds")
+                    or name.endswith("add_seconds")
+                ):
+                    continue
+                offenders.extend(
+                    f"{path.name}:{argument.lineno} looks up {argument.value!r}"
+                    for argument in node.args
+                    if isinstance(argument, ast.Constant) and argument.value in owned
+                )
+        assert not offenders, (
+            f"a timings phase key is spelled outside its owner at {offenders}; "
+            "use the constant, because a key renamed at one of its sites "
+            "silently drops that phase out of the reported total"
+        )
+
+    def test_every_key_is_distinct_and_suffixed(self) -> None:
+        """Two phases sharing a key would overwrite each other's measurement.
+
+        Proven able to fail: pointing two of the constants at one string fails
+        the distinctness assertion, which is what a copy-paste of a new phase
+        constant produces.
+        """
+        from ..search import _result_shaping
+
+        keys = {
+            name: value
+            for name, value in vars(_result_shaping).items()
+            if name.startswith("PHASE_") and isinstance(value, str)
+        }
+        assert len(set(keys.values())) == len(keys), keys
+        for name, value in keys.items():
+            assert value.endswith("_seconds"), (name, value)
+
+
 class TestEveryRegisteredRouteIsTokenGated:
     """No route reaches its body without the token check having run.
 

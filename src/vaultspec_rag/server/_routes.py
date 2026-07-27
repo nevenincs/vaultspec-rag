@@ -59,6 +59,7 @@ from ..logging_config import (
     query_managed_logs,
     render_managed_log_groups,
 )
+from ..search._result_shaping import PHASE_QDRANT, PHASE_RERANK
 from ..service import RegistryFullError
 from ._routes_jobs import (
     _clamp_limit,
@@ -1337,8 +1338,8 @@ def _execute_search_request(
                 "index_state_seconds": index_state_seconds,
                 "search_seconds": search_seconds,
                 "embedding_seconds": phase_timing.get("embedding_seconds"),
-                "qdrant_seconds": phase_timing.get("qdrant_seconds"),
-                "rerank_seconds": phase_timing.get("rerank_seconds"),
+                "qdrant_seconds": phase_timing.get(PHASE_QDRANT),
+                "rerank_seconds": phase_timing.get(PHASE_RERANK),
                 "postprocess_seconds": phase_timing.get("postprocess_seconds"),
                 # Promoted alongside the phases above, not nested only. A
                 # reshape of this dict carried the other phase keys up and left

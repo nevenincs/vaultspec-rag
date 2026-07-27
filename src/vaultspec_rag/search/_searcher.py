@@ -29,6 +29,15 @@ from ._postprocess import (
 )
 from ._rerank import rerank_with_graph
 from ._result_shaping import (
+    PHASE_DEDUP,
+    PHASE_DEMOTE,
+    PHASE_GRAPH_RERANK,
+    PHASE_PREFER,
+    PHASE_QDRANT,
+    PHASE_RERANK,
+    PHASE_RESULT_MAPPING,
+)
+from ._result_shaping import (
     add_seconds as _add_seconds,
 )
 from ._result_shaping import (
@@ -450,7 +459,7 @@ class VaultSearcher:
                 unlike_ids=unlike_ids,
             ),
         )
-        _record_seconds(timings, "qdrant_seconds", phase_started)
+        _record_seconds(timings, PHASE_QDRANT, phase_started)
 
         # Auto-generated feature-index documents are navigational document-lists
         # with no semantic content; they are never searchable and are
@@ -488,7 +497,7 @@ class VaultSearcher:
                     rerank_text=content or None,
                 ),
             )
-        _record_seconds(timings, "result_mapping_seconds", phase_started)
+        _record_seconds(timings, PHASE_RESULT_MAPPING, phase_started)
 
         # Rerank the FULL fetched candidate set: grouping below can
         # collapse several chunks of one document into a single row, so
@@ -496,7 +505,7 @@ class VaultSearcher:
         # whenever one document's chunks dominate the rerank window.
         phase_started = time.perf_counter()
         results = self._rerank(query_text, results, len(results), timings=timings)
-        _record_seconds(timings, "rerank_seconds", phase_started)
+        _record_seconds(timings, PHASE_RERANK, phase_started)
 
         phase_started = time.perf_counter()
         results = _group_chunks_by_document(results)
@@ -513,12 +522,12 @@ class VaultSearcher:
         status_spec = parsed.filters.get("status")
         if status_spec:
             results = apply_status_filter(results, status_spec)
-        _record_seconds(timings, "graph_rerank_seconds", phase_started)
+        _record_seconds(timings, PHASE_GRAPH_RERANK, phase_started)
         if timings is not None:
             timings["postprocess_seconds"] = (
-                timings.get("result_mapping_seconds", 0.0)
-                + timings.get("rerank_seconds", 0.0)
-                + timings.get("graph_rerank_seconds", 0.0)
+                timings.get(PHASE_RESULT_MAPPING, 0.0)
+                + timings.get(PHASE_RERANK, 0.0)
+                + timings.get(PHASE_GRAPH_RERANK, 0.0)
             )
         return results[:top_k]
 
@@ -623,7 +632,7 @@ class VaultSearcher:
             if len(kept) >= top_k or len(raw) < limit or limit >= cap:
                 break
             limit = min(limit * 2, cap)
-        _record_seconds(timings, "qdrant_seconds", started)
+        _record_seconds(timings, PHASE_QDRANT, started)
         if notes is not None and include_norm and raw and not globbed:
             notes["path_filter"] = {
                 "patterns": list(include_norm),
@@ -756,38 +765,38 @@ class VaultSearcher:
 
         phase_started = time.perf_counter()
         results = _map_codebase_results_impl(raw_results)
-        _record_seconds(timings, "result_mapping_seconds", phase_started)
+        _record_seconds(timings, PHASE_RESULT_MAPPING, phase_started)
 
         # Rerank the FULL surviving window (not a top_k slice) so the
         # post-rerank demote pass can lift a production result above noise
         # that initially out-scored it; truncation happens at return.
         phase_started = time.perf_counter()
         results = self._rerank(query_text, results, len(results), timings=timings)
-        _record_seconds(timings, "rerank_seconds", phase_started)
+        _record_seconds(timings, PHASE_RERANK, phase_started)
 
         # Noise demote: subtract the penalty from demoted-domain results and
         # re-sort. Runs after rerank so query-relevance is scored first.
         phase_started = time.perf_counter()
         apply_domain_demotion(results, policy)
-        _record_seconds(timings, "demote_seconds", phase_started)
+        _record_seconds(timings, PHASE_DEMOTE, phase_started)
 
         # --prefer post-rerank score nudge (opt-in, layered over demote).
         phase_started = time.perf_counter()
         _apply_prefer_nudge_impl(results, prefer)
-        _record_seconds(timings, "prefer_seconds", phase_started)
+        _record_seconds(timings, PHASE_PREFER, phase_started)
 
         # Locale-variant collapse (default on via config; tri-state override).
         phase_started = time.perf_counter()
         if effective_dedup:
             results = _collapse_locale_variants(results)
-        _record_seconds(timings, "dedup_seconds", phase_started)
+        _record_seconds(timings, PHASE_DEDUP, phase_started)
         if timings is not None:
             timings["postprocess_seconds"] = (
-                timings.get("result_mapping_seconds", 0.0)
-                + timings.get("rerank_seconds", 0.0)
-                + timings.get("demote_seconds", 0.0)
-                + timings.get("prefer_seconds", 0.0)
-                + timings.get("dedup_seconds", 0.0)
+                timings.get(PHASE_RESULT_MAPPING, 0.0)
+                + timings.get(PHASE_RERANK, 0.0)
+                + timings.get(PHASE_DEMOTE, 0.0)
+                + timings.get(PHASE_PREFER, 0.0)
+                + timings.get(PHASE_DEDUP, 0.0)
             )
 
         return results[:top_k]
@@ -1062,18 +1071,18 @@ class VaultSearcher:
                 sparse_vector=sparse_vector,
             ),
         )
-        _record_seconds(timings, "qdrant_seconds", phase_started)
+        _record_seconds(timings, PHASE_QDRANT, phase_started)
 
         phase_started = time.perf_counter()
         results = _map_document_results_impl(raw_results)
-        _record_seconds(timings, "result_mapping_seconds", phase_started)
+        _record_seconds(timings, PHASE_RESULT_MAPPING, phase_started)
         phase_started = time.perf_counter()
         results = self._rerank(query_text, results, top_k, timings=timings)
-        _record_seconds(timings, "rerank_seconds", phase_started)
+        _record_seconds(timings, PHASE_RERANK, phase_started)
         if timings is not None:
             timings["postprocess_seconds"] = timings.get(
-                "result_mapping_seconds", 0.0
-            ) + timings.get("rerank_seconds", 0.0)
+                PHASE_RESULT_MAPPING, 0.0
+            ) + timings.get(PHASE_RERANK, 0.0)
         return results
 
     def search_document_timed(
