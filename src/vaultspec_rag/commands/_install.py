@@ -145,7 +145,7 @@ def _seed_builtins(
         source = vaultspec_dir / rel
         if not source.exists():
             continue
-        if not dry_run:
+        if not options.dry_run:
             source.unlink()
         report.seeded.append((rel, "[REMOVE]"))
 
@@ -327,21 +327,25 @@ def _persist_fresh_mcp_providers(
     return True
 
 
-def _finish_fresh_provider_enrollment(
-    target: Path,
-    selected: tuple[Tool, ...] | None,
-    snapshots: dict[Path, NodeSnapshot],
-    report: InstallReport,
-    *,
-    dry_run: bool,
-    install_mcp: bool,
-) -> None:
-    if selected is None or dry_run or not install_mcp:
+@dataclass(frozen=True, slots=True)
+class _FreshProviderEnrollmentRequest:
+    target: Path
+    selected: tuple[Tool, ...] | None
+    snapshots: dict[Path, NodeSnapshot]
+    report: InstallReport
+    dry_run: bool
+    install_mcp: bool
+
+
+def _finish_fresh_provider_enrollment(request: _FreshProviderEnrollmentRequest) -> None:
+    if request.selected is None or request.dry_run or not request.install_mcp:
         return
-    if report.mcp_sync_failed:
-        _restore_fresh_provider_transaction(snapshots, report)
+    if request.report.mcp_sync_failed:
+        _restore_fresh_provider_transaction(request.snapshots, request.report)
         return
-    _persist_fresh_mcp_providers(target, selected, snapshots, report)
+    _persist_fresh_mcp_providers(
+        request.target, request.selected, request.snapshots, request.report
+    )
 
 
 def _record_torch_transaction_error(
@@ -355,29 +359,33 @@ def _record_torch_transaction_error(
     )
 
 
-def _commit_mcp_placement_and_mode(
-    target: Path,
-    report: InstallReport,
-    mode: InstallMode,
-    *,
-    enabled: bool,
-    persist_mode: bool,
-    force: bool,
-    upgrade: bool,
-    configure_torch: bool,
-) -> bool:
+@dataclass(frozen=True, slots=True)
+class _McpPlacementCommitRequest:
+    target: Path
+    report: InstallReport
+    mode: InstallMode
+    enabled: bool
+    persist_mode: bool
+    force: bool
+    upgrade: bool
+    configure_torch: bool
+
+
+def _commit_mcp_placement_and_mode(request: _McpPlacementCommitRequest) -> bool:
     """Commit placement, package mode, and builtin intent as one transition."""
     snapshots: dict[Path, NodeSnapshot] = {}
     try:
-        snapshots = {path: file_snapshot(path) for path in _mcp_intent_paths(target)}
+        snapshots = {
+            path: file_snapshot(path) for path in _mcp_intent_paths(request.target)
+        }
         if not _reconcile_mcp_extra(
             _McpExtraRequest(
-                target,
-                report,
-                mode,
-                enabled=enabled,
+                request.target,
+                request.report,
+                request.mode,
+                enabled=request.enabled,
                 dry_run=False,
-                record_torch_inspect_error=configure_torch,
+                record_torch_inspect_error=request.configure_torch,
             )
         ):
             rollback_errors = rollback_file_snapshots(snapshots)
@@ -385,34 +393,36 @@ def _commit_mcp_placement_and_mode(
                 rollback_message = "MCP transaction rollback failed: " + "; ".join(
                     rollback_errors
                 )
-                report.mcp_errors.append(rollback_message)
-                report.warnings.append(rollback_message)
+                request.report.mcp_errors.append(rollback_message)
+                request.report.warnings.append(rollback_message)
             return False
-        if persist_mode:
-            persist_rag_mode(target, mode)
+        if request.persist_mode:
+            persist_rag_mode(request.target, request.mode)
         _seed_builtins(
-            target / WORKSPACE_DIR,
-            report,
+            request.target / WORKSPACE_DIR,
+            request.report,
             _BuiltinSeedOptions(
                 dry_run=False,
-                force=force,
-                upgrade=upgrade,
-                install_mcp=enabled,
+                force=request.force,
+                upgrade=request.upgrade,
+                install_mcp=request.enabled,
             ),
         )
     except Exception as exc:
         rollback_errors = rollback_file_snapshots(snapshots)
-        report.mcp_extra_action = "error"
+        request.report.mcp_extra_action = "error"
         message = f"MCP intent transaction failed: {exc}"
-        if message not in report.mcp_errors:
-            record_mcp_failure(report, message)
-        _record_torch_transaction_error(report, exc, configure_torch=configure_torch)
+        if message not in request.report.mcp_errors:
+            record_mcp_failure(request.report, message)
+        _record_torch_transaction_error(
+            request.report, exc, configure_torch=request.configure_torch
+        )
         if rollback_errors:
             rollback_message = "MCP transaction rollback failed: " + "; ".join(
                 rollback_errors
             )
-            report.mcp_errors.append(rollback_message)
-            report.warnings.append(rollback_message)
+            request.report.mcp_errors.append(rollback_message)
+            request.report.warnings.append(rollback_message)
         return False
     return True
 
@@ -593,12 +603,14 @@ def _run_core_sync(
             )
 
     _finish_fresh_provider_enrollment(
-        target,
-        fresh_providers,
-        manifest_snapshots,
-        report,
-        dry_run=dry_run,
-        install_mcp=install_mcp,
+        _FreshProviderEnrollmentRequest(
+            target,
+            fresh_providers,
+            manifest_snapshots,
+            report,
+            dry_run,
+            install_mcp,
+        )
     )
 
 
@@ -1016,14 +1028,16 @@ def _install_run_unchecked(
     # seeding path.
     if not dry_run and "mcp" not in skip:
         committed = _commit_mcp_placement_and_mode(
-            target,
-            report,
-            resolved.mode,
-            enabled=install_mcp,
-            persist_mode="core" not in skip,
-            force=force,
-            upgrade=upgrade,
-            configure_torch=configure_torch,
+            _McpPlacementCommitRequest(
+                target,
+                report,
+                resolved.mode,
+                install_mcp,
+                "core" not in skip,
+                force,
+                upgrade,
+                configure_torch,
+            )
         )
         if not committed:
             return report
