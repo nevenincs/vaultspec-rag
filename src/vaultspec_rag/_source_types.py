@@ -13,6 +13,7 @@ __all__ = [
     "PublicSourceType",
     "SourceTypeParseError",
     "parse_source_type",
+    "unsupported_feedback_envelope",
 ]
 
 
@@ -121,3 +122,46 @@ def parse_source_type(
                 if resolved is not None:
                     return resolved
     raise SourceTypeParseError(value, allow_aliases)
+
+
+#: Sources whose results carry no cross-collection point identity, so feedback
+#: naming specific points cannot be resolved against them.
+_FEEDBACK_UNSUPPORTED: Final = frozenset(
+    {PublicSourceType.DOCUMENT, PublicSourceType.COMBINED}
+)
+
+
+def unsupported_feedback_envelope(
+    source: PublicSourceType,
+    *,
+    has_point_ids: bool,
+) -> dict[str, object] | None:
+    """Return the refusal envelope for point-id feedback, or ``None`` to allow.
+
+    The HTTP route and the service client each carried this: the same set of
+    sources, the same "does the caller name any points" test, and the same
+    three-key envelope down to the error token. The client builds it locally to
+    refuse without a round trip, which is worth doing and is exactly what makes
+    the copy dangerous - the two are a request apart, so a server-side change
+    to the rule or the wording leaves the client refusing on the old terms and
+    nothing observes the disagreement.
+
+    Args:
+        source: The already-parsed search source.
+        has_point_ids: Whether the caller named any like or unlike ids.
+
+    Returns:
+        The refusal envelope, or ``None`` when the request is allowed. Callers
+        over HTTP wrap the envelope in their own 400; the client returns it
+        directly, which is the only difference the two ever had.
+    """
+    if not has_point_ids or source not in _FEEDBACK_UNSUPPORTED:
+        return None
+    return {
+        "ok": False,
+        "error": "unsupported_feedback_for_search_type",
+        "message": (
+            f"feedback point ids are not supported for {source.value} "
+            "search; omit like_ids and unlike_ids"
+        ),
+    }
