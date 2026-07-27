@@ -455,13 +455,16 @@ class _FinishDetails:
     drift: dict[str, object] | None = None
 
 
+_DEFAULT_FINISH_DETAILS = _FinishDetails()
+
+
 def record_finish(
     record_id: str,
     *,
     result: str | None = None,
     error: str | None = None,
     phase: Phase | None = None,
-    details: _FinishDetails = _FinishDetails(),
+    details: _FinishDetails = _DEFAULT_FINISH_DETAILS,
 ) -> None:
     """Mark the record with *record_id* finished, in place.
 
@@ -812,7 +815,11 @@ def validate_code_support_profile(
 
     from ._store_writes import probe_store_volume, probe_workspace_volume
     from .config import get_config
-    from .index_profiles import AdmissionEnvironment, IndexDomain, validate_profile_admission
+    from .index_profiles import (
+        AdmissionEnvironment,
+        IndexDomain,
+        validate_profile_admission,
+    )
     from .indexer._codebase_indexer import CodeIndexPreflight
 
     discovered = (
@@ -979,7 +986,9 @@ def _sync_legacy_finished(
             result=snapshot.result,
             details=_FinishDetails(
                 preprocess_ok=result.preprocess_ok if result is not None else 0,
-                preprocess_skipped=(result.preprocess_skipped if result is not None else 0),
+                preprocess_skipped=(
+                    result.preprocess_skipped if result is not None else 0
+                ),
                 preprocess_failures=(
                     list(result.preprocess_failures) if result is not None else None
                 ),
