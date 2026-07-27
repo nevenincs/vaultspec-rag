@@ -2079,3 +2079,36 @@ class TestInterruptedJobDegradationSplit:
         # defends rather than an incidental consequence of it.
         assert degraded_reasons == []
         assert jobs_health["last_failed"] is None
+
+
+class TestPersistenceFailureClassification:
+    """A failed replace must never be reported as already published.
+
+    ``PersistenceWriteError.published`` is what tells the manager whether to
+    roll its in-memory mutation back. Reporting a failed replace as published
+    suppresses that rollback on every reversible path at once, leaving memory
+    claiming a transition no reader can see.
+    """
+
+    def test_failed_replace_is_not_published(self, tmp_path: Path) -> None:
+        """A destination that cannot be replaced fails as unpublished."""
+        from ..job_persistence import (
+            PersistedManagerState,
+            PersistenceWriteError,
+            save_persisted_state,
+        )
+
+        state_path = tmp_path / "managed-jobs.json"
+        # A directory at the destination makes the real replace fail: Windows
+        # raises ACCESS_DENIED, POSIX raises EISDIR. Neither one publishes, so
+        # a platform-conditional classification breaks this assertion.
+        state_path.mkdir()
+
+        with pytest.raises(PersistenceWriteError) as caught:
+            save_persisted_state(
+                state_path,
+                PersistedManagerState(jobs=(), bindings=()),
+            )
+
+        assert caught.value.published is False
+        assert list(tmp_path.glob(".managed-jobs.json.*.tmp")) == []
