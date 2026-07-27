@@ -497,8 +497,8 @@ def _try_service_delegation(request: _ServiceDelegationRequest) -> bool:
             )
         elif "job_id" in data:
             _plain(
-                f"{_index_source_label(request.index_type.value)} re-index job queued on "
-                f"service: {data.get('job_id')}"
+                f"{_index_source_label(request.index_type.value)} re-index job "
+                f"queued on service: {data.get('job_id')}"
             )
             _cli.console.print("Check progress with: vaultspec-rag server jobs")
         elif _print_service_domain_outcomes(data.get("domains")):
