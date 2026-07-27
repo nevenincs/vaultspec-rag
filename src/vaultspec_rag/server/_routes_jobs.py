@@ -351,16 +351,20 @@ def _job_completion_estimate(
 ) -> tuple[float | None, float | None]:
     """Return ``(rate_per_second, remaining_seconds)`` for one job.
 
-    Both are ``None`` unless the job is actually doing countable work now.
-    Queued, waiting, paused, transitional and terminal jobs are all inert or
+    Both are ``None`` unless the job is actually doing work now. Queued,
+    waiting, paused, transitional and terminal jobs are all inert or
     finished, and an estimate over any of them describes work that is not
     happening. ``None`` is the honest answer, and is rendered as unknown
     rather than as zero.
+
+    The two answer different questions and are reported independently. The
+    rate is a measurement, and is published for any advancing step. The
+    remaining time is a projection, and needs a completion point: a step
+    reporting a count with no total is real throughput an operator can read,
+    but there is nothing to subtract it from, so it carries a rate and no
+    estimate rather than suppressing both.
     """
     if job_state(record) != JobState.RUNNING.value or _job_is_waiting(record):
-        return None, None
-    counts = _countable_progress(record)
-    if counts is None:
         return None, None
     identifier = record.get("id")
     if not isinstance(identifier, str) or not identifier:
@@ -368,6 +372,9 @@ def _job_completion_estimate(
     rate = _jobs.progress_rate(identifier)
     if rate is None or rate <= 0:
         return None, None
+    counts = _countable_progress(record)
+    if counts is None:
+        return round(rate, 3), None
     completed, total = counts
     return round(rate, 3), round((total - completed) / rate, 1)
 
@@ -526,16 +533,22 @@ def _job_matches(
         (
             _job_id_matches(record, filters.job_id),
             not filters.failed or record_state == JobState.FAILED.value,
-            _job_updated_since(record, since_seconds=filters.since_seconds, now=filters.now),
+            _job_updated_since(
+                record, since_seconds=filters.since_seconds, now=filters.now
+            ),
             filters.phase is None or _job_phase(record, record_state) == filters.phase,
             filters.state is None or record_state == filters.state,
-            filters.desired_state is None or _job_desired_state(record) == filters.desired_state,
-            filters.controllable is None or _job_controllable(record) is filters.controllable,
+            filters.desired_state is None
+            or _job_desired_state(record) == filters.desired_state,
+            filters.controllable is None
+            or _job_controllable(record) is filters.controllable,
             filters.source is None or _job_source(record) == filters.source,
             filters.trigger is None or _job_trigger(record) == filters.trigger,
         )
     )
-    return matches_filters and (filters.query is None or filters.query in _job_search_text(record))
+    return matches_filters and (
+        filters.query is None or filters.query in _job_search_text(record)
+    )
 
 
 def _job_nested_values(raw: object) -> list[str]:
@@ -677,9 +690,14 @@ def _prioritise_running_jobs(
     def priority(record: dict[str, object]) -> int:
         state = job_state(record)
         priorities = {
-            **{value: 0 for value in _TRANSITIONAL_STATES},
-            "running": 1, "queued": 2, "paused": 3,
-            "failed": 4, "interrupted": 4, "cancelled": 5, "succeeded": 6,
+            **dict.fromkeys(_TRANSITIONAL_STATES, 0),
+            "running": 1,
+            "queued": 2,
+            "paused": 3,
+            "failed": 4,
+            "interrupted": 4,
+            "cancelled": 5,
+            "succeeded": 6,
         }
         return priorities.get(state, 7)
 

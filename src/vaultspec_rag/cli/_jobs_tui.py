@@ -6,17 +6,19 @@ non-interactively, and a second console alongside the first corrupts the frame
 it is trying to share. The application takes the screen instead.
 
 Every control it issues goes through the same typed transports the singular
-job verbs use, carrying the same expected-revision guard, and every action is
-offered only where the job's own published capability flags permit it.
+job verbs use, carrying the same expected-revision guard. An action is withheld
+only where the job's own capabilities publish it as denied; a record that says
+nothing about a capability is offered the action, and the service's answer -
+including its refusal - is shown on the row that asked for it.
 """
 
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, ClassVar, NamedTuple, cast
 
 from rich.text import Text
-from textual import work
+from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -46,13 +48,42 @@ if TYPE_CHECKING:
 
 __all__ = ["JobsTuiApp", "run_jobs_tui"]
 
-# Braille frames advance on a timer of their own. A view that repaints only on
-# a successful fetch is indistinguishable from one whose service has stopped
-# answering; the moving glyph says the interface is alive, and the "last
-# refreshed" stamp beside it says whether the data is.
+# Braille frames, advanced only while something is actually happening: a
+# request this view issued is outstanding, or a row's own work is moving. The
+# "last refreshed" stamp beside the glyph is what reports liveness when
+# nothing is; motion is reserved for activity an operator can name.
 _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 _SPINNER_INTERVAL = 0.1
 _LOG_LINES = 200
+
+# What the header shows when nothing is in flight. A glyph that turns whether
+# or not anything is happening tells an operator nothing, and a permanently
+# animated one actively misleads: it says "working" over a view that has been
+# idle for a minute. Motion here means a request is out; stillness means the
+# view is settled, and the refreshed-age beside it says how old the data is.
+_SETTLED_GLYPH = "·"
+
+# How long a deleted row stays on screen, struck through, before it leaves.
+# Long enough to read which row went; the list otherwise backfills the freed
+# slot from the remainder and nothing appears to have happened at all.
+_TOMBSTONE_SECONDS = 4.0
+
+# The service's answer when the control named a job it no longer holds. This
+# is not a generic failure: it means the view is addressing something that has
+# been dropped, and the remedy is a corrected list rather than an error.
+_GONE_CODES = frozenset({"job_not_found", "not_found"})
+
+# Each kind of request runs in a worker group of its own. An exclusive worker
+# cancels every worker sharing its group, and the poll that keeps the view
+# current is exclusive by necessity - so leaving these in one group means the
+# next tick of the refresh timer cancels whatever control the operator just
+# issued. The request still reaches the service, because a thread worker
+# cannot be interrupted mid-call, but its answer is discarded: the row never
+# updates and no outcome is ever reported. That is precisely the shape of "the
+# action did nothing".
+_REFRESH_GROUP = "jobs-refresh"
+_LOG_GROUP = "jobs-log"
+_CONTROL_GROUP = "jobs-control"
 
 # Columns are laid out by relative weight, never by a fixed size: the table
 # divides whatever width the terminal reports among these shares, so the same
@@ -96,6 +127,28 @@ _TERMINAL_STATES = frozenset(state.value for state in JobState if state.is_termi
 # unmeasurable when the truth is that their daemon predates the measurement.
 _ESTIMATE_KEY = "estimated_remaining_seconds"
 
+# Key -> action, so a press that lands on an unavailable action can be
+# answered. A disabled binding never invokes its action, so without this the
+# only signal is a greyed footer entry, and an operator pressing the key gets
+# silence - which reads as a broken interface rather than a refused request.
+_ACTION_KEYS: dict[str, str] = {
+    "p": "job_pause",
+    "u": "job_resume",
+    "k": "job_stop",
+    "y": "job_retry",
+    "d": "job_delete",
+}
+
+# Why each action is unavailable, in the operator's terms rather than the
+# capability flag's.
+_ACTION_REASONS: dict[str, str] = {
+    "job_pause": "Only running work can be paused.",
+    "job_resume": "Only paused work can be resumed.",
+    "job_stop": "Only running work can be cancelled.",
+    "job_retry": "Only a finished or failed job can be retried.",
+    "job_delete": "Only a finished or failed job can be deleted.",
+}
+
 _STATE_STYLES: dict[str, str] = {
     "active": "bold green",
     "waiting": "yellow",
@@ -118,15 +171,23 @@ def _short_id(job: dict[str, object]) -> str:
 
 
 def _capability(job: dict[str, object], flag: str) -> bool:
-    """Report whether the service published *flag* as permitted for *job*.
+    """Report whether *job* may take the action *flag* names.
 
-    Absent capabilities are read as not permitted. An action the service would
-    reject is better shown as unavailable than offered and refused.
+    Only a published ``false`` denies. Absent is unknown, and unknown keeps
+    today's reading rather than inventing a more specific one - the same
+    distinction the jobs surface already draws between a field the service
+    declined to fill and one it does not publish at all.
+
+    Reading absent as denied is what makes a whole list of restored records
+    silently inert: every key greys, every press does nothing, and the
+    interface looks wired to no backend at all. The service is the authority
+    on what it will accept, so an unknown capability is offered and its
+    refusal, if it comes, is shown on the row.
     """
     capabilities = job.get("capabilities")
     if not isinstance(capabilities, dict):
-        return False
-    return cast("dict[str, object]", capabilities).get(flag) is True
+        return True
+    return cast("dict[str, object]", capabilities).get(flag) is not False
 
 
 def _job_revision(job: dict[str, object]) -> int | None:
@@ -166,23 +227,96 @@ def _two_line(
     return text
 
 
+def _row_animates(job: dict[str, object]) -> bool:
+    """Report whether this row's work is actually moving.
+
+    A glyph that turns for every record whose phase reads ``running`` turns for
+    work queued behind admission and for work whose progress stopped updating
+    minutes ago. Both are stopped from the operator's side, and a turning glyph
+    over them is a claim the view cannot support.
+    """
+    return (
+        str(job.get("phase", "")) == "running"
+        and not _job_is_waiting(job)
+        and not _stale_progress_label(job)
+    )
+
+
+class _Pending(NamedTuple):
+    """One control the operator issued, and how far it has got.
+
+    The row carries this until the service's own payload settles it. A toast
+    that expires in seconds is not acknowledgement: the operator looks back at
+    the row, sees the state it always had, and concludes nothing was wired up.
+    """
+
+    action: str
+    # The ``desired_state`` whose arrival confirms the transition, or ``None``
+    # for a control that sets none - retry and delete are confirmed by the
+    # service's list changing, not by a field.
+    expected: str | None
+    # ``requested`` in flight, ``sent`` accepted and awaiting the payload that
+    # proves it, ``refused`` rejected, ``gone`` aimed at a dropped id.
+    outcome: str
+    detail: str
+    # Only a fetch issued after this generation can confirm the control. A
+    # poll already in flight when the control landed carries pre-mutation
+    # state, and letting it clear the marker is what makes a requested control
+    # flash and vanish without anything having changed.
+    settled_after: int
+
+
+class _Tombstone(NamedTuple):
+    """A deleted row, and where it sat before it went."""
+
+    job: dict[str, object]
+    index: int
+    until: float
+
+
+# Each line is kept inside the state column's share, which is set by the
+# widest of them. A longer phrase is not more informative here: it is trimmed
+# to a width that cuts the distinguishing word off, and every stage of a
+# control then paints the same truncated stem. The header carries the full
+# sentence, where there is room for one.
+_PENDING_LINES: dict[str, tuple[str, str]] = {
+    "requested": (" {action} requested", "italic yellow"),
+    "sent": (" {action} sent", "italic yellow"),
+    "refused": (" {action} refused", "bold red"),
+    "gone": (" no longer listed", "bold red"),
+}
+
+
 def _state_cell(
     job: dict[str, object],
     frame: str,
-    pending: str | None,
+    pending: _Pending | None,
     cells: int,
+    *,
+    deleted: bool = False,
 ) -> Text:
     """Render the state cell: phase, a live glyph, and any pending request."""
     label = _phase_label(job)
-    running = str(job.get("phase", "")) == "running" and not _job_is_waiting(job)
-    glyph = f"{frame} " if running else "  "
+    glyph = f"{frame} " if _row_animates(job) else "  "
+    if deleted:
+        # The row the operator acted on, held on screen long enough to be seen
+        # leaving. Without this the freed slot is backfilled from the
+        # remainder on the next poll and the list looks untouched.
+        return _two_line(
+            f"  {label}",
+            " ✗ deleted",
+            cells,
+            top_style="strike dim",
+            bottom_style="bold red",
+        )
     desired = job.get("desired_state")
     state = job.get("state")
     if pending is not None:
         # A requested control is not an observed one. Saying so keeps the
         # view honest across the window where the service has not yet
         # acknowledged the request.
-        second, second_style = f" {pending} requested", "italic yellow"
+        template, second_style = _PENDING_LINES[pending.outcome]
+        second = template.format(action=pending.action)
     elif (
         isinstance(desired, str)
         and desired
@@ -261,7 +395,7 @@ def _progress_cell(job: dict[str, object], cells: int, bar_cells: int) -> Text:
 
 
 def _time_cell(job: dict[str, object], cells: int) -> Text:
-    remaining = job.get("estimated_remaining_seconds")
+    remaining = job.get(_ESTIMATE_KEY)
     estimate = (
         f"~{_compact_duration(remaining)} left"
         if isinstance(remaining, int | float) and not isinstance(remaining, bool)
@@ -285,13 +419,14 @@ class JobsTuiApp(App[None]):
     #logtitle { height: auto; padding: 0 1; background: $panel-darken-1; }
     #joblog { height: 1fr; }
 
-    /* Wide: the log sits beside the table and both are visible at once. */
-    Screen.-wide #logpane { width: 2fr; display: block; }
-    Screen.-wide #jobs { width: 3fr; }
-
-    /* Narrow: one pane at a time, toggled - the same composition, reflowed. */
-    Screen.-narrow.-showlog #logpane { width: 1fr; display: block; }
+    /* One state drives the log in both layouts, so the toggle always does
+       something. Width only decides whether showing it splits the screen or
+       takes it over. */
+    Screen.-showlog #logpane { display: block; }
+    Screen.-wide.-showlog #jobs { width: 3fr; }
+    Screen.-wide.-showlog #logpane { width: 2fr; }
     Screen.-narrow.-showlog #jobs { display: none; }
+    Screen.-narrow.-showlog #logpane { width: 1fr; }
     """
 
     # Unannotated on purpose: the base declares this class variable, and
@@ -312,7 +447,6 @@ class JobsTuiApp(App[None]):
         Binding("l", "toggle_log", "Log"),
     ]
 
-    frame_index: reactive[int] = reactive(0)
     # ``bindings=True`` re-evaluates ``check_action`` whenever the selection
     # moves, so the footer reflects the newly selected job's capabilities.
     selected_id: reactive[str] = reactive("", bindings=True)
@@ -329,13 +463,38 @@ class JobsTuiApp(App[None]):
         self._port = port
         self._interval = interval
         self._jobs: list[dict[str, object]] = []
-        self._pending: dict[str, tuple[str, str | None]] = {}
+        self._pending: dict[str, _Pending] = {}
+        # Rows the operator deleted, held briefly so the deletion is seen.
+        self._tombstones: dict[str, _Tombstone] = {}
+        # How many jobs the service holds behind the page this view fetches.
+        # Without it a deletion is invisible: the next refresh backfills the
+        # freed slot from the remainder and the list looks untouched.
+        self._total: int | None = None
         self._last_refresh: float | None = None
         self._last_error: str | None = None
+        # The outcome of the last control, kept in the header until another
+        # replaces it. A refusal an operator has to catch inside a toast's
+        # lifetime is a refusal they will miss.
+        self._last_outcome: tuple[str, str] | None = None
         self._service_estimates = True
-        self._show_log = False
+        self._frame = 0
+        # Requests currently out. The header glyph turns only while this is
+        # non-zero, so motion on screen means a request is actually in flight.
+        self._inflight = 0
+        # Fetches are stamped and applied newest-first. Cancelling a thread
+        # worker does not stop the OS thread it is running on, so a poll the
+        # next one superseded still delivers its answer - and with a two-second
+        # interval against a thirty-second timeout, several can be outstanding
+        # at once. Applying them in completion order lets a pre-mutation
+        # payload land after a post-mutation one and silently revert the view.
+        self._generation = 0
+        self._applied_generation = 0
+        # ``None`` until the operator chooses; the width decides until then.
+        self._show_log: bool | None = None
         self._bar_cells = 0
         self._column_cells: dict[str, int] = {}
+        # The table width the current column shares were divided from.
+        self._divided_width = 0
 
     def compose(self) -> ComposeResult:
         yield Static(id="summary")
@@ -361,32 +520,45 @@ class JobsTuiApp(App[None]):
         # The table has no width until the first layout pass completes, and
         # dividing zero width would leave every column at its label size.
         self.call_after_refresh(self._relayout)
-        self.set_interval(_SPINNER_INTERVAL, self._advance_frame)
+        self.set_interval(_SPINNER_INTERVAL, self._tick)
         self.set_interval(self._interval, self.refresh_jobs)
         self.refresh_jobs()
 
     def on_resize(self) -> None:
         """Re-divide the columns whenever the terminal changes size."""
-        self.call_after_refresh(self._relayout)
+        self._relayout()
 
     def _relayout(self) -> None:
-        self._layout_columns()
-        if self._jobs:
+        self._apply_default_log_visibility()
+        if self._layout_columns() and self._jobs:
             self._render_rows()
 
-    def _layout_columns(self) -> None:
-        """Divide the table's reported width among the column weights.
+    def _layout_columns(self) -> bool:
+        """Divide the table's own reported width among the column weights.
 
-        Called on mount and on every resize, so column widths are always a
-        function of the current terminal rather than a value chosen once.
+        Reports whether it re-divided, so a caller only repaints when the
+        shares actually moved.
+
+        The width is read from the table rather than taken from whatever
+        changed it. A terminal resize, a breakpoint crossing and the log pane
+        opening all reach the table a layout pass after the event announcing
+        them, so dividing on the event divides the width the table had before -
+        which is how the two rightmost columns end up laid out for a full-width
+        table and painted into a two-thirds-width one, off the edge of the
+        screen. Comparing against the last width divided makes this follow the
+        table instead of racing it, at the cost of one integer comparison on
+        the frames where nothing moved.
         """
         table = self._table()
         if table is None:
-            return
+            return False
         padding = table.cell_padding * 2 * len(_COLUMN_WEIGHTS)
         available = table.size.width - padding
-        if available <= 0:
-            return
+        # A hidden table reports no width. That is not a new division to
+        # record; recording it would skip the real one when it reappears.
+        if available <= 0 or table.size.width == self._divided_width:
+            return False
+        self._divided_width = table.size.width
         total_weight = sum(_COLUMN_WEIGHTS.values())
         for key, weight in _COLUMN_WEIGHTS.items():
             column = table.columns.get(key)
@@ -400,6 +572,7 @@ class JobsTuiApp(App[None]):
         # The bar shares its cell with a trailing " 100%", so it takes what
         # the column has left rather than a width of its own.
         self._bar_cells = max(0, self._column_cells.get("progress", 0) - len(" 100%"))
+        return True
 
     def _cells(self, column: str) -> int:
         """Return the current width of *column*, or zero before layout."""
@@ -417,49 +590,102 @@ class JobsTuiApp(App[None]):
         found = self.query("#jobs")
         return found.only_one(DataTable) if found else None
 
-    def _advance_frame(self) -> None:
-        self.frame_index = (self.frame_index + 1) % len(_SPINNER_FRAMES)
+    def _tick(self) -> None:
+        """Advance whatever is genuinely moving, and nothing else.
 
-    def watch_frame_index(self) -> None:
-        # Only the animated cells and the summary change between frames;
-        # repainting every row ten times a second would burn the terminal
-        # for a glyph.
-        table = self._table()
-        if table is not None:
-            frame = _SPINNER_FRAMES[self.frame_index]
-            for job in self._jobs:
-                job_id = _job_id(job)
-                if job_id in table.rows:
-                    table.update_cell(
-                        job_id,
-                        "state",
-                        _state_cell(
-                            job,
-                            frame,
-                            _pending_label(self._pending, job_id),
-                            self._cells("state"),
-                        ),
-                    )
+        Also the one callback guaranteed to run after every layout pass,
+        whatever caused it, so it is where the table's width is re-read; see
+        ``_layout_columns`` for why the width cannot be taken from the event
+        that changed it.
+        """
+        self._relayout()
+        if self._expire_tombstones():
+            self._render_rows()
+        elif self._animating():
+            self._frame = (self._frame + 1) % len(_SPINNER_FRAMES)
+            self._repaint_animated_cells()
         self._render_summary()
+
+    def _busy(self) -> bool:
+        """Report whether a request this view issued is still outstanding."""
+        return self._inflight > 0
+
+    def _animating(self) -> bool:
+        return self._busy() or any(_row_animates(job) for job in self._jobs)
+
+    def _header_glyph(self) -> str:
+        return _SPINNER_FRAMES[self._frame] if self._busy() else _SETTLED_GLYPH
+
+    def _expire_tombstones(self) -> bool:
+        """Drop deleted rows whose time on screen is up."""
+        if not self._tombstones:
+            return False
+        now = time.monotonic()
+        expired = [key for key, stone in self._tombstones.items() if stone.until <= now]
+        for key in expired:
+            del self._tombstones[key]
+        return bool(expired)
+
+    def _repaint_animated_cells(self) -> None:
+        # Only the animated cells change between frames; repainting every row
+        # ten times a second would burn the terminal for a glyph.
+        table = self._table()
+        if table is None:
+            return
+        frame = _SPINNER_FRAMES[self._frame]
+        for job in self._jobs:
+            job_id = _job_id(job)
+            if _row_animates(job) and job_id in table.rows:
+                table.update_cell(
+                    job_id,
+                    "state",
+                    _state_cell(
+                        job, frame, self._pending.get(job_id), self._cells("state")
+                    ),
+                )
 
     # -- data ---------------------------------------------------------------
 
-    @work(thread=True, exclusive=True)
     def refresh_jobs(self) -> None:
+        """Issue a stamped fetch. The stamp is what orders the answers."""
+        self._generation += 1
+        self._inflight += 1
+        self._fetch_jobs(self._generation)
+
+    @work(thread=True, exclusive=True, group=_REFRESH_GROUP)
+    def _fetch_jobs(self, generation: int) -> None:
         """Fetch on a worker thread; the transport is blocking HTTP."""
         result = self._fetch()
-        self.call_from_thread(self._apply_result, result)
+        self.call_from_thread(self._apply_result, result, generation)
 
-    def _apply_result(self, result: dict[str, object] | None) -> None:
-        if result is None:
-            self._last_error = "service not reachable"
+    def _apply_result(self, result: dict[str, object] | None, generation: int) -> None:
+        self._inflight = max(0, self._inflight - 1)
+        if generation <= self._applied_generation:
+            # A slower fetch that the newest applied one already superseded.
+            # Its payload predates what is on screen.
+            return
+        self._applied_generation = generation
+        error = _fetch_error(result)
+        if error is not None:
+            # The rows already on screen are the last thing the service is
+            # known to have said, so they stay; what changes is that the view
+            # now says it is not hearing back. Overwriting them with the empty
+            # list an error envelope carries would render a wedged daemon as
+            # "no jobs, refreshed just now" - which is the most misleading
+            # frame this interface can paint.
+            self._last_error = error
             self._render_summary()
             return
-        raw_jobs = result.get("jobs")
+        payload = cast("dict[str, object]", result)
+        raw_jobs = payload.get("jobs")
+        previous = self._jobs
         jobs = [
             cast("dict[str, object]", job)
             for job in (raw_jobs if isinstance(raw_jobs, list) else [])
             if isinstance(job, dict)
+            # A record with no id cannot be addressed, and two of them collide
+            # on the table's row key and take the interface down.
+            and _job_id(cast("dict[str, object]", job))
         ]
         self._last_error = None
         self._last_refresh = time.time()
@@ -467,72 +693,162 @@ class JobsTuiApp(App[None]):
         # estimate. Saying so once beats every row reading as unmeasurable.
         self._service_estimates = not jobs or any(_ESTIMATE_KEY in job for job in jobs)
         self._jobs = jobs
-        self._reconcile_pending()
+        self._total = _count(payload.get("total"))
+        self._reconcile_pending(generation, previous)
         self._layout_columns()
         self._render_rows()
         self._render_summary()
+        # Capabilities can flip under a refresh, and the footer only
+        # re-evaluates when the selection moves.
+        self.refresh_bindings()
 
-    def _reconcile_pending(self) -> None:
-        """Drop a pending marker once the service has taken the request.
+    def _reconcile_pending(
+        self,
+        generation: int,
+        previous: list[dict[str, object]],
+    ) -> None:
+        """Settle each outstanding control against what the service now says.
 
-        The marker must survive until the service's own ``desired_state``
-        carries what was asked for. Clearing it merely because a refresh
-        arrived would erase the request during exactly the window it exists to
-        describe - the gap between asking and acknowledgement, which for a
-        cooperative pause is the interesting part.
+        A marker survives until a payload *fetched after the control landed*
+        carries the transition. Clearing it because any refresh arrived erases
+        the request during exactly the window it exists to describe - and with
+        several polls outstanding at once, the refresh that arrives first is
+        routinely one issued before the mutation, so the marker vanishes
+        against state that predates it.
 
-        Retry and delete set no desired state, so they clear on the first
-        refresh that follows: by then the job has been removed, relinked, or
-        the request was refused and already reported.
+        A refusal is not settled at all. It stays on the row until the operator
+        issues another control there or the job leaves the list, because a
+        refusal that expires on a timer is one the operator never sees.
         """
         by_id = {_job_id(job): job for job in self._jobs}
-        for job_id, (_action, expected) in list(self._pending.items()):
-            job = by_id.get(job_id)
-            if job is None or expected is None:
-                del self._pending[job_id]
+        for job_id, marker in list(self._pending.items()):
+            if marker.outcome != "sent":
+                # In flight, or an answered failure being held for reading.
+                if marker.outcome != "requested" and job_id not in by_id:
+                    del self._pending[job_id]
                 continue
-            if job.get("desired_state") == expected:
+            if generation <= marker.settled_after:
+                continue
+            job = by_id.get(job_id)
+            if job is None:
+                # Absent from a list fetched after the control landed is the
+                # service confirming a removal.
                 del self._pending[job_id]
+                if marker.action == "delete":
+                    self._entomb(job_id, previous)
+                continue
+            if marker.expected is None or job.get("desired_state") == marker.expected:
+                del self._pending[job_id]
+
+    def _entomb(self, job_id: str, previous: list[dict[str, object]]) -> None:
+        """Hold a deleted row on screen, where it was, long enough to see."""
+        for index, job in enumerate(previous):
+            if _job_id(job) == job_id:
+                self._tombstones[job_id] = _Tombstone(
+                    job, index, time.monotonic() + _TOMBSTONE_SECONDS
+                )
+                return
+
+    def _visible_rows(self) -> list[tuple[dict[str, object], bool]]:
+        """Return the rows to paint: the service's list, plus what just left.
+
+        A deleted row keeps its place for a few seconds so the operator sees
+        which one went. Reading the list straight from the service instead
+        would have the freed slot backfilled from the remainder before the
+        next frame, leaving nothing on screen that changed.
+        """
+        rows: list[tuple[dict[str, object], bool]] = [
+            (job, False) for job in self._jobs
+        ]
+        for stone in sorted(self._tombstones.values(), key=lambda s: s.index):
+            rows.insert(min(stone.index, len(rows)), (stone.job, True))
+        return rows
 
     def _render_rows(self) -> None:
         table = self._table()
         if table is None:
             return
-        frame = _SPINNER_FRAMES[self.frame_index]
-        wanted = [_job_id(job) for job in self._jobs]
+        frame = _SPINNER_FRAMES[self._frame]
+        rows = self._visible_rows()
+        wanted = [_job_id(job) for job, _deleted in rows]
         if [key.value for key in table.rows] != wanted:
-            cursor = table.cursor_row
-            table.clear()
-            for job in self._jobs:
-                self._add_row(table, job, frame)
-            if cursor < table.row_count:
-                table.move_cursor(row=cursor)
+            self._rebuild_rows(table, rows, wanted, frame)
         else:
-            for job in self._jobs:
-                self._update_row(table, job, frame)
+            for job, deleted in rows:
+                self._update_row(table, job, frame, deleted=deleted)
         self._sync_selection(table)
 
-    def _add_row(self, table: DataTable, job: dict[str, object], frame: str) -> None:
+    def _rebuild_rows(
+        self,
+        table: DataTable,
+        rows: list[tuple[dict[str, object], bool]],
+        wanted: list[str],
+        frame: str,
+    ) -> None:
+        """Repopulate the table, keeping the cursor on the same job.
+
+        Restoring the cursor to the row *index* it held would move the
+        selection onto a different job whenever one above it disappears - and
+        because a control key acts on whatever is selected, the next press
+        would then be aimed at work the operator never chose. The id is what
+        the operator selected, so the id is what is restored; the index is only
+        the fallback for a job that is genuinely gone.
+        """
+        previous = self.selected_id
+        cursor = table.cursor_row
+        table.clear()
+        for job, deleted in rows:
+            self._add_row(table, job, frame, deleted=deleted)
+        if table.row_count == 0:
+            return
+        row = (
+            wanted.index(previous)
+            if previous in wanted
+            else min(max(0, cursor), table.row_count - 1)
+        )
+        table.move_cursor(row=row)
+
+    def _add_row(
+        self,
+        table: DataTable,
+        job: dict[str, object],
+        frame: str,
+        *,
+        deleted: bool = False,
+    ) -> None:
+        job_id = _job_id(job)
         table.add_row(
             _state_cell(
                 job,
                 frame,
-                _pending_label(self._pending, _job_id(job)),
+                self._pending.get(job_id),
                 self._cells("state"),
+                deleted=deleted,
             ),
             _job_cell(job, self._cells("job")),
             _path_cell(job, self._cells("path")),
             _progress_cell(job, self._cells("progress"), self._bar_cells),
             _time_cell(job, self._cells("time")),
             height=2,
-            key=_job_id(job),
+            key=job_id,
         )
 
-    def _update_row(self, table: DataTable, job: dict[str, object], frame: str) -> None:
+    def _update_row(
+        self,
+        table: DataTable,
+        job: dict[str, object],
+        frame: str,
+        *,
+        deleted: bool = False,
+    ) -> None:
         job_id = _job_id(job)
         cells = {
             "state": _state_cell(
-                job, frame, _pending_label(self._pending, job_id), self._cells("state")
+                job,
+                frame,
+                self._pending.get(job_id),
+                self._cells("state"),
+                deleted=deleted,
             ),
             "job": _job_cell(job, self._cells("job")),
             "path": _path_cell(job, self._cells("path")),
@@ -545,6 +861,10 @@ class JobsTuiApp(App[None]):
     def _sync_selection(self, table: DataTable) -> None:
         if table.row_count == 0:
             self.selected_id = ""
+            # Nothing is selected, so the pane must stop claiming to show a
+            # job's log. Leaving the last one there attributes those lines to
+            # work that is no longer listed.
+            self._clear_log("No job selected.")
             return
         row = min(table.cursor_row, table.row_count - 1)
         # ``str`` on a row key gives its repr, not the id it carries.
@@ -553,32 +873,51 @@ class JobsTuiApp(App[None]):
             self.selected_id = job_id
 
     def _render_summary(self) -> None:
-        frame = _SPINNER_FRAMES[self.frame_index]
         counts = {"active": 0, "waiting": 0, "failed": 0, "finished": 0}
         for job in self._jobs:
             label = _phase_label(job)
             if label in counts:
                 counts[label] += 1
-        line = Text(f"{frame} Jobs on port {self._port}", style="bold")
+        line = Text(f"{self._header_glyph()} Jobs on port {self._port}", style="bold")
         line.append(
             f"   active {counts['active']}  waiting {counts['waiting']}"
             f"  failed {counts['failed']}  finished {counts['finished']}"
         )
-        if self._last_error is not None:
-            line.append(f"\n{self._last_error}", style="bold red")
-        elif self._last_refresh is not None:
+        shown = len(self._jobs)
+        if self._total is None:
+            line.append(f"   showing {shown}")
+        else:
+            # A page onto a longer list is marked, because every count above
+            # is a count of the page rather than of the service's work - and
+            # because it is the only place a deletion shows when the freed
+            # slot is immediately backfilled from the remainder.
+            line.append(
+                f"   showing {shown} of {self._total}",
+                style="bold yellow" if self._total > shown else "",
+            )
+        # The age of the data is reported whether or not the last fetch
+        # failed - it is exactly when the service stops answering that an
+        # operator needs to know how old what they are reading is. Suppressing
+        # it on the error branch leaves stale rows on screen with nothing
+        # saying they are stale.
+        if self._last_refresh is None:
+            line.append("\nloading", style="dim")
+        else:
             stamp = time.strftime("%H:%M:%S", time.localtime(self._last_refresh))
             age = time.time() - self._last_refresh
             line.append(f"\nrefreshed {stamp}", style="dim")
             if age > max(5.0, self._interval * 3):
                 line.append(f" ({_compact_duration(age)} ago)", style="bold yellow")
-        else:
-            line.append("\nloading", style="dim")
+        if self._last_error is not None:
+            line.append(f"  ·  {self._last_error}", style="bold red")
         if not self._service_estimates:
             # Said once in the header rather than implied by every row's
             # empty estimate, which reads as unmeasurable work instead of
             # an older daemon.
             line.append("  ·  this service does not report time estimates", style="dim")
+        if self._last_outcome is not None:
+            text, style = self._last_outcome
+            line.append(f"\n{text}", style=style)
         summary = self.query("#summary")
         if summary:
             summary.only_one(Static).update(line)
@@ -586,6 +925,11 @@ class JobsTuiApp(App[None]):
     # -- selection and logs -------------------------------------------------
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        # A highlight that named a removed row is superseded rather than
+        # filtered: rebuilding the table raises its own highlight afterwards,
+        # and ``_sync_selection`` sets the id from the rows that survived. A
+        # membership test here would be unreachable, and an id that did somehow
+        # go stale is answered by the refusal every action already reports.
         self.selected_id = str(event.row_key.value or "")
 
     def watch_selected_id(self, job_id: str) -> None:
@@ -595,9 +939,10 @@ class JobsTuiApp(App[None]):
         if not title:
             return
         title.only_one(Static).update(f"Log · {job_id[:8]}")
+        self._inflight += 1
         self.fetch_logs(job_id)
 
-    @work(thread=True, exclusive=True)
+    @work(thread=True, exclusive=True, group=_LOG_GROUP)
     def fetch_logs(self, job_id: str) -> None:
         result = _try_http_admin(
             "get_logs",
@@ -607,18 +952,30 @@ class JobsTuiApp(App[None]):
         self.call_from_thread(self._apply_logs, job_id, result)
 
     def _apply_logs(self, job_id: str, result: dict[str, object] | None) -> None:
+        self._inflight = max(0, self._inflight - 1)
         if job_id != self.selected_id:
+            return
+        if result is None or result.get("ok") is False:
+            self._clear_log("Logs unavailable: the service did not answer.")
             return
         found = self.query("#joblog")
         if not found:
             return
         log = found.only_one(RichLog)
         log.clear()
-        if result is None or result.get("ok") is False:
-            log.write("Logs unavailable: the service did not answer.")
-            return
         for line in _log_lines(result):
             log.write(line)
+
+    def _clear_log(self, message: str) -> None:
+        """Replace the log pane's body and title with *message*."""
+        title = self.query("#logtitle")
+        if title:
+            title.only_one(Static).update("Log")
+        found = self.query("#joblog")
+        if found:
+            log = found.only_one(RichLog)
+            log.clear()
+            log.write(message)
 
     # -- actions ------------------------------------------------------------
 
@@ -645,9 +1002,52 @@ class JobsTuiApp(App[None]):
             return None
         return True
 
+    def on_key(self, event: events.Key) -> None:
+        """Answer a press that lands on an action the selected job refuses.
+
+        A disabled binding is never invoked - ``check_action`` returning
+        ``None`` greys the footer entry and stops the action there - so without
+        this the key produces nothing at all. Silence reads as a broken
+        interface; a refusal with its reason reads as an answer. This handler
+        runs only once the binding declined the key, so a permitted action is
+        untouched.
+        """
+        action = _ACTION_KEYS.get(event.key)
+        if action is None or self.check_action(action, ()) is True:
+            return
+        event.stop()
+        event.prevent_default()
+        self.notify(self._refusal(action), severity="warning")
+
+    def _refusal(self, action: str) -> str:
+        """Say why *action* is unavailable, in the operator's terms."""
+        if self.selected_job() is None:
+            return "No job is selected."
+        return _ACTION_REASONS.get(action, "This job cannot take that action.")
+
     def action_toggle_log(self) -> None:
-        self._show_log = not self._show_log
+        # One state, applied the same way in both layouts, so the key always
+        # does something: the width decides only whether showing the log
+        # splits the screen or takes it over.
+        self._show_log = not self._log_visible()
         self.screen.set_class(self._show_log, "-showlog")
+
+    def _log_visible(self) -> bool:
+        return self.screen.has_class("-showlog")
+
+    def _apply_default_log_visibility(self) -> None:
+        """Show the log by default only where it can sit beside the table.
+
+        A wide terminal has room for both, so the log is there from the start.
+        A narrow one does not, and opening over the job list before the
+        operator asked for it would hide the thing they came to see. Once they
+        have chosen, the choice survives every later resize.
+        """
+        if self._show_log is None:
+            self.screen.set_class(self._wide(), "-showlog")
+
+    def _wide(self) -> bool:
+        return self.screen.has_class("-wide")
 
     def action_refresh_now(self) -> None:
         self.refresh_jobs()
@@ -674,7 +1074,7 @@ class JobsTuiApp(App[None]):
         self._mark_pending(job, action, expected=desired.value)
         self._send_state(_job_id(job), desired, revision, action)
 
-    @work(thread=True)
+    @work(thread=True, group=_CONTROL_GROUP)
     def _send_state(
         self,
         job_id: str,
@@ -697,7 +1097,7 @@ class JobsTuiApp(App[None]):
             self._mark_pending(job, "retry")
             self._send_retry(_job_id(job))
 
-    @work(thread=True)
+    @work(thread=True, group=_CONTROL_GROUP)
     def _send_retry(self, job_id: str) -> None:
         result = _try_http_retry_job(
             job_id,
@@ -713,7 +1113,7 @@ class JobsTuiApp(App[None]):
             self._mark_pending(job, "delete")
             self._send_delete(_job_id(job))
 
-    @work(thread=True)
+    @work(thread=True, group=_CONTROL_GROUP)
     def _send_delete(self, job_id: str) -> None:
         result = _try_http_delete_job(job_id, self._port)
         self.call_from_thread(self._after_control, job_id, "delete", result)
@@ -724,10 +1124,16 @@ class JobsTuiApp(App[None]):
         The footer already greys a disallowed key, but a binding can still
         fire; this is the check that makes the refusal real rather than
         cosmetic, so no request is sent for a capability the service denies.
+
+        The refusal is reported here as well as at the key, because this is the
+        gate an action reaching the method by any other route still meets - and
+        a refused request that says nothing is indistinguishable from one that
+        was sent and lost.
         """
         job = self.selected_job()
         flag = _action_capability(f"job_{action}")
         if job is None or flag is None or not _capability(job, flag):
+            self.notify(self._refusal(f"job_{action}"), severity="warning")
             return None
         return job
 
@@ -737,7 +1143,16 @@ class JobsTuiApp(App[None]):
         action: str,
         expected: str | None = None,
     ) -> None:
-        self._pending[_job_id(job)] = (action, expected)
+        """Put the request on the row before it leaves the interface.
+
+        The row changes on the keystroke, not on the answer. The gap between
+        the two is the whole window in which an operator decides whether
+        anything is wired up at all.
+        """
+        self._inflight += 1
+        self._pending[_job_id(job)] = _Pending(
+            action, expected, "requested", "", self._generation
+        )
         self._render_rows()
 
     def _after_control(
@@ -746,27 +1161,95 @@ class JobsTuiApp(App[None]):
         action: str,
         result: dict[str, object] | None,
     ) -> None:
+        self._inflight = max(0, self._inflight - 1)
+        short = job_id[:8] or "job"
         if result is None:
-            self._pending.pop(job_id, None)
-            self.notify(f"{action} failed: the service is not reachable.")
+            self._settle(
+                job_id, "refused", f"{action} failed: the service is not reachable."
+            )
+        elif _is_gone(result):
+            # Not a generic failure: the view was addressing a job the service
+            # has dropped. The answer is a corrected list and a plain sentence,
+            # never a raw error.
+            self._settle(
+                job_id,
+                "gone",
+                f"{action}: {short} is no longer on the service - list refreshed.",
+            )
         elif result.get("ok") is not True:
-            self._pending.pop(job_id, None)
             message = result.get("message")
-            self.notify(
+            self._settle(
+                job_id,
+                "refused",
                 f"{action} refused: {message}"
                 if isinstance(message, str)
-                else f"{action} was refused by the service."
+                else f"{action} was refused by the service.",
+            )
+        else:
+            # Accepted is not yet done. The row keeps saying so until the
+            # service's own payload carries the transition, because a control
+            # that reports success and leaves the row unchanged is exactly what
+            # reads as nothing having been wired up.
+            self._settle(
+                job_id, "sent", f"{action} accepted for {short}; awaiting the service."
             )
         self._render_rows()
         self.refresh_jobs()
 
+    def _settle(self, job_id: str, outcome: str, detail: str) -> None:
+        """Record where a control got to, on the row and in the header."""
+        marker = self._pending.get(job_id)
+        self._pending[job_id] = _Pending(
+            marker.action if marker is not None else "control",
+            marker.expected if marker is not None else None,
+            outcome,
+            detail,
+            # Only a fetch issued after this point can carry the mutation, and
+            # ``refresh_jobs`` below takes the next stamp.
+            self._generation,
+        )
+        failed = outcome in {"refused", "gone"}
+        self._last_outcome = (detail, "bold red" if failed else "bold green")
+        self.notify(detail, severity="error" if failed else "information")
 
-def _pending_label(
-    pending: dict[str, tuple[str, str | None]],
-    job_id: str,
-) -> str | None:
-    marker = pending.get(job_id)
-    return None if marker is None else marker[0]
+
+def _count(raw: object) -> int | None:
+    """Read a published count, or ``None`` when the service published none."""
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        return None
+    return raw
+
+
+def _fetch_error(result: dict[str, object] | None) -> str | None:
+    """Return why a fetch cannot be believed, or ``None`` when it can.
+
+    The transport does not raise on a service that answers badly: a timeout
+    comes back as an ``ok: false`` envelope and a non-200 body is returned as
+    it stands. Neither carries a ``jobs`` key, so reading the payload without
+    checking would paint a wedged, erroring or unauthenticated daemon as "no
+    jobs, refreshed just now" - a confident, current-looking, entirely false
+    frame, and with a thirty-second administrative timeout it is the *normal*
+    rendering of a hung service.
+    """
+    if result is None:
+        return "service not reachable"
+    if result.get("ok") is False:
+        message = result.get("message")
+        if isinstance(message, str) and message:
+            return message
+        error = result.get("error")
+        return f"service error: {error}" if error else "the service reported an error"
+    if not isinstance(result.get("jobs"), list):
+        return "the service did not return a job list"
+    return None
+
+
+def _is_gone(result: dict[str, object]) -> bool:
+    """Report whether the service says the job the control named is absent."""
+    return any(
+        isinstance(value, str) and value in _GONE_CODES
+        for value in (result.get("code"), result.get("error"))
+    )
 
 
 def _action_capability(action: str) -> str | None:
