@@ -830,6 +830,64 @@ class TestAtomicReplaceHasOneImplementation:
         assert replace_atomically is not replace_durably
 
 
+class TestPointsAreWrittenUnderTheCreatedVectorNames:
+    """The store writes a point's vectors under the names it created them with.
+
+    The store already created collections with ``DENSE_VECTOR_NAME`` and read
+    points back by it. Only the write side spelled the names out: four upsert
+    paths built the vector map with the literals, eight sites in all.
+
+    Create-by-constant, read-by-constant, write-by-literal is the shape that
+    hurts. Renaming the constant would build the collection under the new name
+    and look for points under the new name, while every upsert kept writing the
+    old one - and the failure surfaces at ingest against a live backend, not in
+    any check that reads the code.
+
+    Scoped to vector maps. The same two words are also keys of the model
+    identity block - which dense model, which sparse model - and that is a
+    different mapping that happens to share the vocabulary.
+    """
+
+    def test_no_upsert_spells_a_vector_name(self) -> None:
+        """A literal here writes to a name nothing else agreed to."""
+        from .. import store_schema
+
+        owned = {store_schema.DENSE_VECTOR_NAME, store_schema.SPARSE_VECTOR_NAME}
+        source = (_PACKAGE_ROOT / "store.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        offenders: list[str] = []
+        for node in ast.walk(tree):
+            keys: list[ast.expr] = []
+            if isinstance(node, ast.Dict):
+                keys = [key for key in node.keys if key is not None]
+            elif isinstance(node, ast.Subscript):
+                keys = [node.slice]
+            offenders.extend(
+                f"store.py:{key.lineno} spells {key.value!r}"
+                for key in keys
+                if isinstance(key, ast.Constant) and key.value in owned
+            )
+        assert not offenders, (
+            f"a vector name is spelled in the store at {offenders}; use the "
+            "store_schema constant, because the collection is created and "
+            "read by it and a write under a different name fails only at "
+            "ingest against a live backend"
+        )
+
+    def test_the_created_and_read_names_are_the_same_object(self) -> None:
+        """Creation, write and read must resolve to one constant, not three.
+
+        Proven able to fail: rebinding either name to an equal-but-distinct
+        string fails the identity assertion, which equality would not catch.
+        """
+        from .. import store_schema
+        from ..indexer import _donor_candidates
+
+        schema = _donor_candidates.expected_vector_schema()
+        assert schema.dense_name is store_schema.DENSE_VECTOR_NAME
+        assert schema.sparse_name in (None, store_schema.SPARSE_VECTOR_NAME)
+
+
 class TestSearchPhaseKeysAreNamed:
     """A timings phase key is written once, not at every site that uses it.
 
