@@ -118,6 +118,20 @@ class _UnsettledCodeConsumerError(RuntimeError):
     """The code consumer remained live after its bounded shutdown wait."""
 
 
+class _IncrementalPublication(NamedTuple):
+    """What one incremental ingest phase produced, for the caller to commit.
+
+    Named rather than a bare 4-tuple because both callers use every field and
+    two of them are ``set[str]`` - positionally interchangeable, and silently
+    so if the order were ever transposed.
+    """
+
+    prior_ids_by_path: dict[str, set[str]]
+    existing_ids: set[str]
+    published_ids: set[str]
+    published_hashes: dict[str, str]
+
+
 class _CodePipelineLimits(NamedTuple):
     """Frozen weighted limits shared by code-index producers and consumer."""
 
@@ -1343,6 +1357,62 @@ class CodebaseIndexer:
         run_control.checkpoint()
         return self._partition_disabled_paths(paths, policy)
 
+    def _supersede_and_publish(
+        self,
+        *,
+        checkpoint: CodeRunCheckpoint,
+        hashes: dict[str, str],
+        to_index: set[str],
+        paths_to_index: list[pathlib.Path],
+        attempted_paths: set[str],
+        reporter: ProgressReporter,
+        limits: _CodePipelineLimits,
+        run_control: RunControl = NO_RUN_CONTROL,
+    ) -> _IncrementalPublication:
+        """Supersede this run's re-ingested snapshot, then stream and publish.
+
+        The whole-run and scoped incremental paths performed this identical
+        sequence, differing only in which hash mapping seeds the supersede -
+        every current hash for a full incremental pass, only the changed ones
+        for a scoped one. Everything after it diverges, which is why the phase
+        is shared and the callers are not.
+
+        The supersede is deliberately narrowed to ``to_index``: re-opening any
+        other path would drop its points without republishing them, so the
+        mapping passed here decides what stays addressable. A second copy of
+        that scoping rule is the kind that loses points rather than raising.
+        """
+        run_control.checkpoint()
+        self._lifecycle.drift_owner.supersede_snapshot(
+            {rel: hashes[rel] for rel in to_index}
+        )
+        run_control.checkpoint()
+        prior_ids_by_path = self._incremental_prior_ids_by_path(
+            checkpoint,
+            attempted_paths,
+        )
+        existing_ids: set[str] = (
+            set(self._get_chunk_ids_for_files(attempted_paths))
+            if attempted_paths
+            else set()
+        )
+        run_control.checkpoint()
+        published_ids, published_hashes = self._publish_incremental_paths(
+            paths=paths_to_index,
+            attempted_paths=attempted_paths,
+            existing_ids=existing_ids,
+            reporter=reporter,
+            checkpoint=checkpoint,
+            limits=limits,
+            run_control=run_control,
+        )
+        return _IncrementalPublication(
+            prior_ids_by_path=prior_ids_by_path,
+            existing_ids=existing_ids,
+            published_ids=published_ids,
+            published_hashes=published_hashes,
+        )
+
     def _publish_incremental_paths(
         self,
         *,
@@ -2077,38 +2147,22 @@ class CodebaseIndexer:
         )
         if resumed_publication is not None:
             return resumed_publication
-        run_control.checkpoint()
-        # Scoped to the paths this run re-ingests: re-opening anything else
-        # would drop its points without republishing them.
-        self._lifecycle.drift_owner.supersede_snapshot(
-            {rel: current_hashes[rel] for rel in to_index}
-        )
-        run_control.checkpoint()
-        prior_ids_by_path = self._incremental_prior_ids_by_path(
-            checkpoint,
-            attempted_paths,
-        )
-        existing_ids: set[str] = (
-            set(self._get_chunk_ids_for_files(attempted_paths))
-            if attempted_paths
-            else set()
-        )
-        run_control.checkpoint()
-        published_ids, published_hashes = self._publish_incremental_paths(
-            paths=paths_to_index,
-            attempted_paths=attempted_paths,
-            existing_ids=existing_ids,
-            reporter=reporter,
+        publication = self._supersede_and_publish(
             checkpoint=checkpoint,
+            hashes=current_hashes,
+            to_index=to_index,
+            paths_to_index=paths_to_index,
+            attempted_paths=attempted_paths,
+            reporter=reporter,
             limits=limits,
             run_control=run_control,
         )
-        current_hashes.update(published_hashes)
+        current_hashes.update(publication.published_hashes)
         self._commit_incremental_replacement(
             policy=policy,
-            existing_ids=existing_ids,
-            published_ids=published_ids,
-            prior_ids_by_path=prior_ids_by_path,
+            existing_ids=publication.existing_ids,
+            published_ids=publication.published_ids,
+            prior_ids_by_path=publication.prior_ids_by_path,
             deleted_paths=deleted_files,
             checkpoint=checkpoint,
             metadata=current_hashes,
@@ -2289,41 +2343,25 @@ class CodebaseIndexer:
         )
         if resumed_publication is not None:
             return resumed_publication
-        run_control.checkpoint()
-        # Scoped to the paths this run re-ingests: re-opening anything else
-        # would drop its points without republishing them.
-        self._lifecycle.drift_owner.supersede_snapshot(
-            {rel: changed_hashes[rel] for rel in to_index}
-        )
-        run_control.checkpoint()
-        prior_ids_by_path = self._incremental_prior_ids_by_path(
-            checkpoint,
-            attempted_paths,
-        )
-        existing_ids: set[str] = (
-            set(self._get_chunk_ids_for_files(attempted_paths))
-            if attempted_paths
-            else set()
-        )
-        run_control.checkpoint()
-        published_ids, published_hashes = self._publish_incremental_paths(
-            paths=paths_to_index,
-            attempted_paths=attempted_paths,
-            existing_ids=existing_ids,
-            reporter=reporter,
+        publication = self._supersede_and_publish(
             checkpoint=checkpoint,
+            hashes=changed_hashes,
+            to_index=to_index,
+            paths_to_index=paths_to_index,
+            attempted_paths=attempted_paths,
+            reporter=reporter,
             limits=limits,
             run_control=run_control,
         )
         new_metadata = dict(previous_metadata)
-        new_metadata.update(published_hashes)
+        new_metadata.update(publication.published_hashes)
         for rel in delete_files:
             new_metadata.pop(rel, None)
         self._commit_incremental_replacement(
             policy=policy,
-            existing_ids=existing_ids,
-            published_ids=published_ids,
-            prior_ids_by_path=prior_ids_by_path,
+            existing_ids=publication.existing_ids,
+            published_ids=publication.published_ids,
+            prior_ids_by_path=publication.prior_ids_by_path,
             deleted_paths=delete_files,
             checkpoint=checkpoint,
             metadata=new_metadata,
