@@ -19,11 +19,14 @@ related:
 
 - Authored `intent_queries.toml`: 11 queries spanning orientation (6), debugging (2), and
   implementation (3), each with a declared intent and rubric-derived gold judgments.
+
 - Anchored every gold judgment on a real, verified vault doc_id (path without extension);
   21 total judgments across ADR, research, plan, and exec documents.
+
 - Included the canonical regression (orientation "decision on gpu lock scope" grades the
   accepted ADR 3, the implementing exec record 1) and a status-derank trap (a superseded
   mcp-route ADR graded 1 so it must not lead its most-topical query).
+
 - Documented the schema and the mechanical-from-rubric authoring rule in file comments.
 
 ## Outcome

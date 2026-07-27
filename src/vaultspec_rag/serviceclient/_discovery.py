@@ -609,10 +609,7 @@ def _machine_pointer_degradation_reason(
     # The publisher refuses to write a payload whose pid is not the lease
     # owner's, so a pointer naming anyone but the live holder is a leftover
     # from a previous incarnation rather than this owner's publication.
-    if (
-        evidence.pointer_pid is not None
-        and evidence.pointer_pid != evidence.holder_pid
-    ):
+    if evidence.pointer_pid is not None and evidence.pointer_pid != evidence.holder_pid:
         return DISCOVERY_REASON_POINTER_FOREIGN
     if (
         evidence.heartbeat_age_s is not None

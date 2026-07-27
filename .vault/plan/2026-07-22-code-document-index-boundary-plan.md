@@ -11,6 +11,7 @@ related:
   - '[[2026-07-21-code-document-index-boundary-reference]]'
   - '[[2026-07-21-large-index-resilience-plan]]'
 ---
+
 # `code-document-index-boundary` plan
 
 ## Description

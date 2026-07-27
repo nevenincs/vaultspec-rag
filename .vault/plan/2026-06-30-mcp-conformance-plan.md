@@ -10,6 +10,7 @@ related:
   - '[[2026-06-30-mcp-search-scope-adr]]'
   - '[[2026-06-30-mcp-conformance-research]]'
 ---
+
 # `mcp-conformance` plan
 
 ## Description

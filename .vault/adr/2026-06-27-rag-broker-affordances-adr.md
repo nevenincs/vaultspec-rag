@@ -139,6 +139,7 @@ convenience for finding the service, never a second gate on starting one.
 (Holds one full execution cycle before promotion, per the codify discipline. Complements
 `service-domain-owns-operability` and the dashboard-side
 `brokered-destructive-verbs-validate-args-and-default-to-preview`.)
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

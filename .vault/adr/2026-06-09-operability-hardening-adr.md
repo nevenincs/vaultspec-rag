@@ -120,6 +120,7 @@ make the UX and model-access fixes idiomatic rather than bespoke.
 - **Rule slug:** `lifecycle-verbs-truthful-exit`.
   **Rule:** service lifecycle verbs must return accurate exit codes — non-zero on a blocked
   or failed start, and a distinct code for an orphaned/divergent daemon state.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

@@ -16,6 +16,7 @@ related:
 - `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`
 
 - Run the new test module using `pytest` to execute both local concurrency and watcher tests.
+
 - Confirm tests pass successfully.
 
 ## Outcome

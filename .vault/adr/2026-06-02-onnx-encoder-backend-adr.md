@@ -94,6 +94,7 @@ and O4).
 - **Rule slug:** `embedding-backend-falls-back-to-torch`. Any non-default embedding backend
   (ONNX, OpenVINO) must degrade to the torch construction on any import/export/provider
   failure, logged, so a misconfigured backend never breaks indexing or search.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

@@ -16,6 +16,7 @@ related:
 - `src/vaultspec_rag/config.py`
 
 - Expose `QDRANT_URL` and `QDRANT_API_KEY` environment variables.
+
 - Add properties `qdrant_url` and `qdrant_api_key` to config model.
 
 ## Outcome

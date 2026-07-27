@@ -45,5 +45,7 @@ To minimize the RAM footprint and accelerate search latency, Qdrant supports sev
 
 - **Detailed Component Breakdown (v1.18)**: Provides granular API metrics on disk, RAM, and page cache usage categorized by vectors, payloads, and index graphs, allowing precise profiling.
 - **Dynamic Named Vectors**: Enables adding or removing named vector configurations to existing collections dynamically without full collection recreation, facilitating seamless schema evolution.
+
 ## Sources
+
 - Evidence cited inline: `src/vaultspec_rag/store.py`.

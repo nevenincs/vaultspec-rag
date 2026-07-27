@@ -5,6 +5,7 @@ tags:
 date: '2026-03-06'
 modified: '2026-07-27'
 ---
+
 # Research: CodebaseIndexer Tech Stack â€” 2026 GPU-First
 
 ## Findings

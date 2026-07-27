@@ -119,6 +119,7 @@ couples assertions to hand-maintained content.
 - `test-project/` deletion is permanent — quality probes replaced by
   generated needles
 - `VAULTSPEC_RAG_*` env var convention established for future config
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

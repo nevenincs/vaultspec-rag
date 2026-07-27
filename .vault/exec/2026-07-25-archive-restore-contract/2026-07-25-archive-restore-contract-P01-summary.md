@@ -7,6 +7,7 @@ modified: '2026-07-27'
 related:
   - "[[2026-07-25-archive-restore-contract-plan]]"
 ---
+
 # `archive-restore-contract` `P01` summary
 
 - Modified: `src/vaultspec_rag/storage_reclamation.py`

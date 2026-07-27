@@ -229,14 +229,16 @@ def resolve_index_cuda_ceiling_mb(
     ``profile_cuda_mb`` - the profile figure becomes a default rather than a
     hard cap.
     """
-    return cuda_ceiling_from_observation(CudaCeilingObservation(
-        device_total_mb=cuda_device_total_mb(),
-        free_mb=cuda_free_memory_mb(),
-        configured_mb=configured_mb,
-        headroom_mb=headroom_mb,
-        profile_cuda_mb=profile_cuda_mb,
-        baseline_mb=baseline_mb,
-    ))
+    return cuda_ceiling_from_observation(
+        CudaCeilingObservation(
+            device_total_mb=cuda_device_total_mb(),
+            free_mb=cuda_free_memory_mb(),
+            configured_mb=configured_mb,
+            headroom_mb=headroom_mb,
+            profile_cuda_mb=profile_cuda_mb,
+            baseline_mb=baseline_mb,
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -704,20 +706,24 @@ class MemoryBudget:
         self._raise_if_latched()
         measured_rss = rss_mb
         measured_cuda = cuda_mb
-        return self._record(_MemoryBudgetReading(
-            label=label,
-            rss_mb=measured_rss if measured_rss is not None else 0.0,
-            rss_available=measured_rss is not None,
-            cuda_allocated_mb=measured_cuda[0] if measured_cuda is not None else 0.0,
-            cuda_reserved_mb=measured_cuda[1] if measured_cuda is not None else 0.0,
-            cuda_peak_allocated_mb=(
-                self.captured_cuda_peak_mb if measured_cuda is not None else 0.0
-            ),
-            cuda_peak_reserved_mb=(
-                measured_cuda[1] if measured_cuda is not None else 0.0
-            ),
-            cuda_available=measured_cuda is not None,
-        ))
+        return self._record(
+            _MemoryBudgetReading(
+                label=label,
+                rss_mb=measured_rss if measured_rss is not None else 0.0,
+                rss_available=measured_rss is not None,
+                cuda_allocated_mb=measured_cuda[0]
+                if measured_cuda is not None
+                else 0.0,
+                cuda_reserved_mb=measured_cuda[1] if measured_cuda is not None else 0.0,
+                cuda_peak_allocated_mb=(
+                    self.captured_cuda_peak_mb if measured_cuda is not None else 0.0
+                ),
+                cuda_peak_reserved_mb=(
+                    measured_cuda[1] if measured_cuda is not None else 0.0
+                ),
+                cuda_available=measured_cuda is not None,
+            )
+        )
 
     def observe(
         self,
@@ -743,16 +749,18 @@ class MemoryBudget:
             "float",
             _valid_memory_mb("cuda_reserved_mb", cuda_reserved_mb),
         )
-        return self._record(_MemoryBudgetReading(
-            label=label,
-            rss_mb=rss,
-            rss_available=True,
-            cuda_allocated_mb=allocated,
-            cuda_reserved_mb=reserved,
-            cuda_peak_allocated_mb=allocated,
-            cuda_peak_reserved_mb=reserved,
-            cuda_available=True,
-        ))
+        return self._record(
+            _MemoryBudgetReading(
+                label=label,
+                rss_mb=rss,
+                rss_available=True,
+                cuda_allocated_mb=allocated,
+                cuda_reserved_mb=reserved,
+                cuda_peak_allocated_mb=allocated,
+                cuda_peak_reserved_mb=reserved,
+                cuda_available=True,
+            )
+        )
 
     def fail_cuda_oom(self, *, label: str, detail: str) -> None:
         """Latch allocator exhaustion as the canonical CUDA ceiling outcome."""

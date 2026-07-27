@@ -93,5 +93,7 @@ propagates to uvicorn's standard error reporting (which logs the
 traceback). No new swallows introduced by this fix. The broader
 swallow-audit across `cli.py` / `mcp_server.py` is filed as
 gh issue #130 and tracked separately to keep this PR scoped.
+
 ## Sources
+
 - The analysis and source locations cited inline in this research record.

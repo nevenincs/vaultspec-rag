@@ -7,6 +7,7 @@ modified: '2026-07-27'
 related:
   - '[[2026-03-07-continuous-research]]'
 ---
+
 # `gpu-rag-stack` adr: `Use blake2b via file_digest() for file change detection` | (**status:** `accepted`)
 
 ## Problem Statement

@@ -7,6 +7,7 @@ modified: '2026-07-27'
 related:
   - "[[2026-03-06-codebase-indexer-tech-stack-research]]"
 ---
+
 # `index-perf-hardening` research: `codebase indexing performance: parallelism, GPU pipelining, hardware acceleration`
 
 ## Findings

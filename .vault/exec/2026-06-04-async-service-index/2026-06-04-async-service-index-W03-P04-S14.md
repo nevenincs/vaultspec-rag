@@ -16,6 +16,7 @@ related:
 - `src/vaultspec_rag/cli/_search.py`
 
 - Refactor `handle_search` inside `src/vaultspec_rag/cli/_search.py` to delegate the core search execution (for both `vault` and `code` types) directly to the backend facade functions `vaultspec_rag.search_vault` and `vaultspec_rag.search_codebase`.
+
 - Remove manual model loading, Qdrant store leasing/instantiation, and GPU/linter logic from the CLI layer, making it a thin wrapper for transport and CLI rendering.
 
 ## Outcome

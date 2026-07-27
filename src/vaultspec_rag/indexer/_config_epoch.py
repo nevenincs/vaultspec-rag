@@ -184,10 +184,20 @@ def _resolved_policy_fingerprints(
     in place with no signal that they are stale.
     """
     (
-        policy_schema_version, content_policy, gitignore_patterns,
-        vaultragignore_patterns, extra_excludes, preprocess_schema_version,
-        preprocess_rules, decoder_encoding, decoder_errors, normalize_newlines,
-        execution_mode, html_strip, max_emitted_bytes, document_chunking,
+        policy_schema_version,
+        content_policy,
+        gitignore_patterns,
+        vaultragignore_patterns,
+        extra_excludes,
+        preprocess_schema_version,
+        preprocess_rules,
+        decoder_encoding,
+        decoder_errors,
+        normalize_newlines,
+        execution_mode,
+        html_strip,
+        max_emitted_bytes,
+        document_chunking,
     ) = (
         request.policy_schema_version,
         request.content_policy,
@@ -310,8 +320,11 @@ def _per_kind_fingerprints(
     from ._content_policy import ContentKind
 
     (
-        policy_schema_version, persistent_membership_payload,
-        operation_membership_payload, content_payload, preprocess_rules,
+        policy_schema_version,
+        persistent_membership_payload,
+        operation_membership_payload,
+        content_payload,
+        preprocess_rules,
         document_chunking,
     ) = (
         request.policy_schema_version,

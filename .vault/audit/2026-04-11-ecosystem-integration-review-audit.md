@@ -70,7 +70,7 @@ would be ignored without `-f`.
 managed by core; core expects to control tracking.
 
 R1 | MEDIUM | ADR missing plan back-link
-ADR `related:` field did not include ``2026-04-06-ecosystem-integration-plan``.
+ADR `related:` field did not include `2026-04-06-ecosystem-integration-plan`.
 **Status:** FIXED — added back-link.
 
 R2 | LOW | Plan has non-standard `revised:` frontmatter field

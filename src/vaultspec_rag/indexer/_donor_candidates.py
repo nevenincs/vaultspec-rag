@@ -73,6 +73,7 @@ class _EligibilityRequest:
     donor_schema_probe: Callable[[str], VectorSchema | None] | None = None
     expected_model: ModelIdentity | None = None
 
+
 __all__ = [
     "DONOR_CANDIDATE_CAP",
     "CollectionKind",
@@ -505,8 +506,12 @@ def _evaluate_donor_eligibility(request: _EligibilityRequest) -> DonorEligibilit
         A :class:`DonorEligibility` naming every failed gate.
     """
     (
-        candidate, kind, expected_content_epoch, expected_schema,
-        donor_schema_probe, expected_model,
+        candidate,
+        kind,
+        expected_content_epoch,
+        expected_schema,
+        donor_schema_probe,
+        expected_model,
     ) = (
         request.candidate,
         request.kind,

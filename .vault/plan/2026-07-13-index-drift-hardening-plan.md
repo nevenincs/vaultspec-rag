@@ -9,6 +9,7 @@ related:
   - '[[2026-07-13-index-drift-hardening-adr]]'
   - '[[2026-07-13-index-drift-hardening-research]]'
 ---
+
 # `index-drift-hardening` plan
 
 ## Description

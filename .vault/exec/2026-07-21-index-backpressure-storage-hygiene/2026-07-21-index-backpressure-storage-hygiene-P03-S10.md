@@ -8,6 +8,7 @@ step_id: 'S10'
 related:
   - "[[2026-07-21-index-backpressure-storage-hygiene-plan]]"
 ---
+
 # wire the same preflight into the in-process CLI index fallback with a single structured non-zero envelope in --json mode
 
 ## Description

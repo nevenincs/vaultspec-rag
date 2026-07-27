@@ -6,6 +6,7 @@ related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]'
 ---
+
 # `cli-service-operability-hardening` W00.S01 - baseline research and ADR setup
 
 ## Description

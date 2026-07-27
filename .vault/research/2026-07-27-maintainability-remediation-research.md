@@ -9,6 +9,7 @@ related:
   - "[[2026-07-27-module-split-production-package-seams-reference]]"
   - "[[2026-07-27-maintainability-remediation-radon-module-ownership-reference]]"
 ---
+
 # `maintainability-remediation` research: `radon maintainability floor`
 
 ## Findings

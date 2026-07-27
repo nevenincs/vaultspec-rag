@@ -71,5 +71,7 @@ not a local one.
 - Track the server-mode path pre-filter (`TextIndexParams` + `MatchText` / prefix +
   `fnmatch` refine) as a follow-up tied to the server-mode work under `#165`, gated on a
   real server-mode deployment so the win can be benchmarked.
+
 ## Sources
+
 - Related record identifiers: `2026-06-07-sparse-search-latency-adr`, `2026-06-08-sparse-search-latency-plan`.

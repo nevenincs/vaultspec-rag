@@ -33,4 +33,5 @@ total on a shared desktop GPU (the ~6.5 GiB desktop baseline observed during
 S19 is not subtracted today).
 
 ## Description
-Retained summary evidence:  are listed in frontmatter; the summary title and existing sections are the available phase record. No implementation claim is added.
+
+Retained summary evidence: are listed in frontmatter; the summary title and existing sections are the available phase record. No implementation claim is added.

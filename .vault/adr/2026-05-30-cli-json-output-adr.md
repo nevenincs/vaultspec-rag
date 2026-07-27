@@ -160,6 +160,7 @@ clients. CLI consumers benefit from learning one schema.
 - The envelope means parsers can't naively pipe `vaultspec-rag status --json` into a tool that expects a bare `IndexStatus`
   object — they need `jq '.data'`. The README example
   demonstrates this.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

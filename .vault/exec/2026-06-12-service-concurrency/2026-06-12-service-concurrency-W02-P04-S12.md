@@ -8,6 +8,7 @@ step_id: 'S12'
 related:
   - "[[2026-06-12-service-concurrency-plan]]"
 ---
+
 # Re-run the quality benchmarks to validate contextual embeddings and record deltas
 
 ## Description

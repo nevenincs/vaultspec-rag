@@ -9,6 +9,7 @@ related:
   - '[[2026-07-25-index-completeness-guard-adr]]'
   - '[[2026-07-25-index-completeness-guard-research]]'
 ---
+
 # `index-completeness-guard` plan
 
 ## Description

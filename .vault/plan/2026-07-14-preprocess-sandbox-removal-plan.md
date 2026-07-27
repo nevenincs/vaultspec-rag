@@ -9,6 +9,7 @@ related:
   - '[[2026-07-14-preprocess-sandbox-removal-adr]]'
   - '[[2026-07-13-preprocess-sandbox-research]]'
 ---
+
 # `preprocess-sandbox-removal` plan
 
 ## Description

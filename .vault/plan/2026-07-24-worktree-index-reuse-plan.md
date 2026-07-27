@@ -9,6 +9,7 @@ related:
   - '[[2026-07-24-worktree-index-reuse-research]]'
   - '[[2026-07-24-worktree-index-reuse-adr]]'
 ---
+
 # `worktree-index-reuse` plan
 
 ## Description

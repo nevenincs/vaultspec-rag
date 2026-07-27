@@ -102,5 +102,7 @@ One PR:
    characters.
 
 No exception-suppression introduced; no shims; one cohesive change.
+
 ## Sources
+
 - Evidence cited inline: `src/vaultspec_rag/tests/test_cli.py`.

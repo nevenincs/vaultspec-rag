@@ -7,6 +7,7 @@ modified: '2026-07-27'
 related:
   - '[[2026-06-02-watcher-targeted-reindex-plan]]'
 ---
+
 # `watcher-targeted-reindex` research: `stranded pending changes on quiet trees`
 
 ## Findings

@@ -41,4 +41,5 @@ exactly that instead of claiming a protection no test can demonstrate. Ordering
 is kept because it costs nothing and holds if either reason is reworded.
 
 ## Notes
+
 Template evidence: intro_commit=2f3068c7d9236d0ef7c4a81177caabf640399f5b; template_commit=2f3068c7d9236d0ef7c4a81177caabf640399f5b:.vaultspec/templates/exec-step.md requires Description, Outcome, and Notes. This repair preserves the retained record text and adds no new implementation claim.

@@ -7,6 +7,7 @@ modified: '2026-07-27'
 related:
   - '[[2026-03-07-continuous-research]]'
 ---
+
 # FastMCP Lifespan Context Research for Task #25
 
 ## Findings

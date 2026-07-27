@@ -128,6 +128,7 @@ plugs into the consumer without touching the producer.
   **Rule:** Codebase-index worker processes must never import or initialize CUDA/torch;
   the embedding GPU is touched only by the single in-process consumer, and the worker pool
   must use the `spawn` start method.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

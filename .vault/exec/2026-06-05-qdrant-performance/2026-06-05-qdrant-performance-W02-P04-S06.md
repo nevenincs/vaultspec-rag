@@ -16,6 +16,7 @@ related:
 - `src/vaultspec_rag/api.py`
 
 - Extend `search_vault` and `search_codebase` public facade APIs with optional `like_ids` and `unlike_ids` arguments.
+
 - Pass recommendation arguments directly to the underlying `VaultStore` search calls inside active slot leases.
 
 ## Outcome

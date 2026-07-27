@@ -139,6 +139,7 @@ field distinguishes from the daemon's `reason=clean`.
   happens before the rotation can fire (atomic single-line
   write), and Windows' file locking model allows append-mode
   writes from a non-owning process.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

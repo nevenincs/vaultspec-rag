@@ -8,6 +8,7 @@ related:
   - '[[2026-03-07-mcp-sync-tools-adr]]'
   - '[[2026-03-08-fastmcp-lifespan-research]]'
 ---
+
 # `gpu-rag-stack` adr: `Use threading.Lock for get_comp() singleton` | (**status:** `accepted`)
 
 ## Problem Statement

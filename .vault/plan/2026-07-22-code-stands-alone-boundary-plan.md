@@ -10,6 +10,7 @@ related:
   - '[[2026-07-23-code-stands-alone-boundary-adr]]'
   - '[[2026-07-27-code-stands-alone-boundary-grounding-research]]'
 ---
+
 # `code-stands-alone-boundary` plan
 
 ## Description

@@ -7,6 +7,7 @@ modified: '2026-07-27'
 related:
   - "[[2026-06-30-mcp-conformance-research]]"
 ---
+
 # `mcp-conformance` reference: `MCP specification baseline and conformant search surface`
 
 ## Summary

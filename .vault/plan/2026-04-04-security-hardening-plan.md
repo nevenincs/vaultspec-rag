@@ -99,8 +99,11 @@ process name verification for PID ownership checks.
 - Manual verification: `get_code_file(".env")` raises ValueError.
 - Manual verification: `/health` response lacks absolute paths.
 - Manual verification: `_is_our_service(os.getpid())` returns True on Windows.
+
 ## Description
+
 - This plan implements the scope recorded in `2026-04-04-security-hardening-adr`, `2026-04-04-security-hardening-research`.
 
 ## Steps
+
 1. Execute the existing proposed changes and tasks with their recorded verification.

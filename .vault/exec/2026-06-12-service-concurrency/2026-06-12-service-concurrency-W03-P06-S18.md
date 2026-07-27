@@ -8,6 +8,7 @@ step_id: 'S18'
 related:
   - "[[2026-06-12-service-concurrency-plan]]"
 ---
+
 # Add GPU tests covering narrowed lock holds, cache behavior, and sparse conversion parity
 
 ## Description

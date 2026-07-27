@@ -63,6 +63,7 @@ in use and avoids inventing a new transport.
   an explicit error instead of a misleading top-k. This is a behavioural
   change but aligns advertised flags with actual semantics.
 - Future search types (e.g. `all`) inherit the same guard automatically.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

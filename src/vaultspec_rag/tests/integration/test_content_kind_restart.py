@@ -232,9 +232,7 @@ def test_document_restart_reuses_confirmed_slices_and_publishes_once(
     )
     policy = _document_policy("restart.txt")
     store = VaultStore(tmp_path)
-    interrupted = _interrupt_document_indexing(
-        tmp_path, embedding_model, store, policy
-    )
+    interrupted = _interrupt_document_indexing(tmp_path, embedding_model, store, policy)
 
     with sqlite3.connect(interrupted.ledger_path) as connection:
         before = dict(
@@ -255,8 +253,7 @@ def test_document_restart_reuses_confirmed_slices_and_publishes_once(
         collection_identity=store_schema.DOCUMENT_COLLECTION,
     )
     assert (
-        published is not None
-        and published.generation_id == interrupted.generation_id
+        published is not None and published.generation_id == interrupted.generation_id
     )
     with sqlite3.connect(interrupted.ledger_path) as connection:
         after = dict(
@@ -293,9 +290,7 @@ def test_each_kind_replays_only_its_final_unconfirmed_unit(tmp_path: Path) -> No
 
     policy = resolve_index_policy(
         tmp_path,
-        IndexPolicyResolutionOptions(
-            content_policy=_document_policy("guide.txt")
-        ),
+        IndexPolicyResolutionOptions(content_policy=_document_policy("guide.txt")),
     )
     run_policy = RunPolicy(no_progress_timeout_seconds=30.0)
     data_root = tmp_path / ".state"

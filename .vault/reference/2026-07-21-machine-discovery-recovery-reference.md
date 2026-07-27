@@ -10,6 +10,7 @@ related:
   - "[[2026-06-24-service-hardware-singleton-adr]]"
   - "[[2026-06-27-rag-broker-affordances-adr]]"
 ---
+
 # `machine-discovery-recovery` reference: `ownership, resolution, and recovery seams`
 
 ## Summary

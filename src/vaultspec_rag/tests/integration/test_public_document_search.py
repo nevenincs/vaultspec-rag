@@ -50,10 +50,13 @@ def test_non_empty_public_facade_applies_document_owned_combined_filters(
         encoding="utf-8",
     )
 
-    indexed = index_documents(tmp_path, DocumentIndexOptions(
-        full=True,
-        content_policy=_document_policy("records/*.txt"),
-    ))
+    indexed = index_documents(
+        tmp_path,
+        DocumentIndexOptions(
+            full=True,
+            content_policy=_document_policy("records/*.txt"),
+        ),
+    )
     try:
         assert indexed.total >= 2
         documents = search_documents(

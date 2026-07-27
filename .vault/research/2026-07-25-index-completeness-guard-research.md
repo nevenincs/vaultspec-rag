@@ -8,6 +8,7 @@ related:
   - "[[2026-07-25-index-resume-drift-race-adr]]"
   - "[[2026-07-21-large-index-resilience-adr]]"
 ---
+
 # `index-completeness-guard` research: a partially destroyed code collection publishes itself as complete
 
 ## Findings

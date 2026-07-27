@@ -8,6 +8,7 @@ related:
   - '[[2026-03-08-qdrant-hybrid-search-patterns-research]]'
   - '[[2026-03-07-libdoc-verification-research]]'
 ---
+
 # `gpu-rag-stack` adr: `Payload indexes are no-ops in local mode; add for forward compatibility` | (**status:** `accepted`)
 
 ## Problem Statement

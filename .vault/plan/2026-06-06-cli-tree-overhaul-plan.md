@@ -91,4 +91,5 @@ Retained-plan evidence: the detailed phase, wave, or step sections in this docum
 Evidence gap: the retained plan prose and complete git log --follow history state no explicit parallelization policy. No concurrency rule is asserted.
 
 ## Verification
+
 Evidence gap: the retained plan prose and complete git log --follow history state no standalone verification criteria. No verification result is asserted.

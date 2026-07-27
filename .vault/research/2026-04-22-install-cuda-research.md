@@ -8,6 +8,7 @@ related:
   - '[[2026-04-12-vaultspec-rag-install-adr]]'
   - '[[2026-04-06-ecosystem-integration-adr]]'
 ---
+
 # install-cuda research: configuring torch cuda for consumer projects
 
 ## Findings

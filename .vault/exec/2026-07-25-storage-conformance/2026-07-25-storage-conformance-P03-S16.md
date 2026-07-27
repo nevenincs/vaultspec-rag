@@ -43,4 +43,5 @@ which a mutation can actually break, and the ordering claim was withdrawn rather
 than defended by an assertion that would always pass.
 
 ## Notes
+
 Template evidence: intro_commit=2f3068c7d9236d0ef7c4a81177caabf640399f5b; template_commit=2f3068c7d9236d0ef7c4a81177caabf640399f5b:.vaultspec/templates/exec-step.md requires Description, Outcome, and Notes. This repair preserves the retained record text and adds no new implementation claim.

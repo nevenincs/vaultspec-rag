@@ -7,6 +7,7 @@ modified: '2026-07-27'
 related:
   - "[[2026-06-24-vault-pipeline-search-research]]"
 ---
+
 # `vault-pipeline-search` adr: `intent-aware pipeline ranking and result shape for vault search` | (**status:** `accepted`)
 
 ## Problem Statement
@@ -133,10 +134,10 @@ rubric (topically-relevant docs only; off-topic = 0):
 | doc_type / status         | orientation | debugging | implementation |
 | ------------------------- | ----------- | --------- | -------------- |
 | adr (accepted)            | 3           | 1         | 2              |
-| adr (proposed/superseded) | 1           | 0â€“1       | 1              |
+| adr (proposed/superseded) | 1           | 0â€“1     | 1              |
 | research / reference      | 2           | 1         | 1              |
 | plan                      | 1           | 1         | 3              |
-| exec (step/summary)       | 0â€“1         | 3         | 2              |
+| exec (step/summary)       | 0â€“1       | 3         | 2              |
 | audit                     | 1           | 2         | 1              |
 | code chunk                | 0           | 2         | 1              |
 
@@ -222,11 +223,13 @@ role-weighted, baseline-anchored benchmark.
   queries surface the implementation trail first; every result carries its pipeline
   context (feature, status, related) so a hit becomes an orientation entry-point. The
   reweight is inspectable under `--scores` and tunable in config.
+
 - Costs and risks: the typeÃ—status weights are a tuning surface that can over- or
   under-correct; only D8 keeps them honest, and D8 is real work that must precede D2.
   Status requires a full reindex. The deliberate override of the "tie-break only"
   philosophy is a genuine reversal that must be bounded and documented so future agents do
   not "fix" it back to a nudge.
+
 - Pathways opened: the per-(typeÃ—status) profile generalizes to recency and to other
   document corpora; the lineage rollup and grouped view become natural follow-ons; the
   intent-aware benchmark becomes the standing guard against ranking regressions.### Codification candidates

@@ -257,6 +257,7 @@ Future considerations:
   (separate ADR), the `threading.Lock`-guarded line reporter and the
   thread-safe Rich adapter both already handle concurrent `advance()`
   calls, so no contract change is needed.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

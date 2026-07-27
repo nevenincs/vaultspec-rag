@@ -8,6 +8,7 @@ related:
   - '[[2026-04-12-vaultspec-rag-install-reference]]'
   - '[[2026-04-12-vaultspec-rag-install-adr]]'
 ---
+
 # `install-command` research
 
 ## Findings

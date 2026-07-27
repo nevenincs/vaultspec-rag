@@ -9,6 +9,7 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-research]]'
 ---
+
 # `provider-mcp-enrollment` plan
 
 ## Description

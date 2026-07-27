@@ -19,12 +19,15 @@ related:
 
 - Created the `tests/quality` evaluation-support package with a package docstring
   distinguishing it from test modules.
+
 - Authored `rubric.py`: an `Intent` StrEnum (orientation, debugging, implementation), the
   active vs inactive ADR-status frozensets (unknown counts as active), and a declarative
   intent x role grade matrix resolved from the ADR D8 table.
+
 - Exposed `grade_for(intent, doc_type, status, *, on_topic)` returning a 0-3 grade, with a
   `_role_key` helper that splits ADRs on active/inactive status and maps every other type
   directly; off-topic and unknown roles score 0.
+
 - Fixed lint (StrEnum over str+Enum, sorted `__all__`); type-check clean.
 
 ## Outcome

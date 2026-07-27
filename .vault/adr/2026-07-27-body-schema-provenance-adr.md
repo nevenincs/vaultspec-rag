@@ -9,6 +9,7 @@ supersedes:
   - '2026-07-27-active-corpus-conformance-adr'
 modified: '2026-07-27'
 ---
+
 # `body-schema-provenance` adr: `Validate documents against immutable schema contracts` | (**status:** `accepted`)
 
 ## Problem Statement

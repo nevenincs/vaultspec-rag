@@ -8,6 +8,7 @@ step_id: 'S15'
 related:
   - '[[2026-06-09-operability-hardening-plan]]'
 ---
+
 # operator-persona testimonial end-to-end CLI integration tests
 
 ## Description

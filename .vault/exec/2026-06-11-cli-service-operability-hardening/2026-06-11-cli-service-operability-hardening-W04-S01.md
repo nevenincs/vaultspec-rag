@@ -6,6 +6,7 @@ related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-server-bound-search-production-readiness-adr]]'
 ---
+
 # `cli-service-operability-hardening` W04.S01 - service search timeout hardening
 
 ## Description

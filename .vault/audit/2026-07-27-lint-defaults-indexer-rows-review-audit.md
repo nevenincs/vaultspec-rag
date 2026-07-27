@@ -7,6 +7,7 @@ modified: '2026-07-27'
 related:
   - "[[2026-07-27-lint-defaults-plan]]"
 ---
+
 # `lint-defaults` audit: indexer rows review
 
 ## Scope

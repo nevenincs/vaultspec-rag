@@ -98,5 +98,7 @@ holding the GIL is only interruptible by killing the process.
   rather than hang.
 - A regression harness must simulate a dead and a wedged service to assert the
   command returns within a bound and leaves no held lock.
+
 ## Sources
+
 - Evidence cited inline: `src/vaultspec_rag/cli/_search.py`, `src/vaultspec_rag/serviceclient/_transport.py`.

@@ -207,6 +207,7 @@ same adversarial harness on the same corpus.
 - **Rule slug:** `rerankers-score-real-content`.
   **Rule:** Reranking inputs must be the token-bounded full candidate content, never a
   fixed-character snippet proxy.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

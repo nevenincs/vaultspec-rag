@@ -8,6 +8,7 @@ step_id: 'S16'
 related:
   - "[[2026-06-12-service-concurrency-plan]]"
 ---
+
 # Add a thread-safe LRU query-embedding cache keyed by surface and cleaned query text
 
 ## Description

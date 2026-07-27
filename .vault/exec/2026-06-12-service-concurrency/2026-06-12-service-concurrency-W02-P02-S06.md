@@ -8,6 +8,7 @@ step_id: 'S06'
 related:
   - "[[2026-06-12-service-concurrency-plan]]"
 ---
+
 # Add unit and GPU integration tests for chunked vault indexing, grouped search, and rebuild-on-schema-bump
 
 ## Description

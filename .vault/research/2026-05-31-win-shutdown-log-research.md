@@ -118,5 +118,7 @@ exception with `exc_info=True`, and is gated by a comment
 explaining why the suppression is safe (shutdown must complete
 even if the log file is missing). No bare `except` clauses
 introduced.
+
 ## Sources
+
 - The analysis and source locations cited inline in this research record.

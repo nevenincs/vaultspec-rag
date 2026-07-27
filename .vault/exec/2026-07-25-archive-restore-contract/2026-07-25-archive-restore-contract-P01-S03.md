@@ -8,6 +8,7 @@ step_id: 'S03'
 related:
   - "[[2026-07-25-archive-restore-contract-plan]]"
 ---
+
 # `P01.S03` whole archive eviction
 
 ## Scope

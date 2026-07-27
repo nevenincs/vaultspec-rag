@@ -8,6 +8,7 @@ step_id: 'S05'
 related:
   - "[[2026-07-25-archive-restore-contract-plan]]"
 ---
+
 # `P01.S05` archive guard coverage
 
 ## Scope

@@ -223,6 +223,7 @@ start.
   tokens to avoid collisions.
 - Whether `reconfigure` on a not-yet-running root is a no-op, an error, or an
   implicit start.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

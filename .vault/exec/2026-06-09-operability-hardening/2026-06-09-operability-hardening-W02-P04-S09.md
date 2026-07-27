@@ -8,6 +8,7 @@ step_id: 'S09'
 related:
   - "[[2026-06-09-operability-hardening-plan]]"
 ---
+
 # Detect a healthy orphaned daemon via port probe when service.json is absent
 
 ## Description

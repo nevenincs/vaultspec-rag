@@ -8,6 +8,7 @@ step_id: 'S13'
 related:
   - '[[2026-06-09-operability-hardening-plan]]'
 ---
+
 # CLI help cleanup — operator-facing help, no leaked developer sections
 
 ## Description

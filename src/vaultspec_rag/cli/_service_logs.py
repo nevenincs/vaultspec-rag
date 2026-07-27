@@ -82,8 +82,7 @@ class _ServiceLogsCommand(TyperCommand):
                     type=int,
                     default=None,
                     help=(
-                        "Use this live service port before reading retained "
-                        "local logs."
+                        "Use this live service port before reading retained local logs."
                     ),
                 ),
                 TyperOption(

@@ -8,6 +8,7 @@ related:
   - '[[2026-06-11-cli-service-operability-hardening-code-review-audit]]'
   - '[[2026-07-27-cli-service-operability-hardening-grounding-research]]'
 ---
+
 # `cli-service-operability-hardening` adr: `Preserve CLI and service operability guarantees` | (**status:** `accepted`)
 
 ## Problem Statement
