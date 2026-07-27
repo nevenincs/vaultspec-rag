@@ -197,13 +197,17 @@ def _get_ephemeral_port() -> int:
 #:
 #: A positive value is an authoritative operator override, so pinning it makes
 #: the bound deterministic without disabling it: a job whose own demand runs
-#: past this figure is still refused. Sized to clear the largest legitimate
-#: demand seen (4609 MiB) with margin, and to leave room above the resident
-#: models on the 16 GiB device the suite targets.
+#: past this figure is still refused. The override is ABSOLUTE, not net of the
+#: resident models: enforcement subtracts the resident baseline from BOTH
+#: sides of the comparison, so a pin at or below the baseline clamps the
+#: admissible demand to zero and fails every forward. The monotone baseline
+#: reaches 6301 MiB once the reranker is resident, and the largest legitimate
+#: net demand seen is 4609 MiB, so the pin must exceed their sum (10910 MiB);
+#: 12288 clears it with margin inside the 16 GiB device the suite targets.
 #:
 #: Tests that assert the ceiling FIRES pass their own figure through the config
 #: overrides, which beat the environment, so this default cannot mask them.
-INTEGRATION_CUDA_CEILING_MB = 6144
+INTEGRATION_CUDA_CEILING_MB = 12288
 
 
 def _get_ephemeral_qdrant_port() -> int:
