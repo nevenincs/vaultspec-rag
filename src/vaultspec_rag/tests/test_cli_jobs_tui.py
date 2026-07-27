@@ -33,6 +33,7 @@ def _job(
     *,
     phase: str = "running",
     state: str = "running",
+    desired: str | None = None,
     root: str = "Y:/code/vaultspec-rag-worktrees/main",
     completed: int = 300,
     total: int | None = 1000,
@@ -46,7 +47,7 @@ def _job(
         "revision": 3,
         "phase": phase,
         "state": state,
-        "desired_state": state,
+        "desired_state": desired if desired is not None else state,
         "source": "code",
         "trigger": "tool",
         "started_at": 1000.0,
@@ -411,3 +412,109 @@ async def _settle(pilot: typing.Any) -> None:
         if not any(worker.is_running for worker in pilot.app.workers):
             return
     raise AssertionError("the interface's workers did not settle")
+
+
+class TestOlderServiceCompatibility:
+    """The view is read by operators whose daemon predates it.
+
+    A service is upgraded by restarting it, and nothing forces that to happen
+    before the CLI is upgraded. The payload from an older daemon is therefore
+    the normal case for a while, not an edge case.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_service_without_estimates_says_so_once(
+        self, control_service: _ControlServer
+    ) -> None:
+        """Absent is a different answer from null, and reads differently.
+
+        A daemon that never publishes the field would otherwise render every
+        row's estimate as unknown, which an operator reads as "none of my work
+        is measurable" rather than "this service does not measure".
+        """
+        job = _job("abc123def456")
+        del job["estimated_remaining_seconds"]
+        del job["progress_rate_per_second"]
+
+        app = _app([job], control_service.port)
+        async with app.run_test(size=(200, 24)) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "does not report time estimates" in painted
+
+    @pytest.mark.asyncio
+    async def test_a_service_that_declines_one_estimate_says_nothing(
+        self, control_service: _ControlServer
+    ) -> None:
+        """Present-and-null is the service declining, and is not a version gap."""
+        app = _app(
+            [_job("abc123def456", remaining=None, rate=None)],
+            control_service.port,
+        )
+        async with app.run_test(size=(200, 24)) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "does not report time estimates" not in painted
+
+    @pytest.mark.asyncio
+    async def test_a_restored_job_advertises_no_transition(
+        self, control_service: _ControlServer
+    ) -> None:
+        """A terminal job carrying a stale desired state is going nowhere.
+
+        A daemon restores jobs its previous life left running as ``interrupted``
+        while they still carry ``desired_state: running``. Painting an arrow
+        there promises a transition on work that is already over.
+
+        Proven able to fail: dropping the terminal-state test in ``_state_cell``
+        renders the arrow and fails the assertion below by name; restored, it
+        passes.
+        """
+        app = _app(
+            # The exact shape a daemon restores a job into: dead, but still
+            # carrying the desired state it held when the daemon died.
+            [
+                _job(
+                    "abc123def456",
+                    phase="interrupted",
+                    state="interrupted",
+                    desired="running",
+                )
+            ],
+            control_service.port,
+        )
+        async with app.run_test(size=(200, 24)) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "interrupted" in painted, "the terminal state itself must show"
+        assert "→ running" not in painted, (
+            "a terminal job must not advertise a transition it will never make"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_service_publishing_no_capabilities_offers_no_controls(
+        self, control_service: _ControlServer
+    ) -> None:
+        """A daemon predating job control must yield an inert, readable view."""
+        job = _job("abc123def456")
+        del job["capabilities"]
+
+        app = _app([job], control_service.port)
+        async with app.run_test(size=(200, 24)) as pilot:
+            await _ready(pilot, app)
+            for key in ("p", "u", "k", "y", "d"):
+                await pilot.press(key)
+            await pilot.pause()
+            app.action_job_pause()
+            app.action_job_delete()
+            await pilot.pause()
+            await _settle(pilot)
+            painted = _screen_text(app)
+
+        assert control_service.control_paths() == [], (
+            "no published capability means no request, by any route"
+        )
+        assert "code index" in painted, "the view must still render the jobs"
