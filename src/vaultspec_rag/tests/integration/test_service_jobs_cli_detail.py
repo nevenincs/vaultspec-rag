@@ -10,8 +10,8 @@ from typing import cast
 import pytest
 
 import vaultspec_rag.mcp._admin_client as admin
-from vaultspec_rag.cli import app
 
+from ...cli import app
 from ._service_jobs_support import (
     _DEAD_PORT,
     _cli_jobs_payload,

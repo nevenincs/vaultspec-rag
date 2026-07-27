@@ -1152,7 +1152,7 @@ def store_locked_by_another_process(root: Path) -> typing.Generator[None]:
 
     holder = textwrap.dedent(f"""
         import pathlib, time
-        from vaultspec_rag.store_runtime import VaultStore
+        from ..store_runtime import VaultStore
         VaultStore(pathlib.Path(r"{root}"))
         print("held", flush=True)
         time.sleep(120)

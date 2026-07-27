@@ -7,8 +7,7 @@ from typing import cast
 
 import pytest
 
-from vaultspec_rag.cli import app
-
+from ...cli import app
 from ._service_jobs_support import (
     _cli_jobs_payload,
     _jobs_feed_rows,

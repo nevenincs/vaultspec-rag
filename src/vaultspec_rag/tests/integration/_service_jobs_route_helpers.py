@@ -9,9 +9,10 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 import vaultspec_rag.server as _m
-from vaultspec_rag import jobs as _jobs
-from vaultspec_rag.job_models import JobSource
-from vaultspec_rag.server._routes import ROUTES
+
+from ... import jobs as _jobs
+from ...job_models import JobSource
+from ...server._routes import ROUTES
 
 __all__ = [
     "_assert_route_control_conflicts",
