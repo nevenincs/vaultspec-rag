@@ -25,19 +25,23 @@ from typing import Any, NotRequired, TypedDict, cast
 
 __all__ = [
     "CODE_COLLECTION",
+    "CODE_FILTER_KEYS",
     "CODE_INTEGER_INDEXES",
     "CODE_KEYWORD_INDEXES",
     "DEFAULT_DENSE_DIM",
     "DENSE_DISTANCE",
     "DENSE_VECTOR_NAME",
     "DOCUMENT_COLLECTION",
+    "DOCUMENT_FILTER_KEYS",
     "DOCUMENT_INTEGER_INDEXES",
     "DOCUMENT_KEYWORD_INDEXES",
+    "DOCUMENT_QUERY_FILTER_KEYS",
     "SERVER_SEGMENT_NUMBER",
     "SERVER_WAL_CAPACITY_MB",
     "SPARSE_VECTOR_NAME",
     "STORAGE_SCHEMA_VERSION",
     "VAULT_COLLECTION",
+    "VAULT_FILTER_KEYS",
     "VAULT_INTEGER_INDEXES",
     "VAULT_KEYWORD_INDEXES",
     "CodeChunkPayload",
@@ -247,6 +251,53 @@ DOCUMENT_INTEGER_INDEXES: tuple[str, ...] = (
     "unit_ordinal",
     "locator_value_int",
 )
+
+# The payload keys a caller may filter a search on, per collection. Declared
+# here beside the index sets because the two are a pair: a filter key with no
+# index behind it is either a full scan or silently unsupported, and the guard
+# over these tuples is what makes that pairing checkable.
+#
+# Deliberately a SUBSET of the index sets rather than equal to them. A code
+# search indexes `domain`, `locator_kind` and `locator_value_str` too, but
+# those reach the query through their own dedicated handling rather than as
+# raw filter keys, so admitting them here would give one concept two entry
+# points that disagree.
+#
+# The document filter learned first why this belongs in one place: it used to
+# re-list its keys, so a keyword index added to the schema was rejected as
+# unknown and the filter was dropped, returning UNFILTERED results to a caller
+# who had asked to narrow. Re-listing is the defect, wherever it happens.
+CODE_FILTER_KEYS: tuple[str, ...] = (
+    "language",
+    "path",
+    "node_type",
+    "function_name",
+    "class_name",
+)
+VAULT_FILTER_KEYS: tuple[str, ...] = ("doc_type", "feature", "date", "tag")
+DOCUMENT_FILTER_KEYS: tuple[str, ...] = (
+    "source_path",
+    "extractor_id",
+    "extractor_version",
+    "locator_kind",
+)
+
+#: Document keys accepted as inline query tokens and forwarded to the store.
+#: A superset of :data:`DOCUMENT_FILTER_KEYS`: ``locator_value_str`` is
+#: indexed and filterable but has no explicit search argument, so it can only
+#: arrive in the query text. The two sets answer different questions - which
+#: arguments a caller passed, and which keys may reach the store - and the
+#: guard pins the containment between them rather than letting one drift into
+#: standing for both.
+DOCUMENT_QUERY_FILTER_KEYS: tuple[str, ...] = (
+    *DOCUMENT_FILTER_KEYS,
+    "locator_value_str",
+)
+
+#: Filter keys whose payload field is spelled differently. ``tag`` filters one
+#: value against the ``tags`` list, so the caller's singular and the payload's
+#: plural are both correct and the translation is recorded rather than assumed.
+FILTER_KEY_PAYLOAD_FIELD: dict[str, str] = {"tag": "tags"}
 
 # Payload field names per collection, derived once from the TypedDicts so the
 # descriptor and the drift test share one source. ``__optional_keys__`` carries

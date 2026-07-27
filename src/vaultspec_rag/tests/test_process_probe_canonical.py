@@ -1469,3 +1469,123 @@ class TestOperatorCommandsHaveOneSpelling:
         assert all(
             command.startswith("vaultspec-rag server jobs") for command in rendered
         )
+
+
+class TestSearchFilterVocabularyHasOneHome:
+    """Which payload keys a search may filter on is declared once.
+
+    ``store_schema`` opens by claiming the shape "cannot drift between the
+    writer, the reader, the wire, and the reference" - and that held for
+    ``store.py``, which builds payloads and index sets from it. The FILTER side
+    did not: three builders and a validator each re-listed the key names.
+
+    The document filter learned why first. It re-listed its keys, so a keyword
+    index the schema had added was rejected as unknown and the condition was
+    dropped - handing back UNFILTERED results to a caller who had asked to
+    narrow. Its fix stopped at that one builder; the code filter and the
+    validator kept their copies until now.
+    """
+
+    def test_every_filter_key_is_backed_by_an_index(self) -> None:
+        """A filter key with no index is a full scan or silently unsupported.
+
+        Proven able to fail: adding an unindexed name to any of the three
+        tuples fails this test on the unbacked list below.
+        """
+        from .. import store_schema
+
+        for keys, indexes, label in (
+            (store_schema.CODE_FILTER_KEYS, store_schema.CODE_KEYWORD_INDEXES, "code"),
+            (
+                store_schema.VAULT_FILTER_KEYS,
+                store_schema.VAULT_KEYWORD_INDEXES,
+                "vault",
+            ),
+            (
+                store_schema.DOCUMENT_FILTER_KEYS,
+                store_schema.DOCUMENT_KEYWORD_INDEXES,
+                "document",
+            ),
+        ):
+            unbacked = [
+                key
+                for key in keys
+                if store_schema.FILTER_KEY_PAYLOAD_FIELD.get(key, key) not in indexes
+            ]
+            assert not unbacked, (
+                f"{label} filter keys with no payload index behind them: "
+                f"{unbacked}; index the field or drop it from the vocabulary"
+            )
+
+        # DOCUMENT_QUERY_FILTER_KEYS splats the argument set, so containment
+        # between the two holds by construction and asserting it would prove
+        # nothing. What is NOT guaranteed is that the keys it adds on top are
+        # indexed - the loop above only walks the argument set - so that is
+        # the assertion worth making.
+        unbacked_query_keys = [
+            key
+            for key in store_schema.DOCUMENT_QUERY_FILTER_KEYS
+            if key not in store_schema.DOCUMENT_KEYWORD_INDEXES
+        ]
+        assert not unbacked_query_keys, (
+            f"query-token filter keys with no payload index: "
+            f"{unbacked_query_keys}; the store will reject them as unknown"
+        )
+
+    def test_no_module_relists_the_filter_vocabulary(self) -> None:
+        """A collection literal holding the vocabulary is a second copy of it.
+
+        Scoped to collection literals on purpose: these field names appear all
+        over the search path as keyword arguments, payload keys and dataclass
+        fields, and those are uses of one field, not a restatement of the set.
+        What matters is a tuple or set that enumerates the vocabulary, because
+        that is what gets consulted as a whitelist and then goes stale.
+        """
+        from .. import store_schema
+
+        vocabularies = {
+            "CODE_FILTER_KEYS": frozenset(store_schema.CODE_FILTER_KEYS),
+            "VAULT_FILTER_KEYS": frozenset(store_schema.VAULT_FILTER_KEYS),
+            "DOCUMENT_FILTER_KEYS": frozenset(store_schema.DOCUMENT_FILTER_KEYS),
+            "DOCUMENT_QUERY_FILTER_KEYS": frozenset(
+                store_schema.DOCUMENT_QUERY_FILTER_KEYS
+            ),
+        }
+        offenders: list[str] = []
+        for path in _production_sources():
+            if path.name == "store_schema.py":
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Tuple | ast.List | ast.Set):
+                    continue
+                literals = {
+                    element.value
+                    for element in node.elts
+                    if isinstance(element, ast.Constant)
+                    and isinstance(element.value, str)
+                }
+                if not literals:
+                    continue
+                for name, keys in vocabularies.items():
+                    if keys <= literals:
+                        offenders.append(f"{path.name}:{node.lineno} re-lists {name}")
+        assert not offenders, (
+            f"{offenders}; import the tuple from store_schema so a key added "
+            "to the schema cannot be rejected as unknown by a stale copy"
+        )
+
+    def test_the_code_filter_admits_exactly_the_declared_keys(self) -> None:
+        """The builder must read the schema, not a list of its own."""
+        import inspect
+
+        from .._store_search import _VaultSearchMixin
+
+        source = inspect.getsource(_VaultSearchMixin._build_code_filter)
+        assert "CODE_FILTER_KEYS" in source, (
+            "the code filter must take its whitelist from store_schema, the "
+            "same way the document filter does"
+        )
