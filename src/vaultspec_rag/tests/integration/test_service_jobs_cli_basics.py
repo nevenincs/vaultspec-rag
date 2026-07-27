@@ -53,7 +53,6 @@ def test_jobs_subcommand_registered() -> None:
         "--since",
         "--watch",
         "--interval",
-        "--refresh-count",
     )
     missing = [flag for flag in expected_flags if flag not in result.stdout]
     assert not missing, f"missing flags in help: {missing}"
@@ -61,6 +60,9 @@ def test_jobs_subcommand_registered() -> None:
     assert "--source" not in result.stdout
     assert "--trigger" not in result.stdout
     assert "--running" not in result.stdout
+    # --watch hands the terminal to an interactive application the operator
+    # leaves when done, so there is no refresh budget to bound.
+    assert "--refresh-count" not in result.stdout
 
 
 @pytest.mark.unit
@@ -75,8 +77,8 @@ def test_jobs_help_uses_operator_language() -> None:
         "manual requests",
         "index update activity",
         "Show only failed jobs",
-        "Continuously refresh the human jobs view",
-        "Stop --watch after this many refreshes",
+        "Open the interactive jobs interface with per-job controls",
+        "Seconds between refreshes in the interactive interface",
         "active, waiting, finished, failed, or cancelled",
     )
     missing = [phrase for phrase in expected_phrases if phrase not in normalized]
@@ -89,6 +91,9 @@ def test_jobs_help_uses_operator_language() -> None:
         "index/reindex",
         "failed/error",
         "running, done, or failed",
+        # The reprint loop these described was replaced by the interface.
+        "Continuously refresh the human jobs view",
+        "Stop --watch after this many refreshes",
     )
     leaked = [phrase for phrase in forbidden_phrases if phrase in normalized]
     assert not leaked, f"internal phrasing leaked into help: {leaked}"

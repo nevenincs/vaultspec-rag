@@ -35,15 +35,28 @@ from ._ports import free_loopback_port
 if TYPE_CHECKING:
     from pathlib import Path
 
-#: Budget for one `server stop --orphans` subprocess. The reap walks the whole
-#: process table, and the CLI is a fresh process every time, so it always pays
-#: the COLD walk: measured at 65.4s on a host with ~1400 processes, against
-#: 3.8-5.6s warm. A 60s budget therefore killed these guards on
-#: `TimeoutExpired` before a single safety assertion ran - they reported a
-#: failure that said nothing about whether the reap spares the singleton, which
-#: is the only thing they exist to check. The integration tier already carries
-#: this figure; the unit tier now shares it rather than rediscovering it.
-_REAP_SUBPROCESS_BUDGET_SECONDS = 240.0
+#: Budget for one `server stop --orphans` subprocess, measured at 3.2-3.6s on a
+#: host with ~1700 processes: CLI startup, one process-table sweep, and the
+#: second-long loopback identity probes.
+#:
+#: This was 240s while the sweep read every process's `ppid` eagerly, which on
+#: Windows costs a full-system snapshot PER PROCESS and put a single reap at
+#: 65-86s. Reading that attribute only for the processes whose command line
+#: already matched cut the sweep to well under a second, and the budget follows
+#: it down. Keep the headroom generous - a busy host is not a hung reap - but
+#: not so generous that a genuinely wedged sweep parks the suite for minutes.
+_REAP_SUBPROCESS_BUDGET_SECONDS = 60.0
+
+#: How long a witness daemon stays alive. It must outlive the WHOLE guard, not
+#: just the reap: the guard sweeps the process table once in-process to
+#: enumerate the witnesses and once more inside the out-of-process reap. When
+#: each of those cost ~70s the witnesses expired MID-GUARD - every pair died of
+#: old age, the reap reported `reaped: 0` because nothing was left to reap, and
+#: the spare assertion passed over a singleton nothing had killed. Funding one
+#: budget for the reap plus a second for the enumeration preceding it keeps the
+#: reap the only thing that can end a witness, which is the premise every
+#: safety assertion here rests on.
+_WITNESS_LIFETIME_SECONDS = 2 * _REAP_SUBPROCESS_BUDGET_SECONDS
 
 
 pytestmark = [pytest.mark.unit]
@@ -90,7 +103,7 @@ def _spawn_witness_daemon(port: int) -> subprocess.Popen[bytes]:
     argv = [
         sys.executable,
         "-c",
-        "import time; time.sleep(120)",
+        f"import time; time.sleep({_WITNESS_LIFETIME_SECONDS})",
         "-m",
         "vaultspec_rag.server",
         "--port",
@@ -110,16 +123,73 @@ def _spawn_witness_daemon(port: int) -> subprocess.Popen[bytes]:
 _PROCS_PER_DAEMON = 2 if sys.platform == "win32" else 1
 
 
-def _wait_for_matched(port: int, count: int) -> dict[int, int]:
-    """Wait until at least *count* witness processes enumerate for *port*."""
+def _descendants(launchers: list[int]) -> set[int]:
+    """Return every live launcher in *launchers* plus its spawned children."""
+    live: set[int] = set()
+    for pid in launchers:
+        try:
+            process = psutil.Process(pid)
+            live.add(pid)
+            live.update(child.pid for child in process.children(recursive=True))
+        except psutil.Error:
+            continue
+    return live
+
+
+def _wait_for_matched(port: int, launchers: list[int], count: int) -> dict[int, int]:
+    """Wait until at least *count* witness processes enumerate for *port*.
+
+    The production enumerator is what the count is taken from - it is the thing
+    whose visibility of the witnesses this wait exists to establish - but it is
+    asked only once the witnesses are known to be up. It reads the command line
+    of EVERY process on the machine, so polling on it spends a full-table sweep
+    per tick, and a spawn slowed by a loaded host is then paid for at roughly a
+    second and a half a look. That put the ceiling of this wait alone near the
+    suite's whole per-test timeout while the answer it waits for is a fact
+    about two child processes.
+
+    So the tick runs on the launchers' own descendants, which costs a handle
+    per known pid and nothing per stranger, and the sweep is reached only when
+    there is something for it to find.
+    """
+    deadline = time.monotonic() + 30.0
+    while time.monotonic() < deadline and len(_descendants(launchers)) < count:
+        time.sleep(0.05)
+
     matched: dict[int, int] = {}
-    for _ in range(100):
+    # A process can be spawned a moment before its command line is readable,
+    # so the authoritative sweep still gets its own (small) retry budget.
+    for _ in range(10):
         matched = _orphan_daemon_pids(port)
         if len(matched) >= count:
             return matched
         time.sleep(0.1)
     msg = f"only {len(matched)} of {count} witness processes enumerated on {port}"
     raise AssertionError(msg)
+
+
+def _kill_witnesses(procs: list[subprocess.Popen[bytes]]) -> None:
+    """Kill every witness launcher and the worker child its shim spawned.
+
+    Killing a launcher leaves its worker running, so the stragglers have to be
+    collected before the launchers die. Reading them off the launchers costs a
+    handle each; sweeping the process table for them costs a command-line read
+    of every process on the machine, once per port, purely to rediscover pids
+    descended from processes this test spawned itself.
+
+    A witness that neither route reaches still expires on its own: the sleeper
+    is spawned with a bounded lifetime, which is the backstop this relies on.
+    """
+    stragglers: set[int] = set()
+    for proc in procs:
+        stragglers.update(_descendants([proc.pid]) - {proc.pid})
+    for proc in procs:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+    for pid in stragglers:
+        with contextlib.suppress(Exception):
+            psutil.Process(pid).kill()
 
 
 def _pair_of(launcher_pid: int, matched: dict[int, int]) -> set[int]:
@@ -201,6 +271,19 @@ def _reap_via_subprocess(port: int) -> dict[str, object]:
     raise AssertionError(msg)
 
 
+def _reaped_pids(envelope: dict[str, object]) -> set[int]:
+    """Return the pids the reap claims to have terminated, per its envelope."""
+    data = envelope.get("data")
+    if not isinstance(data, dict):
+        msg = f"reap envelope carried no data mapping: {envelope!r}"
+        raise AssertionError(msg)
+    raw = cast("dict[str, object]", data).get("reaped_pids")
+    if not isinstance(raw, list):
+        msg = f"reap envelope carried no reaped_pids list: {envelope!r}"
+        raise AssertionError(msg)
+    return {int(cast("int", pid)) for pid in cast("list[object]", raw)}
+
+
 def _spawn_lock_holding_daemon(port: int) -> subprocess.Popen[bytes]:
     """Spawn a witness that HOLDS the machine lock, publishing no pointer.
 
@@ -218,7 +301,7 @@ def _spawn_lock_holding_daemon(port: int) -> subprocess.Popen[bytes]:
         "from vaultspec_rag._machine_lock import acquire_machine_lock_lease;"
         "lease, holder = acquire_machine_lock_lease();"
         "assert lease is not None, holder;"
-        "time.sleep(120)"
+        f"time.sleep({_WITNESS_LIFETIME_SECONDS})"
     )
     argv = [
         sys.executable,
@@ -275,7 +358,9 @@ class TestOrphanReapSafety:
             procs = [singleton, orphan, foreign]
 
             # Each witness spawn is a shim launcher + worker pair; wait for both.
-            matched = _wait_for_matched(port, count=2 * _PROCS_PER_DAEMON)
+            matched = _wait_for_matched(
+                port, [singleton.pid, orphan.pid], count=2 * _PROCS_PER_DAEMON
+            )
             singleton_pair = _pair_of(singleton.pid, matched)
             orphan_pair = _pair_of(orphan.pid, matched)
 
@@ -283,6 +368,20 @@ class TestOrphanReapSafety:
             _write_service_status(singleton.pid, port)
             envelope = _reap_via_subprocess(port)
             assert envelope["ok"] is True, envelope
+
+            # Attribute the deaths to the REAP before reading liveness. A
+            # witness that outran its own lifetime is terminated too, so a
+            # gone-pid assertion alone once passed over a guard in which the
+            # reap had killed nothing at all - it reported `reaped: 0` while
+            # every pair, the out-of-scope foreign daemon included, had expired.
+            # Requiring the reap to NAME the pids it ended, and to name nothing
+            # outside the orphan pair, is what makes the sparing assertions below
+            # evidence about the reaper rather than about the clock.
+            claimed = _reaped_pids(envelope)
+            assert claimed and claimed <= orphan_pair, (
+                f"the reap must name the orphans it ended and nothing else: "
+                f"reaped {claimed}, orphan pair {orphan_pair}"
+            )
 
             _await_all_terminated(orphan_pair)
             assert all(_pid_terminated(pid) for pid in orphan_pair), (
@@ -297,14 +396,7 @@ class TestOrphanReapSafety:
             )
         finally:
             reset_config()
-            for proc in procs:
-                if proc.poll() is None:
-                    proc.kill()
-                    proc.wait(timeout=5)
-            for straggler_port in (port, foreign_port):
-                for pid in _orphan_daemon_pids(straggler_port):
-                    with contextlib.suppress(Exception):
-                        psutil.Process(pid).kill()
+            _kill_witnesses(procs)
 
     def test_reap_spares_singleton_pair_when_worker_is_the_pointer(
         self,
@@ -326,7 +418,9 @@ class TestOrphanReapSafety:
             singleton = _spawn_witness_daemon(port)
             orphan = _spawn_witness_daemon(port)
             procs = [singleton, orphan]
-            matched = _wait_for_matched(port, count=2 * _PROCS_PER_DAEMON)
+            matched = _wait_for_matched(
+                port, [singleton.pid, orphan.pid], count=2 * _PROCS_PER_DAEMON
+            )
             singleton_pair = _pair_of(singleton.pid, matched)
             orphan_pair = _pair_of(orphan.pid, matched)
             workers = singleton_pair - {singleton.pid}
@@ -352,13 +446,7 @@ class TestOrphanReapSafety:
             )
         finally:
             reset_config()
-            for proc in procs:
-                if proc.poll() is None:
-                    proc.kill()
-                    proc.wait(timeout=5)
-            for pid in _orphan_daemon_pids(port):
-                with contextlib.suppress(Exception):
-                    psutil.Process(pid).kill()
+            _kill_witnesses(procs)
 
     def test_reap_spares_the_lock_holding_singleton_without_a_pointer(
         self,
@@ -381,7 +469,9 @@ class TestOrphanReapSafety:
             singleton = _spawn_lock_holding_daemon(port)
             orphan = _spawn_witness_daemon(port)
             procs = [singleton, orphan]
-            matched = _wait_for_matched(port, count=2 * _PROCS_PER_DAEMON)
+            matched = _wait_for_matched(
+                port, [singleton.pid, orphan.pid], count=2 * _PROCS_PER_DAEMON
+            )
             singleton_pair = _pair_of(singleton.pid, matched)
             orphan_pair = _pair_of(orphan.pid, matched)
 
@@ -403,10 +493,4 @@ class TestOrphanReapSafety:
             )
         finally:
             reset_config()
-            for proc in procs:
-                if proc.poll() is None:
-                    proc.kill()
-                    proc.wait(timeout=5)
-            for pid in _orphan_daemon_pids(port):
-                with contextlib.suppress(Exception):
-                    psutil.Process(pid).kill()
+            _kill_witnesses(procs)

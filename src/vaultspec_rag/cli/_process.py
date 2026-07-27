@@ -65,7 +65,6 @@ __all__ = [
     "_port_is_available",
     "_probe_daemon_cuda",
     "_resolve_daemon_interpreter",
-    "_service_child_env",
     "_spawn_service",
     "_terminate_pid",
 ]
@@ -300,13 +299,6 @@ class _ServiceChildEnvRequest:
     qdrant: bool | None = None
     local_only: bool | None = None
     preprocess_mode: Literal["off"] | None = None
-
-
-def _service_child_env(
-    **options: Unpack[_ServiceChildEnvOptions],
-) -> dict[str, str]:
-    """Build the environment for the detached daemon process."""
-    return _build_service_child_env(_ServiceChildEnvRequest(**options))
 
 
 def _build_service_child_env(request: _ServiceChildEnvRequest) -> dict[str, str]:
@@ -801,16 +793,19 @@ def _scan_witness_pids(*, port: int, launch_token: str) -> dict[int, float] | st
     found: dict[int, float] = {}
     try:
         for info in iter_process_info(["pid", "cmdline", "create_time"]):
-            created = info.get("create_time")
-            if (
-                not isinstance(created, int | float)
-                or created <= 0.0
-                or not _is_service_command(
-                    info.get("cmdline"),
-                    port,
-                    launch_token=launch_token,
-                )
+            # The argv witness is the cheap discriminator and MUST be tested
+            # first: the scan reads attributes lazily, and `create_time` costs a
+            # full-system snapshot per process, so leading with it would pay
+            # that for every process on the machine instead of the handful
+            # carrying this launch token.
+            if not _is_service_command(
+                info.get("cmdline"),
+                port,
+                launch_token=launch_token,
             ):
+                continue
+            created = info.get("create_time")
+            if not isinstance(created, int | float) or created <= 0.0:
                 continue
             raw_pid = info.get("pid")
             if isinstance(raw_pid, int) and not isinstance(raw_pid, bool):

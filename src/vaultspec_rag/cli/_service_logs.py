@@ -27,7 +27,7 @@ from ..logging_config import (
 )
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
-from ._app import server_app
+from ._app import JSON_OPTION_HELP, server_app
 from ._render import _emit_json, _emit_json_error_and_exit, _plain
 
 if TYPE_CHECKING:
@@ -89,7 +89,7 @@ class _ServiceLogsCommand(TyperCommand):
                     param_decls=["--json"],
                     default=False,
                     is_flag=True,
-                    help="Emit JSON for scripts instead of human text.",
+                    help=JSON_OPTION_HELP,
                 ),
             )
         )

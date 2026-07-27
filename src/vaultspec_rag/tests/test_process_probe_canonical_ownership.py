@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import itertools
 import os
 import tempfile
 from pathlib import Path
@@ -96,9 +97,12 @@ def _repeated_return_offenders() -> list[str]:
 def _repeated_returns(
     path: Path, function: ast.FunctionDef | ast.AsyncFunctionDef
 ) -> list[str]:
+    # ``pairwise``, not a zip of the body against its own tail: the tail is
+    # always one shorter, so a strict zip raises on every function with a body
+    # and the scan reported a crash instead of a finding.
     return [
         f"{path.name}:{statement.lineno} in {function.name}()"
-        for statement, following in zip(function.body, function.body[1:], strict=True)
+        for statement, following in itertools.pairwise(function.body)
         if _same_guarded_return(statement, following)
     ]
 
@@ -867,6 +871,10 @@ class TestNoGuardedReturnRepeatsItsFallback:
     """
 
     def test_no_branch_returns_what_the_fallback_returns(self) -> None:
+        """Proven able to fail: adding a function whose guarded branch returns
+        the same constant as its fallback fails this on the offender list
+        below, naming that function.
+        """
         find_offenders = _repeated_return_offenders()
         assert not find_offenders, (
             f"a guarded return repeats its fallback at {find_offenders}; the "

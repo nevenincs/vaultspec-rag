@@ -15,6 +15,7 @@ from ._cli_helpers import (
     _empty_search_contract_server,
     _expected_code_search_request,
     _invoke_search_contract,
+    _invoke_timed_out_search,
     _label_values,
     _plain_lines,
     _search_output_contract_server,
@@ -460,31 +461,7 @@ class TestSearchSafetyContract:
         self, tmp_path: Path
     ) -> None:
         """Default search timeout output is natural text, not a backend table."""
-        (tmp_path / ".vaultspec").mkdir()
-        server, thread = _slow_search_contract_server()
-        port = server.server_address[1]
-        try:
-            result = runner.invoke(
-                app,
-                [
-                    "--target",
-                    str(tmp_path),
-                    "search",
-                    "service status jobs logs timeout diagnostics",
-                    "--type",
-                    "code",
-                    "--max-results",
-                    "3",
-                    "--port",
-                    str(port),
-                    "--timeout",
-                    "0.001",
-                ],
-            )
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=5)
+        result, port = _invoke_timed_out_search(tmp_path)
 
         assert result.exit_code == 1, result.output
         labels = _label_values(result.output)
@@ -523,38 +500,15 @@ class TestSearchSafetyContract:
     def test_search_timeout_missing_health_status_is_reported_absence(
         self, tmp_path: Path
     ) -> None:
-        (tmp_path / ".vaultspec").mkdir()
-        server, thread = _slow_search_contract_server(
+        result, _port = _invoke_timed_out_search(
+            tmp_path,
             health_payload={
                 "project_count": 1,
                 "backend_capabilities": {
                     "same_project_search_strategy": "serialized",
                 },
-            }
+            },
         )
-        port = server.server_address[1]
-        try:
-            result = runner.invoke(
-                app,
-                [
-                    "--target",
-                    str(tmp_path),
-                    "search",
-                    "service status jobs logs timeout diagnostics",
-                    "--type",
-                    "code",
-                    "--max-results",
-                    "3",
-                    "--port",
-                    str(port),
-                    "--timeout",
-                    "0.001",
-                ],
-            )
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=5)
 
         assert result.exit_code == 1, result.output
         labels = _label_values(result.output)
@@ -569,8 +523,8 @@ class TestSearchSafetyContract:
     def test_search_timeout_jobs_error_is_reported_absence(
         self, tmp_path: Path
     ) -> None:
-        (tmp_path / ".vaultspec").mkdir()
-        server, thread = _slow_search_contract_server(
+        result, _port = _invoke_timed_out_search(
+            tmp_path,
             jobs_payload={
                 "ok": False,
                 "error": "jobs_unavailable",
@@ -578,29 +532,6 @@ class TestSearchSafetyContract:
             },
             jobs_status_code=503,
         )
-        port = server.server_address[1]
-        try:
-            result = runner.invoke(
-                app,
-                [
-                    "--target",
-                    str(tmp_path),
-                    "search",
-                    "service status jobs logs timeout diagnostics",
-                    "--type",
-                    "code",
-                    "--max-results",
-                    "3",
-                    "--port",
-                    str(port),
-                    "--timeout",
-                    "0.001",
-                ],
-            )
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=5)
 
         assert result.exit_code == 1, result.output
         labels = _label_values(result.output)
@@ -616,32 +547,7 @@ class TestSearchSafetyContract:
         self, tmp_path: Path
     ) -> None:
         """JSON timeout output keeps full diagnostic fields for agents."""
-        (tmp_path / ".vaultspec").mkdir()
-        server, thread = _slow_search_contract_server()
-        port = server.server_address[1]
-        try:
-            result = runner.invoke(
-                app,
-                [
-                    "--target",
-                    str(tmp_path),
-                    "search",
-                    "service status jobs logs timeout diagnostics",
-                    "--type",
-                    "code",
-                    "--max-results",
-                    "3",
-                    "--port",
-                    str(port),
-                    "--timeout",
-                    "0.001",
-                    "--json",
-                ],
-            )
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=5)
+        result, _port = _invoke_timed_out_search(tmp_path, "--json")
 
         assert result.exit_code == 1, result.output
         envelope = json.loads(result.output)

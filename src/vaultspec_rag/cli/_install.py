@@ -16,7 +16,7 @@ from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStub
 
 import vaultspec_rag.cli as _cli
 
-from ._app import _global_target, app
+from ._app import JSON_OPTION_HELP, _global_target, app
 from ._render import _plain, _render_install_report, _render_uninstall_report
 
 if TYPE_CHECKING:
@@ -218,7 +218,7 @@ class _InstallCommand(TyperCommand):
                     param_decls=["--json"],
                     default=False,
                     is_flag=True,
-                    help="Emit JSON for scripts instead of human text.",
+                    help=JSON_OPTION_HELP,
                 ),
             )
         )
@@ -264,9 +264,19 @@ class _InstallCommand(TyperCommand):
     "install",
     cls=_InstallCommand,
     help=(
-        "Set up vaultspec-rag in a workspace. By default, install also "
-        "provisions the external dependencies required by the server-first "
-        "default; use --local-only for the minimal local backend."
+        "Set up vaultspec-rag in a workspace.\n\n"
+        "Creates the required workspace folders, installs bundled rules and "
+        "integration files, and syncs the files used by supported tools. By "
+        "default, install also provisions the external dependencies the "
+        "server-first default needs - the embedding/reranker models and the "
+        "pinned Qdrant server binary - and ensures the optional MCP extra so "
+        "the agent-facing MCP search surface can run, and asks before changing "
+        "PyTorch package configuration. Use --local-only for the minimal local "
+        "backend (skips the binary), the finer "
+        "--skip-torch/--skip-models/--skip-qdrant flags for partial opt-out, "
+        "--no-mcp for a CLI-only workspace without the mcp dependency, and "
+        "--no-provision to set up the workspace only; use --yes or "
+        "--no-torch-config for non-interactive runs."
     ),
 )
 def handle_install() -> None:
@@ -274,20 +284,7 @@ def handle_install() -> None:
 
 
 def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
-    """Set up vaultspec-rag in a workspace.
-
-    Creates the required workspace folders, installs bundled rules and
-    integration files, and syncs the files used by supported tools. By
-    default, install also provisions the external dependencies the
-    server-first default needs - the embedding/reranker models and the
-    pinned Qdrant server binary - and ensures the optional MCP extra so the
-    agent-facing MCP search surface can run, and asks before changing PyTorch
-    package configuration. Use --local-only for the minimal local backend (skips
-    the binary), the finer --skip-torch/--skip-models/--skip-qdrant flags
-    for partial opt-out, --no-mcp for a CLI-only workspace without the mcp
-    dependency, and --no-provision to set up the workspace only; use --yes
-    or --no-torch-config for non-interactive runs.
-    """
+    """Enrol the workspace and provision dependencies for one install request."""
     import sys as _sys
 
     from rich.prompt import Confirm
@@ -460,7 +457,7 @@ class _UninstallCommand(TyperCommand):
                     param_decls=["--json"],
                     default=False,
                     is_flag=True,
-                    help="Emit JSON for scripts instead of human text.",
+                    help=JSON_OPTION_HELP,
                 ),
             )
         )

@@ -33,9 +33,9 @@ from ...indexer._run_ledger_models import (
 from ...indexer._run_ledger_runtime import RunLedger
 from ...job_models import JobSource
 from ...service import ServiceRegistry
-from ...watcher_intake import _record_watcher_changes, _WatcherChangeRouting
+from ...watcher_intake import _record_watcher_changes
 from ...watcher_retry import WatcherRetryPolicy, WatcherSource
-from ...watcher_runtime import _WatcherConvergenceSlot
+from ...watcher_runtime import _WatcherChangeRouting, _WatcherConvergenceSlot
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -143,24 +143,23 @@ def _start_incomplete_clean_code_generation(root: Path, rel_path: str) -> None:
     )
 
 
-def test_deleted_path_uses_prior_ledger_owner_not_current_route(
-    clean_config: None,
-    tmp_path: Path,
-) -> None:
-    del clean_config
-    rel_path = "removed.txt"
-    deleted = tmp_path / rel_path
-    _record_prior_code_owner(tmp_path, rel_path)
+def _assert_deletion_routes_to_the_code_slot(root: Path, deleted: Path) -> None:
+    """Record one deletion and assert only the code slot claimed it.
+
+    The policy routes ``removed.txt`` to the document domain, so a deletion
+    landing on the code slot can only have come from the ledger's record of
+    who indexed the path, not from the current route.
+    """
     registry = ServiceRegistry()
     try:
-        vault, code, document = _slots(tmp_path, registry)
+        vault, code, document = _slots(root, registry)
 
         observed = _record_watcher_changes(
             [(Change.deleted, str(deleted))],
             routing=_WatcherChangeRouting(
-                root_dir=tmp_path,
-                vault_dir=tmp_path / ".vault",
-                policy=_policy(tmp_path),
+                root_dir=root,
+                vault_dir=root / ".vault",
+                policy=_policy(root),
                 vault_slot=vault,
                 code_slot=code,
                 document_slot=document,
@@ -172,6 +171,17 @@ def test_deleted_path_uses_prior_ledger_owner_not_current_route(
         assert document.dirty_paths() == frozenset()
     finally:
         registry.close_all()
+
+
+def test_deleted_path_uses_prior_ledger_owner_not_current_route(
+    clean_config: None,
+    tmp_path: Path,
+) -> None:
+    del clean_config
+    rel_path = "removed.txt"
+    _record_prior_code_owner(tmp_path, rel_path)
+
+    _assert_deletion_routes_to_the_code_slot(tmp_path, tmp_path / rel_path)
 
 
 def test_deleted_path_keeps_prior_owner_across_an_incomplete_clean(
@@ -180,30 +190,10 @@ def test_deleted_path_keeps_prior_owner_across_an_incomplete_clean(
 ) -> None:
     del clean_config
     rel_path = "removed.txt"
-    deleted = tmp_path / rel_path
     _record_prior_code_owner(tmp_path, rel_path)
     _start_incomplete_clean_code_generation(tmp_path, rel_path)
-    registry = ServiceRegistry()
-    try:
-        vault, code, document = _slots(tmp_path, registry)
 
-        observed = _record_watcher_changes(
-            [(Change.deleted, str(deleted))],
-            routing=_WatcherChangeRouting(
-                root_dir=tmp_path,
-                vault_dir=tmp_path / ".vault",
-                policy=_policy(tmp_path),
-                vault_slot=vault,
-                code_slot=code,
-                document_slot=document,
-            ),
-        )
-
-        assert observed == (False, True, False)
-        assert code.dirty_paths() == frozenset({deleted})
-        assert document.dirty_paths() == frozenset()
-    finally:
-        registry.close_all()
+    _assert_deletion_routes_to_the_code_slot(tmp_path, tmp_path / rel_path)
 
 
 def test_policy_control_event_schedules_code_and_document_independently(

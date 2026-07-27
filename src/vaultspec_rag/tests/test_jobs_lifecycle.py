@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -24,6 +23,8 @@ from ..jobs import (
     reset,
     snapshot,
 )
+from ._job_roots import _TEST_PROJECT_ROOT
+from ._jobs_restore_helpers import job_recorded_by_a_now_dead_process
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -31,10 +32,6 @@ if TYPE_CHECKING:
 
 
 pytestmark = [pytest.mark.unit]
-
-_TEST_PROJECT_ROOT = os.path.abspath(os.path.join(os.sep, "project"))
-_TEST_PROJECT_ROOT_OTHER = os.path.abspath(os.path.join(os.sep, "other"))
-_TEST_PROJECT_ROOT_DIFFERENT = os.path.abspath(os.path.join(os.sep, "different"))
 
 
 class TestJobsLifecycle:
@@ -516,13 +513,12 @@ class TestInterruptedJobRestore:
         reset()
         reset_config()
 
-    def test_running_job_survives_a_simulated_daemon_death(self) -> None:
+    def test_running_job_survives_a_daemon_death(self) -> None:
         from ..jobs import restore_interrupted
 
-        job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
-        # Simulate the daemon dying: the in-memory ring vanishes, the
-        # persisted snapshot stays.
-        reset()
+        job_id = job_recorded_by_a_now_dead_process()
+        # The daemon that started the job is gone: this process never held it
+        # in memory, and only the persisted snapshot remains.
         assert snapshot() == []
         assert restore_interrupted() == 1
         records = {r["id"]: r for r in snapshot()}
@@ -536,17 +532,14 @@ class TestInterruptedJobRestore:
     def test_finished_jobs_are_not_restored(self) -> None:
         from ..jobs import restore_interrupted
 
-        job_id = record_start(JobSource.VAULT, "tool")
-        record_finish(job_id, result="ok")
-        reset()
+        job_recorded_by_a_now_dead_process(finished=True)
         assert restore_interrupted() == 0
         assert snapshot() == []
 
     def test_restore_is_not_repeated_on_second_startup(self) -> None:
         from ..jobs import restore_interrupted
 
-        record_start(JobSource.CODE, "tool")
-        reset()
+        job_recorded_by_a_now_dead_process()
         assert restore_interrupted() == 1
         reset()
         assert restore_interrupted() == 0

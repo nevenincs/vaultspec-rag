@@ -254,9 +254,6 @@ class CodeConsumerPipeline:
         reporter = run.reporter
         checkpoint = run.checkpoint
         limits = run.limits
-        content_epoch = run.content_epoch
-        code_build_target = run.code_build_target
-        ingest_wait = run.ingest_wait
         run_control = run.run_control
 
         # One donor resolution per run: the consumer thread reads the
@@ -265,7 +262,7 @@ class CodeConsumerPipeline:
             self._root_dir,
             CollectionKind.CODE,
             self._store,
-            expected_content_epoch=content_epoch or "",
+            expected_content_epoch=run.content_epoch or "",
         )
         new_ids: set[str] = set()
         new_ids.update(checkpoint.ledger.iter_point_ids(checkpoint.generation_id))
@@ -282,7 +279,7 @@ class CodeConsumerPipeline:
         # the duplicate is refused here and keeps serving what it has, which is
         # the whole reason the build never touches the served collection.
         duplicate_points = (
-            self._store.count_code() if code_build_target is not None else 0
+            self._store.count_code() if run.code_build_target is not None else 0
         )
         self._store.disk_headroom_preflight(
             len(paths) * _CHUNKS_PER_FILE_ESTIMATE + duplicate_points
@@ -306,9 +303,9 @@ class CodeConsumerPipeline:
                 total=total,
                 metadata=metadata,
                 checkpoint=checkpoint,
-                ingest_wait=ingest_wait,
+                ingest_wait=run.ingest_wait,
                 run_control=run_control,
-                code_build_target=code_build_target,
+                code_build_target=run.code_build_target,
                 donor_reuse=donor_reuse,
             )
             consumer = self._spawn_weighted_consumer(consumer_run)

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 
 from ...progress import NullProgressReporter
-from ._helpers import _document_policy
+from ._helpers import _document_policy, _full_index_code_then_document
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -152,7 +152,6 @@ def test_code_and_document_publish_independent_generation_signatures(
 ) -> None:
     from ... import store_schema
     from ...config._settings import get_config
-    from ...indexer import CodebaseIndexer, DocumentIndexer
     from ...indexer._content_policy import ContentKind
     from ...indexer._document_meta import read_document_meta
     from ...indexer._run_ledger_models import index_run_ledger_path
@@ -167,25 +166,11 @@ def test_code_and_document_publish_independent_generation_signatures(
     policy = _document_policy("guide.txt")
     store = VaultStore(tmp_path)
     try:
-        code_indexer = CodebaseIndexer(
+        _, document_indexer = _full_index_code_then_document(
             tmp_path,
             embedding_model,
             store,
-            options=CodebaseIndexer.Options(content_policy=policy),
-        )
-        document_indexer = DocumentIndexer(
-            tmp_path,
-            embedding_model,
-            store,
-            content_policy=policy,
-        )
-        code_indexer.full_index(
-            reporter=NullProgressReporter(),
-            preflight=code_indexer.preflight_content(),
-        )
-        document_indexer.full_index(
-            reporter=NullProgressReporter(),
-            preflight=document_indexer.preflight_content(),
+            policy,
         )
 
         ledger = RunLedger(index_run_ledger_path(tmp_path / get_config().data_dir))

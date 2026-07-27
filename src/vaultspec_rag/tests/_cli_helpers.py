@@ -560,6 +560,52 @@ def _slow_search_contract_server(
     return server, thread
 
 
+def _invoke_timed_out_search(
+    tmp_path: Path,
+    *extra: str,
+    health_payload: dict[str, object] | None = None,
+    jobs_payload: dict[str, object] | None = None,
+    jobs_status_code: int = 200,
+) -> tuple[typing.Any, int]:
+    """Run one CLI search whose service answers /search too slowly.
+
+    Returns the CLI result and the port, which the diagnostic under test
+    quotes back. The service is shut down before the caller asserts, so a
+    failing assertion cannot leave the contract server running.
+    """
+    (tmp_path / ".vaultspec").mkdir()
+    server, thread = _slow_search_contract_server(
+        health_payload=health_payload,
+        jobs_payload=jobs_payload,
+        jobs_status_code=jobs_status_code,
+    )
+    port = server.server_address[1]
+    try:
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "search",
+                "service status jobs logs timeout diagnostics",
+                "--type",
+                "code",
+                "--max-results",
+                "3",
+                "--port",
+                str(port),
+                "--timeout",
+                "0.001",
+                *extra,
+            ],
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+    return result, port
+
+
 def _search_output_contract_server() -> tuple[typing.Any, typing.Any, list[object]]:
     """Start a local service returning deterministic search results."""
     import threading

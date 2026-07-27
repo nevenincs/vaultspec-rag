@@ -270,6 +270,19 @@ class _EncodedSearchQuery:
 
 
 @dataclass(frozen=True, slots=True)
+class _SearchSurface[ResultT, OptionsT, ArgumentsT]:
+    """One searchable collection: its encoder surface and its own pipeline.
+
+    Names everything that varies between the per-collection timed searches, so
+    the encode-then-time-then-search sequence they share is written once.
+    """
+
+    name: str
+    options: Callable[[ArgumentsT], OptionsT]
+    run: Callable[[VaultSearcher, _EncodedSearchQuery, OptionsT], list[ResultT]]
+
+
+@dataclass(frozen=True, slots=True)
 class _CodebaseCandidateRequest:
     """All inputs required by codebase candidate retrieval."""
 
@@ -1032,12 +1045,32 @@ class VaultSearcher:
         Returns:
             Ranked list of vault SearchResult instances.
         """
-        results, _timings = self.search_vault_timed(
+        return self.search_vault_timed(raw_query, top_k=top_k, **options)[0]
+
+    def _surface_timed[ResultT, OptionsT, ArgumentsT](
+        self,
+        surface: _SearchSurface[ResultT, OptionsT, ArgumentsT],
+        raw_query: str,
+        top_k: int,
+        arguments: ArgumentsT,
+    ) -> tuple[list[ResultT], dict[str, float]]:
+        """Encode once for *surface*, then run that collection's pipeline."""
+        timings: dict[str, float] = {}
+        phase_started = time.perf_counter()
+        parsed, query_text, query_vector, sparse_vector = self._encode_query(
             raw_query,
-            top_k=top_k,
-            **options,
+            surface=surface.name,
+            timings=timings,
         )
-        return results
+        timings[PHASE_EMBEDDING] = time.perf_counter() - phase_started
+        results = surface.run(
+            self,
+            _EncodedSearchQuery(
+                parsed, query_text, query_vector, sparse_vector, top_k, timings
+            ),
+            surface.options(arguments),
+        )
+        return results, timings
 
     def search_vault_timed(
         self,
@@ -1046,21 +1079,7 @@ class VaultSearcher:
         **options: Unpack[VaultSearchOptionArguments],
     ) -> tuple[list[SearchResult], dict[str, float]]:
         """Search vault and return phase timings for service diagnostics."""
-        timings: dict[str, float] = {}
-        phase_started = time.perf_counter()
-        parsed, query_text, query_vector, sparse_vector = self._encode_query(
-            raw_query,
-            surface="vault",
-            timings=timings,
-        )
-        timings[PHASE_EMBEDDING] = time.perf_counter() - phase_started
-        results = self._search_vault_encoded(
-            _EncodedSearchQuery(
-                parsed, query_text, query_vector, sparse_vector, top_k, timings
-            ),
-            VaultSearchOptions(**options),
-        )
-        return results, timings
+        return self._surface_timed(_VAULT_SURFACE, raw_query, top_k, options)
 
     def search_codebase(
         self,
@@ -1100,12 +1119,7 @@ class VaultSearcher:
         Returns:
             Ranked list of codebase SearchResult instances.
         """
-        results, _timings = self.search_codebase_timed(
-            raw_query,
-            top_k=top_k,
-            **options,
-        )
-        return results
+        return self.search_codebase_timed(raw_query, top_k=top_k, **options)[0]
 
     def search_document(
         self,
@@ -1114,12 +1128,7 @@ class VaultSearcher:
         **options: Unpack[DocumentSearchOptionArguments],
     ) -> list[DocumentSearchResult]:
         """Search only the independent document collection."""
-        results, _timings = self.search_document_timed(
-            raw_query,
-            top_k=top_k,
-            **options,
-        )
-        return results
+        return self.search_document_timed(raw_query, top_k=top_k, **options)[0]
 
     def _search_document_encoded(
         self,
@@ -1180,21 +1189,7 @@ class VaultSearcher:
         **options: Unpack[DocumentSearchOptionArguments],
     ) -> tuple[list[DocumentSearchResult], dict[str, float]]:
         """Search documents and return phase timings for diagnostics."""
-        timings: dict[str, float] = {}
-        phase_started = time.perf_counter()
-        parsed, query_text, query_vector, sparse_vector = self._encode_query(
-            raw_query,
-            surface="document",
-            timings=timings,
-        )
-        timings[PHASE_EMBEDDING] = time.perf_counter() - phase_started
-        results = self._search_document_encoded(
-            _EncodedSearchQuery(
-                parsed, query_text, query_vector, sparse_vector, top_k, timings
-            ),
-            DocumentSearchOptions(**options),
-        )
-        return results, timings
+        return self._surface_timed(_DOCUMENT_SURFACE, raw_query, top_k, options)
 
     def search_combined(
         self,
@@ -1203,12 +1198,7 @@ class VaultSearcher:
         **options: Unpack[CombinedSearchOptionArguments],
     ) -> list[SearchResult | DocumentSearchResult]:
         """Search all three domains with explicit equal candidate allocation."""
-        results, _timings = self.search_combined_timed(
-            raw_query,
-            top_k=top_k,
-            **options,
-        )
-        return results
+        return self.search_combined_timed(raw_query, top_k=top_k, **options)[0]
 
     def search_combined_timed(
         self,
@@ -1298,18 +1288,29 @@ class VaultSearcher:
         **options: Unpack[CodebaseSearchOptionArguments],
     ) -> tuple[list[SearchResult], dict[str, float]]:
         """Search codebase and return phase timings for service diagnostics."""
-        timings: dict[str, float] = {}
-        phase_started = time.perf_counter()
-        parsed, query_text, query_vector, sparse_vector = self._encode_query(
-            raw_query,
-            surface="code",
-            timings=timings,
-        )
-        timings[PHASE_EMBEDDING] = time.perf_counter() - phase_started
-        results = self._search_codebase_encoded(
-            _EncodedSearchQuery(
-                parsed, query_text, query_vector, sparse_vector, top_k, timings
-            ),
-            CodebaseSearchOptions(**options),
-        )
-        return results, timings
+        return self._surface_timed(_CODEBASE_SURFACE, raw_query, top_k, options)
+
+
+_VAULT_SURFACE: _SearchSurface[
+    SearchResult, VaultSearchOptions, VaultSearchOptionArguments
+] = _SearchSurface(
+    "vault",
+    lambda arguments: VaultSearchOptions(**arguments),
+    VaultSearcher._search_vault_encoded,
+)
+
+_CODEBASE_SURFACE: _SearchSurface[
+    SearchResult, CodebaseSearchOptions, CodebaseSearchOptionArguments
+] = _SearchSurface(
+    "code",
+    lambda arguments: CodebaseSearchOptions(**arguments),
+    VaultSearcher._search_codebase_encoded,
+)
+
+_DOCUMENT_SURFACE: _SearchSurface[
+    DocumentSearchResult, DocumentSearchOptions, DocumentSearchOptionArguments
+] = _SearchSurface(
+    "document",
+    lambda arguments: DocumentSearchOptions(**arguments),
+    VaultSearcher._search_document_encoded,
+)

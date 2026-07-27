@@ -647,9 +647,7 @@ def _required_str(value: object, name: str, *, allow_empty: bool = False) -> str
 
 
 def _optional_str(value: object, name: str) -> str | None:
-    return _typed_fields.optional_str(
-        value, on_invalid=lambda: TypeError(f"{name} must be a non-empty string")
-    )
+    return None if value is None else _required_str(value, name, allow_empty=True)
 
 
 def _required_int(value: object, name: str, *, minimum: int) -> int:
@@ -663,13 +661,7 @@ def _required_int(value: object, name: str, *, minimum: int) -> int:
 
 
 def _optional_int(value: object, name: str, *, minimum: int) -> int | None:
-    return _typed_fields.optional_int(
-        value,
-        minimum=minimum,
-        on_invalid=lambda: TypeError(
-            f"{name} must be an integer of at least {minimum}"
-        ),
-    )
+    return None if value is None else _required_int(value, name, minimum=minimum)
 
 
 def _required_float(value: object, name: str) -> float:
@@ -688,8 +680,4 @@ def _required_nonnegative_float(value: object, name: str) -> float:
 
 
 def _optional_float(value: object, name: str) -> float | None:
-    return _typed_fields.optional_float(
-        value,
-        on_invalid=lambda: TypeError(f"{name} must be numeric"),
-        on_not_finite=lambda: ValueError(f"{name} must be finite"),
-    )
+    return None if value is None else _required_float(value, name)

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from .._job_errors import JobError, JobErrorKind
-from ..config._schema import ENV_OVERRIDE_MAP, SETTING_BOUNDS
+from ..config._schema import _ENV_OVERRIDE_MAP, _SETTING_BOUNDS
 from ..config._settings import VaultSpecConfigWrapper, get_config, reset_config
 from ..config._types import EnvVar, hf_cache_only
 from ..memory_probe import MemoryBudget
@@ -1407,8 +1407,9 @@ def test_every_ranged_setting_rejects_a_malformed_environment_value() -> None:
     # A sweep, so a knob added later cannot quietly opt out of coercion.
     # Mutation: returning the default instead of raising in _coerce_env's
     # except branch fails on the first key in the table.
-    for key, bound in SETTING_BOUNDS.items():
-        env_var = ENV_OVERRIDE_MAP.get(key)
+    assert _SETTING_BOUNDS, "expected the settings table to declare numeric ranges"
+    for key, bound in _SETTING_BOUNDS.items():
+        env_var = _ENV_OVERRIDE_MAP.get(key)
         assert env_var is not None, f"{key} declares a range but no env var"
         prev = set_env(env_var, "notavalue")
         try:
@@ -1431,7 +1432,7 @@ def test_every_flag_rejects_an_unrecognised_token() -> None:
     flags = [key for key, value in defaults.items() if isinstance(value, bool)]
     assert flags, "expected the settings table to carry boolean flags"
     for key in flags:
-        env_var = ENV_OVERRIDE_MAP.get(key)
+        env_var = _ENV_OVERRIDE_MAP.get(key)
         assert env_var is not None, f"{key} is a flag with no env var"
         prev = set_env(env_var, "treu")
         try:

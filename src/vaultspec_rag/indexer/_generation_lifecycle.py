@@ -147,38 +147,32 @@ class CodeGenerationLifecycle:
             request = CodeGenerationOpenRequest(**cast("dict[str, Any]", legacy))
         elif legacy:
             raise TypeError("use either CodeGenerationOpenRequest or named inputs")
-        policy = request.policy
-        operation = request.operation
-        clean = request.clean
-        configuration = request.configuration
-        dense_dimensions = request.dense_dimensions
-        sparse_enabled = request.sparse_enabled
-        run_control = request.run_control
-
         config = get_config()
         model_identity = json.dumps(
             {
                 "dense": str(config.embedding_model),
-                "sparse": (str(config.sparse_model) if sparse_enabled else None),
+                "sparse": (
+                    str(config.sparse_model) if request.sparse_enabled else None
+                ),
             },
             sort_keys=True,
             separators=(",", ":"),
         )
 
-        def _open() -> CodeRunCheckpoint:
+        def _open(spec: CodeGenerationOpenRequest) -> CodeRunCheckpoint:
             return CodeRunCheckpoint.open(
                 data_root=self._data_root,
                 root_dir=self._root_dir,
-                policy=policy,
-                run_policy=RunPolicy.from_config(run_control=run_control),
-                operation=operation,
-                clean=clean,
+                policy=spec.policy,
+                run_policy=RunPolicy.from_config(run_control=spec.run_control),
+                operation=spec.operation,
+                clean=spec.clean,
                 model_identity=model_identity,
-                dense_dimensions=dense_dimensions,
-                configuration=configuration,
+                dense_dimensions=spec.dense_dimensions,
+                configuration=spec.configuration,
             )
 
-        checkpoint = _open()
+        checkpoint = _open(request)
         if self.evidence_lost(checkpoint):
             logger.warning(
                 "code collection is missing from storage but the run ledger "
@@ -194,7 +188,7 @@ class CodeGenerationLifecycle:
                     "storage-confirmed evidence no longer describes anything"
                 ),
             )
-            checkpoint = _open()
+            checkpoint = _open(request)
         self._last_checkpoint = checkpoint
         self._drift_owner = CodeDriftOwner(checkpoint, self._store)
         return checkpoint

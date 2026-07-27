@@ -125,6 +125,26 @@ def test_reset_zeroes_counters(_clean_metrics: None) -> None:
 import vaultspec_rag.mcp._admin_client as admin_tools  # noqa: E402
 
 
+async def _reindex_vault_to_completion(root: Path) -> None:
+    """Run a real vault reindex and wait for its job to leave the queue.
+
+    The counter the caller then reads is only credited once the job has
+    actually finished, so polling the job's phase is what makes the
+    subsequent metric assertion deterministic rather than racy.
+    """
+    import asyncio
+
+    response = await tools.reindex_vault(project_root=str(root))
+    assert isinstance(response, dict)
+    job_id: str = cast("str", response["job_id"])
+    for _ in range(50):
+        jobs_res = await admin_tools.get_jobs()
+        jobs = [j for j in jobs_res.get("jobs", []) if j["id"] == job_id]
+        if jobs and jobs[0]["phase"] in ("done", "error", "failed"):
+            break
+        await asyncio.sleep(0.1)
+
+
 async def _fetch_daemon_metrics(port: int, token: str) -> str:
     async with httpx.AsyncClient() as client:
         resp = await client.get(
@@ -142,8 +162,6 @@ async def test_search_vault_increments_counter(
     tmp_path: Path,
     live_service: tuple[int, Path],
 ) -> None:
-    import asyncio
-
     root = _make_root(tmp_path)
     port, _status_dir = live_service
 
@@ -152,15 +170,7 @@ async def test_search_vault_increments_counter(
     health = _poll_health(port)
     token = health["service_token"]
 
-    response = await tools.reindex_vault(project_root=str(root))
-    assert isinstance(response, dict)
-    job_id: str = cast("str", response["job_id"])
-    for _ in range(50):
-        jobs_res = await admin_tools.get_jobs()
-        jobs = [j for j in jobs_res.get("jobs", []) if j["id"] == job_id]
-        if jobs and jobs[0]["phase"] in ("done", "error", "failed"):
-            break
-        await asyncio.sleep(0.1)
+    await _reindex_vault_to_completion(root)
 
     before = await _fetch_daemon_metrics(port, token)
     # the search shouldn't be incremented yet, though prometheus only adds keys on first use  # noqa: E501
@@ -181,8 +191,6 @@ async def test_reindex_vault_increments_counter(
     tmp_path: Path,
     live_service: tuple[int, Path],
 ) -> None:
-    import asyncio
-
     root = _make_root(tmp_path)
     port, _status_dir = live_service
 
@@ -191,15 +199,7 @@ async def test_reindex_vault_increments_counter(
     health = _poll_health(port)
     token = health["service_token"]
 
-    response = await tools.reindex_vault(project_root=str(root))
-    assert isinstance(response, dict)
-    job_id: str = cast("str", response["job_id"])
-    for _ in range(50):
-        jobs_res = await admin_tools.get_jobs()
-        jobs = [j for j in jobs_res.get("jobs", []) if j["id"] == job_id]
-        if jobs and jobs[0]["phase"] in ("done", "error", "failed"):
-            break
-        await asyncio.sleep(0.1)
+    await _reindex_vault_to_completion(root)
 
     text = await _fetch_daemon_metrics(port, token)
     assert "vaultspec_rag_reindex_total 1" in text

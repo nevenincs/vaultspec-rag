@@ -119,11 +119,13 @@ def _witness_tree(launcher_pid: int, port: int, timeout: float = 10.0) -> set[in
     return found
 
 
-# One host-wide command-line sweep is the reap's dominant cost and runs into
-# tens of seconds on a busy machine, so an out-of-process reap gets a budget
-# well past that rather than a round number that would turn host load into a
-# spurious failure.
-_REAP_SUBPROCESS_BUDGET_SECONDS = 240.0
+# One host-wide command-line sweep is the reap's dominant cost. It ran into
+# tens of seconds while the sweep read every process's parent pid eagerly - a
+# full-system snapshot per process on Windows - and this budget was 240s to
+# survive it. The sweep now reads that attribute only for processes whose
+# command line already matched, so the whole subprocess lands in a few seconds;
+# the headroom below is for a loaded host, not for the sweep itself.
+_REAP_SUBPROCESS_BUDGET_SECONDS = 60.0
 
 
 class TestOrphanReapStructuredStop:

@@ -171,46 +171,38 @@ def service_jobs() -> None:
 
 def _run_service_jobs(options: _ServiceJobsOptions) -> None:
     """Show recent index update activity from the running service."""
-    limit = options.limit
-    state = options.state
-    index = options.index
-    started_by = options.started_by
-    query = options.query
-    failed = options.failed
-    job_id = options.job_id
-    since = options.since
-    port = options.port
     json_mode = options.json_mode
-    watch = options.watch
     interval = options.interval
-    phase, client_state = _jobs_state_filter(state, json_mode)
-    source = _jobs_index_filter(index, json_mode)
-    trigger = _jobs_started_by_filter(started_by, json_mode)
-    phase, failed = _resolve_jobs_filters(phase, failed, json_mode)
-    resolved_port = port if port is not None else _default_service_port()
+    phase, client_state = _jobs_state_filter(options.state, json_mode)
+    source = _jobs_index_filter(options.index, json_mode)
+    trigger = _jobs_started_by_filter(options.started_by, json_mode)
+    phase, failed = _resolve_jobs_filters(phase, options.failed, json_mode)
+    resolved_port = (
+        options.port if options.port is not None else _default_service_port()
+    )
     if resolved_port is None:
         _exit_jobs_not_running(json_mode)
     if interval <= 0:
         _exit_invalid_watch_args(json_mode, interval)
-    if watch and json_mode:
+    if options.watch and json_mode:
         _exit_invalid_watch_args(json_mode, interval)
     spec = _JobsQuery(
         port=resolved_port,
-        limit=limit,
+        limit=options.limit,
         phase=phase,
         source=source,
         trigger=trigger,
-        query=query,
+        query=options.query,
         failed=failed,
-        job_id=job_id,
-        since=since,
+        job_id=options.job_id,
+        since=options.since,
     )
     fetch = functools.partial(_fetch_jobs_result, spec)
-    if watch:
+    if options.watch:
         _watch_jobs(
             _JobsWatchRequest(
                 fetch=fetch,
-                job_id=job_id,
+                job_id=options.job_id,
                 port=resolved_port,
                 interval=interval,
                 client_state=client_state,
@@ -227,4 +219,4 @@ def _run_service_jobs(options: _ServiceJobsOptions) -> None:
         _emit_json(True, "service.jobs", data=result)
         return
 
-    _render_jobs_result(result, job_id=job_id, port=resolved_port)
+    _render_jobs_result(result, job_id=options.job_id, port=resolved_port)
