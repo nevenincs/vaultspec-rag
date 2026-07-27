@@ -16,14 +16,40 @@ through the CLI.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import partial
-from typing import Any
+from typing import Any, TypedDict, Unpack
 
 from ..serviceclient._transport import _try_http_admin
 from ._tools import (
     _delegate,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
     _require_port,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
 )
+
+
+class _JobQueryOptions(TypedDict, total=False):
+    limit: int | None
+    phase: str | None
+    source: str | None
+    trigger: str | None
+    query: str | None
+    failed: bool
+    job_id: str | None
+    since: float | None
+    timeout: float
+
+
+@dataclass(frozen=True)
+class _JobQuery:
+    limit: int | None = None
+    phase: str | None = None
+    source: str | None = None
+    trigger: str | None = None
+    query: str | None = None
+    failed: bool = False
+    job_id: str | None = None
+    since: float | None = None
+    timeout: float = 30.0
 
 
 async def _admin(
@@ -118,18 +144,24 @@ async def get_logs(
     return await _admin("get_logs", args)
 
 
-async def get_jobs(
-    limit: int | None = None,
-    phase: str | None = None,
-    source: str | None = None,
-    trigger: str | None = None,
-    query: str | None = None,
-    failed: bool = False,
-    job_id: str | None = None,
-    since: float | None = None,
-    timeout: float = 30.0,
-) -> dict[str, Any]:
+async def get_jobs(**options: Unpack[_JobQueryOptions]) -> dict[str, Any]:
     """Return recent index/reindex activity from the in-flight registry."""
+    return await _get_jobs(_JobQuery(**options))
+
+
+async def _get_jobs(query: _JobQuery) -> dict[str, Any]:
+    """Shape one job query for the running service's admin route."""
+    limit, phase, source, trigger, text, failed, job_id, since, timeout = (
+        query.limit,
+        query.phase,
+        query.source,
+        query.trigger,
+        query.query,
+        query.failed,
+        query.job_id,
+        query.since,
+        query.timeout,
+    )
     args: dict[str, Any] = {}
     if limit is not None:
         args["limit"] = limit
@@ -139,8 +171,8 @@ async def get_jobs(
         args["source"] = source
     if trigger:
         args["trigger"] = trigger
-    if query:
-        args["query"] = query
+    if text:
+        args["query"] = text
     if failed:
         args["failed"] = "true"
     if job_id:
