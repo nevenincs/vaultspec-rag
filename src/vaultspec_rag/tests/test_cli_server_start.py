@@ -217,24 +217,29 @@ class TestStartReorderAndGuards:
         # A live owned daemon that stamped ``warming`` (machine lock held,
         # port not yet serving) is a start already in progress: exit 0 with
         # ``already_starting`` and the warming phase, never ``machine_owned``
-        # exit 1 and never a plain ``already_running`` (#237). The recorded
-        # pid is this live python process; port 1 is silent.
+        # exit 1 and never a plain ``already_running`` (#237). Port 1 is
+        # silent, so nothing can round-trip a health token and the recorded pid
+        # is judged by inspecting the process - which is why it names a live
+        # stand-in carrying the daemon's witness rather than this interpreter.
         from ..cli._service_status import _write_service_status
         from ..serviceclient._discovery import _status_file
+        from ._cli_helpers import _process_the_identity_check_recognises
 
-        _write_service_status(os.getpid(), 1)
-        sf = _status_file()
-        doc = json.loads(sf.read_text(encoding="utf-8"))
-        doc["phase"] = "warming"
-        sf.write_text(json.dumps(doc), encoding="utf-8")
+        with _process_the_identity_check_recognises() as daemon_pid:
+            _write_service_status(daemon_pid, 1)
+            sf = _status_file()
+            doc = json.loads(sf.read_text(encoding="utf-8"))
+            doc["phase"] = "warming"
+            sf.write_text(json.dumps(doc), encoding="utf-8")
 
-        result = runner.invoke(app, ["server", "start", "--json"])
+            result = runner.invoke(app, ["server", "start", "--json"])
+
         assert result.exit_code == 0
         env = json.loads(result.stdout)
         assert env["ok"] is True
         assert env["data"]["status"] == "already_starting"
         assert env["data"]["phase"] == "warming"
-        assert env["data"]["pid"] == os.getpid()
+        assert env["data"]["pid"] == daemon_pid
 
     @pytest.mark.usefixtures("isolated_singleton_dirs")
     def test_a_foreign_port_holder_is_port_in_use_json(self) -> None:
