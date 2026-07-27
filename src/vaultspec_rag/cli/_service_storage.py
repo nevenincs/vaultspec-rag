@@ -1,6 +1,6 @@
 """CLI commands for the ``server storage`` group.
 
-Thin adapters over the service-domain ``storage_ops`` functions. ``survey``
+Thin adapters over the service-domain storage operation functions. ``survey``
 is a read-only, bounded view classifying every per-root namespace
 (live / orphaned / unknown) via the persisted prefix-to-root manifest.
 ``delete`` removes one named namespace and ``prune`` reclaims every
@@ -13,6 +13,7 @@ impossible without an explicit manifest attribution.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 import typer
@@ -28,19 +29,28 @@ if TYPE_CHECKING:
 
     from qdrant_client import QdrantClient
 
-    from ..storage_ops import (
-        DeleteResult,
-        MigrateResult,
-        PruneResult,
-        ReconcileBatch,
-    )
+    from ..storage_migration import MigrateResult
+    from ..storage_reconciliation import ReconcileBatch
     from ..storage_survey import NamespaceSurvey
+    from ..storage_survey_ops import DeleteResult, PruneResult
 
 _SURVEY_CMD = "server.storage.survey"
 _DELETE_CMD = "server.storage.delete"
 _PRUNE_CMD = "server.storage.prune"
 _MIGRATE_CMD = "server.storage.migrate"
 _RECONCILE_CMD = "server.storage.reconcile"
+
+
+@dataclass(frozen=True)
+class _MigrationIdentityCarry:
+    """Inputs needed to transfer identity records after a collection migration."""
+
+    root: str
+    to_backend: str
+    local_path: Path
+    name_map: dict[str, str]
+    preview: bool
+    results: list[MigrateResult]
 
 
 def _resolve_server_url(command: str, json_mode: bool) -> str:
@@ -272,7 +282,7 @@ def _survey_namespaces(
     if fetched is not None:
         return fetched
 
-    from ..storage_ops import gather_survey, server_storage_collections_dir
+    from ..storage_survey_ops import gather_survey, server_storage_collections_dir
 
     progress.stage("No service answered; reading the store directly...")
     surveys = _run_storage_op(
@@ -416,7 +426,7 @@ def _render_delete(
         "or by --root (the sanctioned per-root teardown for harnesses)."
     ),
 )
-def storage_delete(
+def storage_delete(  # noqa: PLR0913 - Typer exposes the stable public CLI option schema.
     prefix: str | None = typer.Argument(
         None, help="The namespace prefix to delete (r{hash}_)."
     ),
@@ -448,7 +458,7 @@ def storage_delete(
     """
     import dataclasses
 
-    from ..storage_ops import delete_prefix
+    from ..storage_survey_ops import delete_prefix
 
     if (prefix is None) == (root is None):
         _emit_or_echo_error(
@@ -551,7 +561,7 @@ def storage_prune(
     json_mode: JsonMode = False,
 ) -> None:
     """Reclaim all orphaned namespaces; never touches unknown or live ones."""
-    from ..storage_ops import (
+    from ..storage_survey_ops import (
         prune_debris,
         prune_orphaned,
         server_storage_collections_dir,
@@ -696,7 +706,8 @@ def storage_reconcile(
     running this on a converged backend is a no-op success.
     """
     from ..config import get_config
-    from ..storage_ops import reconcile_collections, server_storage_collections_dir
+    from ..storage_reconciliation import reconcile_collections
+    from ..storage_survey_ops import server_storage_collections_dir
 
     _require_yes_for_json(_RECONCILE_CMD, json_mode, yes)
     preview = dry_run or not yes
@@ -813,7 +824,7 @@ def storage_migrate(
     """Copy a root's namespaced collections between the local and server stores."""
     from qdrant_client import QdrantClient
 
-    from ..storage_ops import migrate_collections
+    from ..storage_migration import migrate_collections
 
     _require_yes_for_json(_MIGRATE_CMD, json_mode, yes)
     if to_backend not in ("server", "local"):
@@ -866,21 +877,23 @@ def storage_migrate(
         server.close()
     # Provenance first, then attribution: the carry reads the source home, and
     # the re-key rewrites it.
-    _carry_identity_on_migrate(root, to_backend, local_path, name_map, preview, results)
+    _carry_identity_on_migrate(
+        _MigrationIdentityCarry(
+            root=root,
+            to_backend=to_backend,
+            local_path=local_path,
+            name_map=name_map,
+            preview=preview,
+            results=results,
+        )
+    )
     _rekey_manifest_on_migrate(root, to_backend, preview, results)
     _render_migrate(results, json_mode)
     if not dry_run and not yes and any(r.status == "would_migrate" for r in results):
         raise typer.Exit(1)
 
 
-def _carry_identity_on_migrate(
-    root: str,
-    to_backend: str,
-    local_path: Path,
-    name_map: dict[str, str],
-    preview: bool,
-    results: list[MigrateResult],
-) -> None:
+def _carry_identity_on_migrate(migration: _MigrationIdentityCarry) -> None:
     """Move each migrated collection's identity record onto its target name.
 
     A migrate copies vectors through the raw client, which stamps nothing, so
@@ -889,17 +902,17 @@ def _carry_identity_on_migrate(
     hiccup never fails an applied data move - a namespace that loses its record
     degrades to ``unverifiable``, which is the safe direction.
     """
-    if preview:
+    if migration.preview:
         return
-    from ..storage_ops import carry_migrated_identity
+    from ..storage_migration import carry_migrated_identity
 
     try:
         carry_migrated_identity(
-            root,
-            name_map=name_map,
-            to_backend=to_backend,
-            local_dir=local_path,
-            results=results,
+            migration.root,
+            name_map=migration.name_map,
+            to_backend=migration.to_backend,
+            local_dir=migration.local_path,
+            results=migration.results,
         )
     except Exception as exc:  # best-effort provenance; never fail an applied move
         typer.echo(f"Note: migrated data but could not carry its identity: {exc}")

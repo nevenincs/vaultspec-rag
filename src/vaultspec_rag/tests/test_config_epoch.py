@@ -10,7 +10,7 @@ constructed - the classification methods operate on the resolved config alone.
 import json
 import os
 from collections.abc import Generator
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -25,17 +25,17 @@ from ..indexer import CodebaseIndexer
 from ..indexer import _config_epoch as ce
 from ..indexer._content_policy import ContentKind
 from ..indexer._preprocess_config import OnError, PreprocessRule
-from ..indexer._run_ledger import (
-    RunLedger,
+from ..indexer._run_ledger_models import (
     RunOperation,
     RunSignature,
     RunTerminalState,
 )
+from ..indexer._run_ledger_runtime import RunLedger
 from ..progress import NullProgressReporter
 
 if TYPE_CHECKING:
     from ..embeddings import EmbeddingModel
-    from ..store import VaultStore
+    from ..store_runtime import VaultStore
 
 pytestmark = [pytest.mark.unit]
 
@@ -49,28 +49,37 @@ def _reset_cfg() -> Generator[None]:  # pyright: ignore[reportUnusedFunction]
     reset_rag_config()
 
 
+@dataclass(frozen=True, slots=True)
+class _RuleOptions:
+    command: str | None = "extract {path}"
+    entry_point: str | None = None
+    on_error: OnError = "skip"
+    priority: int = 100
+    timeout_s: float | None = 120.0
+    options: dict[str, object] | None = None
+    order: int = 0
+
+
 def _rule(
     pattern: str,
-    *,
-    command: str | None = "extract {path}",
-    entry_point: str | None = None,
-    on_error: OnError = "skip",
-    priority: int = 100,
-    timeout_s: float | None = 120.0,
-    options: dict[str, object] | None = None,
-    order: int = 0,
+    request: _RuleOptions | None = None,
+    **legacy: object,
 ) -> PreprocessRule:
+    if request is None:
+        request = _RuleOptions(**cast("dict[str, object]", legacy))
+    elif legacy:
+        raise TypeError("use either _RuleOptions or named inputs")
     return PreprocessRule(
         pattern=pattern,
-        command=command,
-        entry_point=entry_point,
-        priority=priority,
+        command=request.command,
+        entry_point=request.entry_point,
+        priority=request.priority,
         target=ContentKind.DOCUMENT,
         extractor_version="1.0",
-        on_error=on_error,
-        timeout_s=timeout_s,
-        options=options or {},
-        order=order,
+        on_error=request.on_error,
+        timeout_s=request.timeout_s,
+        options=request.options or {},
+        order=request.order,
     )
 
 

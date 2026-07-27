@@ -12,6 +12,7 @@ import signal
 import sys
 import time
 from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -46,7 +47,7 @@ _MAX_STARTUP_CLEANUP_RESERVE_SECONDS = 15.0
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _pin_index_cuda_ceiling() -> Generator[None]:
+def pin_index_cuda_ceiling() -> Generator[None]:
     """Pin the indexing CUDA ceiling for every in-process integration test.
 
     ``_service_env`` pins the same figure for spawned daemons; this covers the
@@ -89,6 +90,26 @@ _TEARDOWN_GRACEFUL_COURTESY_SECONDS = 5.0
 #: startup reserve (a few seconds), so a fixed courtesy that consumed the whole
 #: budget would re-create the very starvation the courtesy cap exists to avoid.
 _TEARDOWN_FORCE_KILL_RESERVE_SECONDS = 4.0
+
+
+@dataclass
+class _LiveServiceStartup:
+    """One service fixture's deadline, diagnostics, and current startup phase."""
+
+    started: float
+    budget: float
+    work_budget: float
+    stages: list[str]
+    log_path: Path
+    current_stage: str
+
+    def remaining_budget(self, stage: str) -> float:
+        return _remaining_startup_budget(
+            started=self.started,
+            budget=self.work_budget,
+            stages=self.stages,
+            stage=stage,
+        )
 
 
 def _service_output(log_path: Path) -> str:
@@ -259,26 +280,23 @@ def rag_components_with_code(
 
 
 def _startup_failure_message(
+    startup: _LiveServiceStartup,
     *,
     stage: str,
-    started: float,
-    budget: float,
-    stages: list[str],
-    log_path: Path,
     exc: BaseException,
 ) -> str:
     """Render one diagnostic envelope for every startup-stage failure."""
-    elapsed = time.monotonic() - started
-    remaining = max(0.0, budget - elapsed)
-    detail = "\n".join(stages) or "<no completed startup stages>"
+    elapsed = time.monotonic() - startup.started
+    remaining = max(0.0, startup.budget - elapsed)
+    detail = "\n".join(startup.stages) or "<no completed startup stages>"
     return (
         "Service startup failed\n"
         f"stage={stage}\n"
-        f"deadline={budget:.3f}s elapsed={elapsed:.3f}s "
+        f"deadline={startup.budget:.3f}s elapsed={elapsed:.3f}s "
         f"remaining={remaining:.3f}s\n"
         f"cause={exc.__class__.__name__}: {exc}\n"
         f"Startup stages:\n{detail}\n"
-        f"Service output:\n{_service_diagnostics(log_path)}"
+        f"Service output:\n{_service_diagnostics(startup.log_path)}"
     )
 
 
@@ -290,12 +308,12 @@ def _wait_for_qdrant_publication(
 ) -> dict[str, object]:
     """Wait boundedly for the authoritative pre-warmup Qdrant status."""
     from ..._process_probe import pid_alive
-    from ...cli._service_status import _read_service_status
+    from ...cli._service_status import read_service_status
 
     deadline = time.monotonic() + timeout
     last: dict[str, object] | None = None
     while time.monotonic() < deadline:
-        status = _read_service_status()
+        status = read_service_status()
         if status is not None:
             last = cast("dict[str, object]", status)
             daemon_pid = status.get("pid")
@@ -327,9 +345,9 @@ def _resolve_owned_pids(*, port: int, fallback_pid: int) -> tuple[int, int | Non
     ``fallback_pid`` (the spawned process). The qdrant pid is returned when the
     status file records a valid integer, else ``None``.
     """
-    from ...cli._service_status import _read_service_status
+    from ...cli._service_status import read_service_status
 
-    status = _read_service_status()
+    status = read_service_status()
     raw_daemon_pid = (
         status.get("pid") if status is not None and status.get("port") == port else None
     )
@@ -432,10 +450,7 @@ def _cleanup_failed_startup(
     *,
     pid: int,
     port: int,
-    log_path: Path,
-    startup_started: float,
-    budget: float,
-    stages: list[str],
+    startup: _LiveServiceStartup,
 ) -> None:
     """Attempt startup-failure teardown and append its bounded diagnostic.
 
@@ -454,20 +469,58 @@ def _cleanup_failed_startup(
         _cleanup_service_process(
             pid=pid,
             port=port,
-            log_path=log_path,
+            log_path=startup.log_path,
             timeout=max(
-                _startup_cleanup_reserve(budget),
-                budget - (cleanup_started - startup_started),
+                _startup_cleanup_reserve(startup.budget),
+                startup.budget - (cleanup_started - startup.started),
             ),
         )
     except BaseException as exc:
         cleanup_error = f" cleanup_error={exc.__class__.__name__}: {exc}"
-    remaining = max(0.0, budget - (time.monotonic() - startup_started))
-    stages.append(
+    remaining = max(0.0, startup.budget - (time.monotonic() - startup.started))
+    startup.stages.append(
         "startup failure teardown "
         f"elapsed={time.monotonic() - cleanup_started:.3f}s "
         f"remaining={remaining:.3f}s{cleanup_error}"
     )
+
+
+def _prepare_service_models(
+    tmp_path: Path,
+    startup: _LiveServiceStartup,
+    model_ids: tuple[str, ...] | None,
+) -> None:
+    """Ensure model snapshots before the fixture switches the daemon offline."""
+    from ._helpers import _service_env
+
+    online_acquisition_env = {
+        EnvVar.HF_HUB_OFFLINE.value: None,
+        EnvVar.TRANSFORMERS_OFFLINE.value: None,
+    }
+    startup.current_stage = "online environment entry"
+    stage_started = time.monotonic()
+    with _service_env(tmp_path, env_overrides=online_acquisition_env):
+        startup.stages.append(
+            "online environment entry "
+            f"elapsed={time.monotonic() - stage_started:.3f}s "
+            f"remaining={startup.remaining_budget('model acquisition'):.3f}s"
+        )
+        startup.current_stage = "model acquisition"
+        eager_model_ids = model_ids or configured_service_model_ids()
+        warm_cache = models_are_cached(eager_model_ids)
+        stage_started = time.monotonic()
+        ensure_model_snapshots(
+            eager_model_ids,
+            timeout_seconds=startup.remaining_budget(startup.current_stage),
+        )
+        startup.stages.append(
+            "model acquisition "
+            f"state={'warm' if warm_cache else 'repaired'} "
+            f"elapsed={time.monotonic() - stage_started:.3f}s "
+            f"remaining={startup.remaining_budget('offline environment entry'):.3f}s "
+            f"models={list(eager_model_ids)!r} "
+            f"offline_env_cleared={list(online_acquisition_env)!r}"
+        )
 
 
 @contextmanager
@@ -487,122 +540,90 @@ def _live_service_context(
         _service_env,
     )
 
-    startup_started = time.monotonic()
     budget = _resolve_startup_budget(startup_budget)
     cleanup_reserve = _startup_cleanup_reserve(budget)
-    work_budget = budget - cleanup_reserve
-    stages: list[str] = []
-    log_path = tmp_path / "service.log"
-    current_stage = "online environment entry"
+    startup = _LiveServiceStartup(
+        started=time.monotonic(),
+        budget=budget,
+        work_budget=budget - cleanup_reserve,
+        stages=[],
+        log_path=tmp_path / "service.log",
+        current_stage="online environment entry",
+    )
     yielded = False
 
-    def remaining_budget(stage: str) -> float:
-        return _remaining_startup_budget(
-            started=startup_started,
-            budget=work_budget,
-            stages=stages,
-            stage=stage,
-        )
-
     try:
-        online_acquisition_env = {
-            EnvVar.HF_HUB_OFFLINE.value: None,
-            EnvVar.TRANSFORMERS_OFFLINE.value: None,
-        }
-        stage_started = time.monotonic()
-        with _service_env(tmp_path, env_overrides=online_acquisition_env):
-            stages.append(
-                "online environment entry "
-                f"elapsed={time.monotonic() - stage_started:.3f}s "
-                f"remaining={remaining_budget('model acquisition'):.3f}s"
-            )
-            current_stage = "model acquisition"
-            eager_model_ids = model_ids or configured_service_model_ids()
-            warm_cache = models_are_cached(eager_model_ids)
-            stage_started = time.monotonic()
-            ensure_model_snapshots(
-                eager_model_ids,
-                timeout_seconds=remaining_budget(current_stage),
-            )
-            stages.append(
-                "model acquisition "
-                f"state={'warm' if warm_cache else 'repaired'} "
-                f"elapsed={time.monotonic() - stage_started:.3f}s "
-                f"remaining={remaining_budget('offline environment entry'):.3f}s "
-                f"models={list(eager_model_ids)!r} "
-                f"offline_env_cleared={list(online_acquisition_env)!r}"
-            )
+        _prepare_service_models(tmp_path, startup, model_ids)
 
         offline_env = {
             EnvVar.HF_HUB_OFFLINE.value: "1",
             EnvVar.TRANSFORMERS_OFFLINE.value: "1",
         }
-        current_stage = "offline environment entry"
+        startup.current_stage = "offline environment entry"
         stage_started = time.monotonic()
         with _service_env(tmp_path, env_overrides=offline_env):
-            stages.append(
+            startup.stages.append(
                 "offline environment entry "
                 f"elapsed={time.monotonic() - stage_started:.3f}s "
-                f"remaining={remaining_budget('service spawn'):.3f}s "
+                f"remaining={startup.remaining_budget('service spawn'):.3f}s "
                 f"offline_env={offline_env!r}"
             )
             port = _get_ephemeral_port()
-            current_stage = "service spawn"
+            startup.current_stage = "service spawn"
             stage_started = time.monotonic()
             pid = _spawn_service(
                 port,
-                log_path,
+                startup.log_path,
                 watch=watch,
-                timeout=remaining_budget(current_stage),
+                timeout=startup.remaining_budget(startup.current_stage),
                 cleanup_timeout=cleanup_reserve,
             )
             try:
-                stages.append(
+                startup.stages.append(
                     "service spawn "
                     f"elapsed={time.monotonic() - stage_started:.3f}s "
-                    f"remaining={remaining_budget('status publication'):.3f}s "
+                    f"remaining={startup.remaining_budget('status publication'):.3f}s "
                     f"pid={pid} port={port}"
                 )
-                current_stage = "status publication"
+                startup.current_stage = "status publication"
                 stage_started = time.monotonic()
                 _write_service_status(
                     pid,
                     port,
-                    timeout=remaining_budget(current_stage),
+                    timeout=startup.remaining_budget(startup.current_stage),
                 )
                 published = _wait_for_qdrant_publication(
                     service_pid=pid,
                     service_port=port,
-                    timeout=remaining_budget(current_stage),
+                    timeout=startup.remaining_budget(startup.current_stage),
                 )
-                stages.append(
+                startup.stages.append(
                     "status publication "
                     f"elapsed={time.monotonic() - stage_started:.3f}s "
-                    f"remaining={remaining_budget('health readiness'):.3f}s "
+                    f"remaining={startup.remaining_budget('health readiness'):.3f}s "
                     f"qdrant_pid={published.get('qdrant_pid')} "
                     f"qdrant_port={published.get('qdrant_port')} "
                     f"qdrant_version={published.get('qdrant_version')!r}"
                 )
-                current_stage = "health readiness"
+                startup.current_stage = "health readiness"
                 stage_started = time.monotonic()
                 _poll_health(
                     port,
-                    timeout=remaining_budget(current_stage),
+                    timeout=startup.remaining_budget(startup.current_stage),
                 )
-                stages.append(
+                startup.stages.append(
                     "health readiness "
                     f"elapsed={time.monotonic() - stage_started:.3f}s "
-                    f"total={time.monotonic() - startup_started:.3f}s"
+                    f"total={time.monotonic() - startup.started:.3f}s"
                 )
-                stages.append(_verify_offline_service_startup(log_path, stages))
+                startup.stages.append(
+                    _verify_offline_service_startup(startup.log_path, startup.stages)
+                )
             except BaseException:
                 _cleanup_failed_startup(
                     pid=pid,
                     port=port,
-                    log_path=log_path,
-                    startup_started=startup_started,
-                    budget=budget,
-                    stages=stages,
+                    startup=startup,
                 )
                 raise
 
@@ -613,7 +634,7 @@ def _live_service_context(
                 _cleanup_service_process(
                     pid=pid,
                     port=port,
-                    log_path=log_path,
+                    log_path=startup.log_path,
                     timeout=15.0,
                 )
     except BaseException as exc:
@@ -621,11 +642,8 @@ def _live_service_context(
             raise
         raise AssertionError(
             _startup_failure_message(
-                stage=current_stage,
-                started=startup_started,
-                budget=budget,
-                stages=stages,
-                log_path=log_path,
+                startup,
+                stage=startup.current_stage,
                 exc=exc,
             )
         ) from exc

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TYPE_CHECKING, NamedTuple, TypedDict, cast
 
 import pytest
 
@@ -69,6 +69,26 @@ class _CodeProject(TypedDict):
     reranker: CrossEncoder
     root: Path
     src_dir: Path
+
+
+class _IncrementalFailureCase(NamedTuple):
+    """The persisted state a failed incremental attempt must leave intact."""
+
+    indexer: CodebaseIndexer
+    store: VaultStore
+    good: Path
+    root: Path
+    metadata_before: dict[str, str]
+
+
+class _IncrementalRetryCase(NamedTuple):
+    """The two files and durable state a successful retry must publish."""
+
+    indexer: CodebaseIndexer
+    store: VaultStore
+    good: Path
+    failing: Path
+    attempted: set[str]
 
 
 @pytest.fixture
@@ -210,7 +230,7 @@ class TestIncrementalPublicationRecovery:
         code_project: _CodeProject,
     ) -> None:
         """Control before finalization leaves checkpointed storage intact."""
-        from ...indexer._run_ledger import RunOperation
+        from ...indexer._run_ledger_models import RunOperation
         from ...indexer._streaming import CodeFileSegment
         from ...job_control import CancelRequested, RunControlToken
 
@@ -280,7 +300,7 @@ class TestIncrementalPublicationRecovery:
     ) -> None:
         """A rebuild-incomplete generation resumes its confirmed collection."""
         from ...indexer import _chunk_worker
-        from ...indexer._run_ledger import RunOperation, RunTerminalState
+        from ...indexer._run_ledger_models import RunOperation, RunTerminalState
         from ...indexer._streaming import CodeFileSegment, iter_code_file_segments
         from ...job_control import RunControlToken
 
@@ -586,11 +606,7 @@ def _run_incremental_attempt(
 
 
 def _assert_failed_incremental_attempt(
-    indexer: CodebaseIndexer,
-    store: VaultStore,
-    good: Path,
-    root: Path,
-    metadata_before: dict[str, str],
+    case: _IncrementalFailureCase,
     reporter: CountingProgressReporter,
 ) -> None:
     from ...indexer import _chunk_worker
@@ -599,12 +615,13 @@ def _assert_failed_incremental_attempt(
     _assert_phase_balanced(reporter.events)
     assert "chunk + embed" in reporter.phase_names()
     good_expected = {
-        chunk.id for chunk in _chunk_worker.chunk_and_hash_file(good, root).chunks
+        chunk.id
+        for chunk in _chunk_worker.chunk_and_hash_file(case.good, case.root).chunks
     }
     assert good_expected
-    assert set(store.get_code_ids_by_paths({"src/a_good.py"})) == good_expected
-    assert store.get_code_ids_by_paths({"src/z_fail.fatal"}) == []
-    assert indexer._load_meta() == metadata_before  # pyright: ignore[reportPrivateUsage]
+    assert set(case.store.get_code_ids_by_paths({"src/a_good.py"})) == good_expected
+    assert case.store.get_code_ids_by_paths({"src/z_fail.fatal"}) == []
+    assert case.indexer._load_meta() == case.metadata_before  # pyright: ignore[reportPrivateUsage]
 
 
 def _run_failing_incremental_attempt(
@@ -620,11 +637,7 @@ def _run_failing_incremental_attempt(
 
 
 def _assert_successful_incremental_retry(
-    indexer: CodebaseIndexer,
-    store: VaultStore,
-    good: Path,
-    failing: Path,
-    attempted: set[str],
+    case: _IncrementalRetryCase,
     reporter: CountingProgressReporter,
     result: IndexResult,
 ) -> None:
@@ -634,15 +647,15 @@ def _assert_successful_incremental_retry(
 
     _assert_phase_balanced(reporter.events)
     assert result.added == 2
-    assert store.get_code_ids_by_paths(attempted)
-    metadata_after = indexer._load_meta()  # pyright: ignore[reportPrivateUsage]
+    assert case.store.get_code_ids_by_paths(case.attempted)
+    metadata_after = case.indexer._load_meta()  # pyright: ignore[reportPrivateUsage]
     assert (
         metadata_after["src/a_good.py"]
-        == hashlib.blake2b(good.read_bytes()).hexdigest()
+        == hashlib.blake2b(case.good.read_bytes()).hexdigest()
     )
     assert (
         metadata_after["src/z_fail.fatal"]
-        == hashlib.blake2b(failing.read_bytes()).hexdigest()
+        == hashlib.blake2b(case.failing.read_bytes()).hexdigest()
     )
     assert "delete removed" in reporter.phase_names()
     assert "write metadata" in reporter.phase_names()
@@ -808,7 +821,10 @@ class TestCodebaseIncrementalIndex:
             # generation retirement and reconcile/invalidation, not by deleting
             # durable progress here.
             _assert_failed_incremental_attempt(
-                indexer, store, good, root, metadata_before, failure_reporter
+                _IncrementalFailureCase(
+                    indexer, store, good, root, metadata_before
+                ),
+                failure_reporter,
             )
 
             failing.write_text("SUCCEED\n", encoding="utf-8")
@@ -818,7 +834,9 @@ class TestCodebaseIncrementalIndex:
             )
 
         _assert_successful_incremental_retry(
-            indexer, store, good, failing, attempted, retry_reporter, result
+            _IncrementalRetryCase(indexer, store, good, failing, attempted),
+            retry_reporter,
+            result,
         )
 
     @pytest.mark.timeout(240)
@@ -1004,7 +1022,8 @@ class TestCodebaseIncrementalIndex:
         assert result.added >= 1
 
         from ...indexer._content_policy import ContentKind
-        from ...indexer._run_ledger import RunLedger, index_run_ledger_path
+        from ...indexer._run_ledger_models import index_run_ledger_path
+        from ...indexer._run_ledger_runtime import RunLedger
 
         data_root = indexer._data_root  # pyright: ignore[reportPrivateUsage]
         ledger = RunLedger(index_run_ledger_path(data_root))
