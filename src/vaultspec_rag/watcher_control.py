@@ -1262,10 +1262,39 @@ async def _submit_watcher_job(
         )
         return
 
+    await _dispatch_created_watcher_job(
+        _CreatedWatcherJobRequest(
+            slot=slot,
+            manager=manager,
+            snapshot=snapshot,
+            candidate_paths=candidate_paths,
+            code_preflight=code_preflight,
+            document_preflight=document_preflight,
+            secondary_graph_cache=secondary_graph_cache,
+        )
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _CreatedWatcherJobRequest:
+    slot: _WatcherConvergenceSlot
+    manager: _jobs.JobManager
+    snapshot: JobSnapshot
+    candidate_paths: frozenset[Path]
+    code_preflight: CodeExecutionPreflight | None
+    document_preflight: DocumentExecutionPreflight | None
+    secondary_graph_cache: GraphCache | None
+
+
+async def _dispatch_created_watcher_job(request: _CreatedWatcherJobRequest) -> None:
+    """Bind and dispatch one watcher job already admitted by the manager."""
+    slot = request.slot
+    manager = request.manager
+    snapshot = request.snapshot
     job_id = snapshot.id
     captured_paths = slot.capture_prevalidated_attempt(
         snapshot.attempt.number,
-        candidate_paths,
+        request.candidate_paths,
     )
     await _run_in_thread(
         partial(
@@ -1286,9 +1315,9 @@ async def _submit_watcher_job(
             _ManagedAttemptInputs(
                 initial_attempt=snapshot.attempt.number,
                 initial_paths=captured_paths,
-                code_preflight=code_preflight,
-                document_preflight=document_preflight,
-                secondary_graph_cache=secondary_graph_cache,
+                code_preflight=request.code_preflight,
+                document_preflight=request.document_preflight,
+                secondary_graph_cache=request.secondary_graph_cache,
             ),
         )
 
