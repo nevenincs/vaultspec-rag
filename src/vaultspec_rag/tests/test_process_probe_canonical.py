@@ -830,6 +830,74 @@ class TestAtomicReplaceHasOneImplementation:
         assert replace_atomically is not replace_durably
 
 
+class TestEveryRegisteredRouteIsTokenGated:
+    """No route reaches its body without the token check having run.
+
+    Twenty-six handlers open with the same three lines - call ``require_token``,
+    test the result, return it when set. The check itself is already one
+    function; what is repeated is the call and the early return, and that is
+    the part a new route can simply omit. Omitting it does not fail: the route
+    works, and works for anyone who can reach the port.
+
+    This asserts the property rather than the shape, so a handler that gets the
+    gate some other way still passes. Two already do: ``pause`` and ``resume``
+    delegate to the quiesce handler, which is gated - a check looking only for
+    a literal ``require_token`` call in each registered handler would have
+    called both of them unauthenticated and been wrong.
+
+    A decorator would collapse the three lines to one and make the gate
+    impossible to half-apply. That is the better shape and it is not done here:
+    it rewrites twenty-five authentication call sites, and this guard is what
+    makes doing that safely possible rather than hopefully.
+    """
+
+    @staticmethod
+    def _routes_module() -> ast.Module:
+        return ast.parse(
+            (_PACKAGE_ROOT / "server" / "_routes.py").read_text(encoding="utf-8")
+        )
+
+    def test_no_registered_route_skips_the_token_check(self) -> None:
+        """Directly or by delegation, every route must reach the gate."""
+        tree = self._routes_module()
+
+        bodies: dict[str, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                bodies[node.name] = ast.unparse(node)
+
+        gated = {
+            name for name, body in bodies.items() if "require_token(request)" in body
+        }
+        # A handler that hands the request to a gated handler is gated too.
+        changed = True
+        while changed:
+            changed = False
+            for name, body in bodies.items():
+                if name in gated:
+                    continue
+                if any(f"{peer}(request" in body for peer in gated):
+                    gated.add(name)
+                    changed = True
+
+        registered = [
+            node.args[1].id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "Route"
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Name)
+        ]
+        assert registered, "no routes discovered; the scan is looking wrongly"
+        ungated = sorted(name for name in registered if name not in gated)
+        assert not ungated, (
+            f"these registered routes never reach require_token: {ungated}; "
+            "a route without the gate does not fail, it serves anyone who can "
+            "reach the port"
+        )
+
+
 class TestRepeatedStatementRunsStayMerged:
     """No long run of statements is repeated inside two functions.
 
