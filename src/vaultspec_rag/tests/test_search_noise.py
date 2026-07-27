@@ -149,24 +149,32 @@ class TestDomainValidation:
     pytestmark: ClassVar = [pytest.mark.unit]
 
     def test_unknown_domain_rejected(self) -> None:
-        from ..search import InvalidFilterForSearchTypeError, validate_search_filters
-
-        with pytest.raises(InvalidFilterForSearchTypeError):
-            validate_search_filters("code", exclude_domains=["bogus"])
-
-    def test_known_domains_accepted(self) -> None:
-        from ..search import validate_search_filters
-
-        # Does not raise.
-        validate_search_filters(
-            "code", exclude_domains=["tests"], only_domains=["prod"]
+        from ..search import (
+            InvalidFilterForSearchTypeError,
+            SearchFilterOptions,
+            validate_search_filters,
         )
 
+        with pytest.raises(InvalidFilterForSearchTypeError):
+            validate_search_filters("code", SearchFilterOptions(exclude_domains=["bogus"]))
+
+    def test_known_domains_accepted(self) -> None:
+        from ..search import SearchFilterOptions, validate_search_filters
+
+        # Does not raise.
+        validate_search_filters("code", SearchFilterOptions(
+            exclude_domains=["tests"], only_domains=["prod"]
+        ))
+
     def test_domain_filters_require_code_type(self) -> None:
-        from ..search import InvalidFilterForSearchTypeError, validate_search_filters
+        from ..search import (
+            InvalidFilterForSearchTypeError,
+            SearchFilterOptions,
+            validate_search_filters,
+        )
 
         with pytest.raises(InvalidFilterForSearchTypeError):
-            validate_search_filters("vault", exclude_domains=["tests"])
+            validate_search_filters("vault", SearchFilterOptions(exclude_domains=["tests"]))
 
 
 class TestApplyDomainDemotion:
