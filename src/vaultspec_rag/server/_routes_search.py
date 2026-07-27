@@ -349,11 +349,12 @@ def _dispatch_public_search(
         DocumentSearchRequest,
         VaultCombinedSearchFilters,
     )
+    from ..api import CodebaseSearchRequest, VaultSearchRequest
 
     if search_type is PublicSourceType.VAULT:
-        results, timings = vaultspec_rag.search_vault_timed(
-            root,
-            query,
+        results, timings = vaultspec_rag.search_vault_timed(VaultSearchRequest(
+            root_dir=root,
+            query=query,
             top_k=top_k,
             doc_type=payload.get("doc_type"),
             feature=payload.get("feature"),
@@ -362,12 +363,12 @@ def _dispatch_public_search(
             intent=payload.get("intent"),
             like_ids=payload.get("like_ids"),
             unlike_ids=payload.get("unlike_ids"),
-        )
+        ))
         return results, timings, None
     if search_type is PublicSourceType.CODE:
-        results, timings = vaultspec_rag.search_codebase_timed(
-            root,
-            query,
+        results, timings = vaultspec_rag.search_codebase_timed(CodebaseSearchRequest(
+            root_dir=root,
+            query=query,
             top_k=top_k,
             language=payload.get("language"),
             path=payload.get("path"),
@@ -384,7 +385,7 @@ def _dispatch_public_search(
             like_ids=payload.get("like_ids"),
             unlike_ids=payload.get("unlike_ids"),
             notes=notes,
-        )
+        ))
         return results, timings, None
     if search_type is PublicSourceType.DOCUMENT:
         results, timings = vaultspec_rag.search_documents_timed(

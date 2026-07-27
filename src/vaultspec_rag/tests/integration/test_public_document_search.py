@@ -13,7 +13,7 @@ from ..._public_search import (
     search_combined,
     search_documents,
 )
-from ...api import index_documents
+from ...api import DocumentIndexOptions, index_documents
 from ...registry import get_registry
 from ._helpers import _document_policy
 
@@ -50,11 +50,10 @@ def test_non_empty_public_facade_applies_document_owned_combined_filters(
         encoding="utf-8",
     )
 
-    indexed = index_documents(
-        tmp_path,
+    indexed = index_documents(tmp_path, DocumentIndexOptions(
         full=True,
         content_policy=_document_policy("records/*.txt"),
-    )
+    ))
     try:
         assert indexed.total >= 2
         documents = search_documents(

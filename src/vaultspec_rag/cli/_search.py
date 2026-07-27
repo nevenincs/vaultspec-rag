@@ -18,6 +18,7 @@ from .._operator_commands import (
 )
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from .._store_locks import VaultStoreLockedError
+from ..api import CodebaseSearchRequest, VaultSearchRequest
 from ..serviceclient._compat import resolve_data_plane_service
 from ..serviceclient._transport import (
     _get_search_timeout,
@@ -425,9 +426,9 @@ def _try_in_process_search(
         )
         with status_ctx:
             if search_type is PublicSourceType.CODE:
-                results = vaultspec_rag.search_codebase(
-                    target,
-                    query,
+                results = vaultspec_rag.search_codebase(CodebaseSearchRequest(
+                    root_dir=target,
+                    query=query,
                     top_k=max_results,
                     language=language,
                     path=path,
@@ -438,17 +439,17 @@ def _try_in_process_search(
                     exclude_paths=exclude_paths,
                     dedup_locales=dedup_locales,
                     prefer=prefer,
-                )
+                ))
             elif search_type is PublicSourceType.VAULT:
-                results = vaultspec_rag.search_vault(
-                    target,
-                    query,
+                results = vaultspec_rag.search_vault(VaultSearchRequest(
+                    root_dir=target,
+                    query=query,
                     top_k=max_results,
                     doc_type=doc_type,
                     feature=feature,
                     date=date,
                     tag=tag,
-                )
+                ))
             elif search_type is PublicSourceType.DOCUMENT:
                 results = vaultspec_rag.search_documents(
                     DocumentSearchRequest(

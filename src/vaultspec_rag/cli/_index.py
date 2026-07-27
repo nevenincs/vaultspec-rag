@@ -837,18 +837,19 @@ def _execute_source_indexing(
     AllIndexOutcomes | None,
 ]:
     """Execute exactly one canonical source selection without fallback."""
+    from ..api import AllIndexOptions, CodeIndexOptions, DocumentIndexOptions
+
     if index_type is PublicSourceType.COMBINED:
         return (
             None,
             None,
             None,
-            api.index_all(
-                target,
+            api.index_all(target, AllIndexOptions(
                 clean=rebuild,
                 reporter=reporter,
                 model_name=model,
                 extra_excludes=exclude,
-            ),
+            )),
         )
     if index_type is PublicSourceType.VAULT:
         return (
@@ -865,26 +866,24 @@ def _execute_source_indexing(
     if index_type is PublicSourceType.CODE:
         return (
             None,
-            api.index_codebase(
-                target,
+            api.index_codebase(target, CodeIndexOptions(
                 clean=rebuild,
                 reporter=reporter,
                 model_name=model,
                 extra_excludes=exclude,
-            ),
+            )),
             None,
             None,
         )
     return (
         None,
         None,
-        api.index_documents(
-            target,
+        api.index_documents(target, DocumentIndexOptions(
             clean=rebuild,
             reporter=reporter,
             model_name=model,
             extra_excludes=exclude,
-        ),
+        )),
         None,
     )
 
