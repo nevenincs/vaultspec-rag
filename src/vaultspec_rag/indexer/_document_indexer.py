@@ -29,7 +29,7 @@ from ._document_meta import (
 from ._file_state import FileStateKind
 from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
 from ._route_migration import reconcile_generation_storage
-from ._run_ledger import FinalizationPhase, RunOperation
+from ._run_ledger_models import FinalizationPhase, RunOperation
 from ._run_policy import RunPolicy
 from ._streaming import (
     _SliceWriter,
@@ -51,7 +51,7 @@ if TYPE_CHECKING:
     from ._preprocess_config import PreprocessContext
     from ._resolved_policy import ResolvedIndexPolicy
     from ._reuse import DonorReuseContext, ReuseStats
-    from ._run_ledger import CommitUnit
+    from ._run_ledger_models import CommitUnit
 
 logger = logging.getLogger(__name__)
 
@@ -488,10 +488,14 @@ class DocumentIndexer:
         result = _chunk_worker.stream_document_and_hash_file(
             path,
             self.root_dir,
-            prep,
-            self._execution_policy(policy),
-            run_control,
-            lambda: extractor_policy.checkpoint("document extractor polling"),
+            _chunk_worker.DocumentChunkingOptions(
+                prep=prep,
+                execution_policy=self._execution_policy(policy),
+                run_control=run_control,
+                preprocess_checkpoint=lambda: extractor_policy.checkpoint(
+                    "document extractor polling"
+                ),
+            ),
         )
         if result.preprocess_status == "skipped":
             reason = result.preprocess_reason or "document extraction skipped"

@@ -382,6 +382,16 @@ _DEFAULT_EXECUTION_POLICY = ChunkExecutionPolicy()
 
 
 @dataclass(frozen=True, slots=True)
+class DocumentChunkingOptions:
+    """Execution context for one explicitly admitted document source."""
+
+    prep: PreprocessContext | None = None
+    execution_policy: ChunkExecutionPolicy = _DEFAULT_EXECUTION_POLICY
+    run_control: RunControl = NO_RUN_CONTROL
+    preprocess_checkpoint: Callable[[], None] | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class _DocumentChunkConstruction:
     """Stable identity, provenance, and splitting settings for document chunks."""
 
@@ -762,17 +772,14 @@ def _raw_document_stream(
 def stream_document_and_hash_file(
     path: pathlib.Path,
     root_dir: pathlib.Path,
-    prep: PreprocessContext | None = None,
-    execution_policy: ChunkExecutionPolicy = _DEFAULT_EXECUTION_POLICY,
-    run_control: RunControl = NO_RUN_CONTROL,
-    preprocess_checkpoint: Callable[[], None] | None = None,
+    options: DocumentChunkingOptions = DocumentChunkingOptions(),
 ) -> DocumentFileChunkStreamResult:
     """Hash and incrementally chunk one explicitly admitted document."""
     rel_path = path.relative_to(root_dir).as_posix()
-    run_control.checkpoint()
-    rule = prep.config.match(rel_path) if prep is not None else None
+    options.run_control.checkpoint()
+    rule = options.prep.config.match(rel_path) if options.prep is not None else None
     _require_rule_target(rule, ContentKind.DOCUMENT)
-    source_limit = _effective_source_limit(prep, rule)
+    source_limit = _effective_source_limit(options.prep, rule)
     if rule is None:
         return _raw_document_stream(
             _RawDocumentFallback(
@@ -780,8 +787,8 @@ def stream_document_and_hash_file(
                 rel_path=rel_path,
                 expected_hash=None,
                 source_limit=source_limit,
-                execution_policy=execution_policy,
-                run_control=run_control,
+                execution_policy=options.execution_policy,
+                run_control=options.run_control,
             )
         )
     try:
@@ -789,7 +796,7 @@ def stream_document_and_hash_file(
             path,
             max_source_bytes=source_limit,
             retain_bytes=False,
-            run_control=run_control,
+            run_control=options.run_control,
         )
     except _SourceLimitExceededError as exc:
         return DocumentFileChunkStreamResult(
@@ -799,15 +806,15 @@ def stream_document_and_hash_file(
             preprocess_status=_limit_disposition(rule, exc),
             preprocess_reason=str(exc),
         )
-    assert prep is not None
+    assert options.prep is not None
     status, output, reason = _document_preprocess_output(
         _DocumentPreprocessRequest(
             content_hash=content_hash,
             path=path,
             root_dir=root_dir,
-            prep=prep,
-            run_control=run_control,
-            preprocess_checkpoint=preprocess_checkpoint,
+            prep=options.prep,
+            run_control=options.run_control,
+            preprocess_checkpoint=options.preprocess_checkpoint,
         )
     )
     if status == "ok" and output is not None:
@@ -818,7 +825,7 @@ def stream_document_and_hash_file(
                 output,
                 rel_path=rel_path,
                 content_hash=content_hash,
-                execution_policy=execution_policy,
+                execution_policy=options.execution_policy,
             ),
             preprocess_status="ok",
         )
@@ -836,8 +843,8 @@ def stream_document_and_hash_file(
             rel_path=rel_path,
             expected_hash=content_hash,
             source_limit=source_limit,
-            execution_policy=execution_policy,
-            run_control=run_control,
+            execution_policy=options.execution_policy,
+            run_control=options.run_control,
         )
     )
 
@@ -845,19 +852,13 @@ def stream_document_and_hash_file(
 def chunk_document_and_hash_file(
     path: pathlib.Path,
     root_dir: pathlib.Path,
-    prep: PreprocessContext | None = None,
-    execution_policy: ChunkExecutionPolicy = _DEFAULT_EXECUTION_POLICY,
-    run_control: RunControl = NO_RUN_CONTROL,
-    preprocess_checkpoint: Callable[[], None] | None = None,
+    options: DocumentChunkingOptions = DocumentChunkingOptions(),
 ) -> DocumentFileChunkResult:
     """Materialize the document stream for compatibility callers."""
     result = stream_document_and_hash_file(
         path,
         root_dir,
-        prep,
-        execution_policy,
-        run_control,
-        preprocess_checkpoint,
+        options,
     )
     return DocumentFileChunkResult(
         result.rel_path,
