@@ -40,7 +40,7 @@ from .._process_probe import (
     reap_if_child,
     send_signal,
 )
-from ..config import EnvVar, get_config
+from ..config import EnvVar, get_config, managed_status_dir
 from ._constants import (
     MANIFEST_FILENAME,
     QDRANT_ASSET_SHA256,
@@ -203,8 +203,7 @@ def qdrant_bin_dir(version: str = QDRANT_SERVER_VERSION) -> Path:
     ``VAULTSPEC_RAG_STATUS_DIR`` isolation knob carries provisioning
     state along with the rest of the managed service directory.
     """
-    cfg = get_config()
-    return Path(str(cfg.status_dir)).expanduser() / "bin" / "qdrant" / version
+    return managed_status_dir() / "bin" / "qdrant" / version
 
 
 def read_manifest(version_dir: Path) -> dict[str, Any] | None:

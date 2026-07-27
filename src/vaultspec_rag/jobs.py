@@ -20,6 +20,7 @@ from anyio.to_thread import run_sync as _run_in_thread
 
 from ._job_errors import STALL_THRESHOLD_SECONDS, classify_error_text
 from ._runtime_identity import process_identity_fields
+from .config import managed_status_dir
 from .job_control import NO_RUN_CONTROL
 from .job_manager import (
     MAX_RECORDS,
@@ -175,11 +176,8 @@ def get_job_manager() -> JobManager:
 
 def _active_snapshot_path() -> object:
     """Resolve the active-jobs snapshot path from the managed status dir."""
-    from pathlib import Path
 
-    from .config import get_config
-
-    return Path(str(get_config().status_dir)).expanduser() / _ACTIVE_SNAPSHOT_FILENAME
+    return managed_status_dir() / _ACTIVE_SNAPSHOT_FILENAME
 
 
 def _persist_active_snapshot() -> None:

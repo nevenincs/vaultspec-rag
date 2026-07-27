@@ -1903,3 +1903,58 @@ class TestDesiredJobStateHasOneStatement:
             f"'{member}'" in source or "for member in DesiredJobState" in source
             for member in DesiredJobState
         )
+
+
+class TestStatusDirHasOneResolver:
+    """The managed service directory is resolved in one place.
+
+    Nine sites resolved it: five inline, plus named helpers in the manifest
+    and the discovery client. They had settled on two spellings -
+    ``Path(cfg.status_dir)`` and ``Path(str(cfg.status_dir))``. The attribute
+    is a ``str``, so both are identical and the ``str()`` was defensive typing
+    that spread by copying rather than by need.
+
+    One resolver stays separate, and its own docstring says why:
+    ``config._status_dir_path`` reads the environment DIRECTLY because it
+    belongs to the layer that feeds the config. Every consumer goes through
+    the config instead, so a ``--status-dir`` override on the command line is
+    honoured - the manifest helper's docstring warned that reading the
+    environment there would "silently ignore a --status-dir override and split
+    the manifest from the rest of the service's durable state".
+    """
+
+    def test_no_module_resolves_the_status_dir_itself(self) -> None:
+        """A consumer builds the path from the config, or it drifts.
+
+        Proven able to fail: restoring the inline expression in any consumer
+        fails this test on the offender list below.
+        """
+        offenders = [
+            f"{path.name}:{number}"
+            for path in _production_sources()
+            if path.name != "config.py"
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            )
+            if "status_dir)" in line and ".expanduser()" in line
+        ]
+        assert not offenders, (
+            f"the status directory is resolved inline at {offenders}; call "
+            "config.managed_status_dir so a --status-dir override reaches "
+            "every file the service keeps there"
+        )
+
+    def test_every_managed_path_sits_under_the_one_directory(self) -> None:
+        """The files the service keeps must land in the same place.
+
+        Splitting them is the failure the manifest helper's docstring
+        describes: an override honoured by some writers and not others leaves
+        durable state in two directories, one of which nothing reads.
+        """
+        from ..config import managed_status_dir
+        from ..serviceclient._discovery import _status_file
+        from ..storage_manifest import manifest_path
+
+        root = managed_status_dir()
+        for path in (_status_file(), manifest_path()):
+            assert path.parent == root, (path, root)

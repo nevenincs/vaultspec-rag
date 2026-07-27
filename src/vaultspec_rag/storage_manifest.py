@@ -222,25 +222,13 @@ def _legacy_collections(prefix: str, backend: str) -> tuple[str, ...]:
     )
 
 
-def _status_dir_path() -> Path:
-    """Resolve the managed service directory the same way the rest of the system does.
-
-    Resolves through ``get_config().status_dir`` (CLI ``--status-dir`` override
-    -> ``VAULTSPEC_RAG_STATUS_DIR`` env -> default), so the manifest always lands
-    in the same directory as ``service.json``, the qdrant tree, and the logs.
-    Reading the env directly here would silently ignore a ``--status-dir``
-    override and split the manifest from the rest of the service's durable
-    state. The import is function-local to avoid an import cycle with the store
-    (which imports this module's ``root_collection_prefix``-keyed helpers).
-    """
-    from .config import get_config
-
-    return Path(str(get_config().status_dir)).expanduser()
-
-
 def manifest_path() -> Path:
     """Return the path of the persisted storage manifest."""
-    return _status_dir_path() / _MANIFEST_FILENAME
+    # Function-local to avoid an import cycle with the store, which imports
+    # this module's collection-prefix helpers.
+    from .config import managed_status_dir
+
+    return managed_status_dir() / _MANIFEST_FILENAME
 
 
 def _decode_collections(

@@ -16,13 +16,13 @@ import os
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from .._atomic_write import write_json_atomically
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Mapping
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -144,10 +144,10 @@ def _status_dir() -> Path:
     Returns:
         Path to the service status directory.
     """
-    from ..config import get_config
 
-    cfg = get_config()
-    d = Path(cfg.status_dir).expanduser()
+    from ..config import managed_status_dir
+
+    d = managed_status_dir()
     from .._test_isolation import enforce_pytest_managed_singleton_containment
 
     enforce_pytest_managed_singleton_containment(
