@@ -325,18 +325,29 @@ enable = ["C0302", "R0902", "R0904", "R0916"]
 # count; the ceiling is a ratchet, not a target — lower it whenever an
 # extraction lands, and never raise it.
 #
-# Census (2026-07-27, 469 modules — 195 production, 274 test):
+# The census counts PRODUCTION modules only, because `ignore-paths` above
+# means those are the only ones this gate measures. An earlier census here
+# counted the whole tree, which set the ceiling against a 3398-line TEST
+# module the gate could never see and left ~450 lines of unused headroom over
+# the real subject. Count what the gate counts.
 #
-#     over 3400:   0        <- the enforced ceiling; the tree meets it
-#     over 3000:   2 (both test modules)
-#     over 2000:  11
-#     over 1200:  36
-#     over 1000:  50
-#     over  500: 116        <- where modules should settle
+# Census (2026-07-27, 203 production modules):
+#
+#     over 3000:   0        <- the enforced ceiling; the tree meets it
+#     over 2500:   1
+#     over 2000:   4
+#     over 1500:   7
+#     over 1200:  20
+#     over 1000:  28
+#     over  500:  60        <- where modules should settle
 #
 # Longest production module: job_manager.py at 2955 lines.
+#
+# Test modules are NOT gated on length; the longest is 3942 lines. That is a
+# deliberate scope choice, but it does mean test growth is invisible here.
+# `just dev health` ranks the whole tree.
 [tool.pylint.format]
-max-module-lines = 3400
+max-module-lines = 3000
 
 # BASELINE-CALIBRATED (captured 2026-07-27): each sits at the current worst
 # offender, so the gate is green today and can only be ratcheted DOWN.
