@@ -840,6 +840,49 @@ def test_archive_rejects_a_real_write_after_its_first_snapshot(
 
 
 @pytest.mark.usefixtures("isolated_status_dir")
+def test_completed_archive_rejects_a_missing_real_snapshot(
+    ops_qdrant: QdrantSupervisor,
+    tmp_path: Path,
+) -> None:
+    """The archive verifier refuses a persisted manifest with a lost artifact.
+
+    This uses a completed snapshot produced by the live Qdrant server, then
+    removes that snapshot before re-running the verifier. Removing the
+    snapshot-file check makes the guard return successfully.
+    """
+    from qdrant_client import QdrantClient
+
+    from ...storage_manifest import snapshot_manifest_path
+    from ...storage_reclamation import _verify_completed_archive, archive_prefix
+
+    client = QdrantClient(url=ops_qdrant.url, timeout=30)
+    try:
+        root = tmp_path / "archive-artifact"
+        root.mkdir()
+        prefix = root_collection_prefix(root)
+        name = f"{prefix}vault_docs"
+        record_root(root, backend="server")
+        _make_collection(client, name)
+
+        archive_dir = tmp_path / "archive"
+        namespace_dir = archive_dir / prefix.rstrip("_")
+        artifacts = archive_prefix(
+            client,
+            prefix,
+            snapshots_dir=ops_qdrant.storage_dir.parent / "snapshots",
+            archive_dir=archive_dir,
+        )
+        manifest_path = snapshot_manifest_path(namespace_dir)
+        snapshot = next(path for path in artifacts if path != manifest_path)
+        snapshot.unlink()
+
+        with pytest.raises(RuntimeError, match="archived snapshot file not found"):
+            _verify_completed_archive(client, namespace_dir, manifest_path)
+    finally:
+        client.close()
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
 def test_real_migrate_then_carry_stamps_the_remapped_target(
     ops_qdrant: QdrantSupervisor,
     tmp_path: Path,
