@@ -1,25 +1,25 @@
-"""Guard tests for the ``server jobs --watch`` interrupt path.
+"""Guard tests for the interruptible off-thread wait, and the jobs fetch.
 
-These are guard tests, not positive coverage. Their subject is that an operator
-interrupt is NOT swallowed and NOT deferred:
+These are guard tests, not positive coverage. Their subject is that an
+operator interrupt is NOT swallowed and NOT deferred:
 
-- the refresh runs off the main thread, so an interrupt arriving while the
-  service has yet to answer is serviced immediately instead of after the
-  request's timeout (on Windows a thread parked in a blocking socket read
-  reaches no interpreter check, so an inline refresh makes Ctrl+C inert for
-  however long the service takes);
-- the interrupt terminates the view on the conventional interrupted status
-  rather than the success the operator never got;
-- the refresh is a read request, so abandoning one mid-flight cannot leave the
-  service modified.
+- the wait runs off the main thread, so an interrupt arriving while a service
+  has yet to answer is serviced immediately instead of after the request's
+  timeout (on Windows a thread parked in a blocking socket read reaches no
+  interpreter check, so an inline wait makes Ctrl+C inert for however long the
+  service takes);
+- a failing call reaches the caller as its own exception rather than as a
+  missing result, which a caller would misread as a service being down;
+- the worker never outlives the process.
 
-The first test asserts the interrupt lands while the refresh is *still
-blocked*: run the refresh inline again and it fails, because the main thread
-never reaches its wait.
+The first test asserts the interrupt lands while the call is *still blocked*:
+run it inline again and it fails, because the main thread never reaches its
+wait. The remaining test holds the jobs fetch to being a read.
 
-The off-thread mechanism itself is shared with the start command's health
-wait, so those tests drive it at its own home rather than through a
-jobs-local alias, and a separate test holds the watch loop to using it.
+The live jobs view no longer polls on the main thread - it is an application
+that owns its own event loop and runs its fetches on Textual workers, and is
+covered by its own tests. What remains here is the shared wait, which the
+start command's health poll still uses, and the fetch those views share.
 """
 
 from __future__ import annotations
@@ -174,8 +174,8 @@ def test_the_watch_refresh_is_a_read_only_request() -> None:
 
     server, thread, requests = _jobs_empty_contract_server()
     try:
-        jobs_query.fetch_jobs_result(
-            jobs_query.JobsQuery(port=server.server_address[1], limit=5)
+        jobs_query._fetch_jobs_result(
+            jobs_query._JobsQuery(port=server.server_address[1], limit=5)
         )
     finally:
         server.shutdown()

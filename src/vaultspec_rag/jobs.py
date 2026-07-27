@@ -14,7 +14,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
 from anyio.to_thread import run_sync as _run_in_thread
 
@@ -59,11 +59,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "TERMINAL_PHASES",
     "JobProgressReporter",
     "activate_index_job",
     "active_index_support_profiles",
+    "delete_job",
+    "find_job",
     "get_job_manager",
     "index_job_status",
+    "progress_rate",
     "record_finish",
     "record_progress",
     "record_start",
@@ -112,9 +116,37 @@ Phase = Literal[
     "skipped",
     "interrupted",
 ]
+#: Phases a record can no longer leave. Every phase except ``running`` is
+#: terminal, and this is the sole definition of that set: deletion, retention
+#: and the read surface all have to agree on which records are finished.
+TERMINAL_PHASES: frozenset[str] = frozenset(
+    phase for phase in get_args(Phase) if phase != "running"
+)
 
 _lock = threading.Lock()
 _records: deque[dict[str, object]] = deque(maxlen=MAX_RECORDS)
+# Progress-rate sampling. The window rides on its own record, so it is
+# evicted with that record by the ring and needs no second bound.
+#
+# The window is per-step and is discarded whenever the step changes,
+# because an index job's steps have very different per-unit costs:
+# a rate carried over from discovery into embedding predicts embedding
+# badly, and a wrong estimate is worse than none.
+_PROGRESS_WINDOW_KEY = "progress_window"
+_PROGRESS_WINDOW_SAMPLES = 16
+# Two samples milliseconds apart divide a small count by a smaller
+# interval and yield a rate off by orders of magnitude. Refusing to
+# answer until the window spans a real interval costs one refresh.
+_MIN_RATE_SPAN_SECONDS = 1.0
+# Retained samples are spaced by at least this interval. Chunk production
+# reports per file and measures ~385 reports/second on a real tree, so a
+# window bounded only by sample count holds ~40ms of history and can never
+# satisfy the span guard above - the two bounds cancel and the rate is
+# never available. Coalescing every report that lands inside the interval
+# into the newest sample keeps the window bounded by count while still
+# spanning a real interval, without discarding the current count: the
+# newest sample always carries it.
+_PROGRESS_SAMPLE_MIN_INTERVAL_SECONDS = 0.25
 _on_job_complete_callbacks: list[Callable[[float], None]] = []
 _manager_lock = threading.Lock()
 _job_manager: JobManager | None = None
@@ -163,6 +195,13 @@ def _persist_active_snapshot() -> None:
                 "source": record.get("source"),
                 "trigger": record.get("trigger"),
                 "started_at": record.get("started_at"),
+                # Which process owns the run. The snapshot path is shared by
+                # every process on the machine, so the reader needs this to
+                # tell a job its own prior life abandoned from one still
+                # running under somebody else.
+                "pid": runtime.get("pid")
+                if isinstance(runtime := record.get("runtime"), dict)
+                else None,
                 "progress": dict(cast("dict[str, object]", progress))
                 if isinstance(progress := record.get("progress"), dict)
                 else None,
@@ -181,6 +220,21 @@ def _persist_active_snapshot() -> None:
         )
     except OSError:
         logger.debug("could not persist active-jobs snapshot", exc_info=True)
+
+
+def _owned_by_live_process(pid: object) -> bool:
+    """Return whether a snapshot entry is still owned by a running process.
+
+    An unreadable or absent pid reports ``False`` so the entry is restored:
+    a record that predates this field, or one written by a process that
+    crashed mid-write, is exactly the interrupted work restoration exists to
+    surface, and losing it silently is worse than an extra record.
+    """
+    if isinstance(pid, bool) or not isinstance(pid, int):
+        return False
+    from ._process_probe import pid_alive
+
+    return pid_alive(pid)
 
 
 def restore_interrupted() -> int:
@@ -213,6 +267,11 @@ def restore_interrupted() -> int:
         if not isinstance(entry, dict):
             continue
         data = cast("dict[str, object]", entry)
+        if _owned_by_live_process(data.get("pid")):
+            # Still running somewhere. Adopting it would publish a phantom
+            # ``interrupted`` record for work that never stopped, under an id
+            # this service cannot address.
+            continue
         record: dict[str, object] = {
             "id": data.get("id") or uuid.uuid4().hex,
             "source": data.get("source"),
@@ -355,6 +414,83 @@ def record_start(
     return record_id
 
 
+def _sample_progress(
+    record: dict[str, object],
+    *,
+    step: str,
+    previous_step: object,
+    completed: int,
+    at: float,
+) -> None:
+    """Record one progress observation on *record* (caller holds the lock).
+
+    The window is discarded when the step changes, and when the count moves
+    backwards - a resumed attempt replays committed units, so measuring
+    across that reset would report a negative rate or a wildly low one.
+
+    Reports arriving faster than
+    :data:`_PROGRESS_SAMPLE_MIN_INTERVAL_SECONDS` are coalesced into the
+    newest sample rather than appended, so a bounded window spans a real
+    interval however fast the step reports.
+    """
+    window = record.get(_PROGRESS_WINDOW_KEY)
+    samples = (
+        cast("deque[tuple[float, int]]", window)
+        if isinstance(window, deque)
+        else deque(maxlen=_PROGRESS_WINDOW_SAMPLES)
+    )
+    if previous_step != step or (samples and completed < samples[-1][1]):
+        samples.clear()
+    # Measured against the last committed sample, never the newest one: the
+    # newest is overwritten in place, so comparing against it would hold the
+    # window open forever and turn the rate into a whole-step average that
+    # cannot track a slowdown.
+    if (
+        len(samples) >= 2
+        and at - samples[-2][0] < _PROGRESS_SAMPLE_MIN_INTERVAL_SECONDS
+    ):
+        samples[-1] = (at, completed)
+    else:
+        samples.append((at, completed))
+    record[_PROGRESS_WINDOW_KEY] = samples
+
+
+def _window_rate(samples: deque[tuple[float, int]]) -> float | None:
+    """Return the completion rate per second across *samples*, or ``None``.
+
+    Declines to answer rather than guessing: a single sample measures no
+    interval, a short span divides by near-zero, and a flat count over a
+    real span is a stall the caller should not convert into an estimate.
+    """
+    if len(samples) < 2:
+        return None
+    first_at, first_completed = samples[0]
+    last_at, last_completed = samples[-1]
+    span = last_at - first_at
+    advanced = last_completed - first_completed
+    if span < _MIN_RATE_SPAN_SECONDS or advanced <= 0:
+        return None
+    return advanced / span
+
+
+def progress_rate(record_id: str) -> float | None:
+    """Return the windowed completion rate for one job, or ``None``.
+
+    ``None`` means the service declines to estimate - the job is unknown,
+    has not reported twice within one step, or has not advanced. It never
+    means zero.
+    """
+    with _lock:
+        for record in reversed(_records):
+            if record["id"] != record_id:
+                continue
+            window = record.get(_PROGRESS_WINDOW_KEY)
+            if not isinstance(window, deque):
+                return None
+            return _window_rate(cast("deque[tuple[float, int]]", window))
+    return None
+
+
 def record_progress(
     record_id: str,
     step: str,
@@ -378,12 +514,20 @@ def record_progress(
                 if isinstance(progress, dict):
                     progress_data = cast("dict[str, object]", progress)
                     progress_step = progress_data.get("step")
+                now = time.time()
                 record["progress"] = {
                     "step": step,
                     "completed": completed,
                     "total": total,
-                    "last_updated": time.time(),
+                    "last_updated": now,
                 }
+                _sample_progress(
+                    record,
+                    step=step,
+                    previous_step=progress_step,
+                    completed=completed,
+                    at=now,
+                )
                 if progress_step != step:
                     log_fields = {
                         "job_id": record_id,
@@ -527,6 +671,42 @@ def record_finish(
         )
 
 
+def _copied_record(record: dict[str, object]) -> dict[str, object]:
+    """Return one detached copy of a stored activity record.
+
+    Shallow-copies the record and every nested mapping a caller could reach,
+    so no consumer can mutate live registry state through a returned view.
+    """
+    item = dict(record)
+    # Sampling state backs the rate estimate and is not part of the job
+    # resource. Dropping it in the shared copier keeps it off every
+    # projection built from a record, rather than relying on each caller
+    # to remember to exclude it.
+    item.pop(_PROGRESS_WINDOW_KEY, None)
+    prog = record.get("progress")
+    if isinstance(prog, dict):
+        item["progress"] = dict(cast("dict[str, object]", prog))
+    failures = record.get("preprocess_failures")
+    if isinstance(failures, list):
+        item["preprocess_failures"] = list(cast("list[object]", failures))
+    initiator = record.get("initiator")
+    if isinstance(initiator, dict):
+        item["initiator"] = dict(cast("dict[str, object]", initiator))
+    runtime = record.get("runtime")
+    if isinstance(runtime, dict):
+        item["runtime"] = dict(cast("dict[str, object]", runtime))
+    resources = record.get("resources")
+    if isinstance(resources, dict):
+        resource_data = cast("dict[str, object]", resources)
+        item["resources"] = {
+            str(key): dict(cast("dict[str, object]", value))
+            if isinstance(value, dict)
+            else value
+            for key, value in resource_data.items()
+        }
+    return item
+
+
 def snapshot() -> list[dict[str, object]]:
     """Return a newest-first list of copied activity records.
 
@@ -539,30 +719,88 @@ def snapshot() -> list[dict[str, object]]:
     with _lock:
         copied: list[dict[str, object]] = []
         for record in reversed(_records):
-            item = dict(record)
-            prog = record.get("progress")
-            if isinstance(prog, dict):
-                item["progress"] = dict(cast("dict[str, object]", prog))
-            failures = record.get("preprocess_failures")
-            if isinstance(failures, list):
-                item["preprocess_failures"] = list(cast("list[object]", failures))
-            initiator = record.get("initiator")
-            if isinstance(initiator, dict):
-                item["initiator"] = dict(cast("dict[str, object]", initiator))
-            runtime = record.get("runtime")
-            if isinstance(runtime, dict):
-                item["runtime"] = dict(cast("dict[str, object]", runtime))
-            resources = record.get("resources")
-            if isinstance(resources, dict):
-                resource_data = cast("dict[str, object]", resources)
-                item["resources"] = {
-                    str(key): dict(cast("dict[str, object]", value))
-                    if isinstance(value, dict)
-                    else value
-                    for key, value in resource_data.items()
-                }
-            copied.append(item)
+            copied.append(_copied_record(record))
         return copied
+
+
+def _find_activity_record(job_id: str) -> dict[str, object] | None:
+    """Return the newest copied activity record for one exact id."""
+    with _lock:
+        for record in reversed(_records):
+            if record.get("id") == job_id:
+                return _copied_record(record)
+    return None
+
+
+def _purge_activity_record(job_id: str) -> bool:
+    """Drop every activity record for one exact id; report whether any went.
+
+    The durable running-jobs snapshot is rewritten afterwards so a purged
+    record cannot be re-registered as ``interrupted`` by the next startup.
+    """
+    with _lock:
+        surviving = [record for record in _records if record.get("id") != job_id]
+        removed = len(surviving) != len(_records)
+        if removed:
+            _records.clear()
+            _records.extend(surviving)
+    if removed:
+        _persist_active_snapshot()
+    return removed
+
+
+def find_job(job_id: str) -> dict[str, object] | None:
+    """Return one exact job resource from either registry, or ``None``.
+
+    The jobs list is the union of canonical manager history and the activity
+    records that outlive it, so resolving one id has to read the same union.
+    Reading only the canonical half is how a row an operator can see becomes a
+    row they cannot address.
+    """
+    snapshot_job = get_job_manager().get(job_id)
+    if snapshot_job is not None:
+        return snapshot_job.to_dict()
+    return _find_activity_record(job_id)
+
+
+def delete_job(job_id: str) -> JobOutcome:
+    """Delete one terminal job resource from every registry that retains it.
+
+    Canonical history and the activity records are two stores holding the same
+    job under one id. Deleting from one alone leaves the other to surface the
+    job again on the next list, so this owns both halves and is the only
+    supported deletion path.
+    """
+    command = "delete"
+    outcome = get_job_manager().delete(job_id)
+    if outcome.status is not JobOutcomeStatus.ERROR:
+        _purge_activity_record(job_id)
+        return outcome
+    if outcome.code != "job_not_found":
+        return outcome
+
+    record = _find_activity_record(job_id)
+    if record is None:
+        return outcome
+    if not _activity_record_terminal(record):
+        return JobOutcome(
+            command=command,
+            status=JobOutcomeStatus.ERROR,
+            code="job_not_terminal",
+            message="Nonterminal work must be cancelled before deletion.",
+        )
+    _purge_activity_record(job_id)
+    return JobOutcome(
+        command=command,
+        status=JobOutcomeStatus.OK,
+        code="job_deleted",
+        message="The terminal job history was deleted.",
+    )
+
+
+def _activity_record_terminal(record: dict[str, object]) -> bool:
+    """Return whether an activity record has reached a terminal phase."""
+    return str(record.get("phase", "")).strip().lower() in TERMINAL_PHASES
 
 
 def _job_snapshot_stalled(job: JobSnapshot, *, now: float) -> bool:
@@ -1035,15 +1273,17 @@ def _bind_index_dispatch(
     """Attach one logical job to the production indexing implementation."""
     from .job_dispatch import IndexJobBinding, bind_index_job
 
-    return bind_index_job(IndexJobBinding(
-        manager=manager,
-        job_id=job_id,
-        registry=get_registry() if registry is None else registry,
-        code_preflight=code_preflight,
-        document_preflight=document_preflight,
-        on_started=_sync_legacy_started,
-        on_finished=_sync_legacy_finished,
-    ))
+    return bind_index_job(
+        IndexJobBinding(
+            manager=manager,
+            job_id=job_id,
+            registry=get_registry() if registry is None else registry,
+            code_preflight=code_preflight,
+            document_preflight=document_preflight,
+            on_started=_sync_legacy_started,
+            on_finished=_sync_legacy_finished,
+        )
+    )
 
 
 def _prepare_index_job_activation(

@@ -182,7 +182,8 @@ def restore_archive(
     if existing:
         return RestoreResult("refused", destination, names, "destination_exists")
     if request.dry_run or sys.platform == "win32":
-        return RestoreResult("would_restore", destination, names)
+        return (
+            RestoreResult("would_restore", destination, names)
             if request.dry_run
             else RestoreResult(
                 "refused",
@@ -190,6 +191,7 @@ def restore_archive(
                 names,
                 WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON,
             )
+        )
     restored: list[str] = []
     try:
         from qdrant_client.http import models

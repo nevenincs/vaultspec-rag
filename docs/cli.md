@@ -158,8 +158,8 @@ Options:
 | `--scores`                 | flag                               | off     | Show numeric relevance scores on each result.                                                                                                                     |
 | `--language`               | text                               | unset   | Code filter: programming language.                                                                                                                                |
 | `--path`                   | text                               | unset   | Code filter: exact project-relative file path.                                                                                                                    |
-| `--include-path`           | text                               | unset   | Code filter: path pattern to keep matching results; a plain pattern matches that path and everything under it. Repeatable.                                                                                                           |
-| `--exclude-path`           | text                               | unset   | Code filter: path pattern to drop matching results; a plain pattern matches that path and everything under it. Repeatable.                                                                                                           |
+| `--include-path`           | text                               | unset   | Code filter: path pattern to keep matching results; a plain pattern matches that path and everything under it. Repeatable.                                        |
+| `--exclude-path`           | text                               | unset   | Code filter: path pattern to drop matching results; a plain pattern matches that path and everything under it. Repeatable.                                        |
 | `--structure`              | text                               | unset   | Code filter: parse-tree node type, for example `function_definition`.                                                                                             |
 | `--function-name`          | text                               | unset   | Code filter: function or method name.                                                                                                                             |
 | `--class-name`             | text                               | unset   | Code filter: class or struct name.                                                                                                                                |
@@ -355,25 +355,61 @@ Arguments: none.
 
 Options:
 
-| Flag              | Type    | Default              | Description                                                                        |
-| ----------------- | ------- | -------------------- | ---------------------------------------------------------------------------------- |
-| `--limit`         | integer | `20`                 | Maximum number of jobs to return.                                                  |
-| `--state`         | text    | unset                | Filter by state: one of `active`, `waiting`, `finished`, `failed`, or `cancelled`. |
-| `--index`         | text    | unset                | Filter by index source: `vault` or `code`.                                         |
-| `--started-by`    | text    | unset                | Filter by trigger: `manual` or `automatic`.                                        |
-| `--query`, `-q`   | text    | unset                | Match against job id, outcome, or progress.                                        |
-| `--failed`        | flag    | off                  | Show only failed jobs.                                                             |
-| `--job-id`        | text    | unset                | Filter to one job id.                                                              |
-| `--since`         | float   | unset                | Show jobs updated within the last N seconds.                                       |
-| `--port`          | integer | running service port | Target a specific service port.                                                    |
-| `--json`          | flag    | off                  | Emit one JSON envelope to stdout.                                                  |
-| `--watch`         | flag    | off                  | Refresh the table on an interval. Cannot combine with `--json`.                    |
-| `--interval`      | float   | `2.0`                | Refresh interval for `--watch`, in seconds.                                        |
-| `--refresh-count` | integer | unset                | Stop `--watch` after this many refreshes.                                          |
+| Flag            | Type    | Default              | Description                                                                        |
+| --------------- | ------- | -------------------- | ---------------------------------------------------------------------------------- |
+| `--limit`       | integer | `20`                 | Maximum number of jobs to return.                                                  |
+| `--state`       | text    | unset                | Filter by state: one of `active`, `waiting`, `finished`, `failed`, or `cancelled`. |
+| `--index`       | text    | unset                | Filter by index source: `vault` or `code`.                                         |
+| `--started-by`  | text    | unset                | Filter by trigger: `manual` or `automatic`.                                        |
+| `--query`, `-q` | text    | unset                | Match against job id, outcome, or progress.                                        |
+| `--failed`      | flag    | off                  | Show only failed jobs.                                                             |
+| `--job-id`      | text    | unset                | Filter to one job id.                                                              |
+| `--since`       | float   | unset                | Show jobs updated within the last N seconds.                                       |
+| `--port`        | integer | running service port | Target a specific service port.                                                    |
+| `--json`        | flag    | off                  | Emit one JSON envelope to stdout.                                                  |
+| `--watch`       | flag    | off                  | Open the interactive interface. Cannot combine with `--json`.                      |
+| `--interval`    | float   | `2.0`                | Seconds between refreshes in the interactive interface.                            |
 
-Exit/JSON: `0` on success; `2` on an invalid filter value (`invalid_filter`); `3` when the service is not running; `130` when `--watch` is stopped with Ctrl+C. With `--json`, the result is one envelope on stdout.
+Exit/JSON: `0` on success; `2` on an invalid filter value (`invalid_filter`); `3` when the service is not running. With `--json`, the result is one envelope on stdout.
 
-`--watch` is a read-only view: every refresh is a plain read of the service's job registry, so stopping it at any moment leaves no job, lock, or service state changed. Ctrl+C stops it promptly even while a refresh is still waiting on a slow or unresponsive service.
+### The interactive interface
+
+`--watch` opens a full-screen interface rather than reprinting the feed. Each job
+occupies one row carrying its state, operation, full project path, current step and
+progress, elapsed time, and - where the service can estimate it honestly - the time
+remaining. A moving indicator distinguishes a live view from a frozen one, and the
+header stamps the last successful refresh so stale data is visible as stale.
+
+Row controls act on the selected job:
+
+| Key | Action                                      |
+| --- | ------------------------------------------- |
+| `p` | Pause                                       |
+| `u` | Resume                                      |
+| `k` | Kill (request cancellation)                 |
+| `y` | Retry a terminal job                        |
+| `d` | Delete a terminal job from retained history |
+| `l` | Show or hide the log for the selected job   |
+| `r` | Refresh now                                 |
+| `q` | Quit                                        |
+
+Each control is offered only where the selected job's own published capabilities
+permit it; a control the service would refuse appears greyed rather than hidden, and
+pressing it sends nothing. A control that has been requested but not yet acknowledged
+renders as requested - pause and cancellation are cooperative, so the view never shows
+a desired state as though it had already taken effect.
+
+The layout follows the terminal. A wide terminal places the log beside the table; a
+narrow one shows one at a time, with `l` switching between them. Column widths are
+divided from the reported width, and a project path too long for its column keeps its
+tail, which is the part that distinguishes one checkout from another.
+
+The interface only reads until you press a control key: refreshes are plain reads of
+the job registry, so leaving at any moment changes no job, lock, or service state.
+
+A time estimate is shown only while a job is doing countable work and the service has
+measured a steady enough rate to derive one. Queued, waiting, paused and finished jobs
+show none, and an unknown estimate renders as unknown rather than as zero.
 
 ## server job
 
