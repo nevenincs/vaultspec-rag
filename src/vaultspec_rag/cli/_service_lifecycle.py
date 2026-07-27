@@ -17,7 +17,7 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
-from ..config import EnvVar, get_config
+from ..config import EnvVar, configured_model_repos, get_config
 from ._app import server_app
 from ._gpu_errors import _handle_gpu_error
 from ._progress import StartupStatusReporter
@@ -211,12 +211,7 @@ def service_warmup() -> None:
 
     os.environ.setdefault(EnvVar.HF_HUB_DOWNLOAD_TIMEOUT, "300")
 
-    cfg = get_config()
-    models = [
-        ("Dense (Qwen3)", cfg.embedding_model),
-        ("Sparse (SPLADE)", cfg.sparse_model),
-        ("Reranker (CrossEncoder)", cfg.reranker_model),
-    ]
+    models = configured_model_repos()
 
     # No ``--json`` mode on this verb, so the reporter always speaks; it is the
     # only thing an operator sees during a multi-gigabyte, effectively

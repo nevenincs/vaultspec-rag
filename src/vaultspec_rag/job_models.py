@@ -266,6 +266,22 @@ class JobResourceSnapshot:
     writer_lock_held: bool = False
     pipeline_active: bool = False
 
+    @property
+    def holds_anything(self) -> bool:
+        """Return whether this attempt still owns an execution resource.
+
+        The job manager and the persistence validator each answered this by
+        listing all four flags. A fifth resource would have been added to the
+        snapshot and silently missing from both questions, which is how a job
+        holding something comes to look idle.
+        """
+        return (
+            self.index_capacity_held
+            or self.project_lease_held
+            or self.writer_lock_held
+            or self.pipeline_active
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class IndexResilienceSnapshot:

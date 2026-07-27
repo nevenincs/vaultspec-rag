@@ -285,14 +285,9 @@ def _models_readiness() -> DependencyReadiness:
             info={"repos": {}},
         )
 
-    from .config import get_config
+    from .config import configured_model_repos
 
-    cfg = get_config()
-    repos = [
-        str(cfg.embedding_model),
-        str(cfg.sparse_model),
-        str(cfg.reranker_model),
-    ]
+    repos = [repo for _label, repo in configured_model_repos()]
 
     cached: dict[str, bool] = {
         repo: try_to_load_from_cache(repo, "config.json") is not None for repo in repos

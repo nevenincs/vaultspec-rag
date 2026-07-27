@@ -2003,14 +2003,7 @@ class JobManager:
                 )
 
             resources = managed.snapshot.resources
-            if managed.runtime.worker_active or any(
-                (
-                    resources.index_capacity_held,
-                    resources.project_lease_held,
-                    resources.writer_lock_held,
-                    resources.pipeline_active,
-                )
-            ):
+            if managed.runtime.worker_active or resources.holds_anything:
                 return self._error(
                     command,
                     "resources_still_owned",
