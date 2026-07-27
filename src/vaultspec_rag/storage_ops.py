@@ -49,6 +49,8 @@ if TYPE_CHECKING:
 
     from qdrant_client import QdrantClient
 
+    from .generation_survey import RootGenerations
+
 logger = logging.getLogger(__name__)
 
 # Convergence sampling. The optimizer transiently inflates size and segment
@@ -2013,6 +2015,88 @@ def run_maintenance_cycle(
     )
 
 
+def _evaluate_generation_reports(
+    reports: tuple[RootGenerations, ...],
+    *,
+    stamps: Mapping[str, str],
+    now: datetime,
+    grace_hours: float,
+    reader_present: Callable[[str], bool],
+) -> tuple[list[DeleteResult], list[str], list[str], list[str]]:
+    """Decide reclaim/hold/skip for every unreferenced generation, per root.
+
+    Returns ``(results, droppable, held, unreferenced)``.
+    """
+    from .generation_survey import decide_generation_reclaim
+
+    results: list[DeleteResult] = []
+    droppable: list[str] = []
+    held: list[str] = []
+    unreferenced: list[str] = []
+    for report in reports:
+        has_reader = reader_present(report.root)
+        for collection in report.unreferenced:
+            unreferenced.append(collection)
+            decision = decide_generation_reclaim(
+                collection,
+                stamps=stamps,
+                now=now,
+                grace_hours=grace_hours,
+                reader_present=has_reader,
+                # survey_generations already omitted any root whose pointer it
+                # could not read, so every collection reaching here came from a
+                # root whose served name was legible at decision time.
+                pointer_verifiable=True,
+            )
+            if decision.action == "held":
+                held.append(collection)
+            if decision.droppable:
+                droppable.append(collection)
+            else:
+                results.append(
+                    DeleteResult(collection, "skipped", reason=decision.reason)
+                )
+    return results, droppable, held, unreferenced
+
+
+def _hold_unreported_root_generations(
+    roots: Mapping[str, str],
+    live: list[str],
+    reported: set[str],
+    held: list[str],
+) -> None:
+    """Reset the clock for generations whose root pointer was unreadable."""
+    for root, derived in roots.items():
+        if root in reported:
+            continue
+        held.extend(name for name in live if name.startswith(derived))
+
+
+def _drop_generation_collections(
+    client: QdrantClient,
+    droppable: list[str],
+    held: list[str],
+    *,
+    dry_run: bool,
+) -> tuple[list[DeleteResult], set[str]]:
+    """Drop each droppable generation; a failed drop rejoins the held set."""
+    results: list[DeleteResult] = []
+    dropped: set[str] = set()
+    for collection in droppable:
+        if dry_run:
+            results.append(DeleteResult(collection, "would_remove", [collection]))
+            continue
+        try:
+            client.delete_collection(collection_name=collection)
+        except (OSError, RuntimeError) as exc:
+            results.append(DeleteResult(collection, "failed", reason=str(exc)))
+            held.append(collection)
+            continue
+        results.append(DeleteResult(collection, "removed", [collection]))
+        dropped.add(collection)
+    return results, dropped
+
+
 def reclaim_superseded_generations(
     client: QdrantClient,
     *,
@@ -2048,65 +2132,28 @@ def reclaim_superseded_generations(
         reader_present: Predicate answering whether a root has a live lease.
         dry_run: When True, plan and mutate nothing.
     """
-    from .generation_survey import (
-        advance_generation_stamps,
-        decide_generation_reclaim,
-        survey_generations,
-    )
+    from .generation_survey import advance_generation_stamps, survey_generations
 
     live = [c.name for c in client.get_collections().collections]
     reports = survey_generations(roots, live)
-    results: list[DeleteResult] = []
-    droppable: list[str] = []
-    held: list[str] = []
-    unreferenced: list[str] = []
-
-    for report in reports:
-        has_reader = reader_present(report.root)
-        for collection in report.unreferenced:
-            unreferenced.append(collection)
-            decision = decide_generation_reclaim(
-                collection,
-                stamps=stamps,
-                now=now,
-                grace_hours=grace_hours,
-                reader_present=has_reader,
-                # survey_generations already omitted any root whose pointer it
-                # could not read, so every collection reaching here came from a
-                # root whose served name was legible at decision time.
-                pointer_verifiable=True,
-            )
-            if decision.action == "held":
-                held.append(collection)
-            if decision.droppable:
-                droppable.append(collection)
-            else:
-                results.append(
-                    DeleteResult(collection, "skipped", reason=decision.reason)
-                )
+    results, droppable, held, unreferenced = _evaluate_generation_reports(
+        reports,
+        stamps=stamps,
+        now=now,
+        grace_hours=grace_hours,
+        reader_present=reader_present,
+    )
 
     # A root omitted from the report had an unreadable pointer, so any
     # generation of it that exists must have its clock reset rather than keep
     # accumulating a window it did not continuously earn.
     reported = {report.root for report in reports}
-    for root, derived in roots.items():
-        if root in reported:
-            continue
-        held.extend(name for name in live if name.startswith(derived))
+    _hold_unreported_root_generations(roots, live, reported, held)
 
-    dropped: set[str] = set()
-    for collection in droppable:
-        if dry_run:
-            results.append(DeleteResult(collection, "would_remove", [collection]))
-            continue
-        try:
-            client.delete_collection(collection_name=collection)
-        except (OSError, RuntimeError) as exc:
-            results.append(DeleteResult(collection, "failed", reason=str(exc)))
-            held.append(collection)
-            continue
-        results.append(DeleteResult(collection, "removed", [collection]))
-        dropped.add(collection)
+    drop_results, dropped = _drop_generation_collections(
+        client, droppable, held, dry_run=dry_run
+    )
+    results.extend(drop_results)
 
     # A dropped collection keeps no clock: it no longer exists, and a stamp for
     # it would outlive it as debris that never expires. A failed drop is not
