@@ -49,7 +49,7 @@ from .._win32 import (
 from ..config import EnvVar
 from ..serviceclient._transport import _try_http_health
 from ._core import logger
-from ._service_status import _read_service_status
+from ._service_status import read_service_status
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -425,19 +425,24 @@ def _probe_daemon_cuda(
         )
     except OSError as exc:
         return (False, f"could not probe the service interpreter ({exc})")
-    code = proc.returncode
-    if code == 0:
-        return None
-    if code == 3:
-        return (True, "torch is not installed in the service interpreter")
-    if code == 4:
-        return (True, "the service interpreter has a CPU-only torch wheel (no CUDA)")
-    if code == 5:
-        return (
+    return _cuda_probe_exit_outcome(proc.returncode)
+
+
+def _cuda_probe_exit_outcome(code: int) -> tuple[bool, str] | None:
+    """Map the isolated torch probe's documented exit contract."""
+    outcomes = {
+        0: None,
+        3: (True, "torch is not installed in the service interpreter"),
+        4: (True, "the service interpreter has a CPU-only torch wheel (no CUDA)"),
+        5: (
             True,
             "torch is a CUDA build but no CUDA device is visible (driver/GPU)",
-        )
-    return (False, f"the torch pre-flight returned an unexpected exit code {code}")
+        ),
+    }
+    return outcomes.get(
+        code,
+        (False, f"the torch pre-flight returned an unexpected exit code {code}"),
+    )
 
 
 def _spawn_service(
@@ -698,7 +703,7 @@ def _discover_late_service_pids(
     discovery rather than blocking the cleanup.
     """
     candidates: dict[int, float] = {}
-    status = _read_service_status()
+    status = read_service_status()
     status_pid = 0
     if (
         status is not None
