@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#serving-runtime'
 date: '2026-06-12'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-12-service-concurrency-research]]"
   - "[[2026-06-12-service-concurrency-adr]]"
@@ -157,3 +157,7 @@ Web (retrieved 2026-06-12):
   Granian-vs-uvicorn comparisons.
 - https://crates.io/crates/fastembed , https://github.com/StarlightSearch/EmbedAnything ,
   https://github.com/huggingface/candle , and the Qwen3-Embedding-0.6B model card.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#vault-pipeline-search'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 step_id: 'S07'
 related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
@@ -11,11 +11,11 @@ related:
 
 # Parse status from the ADR H1 and strip the status suffix from the displayed title
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/indexer/_vault_prep.py`
-
-## Description
 
 - Added backtick/whitespace-tolerant `_STATUS_RE` and `_STATUS_SUFFIX_RE` patterns for the
   canonical ADR H1 status marker.

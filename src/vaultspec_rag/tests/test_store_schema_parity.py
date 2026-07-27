@@ -14,10 +14,8 @@ import pytest
 
 from .._store_models import (
     CodeChunk,
-    VaultDocument,
-)
-from ..store import (
     VaultChunk,
+    VaultDocument,
     _code_chunk_payload,
     _vault_chunk_payload,
     _vault_doc_payload,

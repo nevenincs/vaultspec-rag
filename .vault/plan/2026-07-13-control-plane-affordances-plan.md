@@ -3,14 +3,27 @@ tags:
   - '#plan'
   - '#control-plane-affordances'
 date: '2026-07-13'
-modified: '2026-07-13'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-07-13-control-plane-affordances-adr]]'
   - '[[2026-07-13-control-plane-affordances-research]]'
 ---
-
 # `control-plane-affordances` plan
+
+## Description
+
+Implements the accepted control-plane-affordances ADR: a root-scoped lookup
+on the storage survey (the route computes the authoritative collection prefix
+via `root_collection_prefix` and returns it as `queried_root`, threaded
+through the serviceclient transport, the CLI `--root` option, and the MCP
+tool argument) and `--json` envelope parity for `server stop` matching the
+start contract from the rag-broker-affordances work. The vaultspec-dashboard
+team's embedding-scroll path and start/stop broker scripting are the
+consumers; landing this lets them delete their sanctioned prefix
+recomputation exception.
+
+## Steps
 
 ### Phase `P01` - Root-scoped survey lookup
 
@@ -27,20 +40,6 @@ Give server stop the --json outcome envelope contract already shipped for start:
 
 - [x] `P02.S05` - Add --json to server stop with one envelope per exit path (stopped, already_stopped, cleaned, reclaimed as ok:true and identity_unconfirmed as ok:false) and make the identity-unconfirmed skip exit 1 in both human and json modes, covering the --port variant; `src/vaultspec_rag/cli/_service_lifecycle.py`.
 - [x] `P02.S06` - Assert the stop --json envelope and exit code on each exit path alongside the existing start --json matrix; `src/vaultspec_rag/tests/integration`.
-
-## Description
-
-Implements the accepted control-plane-affordances ADR: a root-scoped lookup
-on the storage survey (the route computes the authoritative collection prefix
-via `root_collection_prefix` and returns it as `queried_root`, threaded
-through the serviceclient transport, the CLI `--root` option, and the MCP
-tool argument) and `--json` envelope parity for `server stop` matching the
-start contract from the rag-broker-affordances work. The vaultspec-dashboard
-team's embedding-scroll path and start/stop broker scripting are the
-consumers; landing this lets them delete their sanctioned prefix
-recomputation exception.
-
-## Steps
 
 ## Parallelization
 

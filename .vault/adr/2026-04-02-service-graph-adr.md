@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#service-graph'
 date: '2026-04-02'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-02-service-graph-research]]'
   - '[[2026-04-02-release-readiness-audit]]'
@@ -421,3 +421,15 @@ change the architectural decisions above -- drop-in replacement for
   Windows Service integration (beta). Docker `compose.yml` (post-1.0).
   Store idle timeout / eviction (can start with no eviction at alpha --
   manual `service stop` + restart clears all stores).
+
+## C
+
+o
+
+## E
+
+v
+
+## Considered options
+
+Evidence gap: the retained ADR body and complete git log --follow history provide no separate considered-options inventory. No option is asserted.

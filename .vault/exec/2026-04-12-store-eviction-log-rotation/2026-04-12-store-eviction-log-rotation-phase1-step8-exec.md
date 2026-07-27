@@ -3,25 +3,25 @@ tags:
   - '#exec'
   - '#store-eviction-log-rotation'
 date: '2026-04-12'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-phase1-plan]]'
   - '[[2026-04-12-store-eviction-log-rotation-adr]]'
 ---
 
-# store-eviction-log-rotation phase-1 step-8
+## Description
 
-## goal
+### Goal
 
 Expose `list_projects` and `evict_project` MCP tools through the
 Typer CLI as `vaultspec-rag server service projects list|evict`.
 
-## files touched
+### Files touched
 
 - `src/vaultspec_rag/cli.py`
 - `src/vaultspec_rag/tests/test_cli.py`
 
-## what was done
+### What was done
 
 - New `service_projects_app = typer.Typer(...)`, registered via
   `service_app.add_typer(service_projects_app, name="projects")`.
@@ -45,7 +45,23 @@ Typer CLI as `vaultspec-rag server service projects list|evict`.
   via an ephemeral-port helper that binds+closes to guarantee
   ConnectionRefused without running a live server.
 
-## deviations from plan
+## Outcome
+
+### Test results
+
+- `pytest src/vaultspec_rag/tests/test_cli.py -m unit` -> 43
+  passed (including 4 new TestServiceProjectsCli tests).
+- Full unit suite: `pytest src/vaultspec_rag/tests/ -m unit` ->
+  324 passed.
+- `ruff check` + `ty check src/vaultspec_rag` clean.
+
+### Commit hash
+
+`d8a17ce feat(cli): add service projects list and evict subcommands`
+
+## Notes
+
+### Deviations from plan
 
 - The plan lists a separate
   `tests/integration/test_service_projects_cli.py` file with four
@@ -60,19 +76,7 @@ Typer CLI as `vaultspec-rag server service projects list|evict`.
   `BaseException` subclasses; `_is_connection_refused` walks the
   exception chain to classify correctly without a `noqa`.
 
-## test results
-
-- `pytest src/vaultspec_rag/tests/test_cli.py -m unit` -> 43
-  passed (including 4 new TestServiceProjectsCli tests).
-- Full unit suite: `pytest src/vaultspec_rag/tests/ -m unit` ->
-  324 passed.
-- `ruff check` + `ty check src/vaultspec_rag` clean.
-
-## commit hash
-
-`d8a17ce feat(cli): add service projects list and evict subcommands`
-
-## time spent
+### Time spent
 
 ~30 minutes (ty narrowing on dict.get + connection-refused
 exception classification).

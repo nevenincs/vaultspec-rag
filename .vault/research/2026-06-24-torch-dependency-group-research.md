@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#torch-dependency-group'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -108,3 +108,7 @@ on uninstall and break the symmetric install/uninstall mirror the install design
 - Confirm migration is out of scope for v1 (warn-and-no-op on a changed target) or in scope.
 - Confirm the ADR also retroactively records the original `[project].dependencies` rationale,
   since the direct-dep promotion has no ADR of record today.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

@@ -1,20 +1,20 @@
 ---
 tags: ['#exec', '#cli-service-operability-hardening']
 date: '2026-06-11'
-modified: '2026-06-30'
-step_id: 'W01.S01'
+modified: '2026-07-27'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-service-status-convergence-adr]]'
 ---
-
 # `cli-service-operability-hardening` W01.S01 - status and health parity
 
-## Step
+## Description
+
+### Step
 
 Implemented the first convergence slice for service health and service state.
 
-## Changes
+### Changes
 
 - Added `vaultspec-rag server health` as a JSON/table CLI entry point over the service `/health` probe.
 - Changed `server info` to require a project root from `--project-root` or global `--target`.
@@ -22,7 +22,7 @@ Implemented the first convergence slice for service health and service state.
 - Stopped wrapping service-side bad requests as successful `service.info` envelopes.
 - Reworded server-facing port help away from "MCP port" toward "Service port".
 
-## Verification
+### Verification
 
 - `uv run pytest src/vaultspec_rag/tests/integration/test_service_state.py`
 - `uv run vaultspec-rag server health --json`
@@ -33,7 +33,9 @@ Implemented the first convergence slice for service health and service state.
 
 The CLI now has a direct local health entry point and `server info` produces actionable failure when project context is missing.
 
-## Follow-Up: Canonical Status Enrichment
+## Notes
+
+### Follow-Up: Canonical Status Enrichment
 
 `server status` now carries a lightweight operational summary in addition to the
 status-file/process/health checks:
@@ -57,7 +59,7 @@ Observed against resident service PID `29376` on port `8766`:
 - jobs `0 running; 10 total`
 - next action `vaultspec-rag server info --project-root <path>`
 
-## Follow-Up: Status Port Parity
+### Follow-Up: Status Port Parity
 
 Manual timeout remediation exposed that `server status` did not accept the same `--port`
 option as `server health`, `server jobs`, `server logs`, and service-backed `search`.

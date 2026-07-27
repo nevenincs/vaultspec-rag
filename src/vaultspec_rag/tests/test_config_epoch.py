@@ -10,17 +10,17 @@ constructed - the classification methods operate on the resolved config alone.
 import json
 import os
 from collections.abc import Generator
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
 import pytest
 from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
     reset_config,
 )
 
-from ..config import EnvVar
-from ..config import reset_config as reset_rag_config
+from ..config._settings import reset_config as reset_rag_config
+from ..config._types import EnvVar
 from ..indexer import CodebaseIndexer
 from ..indexer import _config_epoch as ce
 from ..indexer._content_policy import ContentKind
@@ -49,37 +49,28 @@ def _reset_cfg() -> Generator[None]:  # pyright: ignore[reportUnusedFunction]
     reset_rag_config()
 
 
-@dataclass(frozen=True, slots=True)
-class _RuleOptions:
-    command: str | None = "extract {path}"
-    entry_point: str | None = None
-    on_error: OnError = "skip"
-    priority: int = 100
-    timeout_s: float | None = 120.0
-    options: dict[str, object] | None = None
-    order: int = 0
+class _RuleOverrides(TypedDict, total=False):
+    command: str | None
+    entry_point: str | None
+    on_error: OnError
+    priority: int
+    timeout_s: float | None
+    options: dict[str, object] | None
+    order: int
 
 
-def _rule(
-    pattern: str,
-    request: _RuleOptions | None = None,
-    **legacy: object,
-) -> PreprocessRule:
-    if request is None:
-        request = _RuleOptions(**cast("dict[str, object]", legacy))
-    elif legacy:
-        raise TypeError("use either _RuleOptions or named inputs")
+def _rule(pattern: str, **overrides: Unpack[_RuleOverrides]) -> PreprocessRule:
     return PreprocessRule(
         pattern=pattern,
-        command=request.command,
-        entry_point=request.entry_point,
-        priority=request.priority,
+        command=overrides.get("command", "extract {path}"),
+        entry_point=overrides.get("entry_point"),
+        priority=overrides.get("priority", 100),
         target=ContentKind.DOCUMENT,
         extractor_version="1.0",
-        on_error=request.on_error,
-        timeout_s=request.timeout_s,
-        options=request.options or {},
-        order=request.order,
+        on_error=overrides.get("on_error", "skip"),
+        timeout_s=overrides.get("timeout_s", 120.0),
+        options=overrides.get("options") or {},
+        order=overrides.get("order", 0),
     )
 
 

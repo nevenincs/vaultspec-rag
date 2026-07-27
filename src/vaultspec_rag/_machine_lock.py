@@ -96,7 +96,7 @@ _lease_guard = threading.RLock()
 
 def machine_lock_path() -> Path:
     """Path of the machine-scoped service lock (alongside the shared storage)."""
-    from .config import get_config
+    from .config._settings import get_config
 
     storage = Path(str(get_config().qdrant_storage_dir)).expanduser()
     return storage.parent / _MACHINE_LOCK_FILENAME
@@ -110,7 +110,7 @@ def machine_discovery_path() -> Path:
     discover the one running service. The daemon writes the versioned discovery
     payload here on each heartbeat and removes it on shutdown.
     """
-    from .config import SERVICE_STATUS_FILENAME
+    from .config._paths import SERVICE_STATUS_FILENAME
 
     return machine_lock_path().parent / SERVICE_STATUS_FILENAME
 
@@ -134,7 +134,7 @@ def read_machine_discovery() -> dict[str, object] | None:
 
 def _lease_discovery_path(lease: MachineLockLease) -> Path:
     """Return the discovery pointer governed by *lease*."""
-    from .config import SERVICE_STATUS_FILENAME
+    from .config._paths import SERVICE_STATUS_FILENAME
 
     return lease.path.parent / SERVICE_STATUS_FILENAME
 

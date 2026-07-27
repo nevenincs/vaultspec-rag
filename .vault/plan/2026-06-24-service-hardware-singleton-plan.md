@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#service-hardware-singleton'
 date: '2026-06-24'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L3
 related:
   - '[[2026-06-24-service-hardware-singleton-adr]]'
@@ -133,6 +133,8 @@ spawning; and a second resident is refused, because one GPU and one single-write
 cannot be co-owned.
 
 ## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
 
 ## Parallelization
 

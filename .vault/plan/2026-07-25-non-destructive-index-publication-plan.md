@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#non-destructive-index-publication'
 date: '2026-07-25'
-modified: '2026-07-26'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-07-25-non-destructive-index-publication-adr]]'

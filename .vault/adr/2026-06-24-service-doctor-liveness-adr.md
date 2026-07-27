@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#service-doctor-liveness'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 related:
   - "[[2026-06-24-service-doctor-liveness-research]]"
 ---
@@ -129,3 +129,7 @@ directions follow the research's ranked candidates and the existing operability 
 
   *(Both are candidates only - promoted after the constraint has held across at least one full
   execution cycle, per the codify discipline.)*
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

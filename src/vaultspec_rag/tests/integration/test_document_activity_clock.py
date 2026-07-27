@@ -16,7 +16,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ...config import EnvVar, reset_config
+from ...config._settings import reset_config
+from ...config._types import EnvVar
 from ...progress import NullProgressReporter
 from ._helpers import _document_policy, provisioned_qdrant_binary, serve_qdrant
 
@@ -84,7 +85,7 @@ def test_a_document_run_refreshes_the_persisted_activity_clock(
     from ..._store_models import root_collection_prefix
     from ...indexer import DocumentIndexer
     from ...storage_manifest import load_manifest, record_root
-    from ...store import VaultStore
+    from ...store_runtime import VaultStore
 
     (tmp_path / "reference.txt").write_text(
         "Server-mode document material for the activity clock.", encoding="utf-8"

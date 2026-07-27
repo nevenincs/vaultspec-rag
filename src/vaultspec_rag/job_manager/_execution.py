@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 from .._job_errors import classify_error_text
 from ..concurrency import get_encode_limiter, get_index_limiter
-from ..config import get_config
+from ..config._settings import get_config
 from ..job_control import (
     CancelRequested,
     PauseRequested,
@@ -37,7 +37,7 @@ from ..job_models import (
 from ..job_models import (
     is_encode_bearing as _is_encode_bearing,
 )
-from ._control import _AttemptTerminal
+from ._control import AttemptTerminal
 from .models import (
     JobAttemptContext,
     JobExecutionResult,
@@ -206,7 +206,6 @@ class JobManagerExecution(JobManagerState):
         in a worker thread.  This retains durable-before-execution ordering while
         keeping whole-registry serialization, replacement, and fsync off ASGI.
         """
-        command = "dispatch"
         loop = asyncio.get_running_loop()
         start_gate = asyncio.Event()
 
@@ -516,7 +515,9 @@ class JobManagerExecution(JobManagerState):
             try:
                 return binding.runner(context)
             finally:
-                context.set_resources(ResourceUpdate(gpu_lock_wait_seconds=gpu_wait.seconds))
+                context.set_resources(
+                    ResourceUpdate(gpu_lock_wait_seconds=gpu_wait.seconds)
+                )
 
     def _complete_attempt(
         self,
@@ -598,7 +599,7 @@ class JobManagerExecution(JobManagerState):
             result = exit_state.result
             return self.finish_attempt(
                 job_id,
-                _AttemptTerminal(
+                AttemptTerminal(
                     attempt=attempt,
                     task=task,
                     state=JobState.SUCCEEDED,
@@ -710,7 +711,7 @@ class JobManagerExecution(JobManagerState):
         )
         return self.finish_attempt(
             job_id,
-            _AttemptTerminal(
+            AttemptTerminal(
                 attempt=attempt,
                 task=task,
                 state=state,

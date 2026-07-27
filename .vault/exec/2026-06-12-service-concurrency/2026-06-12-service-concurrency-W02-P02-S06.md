@@ -3,19 +3,18 @@ tags:
   - '#exec'
   - '#service-concurrency'
 date: '2026-06-12'
-modified: '2026-06-30'
+modified: '2026-07-27'
 step_id: 'S06'
 related:
   - "[[2026-06-12-service-concurrency-plan]]"
 ---
-
 # Add unit and GPU integration tests for chunked vault indexing, grouped search, and rebuild-on-schema-bump
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/tests`
-
-## Description
 
 - Add `test_vault_chunking_unit.py` (split semantics, grouping, bounded
   nudge) and `test_vault_chunking_integration.py` (tail retrieval past the
@@ -29,3 +28,5 @@ needle phrase placed past 12000 chars is retrievable with its snippet
 showing the matched passage - proves the critical quality defect fixed.
 
 ## Notes
+
+Evidence gap: the original record contains no Notes section with authored incident, deferred-work, or follow-up evidence.

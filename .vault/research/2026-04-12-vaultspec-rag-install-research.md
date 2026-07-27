@@ -3,22 +3,23 @@ tags:
   - '#research'
   - '#install-command'
 date: '2026-04-12'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-vaultspec-rag-install-reference]]'
   - '[[2026-04-12-vaultspec-rag-install-adr]]'
 ---
-
 # `install-command` research
+
+## Findings
 
 Pre-ADR investigation that grounded the architectural decisions for
 `vaultspec-rag install` and `vaultspec-rag uninstall` (issues #54 and
 #55). The detailed findings live in
-`[[2026-04-12-vaultspec-rag-install-reference]]`; this document
+`2026-04-12-vaultspec-rag-install-reference`; this document
 captures the question set and what the investigation determined about
 each one.
 
-## Questions Investigated
+### Questions Investigated
 
 ### Layer separation and module placement
 
@@ -83,7 +84,7 @@ each one.
 - What are rag's existing test conventions (fixtures, markers,
   filesystem patterns)?
 
-## Investigation Outcomes
+### Investigation Outcomes
 
 The reference document captures the concrete code excerpts and
 file:line references that answer each question. Key conclusions that
@@ -111,7 +112,7 @@ shaped the ADR:
   `--remove-vault`) is intentional because the *scope* of removal
   differs (rag's index vs core's user vault docs).
 
-## Method
+### Method
 
 Investigation was performed by parallel sub-agents against:
 
@@ -125,3 +126,7 @@ Investigation was performed by parallel sub-agents against:
 
 Each agent produced a structured findings report under 1500 words
 that fed directly into the reference audit and the ADR.
+
+## Sources
+
+Evidence gap: the retained research body has no separately labelled Sources section.

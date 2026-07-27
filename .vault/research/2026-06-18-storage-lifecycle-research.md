@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#storage-lifecycle'
 date: '2026-06-18'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-adr]]'
   - '[[2026-06-12-qdrant-server-provisioning-adr]]'
@@ -260,3 +260,7 @@ The verbs delete user data; the threat model must be designed in, not bolted on:
 ## Next step
 
 Define the ADR: `vaultspec-core vault add adr --feature storage-lifecycle --related 2026-06-18-storage-lifecycle-research`.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

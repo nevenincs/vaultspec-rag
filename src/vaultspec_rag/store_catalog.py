@@ -9,11 +9,15 @@ from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+    from contextlib import AbstractContextManager
     from uuid import UUID
 
+    from qdrant_client import QdrantClient
     from qdrant_client.http.models.models import Condition, Filter, Record
 
 logger = logging.getLogger(__name__)
+
+__all__ = ["_VaultCatalogMixin"]
 
 
 @dataclass(frozen=True)
@@ -29,6 +33,41 @@ class _ContentScrollRequest:
 
 
 class _VaultCatalogMixin:
+    """Catalog-side behaviour supplied to :class:`VaultStore`.
+
+    The concrete store owns the client, collection lifecycle, locking, and
+    retry helpers. These type-checking declarations express that host contract
+    without adding runtime implementations to the mixin.
+    """
+
+    if TYPE_CHECKING:
+        TABLE_NAME: str
+        CODE_TABLE_NAME: str
+        DOCUMENT_TABLE_NAME: str
+
+        @property
+        def client(self) -> QdrantClient: ...
+
+        def ensure_table(self) -> None: ...
+
+        def ensure_code_table(self, collection: str | None = None) -> None: ...
+
+        def ensure_document_table(self) -> None: ...
+
+        def _code_collection(self, collection: str | None) -> str: ...
+
+        def _point_lock(self, collection: str) -> AbstractContextManager[object]: ...
+
+        def _scroll(self, **kwargs: Any) -> tuple[list[Record], Any]: ...
+
+        def _retrieve(self, **kwargs: Any) -> list[Record]: ...
+
+        def _delete_points(self, **kwargs: Any) -> None: ...
+
+        def _id_scan_page_limit(self, collection: str) -> int: ...
+
+        def _retried[T](self, description: str, op: Callable[[int], T]) -> T: ...
+
     def get_all_ids(self) -> set[str]:
         """Return the set of all document ``id`` values in the store.
 
@@ -158,7 +197,13 @@ class _VaultCatalogMixin:
         from qdrant_client import models
 
         (
-            collection, path_key, noun, ensure, limit, offset, source_paths,
+            collection,
+            path_key,
+            noun,
+            ensure,
+            limit,
+            offset,
+            source_paths,
             with_vectors,
         ) = (
             request.collection,

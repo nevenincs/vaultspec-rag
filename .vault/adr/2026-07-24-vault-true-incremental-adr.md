@@ -3,11 +3,12 @@ tags:
   - '#adr'
   - '#vault-true-incremental'
 date: '2026-07-24'
-modified: '2026-07-24'
+modified: '2026-07-27'
 related:
   - "[[2026-07-24-index-throughput-research]]"
   - "[[2026-07-24-index-throughput-adr]]"
   - "[[2026-07-24-worktree-index-reuse-adr]]"
+  - '[[2026-07-27-vault-true-incremental-grounding-research]]'
 ---
 
 # `vault-true-incremental` adr: `frontmatter-volatility-agnostic vault change detection` | (**status:** `accepted`)

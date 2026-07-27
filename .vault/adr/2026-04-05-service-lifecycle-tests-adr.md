@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#service-lifecycle-tests'
 date: '2026-04-05'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-05-service-lifecycle-tests-research]]'
   - '[[2026-04-02-service-graph-code-review-audit]]'
@@ -97,3 +97,7 @@ avoid CLI parsing overhead while exercising real code paths.
 - No new dependencies — `mcp` client already in the project dependency tree.
 - Flaky-test risk from port reuse mitigated by per-test ephemeral ports and
   explicit wait-for-exit loops after termination.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

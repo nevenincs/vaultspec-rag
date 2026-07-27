@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, TypedDict, Unpack
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from ..config import PreprocessMode
+    from ..config._types import PreprocessMode
     from ._content_policy import ContentKind, RootContentPolicy
     from ._preprocess_config import PreprocessRule
     from ._resolved_policy import ResolvedPreprocessRule

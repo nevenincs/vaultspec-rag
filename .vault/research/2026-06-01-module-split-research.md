@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#module-split'
 date: '2026-06-01'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -38,3 +38,5 @@ verdicts live in the module-split audit; this records the chosen pattern.
 - **`store.py` is kept whole** — one cohesive class with no architectural seam.
 - **Verdict:** SPLIT `commands`, `torch_config`, `search`, `indexer`, `cli`,
   `mcp_server` (risk-ascending); KEEP `store` and all sub-threshold modules.
+## Sources
+- The analysis and source locations cited inline in this research record.

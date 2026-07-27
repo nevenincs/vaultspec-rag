@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#preprocess-sandbox-removal'
-date: '2026-07-25'
-modified: '2026-07-25'
+date: '2026-07-27'
+modified: '2026-07-27'
 related:
   - '[[2026-07-14-preprocess-sandbox-removal-P01-S01]]'
   - '[[2026-07-14-preprocess-sandbox-removal-P01-S02]]'
@@ -32,6 +32,7 @@ related:
   - '[[2026-07-14-preprocess-sandbox-removal-P03-summary]]'
   - '[[2026-07-14-preprocess-sandbox-removal-adr]]'
   - '[[2026-07-14-preprocess-sandbox-removal-plan]]'
+  - '[[2026-07-27-preprocess-sandbox-removal-grounding-research]]'
 ---
 
 # `preprocess-sandbox-removal` feature index
@@ -74,3 +75,7 @@ Auto-generated index of all documents tagged with `#preprocess-sandbox-removal`.
 ### plan
 
 - `2026-07-14-preprocess-sandbox-removal-plan` - `preprocess-sandbox-removal` plan
+
+### research
+
+- `2026-07-27-preprocess-sandbox-removal-grounding-research` - `preprocess-sandbox-removal` research: `Grounding`

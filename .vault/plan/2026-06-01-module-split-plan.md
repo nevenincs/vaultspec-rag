@@ -3,29 +3,43 @@ tags:
   - '#plan'
   - '#module-split'
 date: '2026-06-01'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-06-01-module-split-adr]]'
   - '[[2026-06-01-module-split-audit]]'
   - '[[2026-06-01-module-split-research]]'
+  - '[[2026-07-27-module-split-production-length-gate-research]]'
 ---
 
-# `module-split` `split monolithic modules into packages` plan
+<!-- LINK RULES:
+     - [[wiki-links]] are ONLY for .vault/ documents in the
+       related: field above.
+     - The related: field carries the AUTHORISING documents
+       (ADR, research, reference, prior plan) for every Step in
+       this plan. Steps inherit this chain; per-row reference
+       footers do not exist.
+     - NEVER use [[wiki-links]] or markdown links in the
+       document body. -->
+
+# `module-split` `decompose overlength modules into direct owners` plan
 
 ## Description
 
-This plan splits the monolithic modules identified in the module-split audit
-into packages, each preserving its verbatim public surface per the module-split
-ADR. One phase per module, ordered low-risk to high-risk (commands,
-torch_config, search, indexer, cli, mcp_server). `store.py` is intentionally
-excluded (kept single-file).
+The completed historical phases used a facade pattern that the amended ADR now
+rejects. The remaining phases split every listed overlength module into
+concrete owners, migrate all callers directly, and delete each former monolith
+without retaining compatibility paths. Test modules are split by independently
+collectable behavior domain; the production moves preserve the existing service,
+storage, and index-lifecycle ownership decisions.
 
 ## Steps
 
-Each phase splits one module into a `module/` package whose `__init__.py`
-re-exports the exact prior surface, then gates on the full relevant test suite
-plus ruff, ruff-format, and ty passing unedited.
+Each new step moves one cohesive source or test module to direct concrete
+owners, migrates its callers in the same change, and gates on real behavior
+tests plus format, lint, and type checks. The historical phases document the
+superseded facade work and remain closed; they are not a template for the
+remaining phases.
 
 ### Phase `P01` - split commands.py (validate pattern)
 
@@ -63,16 +77,71 @@ Split mcp_server.py into a package; preserve the FastMCP mcp global, tool regist
 
 - [x] `P06.S06` - Split into a package preserving the FastMCP mcp global, tool registration, and the main entry point, then verify full suite + ruff + ty green; `src/vaultspec_rag/mcp_server.py`.
 
+### Phase `P07` - split process-probe guard tests
+
+Move independent canonical-source guard domains into directly collected test modules.
+
+- [x] `P07.S07` - Split canonical process-probe guard domains into directly collected test modules and concrete shared helpers; `src/vaultspec_rag/tests/test_process_probe_canonical.py`.
+
+### Phase `P08` - split installation integration tests
+
+Separate installer behavior domains while retaining real workspace behavior coverage.
+
+- [x] `P08.S08` - Split installation integration behavior domains into directly collected modules; `src/vaultspec_rag/tests/integration/test_install.py`.
+
+### Phase `P09` - split jobs tests
+
+Separate unit and service jobs behavior without test facades.
+
+- [x] `P09.S09` - Split job-manager unit behavior domains into directly collected modules; `src/vaultspec_rag/tests/test_jobs_unit.py`.
+- [x] `P09.S10` - Split service jobs integration behavior domains into directly collected modules; `src/vaultspec_rag/tests/integration/test_service_jobs.py`.
+
+### Phase `P10` - split service lifecycle tests
+
+Separate lifecycle acceptance domains while preserving real process proof.
+
+- [x] `P10.S11` - Split service lifecycle integration behavior domains into directly collected modules; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
+
+### Phase `P11` - decompose job management
+
+Move job models and responsibilities to direct concrete owners and migrate callers.
+
+- [x] `P11.S12` - Decompose job-management responsibilities and migrate all direct importers; `src/vaultspec_rag/job_manager.py`.
+
+### Phase `P12` - decompose storage operations
+
+Move storage lifecycle responsibilities to direct owners without changing service authority.
+
+- [x] `P12.S13` - Decompose storage-operation responsibilities and migrate all direct importers; `src/vaultspec_rag/storage_ops.py`.
+
+### Phase `P13` - decompose the store
+
+Extract cohesive store collaborators and migrate direct consumers without a store facade.
+
+- [x] `P13.S14` - Decompose store responsibilities and migrate all direct importers; `src/vaultspec_rag/store.py`.
+
+### Phase `P14` - decompose watcher control
+
+Separate watcher event intake, retry, and managed indexing owners.
+
+- [x] `P14.S15` - Decompose watcher responsibilities and migrate all direct importers; `src/vaultspec_rag/watcher.py`.
+
+### Phase `P15` - decompose run ledger
+
+Separate run-ledger internals after the active ledger edit is integrated.
+
+- [x] `P15.S16` - Decompose run-ledger responsibilities and migrate all direct importers after the active edit lands; `src/vaultspec_rag/indexer/_run_ledger.py`.
+
 ## Parallelization
 
-Phases are strictly sequential: each split lands only when the full suite is
-green, so a later split never builds on an unverified earlier one. Order is
-risk-ascending (P01 commands through P06 mcp_server) to validate the re-export
-pattern on simple modules before the FastMCP/entry-point module.
+The independent test-file phases may run in parallel. Production moves run in
+dependency order, with `job_manager` before `watcher`, storage operations
+before `store`, and the run-ledger move only after the existing concurrent
+ledger edit is integrated.
 
 ## Verification
 
-The plan is complete when every module phase is closed. Each phase's gate: the
-package re-exports the verbatim pre-split surface (no test edits), the full
-relevant test suite passes, and ruff, ruff-format, and ty are clean. `store.py`
-remains a single file.
+The plan is complete when every open step is closed. Each phase must leave no
+forwarding import path, pass the affected real behavior suite, and pass format,
+lint, and type checks. The final validation reruns the full length census and
+the no-reexports guard.

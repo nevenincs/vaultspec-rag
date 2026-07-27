@@ -3,19 +3,24 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # MCP Server Documentation Audit (2026-03-09)
 
-## Summary
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
+
+### Summary
 
 Comprehensive audit of `src/vaultspec_rag/mcp_server.py` against documentation standards.
 All violations are categorized and listed below.
 
 ______________________________________________________________________
 
-## Critical Violations (Must Fix)
+### Critical Violations (Must Fix)
 
 ### RagComponents Dataclass (Lines 31–40)
 
@@ -99,7 +104,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Secondary Violations (Pydantic Models)
+### Secondary Violations (Pydantic Models)
 
 ### SearchResultItem (Lines 120–139)
 
@@ -152,7 +157,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Type Hint Violations
+### Type Hint Violations
 
 ### Missing Type Hints on Parameters
 
@@ -168,7 +173,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Terminology Consistency
+### Terminology Consistency
 
 ### Terminology Review
 
@@ -181,7 +186,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Summary Statistics
+### Summary Statistics
 
 | Category                                      | Count  |
 | --------------------------------------------- | ------ |
@@ -197,7 +202,16 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Recommendations (Priority Order)
+### Compliant Components
+
+- ✅ All function/method signatures have type hints.
+- ✅ All return values have type annotations.
+- ✅ Terminology ("vault", "codebase", "MCP tool") is consistent throughout.
+- ✅ `IndexStatus` and `IndexResponse` models have complete Field descriptions.
+
+## Recommendations
+
+### Recommendations (Priority Order)
 
 1. **Immediate (P0):** Add `Attributes:` section to `RagComponents` dataclass documenting all 6 fields.
 1. **Immediate (P0):** Add class docstrings to `SearchResponse`, `IndexStatus`, `IndexResponse` models.
@@ -207,10 +221,3 @@ ______________________________________________________________________
 1. **Medium (P2):** Add `Raises:` section to all exception-raising functions, especially get_code_file (ValueError, FileNotFoundError).
 
 ______________________________________________________________________
-
-## Compliant Components
-
-- ✅ All function/method signatures have type hints.
-- ✅ All return values have type annotations.
-- ✅ Terminology ("vault", "codebase", "MCP tool") is consistent throughout.
-- ✅ `IndexStatus` and `IndexResponse` models have complete Field descriptions.

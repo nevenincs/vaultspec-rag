@@ -31,7 +31,8 @@ import time
 import pytest
 from typer.testing import CliRunner
 
-from ..cli import _service_jobs as jobs
+from ..cli import _service_jobs_query as jobs_query
+from ..cli import _service_jobs_watch as jobs_watch
 from ..cli import app
 from ..cli._process import _call_interruptibly
 
@@ -117,13 +118,13 @@ def test_the_watch_loop_owns_no_second_off_thread_wait() -> None:
     assertions by name - the routing one on the missing call, the second-copy
     one on the new thread; restored, both pass.
     """
-    source = pathlib.Path(jobs.__file__).read_text(encoding="utf-8").splitlines()
+    source = pathlib.Path(jobs_watch.__file__).read_text(encoding="utf-8").splitlines()
     watch_loop = "\n".join(line for line in source if not line.lstrip().startswith("#"))
 
     assert "from ._process import _call_interruptibly" in watch_loop, (
         "the watch loop must take the off-thread wait from the module that owns it"
     )
-    assert "_call_interruptibly(fetch)" in watch_loop, (
+    assert "_call_interruptibly(request.fetch)" in watch_loop, (
         "the refresh must route through the shared helper, not a local copy"
     )
     assert "threading.Thread(" not in watch_loop, (
@@ -173,7 +174,9 @@ def test_the_watch_refresh_is_a_read_only_request() -> None:
 
     server, thread, requests = _jobs_empty_contract_server()
     try:
-        jobs._fetch_jobs_result(jobs._JobsQuery(port=server.server_address[1], limit=5))
+        jobs_query.fetch_jobs_result(
+            jobs_query.JobsQuery(port=server.server_address[1], limit=5)
+        )
     finally:
         server.shutdown()
         server.server_close()

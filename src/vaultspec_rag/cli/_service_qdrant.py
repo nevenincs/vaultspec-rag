@@ -14,14 +14,14 @@ import typer
 
 from .._operator_commands import server_start_command
 from .._sync_vocabulary import ProvisionAction
-from ..config import get_config
+from ..config._settings import get_config
 from ..qdrant_runtime._constants import (
     QDRANT_SERVER_VERSION,
     ProvisionReport,
 )
 from ..qdrant_runtime._provision import provision, provisioned_versions
 from ..qdrant_runtime._resolve import probe_qdrant_endpoint, resolve_binary
-from ..serviceclient._discovery import _read_service_status
+from ..serviceclient._discovery import read_service_status
 from ._app import JsonMode, server_qdrant_app
 from ._progress import StartupStatusReporter
 from ._render import _emit_json, _plain_line
@@ -123,7 +123,7 @@ def qdrant_install(
 
 def _service_qdrant_block() -> dict[str, Any]:
     """The running service's recorded Qdrant process, if any."""
-    status = _read_service_status()
+    status = read_service_status()
     if status is None:
         return {"recorded": False}
     block: dict[str, Any] = {"recorded": "qdrant_pid" in status}

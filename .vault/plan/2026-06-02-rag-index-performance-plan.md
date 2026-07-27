@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#rag-index-performance'
 date: '2026-06-02'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-06-02-rag-index-performance-adr]]'
@@ -48,6 +48,8 @@ no regression on real GPU. Behaviour parity (chunk identity, failure-safe rebuil
 stale-purge, serial fallback) is a hard constraint throughout.
 
 ## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
 
 ## Parallelization
 

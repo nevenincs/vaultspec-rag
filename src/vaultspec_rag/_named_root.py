@@ -22,7 +22,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from .config import EnvVar
+from .config._types import EnvVar
 
 __all__ = ["env_named_root"]
 

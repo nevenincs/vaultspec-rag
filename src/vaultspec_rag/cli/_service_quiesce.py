@@ -19,10 +19,10 @@ from ._app import (
     server_app,
 )
 from ._render import (
-    _address_line,
     _emit_json,
     _emit_json_error_and_exit,
     _plain,
+    address_line,
 )
 
 _PAUSE_COMMAND = "service.pause"
@@ -95,7 +95,7 @@ def _fail_unreachable(command: str, json_mode: bool, *, port: int | None) -> Non
             command, "service_unreachable", message, 1, data={"port": port}
         )
     if port is not None:
-        _plain(_address_line(port))
+        _plain(address_line(port))
     _plain(message)
     raise typer.Exit(1)
 

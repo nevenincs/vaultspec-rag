@@ -3,14 +3,16 @@ tags:
   - '#exec'
   - '#service-graph'
 date: '2026-04-02'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-02-service-graph-phase1-plan]]'
 ---
 
 # service-graph phase-1 step-1: graph cache unification (D3, R36-C1)
 
-## Changes
+## Description
+
+### Changes
 
 - Renamed `_GraphCache` to `GraphCache` (public) in `api.py`, added TTL
   support (`_built_at`, `_ttl_seconds`, `_is_stale()`), double-check
@@ -40,7 +42,7 @@ related:
 - Updated 3 ADR regression tests that referenced `_GraphCache` or
   checked for `_graph_built_at` in source.
 
-## Files modified
+### Files modified
 
 - `src/vaultspec_rag/api.py`
 - `src/vaultspec_rag/search.py`
@@ -49,17 +51,19 @@ related:
 - `src/vaultspec_rag/__init__.py`
 - `src/vaultspec_rag/tests/test_adr_regression.py`
 
-## Files created
+### Files created
 
 - `src/vaultspec_rag/tests/test_graph_cache.py` (10 tests)
 
-## Test results
+## Outcome
+
+### Test results
 
 - 10/10 new `test_graph_cache.py` tests pass
 - 230/230 unit tests pass (0 regressions)
 - 0 ruff violations across all modified files
 
-## Verification
+### Verification
 
 - `GraphCache.get()` returns cached instance within TTL, rebuilds after expiry
 - `GraphCache.invalidate()` forces rebuild on next `get()`
@@ -67,3 +71,7 @@ related:
 - `VaultSearcher._get_graph()` delegates to provider when set
 - `VaultSearcher._get_graph()` uses internal lock+TTL when provider is None
 - Concurrent fallback with 4 threads: lock prevents parallel builds
+
+## Notes
+
+No separate notes is recorded in the retained prior execution record. Source: retained prior execution record body.

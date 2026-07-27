@@ -136,7 +136,7 @@ def test_bench_memory(root: Path) -> dict[str, Any]:
     result["vram_reserved_mb"] = torch.cuda.memory_reserved(0) / (1024 * 1024)  # pyright: ignore[reportUnknownMemberType]
 
     # Qdrant disk size
-    from ...config import get_config
+    from ...config._settings import get_config
 
     cfg = get_config()
     qdrant_dir: Path = root / cfg.data_dir / cfg.qdrant_dir

@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Audit: search.py Round 27 — Correctness Deep Dive
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Date:** 2026-03-08
 **Auditor:** docs-researcher-2
@@ -15,7 +20,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Executive Summary
+### Executive Summary
 
 `search.py` is **CORRECT** across all major flows. No CRITICAL or HIGH-severity bugs found.
 
@@ -33,7 +38,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Severity Table
+### Severity Table
 
 | Severity | Count | Issues                                   |
 | -------- | ----- | ---------------------------------------- |
@@ -44,7 +49,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Detailed Findings
+### Detailed Findings
 
 ### 1. `search_vault()` Flow Analysis
 
@@ -254,7 +259,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Summary of Audit Questions
+### Summary of Audit Questions
 
 | Question                        | Answer                                                                                    | Status  |
 | ------------------------------- | ----------------------------------------------------------------------------------------- | ------- |
@@ -269,6 +274,12 @@ ______________________________________________________________________
 | Snippet generation safe?        | Yes, truncation + strip safe; very short content is acceptable.                           | ✅ SAFE |
 
 ______________________________________________________________________
+
+### Conclusion
+
+**search.py is CORRECT.** All major flows (hybrid search, reranking, score normalization, graph boosting) are safely implemented. No CRITICAL or HIGH-severity issues. One LOW-severity note (snippet truncation on very short content) is expected and documented.
+
+Recommend: **PASS WITH NO CHANGES** for production use.
 
 ## Recommendations
 
@@ -286,9 +297,3 @@ None required. Docstrings are clear and design rationale is well-explained (e.g.
 - If multi-threaded concurrent search is needed, add threading.Lock around VaultSearcher.\_rerank() and_get_graph().
 
 ______________________________________________________________________
-
-## Conclusion
-
-**search.py is CORRECT.** All major flows (hybrid search, reranking, score normalization, graph boosting) are safely implemented. No CRITICAL or HIGH-severity issues. One LOW-severity note (snippet truncation on very short content) is expected and documented.
-
-Recommend: **PASS WITH NO CHANGES** for production use.

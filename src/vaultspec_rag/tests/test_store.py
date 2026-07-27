@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from pathlib import Path
 
-    from ..store import VaultStore
+    from ..store_runtime import VaultStore
 
 pytestmark = [pytest.mark.unit]
 
@@ -47,7 +47,7 @@ class TestInterpreterIsSupported:
         version: tuple[int, int, int],
         supported: bool,
     ) -> None:
-        from ..store import _interpreter_is_supported
+        from ..store_runtime import _interpreter_is_supported
 
         assert _interpreter_is_supported(version) is supported
 
@@ -59,7 +59,7 @@ class TestStoreHelpers:
         """_build_filter should return a Qdrant Filter with correct conditions."""
         from qdrant_client import models
 
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         result = VaultStore._build_filter({"doc_type": "adr"})
         assert result is not None
@@ -74,7 +74,7 @@ class TestStoreHelpers:
         """_build_filter with multiple keys should produce multiple conditions."""
         from qdrant_client import models
 
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         result = VaultStore._build_filter({"doc_type": "adr", "feature": "rag"})
         assert result is not None
@@ -84,14 +84,14 @@ class TestStoreHelpers:
 
     def test_build_filter_empty_returns_none(self):
         """_build_filter with empty dict should return None."""
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         result = VaultStore._build_filter({})
         assert result is None
 
     def test_build_filter_none_returns_none(self):
         """_build_filter with None should return None."""
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         result = VaultStore._build_filter(None)
         assert result is None
@@ -100,7 +100,7 @@ class TestStoreHelpers:
         """_build_filter date key should use MatchValue for exact matching."""
         from qdrant_client import models
 
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         result = VaultStore._build_filter({"date": "2026-02-07"})
         assert result is not None
@@ -111,14 +111,14 @@ class TestStoreHelpers:
 
     def test_build_filter_ignores_unknown_keys(self):
         """_build_filter should ignore keys not in (doc_type, feature, date)."""
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         result = VaultStore._build_filter({"unknown_key": "value"})
         assert result is None
 
     def test_stable_id_deterministic(self):
         """_stable_id should return the same integer for the same input."""
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         id1 = VaultStore._stable_id("test-doc")
         id2 = VaultStore._stable_id("test-doc")
@@ -127,7 +127,7 @@ class TestStoreHelpers:
 
     def test_stable_id_different_inputs(self):
         """_stable_id should return different integers for different inputs."""
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         id1 = VaultStore._stable_id("doc-a")
         id2 = VaultStore._stable_id("doc-b")
@@ -137,7 +137,7 @@ class TestStoreHelpers:
         """_build_filter with tag key produces MatchAny on tags field."""
         from qdrant_client import models
 
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         result = VaultStore._build_filter({"tag": "auth"})
         assert result is not None
@@ -154,7 +154,7 @@ class TestStoreLocalWarnings:
     """Qdrant local-mode warning handling."""
 
     def test_payload_index_warning_is_suppressed(self, tmp_path: Path) -> None:
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -169,11 +169,11 @@ class TestStoreLocalWarnings:
         assert not any("Payload indexes have no effect" in msg for msg in messages)
 
     def test_large_local_collection_warning_is_suppressed(self):
-        from ..store import _suppress_local_qdrant_warnings
+        from ..store_runtime import suppress_local_qdrant_warnings
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            with _suppress_local_qdrant_warnings():
+            with suppress_local_qdrant_warnings():
                 warnings.warn(
                     "Local mode is not recommended for collections with more than "
                     "20,000 points. Current collection contains 20032 points. "
@@ -227,7 +227,7 @@ class TestStoreLocalClientSerialization:
         store_call: Callable[[VaultStore], object],
         expected: object,
     ) -> None:
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
         acquired = False
@@ -289,7 +289,7 @@ class TestStoreLocalClientSerialization:
         )
 
     def test_code_search_proceeds_while_vault_lock_held(self, tmp_path: Path) -> None:
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
         from ..store_schema import DEFAULT_DENSE_DIM
 
         store = VaultStore(tmp_path)
@@ -388,7 +388,7 @@ class TestStoreLocalClientSerialization:
     def test_parallel_hybrid_searches_complete_without_qdrant_errors(
         self, tmp_path: Path
     ) -> None:
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         dim = 8
         worker_count = 8
@@ -449,7 +449,7 @@ class TestBuildCodeFilter:
         """Path ending with / should use MatchValue (KEYWORD index)."""
         from qdrant_client import models
 
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         result = VaultStore._build_code_filter({"path": "src/"})
         assert result is not None
@@ -462,7 +462,7 @@ class TestBuildCodeFilter:
         """Exact path should use MatchValue."""
         from qdrant_client import models
 
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         result = VaultStore._build_code_filter({"path": "src/main.py"})
         assert result is not None
@@ -482,8 +482,9 @@ class TestQdrantServerMode:
 
         from qdrant_client.qdrant_remote import QdrantRemote
 
-        from ..config import EnvVar, reset_config
-        from ..store import VaultStore
+        from ..config._settings import reset_config
+        from ..config._types import EnvVar
+        from ..store_runtime import VaultStore
 
         variables = (EnvVar.QDRANT_URL, EnvVar.STORE_OPERATION_TIMEOUT_SECONDS)
         previous = {variable: os.environ.get(variable.value) for variable in variables}
@@ -510,8 +511,8 @@ class TestQdrantServerMode:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """When VAULTSPEC_RAG_QDRANT_URL is set, VaultStore bypasses FileLock."""
-        from ..config import reset_config
-        from ..store import VaultStore
+        from ..config._settings import reset_config
+        from ..store_runtime import VaultStore
 
         monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_URL", "http://localhost:65432")
         monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_API_KEY", "test-api-key")
@@ -539,8 +540,8 @@ class TestQdrantServerMode:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Verify qdrant_quantization builds correct models configs."""
-        from ..config import reset_config
-        from ..store import VaultStore
+        from ..config._settings import reset_config
+        from ..store_runtime import VaultStore
 
         # Test scalar quantization config mapping
         monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_QUANTIZATION", "scalar")
@@ -555,7 +556,7 @@ class TestQdrantServerMode:
             # method or inspect how _ensure_collection builds the config.
             # Let's inspect the code inside _ensure_collection or just verify
             # qdrant_quantization in config.
-            from ..config import get_config
+            from ..config._settings import get_config
 
             cfg = get_config()
             assert cfg.qdrant_quantization == "scalar"
@@ -569,7 +570,7 @@ class TestDropTable:
 
     def test_drop_table_removes_vault_collection(self, tmp_path: Path) -> None:
         """drop_table() should delete the vault_docs collection and reset state."""
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
         try:
@@ -585,7 +586,7 @@ class TestDropTable:
 
     def test_drop_table_idempotent_on_missing_collection(self, tmp_path: Path) -> None:
         """drop_table() on a non-existent collection must not raise."""
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
         try:
@@ -596,7 +597,7 @@ class TestDropTable:
 
     def test_drop_table_then_recreate_works(self, tmp_path: Path) -> None:
         """After drop_table(), ensure_table() should recreate a fresh collection."""
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
         try:
@@ -622,7 +623,7 @@ class TestDropTable:
         same-name create_collection resurrected the deleted points.
         """
         from .._store_models import VaultDocument
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path, embedding_dim=4)
         try:
@@ -655,7 +656,7 @@ class TestDropTable:
 
     def test_drop_code_table_removes_codebase_collection(self, tmp_path: Path) -> None:
         """drop_code_table() deletes the codebase_docs collection and resets state."""
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
         try:
@@ -673,7 +674,7 @@ class TestDropTable:
         self, tmp_path: Path
     ) -> None:
         """drop_code_table() on a non-existent collection must not raise."""
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
         try:
@@ -684,7 +685,7 @@ class TestDropTable:
 
     def test_drop_code_table_then_recreate_works(self, tmp_path: Path) -> None:
         """After drop_code_table(), ensure_code_table() recreates a fresh collection."""
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
         try:
@@ -737,7 +738,7 @@ class TestServerModeNamespacing:
         assert re.fullmatch(r"r[0-9a-f]{12}_", root_collection_prefix(tmp_path))
 
     def test_local_mode_names_unchanged(self, tmp_path: Path) -> None:
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
         try:
@@ -751,8 +752,9 @@ class TestServerModeNamespacing:
         import os
 
         from .._store_models import root_collection_prefix
-        from ..config import EnvVar, reset_config
-        from ..store import VaultStore
+        from ..config._settings import reset_config
+        from ..config._types import EnvVar
+        from ..store_runtime import VaultStore
 
         root_a = tmp_path / "project-a"
         root_b = tmp_path / "project-b"
@@ -813,7 +815,7 @@ class TestStoreBoundedForceClose:
         still holds. ``force_after_seconds`` bounds that wait and closes the
         client anyway so the daemon can complete a bounded shutdown.
         """
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
         held = threading.Event()
@@ -857,7 +859,7 @@ class TestStoreBoundedForceClose:
         must bound the lifecycle-lock wait too, abandon it past the deadline,
         and force-close anyway.
         """
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
         held = threading.Event()
@@ -908,7 +910,7 @@ class TestEnsureTableBackfill:
         indexes, so the call itself is the only observable evidence that the
         backfill path ran.
         """
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         indexed: list[str] = []
 

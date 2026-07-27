@@ -78,7 +78,7 @@ class ServiceTarget:
         Raises:
             RuntimeError: If service.json is missing or incomplete.
         """
-        from ...config import get_config
+        from ...config._settings import get_config
 
         cfg = get_config()
         path = Path(str(cfg.status_dir)).expanduser() / "service.json"

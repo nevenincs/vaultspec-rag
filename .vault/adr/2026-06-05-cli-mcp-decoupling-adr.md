@@ -6,7 +6,7 @@ date: '2026-06-05'
 related:
   - "[[2026-06-05-cli-mcp-decoupling-research]]"
 superseded_by: '2026-06-18-mcp-service-client-adr'
-modified: '2026-06-30'
+modified: '2026-07-27'
 ---
 
 # `cli-mcp-decoupling` adr: `decoupled interface layers and unified backend facade` | (**status:** `superseded`)
@@ -52,3 +52,7 @@ Decoupling all functional orchestration from CLI/MCP ensures that the backend re
 
 - **Rule slug:** `interface-layer-zero-business-logic`.
   **Rule:** CLI and MCP modules must not contain custom business logic, loop orchestrations, or ML model configurations; they must delegate all operational tasks to the unified backend facade.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

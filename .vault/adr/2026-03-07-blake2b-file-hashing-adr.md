@@ -3,21 +3,36 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-03-07-continuous-research]]'
 ---
-
 # `gpu-rag-stack` adr: `Use blake2b via file_digest() for file change detection` | (**status:** `accepted`)
 
-## Context
+## Problem Statement
+
+### Context
 
 `VaultIndexer` needs to detect file content changes to determine which
 documents require re-indexing. The previous approach used filesystem mtime,
 which is unreliable (1-2 second resolution, not portable). Content hashing
 is more reliable but the algorithm choice matters for performance.
 
-## Decision
+## Considerations
+
+No separate considerations is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Considered options
+
+No separate considered options is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Constraints
+
+No separate constraints is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Implementation
+
+### Decision
 
 Use `hashlib.blake2b` via `hashlib.file_digest()` (Python 3.11+) for all
 file change detection.

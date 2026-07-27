@@ -7,12 +7,13 @@ related:
   - "[[2026-03-07-threading-lock-for-singleton-adr]]"
   - "[[2026-03-07-continuous-research]]"
 superseded_by: '2026-06-18-mcp-service-client-adr'
-modified: '2026-07-23'
+modified: '2026-07-27'
 ---
-
 # `gpu-rag-stack` adr: `MCP tools use async def + anyio.to_thread.run_sync` | (**status:** `superseded`)
 
-## Context
+## Problem Statement
+
+### Context
 
 Corrected same day; the original sync-def approach was wrong.
 
@@ -20,18 +21,28 @@ MCP tool handlers in `mcp_server.py` call synchronous blocking code: GPU
 inference (`SentenceTransformer.encode`, `CrossEncoder.predict`) and Qdrant
 I/O (`query_points`, `scroll`). These must not block the asyncio event loop.
 
-## Original Decision (WRONG)
+## Considerations
+
+No separate considerations is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Considered options
+
+No separate considered options is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Constraints
+
+No separate constraints is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Implementation
+
+### Original Decision (WRONG)
 
 Declare all MCP tool functions as plain `def` (synchronous), relying on
-MCP Python SDK PR #1909 to auto-wrap sync tools in `anyio.to_thread.run_sync()`.
-
-## Correction
+MCP Python SDK PR #1909 to auto-wrap sync tools in `anyio.to_thread.run_sync()`.### Correction
 
 Verified against MCP SDK 1.26.0 installed source: **sync `def` tools are NOT
-auto-wrapped** — they execute directly on the event loop, blocking it during
-GPU inference and Qdrant I/O. The auto-wrap assumption was incorrect.
-
-## Corrected Decision
+auto-wrapped** â€” they execute directly on the event loop, blocking it during
+GPU inference and Qdrant I/O. The auto-wrap assumption was incorrect.### Corrected Decision
 
 Declare all MCP tool functions as `async def` and explicitly wrap blocking
 calls with `anyio.to_thread.run_sync()`:

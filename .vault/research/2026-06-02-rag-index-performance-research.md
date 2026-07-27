@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#rag-index-performance'
 date: '2026-06-02'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -135,3 +135,5 @@ read+hash+chunk files in one pass; a feeder that drains the pool into a bounded 
 single dedicated GPU consumer thread that owns the GPU lock and encodes/upserts. Gate auto
 parallelism on total source bytes so small codebases stay serial. Defer tokenise-in-workers
 and length-bucketing as fast-follows.
+## Sources
+- The analysis and source locations cited inline in this research record.

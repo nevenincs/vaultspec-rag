@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#operability-hardening'
 date: '2026-06-09'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -124,3 +124,5 @@ The `gh` token lapsed during this session; findings use issue contents captured 
 plus live code grounding. On re-auth: reconcile against the live board, close the merged
 deconflation issues (#167/#168/#169) and dedupe #179→#178, and confirm no new issues
 landed.
+## Sources
+- Evidence cited inline: `docs/indexing.md`.

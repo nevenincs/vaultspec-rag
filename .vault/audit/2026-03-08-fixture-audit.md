@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Audit Report: Integration Test Fixture Scoping & Isolation
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Date:** 2026-03-08
 **Auditor:** codebase-researcher-2
@@ -14,7 +19,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Executive Summary
+### Executive Summary
 
 The fixture architecture is **LARGELY SOUND** but with **TWO CRITICAL ISSUES**:
 
@@ -26,8 +31,6 @@ The fixture architecture is **LARGELY SOUND** but with **TWO CRITICAL ISSUES**:
 Otherwise, the fixture design is correct: proper Qdrant isolation via suffixes, correct teardown, full corpus coverage across all 5 doc_types, and proper `_save_meta` usage.
 
 ______________________________________________________________________
-
-## Findings
 
 ### 1. Fixture Scoping — Session-Scoped Safety Check
 
@@ -324,7 +327,7 @@ def _save_meta(self, docs: list[VaultDocument]) -> None:
 
 ______________________________________________________________________
 
-## Summary Table
+### Summary Table
 
 | Issue                                              | Severity | Status     | Details                                                              |
 | -------------------------------------------------- | -------- | ---------- | -------------------------------------------------------------------- |
@@ -340,6 +343,15 @@ ______________________________________________________________________
 | integration/conftest.py docstring                  | HIGH     | 🔴 FAIL    | Says "RAG unit test fixtures" but these are integration fixtures     |
 
 ______________________________________________________________________
+
+### Conclusion
+
+The fixture architecture is **structurally sound** with proper isolation and teardown. The Qdrant suffix strategy and corpus coverage are correct. However, **two critical GPU resource issues** must be fixed before accepting this fixture design:
+
+1. **rag_components_with_code** should accept shared `embedding_model`
+1. **rag_components_mixed** should accept shared `embedding_model`
+
+Once these are fixed, the fixture design is **production-ready** for integration testing.
 
 ## Recommendations
 
@@ -426,12 +438,3 @@ def test_something(tmp_path):
 ```
 
 ______________________________________________________________________
-
-## Conclusion
-
-The fixture architecture is **structurally sound** with proper isolation and teardown. The Qdrant suffix strategy and corpus coverage are correct. However, **two critical GPU resource issues** must be fixed before accepting this fixture design:
-
-1. **rag_components_with_code** should accept shared `embedding_model`
-1. **rag_components_mixed** should accept shared `embedding_model`
-
-Once these are fixed, the fixture design is **production-ready** for integration testing.

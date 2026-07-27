@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#service-hardware-singleton'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -184,3 +184,7 @@ owner) is already running before starting another.
 - How should the dashboard's project-local-status-dir instance participate - attach to the
   shared Qdrant (P1) or be folded into a single machine service (P3)?
 - What is the migration/back-compat story for hosts already running with overridden ports?
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

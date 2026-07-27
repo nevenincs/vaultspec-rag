@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#server-bound-search-production-readiness'
 date: '2026-06-11'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]'
@@ -79,3 +79,7 @@ Adopt a production-readiness contract:
 - record last search latency in status/diagnostics,
 - benchmark current behavior against prior known-good behavior before declaring the
   server-bound path production-ready.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

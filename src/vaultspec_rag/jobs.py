@@ -20,7 +20,7 @@ from anyio.to_thread import run_sync as _run_in_thread
 
 from ._job_errors import STALL_THRESHOLD_SECONDS, classify_error_text
 from ._runtime_identity import process_identity_fields
-from .config import managed_status_dir
+from .config._settings import managed_status_dir
 from .job_control import NO_RUN_CONTROL
 from .job_manager.manager import JobManager
 from .job_manager.models import MAX_RECORDS, JobAttemptContext, JobExecutionResult
@@ -89,7 +89,7 @@ __all__ = [
 
 def active_index_support_profiles() -> dict[str, object]:
     """Return the configured code and document ceilings for service status."""
-    from .config import get_config
+    from .config._settings import get_config
     from .index_profiles import index_support_profile_status
 
     return index_support_profile_status(get_config().index_support_profile)
@@ -409,7 +409,7 @@ def _finish_record(
     target_phase: str,
     summary: str | None,
     error: str | None,
-    details: _FinishDetails,
+    details: FinishDetails,
 ) -> dict[str, object] | None:
     """Apply the terminal state to *record* in place (caller holds the lock).
 
@@ -447,7 +447,7 @@ def _finish_record(
 
 
 @dataclass(frozen=True, slots=True)
-class _FinishDetails:
+class FinishDetails:
     preprocess_ok: int = 0
     preprocess_skipped: int = 0
     preprocess_failures: list[str] | None = None
@@ -455,7 +455,7 @@ class _FinishDetails:
     drift: dict[str, object] | None = None
 
 
-_DEFAULT_FINISH_DETAILS = _FinishDetails()
+_DEFAULT_FINISH_DETAILS = FinishDetails()
 
 
 def record_finish(
@@ -464,7 +464,7 @@ def record_finish(
     result: str | None = None,
     error: str | None = None,
     phase: Phase | None = None,
-    details: _FinishDetails = _DEFAULT_FINISH_DETAILS,
+    details: FinishDetails = _DEFAULT_FINISH_DETAILS,
 ) -> None:
     """Mark the record with *record_id* finished, in place.
 
@@ -814,7 +814,7 @@ def validate_code_support_profile(
     import psutil
 
     from ._store_writes import probe_store_volume, probe_workspace_volume
-    from .config import get_config
+    from .config._settings import get_config
     from .index_profiles import (
         AdmissionEnvironment,
         IndexDomain,
@@ -900,7 +900,7 @@ def validate_document_support_profile(
     import psutil
 
     from ._store_writes import probe_store_volume, probe_workspace_volume
-    from .config import get_config
+    from .config._settings import get_config
     from .index_profiles import (
         AdmissionEnvironment,
         IndexDomain,
@@ -984,7 +984,7 @@ def _sync_legacy_finished(
         record_finish(
             snapshot.id,
             result=snapshot.result,
-            details=_FinishDetails(
+            details=FinishDetails(
                 preprocess_ok=result.preprocess_ok if result is not None else 0,
                 preprocess_skipped=(
                     result.preprocess_skipped if result is not None else 0

@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#service-discovery-schema'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -112,3 +112,7 @@ single - not a code defect repair.
 - Decide where the schema document lives (a `reference` vault document versus a user-facing
   docs page) and whether the staleness contract is also surfaced in the file (e.g. a
   `heartbeat_interval_s`/`stale_after_s` pair) rather than prose only.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

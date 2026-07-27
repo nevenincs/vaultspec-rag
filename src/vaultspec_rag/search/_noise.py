@@ -21,7 +21,7 @@ from .._domain import NOISE_DOMAINS, classify_domain
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from ..config import VaultSpecConfigWrapper
+    from ..config._settings import VaultSpecConfigWrapper
     from ._models import SearchResult
 
 __all__ = [

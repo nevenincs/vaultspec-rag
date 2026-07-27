@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from ..cli._service_jobs import _resilience_summary_lines
+from ..cli._service_jobs_presentation import _resilience_summary_lines
 from ..job_control import RunControlToken
-from ..job_manager._control import _AttemptTerminal
+from ..job_manager._control import AttemptTerminal
 from ..job_manager.manager import JobManager
 from ..job_models import (
     IndexResilienceSnapshot,
@@ -130,7 +130,7 @@ async def test_resilience_is_owned_persisted_and_shared_by_status_adapters(
         assert (
             manager.finish_attempt(
                 created.job.id,
-                _AttemptTerminal(
+                AttemptTerminal(
                     attempt=1,
                     task=owner_task,
                     state=JobState.FAILED,
@@ -306,7 +306,7 @@ def test_runtime_cuda_peak_is_not_a_corpus_rejection_dimension() -> None:
     ``cuda_bytes`` to ``exceeded_by``'s rejection set: under that form a
     peak above the profile figure is refused as corpus_limit_exceeded.
     """
-    from ..config import get_config
+    from ..config._settings import get_config
     from ..index_profiles import (
         SupportMeasurement,
         get_index_support_profile,

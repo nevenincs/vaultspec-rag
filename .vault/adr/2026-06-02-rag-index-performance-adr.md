@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#rag-index-performance'
 date: '2026-06-02'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-02-rag-index-performance-research]]"
 ---
@@ -79,3 +79,7 @@ vault-document index path with the same structure.
 - **Rule slug:** `index-workers-stay-cpu-only`. Codebase-index workers never import or
   initialise CUDA/torch; the pool uses `spawn`, and every module on the worker import chain
   keeps its torch import lazy.
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

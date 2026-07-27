@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#onnx-encoder-backend'
 date: '2026-06-02'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-06-02-onnx-encoder-backend-adr]]'
@@ -37,6 +37,8 @@ added to the project; the ONNX path is experimental and opt-in. Activation/bench
 deferred per the ADR until onnxruntime ships a CUDA-13 build.
 
 ## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
 
 ## Parallelization
 

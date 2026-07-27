@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#qdrant-store-resilience'
 date: '2026-06-30'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -96,3 +96,7 @@ positive dropping a good index), and the exact bound. The pure functions -
 parse-tail-for-known-collection and quarantine-collection-dir - are testable
 without a live corrupt store; the integration is the bounded retry around the
 existing `start()`/`restart()`.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

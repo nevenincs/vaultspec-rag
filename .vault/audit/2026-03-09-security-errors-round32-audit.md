@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 32: Security & Error-Handling Audit
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Date:** 2026-03-09
 **Auditor:** Claude Code (Haiku 4.5)
@@ -14,13 +19,13 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Executive Summary
+### Executive Summary
 
 Round 32 audits security (path traversal, command injection, input validation, info disclosure) and error-handling (Qdrant unavailability, CUDA OOM, disk full, partial indexing). Found **2 CRITICAL** path validation gaps, **2 HIGH** error propagation issues, and **3 MEDIUM** concerns about incomplete cleanup. No command injection or direct subprocess risks detected.
 
 ______________________________________________________________________
 
-## Security Audit Results
+### Security Audit Results
 
 ### 1. Path Traversal — OK (Symlink + Traversal Safeguards)
 
@@ -189,7 +194,7 @@ If the exception contains environment variable names (e.g., `VAULTSPEC_ROOT=/sec
 
 ______________________________________________________________________
 
-## Error-Handling Audit Results
+### Error-Handling Audit Results
 
 ### 8. Qdrant Unavailable / Corrupted — HIGH
 
@@ -320,7 +325,7 @@ Unknown keys are logged, not injected. Safe.
 
 ______________________________________________________________________
 
-## Summary Table
+### Summary Table
 
 | ID  | Category               | Finding                                     | Severity   | Status      |
 | --- | ---------------------- | ------------------------------------------- | ---------- | ----------- |
@@ -335,6 +340,24 @@ ______________________________________________________________________
 \*H2 labeled CRITICAL in Round 29, still unresolved.
 
 ______________________________________________________________________
+
+### Files Affected
+
+- `src/vaultspec_rag/cli.py` (C1, M1)
+- `src/vaultspec_rag/api.py` (C2)
+- `src/vaultspec_rag/mcp_server.py` (H1, M3, M2)
+- `src/vaultspec_rag/search.py` (M1)
+
+______________________________________________________________________
+
+### Verification Checklist
+
+- [ ] C1: CLI rejects `--target` pointing outside workspace
+- [ ] C2: API rejects arbitrary `root_dir` without `.vaultspec/`
+- [ ] H1: Qdrant lock errors do not permanently block subsequent searches
+- [ ] M1: Query strings > 10KB are truncated with warning
+- [ ] M3: Exception messages do not leak paths/env vars
+- [ ] M2: Filter parameters have max length enforcement
 
 ## Recommendations
 
@@ -378,21 +401,3 @@ ______________________________________________________________________
    - Clamp `language`, `node_type`, etc. to 256 chars.
 
 ______________________________________________________________________
-
-## Files Affected
-
-- `src/vaultspec_rag/cli.py` (C1, M1)
-- `src/vaultspec_rag/api.py` (C2)
-- `src/vaultspec_rag/mcp_server.py` (H1, M3, M2)
-- `src/vaultspec_rag/search.py` (M1)
-
-______________________________________________________________________
-
-## Verification Checklist
-
-- [ ] C1: CLI rejects `--target` pointing outside workspace
-- [ ] C2: API rejects arbitrary `root_dir` without `.vaultspec/`
-- [ ] H1: Qdrant lock errors do not permanently block subsequent searches
-- [ ] M1: Query strings > 10KB are truncated with warning
-- [ ] M3: Exception messages do not leak paths/env vars
-- [ ] M2: Filter parameters have max length enforcement

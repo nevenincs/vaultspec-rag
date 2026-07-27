@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#search-postprocess'
 date: '2026-05-31'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -175,3 +175,5 @@ files of signature changes.
 Defaults stay off — neither pass runs unless the user opts in
 with the flag. This avoids surprise reordering for existing
 consumers; the new behaviour is purely additive.
+## Sources
+- Evidence cited inline: `tests/test_search_unit.py`, `tests/test_cli.py`.

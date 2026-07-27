@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import typer
 from typer.core import TyperGroup, TyperOption
-from typer.main import TyperPath
+from typer.models import TyperPath
 from vaultspec_core.config.workspace import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
     WorkspaceError,
     WorkspaceLayout,
@@ -25,12 +25,13 @@ from vaultspec_core.config.workspace import (  # pyright: ignore[reportMissingTy
 import vaultspec_rag.cli as _cli
 
 from .._named_root import env_named_root
-from ..config import EnvVar
+from ..config._types import EnvVar
 from ..logging_config import configure_logging
 from ._render import _plain
 
 if TYPE_CHECKING:
     import click
+    from typer._click import Context as ClickContext
 
 __all__ = [
     "JSON_ENVELOPE_OPTION_HELP",
@@ -260,16 +261,18 @@ class _LiteralArgvGroup(TyperGroup):
             )
         )
 
-    def make_context(self, *args: Any, **kwargs: Any) -> typer.Context:
-        """Configure root state after Click has parsed the root flags."""
-        ctx = super().make_context(*args, **kwargs)
-        if ctx.parent is None:
-            _configure_root_context(ctx, bool(ctx._protected_args))
-        return ctx
-
-    def invoke(self, ctx: typer.Context) -> Any:
+    def invoke(self, ctx: ClickContext) -> Any:
         """Invoke the empty registration callback without root option kwargs."""
         params = ctx.params
+        ctx.meta[_ROOT_OPTIONS_CONTEXT_KEY] = _RootOptions(
+            target=cast("Path | None", params["target"]),
+            verbose=cast("bool", params["verbose"]),
+            debug=cast("bool", params["debug"]),
+            data_dir=cast("str | None", params["data_dir"]),
+            storage_dir=cast("str | None", params["storage_dir"]),
+            status_dir=cast("str | None", params["status_dir"]),
+            log_file=cast("str | None", params["log_file"]),
+        )
         ctx.params = {}
         try:
             return super().invoke(ctx)
@@ -350,6 +353,9 @@ server_root_app.add_typer(server_storage_app, name="storage")
 app.add_typer(preprocess_app, name="preprocess")
 
 
+_ROOT_OPTIONS_CONTEXT_KEY = "vaultspec_rag.root_options"
+
+
 def _show_group_help_if_no_command(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
@@ -424,26 +430,20 @@ class CLIState:
 
 
 @app.callback(invoke_without_command=True)
-def main() -> None:
+def main(ctx: typer.Context) -> None:
     """Register root options through ``_LiteralArgvGroup``."""
+    options = ctx.meta.get(_ROOT_OPTIONS_CONTEXT_KEY)
+    if not isinstance(options, _RootOptions):
+        raise RuntimeError("root CLI options were not initialized")
+    _configure_root_context(ctx, options)
 
 
-def _configure_root_context(ctx: typer.Context, has_subcommand: bool) -> None:
+def _configure_root_context(ctx: ClickContext, options: _RootOptions) -> None:
     """Configure logging, resolve workspace, and dispatch to a subcommand."""
-    params = ctx.params
-    options = _RootOptions(
-        target=cast("Path | None", params["target"]),
-        verbose=cast("bool", params["verbose"]),
-        debug=cast("bool", params["debug"]),
-        data_dir=cast("str | None", params["data_dir"]),
-        storage_dir=cast("str | None", params["storage_dir"]),
-        status_dir=cast("str | None", params["status_dir"]),
-        log_file=cast("str | None", params["log_file"]),
-    )
     configure_logging(debug=options.debug, level="INFO" if options.verbose else None)
 
     # Wire CLI overrides into the config system.
-    from ..config import get_config
+    from ..config._settings import get_config
 
     cli_overrides: dict[str, Any] = {}
     if options.data_dir is not None:
@@ -457,7 +457,7 @@ def _configure_root_context(ctx: typer.Context, has_subcommand: bool) -> None:
     if cli_overrides:
         get_config(cli_overrides)
 
-    if not has_subcommand:
+    if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
         raise typer.Exit(0)
 
@@ -472,7 +472,7 @@ def _configure_root_context(ctx: typer.Context, has_subcommand: bool) -> None:
     # settings that are read out of that project.
     named_target = options.target if options.target is not None else env_named_root()
 
-    if ctx._protected_args[0] in (
+    if ctx.invoked_subcommand in (
         "server",
         "install",
         "uninstall",
@@ -506,7 +506,7 @@ def _configure_root_context(ctx: typer.Context, has_subcommand: bool) -> None:
         raise typer.Exit(code=1) from None
 
 
-def _global_target(ctx: typer.Context) -> Path | None:
+def _global_target(ctx: ClickContext) -> Path | None:
     """Read the global ``--target`` value the root callback stashed
     on ``ctx.obj`` for short-circuited subcommands (install /
     uninstall).

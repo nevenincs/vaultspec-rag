@@ -24,8 +24,9 @@ if TYPE_CHECKING:
 
     from sentence_transformers import CrossEncoder
 
-    from ... import VaultIndexer, VaultStore
+    from ... import VaultIndexer
     from ...embeddings import EmbeddingModel
+    from ...store_runtime import VaultStore
 
 
 class _ChunkedCorpus(TypedDict):
@@ -69,7 +70,8 @@ def _build_indexed_root(
     root: Path,
     model: EmbeddingModel,
 ) -> tuple[VaultStore, VaultIndexer, str]:
-    from ... import VaultIndexer, VaultStore
+    from ... import VaultIndexer
+    from ...store_runtime import VaultStore
 
     build_synthetic_vault(root, n_docs=4, seed=77)
     long_doc_id = _write_long_doc(root)
@@ -215,7 +217,7 @@ class TestChunkedVaultLifecycle:
     def test_old_point_layout_triggers_rebuild(
         self, embedding_model: EmbeddingModel, tmp_path: Path
     ) -> None:
-        from ...config import get_config
+        from ...config._settings import get_config
 
         store, indexer, _ = _build_indexed_root(tmp_path, embedding_model)
         try:

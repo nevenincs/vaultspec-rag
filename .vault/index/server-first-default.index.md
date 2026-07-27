@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#server-first-default'
-date: '2026-07-25'
-modified: '2026-07-25'
+date: '2026-07-27'
+modified: '2026-07-27'
 related:
   - '[[2026-06-13-server-first-default-W01-P01-S01]]'
   - '[[2026-06-13-server-first-default-W01-P01-S02]]'
@@ -50,6 +50,7 @@ related:
   - '[[2026-06-13-server-first-default-adr]]'
   - '[[2026-06-13-server-first-default-audit]]'
   - '[[2026-06-13-server-first-default-plan]]'
+  - '[[2026-07-27-server-first-default-grounding-research]]'
 ---
 
 # `server-first-default` feature index
@@ -113,3 +114,7 @@ Auto-generated index of all documents tagged with `#server-first-default`.
 ### plan
 
 - `2026-06-13-server-first-default-plan` - `server-first-default` plan
+
+### research
+
+- `2026-07-27-server-first-default-grounding-research` - `server-first-default` research: `Grounding`

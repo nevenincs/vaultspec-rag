@@ -17,7 +17,8 @@ from ..._store_models import (
     DocumentMetadata,
     DocumentPayload,
 )
-from ...config import EnvVar, reset_config
+from ...config._settings import reset_config
+from ...config._types import EnvVar
 from ...indexer._document_identity import document_point_id
 from ...indexer._document_meta import (
     DocumentFileMetadata,
@@ -25,7 +26,7 @@ from ...indexer._document_meta import (
     document_metadata_path,
     write_document_meta,
 )
-from ...server._routes_storage import _SurveyPayloadRequest, _shape_survey_payload
+from ...server._routes_storage import _shape_survey_payload, _SurveyPayloadRequest
 from ...storage_reclamation import archive_prefix
 from ...storage_survey_ops import gather_survey
 from ...store_runtime import VaultStore

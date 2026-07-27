@@ -3,12 +3,17 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Orchestrator Log
 
-## 2026-03-07 — rag-orchestrator online
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
+
+### 2026-03-07 — rag-orchestrator online
 
 **Agent**: rag-orchestrator
 
@@ -452,3 +457,7 @@ Audit focus: watcher→graph invalidation gap, CrossEncoder OOM, batch sizes on 
 1. Read and verify findings against current code
 1. Create tasks for confirmed issues
 1. Update this log
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

@@ -80,7 +80,7 @@ def _fetch_surveys() -> list[NamespaceSurvey]:
     """
     from qdrant_client import QdrantClient
 
-    from ..config import get_config
+    from ..config._settings import get_config
     from ..storage_survey_ops import gather_survey, server_storage_collections_dir
 
     cfg = get_config()
@@ -321,7 +321,7 @@ async def storage_survey_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
-    from ..config import get_config
+    from ..config._settings import get_config
 
     if not get_config().effective_server_mode():
         return JSONResponse(

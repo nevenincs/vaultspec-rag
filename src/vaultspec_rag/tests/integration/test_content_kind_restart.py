@@ -40,7 +40,7 @@ def _interrupt_document_indexing(
 ) -> _InterruptedDocumentRun:
     """Cancel a real document index only after its first committed unit appears."""
     from ... import store_schema
-    from ...config import get_config
+    from ...config._settings import get_config
     from ...indexer import DocumentIndexer
     from ...indexer._content_policy import ContentKind
     from ...indexer._run_ledger_models import index_run_ledger_path
@@ -99,7 +99,7 @@ def test_completed_source_generation_exposes_route_migration_evidence(
     tmp_path: Path,
 ) -> None:
     from ... import store_schema
-    from ...config import get_config
+    from ...config._settings import get_config
     from ...indexer import CodebaseIndexer
     from ...indexer._code_meta import GENERATION_ID_KEY, read_meta_raw
     from ...indexer._content_policy import ContentKind
@@ -151,7 +151,7 @@ def test_code_and_document_publish_independent_generation_signatures(
     tmp_path: Path,
 ) -> None:
     from ... import store_schema
-    from ...config import get_config
+    from ...config._settings import get_config
     from ...indexer import CodebaseIndexer, DocumentIndexer
     from ...indexer._content_policy import ContentKind
     from ...indexer._document_meta import read_document_meta
@@ -168,7 +168,10 @@ def test_code_and_document_publish_independent_generation_signatures(
     store = VaultStore(tmp_path)
     try:
         code_indexer = CodebaseIndexer(
-            tmp_path, embedding_model, store, content_policy=policy
+            tmp_path,
+            embedding_model,
+            store,
+            options=CodebaseIndexer.Options(content_policy=policy),
         )
         document_indexer = DocumentIndexer(
             tmp_path,
@@ -216,7 +219,7 @@ def test_document_restart_reuses_confirmed_slices_and_publishes_once(
 ) -> None:
     del clean_config
     from ... import store_schema
-    from ...config import get_config
+    from ...config._settings import get_config
     from ...indexer import DocumentIndexer
     from ...indexer._content_policy import ContentKind
     from ...indexer._run_ledger_runtime import RunLedger

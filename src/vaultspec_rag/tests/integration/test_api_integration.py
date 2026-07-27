@@ -180,7 +180,9 @@ class TestRAGAPI:
         assert status["target_dir"] == str(tmp_path)
 
         # 3. Call search_vault()
-        results = vaultspec_rag.search_vault(tmp_path, "Test body")
+        results = vaultspec_rag.search_vault(
+            vaultspec_rag.VaultSearchRequest(tmp_path, "Test body")
+        )
         assert len(results) > 0
         assert results[0].title == "Test Title"
 

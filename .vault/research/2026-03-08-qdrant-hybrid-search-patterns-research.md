@@ -3,15 +3,18 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Qdrant Hybrid Search Patterns (Verified)
 
-**Date**: 2026-03-08
-**Status**: Proactive research — grounding for ongoing coder work
+## Findings
 
-## Universal Query API + FusionQuery(RRF)
+### Retained preamble
+
+**Date**: 2026-03-08
+**Status**: Proactive research â€” grounding for ongoing coder work
+
+### Universal Query API + FusionQuery(RRF)
 
 The project uses Qdrant's Universal Query API (introduced in v1.10) for hybrid search. Key verified patterns:
 
@@ -63,7 +66,7 @@ fallback = client.query_points(
 )
 ```
 
-This is correct — `query_filter` on the top level works fine for single-method queries (no prefetch).
+This is correct â€” `query_filter` on the top level works fine for single-method queries (no prefetch).
 
 ### Named Vectors
 
@@ -74,11 +77,11 @@ The project uses two named vectors per collection:
 
 ### Local Mode
 
-`QdrantClient(path=...)` runs embedded Qdrant — no Docker, no server process. Data persists to disk at the given path. Suitable for single-process access (which this project uses).
+`QdrantClient(path=...)` runs embedded Qdrant â€” no Docker, no server process. Data persists to disk at the given path. Suitable for single-process access (which this project uses).
 
 **Warning**: Local mode does not support concurrent access from multiple processes. The filesystem watcher service (Task #17) must run in the same process as the MCP server, not as a separate daemon.
 
-## Payload Indexes
+### Payload Indexes
 
 The project creates payload indexes for filtered search performance:
 
@@ -86,3 +89,7 @@ The project creates payload indexes for filtered search performance:
 - **Codebase collection**: `line_start` (INTEGER), `language` (KEYWORD), `node_type` (KEYWORD), `function_name` (KEYWORD), `class_name` (KEYWORD), `doc_type` (KEYWORD), `feature` (KEYWORD)
 
 These are created via `create_payload_index()` at collection creation time.
+
+## Sources
+
+No separate sources is recorded in the retained prior research body. Source: retained prior research body.

@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#stdio-watchdog-convergence'
 date: '2026-07-17'
-modified: '2026-07-17'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -74,3 +74,7 @@ performs the handshake and tools/list itself, reports success, then idles -
 with the test killing the intermediary - proves served capability (232) and
 exact-client instant reap through the pipe-creator anchor (229, no grace
 wait since the anchor is precise) in a single real-process scenario.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

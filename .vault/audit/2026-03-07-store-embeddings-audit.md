@@ -3,12 +3,17 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 22b Audit -- store.py, embeddings.py
 
-## store.py
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
+
+### store.py
 
 ### R22b-M1: `_build_filter` uses `MatchText` for date filter -- tokenized full-text search instead of prefix match (Major)
 
@@ -77,7 +82,7 @@ Line 641: If the `id_field` (`doc_id` or `chunk_id`) is missing from the payload
 
 **File:** `store.py:641`
 
-## embeddings.py
+### embeddings.py
 
 ### R22b-M4: `encode_documents` does not use `prompt_name` for documents -- asymmetric encoding (Major)
 
@@ -121,3 +126,7 @@ Lines 162-166: The code checks `hasattr(cfg, "sparse_model") and cfg.sparse_mode
 
 **File:** `embeddings.py:162-166`
 **Also:** Lines 194-196 same pattern for `embedding_dimension`.
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

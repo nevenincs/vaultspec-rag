@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#serviceclient-admin-errors'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 related:
   - "[[2026-06-24-serviceclient-admin-errors-research]]"
 ---
@@ -118,3 +118,7 @@ F1-F6 and the originating audit finding L-2.
 
   *(Candidate only - per the codify discipline this is promoted to a rule after the
   constraint has held across at least one full execution cycle, not on first encounter.)*
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

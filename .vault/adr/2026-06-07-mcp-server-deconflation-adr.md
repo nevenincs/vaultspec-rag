@@ -6,7 +6,7 @@ date: '2026-06-07'
 related:
   - "[[2026-06-07-mcp-server-deconflation-research]]"
 superseded_by: '2026-06-18-mcp-service-client-adr'
-modified: '2026-06-30'
+modified: '2026-07-27'
 ---
 
 # `mcp-server-deconflation` adr: `MCP and Server Deconflation` | (**status:** `superseded`)
@@ -51,3 +51,7 @@ Establishing a clean boundary between the core daemon and the protocol adapter a
 
 - **Rule slug:** `mcp-is-not-the-daemon`.
   **Rule:** The term "MCP Server" must strictly refer to the stdio/SSE protocol serialization layer; all general background processes, watchers, and indexing REST services must be referred to as the "RAG Server" or "RAG Service" to prevent terminological conflation. The MCP adapter and CLI must always act as consumer clients.
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

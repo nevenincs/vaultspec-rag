@@ -3,22 +3,23 @@ tags:
   - "#exec"
   - "#mcp-server-deconflation"
 date: '2026-06-08'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - "[[2026-06-07-mcp-server-deconflation-plan]]"
 ---
-
 # mcp-server-deconflation P02 S10
 
-## Intent
+## Description
+
+### Intent
 
 Audit docstrings and help text across `src/vaultspec_rag/cli` to replace stale references to `server service` with `server`.
 
-## Context
+### Context
 
 The CLI commands were flattened to remove the `service` subgroup, moving commands directly under `server`. However, the docstrings and help messages still directed users to run `server service ...`.
 
-## Action
+### Action
 
 - Used `Get-Content` to replace all occurrences of `server service` with `server` in `src/vaultspec_rag/cli/*.py` and `src/vaultspec_rag/mcp/_admin_tools.py`.
 - Fixed daemon to remove the `/mcp` mount completely, fully decoupling it from the MCP protocol.
@@ -27,3 +28,7 @@ The CLI commands were flattened to remove the `service` subgroup, moving command
 ## Outcome
 
 All docstrings accurately reflect the new CLI structure. The RAG daemon is now purely a REST server with no remaining MCP dependencies or endpoints. Tests hit the daemon's native REST endpoints.
+
+## Notes
+
+Evidence gap: the original record contains no Notes section with authored incident, deferred-work, or follow-up evidence.

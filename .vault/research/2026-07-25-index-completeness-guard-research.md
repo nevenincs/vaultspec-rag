@@ -3,15 +3,16 @@ tags:
   - '#research'
   - '#index-completeness-guard'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - "[[2026-07-25-index-resume-drift-race-adr]]"
   - "[[2026-07-21-large-index-resilience-adr]]"
 ---
-
 # `index-completeness-guard` research: a partially destroyed code collection publishes itself as complete
 
-## Problem
+## Findings
+
+### Problem
 
 A root's code index can collapse so that every query resolves to a handful of
 files - in the worst observed case one - while search keeps answering normally:
@@ -23,15 +24,13 @@ grounding step before code is written, so a silent false negative to "does an
 implementation of this already exist?" is the mechanism by which duplicate
 implementations get written.
 
-## Method
+### Method
 
 Ground truth was read from the store directly rather than through search, so the
 measurement does not inherit the defect under investigation: a read-only client
 scrolled the root's code collection counting points, distinct payload paths, and
 dense-vector degeneracy, and the result was compared against the file set the
 published metadata sidecar claims.
-
-## Findings
 
 ### The collection is genuinely truncated; retrieval is innocent
 
@@ -119,7 +118,7 @@ index generation state that `status` already renders. A partial index is
 therefore free to answer confidently, which is what converts a data-loss bug
 into a silent correctness bug for the caller.
 
-## Implications
+### Implications
 
 Two defects compound and both need addressing:
 
@@ -135,7 +134,7 @@ remove the window entirely, but it touches the storage layer and the per-root
 collection-prefix scheme, and it is not required to stop the silent false
 negative.
 
-## Relationship to adjacent work
+### Relationship to adjacent work
 
 The indexed-path upsert collision is one of the triggers that leaves a
 collection truncated, and it is separately owned by
@@ -144,7 +143,7 @@ drift a single owner. That work addresses why runs abort. It does not address
 what an aborted run leaves behind, nor that the remains are published as
 complete, so the two are complementary rather than duplicative.
 
-## Open questions
+### Open questions
 
 - Whether the vault and document indexers carry the same binary-predicate hole,
   and whether their search surfaces have completeness signals.
@@ -153,3 +152,7 @@ complete, so the two are complementary rather than duplicative.
 - Whether a cheap distinct-path count is available through a payload facet
   query, so the completeness predicate does not pay a full scroll on every
   incremental run.
+
+## Sources
+
+Evidence gap: the retained research body has no separately labelled Sources section.

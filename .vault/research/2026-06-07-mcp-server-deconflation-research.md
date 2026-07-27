@@ -3,17 +3,18 @@ tags:
   - '#research'
   - '#mcp-server-deconflation'
 date: '2026-06-07'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related: []
 ---
-
 # `mcp-server-deconflation` research: `Blast Radius of MCP and Server Conflation`
 
-## Background
+## Findings
+
+### Background
 
 The project currently conflates the general "RAG Service / Server" (the background HTTP daemon running FastAPI, managing Qdrant, coordinating file watchers, and executing background index jobs) with the "MCP Server" (the protocol adapter that communicates over stdio/SSE to expose RAG capabilities to LLM clients). This conceptual and architectural leak causes significant cognitive overhead and violates boundary separation.
 
-## Blast Radius Findings
+### Blast Radius Findings
 
 Based on an audit of the codebase, the terminology conflation extends deeply into several modules:
 
@@ -46,7 +47,7 @@ Based on an audit of the codebase, the terminology conflation extends deeply int
    - **`vaultspec_rag/cli/_mcp_search.py`**: The CLI's fast-path (`_try_mcp_search` and `_try_mcp_reindex`) currently connects to the daemon using the `mcp.client.streamable_http` module. This means the daemon acts directly as an MCP server via SSE, forcing the daemon to handle protocol parsing instead of exposing native REST APIs for core RAG operations.
    - **`vaultspec_rag/mcp_server/_tools.py`**: The MCP tools execute `vaultspec_rag` logic in-process. If `vaultspec-search-mcp` is run as a standalone stdio adapter, it runs its own RAG instance rather than acting as a lightweight client delegating to the resident daemon.
 
-## Next Steps
+### Next Steps
 
 To properly decouple the "RAG Server" from the "MCP Server", we must execute a deep architectural refactor:
 
@@ -54,3 +55,7 @@ To properly decouple the "RAG Server" from the "MCP Server", we must execute a d
 1. **CLI as a REST Client**: The CLI fast-path (`_try_mcp_search`) must be rewritten to consume these new REST endpoints via standard HTTP requests (`_try_http_search`).
 1. **MCP as a Consumer Client**: The MCP protocol adapter (`vaultspec_rag.mcp`) must be isolated as a standalone, lightweight wrapper that proxies LLM requests to the daemon's REST API, stripping it of all in-process RAG orchestration.
 1. **Package & CLI Separation**: Rename `mcp_server` to `server`, flatten the CLI `server service` group to `server`, and decouple the `mcp` startup commands. Correct all misleading docstrings and references in the test suite and framework rules.
+
+## Sources
+
+Evidence gap: the retained research body has no separately labelled Sources section.

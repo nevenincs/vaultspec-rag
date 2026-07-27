@@ -3,11 +3,12 @@ tags:
   - '#adr'
   - '#provisioning-setup'
 date: '2026-06-13'
-modified: '2026-06-13'
+modified: '2026-07-27'
 related:
   - "[[2026-06-13-server-first-default-adr]]"
   - "[[2026-06-12-qdrant-server-provisioning-research]]"
   - "[[2026-06-12-qdrant-server-provisioning-adr]]"
+  - '[[2026-07-27-provisioning-setup-grounding-research]]'
 ---
 
 # `provisioning-setup` adr: `unified dependency provisioning with server-first defaults` | (**status:** `accepted`)
@@ -133,3 +134,7 @@ contract, and the first-class local-only path that make a server-first default s
   `failed`), is idempotent, and supports `--dry-run`; new external dependencies extend
   the front door and the readiness verb rather than adding a separate provisioning
   command.
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

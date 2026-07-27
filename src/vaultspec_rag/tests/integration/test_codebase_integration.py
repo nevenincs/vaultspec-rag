@@ -127,7 +127,7 @@ def code_project(
 def _stored_partial_chunk(path: str, chunk_id: str) -> CodeChunk:
     """Return one real-store-valid remnant of an interrupted publication."""
     from ..._store_models import CodeChunk
-    from ...config import get_config
+    from ...config._settings import get_config
 
     return CodeChunk(
         id=chunk_id,
@@ -301,7 +301,11 @@ class TestIncrementalPublicationRecovery:
         """A rebuild-incomplete generation resumes its confirmed collection."""
         from ...indexer import _chunk_worker
         from ...indexer._run_ledger_models import RunOperation, RunTerminalState
-        from ...indexer._streaming import CodeFileSegment, iter_code_file_segments
+        from ...indexer._streaming import (
+            CodeFileSegment,
+            CodeFileSegmentRequest,
+            iter_code_file_segments,
+        )
         from ...job_control import RunControlToken
 
         indexer = code_project["code_indexer"]
@@ -326,12 +330,14 @@ class TestIncrementalPublicationRecovery:
         chunked = _chunk_worker.chunk_and_hash_file(source, root)
         segments = tuple(
             iter_code_file_segments(
-                chunked.chunks,
-                max_chunks=limits.segment_max_chunks,
-                max_bytes=limits.segment_max_bytes,
-                dense_dimension=limits.dense_dimension,
-                sparse_enabled=limits.sparse_enabled,
-                sparse_dimension=limits.sparse_dimension,
+                CodeFileSegmentRequest(
+                    chunks=chunked.chunks,
+                    max_chunks=limits.segment_max_chunks,
+                    max_bytes=limits.segment_max_bytes,
+                    dense_dimension=limits.dense_dimension,
+                    sparse_enabled=limits.sparse_enabled,
+                    sparse_dimension=limits.sparse_dimension,
+                )
             )
         )
         expected_ids: set[str] = set()
@@ -417,7 +423,7 @@ class TestCodeEmbedFormatRebuild:
     ) -> None:
         import json
 
-        from ...config import get_config
+        from ...config._settings import get_config
 
         indexer = code_project["code_indexer"]
         store = code_project["store"]
@@ -570,7 +576,7 @@ def _configure_conditional_preprocessor(root: Path) -> None:
 
 @contextmanager
 def _single_chunk_indexing() -> Generator[None]:
-    from ...config import EnvVar
+    from ...config._types import EnvVar
     from ..conftest import managed_env
 
     with managed_env(
@@ -709,7 +715,8 @@ class TestCodebaseIncrementalIndex:
         code_project: _CodeProject,
         scoped: bool,
     ) -> None:
-        from ...config import EnvVar, reset_config
+        from ...config._settings import reset_config
+        from ...config._types import EnvVar
         from ...indexer import _chunk_worker
         from .test_indexer_progress_integration import CountingProgressReporter
 
@@ -821,9 +828,7 @@ class TestCodebaseIncrementalIndex:
             # generation retirement and reconcile/invalidation, not by deleting
             # durable progress here.
             _assert_failed_incremental_attempt(
-                _IncrementalFailureCase(
-                    indexer, store, good, root, metadata_before
-                ),
+                _IncrementalFailureCase(indexer, store, good, root, metadata_before),
                 failure_reporter,
             )
 
@@ -864,7 +869,8 @@ class TestCodebaseIncrementalIndex:
         import sys
         import textwrap
 
-        from ...config import EnvVar, reset_config
+        from ...config._settings import reset_config
+        from ...config._types import EnvVar
         from ...indexer import _chunk_worker
         from ...indexer._preprocess_runner import PreprocessAbortError
 
@@ -1585,7 +1591,10 @@ class TestVaultragignore:
         store = VaultStore(tmp_path)
         try:
             indexer = CodebaseIndexer(
-                tmp_path, model, store, extra_excludes=["src/temp.py"]
+                tmp_path,
+                model,
+                store,
+                options=CodebaseIndexer.Options(extra_excludes=["src/temp.py"]),
             )
             indexer.full_index(
                 reporter=NullProgressReporter(),

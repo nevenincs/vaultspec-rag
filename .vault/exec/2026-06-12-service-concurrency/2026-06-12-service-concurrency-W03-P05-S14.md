@@ -3,19 +3,18 @@ tags:
   - '#exec'
   - '#service-concurrency'
 date: '2026-06-12'
-modified: '2026-06-30'
+modified: '2026-07-27'
 step_id: 'S14'
 related:
   - "[[2026-06-12-service-concurrency-plan]]"
 ---
-
 # Extend stress tests to assert cross-collection concurrency and same-collection exclusion semantics
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`
-
-## Description
 
 - Rework the store serialization tests to per-collection semantics: same
   collection waits, the other collection proceeds (new cross-collection
@@ -27,3 +26,5 @@ related:
 code-search-proceeds-while-vault-lock-held assertion.
 
 ## Notes
+
+Evidence gap: the original record contains no Notes section with authored incident, deferred-work, or follow-up evidence.

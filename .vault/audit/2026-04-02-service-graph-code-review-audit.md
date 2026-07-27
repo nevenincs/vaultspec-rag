@@ -3,7 +3,7 @@ tags:
   - '#audit'
   - '#service-graph'
 date: '2026-04-02'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-02-service-graph-phase1-plan]]'
@@ -728,3 +728,15 @@ Final pass verifying every finding from R1-R3 is FIXED, ACCEPTED, or OPEN.
 - PHASE4-002 (HIGH): PID file race on concurrent service start
 - PHASE4-003 (HIGH): Non-atomic status file write
 - TESTGAP-001/002/003 (HIGH): Zero coverage on service lifecycle
+
+## Scope
+
+Retained audit evidence: 2026-04-02-service-graph-adr, 2026-04-02-service-graph-phase1-plan, 2026-04-02-service-graph-research are listed in frontmatter; the audit title and detailed review sections define the reviewed subject.
+
+## Findings
+
+Retained audit evidence: the detailed review entries in this document constitute the findings inventory.
+
+## Recommendations
+
+Evidence gap: the retained audit body and complete git log --follow history state no separate recommendations. No recommendation is asserted.

@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#rag-broker-affordances'
 date: '2026-06-27'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -126,3 +126,5 @@ prerequisites. rag ships the capability; the broker opts in.
   STATUS_DIR `service.json` schema/payload (simplest; one writer shape) or a trimmed pointer
   (port/token/pid/status_dir only); and whether to also expose a `read_machine_discovery`
   on the public api facade for in-process consumers or keep it in `_machine_lock`.
+## Sources
+- Evidence cited inline: `src/vaultspec_rag/cli/_service_lifecycle.py`, `src/vaultspec_rag/server/_lifecycle.py`.

@@ -3,8 +3,8 @@ tags:
   - '#exec'
   - '#operability-hardening'
 date: '2026-06-09'
-modified: '2026-06-30'
-step_id: 'W04.P09.S16'
+modified: '2026-07-27'
+step_id: 'S16'
 related:
   - '[[2026-06-09-operability-hardening-plan]]'
 ---

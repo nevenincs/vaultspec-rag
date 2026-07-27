@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#service-doctor-liveness'
 date: '2026-06-24'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L3
 related:
   - '[[2026-06-24-service-doctor-liveness-adr]]'
@@ -71,6 +71,8 @@ overlap the singleton campaign and are coordinated with its owners rather than r
 Grounded in the ADR and its research; planning artifact only, ADR pending user sign-off.
 
 ## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
 
 ## Parallelization
 

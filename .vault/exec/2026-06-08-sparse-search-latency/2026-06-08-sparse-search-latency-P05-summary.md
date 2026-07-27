@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#sparse-search-latency'
 date: '2026-06-09'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-06-08-sparse-search-latency-plan]]'
 ---
@@ -37,3 +37,7 @@ machine-enforced. `ruff`/`ty` clean; guard test green.
 A small admin-tool cleanup rode along: `list_projects` dropped a misleading `project_root`
 parameter (the `/projects` route ignores it; the documented tool contract is no-arg),
 verified by the live-service integration tests.
+
+## Description
+
+Retained summary evidence: 2026-06-08-sparse-search-latency-plan are listed in frontmatter; the summary title and existing sections are the available phase record. No implementation claim is added.

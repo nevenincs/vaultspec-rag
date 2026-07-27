@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#preprocess-sandbox'
 date: '2026-07-13'
-modified: '2026-07-14'
+modified: '2026-07-27'
 related:
   - '[[2026-07-13-index-drift-hardening-adr]]'
   - '[[2026-06-10-preprocess-hooks-adr]]'
@@ -217,3 +217,7 @@ seatbelt on macOS), delete the TOFU trust store, and fix the three server-path d
 through the service with no user interaction. Second, a store-layer decision for the
 qdrant local delete-resurrect workaround (WP1), with the stale-test reconciliation
 (WP2/WP3) folded into the same plan to reach complete green.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

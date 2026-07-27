@@ -26,7 +26,7 @@ from vaultspec_core.logging_config import (  # pyright: ignore[reportMissingType
 
 from ._managed_log_sink import RawRotatingLogSink
 from ._test_isolation import enforce_pytest_singleton_containment
-from .config import managed_status_dir
+from .config._settings import managed_status_dir
 
 __all__ = [
     "DEFAULT_MANAGED_LOG_LINES",
@@ -139,7 +139,10 @@ def log_event(
         raise ValueError(msg)
 
     severity = cast("int", extra_fields.pop("severity", logging.INFO))
-    exc_info = extra_fields.pop("exc_info", None)
+    exc_info = cast(
+        "EventExcInfo",
+        extra_fields.pop("exc_info", None),
+    )
     fields = cast("Mapping[str, object] | None", extra_fields.pop("fields", None))
     combined_fields: dict[str, object] = {}
     if fields is not None:
@@ -195,7 +198,7 @@ def _managed_log_source(raw: str) -> ManagedLogSource:
 def _managed_log_name(source: ManagedLogGroupSource) -> str:
     if source == "qdrant":
         return _QDRANT_LOG_NAME
-    from .config import get_config
+    from .config._settings import get_config
 
     return str(get_config().log_file)
 
@@ -762,7 +765,7 @@ def configure_logging(
         quiet: When ``True``, forces level to ``WARNING``.
     """
     if level is None and not debug and not quiet:
-        from .config import get_config, rag_default
+        from .config._settings import get_config, rag_default
 
         configured = str(get_config().log_level).upper()
         level = getattr(logging, configured, None)
@@ -1110,3 +1113,10 @@ def install_daemon_log_capture(
 
         _report_handler_close_failures(close_failures)
         return capture
+type EventExcInfo = (
+    bool
+    | BaseException
+    | tuple[type[BaseException], BaseException, Any]
+    | tuple[None, None, None]
+    | None
+)

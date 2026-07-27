@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#operability-hardening'
 date: '2026-06-09'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L3
 related:
   - '[[2026-06-09-operability-hardening-adr]]'
@@ -22,6 +22,8 @@ ordered so the daemon is first made reliably runnable (W01), then truthful and o
 (W02), then the CLI/docs are polished (W03), then the whole is re-validated (W04).
 
 ## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
 
 ## Wave `W01` - Runtime correctness
 

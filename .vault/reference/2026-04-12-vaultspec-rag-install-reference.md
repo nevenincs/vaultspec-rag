@@ -3,7 +3,7 @@ tags:
   - '#reference'
   - '#install-command'
 date: '2026-04-12'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-vaultspec-rag-install-adr]]'
 ---
@@ -179,3 +179,7 @@ fire_hooks("config.synced", {"root": str(ctx.target_dir), "event": "config.synce
 1. Sync called after scaffold
 1. Uninstall safe: --force required, preserves .vault/, surgical removal
 1. **Important:** rag can optionally call vaultspec-core sync via direct function call (gracefully skip if core unavailable) or subprocess
+
+## Summary
+
+Retained reference evidence: the detailed sections below are the available implementation reference; this summary adds no implementation claim.

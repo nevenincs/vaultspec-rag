@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#search-noise-filtering'
 date: '2026-06-30'
-modified: '2026-07-03'
+modified: '2026-07-27'
 related:
   - '[[2026-05-28-cli-search-filters-adr]]'
   - '[[2026-05-30-cli-path-glob-research]]'
@@ -139,3 +139,7 @@ testing mandates (no mocks, real inference).
    sibling dotfile, weighed against the existing config surface in `config.py`.
 1. Whether default-on locale dedup is safe enough to flip without a deprecation
    window.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Audit Round 2: search.py & embeddings.py
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Date:** 2026-03-08
 **Auditor:** docs-researcher
@@ -14,7 +19,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## search.py Audit
+### search.py Audit
 
 ### 1. Query Filter Parsing — `parse_query()`
 
@@ -133,7 +138,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## embeddings.py Audit
+### embeddings.py Audit
 
 ### 1. OOM Retry Logic
 
@@ -262,7 +267,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Integration Correctness
+### Integration Correctness
 
 ### store.hybrid_search() & store.hybrid_search_codebase()
 
@@ -282,7 +287,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Summary Table
+### Summary Table
 
 | Component                   | Status | Severity | Issue                                                                                 |
 | --------------------------- | ------ | -------- | ------------------------------------------------------------------------------------- |
@@ -300,6 +305,14 @@ ______________________________________________________________________
 | Integration                 | ✓ PASS | NONE     | —                                                                                     |
 
 ______________________________________________________________________
+
+### Audit Completion
+
+- ✓ All 6 search.py targets audited
+- ✓ All 5 embeddings.py targets audited
+- ✓ Integration correctness verified
+- ✓ No CRITICAL or HIGH severity issues found
+- ✓ 2 MEDIUM-priority documentation/test improvements identified
 
 ## Recommendations
 
@@ -326,11 +339,3 @@ ______________________________________________________________________
    - Verify CrossEncoder behavior when snippet is `""`.
 
 ______________________________________________________________________
-
-## Audit Completion
-
-- ✓ All 6 search.py targets audited
-- ✓ All 5 embeddings.py targets audited
-- ✓ Integration correctness verified
-- ✓ No CRITICAL or HIGH severity issues found
-- ✓ 2 MEDIUM-priority documentation/test improvements identified

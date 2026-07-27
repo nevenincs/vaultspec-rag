@@ -3,14 +3,19 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 23 Audit -- indexer.py (deep dive)
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 Focused on: `_scan_codebase` performance, binary file detection, `TextSplitter` overlap logic, incremental hashing edge cases, remaining bugs. Excludes issues already reported in Round 22 (`docs/audit/2026-03-07-indexer-store-api.md`).
 
-## New findings
+### New findings
 
 ### R23-M1: `_scan_codebase` second `rglob("*")` also traverses ignored directories (Major)
 
@@ -98,3 +103,7 @@ Line 592: `id=path.stem` means two files like `docs/adr/overview.md` and `docs/r
 Lines 646, 751, 1036, 1129: `ThreadPoolExecutor()` without `max_workers` defaults to `min(32, os.cpu_count() + 4)` in Python 3.13. On a 16-core machine this creates 20 threads all doing file I/O simultaneously. On HDDs or network filesystems, this can cause thrashing. For file I/O workloads, 4-8 threads is usually optimal.
 
 **File:** `indexer.py:646, 751, 1036, 1129`
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

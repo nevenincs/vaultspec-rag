@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 33: Integration Test Coverage Gap & Compliance Audit
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Date:** 2026-03-09
 **Status:** COMPLETE
@@ -14,7 +19,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Part 1: Compliance Check — 100% PASS
+### Part 1: Compliance Check — 100% PASS
 
 ### Scope
 
@@ -39,7 +44,7 @@ Audited all test files:
 
 ______________________________________________________________________
 
-## Part 2: Coverage Gap Analysis
+### Part 2: Coverage Gap Analysis
 
 ### Critical Gaps (MUST ADD TESTS)
 
@@ -206,7 +211,7 @@ searcher.search_all("query", top_k=10)
 
 ______________________________________________________________________
 
-## Part 3: Integration Test Structure Summary
+### Part 3: Integration Test Structure Summary
 
 ### Test Files and What They Cover
 
@@ -240,7 +245,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Fixture Quality Assessment
+### Fixture Quality Assessment
 
 ### Strengths ✅
 
@@ -257,7 +262,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Summary of Findings
+### Summary of Findings
 
 ### **COMPLIANCE AUDIT: ✅ 100% PASS**
 
@@ -279,7 +284,18 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Recommended Actions
+### Audit Quality
+
+- ✅ Read all 19 test files (8 unit, 11 integration)
+- ✅ Read 2 conftest.py files (global + integration fixtures)
+- ✅ Grepped all files for mock/patch/skip/unittest violations
+- ✅ Verified pytest markers (unit, integration, quality, performance, robustness)
+- ✅ Identified 7 coverage gaps with specific locations
+- ✅ Cross-referenced against CLAUDE.md mandatory standards
+
+## Recommendations
+
+### Recommended Actions
 
 ### Priority 1: CRITICAL — Add clean=True tests
 
@@ -309,12 +325,3 @@ ______________________________________________________________________
    - Or isolated test with real file system
 
 ______________________________________________________________________
-
-## Audit Quality
-
-- ✅ Read all 19 test files (8 unit, 11 integration)
-- ✅ Read 2 conftest.py files (global + integration fixtures)
-- ✅ Grepped all files for mock/patch/skip/unittest violations
-- ✅ Verified pytest markers (unit, integration, quality, performance, robustness)
-- ✅ Identified 7 coverage gaps with specific locations
-- ✅ Cross-referenced against CLAUDE.md mandatory standards

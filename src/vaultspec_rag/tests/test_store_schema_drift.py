@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 from .. import store_schema
-from ..store import VaultStore
+from ..store_runtime import VaultStore
 from ..store_schema import DEFAULT_DENSE_DIM
 
 if TYPE_CHECKING:

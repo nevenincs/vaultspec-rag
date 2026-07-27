@@ -31,21 +31,16 @@ related:
 
 ## Scope
 
-<!-- What was audited and why -->
+Reviewed `P01.S02`'s archive-owned completion clock in `write_snapshot_manifest`, its unit guard, and the recorded mutation proof against the accepted retention-clock contract.
 
 ## Findings
 
-<!-- A rolling log of findings: append one subsection per finding, grouped or ordered by
-     severity, using the heading form
+### completion-clock-guard | medium | The timestamp guard does not prove the UTC or archive-age requirements it claims to cover
 
-       ### p01 s02 timestamp review | {level} | {summary}
+`write_snapshot_manifest` stamps an aware UTC ISO-8601 instant after the archive directory is prepared and before the atomic manifest publication. The initial guard accepted any offset-aware instant and did not create a deliberately old archive artifact, so it could not distinguish the intended clock from a copied-source-time regression.
 
-     followed by a paragraph carrying the detail. p01 s02 timestamp review is a concise kebab-case slug,
-     {level} is the severity (critical, high, medium, low), and {summary} is a one-line
-     statement. Append continuously as findings surface; do not rewrite settled entries. -->
+Resolved in `P01.S02`: the guard now asserts a zero UTC offset and places a copied metadata artifact with a 31-day-old mtime beside the manifest. It asserts the stamp remains within the write interval, and records focused failures for an absent field and a deliberately backdated stamp before the restored green run.
 
 ## Recommendations
 
-<!-- Actionable recommendations, each tied to a finding above. An
-     architecturally significant recommendation names the decision a
-     follow-on ADR must make; the decision itself is never recorded here. -->
+No further action for `P01.S02`. `P01.S05` must still exercise this stamp through whole-directory retention, including the old-metadata case named in the plan.

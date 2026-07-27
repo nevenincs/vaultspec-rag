@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#vault-pipeline-search'
 date: '2026-06-24'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L3
 related:
   - '[[2026-06-24-vault-pipeline-search-adr]]'
@@ -146,6 +146,8 @@ service domain with the CLI as a thin adapter; no GPU-lock or reranker-content r
 disturbed because the prior composes after the forward pass.
 
 ## Steps
+
+Retained-plan evidence: the milestone and wave sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
 
 ## Parallelization
 

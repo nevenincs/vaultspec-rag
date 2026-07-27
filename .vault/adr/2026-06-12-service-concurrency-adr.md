@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#service-concurrency'
 date: '2026-06-12'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-12-service-concurrency-research]]"
   - "[[2026-06-11-server-bound-search-production-readiness-adr]]"
@@ -207,3 +207,7 @@ same adversarial harness on the same corpus.
 - **Rule slug:** `rerankers-score-real-content`.
   **Rule:** Reranking inputs must be the token-bounded full candidate content, never a
   fixed-character snippet proxy.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

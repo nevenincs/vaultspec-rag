@@ -3,14 +3,14 @@ tags:
   - '#adr'
   - '#search-noise-filtering'
 date: '2026-06-30'
-modified: '2026-07-03'
+modified: '2026-07-27'
 related:
   - "[[2026-06-30-search-noise-filtering-research]]"
   - "[[2026-05-31-search-postprocess-adr]]"
   - "[[2026-05-30-cli-path-glob-research]]"
   - "[[2026-06-24-vault-pipeline-search-adr]]"
+  - '[[2026-07-22-search-noise-filtering-candidate-budget-audit]]'
 ---
-
 # `search-noise-filtering` adr: `query-time domain noise filtering, ranking, and a persistent noise profile` | (**status:** `accepted`)
 
 ## Problem Statement

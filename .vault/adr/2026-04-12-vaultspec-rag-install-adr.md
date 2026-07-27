@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#install-command'
 date: '2026-04-12'
-modified: '2026-07-26'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-vaultspec-rag-install-research]]'
   - '[[2026-04-12-vaultspec-rag-install-reference]]'
@@ -580,3 +580,7 @@ its own effort.
 
 **Hard-rolled atomic write helper inside rag.** Rejected: reuse
 `vaultspec_core.core.helpers.atomic_write` for one source of truth.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

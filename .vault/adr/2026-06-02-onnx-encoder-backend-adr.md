@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#onnx-encoder-backend'
 date: '2026-06-02'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-02-onnx-encoder-backend-research]]"
 ---
@@ -94,3 +94,7 @@ and O4).
 - **Rule slug:** `embedding-backend-falls-back-to-torch`. Any non-default embedding backend
   (ONNX, OpenVINO) must degrade to the torch construction on any import/export/provider
   failure, logged, so a misconfigured backend never breaks indexing or search.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

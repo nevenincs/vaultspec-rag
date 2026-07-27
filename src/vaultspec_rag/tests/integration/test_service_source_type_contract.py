@@ -13,7 +13,8 @@ import vaultspec_rag.server as server
 
 from ..._source_types import PublicSourceType
 from ...cli._search import _validate_search_type
-from ...config import EnvVar, reset_config
+from ...config._settings import reset_config
+from ...config._types import EnvVar
 from ...mcp._tools import _canonical_tool_source
 from ...server._routes import ROUTES
 

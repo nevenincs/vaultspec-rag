@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#mcp-service-client'
 date: '2026-06-18'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-06-18-mcp-service-client-adr]]'
@@ -117,3 +117,7 @@ verifiable check:
 - The full unit and GPU integration suite passes locally with zero mocks, fakes, or
   skips (`P06.S20`).
 - The vaultspec code review signs off with the audit recorded (`P06.S21`).
+
+## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.

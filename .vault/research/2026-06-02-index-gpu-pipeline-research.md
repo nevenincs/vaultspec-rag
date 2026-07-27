@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#index-gpu-pipeline'
 date: '2026-06-02'
-modified: '2026-07-22'
+modified: '2026-07-27'
 related:
   - "[[2026-06-02-index-perf-hardening-adr]]"
   - "[[2026-06-02-index-perf-hardening-research]]"
@@ -145,3 +145,5 @@ pinned-memory / non-blocking copies as a primary lever (token-ID payloads are ti
 - Batch sizing: token-budget vs fixed `slice_size`; interaction with the existing
   `embedding_code_encode_batch_size` and the length-sort already in the streaming helper.
 - Whether the same pipeline should back the vault-document index path for symmetry.
+## Sources
+- Related record identifiers: `2026-06-02-index-perf-hardening-adr`, `2026-06-02-index-perf-hardening-research`.

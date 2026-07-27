@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#service-token-identity'
 date: '2026-05-31'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-05-31-service-token-identity-research]]'
 ---
@@ -142,3 +142,7 @@ not see the new CLI report the daemon as crashed.
   fields. No coordinated upgrade required.
 - `_health_probe` gains a debug log line — partial down-payment
   on gh #130. Full sweep stays scoped to that PR.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

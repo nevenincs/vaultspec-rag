@@ -10,7 +10,7 @@ import pytest
 
 from ..._store_models import DocumentChunk, DocumentPayload
 from ...api import clean
-from ...config import get_config
+from ...config._settings import get_config
 from ...indexer import CodebaseIndexer
 from ...indexer._document_meta import (
     DocumentFileMetadata,
@@ -20,7 +20,7 @@ from ...indexer._document_meta import (
 )
 from ...indexer._preprocess_cache import preprocess_cache_dir
 from ...progress import NullProgressReporter
-from ...store import VaultStore
+from ...store_runtime import VaultStore
 
 if TYPE_CHECKING:
     from ...embeddings import EmbeddingModel

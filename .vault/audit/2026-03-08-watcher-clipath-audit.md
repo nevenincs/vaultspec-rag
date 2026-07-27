@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 24 Audit: Watcher, CLI Fast-Path, MCP Client
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Date:** 2026-03-08
 **Scope:** `src/vaultspec_rag/watcher.py` (new), `src/vaultspec_rag/cli.py` (functions `_try_mcp_reindex`, `_try_mcp_search`, `_display_search_results`, `handle_search` updates)
@@ -15,7 +20,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Summary Table
+### Summary Table
 
 | Severity | Finding ID | Description                                                                          | File:Line       | Status      |
 | -------- | ---------- | ------------------------------------------------------------------------------------ | --------------- | ----------- |
@@ -27,7 +32,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Detailed Findings
+### Detailed Findings
 
 ### M1: asyncio.run() Called from Sync Context — Event Loop Management
 
@@ -153,7 +158,7 @@ table.add_row(f"{score:.2f}", location, snippet)
 
 ______________________________________________________________________
 
-## NOT TASKED — Verification Summary
+### NOT TASKED — Verification Summary
 
 ✓ **Type annotations:** All functions properly annotated (lines 270–327).
 ✓ **Imports:** No bare `import unittest`, no `mock`/`patch`, no forbidden dependencies (fastembed, ONNX).
@@ -167,10 +172,14 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Top 3 Findings for Orchestrator
+### Top 3 Findings for Orchestrator
 
 1. **M1: asyncio.run() Event Loop Assumption** — Safe today but brittle if CLI becomes async. Add documentation explaining sync-only constraint.
 1. **M2: MCP Response Shape Flexibility** — Server returns `{"results": [...]}` shape; no strict validation but graceful degradation works.
 1. **L1–L3: Remaining Issues Minor** — Cooldown logic correct, type safety enforced, score conversion safe for trusted server responses.
 
 **Triage recommendation:** Deploy as-is. Consider documenting the async constraint in cli.py as a follow-up.
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

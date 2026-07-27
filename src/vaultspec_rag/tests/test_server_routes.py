@@ -18,7 +18,8 @@ import pytest
 from .. import store_schema
 from .._job_errors import STALL_THRESHOLD_SECONDS
 from .._readiness import compute_readiness
-from ..config import EnvVar, reset_config
+from ..config._settings import reset_config
+from ..config._types import EnvVar
 from ..job_models import JobSource
 from ..server import health_handler
 

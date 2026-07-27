@@ -67,7 +67,7 @@ def load_torch() -> Any:
         raise ImportError(TORCH_MISSING_MESSAGE) from exc
     if not torch.cuda.is_available():
         raise RuntimeError(CUDA_REQUIRED_MESSAGE)
-    from .config import get_config
+    from .config._settings import get_config
 
     torch.cuda.set_per_process_memory_fraction(  # pyright: ignore[reportUnknownMemberType] - torch stub gap
         get_config().index_cuda_allocator_fraction,

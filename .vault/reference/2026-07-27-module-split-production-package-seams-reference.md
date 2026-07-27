@@ -33,7 +33,7 @@ stable public surface is narrow (`MAX_RECORDS`, `JobAttemptContext`,
 `JobExecutionResult`, `JobManager`, and `JobShutdownResult`) at
 `src/vaultspec_rag/job_manager.py:53-59`, while the implementation begins with
 result/context dataclasses at lines 84-233 and the `JobManager` class at line
-233. That creates a likely package shape of concrete model/context and manager
+233\. That creates a likely package shape of concrete model/context and manager
 ownership submodules, provided a focused audit proves the class's internal
 responsibility boundaries. Direct consumers currently import from the flat
 module: `src/vaultspec_rag/jobs.py:25`, `job_dispatch.py:11`, `watcher.py:33`,

@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#vault-pipeline-search'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 step_id: 'S02'
 related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
@@ -11,11 +11,11 @@ related:
 
 # Author the intent-tagged labeled query set with hand-graded gold judgments
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/tests/quality/intent_queries.toml`
-
-## Description
 
 - Authored `intent_queries.toml`: 11 queries spanning orientation (6), debugging (2), and
   implementation (3), each with a declared intent and rubric-derived gold judgments.

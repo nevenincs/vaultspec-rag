@@ -120,6 +120,8 @@ def _extract_named_dep_lists(
     groups = tget(table, key)
     if isinstance(groups, _TABLE_LIKE_TYPES):
         for name, group in groups.items():  # pyright: ignore[reportUnknownVariableType]  # tomlkit items() yields Unknown pairs
+            if not isinstance(name, str):
+                continue
             if isinstance(group, list):
                 found.append((label_template.format(name), cast("list[object]", group)))
 

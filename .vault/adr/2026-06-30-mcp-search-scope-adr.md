@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#mcp-search-scope'
 date: '2026-06-30'
-modified: '2026-07-23'
+modified: '2026-07-27'
 related:
   - "[[2026-06-30-mcp-conformance-research]]"
   - "[[2026-06-30-mcp-conformance-reference]]"
@@ -156,3 +156,7 @@ reach the service; neither is complete alone.
   **Rule:** The `vaultspec-rag` MCP server exposes only semantic search and index-refresh
   tools; service lifecycle, administration, and observability are CLI-only and must never
   be added to the MCP surface.
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

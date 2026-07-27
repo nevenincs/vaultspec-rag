@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#service-doctor-liveness'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -124,3 +124,7 @@ symptom, not the trigger.
   campaign (F6, and the pre-yield unlink F7 overlap) - coordinate to avoid double-fixing.
 - Whether the Job-Object breakaway fallback should hard-fail or detach differently, and how to
   prove the daemon survives a parent-shell exit in a no-mock test on this platform.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

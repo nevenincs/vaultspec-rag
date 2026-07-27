@@ -37,7 +37,7 @@ _LOCAL_MODE_MODULES = (
     "vaultspec_rag.service",
     "vaultspec_rag.search._searcher",
     "vaultspec_rag.api",
-    "vaultspec_rag.store",
+    "vaultspec_rag.store_runtime",
     "vaultspec_rag._gpu",
 )
 
@@ -124,7 +124,7 @@ def test_load_torch_applies_configured_process_allocator_fraction(
     """The real centralized gate applies headroom before callers load models."""
     del clean_config
     from .._gpu import load_torch
-    from ..config import get_config
+    from ..config._settings import get_config
 
     configured = 0.73
     get_config({"index_cuda_allocator_fraction": configured})

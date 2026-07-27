@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#service-lifecycle-tests'
 date: '2026-04-05'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-02-service-graph-code-review-audit]]'
 ---
@@ -196,3 +196,5 @@ actually exits within a reasonable window (10s) after `_terminate_pid()`.
 - For stale PID recovery: write a bogus PID before starting, assert service
   detects and overwrites
 - Always use `tmp_path` or `tmp_path_factory.mktemp()` for isolation
+## Sources
+- Related record identifiers: `2026-04-02-service-graph-code-review-audit`.

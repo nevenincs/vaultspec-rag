@@ -55,7 +55,7 @@ class _MigrationIdentityCarry:
 
 def _resolve_server_url(command: str, json_mode: bool) -> str:
     """Return the managed Qdrant URL, or exit 2 if server mode is off."""
-    from ..config import get_config
+    from ..config._settings import get_config
 
     cfg = get_config()
     if not cfg.effective_server_mode():
@@ -705,7 +705,7 @@ def storage_reconcile(
     queryable throughout. Collections already at target are skipped, so
     running this on a converged backend is a no-op success.
     """
-    from ..config import get_config
+    from ..config._settings import get_config
     from ..storage_reconciliation import reconcile_collections
     from ..storage_survey_ops import server_storage_collections_dir
 
@@ -747,7 +747,7 @@ _UNCAPPED_RECONCILE = 1_000_000
 def _local_store_path(root: str) -> Path:
     from pathlib import Path
 
-    from ..config import get_config
+    from ..config._settings import get_config
 
     cfg = get_config()
     return Path(root).expanduser() / str(cfg.data_dir) / str(cfg.qdrant_dir)

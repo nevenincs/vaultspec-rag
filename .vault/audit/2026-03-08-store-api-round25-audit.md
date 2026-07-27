@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 25 Correctness Audit: store.py & api.py
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Date**: 2026-03-08
 **Auditor**: codebase-auditor-1
@@ -15,7 +20,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Executive Summary
+### Executive Summary
 
 This audit verifies correctness of the vector store layer (`store.py`) and public API facade (`api.py`) after six known fixes. All previously flagged issues have been resolved:
 
@@ -30,7 +35,7 @@ This audit verifies correctness of the vector store layer (`store.py`) and publi
 
 ______________________________________________________________________
 
-## Findings by Severity
+### Findings by Severity
 
 | Severity | Count | Details                                                |
 | -------- | ----- | ------------------------------------------------------ |
@@ -41,7 +46,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## store.py Detailed Findings
+### store.py Detailed Findings
 
 ### 1. `_build_filter` — Date filter type ✅ VERIFIED
 
@@ -322,7 +327,7 @@ def close(self) -> None:
 
 ______________________________________________________________________
 
-## api.py Detailed Findings
+### api.py Detailed Findings
 
 ### 10. `get_engine` — Cache key & locking ✅ VERIFIED
 
@@ -434,7 +439,7 @@ class _GraphCache:
 
 ______________________________________________________________________
 
-## Summary Table
+### Summary Table
 
 | Component                   | Finding                              | Severity   | Status   |
 | --------------------------- | ------------------------------------ | ---------- | -------- |
@@ -453,6 +458,21 @@ ______________________________________________________________________
 | api.py:\_GraphCache         | Thread-safe with invalidation        | ✅ Correct | No issue |
 
 ______________________________________________________________________
+
+### Conclusion
+
+✅ **All known fixes verified correct.**
+✅ **No critical or high-severity issues found.**
+⚠️ **One MEDIUM design clarity issue** (payload field naming — suggest docstring clarification, not code change).
+✅ **Store and API layer are production-ready.**
+
+______________________________________________________________________
+
+**Next audit targets**:
+
+- Round 26: `embeddings.py` (Qwen3 + SPLADE + CrossEncoder)
+- Round 27: `search.py` (RRF normalization, graph reranking)
+- Round 28: `mcp_server.py` (async/threading, tool signatures, resource cleanup)
 
 ## Recommendations
 
@@ -480,18 +500,3 @@ to abstract this difference.
 This is **not a bug** (working as designed) but **reduces confusion** for future maintainers.
 
 ______________________________________________________________________
-
-## Conclusion
-
-✅ **All known fixes verified correct.**
-✅ **No critical or high-severity issues found.**
-⚠️ **One MEDIUM design clarity issue** (payload field naming — suggest docstring clarification, not code change).
-✅ **Store and API layer are production-ready.**
-
-______________________________________________________________________
-
-**Next audit targets**:
-
-- Round 26: `embeddings.py` (Qwen3 + SPLADE + CrossEncoder)
-- Round 27: `search.py` (RRF normalization, graph reranking)
-- Round 28: `mcp_server.py` (async/threading, tool signatures, resource cleanup)

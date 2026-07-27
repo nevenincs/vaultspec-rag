@@ -3,11 +3,11 @@ tags:
   - '#adr'
   - '#mcp-stdio-lifetime'
 date: '2026-07-16'
-modified: '2026-07-17'
+modified: '2026-07-27'
 related:
   - "[[2026-07-16-mcp-stdio-lifetime-research]]"
+  - '[[2026-07-16-mcp-stdio-lifetime-audit]]'
 ---
-
 # `mcp-stdio-lifetime` adr: `The stdio shim owns its lifetime: ancestor-chain watchdog behind stdin EOF` | (**status:** `accepted`)
 
 ## Problem Statement

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
-from typing import Any, cast, get_args
+from typing import TYPE_CHECKING, Any, cast, get_args
 
 import typer
 from typer._types import TyperChoice
@@ -29,6 +29,9 @@ from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
 from ._app import server_app
 from ._render import _emit_json, _emit_json_error_and_exit, _plain
+
+if TYPE_CHECKING:
+    from typer._click import Context as ClickContext
 
 _LOGS_COMMAND = "server.logs"
 
@@ -92,7 +95,7 @@ class _ServiceLogsCommand(TyperCommand):
             )
         )
 
-    def invoke(self, ctx: typer.Context) -> Any:
+    def invoke(self, ctx: ClickContext) -> Any:
         params = ctx.params
         return _run_service_logs(
             _ServiceLogsOptions(

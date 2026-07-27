@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#service-hardware-singleton'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 related:
   - "[[2026-06-24-service-hardware-singleton-research]]"
 ---
@@ -134,3 +134,7 @@ wrong-version, wrong-storage, or unowned server would be worse than spawning, so
   only after verifying health, matching managed version, the expected storage path, and an
   ownership signal, and fail fast with a named cause otherwise - never start a competing child
   on the shared single-writer storage.
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

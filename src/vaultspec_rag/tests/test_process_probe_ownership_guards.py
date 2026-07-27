@@ -13,10 +13,10 @@ import pytest
 from .._operator_commands import IndexCommandOptions, index_command
 from ._process_probe_guard_helpers import (
     _PACKAGE_ROOT,
+    _production_sources,
     function_nodes,
     is_attr_call,
     parsed_production_sources,
-    _production_sources,
 )
 
 pytestmark = [pytest.mark.unit]
@@ -176,9 +176,9 @@ class TestBackoffMathHasOneHome:
 
     def test_the_replacement_constants_feed_one_scheduler(self) -> None:
         """Only ``defer_replacement`` may turn the streak into a deadline."""
-        from .. import watcher
+        from .. import watcher_runtime
 
-        source = Path(watcher.__file__).read_text(encoding="utf-8")
+        source = Path(watcher_runtime.__file__).read_text(encoding="utf-8")
         uses = [
             number
             for number, line in enumerate(source.splitlines(), start=1)
@@ -408,9 +408,7 @@ class TestAtomicJsonPublishHasOneWriter:
         excluded = {"_atomic_write.py", self.STREAMING, self.NAMED_TEMP_CONTRACT}
         find_offenders = [
             f"{path.name}:{node.lineno} {node.name}"
-            for path, tree in parsed_production_sources(
-                _production_sources(), excluded
-            )
+            for path, tree in parsed_production_sources(_production_sources(), excluded)
             for node in function_nodes(tree)
             if {"json.dump", "json.dumps"} & self._call_names(node)
             and {"replace_atomically", "replace_durably"} & self._call_names(node)

@@ -3,27 +3,27 @@ tags:
   - '#exec'
   - '#store-eviction-log-rotation'
 date: '2026-04-12'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-phase1-plan]]'
   - '[[2026-04-12-store-eviction-log-rotation-adr]]'
 ---
 
-# store-eviction-log-rotation phase-1 step-4
+## Description
 
-## goal
+### Goal
 
 Grow `ServiceRegistry` into the ADR D3/D4/D6 shape: refcounted lease
 context manager, `peek_project` alias, LRU admission with
 `RegistryFullError`, idle sweep with release-reacquire dance, and
 bounded `close_all` drain.
 
-## files touched
+### Files touched
 
 - `src/vaultspec_rag/service.py`
 - `src/vaultspec_rag/tests/test_service_registry.py`
 
-## what was done
+### What was done
 
 - `ProjectSlot`: added `last_access: float` and `ref_count: int`
   default-0 fields.
@@ -48,30 +48,34 @@ bounded `close_all` drain.
   using the session-scoped `embedding_model` fixture and real
   `VaultStore`/`tmp_path` vaults (no mocks).
 
-## deviations from plan
+## Outcome
+
+### Test results
+
+- `pytest src/vaultspec_rag/tests/test_service_registry.py::TestLeaseApi -m integration -v` -> 8 passed.
+- `pytest src/vaultspec_rag/tests/test_service_registry.py -m integration` -> 36 passed.
+- `ruff check` + `ty check src/vaultspec_rag` clean.
+
+### Commit hash
+
+`520574e feat(service): add lease API with TTL eviction and LRU admission`
+
+## Notes
+
+### Deviations from plan
 
 - The plan's `test_close_all_drains_then_force` description spawns a
   worker thread holding a `lease` past the deadline. That shape
   fails: after `close_all()` clears `_projects`, the worker's eventual
   `_release` hits a `KeyError` because lease release looks up the
   slot via `with reg._lock: slot.ref_count -= 1` (slot object is
-  still live via the local variable, so this is OK) — but the plan's
+  still live via the local variable, so this is OK) â€” but the plan's
   original snippet mutated `reg._projects[root].ref_count` by dict
   lookup *inside* the worker. Rewrote the test to pin `ref_count`
   directly on the slot and measure drain elapsed time (`4.5 < elapsed < 7.0` bounds the 5s deadline from both sides). This still exercises
   the drain+force-close code path and verifies `_projects` is
   cleared afterward.
 
-## test results
-
-- `pytest src/vaultspec_rag/tests/test_service_registry.py::TestLeaseApi -m integration -v` -> 8 passed.
-- `pytest src/vaultspec_rag/tests/test_service_registry.py -m integration` -> 36 passed.
-- `ruff check` + `ty check src/vaultspec_rag` clean.
-
-## commit hash
-
-`520574e feat(service): add lease API with TTL eviction and LRU admission`
-
-## time spent
+### Time spent
 
 ~45 minutes (largest code step; one test revision).

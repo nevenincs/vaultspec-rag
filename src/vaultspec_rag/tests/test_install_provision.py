@@ -22,13 +22,9 @@ from typer.testing import CliRunner
 from ..cli import app
 from ..commands._install import install_run
 from ..commands._provision import ProvisionAction, ProvisionStep
-from ..config import (
-    EnvVar,
-    get_config,
-    persist_local_only,
-    read_persisted_local_only,
-    reset_config,
-)
+from ..config._paths import persist_local_only, read_persisted_local_only
+from ..config._settings import get_config, reset_config
+from ..config._types import EnvVar
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

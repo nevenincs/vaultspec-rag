@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#cli-mcp-decoupling'
 date: '2026-06-05'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -59,3 +59,7 @@ graph TD
 - **CLI Commands** will limit their scope to Typer parsing, confirm prompts, formatting tables, and JSON serialization.
 - **MCP Handlers** will limit their scope to JSON-RPC parameter validation, exception translation, and JSON formatting.
 - **Backend API** (`src/vaultspec_rag/api.py` and matching domain modules) will encapsulate all indexing, searching, benchmarking, quality checks, and system diagnostics.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#preprocess-hooks'
 date: '2026-06-10'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-10-preprocess-hooks-research]]"
 ---
@@ -265,3 +265,7 @@ above:
   **Rule:** Every file a preprocess rule skips or fails must both log a warning and
   increment a surfaced `IndexResult` counter that reaches `status`/`jobs`/CLI `--json`;
   silent index-coverage gaps are the failure mode this feature exists to remove.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

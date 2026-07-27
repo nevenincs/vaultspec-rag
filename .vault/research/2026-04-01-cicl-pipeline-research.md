@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#cicl'
 date: '2026-04-01'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
 
 # `cicl` research: CI/CD pipeline and release automation
@@ -173,3 +173,7 @@ except PackageNotFoundError:
 - **Medium risk:** vaultspec-core dependency change — must verify the PyPI
   version is compatible. Currently published as 0.1.5+ on PyPI.
 - **Low risk:** Smoke tests — conservative checks, no GPU dependency.
+
+## Sources
+
+Evidence gap: the retained research body and manifest provenance state no separate sources list. No source is asserted.

@@ -124,11 +124,11 @@ def _live_service_axis() -> dict[str, object]:
     ``server status`` behaviour exactly.
     """
     from ..serviceclient._compat import classify_service_version
-    from ..serviceclient._discovery import _read_service_status, resolve_machine_service
+    from ..serviceclient._discovery import read_service_status, resolve_machine_service
     from ..serviceclient._status import STATUS_STOPPED, compose_discovery_status
     from ._status_render import _evaluate_service_signals, _liveness_from_resolution
 
-    status = _read_service_status()
+    status = read_service_status()
     if status is None:
         # The singleton is machine-global, so an absent record in this status
         # directory is not evidence that nothing is running. Deriving the axis
@@ -164,35 +164,21 @@ def _live_service_axis() -> dict[str, object]:
             "version_compatible": version.is_compatible,
         }
 
-    (
-        pid,
-        port,
-        _started_at,
-        pid_alive,
-        pid_is_ours,
-        port_listening,
-        heartbeat_age,
-        heartbeat_stale,
-        _token_match,
-        state,
-        state_label,
-        exit_code,
-    ) = _evaluate_service_signals(status)
-
-    live = exit_code == 0
+    signals = _evaluate_service_signals(status)
+    live = signals.exit_code == 0
     status_version = classify_service_version(status)
     return {
         "present": True,
         "live": live,
-        "state": state,
-        "label": state_label,
-        "pid": pid,
-        "port": port,
-        "pid_alive": pid_alive,
-        "pid_matches_service": pid_is_ours,
-        "port_listening": port_listening,
-        "heartbeat_age_seconds": heartbeat_age,
-        "heartbeat_stale": heartbeat_stale,
+        "state": signals.state,
+        "label": signals.state_label,
+        "pid": signals.pid,
+        "port": signals.port,
+        "pid_alive": signals.pid_alive,
+        "pid_matches_service": signals.pid_is_ours,
+        "port_listening": signals.port_listening,
+        "heartbeat_age_seconds": signals.heartbeat_age,
+        "heartbeat_stale": signals.heartbeat_stale,
         "version": status_version.to_dict(),
         "version_compatible": status_version.is_compatible,
     }

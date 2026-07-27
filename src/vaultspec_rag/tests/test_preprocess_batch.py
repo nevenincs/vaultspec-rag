@@ -27,7 +27,8 @@ import pytest
 
 from .. import CodebaseIndexer
 from .._store_models import CodeChunk
-from ..config import EnvVar, reset_config
+from ..config._settings import reset_config
+from ..config._types import EnvVar
 from ..indexer import _chunk_worker
 from ..indexer._content_policy import ContentKind
 from ..indexer._preprocess_cache import preprocess_cache_dir
@@ -759,11 +760,11 @@ def test_batch_pool_retains_only_one_worker_window(tmp_path: Path) -> None:
 
         indexer = _batch_indexer(tmp_path, ctx)
         batch_groups, singles = indexer._producer.partition_batch_work(files)
-        assert singles == []
-        assert len(batch_groups) == 6
+        assert (singles, len(batch_groups)) == ([], 6)
 
         handler_started, release_handler = threading.Event(), threading.Event()
-        received, failures = [], []
+        received: list[int] = []
+        failures: list[BaseException] = []
 
         def _observe_window(results: list[_chunk_worker.FileChunkResult]) -> None:
             received.append(len(results))

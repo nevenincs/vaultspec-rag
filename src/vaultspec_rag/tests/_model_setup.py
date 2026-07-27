@@ -49,7 +49,7 @@ def model_setup_timeout_seconds() -> float:
 
 def configured_service_model_ids() -> tuple[str, ...]:
     """Return every model the resident service will load during startup."""
-    from ..config import get_config
+    from ..config._settings import get_config
 
     cfg = get_config()
     model_ids = [str(cfg.embedding_model), str(cfg.sparse_model)]
@@ -329,7 +329,7 @@ def _setup_context(
     endpoint: str | None,
 ) -> str:
     """Render stable failure context for fixture diagnostics."""
-    from ..config import EnvVar
+    from ..config._types import EnvVar
 
     effective_endpoint = endpoint or os.environ.get(
         EnvVar.HF_ENDPOINT.value,
@@ -370,7 +370,7 @@ def _worker(
         snapshot_download,  # pyright: ignore[reportUnknownVariableType]  # stubs partially unknown
     )
 
-    from ..config import EnvVar
+    from ..config._types import EnvVar
 
     for model_id in model_ids:
         effective_endpoint = endpoint or os.environ.get(

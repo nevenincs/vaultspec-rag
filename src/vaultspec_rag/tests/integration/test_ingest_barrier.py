@@ -18,9 +18,10 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from ...config import EnvVar, get_config, reset_config
+from ...config._settings import get_config, reset_config
+from ...config._types import EnvVar
 from ...progress import NullProgressReporter
-from ...store import IngestVerificationError, VaultStore
+from ...store_runtime import IngestVerificationError, VaultStore
 from ..corpus import build_synthetic_vault
 from ._helpers import provisioned_qdrant_binary, serve_qdrant
 
@@ -30,10 +31,9 @@ if TYPE_CHECKING:
 
     from pytest import TempPathFactory
 
-    from ..._store_models import CodeChunk
+    from ..._store_models import CodeChunk, VaultChunk
     from ..._store_writes import StoreWritePolicy
     from ...qdrant_runtime._supervise import QdrantSupervisor
-    from ...store import VaultChunk
 
 pytestmark = [pytest.mark.integration]
 

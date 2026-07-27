@@ -189,7 +189,9 @@ class WatcherRetryPolicy:
             raise ValueError(
                 "max_seconds must be greater than or equal to base_seconds"
             )
-        self._jitter_fraction = _unit_interval("jitter_fraction", options.jitter_fraction)
+        self._jitter_fraction = _unit_interval(
+            "jitter_fraction", options.jitter_fraction
+        )
         if type(options.failure_threshold) is not int or options.failure_threshold <= 0:
             raise ValueError("failure_threshold must be a positive integer")
         self._failure_threshold = options.failure_threshold
@@ -287,7 +289,7 @@ class WatcherRetryPolicy:
         now: float | None = None,
     ) -> Self:
         """Construct the configured policy for one canonical project root."""
-        from .config import get_config
+        from .config._settings import get_config
 
         cfg = get_config()
         resolved_root = root.resolve()

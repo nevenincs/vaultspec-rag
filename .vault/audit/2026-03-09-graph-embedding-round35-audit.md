@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 35: api.py Graph Invalidation + search_all() Double Encoding Audit
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Date:** 2026-03-09
 **Auditor:** coder (Claude)
@@ -14,7 +19,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Investigation 1: api.py Reindex → Graph Cache Invalidation
+### Investigation 1: api.py Reindex → Graph Cache Invalidation
 
 ### Finding: LOW Risk – Correct but Incomplete Coverage
 
@@ -103,7 +108,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Investigation 2: search_all() Double Query Encoding
+### Investigation 2: search_all() Double Query Encoding
 
 ### Finding: CONFIRMED WASTE – Identical Encoding Repeated Twice
 
@@ -231,7 +236,7 @@ search_all(raw_query) [search.py:381]
 
 ______________________________________________________________________
 
-## Root Cause Analysis
+### Root Cause Analysis
 
 ### Why Dual Encoding Exists
 
@@ -244,6 +249,15 @@ ______________________________________________________________________
 - No overload that accepts pre-computed vectors
 
 ______________________________________________________________________
+
+### Summary
+
+| Investigation                        | Finding                                   | Severity | Status                                                              |
+| ------------------------------------ | ----------------------------------------- | -------- | ------------------------------------------------------------------- |
+| api.py → searcher graph invalidation | Incomplete (index_codebase missing reset) | MEDIUM   | Documented design choice needed                                     |
+| search_all() double encoding         | Confirmed 13-20ms waste per call          | CRITICAL | Refactor `_search_vault_internal()` + `_search_codebase_internal()` |
+
+**Total potential impact:** 40% search latency improvement for `search_all()` calls (8-10ms per call on average).
 
 ## Recommendations
 
@@ -297,12 +311,3 @@ def search_all(self, raw_query: str, ...) -> list[SearchResult]:
 **Option B (Future):** Add vector caching with cache key = blake2b(query_text)
 
 ______________________________________________________________________
-
-## Summary
-
-| Investigation                        | Finding                                   | Severity | Status                                                              |
-| ------------------------------------ | ----------------------------------------- | -------- | ------------------------------------------------------------------- |
-| api.py → searcher graph invalidation | Incomplete (index_codebase missing reset) | MEDIUM   | Documented design choice needed                                     |
-| search_all() double encoding         | Confirmed 13-20ms waste per call          | CRITICAL | Refactor `_search_vault_internal()` + `_search_codebase_internal()` |
-
-**Total potential impact:** 40% search latency improvement for `search_all()` calls (8-10ms per call on average).

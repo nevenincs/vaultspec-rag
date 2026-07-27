@@ -7,6 +7,7 @@ import tempfile
 from contextvars import Context
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypedDict, Unpack
 
 from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
     sync_provider,
@@ -46,6 +47,14 @@ class _UninstallRequest:
     force: bool = False
     skip: set[str] | None = None
     assume_yes: bool = False
+
+
+class _UninstallOptions(TypedDict, total=False):
+    remove_data: bool
+    dry_run: bool
+    force: bool
+    skip: set[str] | None
+    assume_yes: bool
 
 
 def _remove_candidates(
@@ -319,7 +328,7 @@ def _record_topology_errors(report: UninstallReport, errors: list[str]) -> None:
 
 def uninstall_run(
     path: Path | None = None,
-    **options: object,
+    **options: Unpack[_UninstallOptions],
 ) -> UninstallReport:
     """Remove vaultspec-rag enrollment from a workspace."""
     return _uninstall_run(_UninstallRequest(path=path, **options))

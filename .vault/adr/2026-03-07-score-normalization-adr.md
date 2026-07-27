@@ -3,14 +3,15 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-03-07-continuous-research]]'
 ---
-
 # `gpu-rag-stack` adr: `Sigmoid + min-max per-source normalization in search_all()` | (**status:** `accepted`)
 
-## Context
+## Problem Statement
+
+### Context
 
 `search_all()` combines vault search results (graph-boosted RRF scores) with
 codebase search results (CrossEncoder logit scores). These are on incompatible
@@ -21,7 +22,21 @@ scales:
 
 Sorting the combined list by raw score produces meaningless rankings.
 
-## Decision
+## Considerations
+
+No separate considerations is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Considered options
+
+No separate considered options is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Constraints
+
+No separate constraints is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Implementation
+
+### Decision
 
 Normalize each source's scores independently before combining:
 

@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 10 Audit -- embeddings.py (deep dive)
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Auditor:** docs-researcher-2-2
 **File:** `src/vaultspec_rag/embeddings.py` (322 lines)
@@ -15,7 +20,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Check 1: SparseEncoder Methods
+### Check 1: SparseEncoder Methods
 
 ### `encode_documents_sparse()` (lines 274-307)
 
@@ -40,7 +45,7 @@ Uses `encode_query()` -- the correct SparseEncoder method for queries.
 
 ______________________________________________________________________
 
-## Check 2: CrossEncoder Sigmoid
+### Check 2: CrossEncoder Sigmoid
 
 The CrossEncoder lives in `search.py`, not `embeddings.py`.
 
@@ -58,7 +63,7 @@ self._reranker = CrossEncoder(
 
 ______________________________________________________________________
 
-## Check 3: Reranker Model
+### Check 3: Reranker Model
 
 ### `config.py` (line 29)
 
@@ -78,7 +83,7 @@ Note: CLAUDE.md still says `cross-encoder/ms-marco-MiniLM-L6-v2`. This is a docu
 
 ______________________________________________________________________
 
-## Check 4: Dense Model Init
+### Check 4: Dense Model Init
 
 ### `__init__()` (lines 168-183)
 
@@ -109,7 +114,7 @@ The probe at line 174 imports `flash_attn` to check if the package is installed.
 
 ______________________________________________________________________
 
-## Check 5: Sparse Model dtype
+### Check 5: Sparse Model dtype
 
 ### `__init__()` (lines 186-190)
 
@@ -125,7 +130,7 @@ self._sparse_model = SparseEncoder(
 
 ______________________________________________________________________
 
-## Check 6: OOM Retry Logic
+### Check 6: OOM Retry Logic
 
 ### `encode_documents()` (lines 234-252)
 
@@ -160,7 +165,7 @@ No OOM retry. Single query inference.
 
 ______________________________________________________________________
 
-## Check 7: CUDA Check
+### Check 7: CUDA Check
 
 ### `_check_rag_deps()` (lines 34-56)
 
@@ -188,7 +193,7 @@ def _check_rag_deps() -> None:
 
 ______________________________________________________________________
 
-## Check 8: `_sparse_tensor_to_results`
+### Check 8: `_sparse_tensor_to_results`
 
 ### Lines 59-104
 
@@ -212,7 +217,7 @@ if sparse_tensor.is_sparse or sparse_tensor.is_sparse_csr:
 
 ______________________________________________________________________
 
-## Check 9: `encode_documents` Truncation
+### Check 9: `encode_documents` Truncation
 
 ### `encode_documents()` (lines 231-232)
 
@@ -247,7 +252,7 @@ In practice, the SentenceTransformer tokenizer will truncate to `max_seq_length`
 
 ______________________________________________________________________
 
-## Check 10: Bare `except Exception`
+### Check 10: Bare `except Exception`
 
 Scanning all exception handlers in `embeddings.py`:
 
@@ -263,7 +268,7 @@ Scanning all exception handlers in `embeddings.py`:
 
 ______________________________________________________________________
 
-## Additional Observations
+### Additional Observations
 
 ### `hasattr` checks on config (lines 163-166, 194-196)
 
@@ -294,7 +299,7 @@ No `prompt_name` parameter. This was flagged as R22b-M4 and verified as **correc
 
 ______________________________________________________________________
 
-## Summary
+### Summary
 
 | ID     | Severity | Finding                                                                             |
 | ------ | -------- | ----------------------------------------------------------------------------------- |
@@ -315,3 +320,7 @@ ______________________________________________________________________
 - Reranker model is `BAAI/bge-reranker-v2-m3` (config.py:29), contradicts CLAUDE.md which says `cross-encoder/ms-marco-MiniLM-L6-v2`. Documentation should be updated.
 
 **0 HIGH/MEDIUM findings. 2 MINOR findings. All major prior findings verified as fixed.**
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

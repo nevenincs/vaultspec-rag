@@ -3,23 +3,22 @@ tags:
   - '#research'
   - '#vaultragignore'
 date: '2026-04-04'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-04-04-vaultragignore-adr]]'
   - '[[2026-04-04-vaultragignore-plan]]'
 ---
-
 # `vaultragignore` research: codebase indexer exclusion support
 
-## Summary
+## Findings
+
+### Summary
 
 Investigated how `CodebaseIndexer._scan_codebase()` handles file exclusions, identified
 the integration point for `.vaultragignore`, and explored design options for pattern
 isolation, CLI threading, and dry-run support.
 
-## Findings
-
-## Problem statement
+### Problem statement
 
 The `CodebaseIndexer` has hardcoded exclusions (`.venv/`, `.git/`, `node_modules/`,
 `__pycache__/`, `.qdrant/`) and respects `.gitignore`, but there is no way to exclude
@@ -29,7 +28,7 @@ GPU compute, inflating the vector store, and degrading search relevance.
 
 **Issue:** nevenincs/vaultspec-rag#31
 
-## Current architecture
+### Current architecture
 
 ### `CodebaseIndexer._scan_codebase()` (indexer.py:1097–1166)
 
@@ -67,7 +66,7 @@ CodebaseIndexer.__init__(root_dir, model, store, *, gpu_lock=None)
 `VaultSpecConfigWrapper` holds 12 RAG defaults (qdrant_dir, models, batch sizes, etc.).
 No ignore-pattern config exists yet.
 
-## Design exploration
+### Design exploration
 
 ### Q1: Where to load `.vaultragignore` patterns?
 
@@ -120,7 +119,7 @@ at project root. Keeps semantics simple. Patterns are relative to root (same as 
 
 Silently ignored — no error, no warning. Just use the gitignore spec alone.
 
-## Proposed refactoring
+### Proposed refactoring
 
 Extract pattern loading from `_scan_codebase()` into two private methods:
 
@@ -129,7 +128,7 @@ Extract pattern loading from `_scan_codebase()` into two private methods:
 
 Then `_scan_codebase()` checks files against both specs (short-circuit OR).
 
-## Files to modify
+### Files to modify
 
 | File                           | Change                                                                              |
 | ------------------------------ | ----------------------------------------------------------------------------------- |
@@ -141,7 +140,7 @@ Then `_scan_codebase()` checks files against both specs (short-circuit OR).
 **No changes needed to:** `service.py`, `api.py`, `mcp_server.py`, `watcher.py` — they
 all read `.vaultragignore` automatically through the indexer's scan pipeline.
 
-## Resolved questions
+### Resolved questions
 
 1. **Config key for filename?** No — `.vaultragignore` is a convention like `.gitignore`.
    Configuring it adds indirection for zero benefit.
@@ -150,3 +149,7 @@ all read `.vaultragignore` automatically through the indexer's scan pipeline.
    Edits take effect on next index run naturally.
 1. **MCP tool for listing patterns?** Not needed — `--dry-run` serves this purpose from CLI.
    MCP consumers can inspect the `.vaultragignore` file directly.
+
+## Sources
+
+Evidence gap: the retained research body has no separately labelled Sources section.

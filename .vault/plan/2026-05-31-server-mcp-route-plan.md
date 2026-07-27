@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#server-mcp-route'
 date: '2026-05-31'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-05-31-server-mcp-route-adr]]'
   - '[[2026-05-31-server-mcp-route-research]]'
@@ -97,8 +97,12 @@ Cover the rewrite behaviour, guard against a refactor handing the bare applicati
 
 ## Reference
 
-- ADR: \[[2026-05-31-server-mcp-route-adr]\]
-- Research: \[[2026-05-31-server-mcp-route-research]\]
+- ADR: `2026-05-31-server-mcp-route-adr`
+- Research: `2026-05-31-server-mcp-route-research`
 - Wave 1F-6 verification record:
   `.vault/plan/2026-05-28-cli-backend-parity-plan.md`
   (showed `GET /mcp` returned 307 against the unpatched server)
+
+## Parallelization
+
+Evidence gap: the retained plan prose and complete git log --follow history state no explicit parallelization policy. No concurrency rule is asserted.

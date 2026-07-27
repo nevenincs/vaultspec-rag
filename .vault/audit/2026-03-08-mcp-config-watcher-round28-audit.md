@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Audit: mcp_server.py, config.py, watcher.py — Round 28
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Date:** 2026-03-08
 **Scope:** Remaining unaudited modules: MCP server, config wrapper, filesystem watcher
@@ -14,13 +19,13 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Summary
+### Summary
 
 All three modules are correctly implemented and follow established architectural patterns verified in prior audits. No CRITICAL or HIGH findings. Module-level asyncio primitives are safe in Python 3.10+. Watcher cooldown uses correct time.monotonic() semantics. Resource cleanup is sound.
 
 ______________________________________________________________________
 
-## mcp_server.py Findings
+### mcp_server.py Findings
 
 ### 1. Global asyncio.Semaphore and Event initialization ✓
 
@@ -145,7 +150,7 @@ except Exception as exc:
 
 ______________________________________________________________________
 
-## config.py Findings
+### config.py Findings
 
 ### 1. Singleton pattern and thread safety ✓
 
@@ -217,7 +222,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## watcher.py Findings
+### watcher.py Findings
 
 ### 1. Cooldown per-source tracking ✓
 
@@ -305,7 +310,7 @@ _last_vault_index = time.monotonic()
 
 ______________________________________________________________________
 
-## Conclusion
+### Conclusion
 
 All three modules pass correctness audit. No CRITICAL, HIGH, or blocking MEDIUM findings. Known-correct patterns from prior audits are properly applied:
 
@@ -318,3 +323,7 @@ All three modules pass correctness audit. No CRITICAL, HIGH, or blocking MEDIUM 
 - ✓ Path defaults match actual usage in indexer/store
 
 **Ready for production.**
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

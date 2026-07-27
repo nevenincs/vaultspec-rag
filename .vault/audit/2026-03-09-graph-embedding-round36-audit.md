@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 36: Graph/Embedding Domain Audit (2026-03-09)
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Scope:** `search.py` query → embedding pipeline and graph cache correctness
 
@@ -18,7 +23,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Investigation 1: ParsedQuery → embedding pipeline
+### Investigation 1: ParsedQuery → embedding pipeline
 
 ### Finding 1.1: ✅ PASS — Query text extraction and encoding
 
@@ -69,7 +74,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Investigation 2: Graph boost correctness after TTL rebuild
+### Investigation 2: Graph boost correctness after TTL rebuild
 
 ### Finding 2.1: ✅ PASS — Graph reconstruction is blocking but safe
 
@@ -153,7 +158,7 @@ comp.searcher._graph_built_at = 0.0
 
 ______________________________________________________________________
 
-## Investigation 3: encode_query vs encode_documents method dispatch
+### Investigation 3: encode_query vs encode_documents method dispatch
 
 ### Finding 3.1: ✅ VERIFIED — All query encoding uses encode_query()
 
@@ -201,7 +206,7 @@ self._sparse_model = SparseEncoder(
 
 ______________________________________________________________________
 
-## Summary
+### Summary
 
 | Finding                                           | Category        | Severity        | Status                |
 | ------------------------------------------------- | --------------- | --------------- | --------------------- |

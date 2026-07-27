@@ -20,13 +20,13 @@ from ._cli_helpers import (
     _isolated_status_dir,
     _label_values,
     _plain_lines,
-    _process_the_identity_check_recognises,
-    _read_service_status,
     _running_service_record,
     _serving,
     _status_contract_server,
     _write_service_status,
     app,
+    process_the_identity_check_recognises,
+    read_service_status,
     runner,
 )
 from ._http_stubs import QuietHandler
@@ -580,7 +580,7 @@ class TestServiceDaemonHelpers:
         under a python interpreter satisfies both, which is what makes this the
         positive case against the dead, zero, and negative pids below.
         """
-        with _process_the_identity_check_recognises() as pid:
+        with process_the_identity_check_recognises() as pid:
             assert _is_our_service(pid) is True
 
     def test_is_our_service_dead_pid(self):
@@ -599,7 +599,7 @@ class TestServiceDaemonHelpers:
         """Write and read back should produce the same pid/port."""
         with _isolated_status_dir(tmp_path):
             _write_service_status(pid=12345, port=9999)
-            data = _read_service_status()
+            data = read_service_status()
             assert data is not None
             assert data["pid"] == 12345
             assert data["port"] == 9999
@@ -627,21 +627,21 @@ class TestServiceDaemonHelpers:
         empty_dir = tmp_path / "empty"
         empty_dir.mkdir()
         with _isolated_status_dir(empty_dir):
-            assert _read_service_status() is None
+            assert read_service_status() is None
 
     def test_read_status_invalid_json(self, tmp_path: Path):
         """Invalid JSON in status file should return None."""
         sf = tmp_path / "service.json"
         sf.write_text("not json", encoding="utf-8")
         with _isolated_status_dir(tmp_path):
-            assert _read_service_status() is None
+            assert read_service_status() is None
 
     def test_read_status_missing_pid_key(self, tmp_path: Path):
         """Status JSON without a pid key should return None."""
         sf = tmp_path / "service.json"
         sf.write_text('{"port": 8766}', encoding="utf-8")
         with _isolated_status_dir(tmp_path):
-            assert _read_service_status() is None
+            assert read_service_status() is None
 
     def test_service_stop_stale_pid(self, tmp_path: Path):
         """service_stop with a dead PID cleans up the status file."""

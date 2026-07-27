@@ -3,19 +3,18 @@ tags:
   - '#exec'
   - '#index-backpressure-storage-hygiene'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-27'
 step_id: 'S10'
 related:
   - "[[2026-07-21-index-backpressure-storage-hygiene-plan]]"
 ---
-
 # wire the same preflight into the in-process CLI index fallback with a single structured non-zero envelope in --json mode
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/cli/_index.py`
-
-## Description
 
 Verification found a real gap: `InsufficientDiskSpaceError` subclasses
 `RuntimeError`, so the in-process CLI index path routed a preflight
@@ -30,3 +29,5 @@ Committed as `fix(cli): disk-preflight refusal is a structured envelope, not a G
 green.
 
 ## Notes
+
+Evidence gap: the original record contains no Notes section with authored incident, deferred-work, or follow-up evidence.

@@ -3,17 +3,22 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # api.py and ADR Regression Tests Audit
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 Date: 2026-03-07
 Auditor: docs-researcher-2-2
 
 ______________________________________________________________________
 
-## Part A: api.py Audit
+### Part A: api.py Audit
 
 File: `src/vaultspec_rag/api.py` (252 lines)
 
@@ -92,7 +97,7 @@ Also: `_Engine.__init__()` does not have cleanup on partial init failure. If `Em
 
 ______________________________________________________________________
 
-## Part B: ADR Regression Tests Audit
+### Part B: ADR Regression Tests Audit
 
 File: `src/vaultspec_rag/tests/test_adr_regression.py` (164 lines)
 
@@ -185,7 +190,7 @@ The implementation and test agree with each other but disagree with CLAUDE.md. O
 
 ______________________________________________________________________
 
-## Overall Summary
+### Overall Summary
 
 | Category  | Issue                                             | Severity |
 | --------- | ------------------------------------------------- | -------- |
@@ -194,3 +199,7 @@ ______________________________________________________________________
 | api.py    | `_Engine.__init__` leaks store on partial failure | LOW      |
 | ADR tests | 6 of 10 ADR regression tests missing              | HIGH     |
 | ADR tests | Reranker model mismatch: CLAUDE.md vs config.py   | MEDIUM   |
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

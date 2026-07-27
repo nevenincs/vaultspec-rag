@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#vault-pipeline-search'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 step_id: 'S06'
 related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
@@ -11,11 +11,11 @@ related:
 
 # Capture and commit the baseline ranking report on the current reranker
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/tests/quality/baseline.json`
-
-## Description
 
 - Ran the intent-ranking harness against a hermetic copy of the project vault on the real
   GPU (694 documents indexed) using the current bare-reranker ranking.

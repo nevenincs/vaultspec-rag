@@ -29,7 +29,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .._env_values import FALSE_TOKENS, TRUE_TOKENS
-from ..config import EnvVar, get_config, hf_cache_only, reset_config
+from ..config._settings import get_config, reset_config
+from ..config._types import EnvVar, hf_cache_only
 from ..memory_probe import is_enabled
 from ..server._stdio_lifetime import watchdog_disabled
 from ._import_probe import assert_fresh_import_excludes
@@ -282,7 +283,7 @@ def test_memory_probe_import_stays_free_of_the_settings_package() -> None:
     table lives in a stdlib-only module and the variable's name is restated
     rather than imported.
 
-    Mutation: added ``from .config import EnvVar`` at module scope in
+    Mutation: added ``from .config._types import EnvVar`` at module scope in
     ``memory_probe``. Observed this guard fail with ``vaultspec_core`` and its
     submodules named in the child's assertion payload.
     """

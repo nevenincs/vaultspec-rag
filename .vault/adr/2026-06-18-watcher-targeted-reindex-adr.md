@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#watcher-targeted-reindex'
 date: '2026-06-18'
-modified: '2026-06-18'
+modified: '2026-07-27'
 related:
   - "[[2026-06-18-watcher-targeted-reindex-research]]"
   - '[[2026-06-02-watcher-targeted-reindex-plan]]'
@@ -113,3 +113,7 @@ assert the chunks are evicted.
   **Rule:** Any application-level debounce or cooldown layered on top of the filesystem
   watcher must guarantee its last pending batch is flushed on a quiet tree (e.g. via the
   `awatch` idle tick), never only on the next filesystem event.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

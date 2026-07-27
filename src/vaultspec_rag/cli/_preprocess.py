@@ -17,13 +17,13 @@ All honour the shared script-facing ``--json`` output.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, cast
+from typing import TYPE_CHECKING, Annotated, cast
 
 import typer
 
 import vaultspec_rag.cli as _cli
 
-from ..config import PreprocessMode, get_config
+from ..config._settings import get_config
 from ..indexer._preprocess_config import (
     PREPROCESS_CONFIG_FILENAME,
     PreprocessConfig,
@@ -34,6 +34,9 @@ from ..indexer._preprocess_config import (
 from ..indexer._preprocess_runner import PreprocessAbortError, run_preprocessor
 from ._app import CLIState, JsonMode, preprocess_app
 from ._render import _emit_json, _emit_json_error_and_exit, _plain
+
+if TYPE_CHECKING:
+    from ..config._types import PreprocessMode
 
 
 def _root(ctx: typer.Context) -> Path:
@@ -225,7 +228,7 @@ def handle_preprocess_run_one(
     json_mode: JsonMode = False,
 ) -> None:
     """Trial the matching preprocessor against one file for authoring/debugging."""
-    from ..config import get_config
+    from ..config._settings import get_config
 
     root = _root(ctx)
     try:
@@ -307,7 +310,7 @@ def _gated_rule_state(root: Path, nonstrict_config: PreprocessConfig) -> int | N
         The strict rule count when the rules exist but are switched off, else
         ``None`` (no config, an invalid config, or genuinely no rules).
     """
-    from ..config import get_config
+    from ..config._settings import get_config
 
     if get_config().preprocess_mode != "off":
         return None

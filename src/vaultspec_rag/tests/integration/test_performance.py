@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
     from ...embeddings import EmbeddingModel
     from ...indexer import IndexResult, VaultIndexer
-    from ...store import VaultStore
+    from ...store_runtime import VaultStore
     from ..conftest import RagComponentsWithManifest
 
 pytestmark = [pytest.mark.performance]
@@ -141,7 +141,7 @@ class TestPerformance:
 
     def test_store_disk_footprint(self, rag_components_full: RagComponentsWithManifest):
         """The Qdrant data directory should be under 50MB for the full corpus."""
-        from ...config import get_config
+        from ...config._settings import get_config
 
         cfg = get_config()
         root: Path = rag_components_full["root"]
@@ -285,8 +285,9 @@ class TestPerformance:
         """
         import time
 
-        from ... import VaultIndexer, VaultStore
+        from ... import VaultIndexer
         from ...memory_probe import MemoryProbe
+        from ...store_runtime import VaultStore
         from ..corpus import build_synthetic_vault
 
         # monkeypatch.setenv scopes the mutation to this test so the

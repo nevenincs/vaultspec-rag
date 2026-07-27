@@ -1,11 +1,12 @@
 """Hybrid search and query-builder helpers for the Qdrant vault store.
 
-Split out of ``store.py`` as a mixin that :class:`~vaultspec_rag.store.VaultStore`
-inherits. The methods here own dense/sparse query assembly, the RRF hybrid
-execution with its dense-only fallback, filter construction, and result
+Split out of ``store_runtime.py`` as a mixin that
+:class:`~vaultspec_rag.store_runtime.VaultStore` inherits. The methods own
+dense/sparse query assembly, the RRF hybrid execution with its dense-only
+fallback, filter construction, and result
 mapping. They acquire the store's point locks exactly as before via the
 ``_point_lock`` guard the concrete store provides; the lifecycle/point-lock
-design and its ordering stay in ``store.py``. Qdrant is imported function-local
+design and its ordering stay in ``store_runtime.py``. Qdrant is imported function-local
 so importing this module stays torch- and qdrant-free at module scope, matching
 the rest of the local-mode store layer.
 """
@@ -78,7 +79,7 @@ class _VaultSearchMixin:
 
         def ensure_table(self) -> None: ...
 
-        def ensure_code_table(self) -> None: ...
+        def ensure_code_table(self, collection: str | None = None) -> None: ...
 
         def ensure_document_table(self) -> None: ...
 

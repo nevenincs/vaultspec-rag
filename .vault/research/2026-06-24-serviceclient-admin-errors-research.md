@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#serviceclient-admin-errors'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -125,3 +125,7 @@ should not block the primary fix.
   raises a non-refused, non-timeout error (e.g. a malformed-response/JSON-decode path)
   asserting the envelope is returned and is distinguishable from a real empty result - no
   patching of the transport internals.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

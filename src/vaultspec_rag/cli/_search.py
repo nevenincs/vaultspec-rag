@@ -752,7 +752,7 @@ def _local_only_configured() -> bool:
     workspace into local mode, so the router need not require
     ``--allow-fallback`` on every call.
     """
-    from ..config import get_config
+    from ..config._settings import get_config
 
     return bool(get_config().local_only)
 

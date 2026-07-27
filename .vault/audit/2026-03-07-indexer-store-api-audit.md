@@ -3,12 +3,17 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 22 Audit -- indexer.py, store.py, api.py
 
-## indexer.py
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
+
+### indexer.py
 
 ### R22-M1: `_scan_codebase` reads every `.gitignore` via `rglob`, including inside ignored directories (Major)
 
@@ -71,7 +76,7 @@ Line 312: `parser = get_parser(grammar)` is called per file. If `get_parser` doe
 
 **File:** `indexer.py:312`
 
-## store.py
+### store.py
 
 ### R22-M4: `_build_filter` uses `MatchText` for date filter -- full-text search instead of prefix match (Major)
 
@@ -111,7 +116,7 @@ Lines 256-259: All points are upserted in a single `self._client.upsert()` call 
 **File:** `store.py:256-259`
 **Also:** `store.py:303-306` (same for `upsert_code_chunks`)
 
-## api.py
+### api.py
 
 ### R22-M6: `get_engine` silently discards old engine when `root_dir` changes without closing it (Major)
 
@@ -142,3 +147,7 @@ Lines 16-19: `api.py` imports `EmbeddingModel`, `VaultIndexer`, `CodebaseIndexer
 Line 117-131: The `search_codebase` facade only accepts `query` and `top_k`, but `VaultSearcher.search_codebase` supports `language`, `node_type`, `function_name`, `class_name` keyword arguments. API users cannot filter codebase searches without dropping down to the engine directly.
 
 **File:** `api.py:117-131`
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

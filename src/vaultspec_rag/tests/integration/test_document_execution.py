@@ -41,7 +41,10 @@ from ...indexer._preprocess_config import (
 )
 from ...indexer._preprocess_runner import run_preprocessor
 from ...indexer._run_policy import RunPolicy
-from ...indexer._streaming import iter_weighted_document_slices
+from ...indexer._streaming import (
+    DocumentSliceStreamRequest,
+    iter_weighted_document_slices,
+)
 from ...job_control import CancelRequested, RunControlToken
 from ...job_dispatch import _AttemptDispatch, _run_indexing_attempt
 from ...job_manager.manager import JobManager
@@ -466,10 +469,10 @@ def test_document_retry_state_and_resource_profile_are_independent(
                 backend="local",
                 available_ram_bytes=profile.minimum_ram_bytes,
                 store_volume=VolumeReading(
-                role="vector store",
-                path=tmp_path,
-                measured_path=tmp_path,
-                free_bytes=profile.minimum_free_disk_bytes,
+                    role="vector store",
+                    path=tmp_path,
+                    measured_path=tmp_path,
+                    free_bytes=profile.minimum_free_disk_bytes,
                 ),
             ),
         )
@@ -491,11 +494,13 @@ def test_document_slices_enforce_chunk_and_weighted_queue_caps() -> None:
     ]
     slices = tuple(
         iter_weighted_document_slices(
-            chunks,
-            max_chunks=1,
-            max_bytes=1024 * 1024,
-            dense_dimension=2,
-            sparse_enabled=False,
+            DocumentSliceStreamRequest(
+                chunks=chunks,
+                max_chunks=1,
+                max_bytes=1024 * 1024,
+                dense_dimension=2,
+                sparse_enabled=False,
+            )
         )
     )
     assert [len(weighted.chunks) for weighted in slices] == [1, 1]
@@ -503,11 +508,13 @@ def test_document_slices_enforce_chunk_and_weighted_queue_caps() -> None:
     with pytest.raises(ValueError, match="queue ceiling"):
         tuple(
             iter_weighted_document_slices(
-                chunks,
-                max_chunks=2,
-                max_bytes=1,
-                dense_dimension=2,
-                sparse_enabled=False,
+                DocumentSliceStreamRequest(
+                    chunks=chunks,
+                    max_chunks=2,
+                    max_bytes=1,
+                    dense_dimension=2,
+                    sparse_enabled=False,
+                )
             )
         )
 

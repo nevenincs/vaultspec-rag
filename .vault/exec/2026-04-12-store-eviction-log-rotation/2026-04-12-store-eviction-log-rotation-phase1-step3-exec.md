@@ -3,26 +3,26 @@ tags:
   - '#exec'
   - '#store-eviction-log-rotation'
 date: '2026-04-12'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-phase1-plan]]'
   - '[[2026-04-12-store-eviction-log-rotation-adr]]'
 ---
 
-# store-eviction-log-rotation phase-1 step-3
+## Description
 
-## goal
+### Goal
 
 Introduce `DaemonRotatingFileHandler` and `install_daemon_log_rotation`
 helper in `logging_config.py` per ADR D1. Add unit-level coverage for
 the re-`dup2` invariant and idempotent installation.
 
-## files touched
+### Files touched
 
 - `src/vaultspec_rag/logging_config.py`
 - `src/vaultspec_rag/tests/test_logging_config.py` (new)
 
-## what was done
+### What was done
 
 - Added `DaemonRotatingFileHandler` subclass with `@override`
   `doRollover` that (a) redirects fds 1 and 2 to `os.devnull` before
@@ -36,7 +36,21 @@ the re-`dup2` invariant and idempotent installation.
 - Wrote two real-unit tests using `tmp_path` and genuine
   `os.dup`/`os.dup2` fd save-and-restore (no mocks).
 
-## deviations from plan
+## Outcome
+
+### Test results
+
+- `pytest src/vaultspec_rag/tests/test_logging_config.py -x -v` ->
+  2 passed.
+- `ruff check` + `ty check` clean on the two modified files.
+
+### Commit hash
+
+`32d87f1 feat(logging): add DaemonRotatingFileHandler with FD re-dup2`
+
+## Notes
+
+### Deviations from plan
 
 - The ADR D1 pseudocode did not mention redirecting fds 1/2 to
   `os.devnull` before the rename. On Windows the dup2'd fds pin
@@ -44,20 +58,10 @@ the re-`dup2` invariant and idempotent installation.
   is the documented Windows FD-dup gotcha; the fix is implemented
   directly in `doRollover`. ADR D1's acceptance of the "microsecond
   window between doRollover and re-dup2" for raw C-level writes is
-  still honored — during the rename, raw fd-1/2 writes go to
+  still honored â€” during the rename, raw fd-1/2 writes go to
   `os.devnull` and are lost, not misdirected. This is strictly
   safer than pinning the rename open.
 
-## test results
-
-- `pytest src/vaultspec_rag/tests/test_logging_config.py -x -v` ->
-  2 passed.
-- `ruff check` + `ty check` clean on the two modified files.
-
-## commit hash
-
-`32d87f1 feat(logging): add DaemonRotatingFileHandler with FD re-dup2`
-
-## time spent
+### Time spent
 
 ~20 minutes (Windows rename collision added one debug cycle).

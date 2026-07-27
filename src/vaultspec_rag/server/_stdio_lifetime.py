@@ -38,7 +38,7 @@ import time
 
 from .._env_values import BOOL_SHAPE, parse_bool
 from .._process_probe import pid_alive
-from ..config import EnvVar
+from ..config._types import EnvVar
 
 logger = logging.getLogger("vaultspec_rag.server")
 

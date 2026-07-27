@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import pathspec
 
-from ..config import PreprocessMode, RootContentPolicyConfig, get_config
+from ..config._settings import get_config
 from . import _config_epoch, _ignore_specs
 from ._content_policy import (
     ClassifiedContent,
@@ -31,6 +31,8 @@ from ._preprocess_schema import UNIT_TEXT_MAX_CHARS, validate_max_emitted_bytes
 if TYPE_CHECKING:
     import pathlib
     from collections.abc import Sequence
+
+    from ..config._types import PreprocessMode, RootContentPolicyConfig
 
 __all__ = [
     "DecoderPolicy",
@@ -217,7 +219,7 @@ def _thaw_scalar(tag: _ScalarTag, payload: object) -> object:
     """Validate and materialize one canonical scalar."""
     if tag in {"date", "time", "datetime"}:
         return _thaw_temporal(
-            cast('Literal["date", "time", "datetime"]', tag),
+            tag,
             payload,
         )
     scalar_thawers = {

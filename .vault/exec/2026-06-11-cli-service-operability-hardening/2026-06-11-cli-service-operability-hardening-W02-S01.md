@@ -1,20 +1,20 @@
 ---
 tags: ['#exec', '#cli-service-operability-hardening']
 date: '2026-06-11'
-modified: '2026-07-23'
-step_id: 'W02.S01'
+modified: '2026-07-27'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-service-jobs-operability-adr]]'
 ---
-
 # `cli-service-operability-hardening` W02.S01 - operator-grade jobs filters
 
-## Step
+## Description
+
+### Step
 
 Made the jobs surface bounded and filterable across HTTP, MCP, and CLI.
 
-## Changes
+### Changes
 
 - Added `/jobs` filters for `phase`, `source`, `trigger`, `query`, and `limit`.
 - Added `total`, `returned`, `summary`, and `filters` metadata to the jobs response.
@@ -22,7 +22,7 @@ Made the jobs surface bounded and filterable across HTTP, MCP, and CLI.
 - Added CLI options `--phase`, `--source`, `--trigger`, `--query/-q`, `--running`, and a default `--limit 20`.
 - Reworked the Rich jobs table around compact ID/source/trigger/phase/age/detail columns.
 
-## Verification
+### Verification
 
 - `uv run pytest src/vaultspec_rag/tests/integration/test_service_jobs.py`
 - `uv run vaultspec-rag index --type code --port 8766 --json`
@@ -34,7 +34,9 @@ Made the jobs surface bounded and filterable across HTTP, MCP, and CLI.
 
 Operators can now ask for latest bounded jobs, running jobs, source/trigger-specific jobs, and text-filtered jobs instead of scrolling a fragile full-history table.
 
-## Follow-Up: Focused Inspection And Liveness
+## Notes
+
+### Follow-Up: Focused Inspection And Liveness
 
 Added focused job inspection and liveness metadata across HTTP, MCP, and CLI:
 
@@ -80,11 +82,11 @@ Post-review corrections:
 - CLI and MCP reindex paths now identify themselves as `cli` and `mcp` respectively.
 - `--since 0` is preserved by the CLI argument builder.
 
-## Deferred
+### Deferred
 
 The registry still lacks OS user, wrapper identity, PID, and memory fields, so those cannot be truthfully surfaced yet.
 
-## Follow-Up: Runtime Ownership And Resource Context
+### Follow-Up: Runtime Ownership And Resource Context
 
 Implemented the missing job ownership/resource context across the registry, HTTP route,
 status summary, and CLI detail view:
@@ -124,7 +126,7 @@ Observed:
   CUDA allocated `3520.1 MB`, and CUDA reserved `3532.0 MB`.
 - The final resident service was restarted on port `8766` with serving PID `32848`.
 
-## Follow-Up: Logs Filtering Parity
+### Follow-Up: Logs Filtering Parity
 
 Implemented a small logs parity slice so operators can narrow the service log without
 dumping the whole tail:

@@ -3,20 +3,24 @@ tags:
   - '#exec'
   - '#async-service-index'
 date: '2026-06-04'
-modified: '2026-06-30'
+modified: '2026-07-27'
 step_id: 'S03'
 related:
   - "[[2026-06-04-async-service-index-plan]]"
 ---
 
-# parse background queue payload and exit CLI client immediately
+## Description
 
-## Scope
+### Scope
 
 - `src/vaultspec_rag/cli/_index.py`
 
-## Description
+No separate description is recorded in the retained prior execution record. Source: retained prior execution record body.
 
 ## Outcome
 
+No separate outcome is recorded in the retained prior execution record. Source: retained prior execution record body.
+
 ## Notes
+
+No separate notes is recorded in the retained prior execution record. Source: retained prior execution record body.
