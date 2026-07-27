@@ -26,13 +26,13 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from . import store_schema
 from ._atomic_write import replace_atomically
 from ._store_writes import DISK_FLOOR_BYTES as _DISK_FLOOR_BYTES
+from ._timestamps import parse_iso_timestamp
 from .storage_manifest import (
     SnapshotCollection,
     StorageSnapshotManifest,
@@ -45,6 +45,7 @@ from .storage_survey import NamespaceSurvey, classify_namespaces
 if TYPE_CHECKING:
     import threading
     from collections.abc import Callable, Mapping
+    from datetime import datetime
 
     from qdrant_client import QdrantClient
 
@@ -1332,19 +1333,6 @@ def _active_index_prefixes() -> frozenset[str]:
     return frozenset(prefixes)
 
 
-def _parse_iso(ts: str) -> datetime | None:
-    """Parse an ISO-8601 timestamp; naive values are assumed UTC."""
-    if not ts:
-        return None
-    try:
-        parsed = datetime.fromisoformat(ts)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed
-
-
 def _evaluate_ephemeral(
     surveys: list[NamespaceSurvey],
     last_indexed: dict[str, str],
@@ -1378,7 +1366,9 @@ def _evaluate_ephemeral(
     )
     for survey in candidates:
         tier = "empty" if survey.points == 0 else "data"
-        stamped = _parse_iso(last_indexed.get(survey.prefix, ""))
+        stamped = parse_iso_timestamp(
+            last_indexed.get(survey.prefix, ""), field="last_indexed"
+        )
         if stamped is None:
             decisions.append(
                 ReclaimDecision(
@@ -1495,7 +1485,7 @@ def _decide_orphan(
     """Decide one orphaned namespace against its tiered grace window."""
     tier = "empty" if survey.points == 0 else "data"
     window_hours = policy.grace_hours if tier == "empty" else policy.grace_hours_data
-    first_seen = _parse_iso(stamps.get(survey.prefix, ""))
+    first_seen = parse_iso_timestamp(stamps.get(survey.prefix, ""), field="first_seen")
     if first_seen is None:
         return ReclaimDecision(
             survey.prefix,

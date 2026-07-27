@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from .._atomic_write import write_json_atomically
+from .._timestamps import age_seconds
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Mapping
@@ -409,23 +410,6 @@ def _coerce_port(port: Any) -> int | None:
         return None
 
 
-def _heartbeat_age_seconds(payload: dict[str, Any]) -> float | None:
-    """Return the payload heartbeat's age in seconds, or ``None`` when absent."""
-    from datetime import UTC, datetime
-
-    raw = payload.get("last_heartbeat")
-    if not isinstance(raw, str) or not raw:
-        return None
-    try:
-        ts = datetime.fromisoformat(raw)
-    except ValueError as exc:
-        logger.debug("discovery last_heartbeat %r unparseable: %s", raw, exc)
-        return None
-    if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=UTC)
-    return (datetime.now(UTC) - ts).total_seconds()
-
-
 def _staleness_window_seconds(payload: dict[str, Any]) -> float:
     """Return the payload's own staleness window, or the fallback."""
     threshold = payload.get("stale_after_s")
@@ -559,7 +543,7 @@ def resolve_machine_service() -> MachineResolution:
         raw_pid if isinstance(raw_pid, int) and not isinstance(raw_pid, bool) else None
     )
     token = payload.get("service_token")
-    age = _heartbeat_age_seconds(payload)
+    age = age_seconds(payload, "last_heartbeat")
     window = _staleness_window_seconds(payload)
 
     def degraded(reason: str) -> MachineResolution:

@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
-import shutil
 import tempfile
 from contextvars import Context
 from pathlib import Path
@@ -16,6 +14,7 @@ from vaultspec_core.core.mcps import (  # pyright: ignore[reportMissingTypeStubs
     mcp_uninstall,
 )
 
+from .._rmtree import remove_tree
 from .._workspace_layout import (
     VAULT_DATA_DIR,
     WORKSPACE_DIR,
@@ -92,7 +91,7 @@ def _remove_obsolete_sentinels(
         rel = relative.as_posix()
         if not dry_run:
             try:
-                shutil.rmtree(sentinel_dir, onexc=_rmtree_safe_onexc)
+                remove_tree(sentinel_dir)
             except OSError as exc:
                 logger.warning("Failed to remove %s: %s", rel, exc)
                 report.warnings.append(f"failed to remove {rel}: {exc}")
@@ -112,7 +111,7 @@ def _remove_data_dir(target: Path, dry_run: bool, report: UninstallReport) -> No
     elif data_dir.is_dir():
         if not dry_run:
             try:
-                shutil.rmtree(data_dir, onexc=_rmtree_safe_onexc)
+                remove_tree(data_dir)
             except OSError as exc:
                 logger.warning("Failed to remove %s: %s", data_dir, exc)
                 report.warnings.append(f"failed to remove .vault/data: {exc}")
@@ -440,24 +439,3 @@ def uninstall_run(
         _remove_data_dir(target, dry_run, report)
 
     return report
-
-
-def _rmtree_safe_onexc(_func: object, path: str | bytes, exc: BaseException) -> None:
-    """``shutil.rmtree`` error handler (Python 3.12+ ``onexc`` form)
-    that unlinks symlinks instead of following them.
-
-    Defensive secondary guard against the case where a symlink is
-    encountered inside ``.vault/data/`` after the top-level
-    ``is_symlink`` check has already passed. Python 3.12+ ``onexc``
-    receives the exception instance directly instead of an
-    ``exc_info`` tuple.
-    """
-    p = Path(os.fsdecode(path))
-    if p.is_symlink():
-        try:
-            p.unlink()
-        except OSError as e:
-            logger.warning("Failed to unlink symlink %s: %s", p, e)
-        return
-    # Re-raise the original error for non-symlink failures.
-    raise exc

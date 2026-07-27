@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
 from .._atomic_write import write_json_atomically
+from .._rmtree import remove_tree
 from .._sync_vocabulary import ProvisionAction
 from .._units import human_bytes
 from ._constants import (
@@ -649,20 +650,6 @@ def clean_provisioned(*, keep_current: bool = False) -> list[str]:
             continue
         if keep_current and child.name == QDRANT_SERVER_VERSION:
             continue
-        shutil.rmtree(child, onexc=_rmtree_safe_onexc)
+        remove_tree(child)
         removed.append(child.name)
     return removed
-
-
-def _rmtree_safe_onexc(_func: object, path: str | bytes, exc: BaseException) -> None:
-    """``shutil.rmtree`` error handler that unlinks a symlink rather than
-    following it (defense-in-depth for a symlink/junction encountered mid-tree
-    after the top-level ``is_symlink`` check)."""
-    p = Path(os.fsdecode(path))
-    if p.is_symlink():
-        try:
-            p.unlink()
-        except OSError as exc_unlink:
-            logger.warning("Failed to unlink symlink %s: %s", p, exc_unlink)
-        return
-    raise exc

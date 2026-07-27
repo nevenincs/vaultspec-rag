@@ -25,9 +25,8 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from .._process_probe import (
     bounded_call,
@@ -62,7 +61,6 @@ __all__ = [
     "DaemonBreakawayError",
     "TerminationResult",
     "_call_interruptibly",
-    "_heartbeat_age_seconds",
     "_is_our_service",
     "_port_is_available",
     "_port_is_listening",
@@ -302,28 +300,6 @@ def _port_is_listening(port: int) -> bool:
         return sock.connect_ex(("127.0.0.1", port)) == 0
     finally:
         sock.close()
-
-
-def _heartbeat_age_seconds(status: dict[str, Any]) -> float | None:
-    """Compute seconds since the daemon's last heartbeat write.
-
-    Returns ``None`` when the field is missing (pre-upgrade
-    ``service.json`` or daemon that crashed before its first tick) or
-    when the timestamp is unparseable. Callers treat ``None`` as
-    "no heartbeat data" rather than "fresh".
-    """
-    raw = status.get("last_heartbeat")
-    if not isinstance(raw, str) or not raw:
-        return None
-    try:
-        ts = datetime.fromisoformat(raw)
-    except ValueError as exc:
-        logger.debug("last_heartbeat %r unparseable: %s", raw, exc)
-        return None
-    if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=UTC)
-    delta = datetime.now(UTC) - ts
-    return delta.total_seconds()
 
 
 def _service_child_env(

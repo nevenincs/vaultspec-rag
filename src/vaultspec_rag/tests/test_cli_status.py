@@ -217,7 +217,7 @@ class TestStatusCommand:
 
 
 class TestServiceLifecycleHelpers:
-    """_port_is_listening + _heartbeat_age_seconds helpers."""
+    """_port_is_listening + the canonical heartbeat-age reader."""
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
@@ -251,24 +251,24 @@ class TestServiceLifecycleHelpers:
 
     def test_heartbeat_age_missing_field(self):
         """No last_heartbeat → None (caller treats as 'no data')."""
-        from ..cli import _heartbeat_age_seconds
+        from .._timestamps import age_seconds
 
-        assert _heartbeat_age_seconds({"pid": 1, "port": 2}) is None
+        assert age_seconds({"pid": 1, "port": 2}, "last_heartbeat") is None
 
     def test_heartbeat_age_malformed_timestamp(self):
         """Unparseable timestamp → None, no exception."""
-        from ..cli import _heartbeat_age_seconds
+        from .._timestamps import age_seconds
 
-        assert _heartbeat_age_seconds({"last_heartbeat": "not-a-date"}) is None
+        assert age_seconds({"last_heartbeat": "not-a-date"}, "last_heartbeat") is None
 
     def test_heartbeat_age_fresh(self):
         """Just-written heartbeat → near-zero seconds."""
         from datetime import UTC, datetime
 
-        from ..cli import _heartbeat_age_seconds
+        from .._timestamps import age_seconds
 
         ts = datetime.now(UTC).isoformat(timespec="seconds")
-        age = _heartbeat_age_seconds({"last_heartbeat": ts})
+        age = age_seconds({"last_heartbeat": ts}, "last_heartbeat")
         assert age is not None
         assert 0 <= age < 5
 
@@ -276,12 +276,12 @@ class TestServiceLifecycleHelpers:
         """Old heartbeat → seconds matching the synthesized delta."""
         from datetime import UTC, datetime, timedelta
 
-        from ..cli import _heartbeat_age_seconds
+        from .._timestamps import age_seconds
 
         old = (datetime.now(UTC) - timedelta(seconds=120)).isoformat(
             timespec="seconds",
         )
-        age = _heartbeat_age_seconds({"last_heartbeat": old})
+        age = age_seconds({"last_heartbeat": old}, "last_heartbeat")
         assert age is not None
         assert 115 < age < 125
 
@@ -289,7 +289,7 @@ class TestServiceLifecycleHelpers:
         """Pre-3.13-style naive ISO timestamps must not crash."""
         from datetime import UTC, datetime, timedelta
 
-        from ..cli import _heartbeat_age_seconds
+        from .._timestamps import age_seconds
 
         old = (
             (datetime.now(UTC) - timedelta(seconds=10))
@@ -298,7 +298,7 @@ class TestServiceLifecycleHelpers:
             )
             .isoformat(timespec="seconds")
         )
-        age = _heartbeat_age_seconds({"last_heartbeat": old})
+        age = age_seconds({"last_heartbeat": old}, "last_heartbeat")
         assert age is not None
         assert 8 < age < 15
 
