@@ -32,6 +32,10 @@ from ..serviceclient._transport import _try_http_admin
 pytestmark = [pytest.mark.unit]
 
 _HANDOFF_TIMEOUT = 10.0
+# How often the waits below re-read the screen. Everything they wait on arrives
+# on a worker thread, so the granularity is dead time added to every wait, not
+# work: it buys nothing to sit on a settled frame for a whole tick.
+_POLL_INTERVAL = 0.005
 # Wide enough that a two-pane layout leaves every column, and a toast, room to
 # paint whole. Anything asserted on rendered text needs the text to have fitted.
 _WIDE = (200, 24)
@@ -256,7 +260,14 @@ class _JobService:
         # slower of the two look like a hang.
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
         self.server.daemon_threads = True
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        # ``shutdown`` blocks until the accept loop next checks its flag, so the
+        # poll interval is paid in full by every teardown. The default half
+        # second dominates a file that stands one of these up per test.
+        self.thread = threading.Thread(
+            target=self.server.serve_forever,
+            kwargs={"poll_interval": 0.005},
+            daemon=True,
+        )
         self.thread.start()
 
     @property
@@ -1466,9 +1477,17 @@ async def _ready(pilot: typing.Any, app: JobsTuiApp) -> None:
     shares divided from that agree with it. So the division has to survive a
     frame tick - the interval at which the interface re-reads the width - to
     count as settled.
+
+    The tick is spanned by holding the agreement rather than by sleeping over
+    it: the match is re-read every poll and the clock restarts the moment it
+    breaks, so the window closes only on a division that agreed for the whole
+    of it. Sleeping a tick and re-reading afterwards checks two instants and
+    is blind to everything between them, and pays a full tick for each of the
+    several rounds the first paint takes.
     """
     deadline = time.monotonic() + _HANDOFF_TIMEOUT
-    settled_at: int | None = None
+    matched_at: float | None = None
+    matched_width: int | None = None
     while time.monotonic() < deadline:
         await pilot.pause()
         table = app.query("#jobs")
@@ -1483,14 +1502,16 @@ async def _ready(pilot: typing.Any, app: JobsTuiApp) -> None:
             # a frame no operator ever sees.
             and app.selected_id
         ):
-            settled_at = None
-            await asyncio.sleep(0.02)
+            matched_at = None
+            await asyncio.sleep(_POLL_INTERVAL)
             continue
         width = table.only_one(DataTable).size.width
-        if settled_at == width:
+        now = time.monotonic()
+        if matched_at is None or matched_width != width:
+            matched_at, matched_width = now, width
+        elif now - matched_at >= _SPINNER_INTERVAL * 1.5:
             return
-        settled_at = width
-        await asyncio.sleep(_SPINNER_INTERVAL * 2)
+        await asyncio.sleep(_POLL_INTERVAL)
     raise AssertionError("the interface never completed its first paint")
 
 
@@ -1501,14 +1522,19 @@ async def _settle(pilot: typing.Any) -> None:
         await pilot.pause()
         if not any(worker.is_running for worker in pilot.app.workers):
             return
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(_POLL_INTERVAL)
     raise AssertionError("the interface's workers did not settle")
 
 
 async def _settled_paint(pilot: typing.Any, app: JobsTuiApp) -> None:
-    """Let the layout settle after a change that re-divides the columns."""
+    """Let the layout settle after a change that re-divides the columns.
+
+    Held across a frame tick rather than slept over, for the reason given in
+    ``_ready``.
+    """
     deadline = time.monotonic() + _HANDOFF_TIMEOUT
-    settled_at: int | None = None
+    matched_at: float | None = None
+    matched_width: int | None = None
     while time.monotonic() < deadline:
         await pilot.pause()
         table = app.query("#jobs")
@@ -1517,10 +1543,14 @@ async def _settled_paint(pilot: typing.Any, app: JobsTuiApp) -> None:
         if not table or not table.only_one(DataTable).display:
             return
         width = table.only_one(DataTable).size.width
-        if app._divided_width == width and settled_at == width:
+        now = time.monotonic()
+        if app._divided_width != width:
+            matched_at = None
+        elif matched_at is None or matched_width != width:
+            matched_at, matched_width = now, width
+        elif now - matched_at >= _SPINNER_INTERVAL * 1.5:
             return
-        settled_at = width if app._divided_width == width else None
-        await asyncio.sleep(_SPINNER_INTERVAL * 2)
+        await asyncio.sleep(_POLL_INTERVAL)
 
 
 async def _await_painted(pilot: typing.Any, app: JobsTuiApp, needle: str) -> str:
@@ -1538,7 +1568,7 @@ async def _await_painted(pilot: typing.Any, app: JobsTuiApp, needle: str) -> str
         painted = _screen_text(app)
         if needle in painted:
             return painted
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(_POLL_INTERVAL)
     raise AssertionError(f"{needle!r} was never painted; last frame:\n{painted}")
 
 
@@ -1556,7 +1586,7 @@ async def _await_painted_when(
         painted = _screen_text(app)
         if predicate(painted):
             return painted
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(_POLL_INTERVAL)
     raise AssertionError(f"{described} was never painted; last frame:\n{painted}")
 
 
@@ -1569,7 +1599,7 @@ async def _await_gone(pilot: typing.Any, app: JobsTuiApp, needle: str) -> str:
         painted = _screen_text(app)
         if needle not in painted:
             return painted
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(_POLL_INTERVAL)
     raise AssertionError(f"{needle!r} never left the screen; last frame:\n{painted}")
 
 
