@@ -20,7 +20,7 @@ from ..serviceclient._transport import (
 from ._app import JobIdArgument, JsonEnvelopeMode, PortOption, server_job_app
 from ._render import _emit_json, _emit_json_error_and_exit, _plain
 from ._service_jobs_presentation import _render_job_detail
-from ._service_jobs_query import _jobs_from_result
+from ._service_jobs_query import _jobs_from_result, job_revision
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,14 +230,14 @@ def _exact_job_for_control(
     return exact_id, job
 
 
-def _job_revision(
+def _require_job_revision(
     job: dict[str, object],
     *,
     command: str,
     json_mode: bool,
 ) -> int:
-    revision = job.get("revision")
-    if isinstance(revision, int) and not isinstance(revision, bool) and revision >= 1:
+    revision = job_revision(job)
+    if revision is not None:
         return revision
     _job_control_failure(
         _JobControlFailureRequest(
@@ -306,7 +306,7 @@ def _set_job_state(request: _JobStateChangeRequest) -> None:
         command=command,
         json_mode=request.json_mode,
     )
-    revision = _job_revision(job, command=command, json_mode=request.json_mode)
+    revision = _require_job_revision(job, command=command, json_mode=request.json_mode)
     result = _try_http_set_job_desired_state(
         exact_id,
         request.state,

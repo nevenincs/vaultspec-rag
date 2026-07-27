@@ -40,14 +40,14 @@ from ._jobs_tui_status import (
     fetch_service_status,
 )
 from ._service_jobs_presentation import (
+    _human_progress,
+    _operation_label,
     _phase_label,
+    _project_label,
     _project_root,
-    human_progress,
-    operation_label,
-    project_label,
-    stale_progress_label,
+    _stale_progress_label,
 )
-from ._service_jobs_query import job_is_waiting
+from ._service_jobs_query import _job_is_waiting, job_revision
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -217,13 +217,6 @@ def _capability(job: dict[str, object], flag: str) -> bool:
     return cast("dict[str, object]", capabilities).get(flag) is not False
 
 
-def _job_revision(job: dict[str, object]) -> int | None:
-    revision = job.get("revision")
-    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
-        return None
-    return revision
-
-
 def _fit(value: str, cells: int) -> str:
     """Trim *value* to *cells*, marking the trim.
 
@@ -264,8 +257,8 @@ def _row_animates(job: dict[str, object]) -> bool:
     """
     return (
         str(job.get("phase", "")) == "running"
-        and not job_is_waiting(job)
-        and not stale_progress_label(job)
+        and not _job_is_waiting(job)
+        and not _stale_progress_label(job)
     )
 
 
@@ -373,7 +366,7 @@ def _job_cell(job: dict[str, object], cells: int) -> Text:
     if isinstance(initiator, dict):
         kind = str(cast("dict[str, object]", initiator).get("kind") or "")
     subtitle = f"{_short_id(job)} · {kind}" if kind else _short_id(job)
-    return _two_line(operation_label(job), subtitle, cells, top_style="bold")
+    return _two_line(_operation_label(job), subtitle, cells, top_style="bold")
 
 
 def _elide_left(value: str, cells: int) -> str:
@@ -393,13 +386,13 @@ def _path_cell(job: dict[str, object], cells: int) -> Text:
     """Render the project and its root, tail-first when the root is long."""
     root = _project_root(job)
     shown = _elide_left(root, cells) if root else "path not reported"
-    return _two_line(project_label(job), shown, cells)
+    return _two_line(_project_label(job), shown, cells)
 
 
 def _progress_cell(job: dict[str, object], cells: int, bar_cells: int) -> Text:
     """Render the progress cell, sizing the bar to the column it lands in."""
-    detail = human_progress(job) or "—"
-    stale = stale_progress_label(job)
+    detail = _human_progress(job) or "—"
+    stale = _stale_progress_label(job)
     if stale:
         return _two_line(detail, stale, cells, bottom_style="bold red")
     progress = job.get("progress")
@@ -1141,7 +1134,7 @@ class JobsTuiApp(App[None]):
         job = self._actionable(action)
         if job is None:
             return
-        revision = _job_revision(job)
+        revision = job_revision(job)
         if revision is None:
             self.notify("The service reported no revision for this job.")
             return

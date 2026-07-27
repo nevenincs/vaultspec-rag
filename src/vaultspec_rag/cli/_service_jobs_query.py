@@ -228,6 +228,13 @@ def _jobs_from_result(result: dict[str, object]) -> list[object]:
     return cast("list[object]", raw_jobs) if isinstance(raw_jobs, list) else []
 
 
+def job_revision(job: dict[str, object]) -> int | None:
+    revision = job.get("revision")
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
+        return None
+    return revision
+
+
 def _empty_jobs_message(result: dict[str, object], job_id: str | None) -> str:
     message = "No jobs have been reported by this service yet."
     if job_id:

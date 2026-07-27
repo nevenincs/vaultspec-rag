@@ -131,8 +131,8 @@ def test_the_watch_refresh_is_a_read_only_request() -> None:
 
     server, thread, requests = _jobs_empty_contract_server()
     try:
-        jobs_query.fetch_jobs_result(
-            jobs_query.JobsQuery(port=server.server_address[1], limit=5)
+        jobs_query._fetch_jobs_result(
+            jobs_query._JobsQuery(port=server.server_address[1], limit=5)
         )
     finally:
         server.shutdown()
