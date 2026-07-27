@@ -11,7 +11,7 @@ import functools
 import re
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, NoReturn, cast
+from typing import Annotated, NoReturn, cast
 
 import typer
 
@@ -46,7 +46,6 @@ from ._cli_format import (
     _format_seconds,
     _path_label,
 )
-from ._process import _call_interruptibly
 from ._render import (
     _address_line,
     _display_service_not_running,
@@ -54,9 +53,6 @@ from ._render import (
     _emit_json_error_and_exit,
     _plain,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 __all__ = [
     "_human_progress",
@@ -556,23 +552,9 @@ def _render_jobs_header(
     _plain(counts_line)
 
 
-def _render_filter_and_watch(
-    filter_text: str,
-    *,
-    monitoring: bool,
-    watch_text: str | None,
-) -> None:
-    """Print the filter line and, while watching, the refresh banner.
-
-    Shared so the two views cannot drift into telling an operator different
-    things about the same refresh.
-    """
+def _render_filter_line(filter_text: str) -> None:
     if filter_text:
         _plain(f"Filter: {filter_text}")
-    if not monitoring:
-        return
-    _plain(f"Refreshed: {time.strftime('%H:%M:%S', time.localtime())}")
-    _cli.console.print(watch_text or "Watch: press Ctrl+C to stop.")
 
 
 def _render_jobs_feed(
@@ -580,8 +562,6 @@ def _render_jobs_feed(
     jobs: list[object],
     *,
     port: int,
-    monitoring: bool = False,
-    watch_text: str | None = None,
 ) -> None:
     sorted_jobs = _human_sorted_jobs(jobs)
     filter_text = _filter_line(result)
@@ -601,7 +581,7 @@ def _render_jobs_feed(
     # always contains the literal words "active"/"waiting", so grepping it for
     # job states self-deadlocks (a waiter that greps "active" always matches).
     _plain("Scripting: use --json (this summary always contains the word 'active')")
-    _render_filter_and_watch(filter_text, monitoring=monitoring, watch_text=watch_text)
+    _render_filter_line(filter_text)
     job_id_labels = _job_id_labels(sorted_jobs)
     for index, job in enumerate(sorted_jobs):
         job_id = job_id_labels[index]
@@ -618,8 +598,6 @@ def _render_empty_jobs_result(
     *,
     job_id: str | None,
     port: int,
-    monitoring: bool,
-    watch_text: str | None = None,
 ) -> None:
     filter_text = _filter_line(result)
     _render_jobs_header(
@@ -631,7 +609,7 @@ def _render_empty_jobs_result(
         counts_line=_job_counts_line(0, 0, 0, 0),
     )
     _plain("Order: latest job appears last")
-    _render_filter_and_watch(filter_text, monitoring=monitoring, watch_text=watch_text)
+    _render_filter_line(filter_text)
     _cli.console.print(_empty_jobs_message(result, job_id))
     _plain("Next actions:")
     _plain(f"  vaultspec-rag server status --port {port}")
@@ -978,18 +956,10 @@ def _render_jobs_result(
     *,
     job_id: str | None,
     port: int,
-    monitoring: bool = False,
-    watch_text: str | None = None,
 ) -> None:
     jobs = _jobs_from_result(result)
     if not jobs:
-        _render_empty_jobs_result(
-            result,
-            job_id=job_id,
-            port=port,
-            monitoring=monitoring,
-            watch_text=watch_text,
-        )
+        _render_empty_jobs_result(result, job_id=job_id, port=port)
         return
     if job_id:
         if len(jobs) > 1:
@@ -1005,9 +975,7 @@ def _render_jobs_result(
             port=port,
         )
         return
-    _render_jobs_feed(
-        result, jobs, port=port, monitoring=monitoring, watch_text=watch_text
-    )
+    _render_jobs_feed(result, jobs, port=port)
 
 
 def _exit_invalid_watch_args(json_mode: bool, interval: float) -> NoReturn:
@@ -1054,64 +1022,6 @@ def _apply_client_state_filter(
     )
     filtered["filters"] = {**filter_dict, "state": state}
     return filtered
-
-
-def _watch_status_text(refresh_number: int, refresh_count: int | None) -> str:
-    if refresh_count is None:
-        return "Watch: press Ctrl+C to stop."
-    return f"Watch: refresh {refresh_number} of {refresh_count}."
-
-
-def _stop_watching() -> NoReturn:
-    """Leave the refreshing view on an operator interrupt.
-
-    Watch only reads, so there is nothing to unwind. Exit on the conventional
-    interrupted status rather than reporting the success the operator never
-    got, and without a traceback they did not ask for.
-    """
-    _cli.console.print("\n[dim]Stopped watching jobs.[/]")
-    raise typer.Exit(130)
-
-
-def _watch_jobs(
-    fetch: Callable[[], dict[str, object] | None],
-    *,
-    job_id: str | None,
-    port: int,
-    interval: float,
-    refresh_count: int | None,
-    client_state: str | None,
-) -> None:
-    """Re-render *fetch*'s result on an interval until interrupted.
-
-    Takes the bound fetch rather than the filter set so the query is spelled
-    once in the command and both the one-shot and watching paths are provably
-    reading the same thing.
-    """
-    refreshes = 0
-    while refresh_count is None or refreshes < refresh_count:
-        # The refresh is one instance of the general problem of keeping the
-        # main thread interruptible across a blocking call, so it shares the
-        # process module's helper rather than carrying a second copy of the
-        # same threading rationale. A divergence between two copies would be a
-        # Ctrl+C that works in one operator view and not the other.
-        result = _call_interruptibly(fetch)
-        if result is None:
-            _exit_jobs_not_running(False, port)
-        result = _apply_client_state_filter(result, client_state)
-        _cli.console.clear()
-        refresh_number = refreshes + 1
-        _render_jobs_result(
-            result,
-            job_id=job_id,
-            port=port,
-            monitoring=True,
-            watch_text=_watch_status_text(refresh_number, refresh_count),
-        )
-        refreshes += 1
-        if refresh_count is not None and refreshes >= refresh_count:
-            return
-        time.sleep(interval)
 
 
 def _job_control_command(action: str) -> str:
@@ -1544,19 +1454,15 @@ def service_jobs(
     ] = False,
     watch: Annotated[
         bool,
-        typer.Option("--watch", help="Continuously refresh the human jobs view."),
+        typer.Option(
+            "--watch",
+            help="Open the interactive jobs interface with per-job controls.",
+        ),
     ] = False,
     interval: Annotated[
         float,
         typer.Option("--interval", help="Seconds between --watch refreshes."),
     ] = 2.0,
-    refresh_count: Annotated[
-        int | None,
-        typer.Option(
-            "--refresh-count",
-            help="Stop --watch after this many refreshes.",
-        ),
-    ] = None,
 ) -> None:
     """Show recent index update activity from the running service."""
     phase, client_state = _jobs_state_filter(state, json_mode)
@@ -1583,17 +1489,19 @@ def service_jobs(
     )
     fetch = functools.partial(_fetch_jobs_result, spec)
     if watch:
-        try:
-            _watch_jobs(
-                fetch,
-                job_id=job_id,
-                port=resolved_port,
-                interval=interval,
-                refresh_count=refresh_count,
-                client_state=client_state,
+        # Imported here so the one-shot and structured paths never pay for
+        # the interface, and a terminal-less host can still read the feed.
+        from ._jobs_tui import run_jobs_tui
+
+        def watched_fetch() -> dict[str, object] | None:
+            result = fetch()
+            return (
+                None
+                if result is None
+                else _apply_client_state_filter(result, client_state)
             )
-        except KeyboardInterrupt:
-            _stop_watching()
+
+        run_jobs_tui(watched_fetch, port=resolved_port, interval=interval)
         return
 
     result = fetch()
