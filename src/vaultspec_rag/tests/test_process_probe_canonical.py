@@ -830,6 +830,95 @@ class TestAtomicReplaceHasOneImplementation:
         assert replace_atomically is not replace_durably
 
 
+class TestPinnedAssetNamesAreNamedOnce:
+    """Every release asset filename is written once and pinned once.
+
+    The digest table is keyed by asset filename, and the platform resolver
+    wrote those filenames out again as literals to pick one. The resolver
+    already refused an asset with no committed digest, so a typo could not
+    reach a download - but that check only runs for the platform the typo is
+    on, so a bad edit surfaced as a provisioning failure on one architecture
+    instead of as a bad edit.
+
+    The reverse direction had no check at all, and the two lists do differ:
+    six assets are pinned, five are reachable. The x86-64 musl build is pinned
+    and no platform selects it. That is deliberate - dropping a reviewed pin is
+    how an unpinned asset later becomes reachable - so it is asserted as the
+    one known exception rather than left as an unexplained gap.
+    """
+
+    #: Pinned but deliberately unreachable; see the constant's comment.
+    _UNREACHABLE: ClassVar[frozenset[str]] = frozenset(
+        {"qdrant-x86_64-unknown-linux-musl.tar.gz"}
+    )
+
+    #: Every pair the resolver accepts today.
+    _PLATFORMS: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("win32", "amd64"),
+        ("win32", "x86_64"),
+        ("darwin", "arm64"),
+        ("darwin", "aarch64"),
+        ("darwin", "x86_64"),
+        ("linux", "x86_64"),
+        ("linux", "amd64"),
+        ("linux", "aarch64"),
+        ("linux", "arm64"),
+    )
+
+    def test_no_module_but_the_constants_spells_an_asset_filename(self) -> None:
+        """A literal asset name anywhere else is a second spelling."""
+        pattern = re.compile(r"^qdrant-[a-z0-9_]+-[a-z0-9-]+\.(tar\.gz|zip)$")
+        offenders: list[str] = []
+        for path in _every_production_file():
+            if path.name == "_constants.py":
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            offenders.extend(
+                f"{path.name}:{node.lineno} spells {node.value!r}"
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and pattern.match(node.value)
+            )
+        assert not offenders, (
+            f"a release asset filename is spelled outside the pin table at "
+            f"{offenders}; import the named constant, so the name the digest "
+            "is keyed by and the name the resolver picks cannot diverge"
+        )
+
+    def test_every_selectable_asset_is_pinned_and_the_gap_is_declared(self) -> None:
+        """Both directions, so neither list can drift unnoticed.
+
+        Proven able to fail: adding a pin with no selecting platform, or
+        making the musl build selectable, fails the second assertion.
+
+        The first assertion needs the resolver's OWN pin check removed before
+        it can be reached - pointing a branch at an unpinned asset raises
+        inside ``asset_for_platform`` first, so a one-line mutation fails this
+        test on that RuntimeError rather than on the assertion, which proves
+        nothing about the assertion. It is deliberately kept as the check that
+        survives if that guard is ever loosened.
+        """
+        from ..qdrant_runtime._constants import QDRANT_ASSET_SHA256
+        from ..qdrant_runtime._resolve import asset_for_platform
+
+        selectable = {
+            asset_for_platform(platform, machine)
+            for platform, machine in self._PLATFORMS
+        }
+        assert not selectable - set(QDRANT_ASSET_SHA256), (
+            "the resolver can select an asset with no committed SHA256 pin"
+        )
+        assert set(QDRANT_ASSET_SHA256) - selectable == self._UNREACHABLE, (
+            "the set of pinned-but-unreachable assets changed; either a "
+            "platform gained an asset or a pin became dead - both need saying "
+            "out loud rather than drifting"
+        )
+
+
 class TestNoOptionIsDeclaredTwice:
     """No two commands declare the same flag for themselves.
 
