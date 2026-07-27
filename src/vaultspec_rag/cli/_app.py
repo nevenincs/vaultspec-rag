@@ -30,9 +30,16 @@ from ._render import _plain
 __all__ = [
     "JSON_ENVELOPE_OPTION_HELP",
     "JSON_OPTION_HELP",
+    "PORT_OPTION_HELP",
     "CLIState",
+    "JobIdArgument",
     "JsonEnvelopeMode",
     "JsonMode",
+    "PortOption",
+    "RepeatUpdateDelayOption",
+    "SkipOption",
+    "TargetOption",
+    "UpdateDelayOption",
     "_global_target",
     "app",
     "main",
@@ -67,6 +74,65 @@ JSON_ENVELOPE_OPTION_HELP = "Emit one structured JSON outcome."
 JsonMode = Annotated[bool, typer.Option("--json", help=JSON_OPTION_HELP)]
 JsonEnvelopeMode = Annotated[
     bool, typer.Option("--json", help=JSON_ENVELOPE_OPTION_HELP)
+]
+
+#: How every verb describes ``--port``. Eighteen declarations spelled it out,
+#: and they had already split into two sentences for one flag: sixteen said
+#: this, while ``index`` and ``search`` said "Use the service running on this
+#: port." Both mean the same thing, so an operator comparing two ``--help``
+#: screens was reading a difference that was not there. The majority wording is
+#: kept because it also documents what omitting the flag does.
+PORT_OPTION_HELP = "Service port (defaults to running service)."
+
+#: The service-address flag. Every verb that can talk to a running daemon takes
+#: it with the same name, the same type, and the same optional-means-discover
+#: default, so it is one declaration rather than one per verb.
+PortOption = Annotated[int | None, typer.Option("--port", help=PORT_OPTION_HELP)]
+
+#: The job selector the job verbs share. Six of them accepted it and each
+#: repeated the sentence explaining that a prefix is allowed in human mode -
+#: a rule about the id format, so it belongs to the argument and not to any
+#: one verb that reads it.
+JobIdArgument = Annotated[
+    str, typer.Argument(help="Exact job id or human-mode prefix.")
+]
+
+#: Watcher tuning, declared once for the two verbs that accept it. ``server
+#: start`` and ``server watch`` set the same two knobs, and a default or a
+#: unit changed in one of them would have left the other describing the old
+#: contract in ``--help`` while still forwarding to the same service route.
+UpdateDelayOption = Annotated[
+    int | None,
+    typer.Option(
+        "--update-delay-ms",
+        help="Delay before indexing a burst of file changes, in milliseconds.",
+    ),
+]
+RepeatUpdateDelayOption = Annotated[
+    float | None,
+    typer.Option(
+        "--repeat-update-delay-s",
+        help="Minimum wait before automatically updating a project again, in seconds.",
+    ),
+]
+
+#: The install verbs' shared workspace and component selectors. ``install`` and
+#: ``uninstall`` must agree on what ``--target`` resolves and what ``--skip``
+#: names, or the pair stops being symmetric.
+TargetOption = Annotated[
+    Path | None,
+    typer.Option(
+        "--target",
+        "-t",
+        help="Workspace path (default: current working directory).",
+        dir_okay=True,
+        file_okay=False,
+        resolve_path=True,
+    ),
+]
+SkipOption = Annotated[
+    list[str] | None,
+    typer.Option("--skip", help="Skip a component (repeatable)."),
 ]
 
 

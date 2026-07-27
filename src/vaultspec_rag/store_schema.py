@@ -337,6 +337,40 @@ def effective_dense_dim() -> int:
     return dim if dim > 0 else DEFAULT_DENSE_DIM
 
 
+def effective_sparse_dim(model: object) -> int:
+    """Resolve the sparse width a run will write, or ``1`` when sparse is off.
+
+    The counterpart to :func:`effective_dense_dim`, and here for the same
+    reason: the width a collection is built with must come from one place. The
+    code and document indexers each resolved it inline, in blocks that were
+    identical down to the strict ``type(...) is not int`` test, so a rule
+    change would have had to be made twice in two files that never import each
+    other.
+
+    Args:
+        model: The loaded embedding model, asked for ``sparse_dimension``.
+
+    Returns:
+        The model's sparse width, or ``1`` when sparse vectors are disabled -
+        the placeholder width a collection still needs a number for.
+
+    Raises:
+        RuntimeError: When sparse is enabled and the loaded model reports no
+            usable width. ``type(...) is not int`` rather than ``isinstance``
+            on purpose: ``bool`` is an ``int`` subclass, and a model reporting
+            ``True`` would otherwise be read as a width of one and produce a
+            collection that accepts exactly one sparse term.
+    """
+    from .config import get_config
+
+    if not bool(get_config().sparse_enabled):
+        return 1
+    value = getattr(model, "sparse_dimension", None)
+    if type(value) is not int or value <= 0:
+        raise RuntimeError("loaded sparse model has no valid output dimension")
+    return value
+
+
 def describe_storage_schema() -> dict[str, Any]:
     """Build the bounded wire descriptor a consumer asserts compatibility against.
 

@@ -658,16 +658,11 @@ class DocumentIndexer:
     ) -> DocumentRunCheckpoint:
         """Open one compatible storage-confirmed document generation."""
         from ..config import get_config
+        from ..store_schema import effective_sparse_dim
 
         config = get_config()
         sparse_enabled = bool(config.sparse_enabled)
-        sparse_dimension_value = getattr(self.model, "sparse_dimension", None)
-        if sparse_enabled:
-            if type(sparse_dimension_value) is not int or sparse_dimension_value <= 0:
-                raise RuntimeError("loaded sparse model has no valid output dimension")
-            sparse_dimension = sparse_dimension_value
-        else:
-            sparse_dimension = 1
+        sparse_dimension = effective_sparse_dim(self.model)
         model_identity = json.dumps(
             {
                 "dense": str(config.embedding_model),

@@ -32,7 +32,14 @@ from ..serviceclient._transport import (
     _try_http_retry_job,
     _try_http_set_job_desired_state,
 )
-from ._app import JSON_OPTION_HELP, JsonEnvelopeMode, server_app, server_job_app
+from ._app import (
+    JSON_OPTION_HELP,
+    JobIdArgument,
+    JsonEnvelopeMode,
+    PortOption,
+    server_app,
+    server_job_app,
+)
 from ._cli_format import (
     _format_mb,
     _format_milliseconds,
@@ -1367,11 +1374,8 @@ def _set_job_state(
 
 @server_job_app.command("show")
 def service_job_show(
-    job_id: Annotated[str, typer.Argument(help="Exact job id or human-mode prefix.")],
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
+    job_id: JobIdArgument,
+    port: PortOption = None,
     json_mode: JsonEnvelopeMode = False,
 ) -> None:
     """Show one exact job resource; human output accepts a unique prefix."""
@@ -1391,11 +1395,8 @@ def service_job_show(
 
 @server_job_app.command("pause")
 def service_job_pause(
-    job_id: Annotated[str, typer.Argument(help="Exact job id or human-mode prefix.")],
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
+    job_id: JobIdArgument,
+    port: PortOption = None,
     json_mode: JsonEnvelopeMode = False,
 ) -> None:
     """Request a cooperative pause for one job."""
@@ -1406,11 +1407,8 @@ def service_job_pause(
 
 @server_job_app.command("resume")
 def service_job_resume(
-    job_id: Annotated[str, typer.Argument(help="Exact job id or human-mode prefix.")],
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
+    job_id: JobIdArgument,
+    port: PortOption = None,
     json_mode: JsonEnvelopeMode = False,
 ) -> None:
     """Resume one paused job through reconciliation."""
@@ -1421,11 +1419,8 @@ def service_job_resume(
 
 @server_job_app.command("stop")
 def service_job_stop(
-    job_id: Annotated[str, typer.Argument(help="Exact job id or human-mode prefix.")],
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
+    job_id: JobIdArgument,
+    port: PortOption = None,
     json_mode: JsonEnvelopeMode = False,
     force: Annotated[
         bool,
@@ -1448,11 +1443,8 @@ def service_job_stop(
 
 @server_job_app.command("retry")
 def service_job_retry(
-    job_id: Annotated[str, typer.Argument(help="Exact job id or human-mode prefix.")],
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
+    job_id: JobIdArgument,
+    port: PortOption = None,
     json_mode: JsonEnvelopeMode = False,
 ) -> None:
     """Create a linked retry for one retryable terminal job."""
@@ -1475,11 +1467,8 @@ def service_job_retry(
 
 @server_job_app.command("delete")
 def service_job_delete(
-    job_id: Annotated[str, typer.Argument(help="Exact job id or human-mode prefix.")],
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
+    job_id: JobIdArgument,
+    port: PortOption = None,
     json_mode: JsonEnvelopeMode = False,
 ) -> None:
     """Delete one terminal job from retained history."""
@@ -1541,10 +1530,7 @@ def service_jobs(
         float | None,
         typer.Option("--since", help="Show jobs updated within the last N seconds."),
     ] = None,
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
+    port: PortOption = None,
     json_mode: Annotated[
         bool,
         typer.Option(

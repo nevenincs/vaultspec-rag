@@ -17,6 +17,7 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from .._loopback_http import FAST_CONNECT_TIMEOUT_SECONDS, probe_loopback_connect
 from .._operator_commands import (
     port_option,
     server_jobs_command,
@@ -54,11 +55,14 @@ from ..serviceclient._transport import (
     _try_http_admin,
     _try_http_health,
 )
-from ._app import JSON_OPTION_HELP, server_app
+from ._app import (
+    JSON_OPTION_HELP,
+    PortOption,
+    server_app,
+)
 from ._cli_format import NOT_REPORTED
 from ._process import (
     _is_our_service,
-    _port_is_listening,
 )
 from ._render import _address_line, _emit_json, _plain
 from ._service_jobs import (
@@ -134,7 +138,13 @@ def _liveness_from_resolution(resolution: MachineResolution) -> LivenessSignals:
     pid_matches = (
         _is_our_service(pid, port=port, expected_token=token) if pid_alive else False
     )
-    port_listening = _port_is_listening(port) if port > 0 else False
+    # Status is an observability view: the fast connect bound applies, because
+    # a rare misread shows one degraded line and the next probe corrects it.
+    port_listening = (
+        probe_loopback_connect(port, timeout=FAST_CONNECT_TIMEOUT_SECONDS) == "accepted"
+        if port > 0
+        else False
+    )
     age = resolution.heartbeat_age_s
     window = resolution.stale_after_s
     stale = age is not None and window is not None and age > window
@@ -263,7 +273,11 @@ def _evaluate_service_signals(
         if pid_alive
         else False
     )
-    port_listening = _port_is_listening(port) if pid_alive else False
+    port_listening = (
+        probe_loopback_connect(port, timeout=FAST_CONNECT_TIMEOUT_SECONDS) == "accepted"
+        if pid_alive
+        else False
+    )
     heartbeat_age = age_seconds(status, "last_heartbeat")
     heartbeat_stale = (
         pid_alive
@@ -861,7 +875,9 @@ def _render_port_only_status(
     json_mode: bool,
     verbose: bool = False,
 ) -> None:
-    port_listening = _port_is_listening(port)
+    port_listening = (
+        probe_loopback_connect(port, timeout=FAST_CONNECT_TIMEOUT_SECONDS) == "accepted"
+    )
     health = _try_http_health(port) if port_listening else None
     state = (
         "running"
@@ -985,7 +1001,10 @@ def _render_explicit_port_status(
         else False
     )
     heartbeat_age = age_seconds(status, "last_heartbeat")
-    port_listening = _port_is_listening(target_port)
+    port_listening = (
+        probe_loopback_connect(target_port, timeout=FAST_CONNECT_TIMEOUT_SECONDS)
+        == "accepted"
+    )
     health = _try_http_health(target_port) if port_listening else None
     state, state_label, exit_code, heartbeat_stale = _explicit_port_state(
         port_listening,
@@ -1063,10 +1082,7 @@ def _render_explicit_port_status(
     ),
 )
 def service_status(
-    requested_port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
+    requested_port: PortOption = None,
     json_mode: Annotated[
         bool,
         typer.Option(

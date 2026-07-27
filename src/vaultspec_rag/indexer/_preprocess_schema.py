@@ -108,6 +108,37 @@ class Locator(BaseModel):
 UNIT_TEXT_MAX_CHARS = 1_000_000
 
 
+def validate_max_emitted_bytes(value: object) -> int:
+    """Require a positive, genuinely integral emitted-output cap.
+
+    The resolved policy and the cache identity each checked this, and the two
+    checks were not the same. The policy rejected anything that was not an
+    ``int``; the cache only rejected ``bool`` and non-positive values, so a
+    float reached it intact and compared fine against zero. Nothing had
+    exploited the gap because the value arrives from config, which coerces -
+    but the cache validated defensively precisely for the case where it does
+    not, and that was the case its check was weakest on.
+
+    ``bool`` is excluded before the ``int`` test because it is an ``int``
+    subclass: ``True`` would otherwise pass as a one-byte cap, which is not a
+    configuration anyone writes but is exactly what a mis-forwarded flag
+    produces.
+
+    Args:
+        value: The candidate cap, unnarrowed.
+
+    Returns:
+        The value as an ``int``.
+
+    Raises:
+        ValueError: When *value* is a ``bool``, not an ``int``, or not
+            positive.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError("max_emitted_bytes must be a positive integer")
+    return value
+
+
 class PreprocUnit(BaseModel):
     """One pre-chunked unit emitted by a preprocessor.
 

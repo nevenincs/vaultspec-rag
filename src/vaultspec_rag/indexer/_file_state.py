@@ -12,12 +12,51 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import PurePosixPath, PureWindowsPath
 from types import MappingProxyType
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from .._job_errors import JobErrorKind
 from ._content_policy import AdmissionDisposition, AdmissionReason, ContentKind
 
-__all__ = ["FileState", "FileStateKind"]
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
+
+__all__ = [
+    "FileState",
+    "FileStateKind",
+    "iter_publishable_states",
+    "validate_rel_path",
+]
+
+
+def validate_rel_path(rel_path: str) -> None:
+    """Require canonical project-relative POSIX path syntax.
+
+    Raises:
+        ValueError: When *rel_path* is empty, ``.``, absolute, drive-qualified,
+            contains a NUL or a backslash, walks upward through ``..``, or is
+            not already in the form ``PurePosixPath`` renders it as.
+
+    The nine clauses were written out twice - here as a row's own check and
+    again in the ledger that persists those rows - and they had stayed
+    identical, which is the only reason nothing had gone wrong yet. Four of
+    them are containment checks: a backslash, a drive letter, an absolute
+    path, and ``..`` are each a way of naming a file outside the project the
+    row claims to describe. A copy that loses one clause does not fail; it
+    accepts a path the other copy rejects, and which of the two runs depends
+    on whether the value arrived as a row or through a ledger call.
+    """
+    path = PurePosixPath(rel_path)
+    if (
+        not rel_path
+        or rel_path == "."
+        or path.is_absolute()
+        or PureWindowsPath(rel_path).drive
+        or "\0" in rel_path
+        or "\\" in rel_path
+        or ".." in path.parts
+        or path.as_posix() != rel_path
+    ):
+        raise ValueError("rel_path must be canonical project-relative POSIX syntax")
 
 
 class FileStateKind(StrEnum):
@@ -117,18 +156,7 @@ class FileState:
 
     def _validate_path(self) -> None:
         """Require canonical project-relative POSIX path syntax."""
-        path = PurePosixPath(self.rel_path)
-        if (
-            not self.rel_path
-            or self.rel_path == "."
-            or path.is_absolute()
-            or PureWindowsPath(self.rel_path).drive
-            or "\0" in self.rel_path
-            or "\\" in self.rel_path
-            or ".." in path.parts
-            or path.as_posix() != self.rel_path
-        ):
-            raise ValueError("rel_path must be canonical project-relative POSIX syntax")
+        validate_rel_path(self.rel_path)
 
     def _validate_scalar_evidence(self) -> None:
         """Validate optional hash and detail evidence independently of state."""
@@ -266,3 +294,54 @@ class FileState:
             error_kind=error_kind,
             detail=detail,
         )
+
+
+def iter_publishable_states(
+    states: Iterable[FileState],
+) -> Iterator[tuple[str, str]]:
+    """Validate ledger evidence and yield only the states a manifest records.
+
+    Both publishers - the code sidecar and the document manifest - opened their
+    write loop with the same five-statement gate: refuse an unconverged state,
+    refuse one that breaks strict ascending path order, remember the path, skip
+    anything not ``INDEXED``, and assert the survivor carries a hash. What each
+    then did with the survivor is entirely different, which is why only the
+    gate moves here and the loops stay where they are.
+
+    The gate had already drifted where drift is cheapest to make and hardest to
+    notice: the ordering refusal was two different sentences for one violation,
+    so which explanation an operator got depended on whether the code index or
+    the document index was publishing. The code side's wording is kept because
+    it names both properties the check enforces - uniqueness and order.
+
+    Args:
+        states: Ledger evidence in the order the caller intends to publish it.
+
+    Yields:
+        ``(rel_path, content_hash)`` for each ``INDEXED`` state, in input
+        order. The pair rather than the state, because the hash is
+        ``str | None`` on the row and only this gate establishes it is
+        present - yielding the row would move the assertion here and leave
+        every caller re-narrowing a value already checked.
+
+    Raises:
+        ValueError: On the first unconverged state, or the first that is not
+            strictly after its predecessor. Raised from inside the iteration,
+            so a caller writing incrementally stops at the offending record
+            rather than after publishing a partial manifest.
+    """
+    previous_path: str | None = None
+    for state in states:
+        if not state.converged:
+            raise ValueError(
+                f"cannot publish unresolved file state for {state.rel_path}"
+            )
+        if previous_path is not None and state.rel_path <= previous_path:
+            raise ValueError(
+                "ledger file states must be unique and ordered by relative path"
+            )
+        previous_path = state.rel_path
+        if state.state is not FileStateKind.INDEXED:
+            continue
+        assert state.content_hash is not None
+        yield state.rel_path, state.content_hash

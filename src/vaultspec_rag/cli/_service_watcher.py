@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, cast
+from typing import Annotated, NamedTuple, cast
 
 import typer
 
@@ -16,7 +16,13 @@ from .._operator_commands import (
 )
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
-from ._app import JsonMode, server_watcher_app
+from ._app import (
+    JsonMode,
+    PortOption,
+    RepeatUpdateDelayOption,
+    UpdateDelayOption,
+    server_watcher_app,
+)
 from ._cli_format import _counted_unit, _project_name
 from ._render import (
     _address_line,
@@ -217,10 +223,7 @@ _UPDATES_TIMING_COMMAND = "service.updates.timing"
 
 @server_watcher_app.command("status")
 def service_watcher_status(
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
+    port: PortOption = None,
     json_mode: JsonMode = False,
 ) -> None:
     """Show automatic index update settings and projects."""
@@ -258,40 +261,76 @@ def service_watcher_status(
         _plain(f"  Path: {entry}", soft_wrap=True)
 
 
-@server_watcher_app.command("start")
-def service_watcher_start(
-    project: Annotated[str, typer.Argument(help="Project to keep indexed.")],
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
-    json_mode: JsonMode = False,
-) -> None:
-    """Start automatic index updates for a project."""
+class _WatcherCall(NamedTuple):
+    """One accepted watcher admin call and the address it reached."""
+
+    result: dict[str, object]
+    port: int
+    project: str
+
+
+def _call_watcher_admin(
+    verb: str,
+    command: str,
+    *,
+    project: str,
+    port: int | None,
+    json_mode: bool,
+) -> _WatcherCall | None:
+    """Resolve the service, call one project-scoped watcher verb, or refuse.
+
+    ``start`` and ``stop`` reached the service through the same eleven
+    statements, differing only in the verb they name and the command they
+    attribute a failure to. Three of those statements are refusals, and each
+    is a separate exit path an operator or a broker reads: no reachable
+    service, a service that did not answer, and a service that answered no.
+    Duplicating a set of exit paths is how one verb grows a fourth and the
+    other keeps three.
+
+    Returns ``None`` when it has already reported the failure, so a caller
+    returns without deciding anything - the refusal and the exit code are
+    settled here.
+    """
     resolved_port = port if port is not None else _default_service_port()
     if resolved_port is None:
-        _watcher_service_unreachable(_UPDATES_START_COMMAND, json_mode, root=project)
-        return
+        _watcher_service_unreachable(command, json_mode, root=project)
+        return None
     resolved_project = _resolve_project_argument(project)
-    result = _try_http_admin(
-        "start_watcher",
-        {"root": resolved_project},
-        resolved_port,
-    )
+    result = _try_http_admin(verb, {"root": resolved_project}, resolved_port)
     if result is None:
         _watcher_service_unreachable(
-            _UPDATES_START_COMMAND, json_mode, port=resolved_port, root=project
+            command, json_mode, port=resolved_port, root=project
         )
-        return
+        return None
     if result.get("ok") is False:
         _watcher_admin_error(
-            _UPDATES_START_COMMAND,
+            command,
             json_mode,
             result,
             resolved_port,
             root=resolved_project,
         )
+        return None
+    return _WatcherCall(result, resolved_port, resolved_project)
+
+
+@server_watcher_app.command("start")
+def service_watcher_start(
+    project: Annotated[str, typer.Argument(help="Project to keep indexed.")],
+    port: PortOption = None,
+    json_mode: JsonMode = False,
+) -> None:
+    """Start automatic index updates for a project."""
+    called = _call_watcher_admin(
+        "start_watcher",
+        _UPDATES_START_COMMAND,
+        project=project,
+        port=port,
+        json_mode=json_mode,
+    )
+    if called is None:
         return
+    result, resolved_port, resolved_project = called
     if not bool(result.get("started", False)):
         _updates_state_not_achieved(
             _UPDATES_START_COMMAND,
@@ -320,37 +359,20 @@ def service_watcher_stop(
         str,
         typer.Argument(help="Project to stop updating automatically."),
     ],
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
+    port: PortOption = None,
     json_mode: JsonMode = False,
 ) -> None:
     """Stop automatic index updates for a project."""
-    resolved_port = port if port is not None else _default_service_port()
-    if resolved_port is None:
-        _watcher_service_unreachable(_UPDATES_STOP_COMMAND, json_mode, root=project)
-        return
-    resolved_project = _resolve_project_argument(project)
-    result = _try_http_admin(
+    called = _call_watcher_admin(
         "stop_watcher",
-        {"root": resolved_project},
-        resolved_port,
+        _UPDATES_STOP_COMMAND,
+        project=project,
+        port=port,
+        json_mode=json_mode,
     )
-    if result is None:
-        _watcher_service_unreachable(
-            _UPDATES_STOP_COMMAND, json_mode, port=resolved_port, root=project
-        )
+    if called is None:
         return
-    if result.get("ok") is False:
-        _watcher_admin_error(
-            _UPDATES_STOP_COMMAND,
-            json_mode,
-            result,
-            resolved_port,
-            root=resolved_project,
-        )
-        return
+    result, resolved_port, resolved_project = called
     stopped = bool(result.get("stopped", False))
     if json_mode:
         _emit_json(True, _UPDATES_STOP_COMMAND, data=result)
@@ -369,27 +391,9 @@ def service_watcher_stop(
 @server_watcher_app.command("timing")
 def service_watcher_timing(
     project: Annotated[str, typer.Argument(help="Project to update timing for.")],
-    update_delay_ms: Annotated[
-        int | None,
-        typer.Option(
-            "--update-delay-ms",
-            help="Delay before indexing a burst of file changes, in milliseconds.",
-        ),
-    ] = None,
-    repeat_update_delay_s: Annotated[
-        float | None,
-        typer.Option(
-            "--repeat-update-delay-s",
-            help=(
-                "Minimum wait before automatically updating a project again, "
-                "in seconds."
-            ),
-        ),
-    ] = None,
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
+    update_delay_ms: UpdateDelayOption = None,
+    repeat_update_delay_s: RepeatUpdateDelayOption = None,
+    port: PortOption = None,
     json_mode: JsonMode = False,
 ) -> None:
     """Change automatic index update timing."""

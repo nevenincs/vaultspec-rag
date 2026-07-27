@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import os
 import socket
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -631,6 +632,105 @@ class TestHealthProbeContract:
             for server in (healthy, unhealthy):
                 server.shutdown()
                 server.server_close()
+
+
+class _SlowHealthyHandler(QuietHandler):
+    """Accept promptly, then answer well after the fast connect deadline.
+
+    Stands in for a live daemon whose worker threads are busy: the kernel
+    completes the TCP handshake immediately, the HTTP answer takes a while.
+    """
+
+    def do_GET(self) -> None:
+        import json
+
+        time.sleep(0.5)
+        body = json.dumps(
+            {"status": "ready", "pid": 4242, "service_token": "slow-token"}
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+class TestConnectGateSemantics:
+    """The transport bounds the TCP connect alone, not the whole exchange.
+
+    On Windows a connect to a dead loopback port surfaces WSAECONNREFUSED only
+    after ~1s of SYN retransmission, so every "is the service up" decision that
+    waited for the full refusal paid that second. The gate cuts the wait while
+    changing no verdict: a dead port still reads as down (the refused path,
+    never the timeout envelope), and a live-but-slow responder still gets the
+    full response deadline.
+    """
+
+    def test_dead_port_reads_as_down_well_under_the_refusal_floor(
+        self, refused_port: int
+    ) -> None:
+        from ..serviceclient._transport import _try_http_health
+
+        started = time.perf_counter()
+        result = _try_http_health(refused_port)
+        elapsed = time.perf_counter() - started
+
+        assert result is None
+        # Proven able to fail: removing the fast connect gate from
+        # _try_http_health leaves the probe waiting out the Windows SYN
+        # retransmission (~1s) and fails this bound.
+        assert elapsed < 0.9, f"dead-port health probe took {elapsed:.3f}s"
+
+    def test_dead_port_general_call_reads_as_down_not_as_a_timeout(
+        self, refused_port: int
+    ) -> None:
+        started = time.perf_counter()
+        result = _try_http_admin("list_projects", {}, refused_port)
+        elapsed = time.perf_counter() - started
+
+        # None is the refused/service-down sentinel. Proven able to fail: a
+        # gate that surfaced its bounded connect as a TimeoutError instead of
+        # ConnectionRefusedError comes back as the admin_timeout envelope and
+        # fails the sentinel assertion - the distinction every caller's
+        # fallback decision rides on.
+        assert result is None
+        assert elapsed < 0.9, f"dead-port admin call took {elapsed:.3f}s"
+
+    def test_slow_responder_is_not_misread_as_down(self) -> None:
+        from ..serviceclient._transport import _try_http_health
+
+        server, port = _serve(_SlowHealthyHandler)
+        try:
+            result = _try_http_health(port)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        # Proven able to fail: applying the fast connect bound to the whole
+        # exchange (passing it as the urllib timeout) turns this slow answer
+        # into the unreachable sentinel and fails the not-None assertion.
+        assert result is not None
+        assert result["status"] == "ready"
+        assert result["service_token"] == "slow-token"
+
+    def test_conservative_probe_waits_for_the_authoritative_refusal(
+        self, refused_port: int
+    ) -> None:
+        from ..serviceclient._transport import _try_http_health
+
+        started = time.perf_counter()
+        result = _try_http_health(refused_port, connect_timeout=None)
+        elapsed = time.perf_counter() - started
+
+        assert result is None
+        if sys.platform == "win32":
+            # The opt-out exists for callers whose success claim rides on the
+            # answer (stop verification): they wait for the OS's authoritative
+            # refusal, which Windows delivers only after ~1s of SYN
+            # retransmission. Proven able to fail: an opt-out that silently
+            # kept the fast gate returns in ~0.15s and fails this lower bound.
+            assert elapsed > 0.5, f"opt-out probe returned in {elapsed:.3f}s"
 
 
 @pytest.mark.usefixtures("isolated_status_dir")

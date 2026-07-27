@@ -116,25 +116,11 @@ def apply_patch(pyproject: Path) -> PatchReport:
         report.conflicts = conflicts
         return report
 
-    # MISSING → write.
-    uses_crlf = detect_crlf(pyproject)
-    original_bytes = pyproject.read_bytes()
+    # MISSING → write. The doc mutations are in-memory; the writer re-reads
+    # the file for its CRLF and trailing-newline shape, so ordering is free.
     _ensure_tool_uv_index(doc)
     _ensure_torch_source(doc)
-    new_text = tomlkit.dumps(doc)
-    # Reparse to confirm validity before the write crosses the FS boundary.
-    tomlkit.parse(new_text)
-    if uses_crlf:
-        # tomlkit emits LF; restore the file's original CRLF so the
-        # diff stays minimal. tomlkit's parser accepts both endings,
-        # so the validation reparse above still applies.
-        new_text = new_text.replace("\n", "\r\n")
-    # Preserve the file's original trailing-newline shape so both
-    # apply and remove are EOF-neutral. Necessary for the
-    # symmetric-mirror byte-equality promise (apply→remove leaves the
-    # file byte-identical to the pre-apply content). BEHAV-01.
-    new_text = _match_trailing_newline(original_bytes, new_text, uses_crlf=uses_crlf)
-    atomic_write(pyproject, new_text)
+    write_doc_preserving_shape(pyproject, doc)
     report.action = TorchConfigAction.APPLIED
     report.preview = manual_snippet()
     return report
@@ -180,21 +166,10 @@ def remove_patch(pyproject: Path) -> PatchReport:
             report.conflicts = conflicts
             return report
 
-    # CANONICAL (or half-applied) → remove. Capture the trailing-newline shape pre-read
-    # so the symmetric-mirror promise (apply→remove leaves the file
-    # byte-identical to the pre-apply content) holds - tomlkit's
-    # ``dumps`` always emits a single trailing LF, which can append
-    # one extra byte if the original ended without one. BEHAV-01.
-    uses_crlf = detect_crlf(pyproject)
-    original_bytes = pyproject.read_bytes()
+    # CANONICAL (or half-applied) → remove.
     _drop_cu130_index(doc)
     _drop_torch_source(doc)
-    new_text = tomlkit.dumps(doc)
-    tomlkit.parse(new_text)
-    if uses_crlf:
-        new_text = new_text.replace("\n", "\r\n")
-    new_text = _match_trailing_newline(original_bytes, new_text, uses_crlf=uses_crlf)
-    atomic_write(pyproject, new_text)
+    write_doc_preserving_shape(pyproject, doc)
     report.action = TorchConfigAction.REMOVED
     return report
 
@@ -239,6 +214,27 @@ def _match_trailing_newline(
 
 
 def write_doc_preserving_shape(pyproject: Path, doc: TOMLDocument) -> None:
+    """Serialise *doc* over *pyproject*, keeping the file's byte shape.
+
+    Two shapes survive the round trip and neither is recoverable from the
+    document: the line ending, because ``tomlkit`` always emits LF, and the
+    trailing-newline count, because it always emits exactly one. Both are read
+    from the file rather than the doc, so a caller may mutate the doc first -
+    the mutation helpers here take only the document and never touch disk.
+
+    This function already had seven callers in two other modules while
+    ``apply_patch`` and ``remove_patch``, eight lines above, still inlined the
+    same sequence. That mattered more than the repetition: those two owe a
+    stated promise to each other - apply followed by remove leaves the file
+    byte-identical to what it was - and a promise between two hand-maintained
+    copies of a byte-shaping routine holds only while someone keeps them
+    aligned. It is one routine now, so the promise is a property of this
+    function rather than of an agreement between callers.
+
+    The validation reparse before the write is deliberate: it fails on a
+    document that serialises to invalid TOML before anything crosses the
+    filesystem boundary, rather than leaving a corrupt pyproject behind.
+    """
     uses_crlf = detect_crlf(pyproject)
     original_bytes = pyproject.read_bytes()
     new_text = tomlkit.dumps(doc)
