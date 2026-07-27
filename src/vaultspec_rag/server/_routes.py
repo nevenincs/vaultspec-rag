@@ -54,6 +54,7 @@ from ..logging_config import (
 from ..service import RegistryFullError
 from ._auth import require_token
 from ._routes_jobs import (
+    JobFilter,
     _clamp_limit,
     _job_matches,
     _job_summary,
@@ -99,7 +100,7 @@ _CONTROL_MODES: dict[str, Literal["graceful", "force"]] = {
 }
 
 
-def _search_summary(count: int, index_state: dict[str, object]) -> str:
+def search_summary(count: int, index_state: dict[str, object]) -> str:
     """Return the one-line summary, naming every demonstrated shortfall inline.
 
     An adapter that surfaces only the summary would otherwise report a
@@ -125,7 +126,7 @@ def _search_summary(count: int, index_state: dict[str, object]) -> str:
     return f"{found} Warning: " + "; ".join(notes) + "."
 
 
-def _canonical_job_snapshot() -> list[dict[str, object]]:
+def canonical_job_snapshot() -> list[dict[str, object]]:
     """Return the canonical manager's copied, JSON-ready job view."""
     from ..jobs import get_job_manager
 
@@ -134,7 +135,7 @@ def _canonical_job_snapshot() -> list[dict[str, object]]:
 
 def _service_job_snapshot() -> list[dict[str, object]]:
     """Return canonical jobs plus legacy-only service activity records."""
-    canonical = _canonical_job_snapshot()
+    canonical = canonical_job_snapshot()
     canonical_ids = {str(record.get("id", "")) for record in canonical}
     legacy_only = [
         record
@@ -144,7 +145,7 @@ def _service_job_snapshot() -> list[dict[str, object]]:
     return [*canonical, *legacy_only]
 
 
-class _InvalidJobRequestError(ValueError):
+class InvalidJobRequestError(ValueError):
     """Stable client-input failure for the canonical jobs resource."""
 
     def __init__(self, code: str, message: str) -> None:
@@ -152,7 +153,7 @@ class _InvalidJobRequestError(ValueError):
         self.code = code
 
 
-async def _job_payload(
+async def job_payload(
     request: Request,
     *,
     required: bool,
@@ -162,12 +163,12 @@ async def _job_payload(
     except Exception as exc:
         if not required and not await request.body():
             return {}
-        raise _InvalidJobRequestError(
+        raise InvalidJobRequestError(
             "invalid_json",
             "The request body must be a JSON object.",
         ) from exc
     if not isinstance(raw, dict):
-        raise _InvalidJobRequestError(
+        raise InvalidJobRequestError(
             "invalid_json",
             "The request body must be a JSON object.",
         )
@@ -177,14 +178,14 @@ async def _job_payload(
 def _job_bool(payload: dict[str, object], key: str, *, default: bool) -> bool:
     value = payload.get(key, default)
     if type(value) is not bool:
-        raise _InvalidJobRequestError(
+        raise InvalidJobRequestError(
             "invalid_job_spec",
             f"{key} must be a boolean when provided.",
         )
     return bool(value)
 
 
-def _job_string(
+def job_string(
     payload: dict[str, object],
     key: str,
     *,
@@ -192,7 +193,7 @@ def _job_string(
 ) -> str:
     value = payload.get(key, default)
     if not isinstance(value, str) or not value.strip():
-        raise _InvalidJobRequestError(
+        raise InvalidJobRequestError(
             "invalid_job_spec",
             f"{key} must be a non-empty string.",
         )
@@ -213,7 +214,7 @@ def _validated_initiator(
     elif isinstance(raw, dict):
         initiator = cast("dict[str, object]", raw)
     else:
-        raise _InvalidJobRequestError(
+        raise InvalidJobRequestError(
             "invalid_initiator",
             "initiator must be a JSON object when provided.",
         )
@@ -221,12 +222,12 @@ def _validated_initiator(
     kind = initiator.get("kind", legacy_kind)
     command = initiator.get("command", default_command)
     if not isinstance(kind, str) or not kind.strip():
-        raise _InvalidJobRequestError(
+        raise InvalidJobRequestError(
             "invalid_initiator",
             "initiator.kind must be a non-empty string.",
         )
     if not isinstance(command, str) or not command.strip():
-        raise _InvalidJobRequestError(
+        raise InvalidJobRequestError(
             "invalid_initiator",
             "initiator.command must be a non-empty string.",
         )
@@ -246,12 +247,12 @@ def _validated_idempotency_key(
     header_key = request.headers.get("Idempotency-Key")
     body_key = payload.get("idempotency_key")
     if body_key is not None and not isinstance(body_key, str):
-        raise _InvalidJobRequestError(
+        raise InvalidJobRequestError(
             "invalid_idempotency_key",
             "idempotency_key must be a string when provided.",
         )
     if header_key is not None and body_key is not None and header_key != body_key:
-        raise _InvalidJobRequestError(
+        raise InvalidJobRequestError(
             "idempotency_key_conflict",
             "The header and body idempotency keys must match.",
         )
@@ -261,7 +262,7 @@ def _validated_idempotency_key(
     return f"{key}:{suffix}"
 
 
-async def _validated_index_request(
+async def validated_index_request(
     request: Request,
     payload: dict[str, object],
     *,
@@ -275,11 +276,11 @@ async def _validated_index_request(
 ]:
     from ..job_models import JobMode, JobOperation, JobSource, JobSpec
 
-    operation = _job_string(payload, "operation", default="index")
-    source = _job_string(payload, "source")
-    mode = _job_string(payload, "mode", default="incremental")
+    operation = job_string(payload, "operation", default="index")
+    source = job_string(payload, "source")
+    mode = job_string(payload, "mode", default="incremental")
     if operation != JobOperation.INDEX.value:
-        raise _InvalidJobRequestError(
+        raise InvalidJobRequestError(
             "invalid_job_spec",
             "operation must be 'index'.",
         )
@@ -288,26 +289,26 @@ async def _validated_index_request(
         JobSource.CODE.value,
         JobSource.DOCUMENT.value,
     }:
-        raise _InvalidJobRequestError(
+        raise InvalidJobRequestError(
             "invalid_job_spec",
             "source must be 'vault', 'code', or 'document'.",
         )
     if mode not in set(JobMode):
         allowed = ", ".join(f"'{member}'" for member in JobMode)
-        raise _InvalidJobRequestError(
+        raise InvalidJobRequestError(
             "invalid_job_spec",
             f"mode must be one of {allowed}.",
         )
-    raw_root = _job_string(payload, "project_root")
+    raw_root = job_string(payload, "project_root")
     if not Path(raw_root).expanduser().is_absolute():
-        raise _InvalidJobRequestError(
+        raise InvalidJobRequestError(
             "invalid_job_spec",
             "project_root must be an absolute path.",
         )
     try:
         root = _resolve_root(raw_root)
     except (ProjectRootRequiredError, ValueError) as exc:
-        raise _InvalidJobRequestError("invalid_job_spec", str(exc)) from exc
+        raise InvalidJobRequestError("invalid_job_spec", str(exc)) from exc
     start_paused = _job_bool(payload, "start_paused", default=False)
     spec = JobSpec(
         operation=JobOperation.INDEX,
@@ -352,12 +353,12 @@ async def _validate_index_job_spec(
         # kind as a prefix so the typed identity survives the background-job
         # text boundary, and the kind is already travelling separately as the
         # response code. Rendering both concatenates the kind twice.
-        raise _InvalidJobRequestError(
+        raise InvalidJobRequestError(
             exc.error_kind.value,
             exc.detail,
         ) from exc
     except ValueError as exc:
-        raise _InvalidJobRequestError(
+        raise InvalidJobRequestError(
             "invalid_job_spec",
             str(exc),
         ) from exc
@@ -384,7 +385,7 @@ def _admission_preflight(preflight: CodeIndexPreflight) -> dict[str, object]:
     }
 
 
-def _index_admission_preflight(
+def index_admission_preflight(
     preflight: CodeIndexPreflight | DocumentIndexPreflight,
 ) -> dict[str, object]:
     """Project exact code or document admission without reclassification."""
@@ -403,41 +404,34 @@ def _index_admission_preflight(
     }
 
 
-def _job_outcome_status(code: str) -> int:
+def job_outcome_status(code: str) -> int:
     if code.startswith("invalid_") and code != "invalid_transition":
         return 400
-    if code == "job_not_found":
-        return 404
-    if code == "job_capacity_exceeded":
-        return 429
-    if code in {
-        "corpus_limit_exceeded",
-        "profile_requirements_not_met",
-    }:
-        return 422
-    if code == "disk_preflight_failed":
-        return 507
     if code.startswith("persistence_") or code in {
         "dispatch_stopped",
         "event_loop_required",
     }:
         return 503
-    if code in {
-        "active_job_exists",
-        "idempotency_key_conflict",
-        "invalid_transition",
-        "job_id_conflict",
-        "job_not_retryable",
-        "job_not_terminal",
-        "revision_conflict",
-        "force_not_supported",
-        "force_termination_unavailable",
-    }:
-        return 409
-    return 500
+    status_codes = {
+        "job_not_found": 404,
+        "job_capacity_exceeded": 429,
+        "corpus_limit_exceeded": 422,
+        "profile_requirements_not_met": 422,
+        "disk_preflight_failed": 507,
+        "active_job_exists": 409,
+        "idempotency_key_conflict": 409,
+        "invalid_transition": 409,
+        "job_id_conflict": 409,
+        "job_not_retryable": 409,
+        "job_not_terminal": 409,
+        "revision_conflict": 409,
+        "force_not_supported": 409,
+        "force_termination_unavailable": 409,
+    }
+    return status_codes.get(code, 500)
 
 
-def _job_error(
+def job_error(
     command: str,
     code: str,
     message: str,
@@ -469,7 +463,7 @@ def _job_response(
     payload["ok"] = outcome.status is not JobOutcomeStatus.ERROR
     if outcome.status is JobOutcomeStatus.ERROR:
         payload["error"] = outcome.code
-        status_code = _job_outcome_status(outcome.code)
+        status_code = job_outcome_status(outcome.code)
     else:
         status_code = 202 if outcome.status is JobOutcomeStatus.ACCEPTED else 200
     if extra:
@@ -480,7 +474,7 @@ def _job_response(
     return JSONResponse(payload, status_code=status_code, headers=headers)
 
 
-async def _activate_index_job(
+async def activate_index_job(
     outcome: JobOutcome,
     preflight: CodeIndexPreflight | DocumentIndexPreflight | None,
 ) -> JobOutcome:
@@ -514,7 +508,7 @@ def _normalise_controllable_filter(raw: str | None) -> bool | None:
         return True
     if value in {"0", "false", "no"}:
         return False
-    raise _InvalidJobRequestError(
+    raise InvalidJobRequestError(
         "invalid_filter",
         "controllable must be true or false when provided.",
     )
@@ -555,25 +549,27 @@ async def jobs_route(request: Request) -> JSONResponse:
         controllable = _normalise_controllable_filter(
             request.query_params.get("controllable")
         )
-    except _InvalidJobRequestError as exc:
-        return _job_error("list", exc.code, str(exc))
+    except InvalidJobRequestError as exc:
+        return job_error("list", exc.code, str(exc))
     now = time.time()
     filtered_records = [
         _job_with_liveness(record, now=now)
         for record in records
         if _job_matches(
             record,
-            phase=phase,
-            source=source,
-            trigger=trigger,
-            query=query,
-            failed=failed,
-            job_id=job_id,
-            since_seconds=since_seconds,
-            now=now,
-            state=state,
-            desired_state=desired_state,
-            controllable=controllable,
+            JobFilter(
+                phase=phase,
+                source=source,
+                trigger=trigger,
+                query=query,
+                failed=failed,
+                job_id=job_id,
+                since_seconds=since_seconds,
+                now=now,
+                state=state,
+                desired_state=desired_state,
+                controllable=controllable,
+            ),
         )
     ]
     filtered_records = _prioritise_running_jobs(filtered_records)
@@ -609,16 +605,16 @@ async def create_job_route(request: Request) -> JSONResponse:
     if denied is not None:
         return denied
     try:
-        payload = await _job_payload(request, required=True)
+        payload = await job_payload(request, required=True)
         (
             spec,
             initiator,
             start_paused,
             idempotency_key,
             admission,
-        ) = await _validated_index_request(request, payload)
-    except _InvalidJobRequestError as exc:
-        return _job_error("create", exc.code, str(exc))
+        ) = await validated_index_request(request, payload)
+    except InvalidJobRequestError as exc:
+        return job_error("create", exc.code, str(exc))
 
     from ..jobs import get_job_manager
 
@@ -632,12 +628,12 @@ async def create_job_route(request: Request) -> JSONResponse:
             idempotency_key=idempotency_key,
         )
     )
-    outcome = await _activate_index_job(outcome, admission)
+    outcome = await activate_index_job(outcome, admission)
     return _job_response(
         outcome,
         location=True,
         extra=(
-            {"admission": _index_admission_preflight(admission)}
+            {"admission": index_admission_preflight(admission)}
             if admission is not None
             else None
         ),
@@ -654,7 +650,7 @@ async def job_detail_route(request: Request) -> JSONResponse:
     job_id = str(request.path_params["job_id"])
     snapshot = get_job_manager().get(job_id)
     if snapshot is None:
-        return _job_error("get", "job_not_found", "The job was not found.")
+        return job_error("get", "job_not_found", "The job was not found.")
     return JSONResponse(
         {
             "ok": True,
@@ -668,7 +664,7 @@ def _validated_expected_revision(payload: dict[str, object]) -> int | None:
     if raw is None:
         return None
     if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
-        raise _InvalidJobRequestError(
+        raise InvalidJobRequestError(
             "invalid_revision",
             "expected_revision must be a positive integer when provided.",
         )
@@ -683,24 +679,24 @@ async def set_job_desired_state_route(request: Request) -> JSONResponse:
     from ..job_models import DesiredJobState
 
     try:
-        payload = await _job_payload(request, required=True)
-        state = _job_string(payload, "state")
-        mode = _job_string(payload, "mode", default="graceful")
+        payload = await job_payload(request, required=True)
+        state = job_string(payload, "state")
+        mode = job_string(payload, "mode", default="graceful")
         if state not in set(DesiredJobState):
             allowed = ", ".join(f"'{member}'" for member in DesiredJobState)
-            raise _InvalidJobRequestError(
+            raise InvalidJobRequestError(
                 "invalid_desired_state",
                 f"state must be one of {allowed}.",
             )
         control_mode = _CONTROL_MODES.get(mode)
         if control_mode is None:
-            raise _InvalidJobRequestError(
+            raise InvalidJobRequestError(
                 "invalid_control_mode",
                 "mode must be 'graceful' or 'force'.",
             )
         expected_revision = _validated_expected_revision(payload)
-    except _InvalidJobRequestError as exc:
-        return _job_error("set_desired_state", exc.code, str(exc))
+    except InvalidJobRequestError as exc:
+        return job_error("set_desired_state", exc.code, str(exc))
 
     from ..jobs import get_job_manager
 
@@ -719,9 +715,9 @@ async def retry_job_route(request: Request) -> JSONResponse:
     if denied is not None:
         return denied
     try:
-        payload = await _job_payload(request, required=False)
-    except _InvalidJobRequestError as exc:
-        return _job_error("retry", exc.code, str(exc))
+        payload = await job_payload(request, required=False)
+    except InvalidJobRequestError as exc:
+        return job_error("retry", exc.code, str(exc))
 
     from ..jobs import get_job_manager
 
@@ -731,8 +727,8 @@ async def retry_job_route(request: Request) -> JSONResponse:
     if parent is not None:
         try:
             admission = await _validate_index_job_spec(parent.spec)
-        except _InvalidJobRequestError as exc:
-            return _job_error("retry", exc.code, str(exc))
+        except InvalidJobRequestError as exc:
+            return job_error("retry", exc.code, str(exc))
     initiator = None
     if parent is not None and ("initiator" in payload or "initiator_kind" in payload):
         try:
@@ -742,8 +738,8 @@ async def retry_job_route(request: Request) -> JSONResponse:
                 root=root,
                 default_command="http_job_retry",
             )
-        except _InvalidJobRequestError as exc:
-            return _job_error("retry", exc.code, str(exc))
+        except InvalidJobRequestError as exc:
+            return job_error("retry", exc.code, str(exc))
     outcome = await _run_in_thread(
         partial(
             manager.retry,
@@ -751,12 +747,12 @@ async def retry_job_route(request: Request) -> JSONResponse:
             initiator=initiator,
         )
     )
-    outcome = await _activate_index_job(outcome, admission)
+    outcome = await activate_index_job(outcome, admission)
     return _job_response(
         outcome,
         location=True,
         extra=(
-            {"admission": _index_admission_preflight(admission)}
+            {"admission": index_admission_preflight(admission)}
             if admission is not None
             else None
         ),
