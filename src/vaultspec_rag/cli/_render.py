@@ -42,6 +42,7 @@ __all__ = [
     "_format_local_index_busy_message",
     "_plain",
     "_plain_line",
+    "_print_next_action",
     "_render_install_report",
     "_render_uninstall_report",
 ]
@@ -130,6 +131,13 @@ def _emit_json_error_and_exit(
         **extra,
     )
     raise typer.Exit(code=code)
+
+
+def _print_next_action(command: object) -> None:
+    """Print the operator's "Next action:" hint, or nothing for a falsy command."""
+    if command:
+        _plain_line("Next action:")
+        _plain_line(f"  {command}")
 
 
 def address_line(port: object) -> str:

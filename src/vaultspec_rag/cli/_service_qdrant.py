@@ -24,12 +24,7 @@ from ..qdrant_runtime._resolve import probe_qdrant_endpoint, resolve_binary
 from ..serviceclient._discovery import read_service_status
 from ._app import JsonMode, server_qdrant_app
 from ._progress import StartupStatusReporter
-from ._render import _emit_json, _plain_line
-
-
-def _print_next_action(command: str) -> None:
-    _plain_line("Next action:")
-    _plain_line(f"  {command}")
+from ._render import _emit_json, _plain_line, _print_next_action
 
 
 def _action_label(action: object) -> str:

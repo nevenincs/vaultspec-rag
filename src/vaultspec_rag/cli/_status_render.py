@@ -65,7 +65,7 @@ from ._cli_format import NOT_REPORTED
 from ._process import (
     _is_our_service,
 )
-from ._render import _emit_json, _plain, address_line
+from ._render import _emit_json, _plain, _print_next_action, address_line
 from ._service_jobs_presentation import (
     human_progress,
     operation_label,
@@ -326,8 +326,18 @@ def _evaluate_service_signals(
     )
 
     return _StatusSignals(
-        pid, port, started_at, pid_alive, pid_is_ours, port_listening,
-        heartbeat_age, heartbeat_stale, token_match, state, state_label, exit_code,
+        pid,
+        port,
+        started_at,
+        pid_alive,
+        pid_is_ours,
+        port_listening,
+        heartbeat_age,
+        heartbeat_stale,
+        token_match,
+        state,
+        state_label,
+        exit_code,
     )
 
 
@@ -799,14 +809,7 @@ def _print_operational_detail(
             _print_current_job_detail(jobs_dict)
         else:
             _print_detail_line("Processed jobs", NOT_REPORTED)
-    next_action = operational.get("next_action")
-    if next_action:
-        _print_next_action(next_action)
-
-
-def _print_next_action(next_action: object) -> None:
-    if next_action:
-        _print_status_lines(["Next action:", f"  {next_action}"])
+    _print_next_action(operational.get("next_action"))
 
 
 def _render_status_summary(request: _StatusSummaryRequest) -> None:
