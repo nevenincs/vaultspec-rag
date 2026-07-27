@@ -775,6 +775,42 @@ class _JobsQuery:
     since: float | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _JobsWatchRequest:
+    """The resolved query and display settings for a watched jobs view."""
+
+    fetch: Callable[[], dict[str, object] | None]
+    job_id: str | None
+    port: int
+    interval: float
+    refresh_count: int | None
+    client_state: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _JobStateChangeRequest:
+    """One requested desired-state transition for a service job."""
+
+    action: str
+    reference: str
+    state: DesiredJobState
+    port: int | None
+    json_mode: bool
+    force: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _JobControlFailureRequest:
+    """One terminal job-control error rendered for humans or JSON clients."""
+
+    command: str
+    error: str
+    message: str
+    json_mode: bool
+    exit_code: int
+    data: dict[str, object] | None = None
+
+
 def _jobs_args(spec: _JobsQuery) -> dict[str, object]:
     args: dict[str, object] = {"limit": spec.limit}
     optional_args = {
@@ -1071,15 +1107,7 @@ def _stop_watching() -> NoReturn:
     raise typer.Exit(130)
 
 
-def _watch_jobs(
-    fetch: Callable[[], dict[str, object] | None],
-    *,
-    job_id: str | None,
-    port: int,
-    interval: float,
-    refresh_count: int | None,
-    client_state: str | None,
-) -> None:
+def _watch_jobs(request: _JobsWatchRequest) -> None:
     """Re-render *fetch*'s result on an interval until interrupted.
 
     Takes the bound fetch rather than the filter set so the query is spelled
@@ -1087,55 +1115,47 @@ def _watch_jobs(
     reading the same thing.
     """
     refreshes = 0
-    while refresh_count is None or refreshes < refresh_count:
+    while request.refresh_count is None or refreshes < request.refresh_count:
         # The refresh is one instance of the general problem of keeping the
         # main thread interruptible across a blocking call, so it shares the
         # process module's helper rather than carrying a second copy of the
         # same threading rationale. A divergence between two copies would be a
         # Ctrl+C that works in one operator view and not the other.
-        result = _call_interruptibly(fetch)
+        result = _call_interruptibly(request.fetch)
         if result is None:
-            _exit_jobs_not_running(False, port)
-        result = _apply_client_state_filter(result, client_state)
+            _exit_jobs_not_running(False, request.port)
+        result = _apply_client_state_filter(result, request.client_state)
         _cli.console.clear()
         refresh_number = refreshes + 1
         _render_jobs_result(
             result,
-            job_id=job_id,
-            port=port,
+            job_id=request.job_id,
+            port=request.port,
             monitoring=True,
-            watch_text=_watch_status_text(refresh_number, refresh_count),
+            watch_text=_watch_status_text(refresh_number, request.refresh_count),
         )
         refreshes += 1
-        if refresh_count is not None and refreshes >= refresh_count:
+        if request.refresh_count is not None and refreshes >= request.refresh_count:
             return
-        time.sleep(interval)
+        time.sleep(request.interval)
 
 
 def _job_control_command(action: str) -> str:
     return f"server.job.{action}"
 
 
-def _job_control_failure(
-    command: str,
-    error: str,
-    message: str,
-    *,
-    json_mode: bool,
-    exit_code: int,
-    data: dict[str, object] | None = None,
-) -> NoReturn:
-    if json_mode:
+def _job_control_failure(request: _JobControlFailureRequest) -> NoReturn:
+    if request.json_mode:
         _emit_json_error_and_exit(
-            command,
-            error,
-            message,
-            exit_code,
-            data=data or {},
+            request.command,
+            request.error,
+            request.message,
+            request.exit_code,
+            data=request.data or {},
         )
-    _plain(f"Error: {message}", soft_wrap=True)
-    _plain(f"Code: {error}")
-    raise typer.Exit(exit_code)
+    _plain(f"Error: {request.message}", soft_wrap=True)
+    _plain(f"Code: {request.error}")
+    raise typer.Exit(request.exit_code)
 
 
 def _job_control_port(
@@ -1147,11 +1167,13 @@ def _job_control_port(
     resolved = port if port is not None else _default_service_port()
     if resolved is None:
         _job_control_failure(
-            command,
-            "service_not_running",
-            SERVICE_NOT_RUNNING_MESSAGE,
-            json_mode=json_mode,
-            exit_code=3,
+            _JobControlFailureRequest(
+                command=command,
+                error="service_not_running",
+                message=SERVICE_NOT_RUNNING_MESSAGE,
+                json_mode=json_mode,
+                exit_code=3,
+            )
         )
     return resolved
 
@@ -1171,12 +1193,14 @@ def _job_control_result_failure(
         if result.get(key) is not None
     }
     _job_control_failure(
-        command,
-        error,
-        message,
-        json_mode=json_mode,
-        exit_code=exit_code,
-        data=data,
+        _JobControlFailureRequest(
+            command=command,
+            error=error,
+            message=message,
+            json_mode=json_mode,
+            exit_code=exit_code,
+            data=data,
+        )
     )
 
 
@@ -1189,11 +1213,13 @@ def _human_exact_job_id(
     result = _try_http_admin("get_jobs", {"job_id": reference}, port)
     if result is None:
         _job_control_failure(
-            command,
-            "service_not_running",
-            SERVICE_NOT_RUNNING_MESSAGE,
-            json_mode=False,
-            exit_code=3,
+            _JobControlFailureRequest(
+                command=command,
+                error="service_not_running",
+                message=SERVICE_NOT_RUNNING_MESSAGE,
+                json_mode=False,
+                exit_code=3,
+            )
         )
     if result.get("ok") is False:
         _job_control_result_failure(command, result, json_mode=False)
@@ -1204,30 +1230,38 @@ def _human_exact_job_id(
     ]
     if not matches:
         _job_control_failure(
-            command,
-            "job_not_found",
-            f'No job matches "{reference}".',
-            json_mode=False,
-            exit_code=1,
+            _JobControlFailureRequest(
+                command=command,
+                error="job_not_found",
+                message=f'No job matches "{reference}".',
+                json_mode=False,
+                exit_code=1,
+            )
         )
     if len(matches) > 1:
         _job_control_failure(
-            command,
-            "ambiguous_job_id",
-            f'Job prefix "{reference}" matches {len(matches)} jobs. '
-            "Use a longer prefix.",
-            json_mode=False,
-            exit_code=2,
-            data={"matches": [job.get("id") for job in matches]},
+            _JobControlFailureRequest(
+                command=command,
+                error="ambiguous_job_id",
+                message=(
+                    f'Job prefix "{reference}" matches {len(matches)} jobs. '
+                    "Use a longer prefix."
+                ),
+                json_mode=False,
+                exit_code=2,
+                data={"matches": [job.get("id") for job in matches]},
+            )
         )
     exact_id = matches[0].get("id")
     if not isinstance(exact_id, str) or not exact_id:
         _job_control_failure(
-            command,
-            "invalid_job_resource",
-            "The service returned a job without an exact identifier.",
-            json_mode=False,
-            exit_code=1,
+            _JobControlFailureRequest(
+                command=command,
+                error="invalid_job_resource",
+                message="The service returned a job without an exact identifier.",
+                json_mode=False,
+                exit_code=1,
+            )
         )
     return exact_id
 
@@ -1251,32 +1285,40 @@ def _exact_job_for_control(
     result = _try_http_get_job(exact_id, port)
     if result is None:
         _job_control_failure(
-            command,
-            "service_not_running",
-            SERVICE_NOT_RUNNING_MESSAGE,
-            json_mode=json_mode,
-            exit_code=3,
+            _JobControlFailureRequest(
+                command=command,
+                error="service_not_running",
+                message=SERVICE_NOT_RUNNING_MESSAGE,
+                json_mode=json_mode,
+                exit_code=3,
+            )
         )
     if result.get("ok") is not True:
         _job_control_result_failure(command, result, json_mode=json_mode)
     raw_job = result.get("job")
     if not isinstance(raw_job, dict):
         _job_control_failure(
-            command,
-            "invalid_job_resource",
-            "The service returned an invalid job resource.",
-            json_mode=json_mode,
-            exit_code=1,
+            _JobControlFailureRequest(
+                command=command,
+                error="invalid_job_resource",
+                message="The service returned an invalid job resource.",
+                json_mode=json_mode,
+                exit_code=1,
+            )
         )
     job = cast("dict[str, object]", raw_job)
     reported_id = job.get("id")
     if reported_id != exact_id:
         _job_control_failure(
-            command,
-            "invalid_job_resource",
-            "The service returned a different job identifier than requested.",
-            json_mode=json_mode,
-            exit_code=1,
+            _JobControlFailureRequest(
+                command=command,
+                error="invalid_job_resource",
+                message=(
+                    "The service returned a different job identifier than requested."
+                ),
+                json_mode=json_mode,
+                exit_code=1,
+            )
         )
     return exact_id, job
 
@@ -1291,11 +1333,13 @@ def _job_revision(
     if isinstance(revision, int) and not isinstance(revision, bool) and revision >= 1:
         return revision
     _job_control_failure(
-        command,
-        "invalid_job_resource",
-        "The service returned a job without a positive revision.",
-        json_mode=json_mode,
-        exit_code=1,
+        _JobControlFailureRequest(
+            command=command,
+            error="invalid_job_resource",
+            message="The service returned a job without a positive revision.",
+            json_mode=json_mode,
+            exit_code=1,
+        )
     )
 
 
@@ -1322,11 +1366,13 @@ def _complete_job_control(
 ) -> None:
     if result is None:
         _job_control_failure(
-            command,
-            "service_not_running",
-            SERVICE_NOT_RUNNING_MESSAGE,
-            json_mode=json_mode,
-            exit_code=3,
+            _JobControlFailureRequest(
+                command=command,
+                error="service_not_running",
+                message=SERVICE_NOT_RUNNING_MESSAGE,
+                json_mode=json_mode,
+                exit_code=3,
+            )
         )
     if result.get("ok") is not True:
         _job_control_result_failure(command, result, json_mode=json_mode)
@@ -1342,32 +1388,26 @@ def _complete_job_control(
     _render_job_control_outcome(result)
 
 
-def _set_job_state(
-    action: str,
-    reference: str,
-    state: DesiredJobState,
-    *,
-    port: int | None,
-    json_mode: bool,
-    force: bool = False,
-) -> None:
-    command = _job_control_command(action)
-    resolved_port = _job_control_port(port, command=command, json_mode=json_mode)
+def _set_job_state(request: _JobStateChangeRequest) -> None:
+    command = _job_control_command(request.action)
+    resolved_port = _job_control_port(
+        request.port, command=command, json_mode=request.json_mode
+    )
     exact_id, job = _exact_job_for_control(
-        reference,
+        request.reference,
         resolved_port,
         command=command,
-        json_mode=json_mode,
+        json_mode=request.json_mode,
     )
-    revision = _job_revision(job, command=command, json_mode=json_mode)
+    revision = _job_revision(job, command=command, json_mode=request.json_mode)
     result = _try_http_set_job_desired_state(
         exact_id,
-        state,
+        request.state,
         resolved_port,
         expected_revision=revision,
-        mode="force" if force else "graceful",
+        mode="force" if request.force else "graceful",
     )
-    _complete_job_control(command, result, json_mode=json_mode)
+    _complete_job_control(command, result, json_mode=request.json_mode)
 
 
 @server_job_app.command("show")
@@ -1399,7 +1439,13 @@ def service_job_pause(
 ) -> None:
     """Request a cooperative pause for one job."""
     _set_job_state(
-        "pause", job_id, DesiredJobState.PAUSED, port=port, json_mode=json_mode
+        _JobStateChangeRequest(
+            action="pause",
+            reference=job_id,
+            state=DesiredJobState.PAUSED,
+            port=port,
+            json_mode=json_mode,
+        )
     )
 
 
@@ -1411,7 +1457,13 @@ def service_job_resume(
 ) -> None:
     """Resume one paused job through reconciliation."""
     _set_job_state(
-        "resume", job_id, DesiredJobState.RUNNING, port=port, json_mode=json_mode
+        _JobStateChangeRequest(
+            action="resume",
+            reference=job_id,
+            state=DesiredJobState.RUNNING,
+            port=port,
+            json_mode=json_mode,
+        )
     )
 
 
@@ -1430,12 +1482,14 @@ def service_job_stop(
 ) -> None:
     """Request cancellation without disabling automatic updates."""
     _set_job_state(
-        "stop",
-        job_id,
-        DesiredJobState.CANCELLED,
-        port=port,
-        json_mode=json_mode,
-        force=force,
+        _JobStateChangeRequest(
+            action="stop",
+            reference=job_id,
+            state=DesiredJobState.CANCELLED,
+            port=port,
+            json_mode=json_mode,
+            force=force,
+        )
     )
 
 
@@ -1583,12 +1637,14 @@ def service_jobs(
     if watch:
         try:
             _watch_jobs(
-                fetch,
-                job_id=job_id,
-                port=resolved_port,
-                interval=interval,
-                refresh_count=refresh_count,
-                client_state=client_state,
+                _JobsWatchRequest(
+                    fetch=fetch,
+                    job_id=job_id,
+                    port=resolved_port,
+                    interval=interval,
+                    refresh_count=refresh_count,
+                    client_state=client_state,
+                )
             )
         except KeyboardInterrupt:
             _stop_watching()
