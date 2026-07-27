@@ -1107,7 +1107,9 @@ def _qdrant_process_is_live(
     result = probe(
         identity.http_port, timeout=max(0.001, min(2.0, remaining / 2.0))
     )
-    return bool(getattr(result, "ready", False)) and getattr(result, "version", None) == expected_version
+    return bool(getattr(result, "ready", False)) and (
+        getattr(result, "version", None) == expected_version
+    )
 
 
 def _reap_owned_qdrant(
