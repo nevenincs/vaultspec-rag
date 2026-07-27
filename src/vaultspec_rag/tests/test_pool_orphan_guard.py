@@ -24,7 +24,7 @@ import time
 import psutil
 import pytest
 
-from vaultspec_rag.indexer import _pool_guard
+from ..indexer import _pool_guard
 
 _WORKERS = 4
 _READY_TIMEOUT_SECONDS = 120.0
@@ -33,13 +33,17 @@ _EXIT_TIMEOUT_SECONDS = 60.0
 # Built through the production constructor, so the workers carry whatever guard
 # production gives them - the test cannot pass by assembling a safer pool than
 # the indexer actually uses.
+#
+# This string is executed as a standalone script in a subprocess, not imported
+# as part of this package, so its import of the pool guard must be absolute -
+# a relative import has no package to resolve against and raises at startup.
 _DRIVER = """\
 import multiprocessing
 import os
 import sys
 import time
 
-from vaultspec_rag.indexer._pool_guard import spawn_pool
+from vaultspec_rag.indexer._pool_guard import spawn_pool  # absolute-import-ok
 
 
 def _occupy(_index: int) -> int:

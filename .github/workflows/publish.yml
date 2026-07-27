@@ -21,8 +21,10 @@ concurrency:
 jobs:
   build:
     name: Build
-    # Artifact builds run on the shared self-hosted fleet (hosted
-    # multiplatform runners are cost-prohibitive); lint/test CI stays hosted.
+    # Release artifacts build on GitHub-HOSTED runners, deliberately: a
+    # published wheel must not be built on a workstation that also runs agent
+    # sessions and a live service. CI's lint/test jobs are the ones on the
+    # self-hosted fleet.
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -102,8 +104,9 @@ jobs:
   github-release:
     name: Attach Release Assets
     needs: smoke-test
-    # gh and sha256sum are both available on the self-hosted WSL runner;
-    # keep artifact jobs on the fleet alongside build/smoke-test/publish-pypi.
+    # Hosted, like every other job in this workflow: `gh` and `sha256sum` both
+    # ship on the hosted image, and the whole release path stays off the
+    # self-hosted fleet.
     runs-on: ubuntu-latest
     permissions:
       contents: write

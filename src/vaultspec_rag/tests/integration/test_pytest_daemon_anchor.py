@@ -28,9 +28,16 @@ pytestmark = pytest.mark.integration
 #: The owner: it creates the job, spawns a sleeper into it, reports the
 #: sleeper's pid, then parks. Nothing here ever runs cleanup - the test kills
 #: this process outright, which is the whole point.
+#:
+#: Executed as a standalone script in a subprocess rather than imported, so its
+#: import must be absolute - a relative import has no package to resolve
+#: against and raises at startup.
 _OWNER = """
 import subprocess, sys, time
-from vaultspec_rag._win32 import assign_process_to_job, create_kill_on_close_job
+from vaultspec_rag._win32 import (  # absolute-import-ok
+    assign_process_to_job,
+    create_kill_on_close_job,
+)
 
 job = create_kill_on_close_job(purpose="test")
 assert job is not None, "job creation failed"

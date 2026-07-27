@@ -29,7 +29,7 @@ import sys
 
 import pytest
 
-from vaultspec_rag._process_probe import pid_alive
+from .._process_probe import pid_alive
 
 pytestmark = [pytest.mark.unit]
 
@@ -113,7 +113,7 @@ def test_service_liveness_has_no_second_implementation() -> None:
     without a single caller changing. Nothing ever substituted that seam, so
     it bought no testability and carried that risk for free.
     """
-    from vaultspec_rag.cli import _process
+    from ..cli import _process
 
     assert _process.pid_alive is pid_alive
     assert not hasattr(_process, "_is_pid_alive")
