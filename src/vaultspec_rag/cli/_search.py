@@ -357,7 +357,9 @@ def _try_in_process_search(
 
     from .._public_search import (
         CodeCombinedSearchFilters,
+        CombinedSearchRequest,
         DocumentCombinedSearchFilters,
+        DocumentSearchRequest,
         VaultCombinedSearchFilters,
     )
     from ..registry import get_registry
@@ -449,42 +451,46 @@ def _try_in_process_search(
                 )
             elif search_type is PublicSourceType.DOCUMENT:
                 results = vaultspec_rag.search_documents(
-                    target,
-                    query,
-                    top_k=max_results,
-                    source_path=source_path,
-                    extractor_id=extractor_id,
-                    extractor_version=extractor_version,
-                    locator_kind=locator_kind,
-                )
-            else:
-                results = vaultspec_rag.search_combined(
-                    target,
-                    query,
-                    top_k=max_results,
-                    vault_filters=VaultCombinedSearchFilters(
-                        doc_type=doc_type,
-                        feature=feature,
-                        date=date,
-                        tag=tag,
-                    ),
-                    code_filters=CodeCombinedSearchFilters(
-                        language=language,
-                        path=path,
-                        node_type=node_type,
-                        function_name=function_name,
-                        class_name=class_name,
-                        include_paths=tuple(include_paths or ()),
-                        exclude_paths=tuple(exclude_paths or ()),
-                        dedup_locales=dedup_locales,
-                        prefer=prefer,
-                    ),
-                    document_filters=DocumentCombinedSearchFilters(
+                    DocumentSearchRequest(
+                        root_dir=target,
+                        query=query,
+                        top_k=max_results,
                         source_path=source_path,
                         extractor_id=extractor_id,
                         extractor_version=extractor_version,
                         locator_kind=locator_kind,
-                    ),
+                    )
+                )
+            else:
+                results = vaultspec_rag.search_combined(
+                    CombinedSearchRequest(
+                        root_dir=target,
+                        query=query,
+                        top_k=max_results,
+                        vault_filters=VaultCombinedSearchFilters(
+                            doc_type=doc_type,
+                            feature=feature,
+                            date=date,
+                            tag=tag,
+                        ),
+                        code_filters=CodeCombinedSearchFilters(
+                            language=language,
+                            path=path,
+                            node_type=node_type,
+                            function_name=function_name,
+                            class_name=class_name,
+                            include_paths=tuple(include_paths or ()),
+                            exclude_paths=tuple(exclude_paths or ()),
+                            dedup_locales=dedup_locales,
+                            prefer=prefer,
+                        ),
+                        document_filters=DocumentCombinedSearchFilters(
+                            source_path=source_path,
+                            extractor_id=extractor_id,
+                            extractor_version=extractor_version,
+                            locator_kind=locator_kind,
+                        ),
+                    )
                 )
         return cast(
             "list[SearchResult | DocumentSearchResult] | CombinedSearchOutcome",

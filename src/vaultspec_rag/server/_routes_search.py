@@ -344,7 +344,9 @@ def _dispatch_public_search(
 
     from .._public_search import (
         CodeCombinedSearchFilters,
+        CombinedSearchRequest,
         DocumentCombinedSearchFilters,
+        DocumentSearchRequest,
         VaultCombinedSearchFilters,
     )
 
@@ -386,46 +388,50 @@ def _dispatch_public_search(
         return results, timings, None
     if search_type is PublicSourceType.DOCUMENT:
         results, timings = vaultspec_rag.search_documents_timed(
-            root,
-            query,
-            top_k=top_k,
-            source_path=payload.get("source_path"),
-            extractor_id=payload.get("extractor_id"),
-            extractor_version=payload.get("extractor_version"),
-            locator_kind=payload.get("locator_kind"),
+            DocumentSearchRequest(
+                root_dir=root,
+                query=query,
+                top_k=top_k,
+                source_path=payload.get("source_path"),
+                extractor_id=payload.get("extractor_id"),
+                extractor_version=payload.get("extractor_version"),
+                locator_kind=payload.get("locator_kind"),
+            )
         )
         return results, timings, None
     combined, timings = vaultspec_rag.search_combined_timed(
-        root,
-        query,
-        top_k=top_k,
-        vault_filters=VaultCombinedSearchFilters(
-            doc_type=payload.get("doc_type"),
-            feature=payload.get("feature"),
-            date=payload.get("date"),
-            tag=payload.get("tag"),
-            intent=payload.get("intent"),
-        ),
-        code_filters=CodeCombinedSearchFilters(
-            language=payload.get("language"),
-            path=payload.get("path"),
-            node_type=payload.get("node_type"),
-            function_name=payload.get("function_name"),
-            class_name=payload.get("class_name"),
-            include_paths=tuple(payload.get("include_paths") or ()),
-            exclude_paths=tuple(payload.get("exclude_paths") or ()),
-            dedup_locales=payload.get("dedup_locales"),
-            prefer=payload.get("prefer"),
-            exclude_domains=tuple(payload.get("exclude_domains") or ()),
-            only_domains=tuple(payload.get("only_domains") or ()),
-            include_domains=tuple(payload.get("include_domains") or ()),
-        ),
-        document_filters=DocumentCombinedSearchFilters(
-            source_path=payload.get("source_path"),
-            extractor_id=payload.get("extractor_id"),
-            extractor_version=payload.get("extractor_version"),
-            locator_kind=payload.get("locator_kind"),
-        ),
+        CombinedSearchRequest(
+            root_dir=root,
+            query=query,
+            top_k=top_k,
+            vault_filters=VaultCombinedSearchFilters(
+                doc_type=payload.get("doc_type"),
+                feature=payload.get("feature"),
+                date=payload.get("date"),
+                tag=payload.get("tag"),
+                intent=payload.get("intent"),
+            ),
+            code_filters=CodeCombinedSearchFilters(
+                language=payload.get("language"),
+                path=payload.get("path"),
+                node_type=payload.get("node_type"),
+                function_name=payload.get("function_name"),
+                class_name=payload.get("class_name"),
+                include_paths=tuple(payload.get("include_paths") or ()),
+                exclude_paths=tuple(payload.get("exclude_paths") or ()),
+                dedup_locales=payload.get("dedup_locales"),
+                prefer=payload.get("prefer"),
+                exclude_domains=tuple(payload.get("exclude_domains") or ()),
+                only_domains=tuple(payload.get("only_domains") or ()),
+                include_domains=tuple(payload.get("include_domains") or ()),
+            ),
+            document_filters=DocumentCombinedSearchFilters(
+                source_path=payload.get("source_path"),
+                extractor_id=payload.get("extractor_id"),
+                extractor_version=payload.get("extractor_version"),
+                locator_kind=payload.get("locator_kind"),
+            ),
+        )
     )
     return combined.results, timings, combined
 
