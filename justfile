@@ -16,26 +16,9 @@ default:
   @just --list
 
 # ===========================================================================
-# prod - pure 1:1 mirror of the vaultspec-rag Python CLI
-#
-# just prod [args...]  →  uv run vaultspec-rag [args...]
-#
-# Examples:
-#   just prod index .
-#   just prod search "query text"
-#   just prod status
-#   just prod server
-# ===========================================================================
-
-# prod - pure 1:1 mirror of the vaultspec-rag Python CLI
-prod *args='':
-  {{uvr}} vaultspec-rag {{args}}
-
-# ===========================================================================
 # readme-assets - regenerate the README terminal-render SVGs
 #
-# Requires the managed search server running (just prod server start) and
-# this repo's own index current.
+# Requires the managed search server running and this repo's own index current.
 # ===========================================================================
 
 # readme-assets - regenerate the README terminal-render SVGs
@@ -43,10 +26,6 @@ readme-assets out_dir='assets':
   {{uvr}} python scripts/render_readme_assets.py {{out_dir}}
 
 # ===========================================================================
-# dev - development toolchain (linters, formatters, tests, builds)
-#
-# Nothing here exists in the shipped CLI.
-#
 # Verbs:
 #   deps      dependency management (sync, upgrade, lock)
 #   lint      read-only static analysis (ruff, ty, taplo, mdformat, lychee, complexity, ...)
@@ -57,36 +36,19 @@ readme-assets out_dir='assets':
 #   health    aggregate code-health report (complexity, LOC, MI, strict types)
 #
 # Examples:
-#   just dev deps sync
-#   just dev lint
-#   just dev lint type
-#   just dev lint complexity
-#   just dev lint type-strict
-#   just dev lint module-length
-#   just dev fix
-#   just dev fix python
-#   just dev audit deps
-#   just dev test python
-#   just dev build python
-#   just dev health
+#   just deps sync
+#   just lint
+#   just lint type
+#   just lint complexity
+#   just lint type-strict
+#   just lint module-length
+#   just fix
+#   just fix python
+#   just audit deps
+#   just test python
+#   just build python
+#   just health
 # ===========================================================================
-
-# dev - development toolchain (linters, formatters, tests, builds)
-dev target *args='':
-  switch ("{{target}}") { \
-    "deps" { just _dev-deps {{args}} ; break } \
-    "lint" { just _dev-lint {{args}} ; break } \
-    "fix" { just _dev-fix {{args}} ; break } \
-    "audit" { just _dev-audit {{args}} ; break } \
-    "test" { just _dev-test {{args}} ; break } \
-    "build" { just _dev-build {{args}} ; break } \
-    "health" { just _dev-health {{args}} ; break } \
-    default { \
-      Write-Host "unknown dev target: {{target}}" -ForegroundColor Red ; \
-      Write-Host "  targets: deps lint fix audit test build health" -ForegroundColor Red ; \
-      exit 1 \
-    } \
-  }
 
 # ===========================================================================
 # ci - full pipeline: lint → audit → vault check → test
@@ -94,33 +56,29 @@ dev target *args='':
 
 # ci - full pipeline: lint → audit → vault check → test
 ci:
-  just dev lint all
+  just lint all
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-  just dev audit deps
+  just audit deps
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   {{uvr}} vaultspec-core vault check all
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-  just dev test all
+  just test all
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-# ---------------------------------------------------------------------------
-#  Internal recipes (prefixed with _ to hide from --list)
-# ---------------------------------------------------------------------------
-
-_dev-deps target='sync':
+deps target='sync':
   switch ("{{target}}") { \
     "sync" { uv sync --locked --group dev ; break } \
     "upgrade" { uv sync --upgrade --all-groups ; break } \
     "lock" { uv lock ; break } \
     "lock-upgrade" { uv lock --upgrade ; break } \
     default { \
-      Write-Host "unknown dev deps target: {{target}}" -ForegroundColor Red ; \
+      Write-Host "unknown deps target: {{target}}" -ForegroundColor Red ; \
       Write-Host "  targets: sync upgrade lock lock-upgrade" -ForegroundColor Red ; \
       exit 1 \
     } \
   }
 
-_dev-lint target='all':
+lint target='all':
   switch ("{{target}}") { \
     "python" { {{uvr}} ruff check src tools ; break } \
     "type" { {{uvr}} python -m ty check src/vaultspec_rag ; break } \
@@ -193,39 +151,39 @@ _dev-lint target='all':
       break \
     } \
     "all" { \
-      just _dev-lint python ; \
+      just lint python ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-      just _dev-lint type ; \
+      just lint type ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-      just _dev-lint links ; \
+      just lint links ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-      just _dev-lint toml ; \
+      just lint toml ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-      just _dev-lint markdown ; \
+      just lint markdown ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-      just _dev-lint workflow ; \
+      just lint workflow ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-      just _dev-lint absolute-imports ; \
+      just lint absolute-imports ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-      just _dev-lint complexity ; \
+      just lint complexity ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-      just _dev-lint module-length ; \
+      just lint module-length ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-      just _dev-lint docs-version ; \
+      just lint docs-version ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-      just _dev-lint citations ; \
+      just lint citations ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-      just _dev-lint type-strict ; \
+      just lint type-strict ; \
       break \
     } \
     default { \
-      Write-Host "unknown dev lint target: {{target}}" -ForegroundColor Red ; \
+      Write-Host "unknown lint target: {{target}}" -ForegroundColor Red ; \
       Write-Host "  targets: python type type-strict links toml markdown workflow complexity module-length docs-version citations absolute-imports all" -ForegroundColor Red ; \
       exit 1 \
     } \
   }
 
-_dev-fix target='all':
+fix target='all':
   switch ("{{target}}") { \
     "python" { \
       {{uvr}} ruff format src tools ; \
@@ -255,17 +213,17 @@ _dev-fix target='all':
       break \
     } \
     "all" { \
-      just _dev-fix python ; \
+      just fix python ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-      just _dev-fix toml ; \
+      just fix toml ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-      just _dev-fix markdown ; \
+      just fix markdown ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-      just _dev-fix vault ; \
+      just fix vault ; \
       break \
     } \
     default { \
-      Write-Host "unknown dev fix target: {{target}}" -ForegroundColor Red ; \
+      Write-Host "unknown fix target: {{target}}" -ForegroundColor Red ; \
       Write-Host "  targets: python toml markdown vault all" -ForegroundColor Red ; \
       exit 1 \
     } \
@@ -275,11 +233,11 @@ _dev-fix target='all':
 # (CVE-2025-3000) and lifted the transitive setuptools pin past the PYSEC-2026-3447
 # fix (83.0.0). A future advisory with no upstream fix should be suppressed with
 # --ignore-until-fixed (self-expiring), never a bare --ignore without a comment.
-_dev-audit target:
+audit target:
   switch ("{{target}}") { \
     "deps" { uv audit --locked --preview-features audit ; break } \
     default { \
-      Write-Host "unknown dev audit target: {{target}}" -ForegroundColor Red ; \
+      Write-Host "unknown audit target: {{target}}" -ForegroundColor Red ; \
       Write-Host "  targets: deps" -ForegroundColor Red ; \
       exit 1 \
     } \
@@ -308,7 +266,7 @@ _dev-audit target:
 # quiet-machine-ONLY lane: the performance tests' wall-clock latency/footprint
 # assertions ARE the system under test, so a loaded machine fails them for
 # reasons unrelated to a regression - they are excluded from "gpu" and run
-# only on explicit `just dev test perf`, never as a correctness gate.
+# only on explicit `just test perf`, never as a correctness gate.
 #
 # Only "python" runs parallel. `-n auto` resolves to PHYSICAL cores when psutil
 # is importable, which it always is here (it is a runtime dependency), and
@@ -324,7 +282,7 @@ _dev-audit target:
 # comment inside the switch - PowerShell's `#` runs to the end of the joined
 # line and silently swallows every case after it, including the closing
 # braces (this broke every target, not just "gpu", the last time it happened).
-_dev-test target='all':
+test target='all':
   switch ("{{target}}") { \
     "python" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -n auto --dist loadfile -m "not (integration or quality or performance or robustness or subprocess_gpu or cuda)" ; break } \
     "fast" { {{uvr}} pytest src/vaultspec_rag/tests/ -x -q --tb=short -m unit ; break } \
@@ -335,19 +293,19 @@ _dev-test target='all':
       break \
     } \
     "perf" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "performance" ; break } \
-    "all" { just _dev-test python ; break } \
+    "all" { just test python ; break } \
     default { \
-      Write-Host "unknown dev test target: {{target}}" -ForegroundColor Red ; \
+      Write-Host "unknown test target: {{target}}" -ForegroundColor Red ; \
       Write-Host "  targets: python fast gpu perf all" -ForegroundColor Red ; \
       exit 1 \
     } \
   }
 
-_dev-build target:
+build target:
   switch ("{{target}}") { \
     "python" { uv build ; break } \
     default { \
-      Write-Host "unknown dev build target: {{target}}" -ForegroundColor Red ; \
+      Write-Host "unknown build target: {{target}}" -ForegroundColor Red ; \
       Write-Host "  targets: python" -ForegroundColor Red ; \
       exit 1 \
     } \
@@ -356,5 +314,5 @@ _dev-build target:
 # Aggregate code-health report: worst offenders per dimension (cyclomatic,
 # cognitive, function limits, module LOC, maintainability, strict types).
 # Measurement only — always exits 0. Pass --fast to skip basedpyright.
-_dev-health *args='':
+health *args='':
   {{uvr}} python tools/health_report.py {{args}}
