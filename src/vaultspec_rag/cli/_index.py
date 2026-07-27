@@ -28,7 +28,12 @@ from .._operator_commands import (
     index_source_option,
     server_status_command,
 )
-from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
+from .._source_types import (
+    INDEX_SOURCES,
+    PublicSourceType,
+    SourceTypeParseError,
+    parse_source_type,
+)
 from .._store_locks import VaultStoreLockedError
 from .._store_writes import InsufficientDiskSpaceError
 from ..config import EnvVar
@@ -267,24 +272,8 @@ def _dry_run_admission(scan: ContentScanResult | None) -> dict[str, object]:
     samples: tuple[AdmissionSample, ...] = scan.samples if scan is not None else ()
     return {
         "policy_fingerprint": scan.policy_fingerprint if scan is not None else None,
-        "counts": [
-            {
-                "kind": count.kind.value if count.kind is not None else None,
-                "admitted": count.admitted,
-                "reason": count.reason.value,
-                "count": count.count,
-            }
-            for count in counts
-        ],
-        "samples": [
-            {
-                "path": sample.path,
-                "kind": sample.kind.value if sample.kind is not None else None,
-                "admitted": sample.admitted,
-                "reason": sample.reason.value,
-            }
-            for sample in samples
-        ],
+        "counts": [count.as_payload() for count in counts],
+        "samples": [sample.as_payload() for sample in samples],
     }
 
 
@@ -507,7 +496,7 @@ def _print_service_domain_outcomes(raw_domains: object) -> bool:
         return False
     domains = cast("dict[str, object]", raw_domains)
     rendered = False
-    for source in ("vault", "code", "document"):
+    for source in INDEX_SOURCES:
         raw = domains.get(source)
         if not isinstance(raw, dict):
             continue

@@ -22,11 +22,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
+from .._store_models import DocumentLocatorKind
+
 __all__ = [
     "PREPROCESS_INVOCATION_ENV",
     "SUPPORTED_SCHEMA_VERSION",
     "Locator",
-    "LocatorKind",
     "PreprocOutput",
     "PreprocUnit",
     "PreprocessInvocation",
@@ -44,8 +45,6 @@ PREPROCESS_INVOCATION_SCHEMA_VERSION = 1
 PREPROCESS_INVOCATION_ENV = "VAULTSPEC_PREPROCESS_INVOCATION"
 
 PreprocessInvocationMode = Literal["single", "batch"]
-
-LocatorKind = Literal["byte", "page", "sheet", "line", "char", "none"]
 
 
 class PreprocessInvocation(BaseModel):
@@ -96,7 +95,7 @@ class Locator(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: LocatorKind
+    kind: DocumentLocatorKind
     value: int | str
     end: int | str | None = None
 

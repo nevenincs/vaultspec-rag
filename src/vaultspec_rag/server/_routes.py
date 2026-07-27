@@ -41,7 +41,13 @@ from .._operator_commands import (
     server_jobs_command,
     server_status_command,
 )
-from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
+from .._source_types import (
+    INDEX_SOURCES,
+    IndexSource,
+    PublicSourceType,
+    SourceTypeParseError,
+    parse_source_type,
+)
 from .._store_locks import VaultStoreLockedError
 from ..concurrency import get_search_limiter
 from ..job_models import JobOutcome
@@ -377,7 +383,7 @@ def _classify_search_result(
     *,
     job_snapshot_before: list[dict[str, object]],
     root: Path,
-    source: Literal["vault", "code", "document"],
+    source: IndexSource,
     request_id: str,
     port: int | None,
 ) -> SearchResponseClassification:
@@ -410,7 +416,7 @@ def _classify_collection_disappearance(
     *,
     job_snapshot_before: list[dict[str, object]],
     root: Path,
-    source: Literal["vault", "code", "document"],
+    source: IndexSource,
     request_id: str,
     port: int | None,
 ) -> SearchResponseClassification | None:
@@ -436,7 +442,7 @@ async def _run_search_with_availability(
     *,
     job_snapshot_before: list[dict[str, object]],
     root: Path,
-    source: Literal["vault", "code", "document"],
+    source: IndexSource,
     request_id: str,
     port: int | None,
 ) -> tuple[dict[str, object], SearchResponseClassification | None]:
@@ -461,7 +467,7 @@ def _complete_classified_search(
     classification: SearchResponseClassification,
     *,
     root: Path,
-    source: Literal["vault", "code", "document"],
+    source: IndexSource,
     request_id: str,
     total_seconds: float,
 ) -> tuple[dict[str, object], Literal[200, 503]]:
@@ -754,24 +760,8 @@ def _admission_preflight(preflight: CodeIndexPreflight) -> dict[str, object]:
             "rss_bytes": scan.measurement.rss_bytes,
             "cuda_bytes": scan.measurement.cuda_bytes,
         },
-        "counts": [
-            {
-                "kind": count.kind.value if count.kind is not None else None,
-                "admitted": count.admitted,
-                "reason": count.reason.value,
-                "count": count.count,
-            }
-            for count in scan.counts
-        ],
-        "samples": [
-            {
-                "path": sample.path,
-                "kind": sample.kind.value if sample.kind is not None else None,
-                "admitted": sample.admitted,
-                "reason": sample.reason.value,
-            }
-            for sample in scan.samples
-        ],
+        "counts": [count.as_payload() for count in scan.counts],
+        "samples": [sample.as_payload() for sample in scan.samples],
     }
 
 
@@ -1314,7 +1304,7 @@ def _execute_search_request(
         indexed_count = (
             sum(
                 int(phase_timing.get(f"{source}_indexed_count", 0.0))
-                for source in ("vault", "code", "document")
+                for source in INDEX_SOURCES
             )
             if search_type is PublicSourceType.COMBINED
             else int(phase_timing["indexed_count"])

@@ -47,6 +47,15 @@ DEFAULT_SCAN_SAMPLE_LIMIT = 100
 class AdmissionCount:
     """One stable content-kind/disposition count from a structured scan."""
 
+    def as_payload(self) -> dict[str, object]:
+        """Return the wire shape both the CLI and the route report this as."""
+        return {
+            "kind": self.kind.value if self.kind is not None else None,
+            "admitted": self.admitted,
+            "reason": self.reason.value,
+            "count": self.count,
+        }
+
     kind: ContentKind | None
     admitted: bool
     reason: AdmissionReason
@@ -56,6 +65,20 @@ class AdmissionCount:
 @dataclass(frozen=True, slots=True)
 class AdmissionSample:
     """One bounded, project-relative example from a structured scan."""
+
+    def as_payload(self) -> dict[str, object]:
+        """Return the wire shape both the CLI and the route report this as.
+
+        Two adapters projected these four fields by hand. A field added to the
+        sample reaches neither until someone remembers both, and the two are
+        in different packages, so nothing makes them disagree loudly.
+        """
+        return {
+            "path": self.path,
+            "kind": self.kind.value if self.kind is not None else None,
+            "admitted": self.admitted,
+            "reason": self.reason.value,
+        }
 
     path: str
     kind: ContentKind | None

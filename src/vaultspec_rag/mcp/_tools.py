@@ -31,6 +31,7 @@ from ..serviceclient._transport import (
     _try_http_code_file,
     _try_http_reindex,
     _try_http_search,
+    document_search_filters,
 )
 from ._mcp import mcp
 from ._roots import _resolve_project_root
@@ -343,12 +344,12 @@ async def search_documents(
             top_k,
             port,
             _resolve_project_root(project_root),
-            document_filters={
-                "source_path": source_path,
-                "extractor_id": extractor_id,
-                "extractor_version": extractor_version,
-                "locator_kind": locator_kind,
-            },
+            document_filters=document_search_filters(
+                source_path=source_path,
+                extractor_id=extractor_id,
+                extractor_version=extractor_version,
+                locator_kind=locator_kind,
+            ),
         )
     )
     return SearchResults.model_validate(_search_envelope_or_raise(result))
@@ -410,12 +411,12 @@ async def search_combined(  # noqa: PLR0913 - MCP exposes each owned filter expl
             date=date,
             tag=tag,
             intent=intent,
-            document_filters={
-                "source_path": source_path,
-                "extractor_id": extractor_id,
-                "extractor_version": extractor_version,
-                "locator_kind": locator_kind,
-            },
+            document_filters=document_search_filters(
+                source_path=source_path,
+                extractor_id=extractor_id,
+                extractor_version=extractor_version,
+                locator_kind=locator_kind,
+            ),
         )
     )
     return SearchResults.model_validate(_search_envelope_or_raise(result))

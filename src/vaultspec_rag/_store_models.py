@@ -41,7 +41,10 @@ __all__ = [
     "root_collection_prefix",
 ]
 
-type DocumentLocatorKind = Literal["byte", "page", "sheet", "line", "char", "none"]
+#: How a document locator addresses its unit. Declared once: the preprocess
+#: schema and the server model each carried their own copy, one of them
+#: under a second name.
+DocumentLocatorKind = Literal["byte", "page", "sheet", "line", "char", "none"]
 
 
 @dataclass(frozen=True, slots=True)

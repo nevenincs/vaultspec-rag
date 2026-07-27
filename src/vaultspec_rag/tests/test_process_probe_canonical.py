@@ -2340,3 +2340,70 @@ class TestParseErrorEnvelopeHasOneShape:
         # allowed off the top level.
         for key, value in caught.value.as_payload().items():
             assert envelope[key] == value
+
+
+class TestCrossModuleLiteralTwins:
+    """No data literal of three or more elements is written out twice.
+
+    A scan for identical multi-element literals across modules found six: a
+    failure envelope in five places, the sync-counter labels, the managed-log
+    source vocabulary, the document-filter projection, the dry-run sample
+    shape, and the probe-unavailable block - the last of which already had a
+    helper in the transport that the status renderer simply did not call.
+
+    Each had a natural owner that already existed. The sample now reports
+    itself, the way the breadth figures already did; the counters and the log
+    sources were declared once and re-listed; the filter projection sits with
+    the type it produces.
+    """
+
+    def test_no_literal_collection_is_defined_in_two_modules(self) -> None:
+        import collections
+
+        seen: collections.defaultdict[str, list[str]] = collections.defaultdict(list)
+        for path in _production_sources():
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Tuple | ast.List | ast.Set | ast.Dict):
+                    continue
+                elements = node.keys if isinstance(node, ast.Dict) else node.elts
+                present = [e for e in elements if e is not None]
+                if len(present) < 3 or not all(
+                    isinstance(e, ast.Constant) for e in present
+                ):
+                    continue
+                seen[ast.unparse(node)].append(f"{path.name}:{node.lineno}")
+        offenders = {
+            literal: sites
+            for literal, sites in seen.items()
+            if len({site.split(":")[0] for site in sites}) > 1
+        }
+        assert not offenders, (
+            f"the same literal collection is written in two modules: "
+            f"{offenders}; give it one owner both can import"
+        )
+
+    def test_the_sample_reports_itself(self) -> None:
+        """The projection lives with the data, not in each adapter.
+
+        Proven able to fail: dropping a key from ``as_payload`` fails this on
+        the field comparison below.
+        """
+        from ..indexer._content_discovery import AdmissionReason, AdmissionSample
+        from ..indexer._content_policy import ContentKind
+
+        sample = AdmissionSample(
+            path="p.py",
+            kind=ContentKind.CODE,
+            admitted=True,
+            reason=next(iter(AdmissionReason)),
+        )
+        assert sample.as_payload() == {
+            "path": sample.path,
+            "kind": sample.kind.value if sample.kind is not None else None,
+            "admitted": sample.admitted,
+            "reason": sample.reason.value,
+        }

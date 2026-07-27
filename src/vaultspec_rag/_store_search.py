@@ -13,7 +13,7 @@ the rest of the local-mode store layer.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -26,6 +26,7 @@ if TYPE_CHECKING:
         ScoredPoint,
     )
 
+    from ._source_types import IndexSource
     from .embeddings import SparseResult
 
 logger = logging.getLogger(__name__)
@@ -299,7 +300,7 @@ class _VaultSearchMixin:
     def _execute_hybrid_query(
         self,
         collection_name: str,
-        source: Literal["vault", "code", "document"],
+        source: IndexSource,
         prefetch: list[Any],
         dense_query: Any,
         query_filter: Filter | None,
