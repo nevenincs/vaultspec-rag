@@ -649,27 +649,21 @@ def _validated_managed_log_truncation(
         "record_truncations",
         "omitted_response_records",
     )
-    if any(not _is_nonnegative_int(details.get(key)) for key in required_ints):
-        return None
-    if details.get("record_limit_bytes") != MAX_MANAGED_LOG_RECORD_BYTES:
-        return None
-    if details.get("source_limit_bytes") != MAX_MANAGED_LOG_SOURCE_BYTES:
-        return None
-    scanned = cast("int", details["scanned_bytes"])
-    returned = cast("int", details["returned_content_bytes"])
-    if (
-        scanned > MAX_MANAGED_LOG_SOURCE_BYTES
-        or returned > MAX_MANAGED_LOG_SOURCE_BYTES
-    ):
-        return None
-    if not isinstance(details.get("source_budget_exhausted"), bool):
-        return None
-    if not isinstance(details.get("response_budget_exhausted"), bool):
-        return None
+    scanned = details.get("scanned_bytes")
+    returned = details.get("returned_content_bytes")
     content_bytes = _managed_log_content_bytes(lines, marker=True)
-    if not _managed_log_lines_fit_bounds(lines, marker=True):
-        return None
-    if returned != content_bytes:
+    has_valid_details = (
+        all(_is_nonnegative_int(details.get(key)) for key in required_ints)
+        and details.get("record_limit_bytes") == MAX_MANAGED_LOG_RECORD_BYTES
+        and details.get("source_limit_bytes") == MAX_MANAGED_LOG_SOURCE_BYTES
+        and cast("int", scanned) <= MAX_MANAGED_LOG_SOURCE_BYTES
+        and cast("int", returned) <= MAX_MANAGED_LOG_SOURCE_BYTES
+        and isinstance(details.get("source_budget_exhausted"), bool)
+        and isinstance(details.get("response_budget_exhausted"), bool)
+        and _managed_log_lines_fit_bounds(lines, marker=True)
+        and cast("int", returned) == content_bytes
+    )
+    if not has_valid_details:
         return None
     return cast("dict[str, int | bool]", details)
 
@@ -681,13 +675,9 @@ def _validated_managed_log_group(
     limit: int,
 ) -> ManagedLogGroup | None:
     """Validate one exact source group from the live response."""
-    if not isinstance(raw, dict):
-        return None
-    data = cast("dict[str, object]", raw)
-    if data.get("source") != expected_source:
-        return None
-    lines = _validated_managed_log_lines(data.get("lines"), limit=limit)
-    if lines is None:
+    data = cast("dict[str, object]", raw) if isinstance(raw, dict) else None
+    lines = _validated_managed_log_lines(data.get("lines"), limit=limit) if data else None
+    if data is None or data.get("source") != expected_source or lines is None:
         return None
     group: ManagedLogGroup = {"source": expected_source, "lines": lines}
     metadata_present = any(
@@ -695,16 +685,18 @@ def _validated_managed_log_group(
     )
     if not metadata_present:
         return group if _managed_log_lines_fit_bounds(lines, marker=False) else None
-    if data.get("truncated") is not True:
-        return None
-    if data.get("marker") != MANAGED_LOG_TRUNCATION_MARKER:
-        return None
     details = _validated_managed_log_truncation(
         data.get("truncation"),
         lines=lines,
     )
-    if details is None:
+    has_valid_metadata = (
+        data.get("truncated") is True
+        and data.get("marker") == MANAGED_LOG_TRUNCATION_MARKER
+        and details is not None
+    )
+    if not has_valid_metadata:
         return None
+    assert details is not None
     group["truncated"] = True
     group["marker"] = MANAGED_LOG_TRUNCATION_MARKER
     group["truncation"] = details
@@ -917,6 +909,15 @@ class DaemonLogCapture:
         if self._persistence_error is None:
             self._persistence_error = exc
 
+    def _discard_remaining_pipe(self, read_size: int) -> None:
+        """Keep draining a failed sink's pipe so producers cannot deadlock."""
+        while True:
+            try:
+                if not os.read(self._read_fd, read_size):
+                    return
+            except OSError:
+                return
+
     def _drain(self) -> None:
         """Copy fixed-size raw pipe chunks into the sole rotating file sink."""
         sink = RawRotatingLogSink(
@@ -942,12 +943,7 @@ class DaemonLogCapture:
                         sink.close()
                     # Persistence is degraded, but the pipe must keep draining
                     # so noisy producers cannot deadlock the service.
-                    while True:
-                        try:
-                            if not os.read(self._read_fd, read_size):
-                                break
-                        except OSError:
-                            break
+                    self._discard_remaining_pipe(read_size)
                     break
         finally:
             with contextlib.suppress(OSError, ValueError):
