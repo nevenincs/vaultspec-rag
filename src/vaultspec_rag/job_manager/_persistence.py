@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 import time
 from collections import OrderedDict, deque
-from dataclasses import replace
-from typing import cast
+from dataclasses import dataclass, replace
+from typing import Any, cast
 
 from .. import job_persistence as _job_persistence
 from ..job_models import (
@@ -193,68 +193,68 @@ class JobManagerPersistence(JobManagerState):
     def _replace_snapshot_locked(
         self,
         managed: ManagedJob,
-        *,
-        state: JobState,
-        desired_state: DesiredJobState,
-        now: float,
-        attempt: JobAttempt | None = None,
-        started_at: float | object | None = ...,
-        control_requested_at: float | object | None = ...,
-        control_acknowledged_at: float | object | None = ...,
-        finished_at: float | object | None = ...,
-        result: str | object | None = ...,
-        error_kind: str | object | None = ...,
-        reuse: dict[str, object] | object | None = ...,
+        transition: _SnapshotTransition | None = None,
+        **legacy: object,
     ) -> None:
+        if transition is None:
+            transition = _SnapshotTransition(**cast("dict[str, Any]", legacy))
+        elif legacy:
+            raise TypeError("use either _SnapshotTransition or named inputs")
         previous = managed.snapshot
         timestamps = previous.timestamps
         managed.snapshot = replace(
             previous,
             revision=previous.revision + 1,
-            state=state,
-            desired_state=desired_state,
-            capabilities=_capabilities_for_state(previous.spec, state),
-            attempt=attempt or previous.attempt,
+            state=transition.state,
+            desired_state=transition.desired_state,
+            capabilities=_capabilities_for_state(previous.spec, transition.state),
+            attempt=transition.attempt or previous.attempt,
             timestamps=replace(
                 timestamps,
-                state_changed_at=now,
+                state_changed_at=transition.now,
                 started_at=(
                     timestamps.started_at
-                    if started_at is ...
-                    else cast("float | None", started_at)
+                    if transition.started_at is ...
+                    else cast("float | None", transition.started_at)
                 ),
                 # Admission is a per-attempt fact: any transition that
                 # rewrites the start clock (a fresh start, a requeued
                 # resume) discards the previous attempt's admission stamp.
                 admission_acquired_at=(
-                    timestamps.admission_acquired_at if started_at is ... else None
+                    timestamps.admission_acquired_at
+                    if transition.started_at is ...
+                    else None
                 ),
                 control_requested_at=(
                     timestamps.control_requested_at
-                    if control_requested_at is ...
-                    else cast("float | None", control_requested_at)
+                    if transition.control_requested_at is ...
+                    else cast("float | None", transition.control_requested_at)
                 ),
                 control_acknowledged_at=(
                     timestamps.control_acknowledged_at
-                    if control_acknowledged_at is ...
-                    else cast("float | None", control_acknowledged_at)
+                    if transition.control_acknowledged_at is ...
+                    else cast("float | None", transition.control_acknowledged_at)
                 ),
                 finished_at=(
                     timestamps.finished_at
-                    if finished_at is ...
-                    else cast("float | None", finished_at)
+                    if transition.finished_at is ...
+                    else cast("float | None", transition.finished_at)
                 ),
             ),
-            result=previous.result if result is ... else cast("str | None", result),
+            result=(
+                previous.result
+                if transition.result is ...
+                else cast("str | None", transition.result)
+            ),
             error_kind=(
                 previous.error_kind
-                if error_kind is ...
-                else cast("str | None", error_kind)
+                if transition.error_kind is ...
+                else cast("str | None", transition.error_kind)
             ),
             reuse=(
                 previous.reuse
-                if reuse is ...
-                else cast("dict[str, object] | None", reuse)
+                if transition.reuse is ...
+                else cast("dict[str, object] | None", transition.reuse)
             ),
         )
 
@@ -341,3 +341,16 @@ class JobManagerPersistence(JobManagerState):
             message=f"Job state could not be persisted: {detail}",
             job=job,
         )
+@dataclass(frozen=True, slots=True)
+class _SnapshotTransition:
+    state: JobState
+    desired_state: DesiredJobState
+    now: float
+    attempt: JobAttempt | None = None
+    started_at: float | object | None = ...
+    control_requested_at: float | object | None = ...
+    control_acknowledged_at: float | object | None = ...
+    finished_at: float | object | None = ...
+    result: str | object | None = ...
+    error_kind: str | object | None = ...
+    reuse: dict[str, object] | object | None = ...
