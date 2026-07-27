@@ -18,7 +18,7 @@ related:
 
 Stops retention from shredding an archive into a partial one, and stops a namespace being destroyed on the word of an archive nobody re-read.
 
-- [ ] `P01.S01` - Record the pre-change baseline of the storage suite so any later regression stays attributable; `src/vaultspec_rag/tests/test_storage_ops.py`.
+- [x] `P01.S01` - Record the pre-change baseline of the storage suite so any later regression stays attributable; `src/vaultspec_rag/tests/test_storage_ops.py`.
 - [ ] `P01.S02` - Stamp an archive's own completion timestamp into its snapshot manifest so retention has an age that belongs to the archive; `src/vaultspec_rag/storage_manifest.py`.
 - [ ] `P01.S03` - Expire and evict whole archive directories on that stamp instead of individual files on their own modification times, so the byte cap can never leave a manifest describing deleted snapshots; `src/vaultspec_rag/storage_ops.py`.
 - [ ] `P01.S04` - Re-read a completed archive before returning it, asserting every recorded snapshot file exists non-empty and every recorded point count still matches the live collection, and raise as every other archive failure already does; `src/vaultspec_rag/storage_ops.py`.

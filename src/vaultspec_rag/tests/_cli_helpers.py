@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+from dataclasses import dataclass
 import http.server
 import json
 import os
@@ -17,7 +18,7 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
 from ..cli import app
 from ..cli._process import _is_our_service
 from ..cli._render import _display_search_results, _display_service_error
-from ..cli._service_status import _read_service_status, _write_service_status
+from ..cli._service_status import _write_service_status, read_service_status
 from ..config import EnvVar
 from ..config import reset_config as reset_rag_config
 from ..serviceclient._compat import DataPlaneService, classify_service_version
@@ -28,6 +29,18 @@ from ..serviceclient._transport import (
 )
 from ..torch_config._constants import TorchConfigAction
 from ._http_stubs import QuietHandler
+
+
+@dataclass(frozen=True, slots=True)
+class _StatusContractOptions:
+    last_progress_age_seconds: float = 2.0
+    extra_running_job: bool = False
+    failed_jobs: int = 0
+    omit_project: bool = False
+    omit_job_started_at: bool = False
+    health: dict[str, object] | None = None
+    jobs: dict[str, object] | None = None
+    jobs_status_code: int = 200
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -332,8 +345,8 @@ def _assert_record(
 
 
 def _hold_local_index_lock(root: Path):
+    from .._store_locks import FileLock
     from ..config import get_config
-    from ..store import FileLock
 
     cfg = get_config()
     index_dir = root / cfg.data_dir / cfg.qdrant_dir
@@ -344,15 +357,8 @@ def _hold_local_index_lock(root: Path):
 
 
 def _status_contract_server(
-    last_progress_age_seconds: float = 2.0,
-    *,
-    extra_running_job: bool = False,
-    failed_jobs: int = 0,
-    omit_project: bool = False,
-    omit_job_started_at: bool = False,
-    health: dict[str, object] | None = None,
-    jobs: dict[str, object] | None = None,
-    jobs_status_code: int = 200,
+    options: _StatusContractOptions | None = None,
+    **legacy: object,
 ) -> tuple[typing.Any, typing.Any]:
     """Start a local HTTP service exposing /health and /jobs for status tests.
 
@@ -365,28 +371,31 @@ def _status_contract_server(
     import threading
     import time
 
+    if options is None:
+        options = _StatusContractOptions(**typing.cast("dict[str, typing.Any]", legacy))
+    elif legacy:
+        raise TypeError("use either _StatusContractOptions or named inputs")
+
     running_job_started_at = time.time() - 42
 
     class _StatusContractHandler(QuietHandler):
         def do_GET(self):
             status_code = 200
             if self.path.startswith("/jobs"):
-                status_code = jobs_status_code
+                status_code = options.jobs_status_code
                 payload = (
-                    jobs
-                    if jobs is not None
+                    options.jobs
+                    if options.jobs is not None
                     else _status_contract_jobs_payload(
                         running_job_started_at,
-                        last_progress_age_seconds=last_progress_age_seconds,
-                        extra_running_job=extra_running_job,
-                        failed_jobs=failed_jobs,
-                        omit_project=omit_project,
-                        omit_job_started_at=omit_job_started_at,
+                        options,
                     )
                 )
             else:
                 payload = _with_service_token(
-                    health if health is not None else _status_contract_health_payload()
+                    options.health
+                    if options.health is not None
+                    else _status_contract_health_payload()
                 )
             self.send_response(status_code)
             self.send_header("Content-Type", "application/json")
@@ -401,12 +410,7 @@ def _status_contract_server(
 
 def _status_contract_jobs_payload(
     started_at: float,
-    *,
-    last_progress_age_seconds: float,
-    extra_running_job: bool,
-    failed_jobs: int,
-    omit_project: bool,
-    omit_job_started_at: bool,
+    options: _StatusContractOptions,
 ) -> dict[str, object]:
     running_job: dict[str, object] = {
         "id": "running-job",
@@ -420,11 +424,11 @@ def _status_contract_jobs_payload(
             "completed": 7,
             "total": 20,
         },
-        "last_progress_age_seconds": last_progress_age_seconds,
+        "last_progress_age_seconds": options.last_progress_age_seconds,
     }
-    if not omit_job_started_at:
+    if not options.omit_job_started_at:
         running_job["started_at"] = started_at
-    if not omit_project:
+    if not options.omit_project:
         running_job["initiator"] = {
             "command": "reindex_codebase",
             "project_root": (
@@ -433,7 +437,7 @@ def _status_contract_jobs_payload(
             ),
         }
     jobs: list[dict[str, object]] = [running_job]
-    if extra_running_job:
+    if options.extra_running_job:
         jobs.append(
             {
                 "id": "vault-running-job",
@@ -457,12 +461,13 @@ def _status_contract_jobs_payload(
         )
     jobs.extend([{"id": "done-1", "phase": "done"}, {"id": "done-2", "phase": "done"}])
     jobs.extend(
-        {"id": f"failed-{index}", "phase": "error"} for index in range(failed_jobs)
+        {"id": f"failed-{index}", "phase": "error"}
+        for index in range(options.failed_jobs)
     )
-    running_count = 2 if extra_running_job else 1
+    running_count = 2 if options.extra_running_job else 1
     phases = {"running": running_count, "done": 2}
-    if failed_jobs:
-        phases["error"] = failed_jobs
+    if options.failed_jobs:
+        phases["error"] = options.failed_jobs
     return {
         "ok": True,
         "jobs": jobs,
@@ -973,7 +978,6 @@ __all__ = [
     "_plain_lines",
     "_projects_list_contract_server",
     "_projects_unload_contract_server",
-    "_read_service_status",
     "_reindex_contract_server",
     "_running_service_record",
     "_search_output_contract_server",
@@ -988,6 +992,7 @@ __all__ = [
     "_try_http_search",
     "_write_service_status",
     "app",
+    "read_service_status",
     "reset_base_config",
     "reset_rag_config",
     "runner",
@@ -1046,7 +1051,7 @@ def _reindex_contract_server() -> tuple[
 
 
 @contextlib.contextmanager
-def _process_the_identity_check_recognises() -> typing.Generator[int]:
+def process_the_identity_check_recognises() -> typing.Generator[int]:
     """Run a live process this build accepts as its own daemon, yielding its pid.
 
     Where no ``/health`` token can be round-tripped - a daemon still warming
@@ -1086,7 +1091,7 @@ def _process_the_identity_check_recognises() -> typing.Generator[int]:
 
 
 @contextlib.contextmanager
-def _store_locked_by_another_process(root: Path) -> typing.Generator[None]:
+def store_locked_by_another_process(root: Path) -> typing.Generator[None]:
     """Hold *root*'s store open in a separate process for the block's duration.
 
     The lock is per process, not per handle: a second ``VaultStore`` in THIS
@@ -1100,7 +1105,7 @@ def _store_locked_by_another_process(root: Path) -> typing.Generator[None]:
 
     holder = textwrap.dedent(f"""
         import pathlib, time
-        from vaultspec_rag import VaultStore
+        from vaultspec_rag.store_runtime import VaultStore
         VaultStore(pathlib.Path(r"{root}"))
         print("held", flush=True)
         time.sleep(120)
