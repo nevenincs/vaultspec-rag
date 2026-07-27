@@ -11,6 +11,12 @@ from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStub
     init_paths,
 )
 
+from .._workspace_layout import (
+    VAULT_DIR,
+    VAULTSPEC_DIR,
+    workspace_directories,
+)
+
 __all__ = [
     "_ensure_workspace_dirs",
     "_init_core_context",
@@ -42,8 +48,8 @@ def _resolve_target(path: Path | None, *, bootstrap: bool) -> Path:
     if not bootstrap:
         return target
     target.mkdir(parents=True, exist_ok=True)
-    (target / ".vault").mkdir(exist_ok=True)
-    (target / ".vaultspec").mkdir(exist_ok=True)
+    (target / VAULT_DIR).mkdir(exist_ok=True)
+    (target / VAULTSPEC_DIR).mkdir(exist_ok=True)
     return target
 
 
@@ -65,14 +71,7 @@ def _ensure_workspace_dirs(target: Path, *, dry_run: bool) -> list[str]:
     minimum rag's enrollment requires; core's ``install_run`` will
     create the same dirs (and more) without conflict.
     """
-    needed = [
-        target / ".vault",
-        target / ".vault" / "data",
-        target / ".vaultspec",
-        target / ".vaultspec" / "rules",
-        target / ".vaultspec" / "mcps",
-        target / ".vaultspec" / "skills",
-    ]
+    needed = [target / relative for relative in workspace_directories()]
     created: list[str] = []
     for d in needed:
         if d.is_dir():

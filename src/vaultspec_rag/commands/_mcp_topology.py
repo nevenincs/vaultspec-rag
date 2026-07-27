@@ -18,6 +18,16 @@ from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStub
 )
 
 from .._atomic_write import replace_atomically
+from .._workspace_layout import (
+    VAULT_DATA_DIR,
+    VAULTSPEC_DIR,
+    VAULTSPEC_MCP_OWNERSHIP,
+    VAULTSPEC_MCPS,
+    VAULTSPEC_PROVIDERS,
+    VAULTSPEC_RULES,
+    VAULTSPEC_WORKSPACE,
+    workspace_directories,
+)
 from ..builtins import list_builtins
 
 
@@ -182,7 +192,7 @@ class RequiredMcpTopology:
         for path, original in self.nodes:
             projected = projection / path.relative_to(self.root)
             expected = file_snapshot(projected)
-            if path == self.root / Path(".vaultspec") / "mcp-ownership.json":
+            if path == self.root / VAULTSPEC_MCP_OWNERSHIP:
                 expected = _rebase_ownership_snapshot(
                     expected,
                     projection=projection,
@@ -279,21 +289,14 @@ class RequiredMcpTopology:
 _REQUIRED_MCP_STATIC_RELATIVE_PATHS = (
     Path(".mcp.json"),
     Path(".codex") / "config.toml",
-    Path(".vaultspec") / "mcp-ownership.json",
-    Path(".vaultspec") / "providers.json",
-    Path(".vaultspec") / "workspace.json",
+    VAULTSPEC_MCP_OWNERSHIP,
+    VAULTSPEC_PROVIDERS,
+    VAULTSPEC_WORKSPACE,
     Path("pyproject.toml"),
 )
-_RAG_MCP_SOURCE = Path(".vaultspec") / "mcps" / "vaultspec-rag.builtin.json"
+_RAG_MCP_SOURCE = VAULTSPEC_MCPS / "vaultspec-rag.builtin.json"
 
-_WORKSPACE_CONTAINERS = (
-    Path(".vault"),
-    Path(".vault") / "data",
-    Path(".vaultspec"),
-    Path(".vaultspec") / "rules",
-    Path(".vaultspec") / "mcps",
-    Path(".vaultspec") / "skills",
-)
+_WORKSPACE_CONTAINERS = workspace_directories()
 
 # Core's provider hook writer owns these native files and sidecars.  Keep the
 # paths in the same lifecycle inventory as Core-derived ToolConfig paths so a
@@ -345,13 +348,13 @@ def lifecycle_transaction_inventory(target: Path) -> LifecycleTransactionInvento
         *required_mcp_paths(root),
         root / "uv.lock",
         *(root / relative for relative in _CORE_ROOT_FILES),
-        *(root / ".vaultspec" / relative for relative in list_builtins()),
+        *(root / VAULTSPEC_DIR / relative for relative in list_builtins()),
         *(root / relative for relative in _PROVIDER_HOOK_FILES),
     }
     containers = {root / relative for relative in _WORKSPACE_CONTAINERS}
     managed_trees = {
-        root / ".vault" / "data",
-        root / ".vaultspec" / "rules",
+        root / VAULT_DATA_DIR,
+        root / VAULTSPEC_RULES,
         root / ".venv",
     }
 
@@ -373,7 +376,7 @@ def _provider_paths(root: Path) -> tuple[set[Path], set[Path], set[Path]]:
     """Resolve provider outputs from Core without touching *root*."""
     with tempfile.TemporaryDirectory(prefix="vaultspec-rag-provider-paths-") as raw:
         projection = Path(raw) / "workspace"
-        (projection / ".vaultspec").mkdir(parents=True)
+        (projection / VAULTSPEC_DIR).mkdir(parents=True)
         context = Context().run(init_paths, projection)
 
         files: set[Path] = set()
@@ -518,7 +521,7 @@ def inspect_required_mcp_topology(target: Path) -> RequiredMcpTopology:
         identities=tuple(identities),
         links=tuple(captured),
         mcp_sources=tuple(
-            path for path in required if path.parent == root / ".vaultspec" / "mcps"
+            path for path in required if path.parent == root / VAULTSPEC_MCPS
         ),
     )
 
@@ -615,7 +618,7 @@ def _capture_required_link(
 
 def _discover_mcp_sources(root: Path) -> tuple[Path, ...]:
     """Enumerate the exact direct ``*.json`` source set used by Core."""
-    directory = root / ".vaultspec" / "mcps"
+    directory = root / VAULTSPEC_MCPS
     _validate_plain_parents(root, directory / "source.json")
     snapshot = file_snapshot(directory)
     if snapshot.kind is SnapshotKind.ABSENT:

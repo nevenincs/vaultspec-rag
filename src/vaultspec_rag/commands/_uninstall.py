@@ -16,6 +16,10 @@ from vaultspec_core.core.mcps import (  # pyright: ignore[reportMissingTypeStubs
     mcp_uninstall,
 )
 
+from .._workspace_layout import (
+    VAULT_DATA_DIR,
+    VAULTSPEC_DIR,
+)
 from ..builtins import list_builtins
 from ._mcp_extra import reconcile_mcp_extra
 from ._mcp_topology import RequiredMcpTopology, inspect_required_mcp_topology
@@ -38,7 +42,7 @@ def _remove_candidates(
     # ``seed_builtins`` would write, derived from the same package tree
     # via ``list_builtins``. A new bundled file is then seeded and
     # removed by one source of truth and can never be orphaned.
-    vaultspec_dir = target / ".vaultspec"
+    vaultspec_dir = target / VAULTSPEC_DIR
     candidates = [
         vaultspec_dir / rel
         for rel in list_builtins()
@@ -63,7 +67,7 @@ def _remove_candidates(
 #: (the machine-global status dir and ``.vault/data/``), so these are only
 #: ever stale residue; uninstall removes them defensively and idempotently.
 _OBSOLETE_SENTINEL_FILES = (".qdrant-initialized",)
-_OBSOLETE_SENTINEL_DIRS = ((".vaultspec", "runtime"),)
+_OBSOLETE_SENTINEL_DIRS = (VAULTSPEC_DIR / "runtime",)
 
 
 def _remove_obsolete_sentinels(
@@ -81,11 +85,11 @@ def _remove_obsolete_sentinels(
                 report.warnings.append(f"failed to remove {name}: {exc}")
                 continue
         report.removed.append(name)
-    for parts in _OBSOLETE_SENTINEL_DIRS:
-        sentinel_dir = target.joinpath(*parts)
+    for relative in _OBSOLETE_SENTINEL_DIRS:
+        sentinel_dir = target / relative
         if not sentinel_dir.is_dir() or sentinel_dir.is_symlink():
             continue
-        rel = "/".join(parts)
+        rel = relative.as_posix()
         if not dry_run:
             try:
                 shutil.rmtree(sentinel_dir, onexc=_rmtree_safe_onexc)
@@ -97,7 +101,7 @@ def _remove_obsolete_sentinels(
 
 
 def _remove_data_dir(target: Path, dry_run: bool, report: UninstallReport) -> None:
-    data_dir = target / ".vault" / "data"
+    data_dir = target / VAULT_DATA_DIR
     if data_dir.is_symlink():
         msg = (
             f"refusing to --remove-data: {data_dir} is a symlink. "
@@ -378,7 +382,7 @@ def uninstall_run(
             report.warnings.append(message)
             return report
 
-    if not (target / ".vaultspec").is_dir():
+    if not (target / VAULTSPEC_DIR).is_dir():
         # No ``.vaultspec/`` means rag was never installed at this
         # target - anything we found in ``pyproject.toml`` belongs to
         # the user (or to a different project that happened to land in
