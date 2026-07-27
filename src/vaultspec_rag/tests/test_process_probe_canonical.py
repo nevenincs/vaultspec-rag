@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -2154,6 +2155,16 @@ class TestNoTwoModulesGrewTheSameHelper:
             def visit_Constant(self, node: ast.Constant) -> ast.AST:
                 return ast.copy_location(ast.Constant(value=None), node)
 
+            def visit_ExceptHandler(self, node: ast.ExceptHandler) -> ast.AST:
+                # An ``except ... as`` alias is a bare string on the handler,
+                # not a Name node, so the visitors above never reached it. Two
+                # byte-identical bodies that spelled the caught exception
+                # differently therefore hashed differently, and one such pair
+                # sat undetected in the tree until a separate scan found it.
+                self.generic_visit(node)
+                node.name = "_" if node.name else None
+                return node
+
         count = sum(
             1
             for _ in ast.walk(ast.Module(body=body, type_ignores=[]))
@@ -2500,3 +2511,211 @@ class TestJobEnumGroupingsAreDeclared:
         assert retryable < terminal
         assert JobState.SUCCEEDED in terminal
         assert JobState.SUCCEEDED not in retryable
+
+
+class TestTimestampReadingHasOneHome:
+    """Only ``_timestamps`` turns a stored ISO string back into an instant.
+
+    The writing side was made canonical long ago - one helper stamps both
+    discovery fields so their format cannot drift. The reading side was not,
+    and five sites parsed a stamp back, two of them the same function under
+    the same name in modules one of which imports the other.
+
+    The rule that mattered was the one for a value carrying no offset. Four
+    readers called it UTC; the fifth handed it to ``astimezone``, which reads
+    a naive value as local. Same string, two instants, differing by the
+    machine's offset - and nothing failed, because the canonical writer always
+    emits an offset. It would have surfaced first on a hand-edited file.
+    """
+
+    #: The typed round-trip for preprocess config scalars is not this. It
+    #: dispatches across ``date``/``time``/``datetime`` and must RAISE on bad
+    #: input, where every timestamp reader returns ``None`` and carries on.
+    #: Merging them would force one contract onto both.
+    _TYPED_SCALAR_THAW = "_resolved_policy.py"
+
+    def test_only_the_timestamp_module_parses_an_iso_instant(self) -> None:
+        """A new ``fromisoformat`` elsewhere is a sixth reader."""
+        offenders: list[str] = []
+        for path in _production_sources():
+            if path.name in {"_timestamps.py", self._TYPED_SCALAR_THAW}:
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            offenders.extend(
+                f"{path.name}:{node.lineno}"
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "fromisoformat"
+            )
+        assert not offenders, (
+            f"an ISO timestamp is parsed outside the timestamp module at "
+            f"{offenders}; call parse_iso_timestamp, so the rule for a value "
+            "carrying no offset is stated once instead of guessed per reader"
+        )
+
+    def test_only_the_timestamp_module_calls_a_naive_value_utc(self) -> None:
+        """The coercion is the rule itself, so it may exist in one place."""
+        offenders: list[str] = []
+        for path in _production_sources():
+            if path.name == "_timestamps.py":
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            offenders.extend(
+                f"{path.name}:{node.lineno}"
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "replace"
+                and any(kw.arg == "tzinfo" for kw in node.keywords)
+            )
+        assert not offenders, (
+            f"a naive timestamp is given a timezone outside the timestamp "
+            f"module at {offenders}; whichever offset it picks becomes a "
+            "second answer to the question that module exists to answer once"
+        )
+
+    def test_a_naive_stamp_reads_as_utc_and_not_as_local(self) -> None:
+        """The divergence the fifth reader carried.
+
+        ``astimezone`` on a naive value assumes LOCAL time, so the label path
+        placed the same string at a different instant from every other reader
+        whenever the machine was not on UTC.
+
+        Proven able to fail: returning ``parsed`` unchanged instead of
+        ``parsed.replace(tzinfo=UTC)`` fails this on the ``tzinfo`` assertion
+        below; making the fallback ``astimezone()`` fails it on the equality.
+        """
+        from datetime import UTC, datetime
+
+        from .._timestamps import parse_iso_timestamp
+
+        naive = parse_iso_timestamp("2026-07-26T10:00:00")
+        assert naive is not None
+        assert naive.tzinfo is UTC
+        assert naive == datetime(2026, 7, 26, 10, 0, 0, tzinfo=UTC)
+
+    def test_no_module_rewrites_a_z_suffix_before_parsing(self) -> None:
+        """The dead workaround one reader still carried, kept out.
+
+        ``fromisoformat`` has accepted ``Z`` since 3.11 and this package
+        requires later, so substituting ``+00:00`` first is a no-op that reads
+        as a necessary step. Asserting the parser accepts ``Z`` would test
+        CPython rather than this codebase; asserting nothing performs the
+        substitution tests the thing that was actually wrong.
+        """
+        offenders: list[str] = []
+        for path in _production_sources():
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            offenders.extend(
+                f"{path.name}:{node.lineno}"
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "replace"
+                and [
+                    argument.value
+                    for argument in node.args
+                    if isinstance(argument, ast.Constant)
+                ]
+                == ["Z", "+00:00"]
+            )
+        assert not offenders, (
+            f"a Z suffix is rewritten before parsing at {offenders}; the "
+            "parser has accepted it since 3.11, and a no-op that looks "
+            "load-bearing is how the copy carrying it escaped notice"
+        )
+
+
+class TestTreeRemovalHasOneHandler:
+    """Only ``_rmtree`` decides what to do with a link found mid-tree.
+
+    Two modules had grown the handler independently, byte-for-byte identical
+    apart from the name each gave the caught exception - and that rename is
+    exactly why the structural scan could not see them. It blinds identifiers
+    and constants, but an ``except ... as`` alias is a plain string on the
+    handler node, so two identical bodies hashed differently.
+    """
+
+    def test_no_module_passes_its_own_onexc_handler(self) -> None:
+        """A second handler is a second policy for following a link."""
+        offenders: list[str] = []
+        for path in _production_sources():
+            if path.name == "_rmtree.py":
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            offenders.extend(
+                f"{path.name}:{node.lineno}"
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and any(kw.arg in {"onexc", "onerror"} for kw in node.keywords)
+            )
+        assert not offenders, (
+            f"a tree removal supplies its own error handler at {offenders}; "
+            "call remove_tree, so descending through a link is refused by one "
+            "policy rather than by whichever copy the caller reached for"
+        )
+
+    def test_the_handler_clears_a_link_instead_of_following_it(self) -> None:
+        """The branch, exercised directly rather than through a tree.
+
+        A tree-shaped test cannot reach this on Windows: ``rmtree`` there
+        walks with ``scandir`` and removes both link shapes itself, so the
+        handler is never invoked and the test passes whatever the handler
+        does. Only the POSIX fd-walk raises on a link found mid-tree. Calling
+        the handler with the arguments ``rmtree`` would pass it exercises the
+        real branch on either platform.
+
+        Proven able to fail: dropping the ``is_symlink`` branch so the handler
+        only re-raises fails this on the ``pytest.fail`` below.
+        """
+        from .._rmtree import _unlink_link_or_reraise
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            outside = root / "outside"
+            outside.mkdir()
+            kept = outside / "precious.txt"
+            kept.write_text("must survive", encoding="utf-8")
+            link = root / "link"
+            try:
+                link.symlink_to(outside, target_is_directory=True)
+            except OSError as exc:  # pragma: no cover - unprivileged Windows
+                pytest.skip(f"symlink creation not permitted here: {exc}")
+            try:
+                _unlink_link_or_reraise(os.rmdir, str(link), OSError("refused"))
+            except OSError as exc:
+                pytest.fail(
+                    f"the handler re-raised over a link instead of clearing it: {exc}"
+                )
+            assert not link.is_symlink()
+            assert kept.read_text(encoding="utf-8") == "must survive"
+
+    def test_the_handler_re_raises_anything_that_is_not_a_link(self) -> None:
+        """A real failure must not be swallowed by the link branch.
+
+        Proven able to fail: returning instead of ``raise exc`` fails this on
+        the ``pytest.raises`` below, and every genuine removal error would
+        then be reported as a successful delete.
+        """
+        from .._rmtree import _unlink_link_or_reraise
+
+        with tempfile.TemporaryDirectory() as td:
+            ordinary = Path(td) / "ordinary.txt"
+            ordinary.write_text("not a link", encoding="utf-8")
+            with pytest.raises(OSError, match="disk went away"):
+                _unlink_link_or_reraise(
+                    os.unlink, str(ordinary), OSError("disk went away")
+                )

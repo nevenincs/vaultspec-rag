@@ -59,7 +59,6 @@ from ._core import console
 from ._gpu_errors import _cpu_only_message, _no_gpu_message, _no_torch_message
 from ._process import (
     TerminationResult,
-    _heartbeat_age_seconds,
     _is_our_service,
     _port_is_listening,
     _service_child_env,
@@ -89,7 +88,6 @@ __all__ = [
     "_cpu_only_message",
     "_display_search_results",
     "_display_service_error",
-    "_heartbeat_age_seconds",
     "_index",
     "_install",
     "_is_our_service",

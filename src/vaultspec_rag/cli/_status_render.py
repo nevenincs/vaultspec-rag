@@ -24,6 +24,7 @@ from .._operator_commands import (
     server_status_command,
 )
 from .._process_probe import pid_alive as _pid_alive
+from .._timestamps import age_seconds
 from ..serviceclient._discovery import (
     HEARTBEAT_STALENESS_SECONDS,
     SERVICE_PHASE_WARMING,
@@ -47,7 +48,6 @@ from ..serviceclient._transport import (
 from ._app import JSON_OPTION_HELP, server_app
 from ._cli_format import NOT_REPORTED
 from ._process import (
-    _heartbeat_age_seconds,
     _is_our_service,
     _port_is_listening,
 )
@@ -251,7 +251,7 @@ def _evaluate_service_signals(
         else False
     )
     port_listening = _port_is_listening(port) if pid_alive else False
-    heartbeat_age = _heartbeat_age_seconds(status)
+    heartbeat_age = age_seconds(status, "last_heartbeat")
     heartbeat_stale = (
         pid_alive
         if heartbeat_age is None
@@ -971,7 +971,7 @@ def _render_explicit_port_status(
         if pid_alive
         else False
     )
-    heartbeat_age = _heartbeat_age_seconds(status)
+    heartbeat_age = age_seconds(status, "last_heartbeat")
     port_listening = _port_is_listening(target_port)
     health = _try_http_health(target_port) if port_listening else None
     state, state_label, exit_code, heartbeat_stale = _explicit_port_state(

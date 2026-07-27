@@ -12,7 +12,6 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime
 from typing import TYPE_CHECKING, NamedTuple, cast
 
 from .._operator_commands import (
@@ -21,6 +20,7 @@ from .._operator_commands import (
     server_status_command,
 )
 from .._source_types import PublicSourceType
+from .._timestamps import parse_iso_timestamp
 from ._cli_format import NOT_REPORTED, _counted_unit, _duration_phrase
 
 if TYPE_CHECKING:
@@ -100,9 +100,8 @@ def _format_status_duration(raw: object) -> str:
 def _format_started_label(raw: object) -> str:
     if not isinstance(raw, str) or not raw or raw == "unknown":
         return "not reported by local record"
-    try:
-        started = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
+    started = parse_iso_timestamp(raw, field="started_at")
+    if started is None:
         return raw
     return f"{started.astimezone().strftime('%H:%M:%S')} local time"
 

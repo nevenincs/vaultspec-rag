@@ -21,13 +21,14 @@ that implied otherwise would be the first step toward deleting a live index.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, NamedTuple
 
 from ._store_models import read_served_pointer
+from ._timestamps import parse_iso_timestamp
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
+    from datetime import datetime
 
 __all__ = [
     "GenerationReclaim",
@@ -153,12 +154,9 @@ def decide_generation_reclaim(
     first_seen = stamps.get(collection)
     if not first_seen:
         return GenerationReclaim(collection, "pending", "grace_started")
-    try:
-        seen_at = datetime.fromisoformat(first_seen)
-    except ValueError:
+    seen_at = parse_iso_timestamp(first_seen, field="first_seen")
+    if seen_at is None:
         return GenerationReclaim(collection, "pending", "grace_restarted")
-    if seen_at.tzinfo is None:
-        seen_at = seen_at.replace(tzinfo=UTC)
     age_hours = (now - seen_at).total_seconds() / 3600.0
     if age_hours < grace_hours:
         remaining = grace_hours - age_hours
