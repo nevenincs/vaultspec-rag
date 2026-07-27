@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,6 +30,7 @@ from typing import TYPE_CHECKING, cast
 
 from . import store_schema
 from ._atomic_write import replace_atomically
+from ._store_models import ROOT_COLLECTION_PREFIX_RE
 from ._store_writes import DISK_FLOOR_BYTES as _DISK_FLOOR_BYTES
 from ._timestamps import parse_iso_timestamp
 from .storage_manifest import (
@@ -97,7 +97,16 @@ def _free_bytes(path: Path) -> int | None:
 # (e.g. ``""`` or ``"r"``) can never match every collection via startswith -
 # the load-bearing guard against a total out-of-scope wipe, enforced even
 # under ``allow_unknown``.
-_CANONICAL_PREFIX_RE = re.compile(r"^r[0-9a-f]{12}_$")
+#
+# Matched with ``fullmatch`` against the one pattern the prefix builder's own
+# digest size produces. The local copy this replaced was ``$``-anchored, and
+# ``$`` also matches immediately before a trailing newline - so
+# ``"r0123456789ab_\n"`` passed this gate. ``fullmatch`` does not accept it.
+# Strictly narrower, which is the only direction a delete gate should move.
+def _is_canonical_prefix(value: str) -> bool:
+    """Return whether *value* is exactly one canonical root prefix."""
+    return ROOT_COLLECTION_PREFIX_RE.fullmatch(value) is not None
+
 
 __all__ = [
     "DeleteResult",
@@ -498,7 +507,7 @@ def read_geometry(
     entries: list[GeometryEntry] = []
     for descriptor in descriptors:
         name = descriptor.name
-        if not _CANONICAL_PREFIX_RE.match(_prefix_of(name)):
+        if not _is_canonical_prefix(_prefix_of(name)):
             continue
         try:
             info = client.get_collection(collection_name=name)
@@ -951,7 +960,7 @@ def delete_prefix(
     # Hard gate: only a canonical r{12hex}_ prefix may ever be a delete target.
     # This is enforced before anything else and is NOT relaxed by allow_unknown,
     # so an empty/short/crafted prefix can never startswith-match foreign roots.
-    if not _CANONICAL_PREFIX_RE.match(prefix):
+    if not _is_canonical_prefix(prefix):
         return DeleteResult(prefix, "skipped", reason="invalid_prefix")
     manifest = load_manifest()
     targets = sorted(

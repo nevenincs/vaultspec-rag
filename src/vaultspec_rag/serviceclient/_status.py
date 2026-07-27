@@ -47,11 +47,25 @@ EXIT_STOPPED = 3
 EXIT_FAULT = 4
 EXIT_WARMING = 5
 
+#: The sentences an operator reads for the conditions both the service verdict
+#: and the CLI's own signal ladder can reach. The CLI derives a finer state
+#: token than this module does - it distinguishes a dead pid from a reused one,
+#: where the service reports ``crashed`` for both - but where the two describe
+#: the same condition they must not describe it differently. Each of these was
+#: spelled in both places, so the same daemon could be explained in two
+#: wordings depending on which path an operator arrived through.
+LABEL_WARMING = "warming (loading models, not yet serving)"
+LABEL_CRASHED_PORT_SILENT = "crashed (port silent)"
+LABEL_CRASHED_HEARTBEAT_STALE = "crashed (heartbeat stale)"
+
 __all__ = [
     "EXIT_FAULT",
     "EXIT_RUNNING",
     "EXIT_STOPPED",
     "EXIT_WARMING",
+    "LABEL_CRASHED_HEARTBEAT_STALE",
+    "LABEL_CRASHED_PORT_SILENT",
+    "LABEL_WARMING",
     "RECONCILE_ALREADY",
     "RECONCILE_CONVERGED",
     "RECONCILE_INTERVAL_SECONDS",
@@ -229,7 +243,7 @@ def compose_discovery_status(
     if facts.phase == SERVICE_PHASE_WARMING:
         return DiscoveryStatus(
             state=STATUS_WARMING,
-            label="warming (loading models, not yet serving)",
+            label=LABEL_WARMING,
             exit_code=EXIT_WARMING,
             resolution=resolution,
             signals=facts,
@@ -238,7 +252,7 @@ def compose_discovery_status(
     if not facts.port_listening:
         return DiscoveryStatus(
             state=STATUS_CRASHED,
-            label="crashed (port silent)",
+            label=LABEL_CRASHED_PORT_SILENT,
             exit_code=EXIT_FAULT,
             resolution=resolution,
             signals=facts,
@@ -247,7 +261,7 @@ def compose_discovery_status(
     if facts.heartbeat_stale:
         return DiscoveryStatus(
             state=STATUS_CRASHED,
-            label="crashed (heartbeat stale)",
+            label=LABEL_CRASHED_HEARTBEAT_STALE,
             exit_code=EXIT_FAULT,
             resolution=resolution,
             signals=facts,

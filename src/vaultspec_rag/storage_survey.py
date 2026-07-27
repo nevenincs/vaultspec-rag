@@ -22,11 +22,11 @@ fully testable without a server or GPU.
 
 from __future__ import annotations
 
-import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
 from . import store_schema
+from ._store_models import ROOT_COLLECTION_PREFIX_RE
 from .storage_manifest import ManifestEntry, classify_root
 
 __all__ = [
@@ -35,8 +35,6 @@ __all__ = [
     "classify_namespaces",
     "is_temp_rooted",
 ]
-
-_PREFIX_RE = re.compile(r"^(r[0-9a-f]{12}_)")
 
 
 def is_temp_rooted(root: str | None) -> bool:
@@ -138,7 +136,7 @@ def _prefix_of(collection_name: str) -> str:
     is returned unchanged so it surfaces as its own unattributable entry
     rather than being silently dropped.
     """
-    match = _PREFIX_RE.match(collection_name)
+    match = ROOT_COLLECTION_PREFIX_RE.match(collection_name)
     return match.group(1) if match else collection_name
 
 

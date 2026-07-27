@@ -35,7 +35,16 @@ from ..serviceclient._discovery import (
     resolve_machine_service,
 )
 from ..serviceclient._status import (
+    EXIT_FAULT,
+    EXIT_RUNNING,
+    EXIT_STOPPED,
+    EXIT_WARMING,
+    LABEL_CRASHED_HEARTBEAT_STALE,
+    LABEL_CRASHED_PORT_SILENT,
+    LABEL_WARMING,
+    STATUS_RUNNING,
     STATUS_STOPPED,
+    STATUS_WARMING,
     DiscoveryStatus,
     LivenessSignals,
     compose_discovery_status,
@@ -212,25 +221,29 @@ def _compute_state(
         return (
             "crashed_pid_dead",
             "crashed (PID dead, stale service.json cleaned)",
-            4,
+            EXIT_FAULT,
         )
     if not pid_is_ours:
         return (
             "crashed_pid_reused",
             "crashed (PID reused by unrelated process)",
-            4,
+            EXIT_FAULT,
         )
     # A live daemon that stamped ``warming`` holds the machine lock but is
     # still loading models: the silent port and the not-yet-started heartbeat
     # are expected, not crash signals. Checked before both so a warming daemon
     # never renders as crashed. An absent phase keeps the pre-phase semantics.
     if phase == SERVICE_PHASE_WARMING:
-        return "warming", "warming (loading models, not yet serving)", 5
+        return STATUS_WARMING, LABEL_WARMING, EXIT_WARMING
     if not port_listening:
-        return "crashed_port_silent", "crashed (port silent)", 4
+        return "crashed_port_silent", LABEL_CRASHED_PORT_SILENT, EXIT_FAULT
     if heartbeat_stale:
-        return "crashed_heartbeat_stale", "crashed (heartbeat stale)", 4
-    return "running", "running", 0
+        return (
+            "crashed_heartbeat_stale",
+            LABEL_CRASHED_HEARTBEAT_STALE,
+            EXIT_FAULT,
+        )
+    return STATUS_RUNNING, STATUS_RUNNING, EXIT_RUNNING
 
 
 def _evaluate_service_signals(
@@ -932,15 +945,15 @@ def _explicit_port_state(
     pid_is_ours: bool = False,
 ) -> tuple[str, str, int, bool]:
     if isinstance(health, dict) and health.get("status") == "ready":
-        return "running", "running", 0, False
+        return STATUS_RUNNING, STATUS_RUNNING, EXIT_RUNNING, False
     if port_listening:
-        return "unreachable", "unreachable", 4, False
+        return "unreachable", "unreachable", EXIT_FAULT, False
     # Silent port + a live, identity-confirmed daemon that stamped ``warming``:
     # report the warmup window instead of a contradictory "stopped" (the
     # machine lock is held). A reused pid must not resurrect a stale stamp.
     if phase == SERVICE_PHASE_WARMING and pid_alive and pid_is_ours:
-        return "warming", "warming (loading models, not yet serving)", 5, False
-    return "stopped", "stopped", 3, False
+        return STATUS_WARMING, LABEL_WARMING, EXIT_WARMING, False
+    return STATUS_STOPPED, STATUS_STOPPED, EXIT_STOPPED, False
 
 
 def _status_response_token_match(

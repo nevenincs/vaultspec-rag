@@ -172,12 +172,11 @@ def _reconcile_storage_manifest(
     read of the constant so the bound can be exercised: asserting the default
     would mean a test that waits the default.
     """
-    import re
 
+    from .._store_models import ROOT_COLLECTION_PREFIX_RE
     from ..config import get_config
     from ..storage_manifest import reconcile_manifest
 
-    prefix_re = re.compile(r"^(r[0-9a-f]{12}_)")
     try:
         from qdrant_client import QdrantClient
 
@@ -190,7 +189,7 @@ def _reconcile_storage_manifest(
             client.close()
         known: set[str] = set()
         for name in names:
-            match = prefix_re.match(name)
+            match = ROOT_COLLECTION_PREFIX_RE.match(name)
             if match:
                 known.add(match.group(1))
         result = reconcile_manifest(known)
