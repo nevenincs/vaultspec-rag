@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from pytest import TempPathFactory
+    from sentence_transformers import CrossEncoder
 
     from ...embeddings import EmbeddingModel
 
@@ -104,6 +105,7 @@ class TestServerModeRoundTrip:
         self,
         server_mode: QdrantSupervisor,  # noqa: ARG002  # activates the URL env seam
         embedding_model: EmbeddingModel,
+        shared_reranker: CrossEncoder,
         tmp_path: Path,
     ) -> None:
         """Full vault + code index and hybrid search against the server."""
@@ -139,7 +141,9 @@ class TestServerModeRoundTrip:
             assert store.count() > 0
             assert store.count_code() > 0
 
-            searcher = VaultSearcher(tmp_path, embedding_model, store)
+            searcher = VaultSearcher(
+                tmp_path, embedding_model, store, reranker=shared_reranker
+            )
             vault_hits = searcher.search_vault("synthetic vault document", top_k=5)
             assert vault_hits, "vault hybrid search returned nothing"
 
@@ -243,6 +247,7 @@ class TestServerModeDeletionEviction:
         self,
         server_mode: QdrantSupervisor,  # noqa: ARG002  # activates the URL env seam
         embedding_model: EmbeddingModel,
+        shared_reranker: CrossEncoder,
         tmp_path: Path,
     ) -> None:
         """Deleting a code file then scoped-reindexing drops its chunks and
@@ -283,7 +288,9 @@ class TestServerModeDeletionEviction:
                 "doomed file must have chunks before deletion (sanity)"
             )
 
-            searcher = VaultSearcher(tmp_path, embedding_model, store)
+            searcher = VaultSearcher(
+                tmp_path, embedding_model, store, reranker=shared_reranker
+            )
             assert any(
                 "gone_utils" in hit.path
                 for hit in searcher.search_codebase(
@@ -448,6 +455,7 @@ class TestServerModeWatcherEviction:
         self,
         server_mode: QdrantSupervisor,  # noqa: ARG002  # activates the URL env seam
         embedding_model: EmbeddingModel,
+        shared_reranker: CrossEncoder,
         tmp_path: Path,
     ) -> None:
         """The user's exact scenario: a deleted code file must drop out of
@@ -480,7 +488,9 @@ class TestServerModeWatcherEviction:
             reporter=NullProgressReporter(),
             preflight=code_indexer.preflight_content(),
         )
-        searcher = VaultSearcher(tmp_path, embedding_model, store)
+        searcher = VaultSearcher(
+            tmp_path, embedding_model, store, reranker=shared_reranker
+        )
 
         def _hits() -> bool:
             return any(

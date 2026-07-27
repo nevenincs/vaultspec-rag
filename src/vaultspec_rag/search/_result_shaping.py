@@ -126,6 +126,24 @@ def group_chunks_by_document(results: list[SearchResult]) -> list[SearchResult]:
     return sorted(best.values(), key=lambda r: r.score, reverse=True)
 
 
+#: The phase keys a search publishes on its timings channel.
+#:
+#: Each was written as a literal at every site that recorded it and again at
+#: every site that read it back to sum a total - seven keys across twenty-three
+#: spellings, three of them recorded from three different searches. A key is a
+#: wire name: renaming one recording site and not its reader does not raise, it
+#: drops that phase out of the total and reports a smaller number than the work
+#: took. Naming them makes the pairing something the reader can follow and the
+#: type checker can catch.
+PHASE_QDRANT = "qdrant_seconds"
+PHASE_RESULT_MAPPING = "result_mapping_seconds"
+PHASE_RERANK = "rerank_seconds"
+PHASE_GRAPH_RERANK = "graph_rerank_seconds"
+PHASE_DEDUP = "dedup_seconds"
+PHASE_DEMOTE = "demote_seconds"
+PHASE_PREFER = "prefer_seconds"
+
+
 def record_seconds(
     timings: dict[str, float] | None,
     key: str,
