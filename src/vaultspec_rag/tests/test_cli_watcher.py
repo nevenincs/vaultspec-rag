@@ -328,6 +328,18 @@ def test_updates_start_times_out_with_next_actions(tmp_path: Path) -> None:
                 app,
                 ["server", "updates", "start", project, "--port", str(port)],
             )
+            # The client stops waiting after its 0.05s deadline, but the
+            # request it sent is recorded by the server's own thread, and
+            # leaving this block shuts that server down. Assert on the record
+            # only once it exists: otherwise the test asks whether the host
+            # scheduled that thread inside a 50ms window, which is a property
+            # of the machine and not of the code under test. A request that
+            # never arrives still fails the assertion below, just later.
+            deadline = time.monotonic() + 5.0
+            while not _SlowUpdatesHTTPHandler.requests:
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.01)
     finally:
         if previous is None:
             os.environ.pop("VAULTSPEC_RAG_ADMIN_TIMEOUT", None)
