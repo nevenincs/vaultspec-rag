@@ -133,7 +133,7 @@ _watcher_restarts: dict[Path, tuple[int | None, float | None]] = {}
 
 def _watcher_task_done(root: Path, task: asyncio.Task[None]) -> None:
     """Turn a natural intake exit into the normal drain/restart lifecycle."""
-    from ..watcher import WatcherInitializationError
+    from ..watcher_control import WatcherInitializationError
 
     error = None if task.cancelled() else task.exception()
     init_failed = isinstance(error, WatcherInitializationError)
@@ -416,7 +416,7 @@ def _start_watcher_locked(
     if not bool(cfg.watch_enabled):
         return WatcherStartOutcome.DISABLED
 
-    from ..watcher import watch_and_reindex
+    from ..watcher_control import WatcherConfiguration, watch_and_reindex
 
     debounce = (
         int(debounce_ms) if debounce_ms is not None else int(cfg.watch_debounce_ms)
@@ -427,16 +427,18 @@ def _start_watcher_locked(
     stop_event = asyncio.Event()
     task = asyncio.create_task(
         watch_and_reindex(
-            root_dir=root,
-            vault_dir=root / VAULT_DIR,
-            vault_indexer=slot.vault_indexer,
-            code_indexer=slot.code_indexer,
-            document_indexer=slot.document_indexer,
-            stop_event=stop_event,
-            graph_cache=slot.graph_cache,
-            debounce=debounce,
-            cooldown=cooldown,
-            registry=registry,
+            WatcherConfiguration(
+                root_dir=root,
+                vault_dir=root / VAULT_DIR,
+                vault_indexer=slot.vault_indexer,
+                code_indexer=slot.code_indexer,
+                document_indexer=slot.document_indexer,
+                stop_event=stop_event,
+                graph_cache=slot.graph_cache,
+                debounce=debounce,
+                cooldown=cooldown,
+                registry=registry,
+            )
         ),
     )
     _m._watcher_tasks[root] = task
@@ -560,7 +562,7 @@ async def _watcher_release_error(
         return f"watcher intake did not stop within {timeout:g} seconds"
     if not await _wait_for_managed_watcher_attempts(root, deadline):
         return f"watcher-owned job resources did not release within {timeout:g} seconds"
-    from ..watcher import wait_for_retry_settlements
+    from ..watcher_retry_settlement import wait_for_retry_settlements
 
     if not await wait_for_retry_settlements(root, deadline):
         return (
@@ -724,7 +726,7 @@ def _active_watcher_jobs(root: Path) -> list[JobSnapshot]:
 
 def _managed_watcher_resources_released(root: Path) -> bool:
     """Return whether snapshots prove no watcher attempt owns live resources."""
-    from ..watcher import retry_settlements_released
+    from ..watcher_retry_settlement import retry_settlements_released
 
     return retry_settlements_released(root) and all(
         not snapshot.runtime.task_active
