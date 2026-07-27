@@ -109,16 +109,49 @@ def test_extended_length_alias_hashes_to_same_prefix(tmp_path: Path) -> None:
 
 
 def test_unc_extended_length_alias_normalizes() -> None:
-    r"""The ``\\?\UNC\`` form reduces to the plain UNC spelling before hashing."""
+    r"""The ``\\?\UNC\`` form reduces to the plain UNC spelling before hashing.
+
+    The host is in the reserved ``.invalid`` domain, so hashing a UNC root
+    cannot depend on whether some host really answers to that name: a
+    resolvable host makes the underlying ``resolve()`` reach the network,
+    where an unreachable share raises rather than falling back lexically.
+    """
     import sys
 
     from .._store_models import root_collection_prefix
 
     if sys.platform != "win32":
         pytest.skip("extended-length path prefixes are Windows-only")
-    plain = root_collection_prefix(r"\\server\share\proj")
-    aliased = root_collection_prefix(r"\\?\UNC\server\share\proj")
+    plain = root_collection_prefix(r"\\fileserver.invalid\share\proj")
+    aliased = root_collection_prefix(r"\\?\UNC\fileserver.invalid\share\proj")
     assert aliased == plain
+
+
+def test_unreachable_root_still_hashes() -> None:
+    r"""A root that cannot be reached names a namespace lexically, never raises.
+
+    An offline share or unplugged drive is not an absent path: Windows
+    reports it as a network or device error, which ``Path.resolve()``
+    propagates instead of degrading to its lexical result.
+    """
+    import pathlib
+    import sys
+
+    from .._store_models import ROOT_COLLECTION_PREFIX_RE, root_collection_prefix
+
+    if sys.platform != "win32":
+        pytest.skip("UNC roots and device errors are Windows-only")
+    # A raw device path stands in for the offline share: it is the input that
+    # makes resolve() raise on any Windows host, where an unreachable share
+    # only raises while the network is in the state that provokes it. The
+    # precondition is asserted so the fallback branch cannot go unexercised.
+    device = r"\\.\PhysicalDrive0\proj"
+    with pytest.raises(OSError):
+        pathlib.Path(device).resolve()
+    assert ROOT_COLLECTION_PREFIX_RE.match(root_collection_prefix(device))
+    assert ROOT_COLLECTION_PREFIX_RE.match(
+        root_collection_prefix(r"\\fileserver.invalid\share\proj")
+    )
 
 
 def test_temp_rooted_flags_tempdir_descendants(tmp_path: Path) -> None:
