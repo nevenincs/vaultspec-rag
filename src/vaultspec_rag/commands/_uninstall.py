@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import tempfile
 from contextvars import Context
+from dataclasses import dataclass
 from pathlib import Path
 
 from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
@@ -35,6 +36,16 @@ from ._torch_flow import _run_torch_config_uninstall
 from ._workspace import _init_core_context, _resolve_target
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _UninstallRequest:
+    path: Path | None = None
+    remove_data: bool = False
+    dry_run: bool = False
+    force: bool = False
+    skip: set[str] | None = None
+    assume_yes: bool = False
 
 
 def _remove_candidates(
@@ -308,13 +319,13 @@ def _record_topology_errors(report: UninstallReport, errors: list[str]) -> None:
 
 def uninstall_run(
     path: Path | None = None,
-    *,
-    remove_data: bool = False,
-    dry_run: bool = False,
-    force: bool = False,
-    skip: set[str] | None = None,
-    assume_yes: bool = False,
+    **options: object,
 ) -> UninstallReport:
+    """Remove vaultspec-rag enrollment from a workspace."""
+    return _uninstall_run(_UninstallRequest(path=path, **options))
+
+
+def _uninstall_run(request: _UninstallRequest) -> UninstallReport:
     """Remove vaultspec-rag enrollment from a workspace.
 
     Symmetric mirror of :func:`install_run`. Removes rag's bundled
@@ -345,6 +356,14 @@ def uninstall_run(
     Returns:
         :class:`UninstallReport` with the structured result.
     """
+    path, remove_data, dry_run, force, skip, assume_yes = (
+        request.path,
+        request.remove_data,
+        request.dry_run,
+        request.force,
+        request.skip,
+        request.assume_yes,
+    )
     # assume_yes is reserved for future prompts; uninstall currently
     # has no prompt to bypass. Suppress the unused-argument lint
     # without ``del`` - keeping the parameter in the public signature
