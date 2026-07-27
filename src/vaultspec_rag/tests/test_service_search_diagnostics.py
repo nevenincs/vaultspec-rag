@@ -13,7 +13,7 @@ pytestmark = [pytest.mark.unit]
 
 
 def test_search_index_state_uses_selected_source_preflight_count() -> None:
-    from ..server._routes import _search_index_state
+    from ..server._routes_search import _search_index_state
 
     state = _search_index_state(
         indexed_count=37,
@@ -32,7 +32,7 @@ def test_search_index_state_uses_selected_source_preflight_count() -> None:
 
 
 def test_empty_search_diagnostics_use_supported_jobs_filter() -> None:
-    from ..server._routes import _empty_search_diagnostics
+    from ..server._routes_search import _empty_search_diagnostics
 
     diagnostics = _empty_search_diagnostics(
         {
@@ -55,7 +55,7 @@ def test_empty_search_diagnostics_name_the_path_filter_that_emptied_the_page() -
     query found nothing" and sends the reader off tuning the query while a
     pattern that matches no indexed path sits in the command.
     """
-    from ..server._routes import _empty_search_diagnostics
+    from ..server._routes_search import _empty_search_diagnostics
 
     diagnostics = _empty_search_diagnostics(
         {
@@ -78,7 +78,7 @@ def test_empty_search_diagnostics_name_the_path_filter_that_emptied_the_page() -
 
 
 def test_empty_search_diagnostics_stay_a_plain_no_match_without_a_path_filter() -> None:
-    from ..server._routes import _empty_search_diagnostics
+    from ..server._routes_search import _empty_search_diagnostics
 
     diagnostics = _empty_search_diagnostics(
         {
@@ -93,7 +93,7 @@ def test_empty_search_diagnostics_stay_a_plain_no_match_without_a_path_filter() 
 
 def test_an_empty_index_outranks_a_path_filter_explanation() -> None:
     """With nothing indexed, the path filter is not the actionable cause."""
-    from ..server._routes import _empty_search_diagnostics
+    from ..server._routes_search import _empty_search_diagnostics
 
     diagnostics = _empty_search_diagnostics(
         {
@@ -121,7 +121,7 @@ def test_search_index_state_carries_a_published_breadth_shortfall() -> None:
     green. Its companion pins the opposite direction under a different
     mutation, so neither can pass on a constant.
     """
-    from ..server._routes import _search_index_state
+    from ..server._routes_search import _search_index_state
 
     state = _search_index_state(
         indexed_count=4,
@@ -153,7 +153,7 @@ def test_search_index_state_omits_the_shortfall_when_breadth_is_unknown() -> Non
     production call instead of on the assertion, which proves the branch
     raises, not that the test is watching it.
     """
-    from ..server._routes import _search_index_state
+    from ..server._routes_search import _search_index_state
 
     state = _search_index_state(
         indexed_count=4,
@@ -180,7 +180,7 @@ def test_one_projection_backs_the_shortfall_block_on_both_search_paths() -> None
     literals are what pin the key names a renderer looks up.
     """
     from .._index_breadth import BreadthShortfall
-    from ..server._routes import _search_index_state
+    from ..server._routes_search import _search_index_state
 
     block = BreadthShortfall(published=421, live=4).as_index_state_block()
     daemon_state = _search_index_state(
@@ -215,7 +215,7 @@ def test_the_daemon_route_renders_the_service_domain_index_state() -> None:
     """
     from .._index_breadth import BreadthShortfall
     from .._search_state import search_index_state
-    from ..server._routes import _search_index_state
+    from ..server._routes_search import _search_index_state
 
     routed = _search_index_state(
         indexed_count=4,
@@ -393,7 +393,7 @@ def test_a_path_filter_note_survives_classification_into_the_empty_block(
     on the unavailable path, so a note carried on the searched body is exactly
     the kind of thing that can be dropped in transit without any test noticing.
     """
-    from ..server._routes import _classify_search_result
+    from ..server._routes_search import _classify_search_result
 
     searched: dict[str, object] = {
         "results": [],
