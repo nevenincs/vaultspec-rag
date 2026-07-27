@@ -47,6 +47,23 @@ _LEGACY_TERMINAL_PHASES = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class JobFilter:
+    """One normalized `/jobs` query predicate."""
+
+    phase: str | None
+    source: str | None
+    trigger: str | None
+    query: str | None
+    failed: bool
+    job_id: str | None
+    since_seconds: float | None
+    now: float
+    state: str | None = None
+    desired_state: str | None = None
+    controllable: bool | None = None
+
+
 def _job_mapping(record: dict[str, object], key: str) -> dict[str, object]:
     value = record.get(key)
     return cast("dict[str, object]", value) if isinstance(value, dict) else {}
@@ -453,34 +470,23 @@ def _job_search_text(record: dict[str, object]) -> str:
 
 def _job_matches(
     record: dict[str, object],
-    *,
-    phase: str | None,
-    source: str | None,
-    trigger: str | None,
-    query: str | None,
-    failed: bool,
-    job_id: str | None,
-    since_seconds: float | None,
-    now: float,
-    state: str | None = None,
-    desired_state: str | None = None,
-    controllable: bool | None = None,
+    filters: JobFilter,
 ) -> bool:
     record_state = job_state(record)
     matches_filters = all(
         (
-            _job_id_matches(record, job_id),
-            not failed or record_state == JobState.FAILED.value,
-            _job_updated_since(record, since_seconds=since_seconds, now=now),
-            phase is None or _job_phase(record, record_state) == phase,
-            state is None or record_state == state,
-            desired_state is None or _job_desired_state(record) == desired_state,
-            controllable is None or _job_controllable(record) is controllable,
-            source is None or _job_source(record) == source,
-            trigger is None or _job_trigger(record) == trigger,
+            _job_id_matches(record, filters.job_id),
+            not filters.failed or record_state == JobState.FAILED.value,
+            _job_updated_since(record, since_seconds=filters.since_seconds, now=filters.now),
+            filters.phase is None or _job_phase(record, record_state) == filters.phase,
+            filters.state is None or record_state == filters.state,
+            filters.desired_state is None or _job_desired_state(record) == filters.desired_state,
+            filters.controllable is None or _job_controllable(record) is filters.controllable,
+            filters.source is None or _job_source(record) == filters.source,
+            filters.trigger is None or _job_trigger(record) == filters.trigger,
         )
     )
-    return matches_filters and (query is None or query in _job_search_text(record))
+    return matches_filters and (filters.query is None or filters.query in _job_search_text(record))
 
 
 def _job_nested_values(raw: object) -> list[str]:
@@ -621,21 +627,12 @@ def _prioritise_running_jobs(
 
     def priority(record: dict[str, object]) -> int:
         state = job_state(record)
-        if state in _TRANSITIONAL_STATES:
-            return 0
-        if state == "running":
-            return 1
-        if state == "queued":
-            return 2
-        if state == "paused":
-            return 3
-        if state in ("failed", "interrupted"):
-            return 4
-        if state == "cancelled":
-            return 5
-        if state == "succeeded":
-            return 6
-        return 7
+        priorities = {
+            **{value: 0 for value in _TRANSITIONAL_STATES},
+            "running": 1, "queued": 2, "paused": 3,
+            "failed": 4, "interrupted": 4, "cancelled": 5, "succeeded": 6,
+        }
+        return priorities.get(state, 7)
 
     return sorted(
         records,
