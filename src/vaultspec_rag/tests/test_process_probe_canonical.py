@@ -17,6 +17,7 @@ behavioural test of the existing call sites can see.
 from __future__ import annotations
 
 import ast
+import hashlib
 import sys
 import tempfile
 from pathlib import Path
@@ -2090,3 +2091,137 @@ class TestJobVocabulariesHaveOneStatement:
                 "than listing its members, or a new member is accepted by the "
                 "domain and refused at the API boundary"
             )
+
+
+class TestNoTwoModulesGrewTheSameHelper:
+    """No two unrelated modules define the same function with the same body.
+
+    The other guards here catch a copy that keeps its shape (the structural
+    scan) or one that keeps its name (the alias scan). This catches the case
+    neither sees on its own: two modules with no import path between them,
+    each having grown a helper of the same name and the same body, because
+    neither could see the other's.
+
+    "Unrelated" is resolved rather than guessed. An earlier version of this
+    analysis matched module STEMS, so ``api`` importing ``.search`` looked
+    like a link to ``search._searcher`` and hid pairs behind false ones; it
+    also counted methods as functions, so a facade function looked like a copy
+    of the method it delegates to. Both cost a real finding to a false one.
+    """
+
+    @staticmethod
+    def _shape(node: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[str, int]:
+        """Return a name-blind hash of *node*'s body, and its statement count."""
+        body = [
+            statement
+            for statement in node.body
+            if not (
+                isinstance(statement, ast.Expr)
+                and isinstance(statement.value, ast.Constant)
+            )
+        ]
+
+        class _Blind(ast.NodeTransformer):
+            def visit_Name(self, node: ast.Name) -> ast.AST:
+                return ast.copy_location(ast.Name(id="_", ctx=node.ctx), node)
+
+            def visit_Attribute(self, node: ast.Attribute) -> ast.AST:
+                self.generic_visit(node)
+                return ast.copy_location(
+                    ast.Attribute(value=node.value, attr="_", ctx=node.ctx), node
+                )
+
+            def visit_Constant(self, node: ast.Constant) -> ast.AST:
+                return ast.copy_location(ast.Constant(value=None), node)
+
+        count = sum(
+            1
+            for _ in ast.walk(ast.Module(body=body, type_ignores=[]))
+            if isinstance(_, ast.stmt)
+        )
+        blinded = ast.Module(
+            body=[_Blind().visit(ast.parse(ast.unparse(s)).body[0]) for s in body],
+            type_ignores=[],
+        )
+        return hashlib.sha256(ast.dump(blinded).encode()).hexdigest(), count
+
+    @staticmethod
+    def _reached_modules(tree: ast.Module, owner: list[str], package: str) -> set[str]:
+        """Return every in-package module this one imports, at any nesting."""
+        reached: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                reached.update(a.name for a in node.names if a.name.startswith(package))
+                continue
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            if node.level:
+                depth = len(owner) - (node.level - 1) if node.level > 1 else len(owner)
+                base = owner[:depth]
+                target = (
+                    ".".join([*base, node.module]) if node.module else ".".join(base)
+                )
+            else:
+                target = node.module or ""
+            if target.startswith(package):
+                reached.add(target)
+                reached.update(f"{target}.{a.name}" for a in node.names)
+        return reached
+
+    def test_no_unrelated_pair_shares_a_name_and_a_body(self) -> None:
+        package = "vaultspec_rag"
+        imports: dict[str, set[str]] = {}
+        defined: dict[str, list[tuple[str, int, str]]] = {}
+
+        for path in _production_sources():
+            relative = path.relative_to(_PACKAGE_ROOT).with_suffix("")
+            module = ".".join(
+                [package, *(p for p in relative.parts if p != "__init__")]
+            )
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            imports[module] = self._reached_modules(
+                tree, module.split(".")[:-1], package
+            )
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                    continue
+                first = node.args.args[0].arg if node.args.args else ""
+                if first in {"self", "cls"} or node.name.startswith("__"):
+                    continue
+                shape, count = self._shape(node)
+                if count >= 3:
+                    defined.setdefault(node.name, []).append(
+                        (module, node.lineno, shape)
+                    )
+
+        def reaches(source: str, target: str, seen: set[str] | None = None) -> bool:
+            seen = set() if seen is None else seen
+            if source == target or target in imports.get(source, ()):
+                return True
+            if source in seen:
+                return False
+            seen.add(source)
+            return any(
+                reaches(step, target, seen)
+                for step in imports.get(source, ())
+                if step in imports
+            )
+
+        offenders: list[str] = []
+        for name, sites in sorted(defined.items()):
+            for index, (module, line, shape) in enumerate(sites):
+                for other, other_line, other_shape in sites[index + 1 :]:
+                    if module == other or shape != other_shape:
+                        continue
+                    if reaches(module, other) or reaches(other, module):
+                        continue
+                    offenders.append(
+                        f"{name}: {module}:{line} and {other}:{other_line}"
+                    )
+        assert not offenders, (
+            f"the same helper grew twice in modules that cannot see each "
+            f"other: {offenders}; give it one home both can import"
+        )
