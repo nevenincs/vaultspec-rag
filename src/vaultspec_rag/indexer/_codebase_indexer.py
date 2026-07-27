@@ -13,7 +13,7 @@ import logging
 import pathlib
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from .._atomic_write import JsonWriteOptions, write_json_atomically
 from .._index_breadth import PUBLISHED_FILES_KEY, PUBLISHED_POINTS_KEY
@@ -64,6 +64,7 @@ from ._support_budget import CodeSupportBudget
 from ._vault_prep import IndexResult
 
 if TYPE_CHECKING:
+    import threading
     from collections.abc import Iterable
 
     from ..embeddings import EmbeddingModel
@@ -106,12 +107,20 @@ class CodebaseIndexer:
     hashing to skip unchanged files.
     """
 
+    @dataclass(frozen=True, slots=True)
+    class Options:
+        """Optional root-level collaborators and discovery policy."""
+
+        gpu_lock: threading.Lock | None = None
+        extra_excludes: list[str] | None = None
+        content_policy: RootContentPolicy | None = None
+
     def __init__(
         self,
         root_dir: pathlib.Path,
         model: EmbeddingModel,
         store: VaultStore,
-        **options: Any,
+        options: Options | None = None,
     ) -> None:
         """Initialize the codebase indexer.
 
@@ -128,18 +137,13 @@ class CodebaseIndexer:
             content_policy: Caller-authored content ownership policy. The
                 versioned conventional source profile is used when omitted.
         """
-        gpu_lock = options.pop("gpu_lock", None)
-        extra_excludes = options.pop("extra_excludes", None)
-        content_policy = options.pop("content_policy", None)
-        if options:
-            unexpected = ", ".join(sorted(options))
-            raise TypeError(f"unexpected CodebaseIndexer option(s): {unexpected}")
+        options = options or self.Options()
         self.root_dir = root_dir
         self.model = model
         self.store = store
-        self._gpu_lock = gpu_lock
-        self._extra_excludes = extra_excludes or []
-        self._content_policy = content_policy or RootContentPolicy(
+        self._gpu_lock = options.gpu_lock
+        self._extra_excludes = options.extra_excludes or []
+        self._content_policy = options.content_policy or RootContentPolicy(
             SourceProfileVersion.CONVENTIONAL_V1
         )
         # Discovery is fully determined by the three inputs above and holds no
