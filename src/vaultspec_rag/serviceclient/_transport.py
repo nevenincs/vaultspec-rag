@@ -49,7 +49,7 @@ from ..config import get_config, rag_default
 if TYPE_CHECKING:
     # The job-source vocabulary has one declaration, the canonical enum.
     # Annotation-only, so the client does not import the domain at runtime.
-    from ..job_models import DesiredJobState, JobSource
+    from ..job_models import DesiredJobState, JobMode, JobSource
     from ._discovery import MachineResolution
 
 logger = logging.getLogger(__name__)
@@ -97,7 +97,6 @@ type ReindexType = PublicSourceType | str
 type ReindexInitiator = Literal["cli", "mcp"]
 type DocumentSearchFilters = dict[str, str | None]
 type HTTPMethod = Literal["GET", "POST", "PUT", "DELETE"]
-type JobMode = Literal["incremental", "rebuild"]
 type JobControlMode = Literal["graceful", "force"]
 
 
@@ -625,12 +624,19 @@ def _try_http_job_call(
         }
 
 
+def _default_job_mode() -> str:
+    """Return the convergence mode a job takes when the caller names none."""
+    from ..job_models import JobMode
+
+    return JobMode.INCREMENTAL.value
+
+
 def _try_http_create_job(
     source: JobSource,
     project_root: str,
     port: int | None,
     *,
-    mode: JobMode = "incremental",
+    mode: JobMode | None = None,
     start_paused: bool = False,
     initiator_kind: str = "cli",
     command: str = "server_job_create",
@@ -641,7 +647,9 @@ def _try_http_create_job(
         "operation": "index",
         "source": source,
         "project_root": project_root,
-        "mode": mode,
+        # Resolved here, not in the signature: the enum is annotation-only in
+        # this module so the client keeps the domain out of its import graph.
+        "mode": mode if mode is not None else _default_job_mode(),
         "start_paused": start_paused,
         "initiator": {"kind": initiator_kind, "command": command},
     }

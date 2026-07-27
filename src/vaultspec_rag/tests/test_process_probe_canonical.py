@@ -606,7 +606,6 @@ class TestNoStructurallyIdenticalFunctions:
         (
             "cli/_preprocess.py:_format_failure_handling",
             "cli/_preprocess.py:_status_effect_line",
-            "server/_search_availability.py:_normalized_mode",
         ): _SMALL_GUARD,
         (
             "commands/_mcp_topology.py:_require_identity",
@@ -2013,3 +2012,81 @@ class TestWorkspaceLayoutHasOneOwner:
             "the scaffolder must build from the shared tuple, or it and the "
             "projection drift the next time either gains a directory"
         )
+
+
+class TestJobVocabulariesHaveOneStatement:
+    """The job enums are the only statement of their own members.
+
+    ``DesiredJobState`` was fixed three iterations ago and its siblings were
+    not, because that pass looked at one enum instead of the shape. ``JobMode``
+    existed twice - the domain ``StrEnum`` and a ``Literal`` of the same name
+    in the service client, which the server's availability adapter imported in
+    preference to the domain's. ``JobSource``'s four members were restated as
+    a ``Literal`` in the jobs module, and the route enumerated ``JobMode``'s
+    two members by hand rather than asking the enum.
+    """
+
+    def test_no_literal_restates_a_job_enum(self) -> None:
+        """A ``Literal`` mirroring an enum is a second declaration of it."""
+        from ..job_models import DesiredJobState, JobMode, JobSource
+
+        vocabularies = {
+            name: frozenset(member.value for member in enum)
+            for name, enum in (
+                ("JobMode", JobMode),
+                ("JobSource", JobSource),
+                ("DesiredJobState", DesiredJobState),
+            )
+        }
+        offenders: list[str] = []
+        for path in _production_sources():
+            if path.name == "job_models.py":
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            for node in ast.walk(tree):
+                if not (
+                    isinstance(node, ast.Subscript)
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id == "Literal"
+                ):
+                    continue
+                elements = (
+                    node.slice.elts
+                    if isinstance(node.slice, ast.Tuple)
+                    else [node.slice]
+                )
+                literals = {
+                    element.value
+                    for element in elements
+                    if isinstance(element, ast.Constant)
+                    and isinstance(element.value, str)
+                }
+                for name, members in vocabularies.items():
+                    if members and members == literals:
+                        offenders.append(f"{path.name}:{node.lineno} restates {name}")
+        assert not offenders, (
+            f"{offenders}; annotate with the enum so a new member is legal "
+            "everywhere at once instead of being refused by whichever mirror "
+            "was not updated"
+        )
+
+    def test_no_route_enumerates_a_job_enum_by_hand(self) -> None:
+        """Membership comes from the enum, so a new member widens the route.
+
+        Proven able to fail: restoring either literal member set in the job
+        routes fails this on the offender list below.
+        """
+        import inspect
+
+        from ..server import _routes
+
+        source = inspect.getsource(_routes)
+        for enum_name in ("JobMode", "DesiredJobState"):
+            assert f"set({enum_name})" in source, (
+                f"the route must test membership against {enum_name} rather "
+                "than listing its members, or a new member is accepted by the "
+                "domain and refused at the API boundary"
+            )

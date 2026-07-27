@@ -675,10 +675,11 @@ async def _validated_index_request(
             "invalid_job_spec",
             "source must be 'vault', 'code', or 'document'.",
         )
-    if mode not in {JobMode.INCREMENTAL.value, JobMode.REBUILD.value}:
+    if mode not in set(JobMode):
+        allowed = ", ".join(f"'{member}'" for member in JobMode)
         raise _InvalidJobRequestError(
             "invalid_job_spec",
-            "mode must be 'incremental' or 'rebuild'.",
+            f"mode must be one of {allowed}.",
         )
     raw_root = _job_string(payload, "project_root")
     if not Path(raw_root).expanduser().is_absolute():

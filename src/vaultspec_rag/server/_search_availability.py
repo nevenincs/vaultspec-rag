@@ -14,9 +14,9 @@ from qdrant_client.http.exceptions import UnexpectedResponse
 from .._operator_commands import server_jobs_command
 
 if TYPE_CHECKING:
-    # The convergence-mode vocabulary has one declaration, in the transport.
-    # Annotation-only, so the client is not imported at runtime.
-    from ..serviceclient._transport import JobMode
+    # The convergence-mode vocabulary is the domain's, not the client's.
+    # Annotation-only, so job_models is not imported at runtime.
+    from ..job_models import JobMode
 
 __all__ = [
     "SearchResponseClassification",
@@ -84,11 +84,17 @@ def _normalized_root(value: object) -> str | None:
 
 
 def _normalized_mode(value: object) -> JobMode | None:
-    if value == "incremental":
-        return "incremental"
-    if value == "rebuild":
-        return "rebuild"
-    return None
+    """Return the declared mode *value* names, or ``None`` when it names none.
+
+    Asks the enum rather than testing its members one at a time: a third mode
+    would have been rejected here as unknown while the domain accepted it.
+    """
+    from ..job_models import JobMode as _JobMode
+
+    try:
+        return _JobMode(value)
+    except ValueError:
+        return None
 
 
 def _canonical_match(
