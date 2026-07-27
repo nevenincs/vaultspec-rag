@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, TypedDict, cast
 
 import pytest
@@ -19,8 +20,12 @@ if TYPE_CHECKING:
     from ..._store_models import CodeChunk
     from ...embeddings import EmbeddingModel
     from ...indexer import CodebaseIndexer
-    from ...store import VaultStore
+    from ...indexer._content_discovery import CodeExecutionPreflight
+    from ...indexer._vault_prep import IndexResult
+    from ...progress import ProgressReporter
+    from ...store_runtime import VaultStore
     from ..conftest import RagComponentsWithManifest
+    from .test_indexer_progress_integration import CountingProgressReporter
 
 pytestmark = [pytest.mark.integration]
 
@@ -75,7 +80,8 @@ def code_project(
 
     Yields a dict with code_indexer, store, model, root, and the source dir.
     """
-    from ... import CodebaseIndexer, VaultStore
+    from ... import CodebaseIndexer
+    from ...store_runtime import VaultStore
 
     model = rag_components["model"]
 
@@ -242,19 +248,23 @@ class TestIncrementalPublicationRecovery:
 
         token = RunControlToken()
         assert token.request_cancel()
+        from ...indexer._incremental_commit import IncrementalReplacementRequest
+
         with pytest.raises(CancelRequested):
             indexer._incremental_commit.commit_replacement(  # pyright: ignore[reportPrivateUsage]
-                policy=policy,
-                existing_ids=set(),
-                published_ids={point_id},
-                prior_ids_by_path={rel_path: set()},
-                deleted_paths=set(),
-                checkpoint=checkpoint,
-                metadata={rel_path: digest},
-                files_count=1,
-                protect_replacement=False,
-                reporter=NullProgressReporter(),
-                run_control=token,
+                IncrementalReplacementRequest(
+                    policy=policy,
+                    existing_ids=set(),
+                    published_ids={point_id},
+                    prior_ids_by_path={rel_path: set()},
+                    deleted_paths=set(),
+                    checkpoint=checkpoint,
+                    metadata={rel_path: digest},
+                    files_count=1,
+                    protect_replacement=False,
+                    reporter=NullProgressReporter(),
+                    run_control=token,
+                )
             )
 
         assert store.get_code_ids_by_paths({rel_path}) == [point_id]
@@ -497,6 +507,147 @@ class TestCodebaseFullIndex:
         )
 
 
+def _configure_conditional_preprocessor(root: Path) -> None:
+    import shlex
+    import sys
+    import textwrap
+
+    script = root / "conditional_preprocessor.py"
+    script.write_text(
+        textwrap.dedent(
+            """
+            import json
+            import pathlib
+            import sys
+            import time
+
+            source = pathlib.Path(sys.argv[1])
+            content = source.read_text(encoding="utf-8")
+            if "FAIL" in content:
+                time.sleep(1.0)
+                sys.exit(7)
+            print(json.dumps({
+                "schema_version": 1,
+                "preprocessor_id": "conditional",
+                "preprocessor_version": "1",
+                "source_path": str(source),
+                "text": "successful conditional extraction",
+            }))
+            """
+        ),
+        encoding="utf-8",
+    )
+    command = f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} {{path}}"
+    (root / ".vaultragpreprocess.toml").write_text(
+        "version = 2\n[[rule]]\n"
+        'pattern = "*.fatal"\n'
+        'target = "code"\nextractor_version = "1"\n'
+        f"command = '''{command}'''\n"
+        'on_error = "fail"\n',
+        encoding="utf-8",
+    )
+
+
+@contextmanager
+def _single_chunk_indexing() -> Generator[None]:
+    from ...config import EnvVar
+    from ..conftest import managed_env
+
+    with managed_env(
+        **{
+            EnvVar.INDEX_SEGMENT_MAX_CHUNKS.value: "1",
+            EnvVar.INDEX_QUEUE_MAX_CHUNKS.value: "2",
+            EnvVar.INDEX_CHUNK_WORKERS.value: "1",
+        }
+    ):
+        yield
+
+
+def _incremental_preflight(
+    indexer: CodebaseIndexer, paths: list[Path], scoped: bool
+) -> tuple[list[Path] | None, CodeExecutionPreflight]:
+    if scoped:
+        return paths, indexer.preflight_changed_paths(paths)
+    return None, indexer.preflight_content()
+
+
+def _run_incremental_attempt(
+    indexer: CodebaseIndexer,
+    reporter: ProgressReporter,
+    paths: list[Path],
+    scoped: bool,
+) -> IndexResult:
+    changed_paths, preflight = _incremental_preflight(indexer, paths, scoped)
+    return indexer.incremental_index(
+        reporter=reporter,
+        changed_paths=changed_paths,
+        preflight=preflight,
+    )
+
+
+def _assert_failed_incremental_attempt(
+    indexer: CodebaseIndexer,
+    store: VaultStore,
+    good: Path,
+    root: Path,
+    metadata_before: dict[str, str],
+    reporter: CountingProgressReporter,
+) -> None:
+    from ...indexer import _chunk_worker
+    from .test_indexer_progress_integration import _assert_phase_balanced
+
+    _assert_phase_balanced(reporter.events)
+    assert "chunk + embed" in reporter.phase_names()
+    good_expected = {
+        chunk.id for chunk in _chunk_worker.chunk_and_hash_file(good, root).chunks
+    }
+    assert good_expected
+    assert set(store.get_code_ids_by_paths({"src/a_good.py"})) == good_expected
+    assert store.get_code_ids_by_paths({"src/z_fail.fatal"}) == []
+    assert indexer._load_meta() == metadata_before  # pyright: ignore[reportPrivateUsage]
+
+
+def _run_failing_incremental_attempt(
+    indexer: CodebaseIndexer,
+    reporter: CountingProgressReporter,
+    paths: list[Path],
+    scoped: bool,
+) -> None:
+    from ...indexer._preprocess_runner import PreprocessAbortError
+
+    with pytest.raises(PreprocessAbortError):
+        _run_incremental_attempt(indexer, reporter, paths, scoped)
+
+
+def _assert_successful_incremental_retry(
+    indexer: CodebaseIndexer,
+    store: VaultStore,
+    good: Path,
+    failing: Path,
+    attempted: set[str],
+    reporter: CountingProgressReporter,
+    result: IndexResult,
+) -> None:
+    import hashlib
+
+    from .test_indexer_progress_integration import _assert_phase_balanced
+
+    _assert_phase_balanced(reporter.events)
+    assert result.added == 2
+    assert store.get_code_ids_by_paths(attempted)
+    metadata_after = indexer._load_meta()  # pyright: ignore[reportPrivateUsage]
+    assert (
+        metadata_after["src/a_good.py"]
+        == hashlib.blake2b(good.read_bytes()).hexdigest()
+    )
+    assert (
+        metadata_after["src/z_fail.fatal"]
+        == hashlib.blake2b(failing.read_bytes()).hexdigest()
+    )
+    assert "delete removed" in reporter.phase_names()
+    assert "write metadata" in reporter.phase_names()
+
+
 class TestCodebaseIncrementalIndex:
     """Tests for CodebaseIndexer.incremental_index."""
 
@@ -618,59 +769,13 @@ class TestCodebaseIncrementalIndex:
         code_project: _CodeProject,
         scoped: bool,
     ) -> None:
-        import hashlib
-        import shlex
-        import sys
-        import textwrap
-
-        from ...config import EnvVar, reset_config
-        from ...indexer import _chunk_worker
-        from ...indexer._preprocess_runner import PreprocessAbortError
-        from .test_indexer_progress_integration import (
-            CountingProgressReporter,
-            _assert_phase_balanced,
-        )
+        from .test_indexer_progress_integration import CountingProgressReporter
 
         indexer = code_project["code_indexer"]
         store = code_project["store"]
         root = code_project["root"]
         src_dir = code_project["src_dir"]
-        script = root / "conditional_preprocessor.py"
-        script.write_text(
-            textwrap.dedent(
-                """
-                import json
-                import pathlib
-                import sys
-                import time
-
-                source = pathlib.Path(sys.argv[1])
-                content = source.read_text(encoding="utf-8")
-                if "FAIL" in content:
-                    time.sleep(1.0)
-                    sys.exit(7)
-                print(json.dumps({
-                    "schema_version": 1,
-                    "preprocessor_id": "conditional",
-                    "preprocessor_version": "1",
-                    "source_path": str(source),
-                    "text": "successful conditional extraction",
-                }))
-                """
-            ),
-            encoding="utf-8",
-        )
-        command = f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} {{path}}"
-        (root / ".vaultragpreprocess.toml").write_text(
-            "version = 2\n"
-            "[[rule]]\n"
-            'pattern = "*.fatal"\n'
-            'target = "code"\n'
-            'extractor_version = "1"\n'
-            f"command = '''{command}'''\n"
-            'on_error = "fail"\n',
-            encoding="utf-8",
-        )
+        _configure_conditional_preprocessor(root)
         indexer.full_index(
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
@@ -685,29 +790,11 @@ class TestCodebaseIncrementalIndex:
         failing.write_text("FAIL\n", encoding="utf-8")
         attempted = {"src/a_good.py", "src/z_fail.fatal"}
 
-        overrides = {
-            EnvVar.INDEX_SEGMENT_MAX_CHUNKS.value: "1",
-            EnvVar.INDEX_QUEUE_MAX_CHUNKS.value: "2",
-            EnvVar.INDEX_CHUNK_WORKERS.value: "1",
-        }
-        previous = {key: os.environ.get(key) for key in overrides}
-        try:
-            os.environ.update(overrides)
-            reset_config()
+        with _single_chunk_indexing():
             failure_reporter = CountingProgressReporter()
-            with pytest.raises(PreprocessAbortError):
-                indexer.incremental_index(
-                    reporter=failure_reporter,
-                    changed_paths=[good, failing] if scoped else None,
-                    preflight=(
-                        indexer.preflight_changed_paths([good, failing])
-                        if scoped
-                        else indexer.preflight_content()
-                    ),
-                )
-
-            _assert_phase_balanced(failure_reporter.events)
-            assert "chunk + embed" in failure_reporter.phase_names()
+            _run_failing_incremental_attempt(
+                indexer, failure_reporter, [good, failing], scoped
+            )
             # Resume contract (the checkpoint-resume model): a failed attempt
             # RETAINS the points it already storage-confirmed, so the retry
             # resumes rather than re-encoding from scratch. a_good.py was fully
@@ -720,53 +807,19 @@ class TestCodebaseIncrementalIndex:
             # separately by existing_ids. The never-retried case is covered by
             # generation retirement and reconcile/invalidation, not by deleting
             # durable progress here.
-            good_expected = {
-                chunk.id
-                for chunk in _chunk_worker.chunk_and_hash_file(good, root).chunks
-            }
-            assert good_expected
-            assert set(store.get_code_ids_by_paths({"src/a_good.py"})) == good_expected
-            assert store.get_code_ids_by_paths({"src/z_fail.fatal"}) == []
-            # Metadata publishes only at finalization, so a failed attempt
-            # leaves the sidecar at its pre-attempt baseline.
-            assert (
-                indexer._load_meta()  # pyright: ignore[reportPrivateUsage]
-                == metadata_before
+            _assert_failed_incremental_attempt(
+                indexer, store, good, root, metadata_before, failure_reporter
             )
 
             failing.write_text("SUCCEED\n", encoding="utf-8")
             retry_reporter = CountingProgressReporter()
-            result = indexer.incremental_index(
-                reporter=retry_reporter,
-                changed_paths=[good, failing] if scoped else None,
-                preflight=(
-                    indexer.preflight_changed_paths([good, failing])
-                    if scoped
-                    else indexer.preflight_content()
-                ),
+            result = _run_incremental_attempt(
+                indexer, retry_reporter, [good, failing], scoped
             )
-            _assert_phase_balanced(retry_reporter.events)
-        finally:
-            for key, value in previous.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
-            reset_config()
 
-        assert result.added == 2
-        assert store.get_code_ids_by_paths(attempted)
-        metadata_after = indexer._load_meta()  # pyright: ignore[reportPrivateUsage]
-        assert (
-            metadata_after["src/a_good.py"]
-            == hashlib.blake2b(good.read_bytes()).hexdigest()
+        _assert_successful_incremental_retry(
+            indexer, store, good, failing, attempted, retry_reporter, result
         )
-        assert (
-            metadata_after["src/z_fail.fatal"]
-            == hashlib.blake2b(failing.read_bytes()).hexdigest()
-        )
-        assert "delete removed" in retry_reporter.phase_names()
-        assert "write metadata" in retry_reporter.phase_names()
 
     @pytest.mark.timeout(240)
     @pytest.mark.parametrize("scoped", [False, True], ids=["unscoped", "scoped"])
@@ -1387,7 +1440,8 @@ class TestVaultragignore:
         self, rag_components: RagComponentsWithManifest, tmp_path: Path
     ) -> None:
         """Files matching .vaultragignore are not indexed."""
-        from ... import CodebaseIndexer, VaultStore
+        from ... import CodebaseIndexer
+        from ...store_runtime import VaultStore
 
         model = rag_components["model"]
 
@@ -1421,7 +1475,8 @@ class TestVaultragignore:
         self, rag_components: RagComponentsWithManifest, tmp_path: Path
     ) -> None:
         """Removing .vaultragignore causes previously excluded files to appear."""
-        from ... import CodebaseIndexer, VaultStore
+        from ... import CodebaseIndexer
+        from ...store_runtime import VaultStore
 
         model = rag_components["model"]
 
@@ -1464,7 +1519,8 @@ class TestVaultragignore:
         self, rag_components: RagComponentsWithManifest, tmp_path: Path
     ) -> None:
         """.vaultragignore negation cannot un-ignore .gitignore entries."""
-        from ... import CodebaseIndexer, VaultStore
+        from ... import CodebaseIndexer
+        from ...store_runtime import VaultStore
 
         model = rag_components["model"]
 
@@ -1497,7 +1553,8 @@ class TestVaultragignore:
         self, rag_components: RagComponentsWithManifest, tmp_path: Path
     ) -> None:
         """CLI --exclude patterns flow through extra_excludes to full_index."""
-        from ... import CodebaseIndexer, VaultStore
+        from ... import CodebaseIndexer
+        from ...store_runtime import VaultStore
 
         model = rag_components["model"]
 

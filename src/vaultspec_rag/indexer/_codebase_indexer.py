@@ -47,10 +47,14 @@ from ._content_policy import (
     SourceProfileVersion,
 )
 from ._generation_lifecycle import CodeGenerationLifecycle
-from ._incremental_commit import CodeIncrementalCommit
+from ._incremental_commit import (
+    CodeIncrementalCommit,
+    IncrementalPublicationRequest,
+    IncrementalReplacementRequest,
+)
 from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
 from ._route_migration import reconcile_generation_storage
-from ._run_ledger import RunLedgerCompatibilityError, RunOperation
+from ._run_ledger_models import RunLedgerCompatibilityError, RunOperation
 from ._support_budget import CodeSupportBudget
 from ._vault_prep import IndexResult
 
@@ -63,7 +67,7 @@ if TYPE_CHECKING:
     from ..job_control import RunControl
     from ..memory_probe import MemoryBudgetSnapshot
     from ..progress import ProgressReporter
-    from ..store import VaultStore
+    from ..store_runtime import VaultStore
     from ._chunk_worker import FileChunkResult
     from ._preprocess_config import (
         PreprocessContext,
@@ -1129,28 +1133,32 @@ class CodebaseIndexer:
         if resumed_publication is not None:
             return resumed_publication
         publication = self._incremental_commit.supersede_and_publish(
-            checkpoint=checkpoint,
-            hashes=current_hashes,
-            to_index=to_index,
-            paths_to_index=paths_to_index,
-            attempted_paths=attempted_paths,
-            reporter=reporter,
-            limits=limits,
-            run_control=run_control,
+            IncrementalPublicationRequest(
+                checkpoint=checkpoint,
+                hashes=current_hashes,
+                to_index=to_index,
+                paths_to_index=paths_to_index,
+                attempted_paths=attempted_paths,
+                reporter=reporter,
+                limits=limits,
+                run_control=run_control,
+            )
         )
         current_hashes.update(publication.published_hashes)
         self._incremental_commit.commit_replacement(
-            policy=policy,
-            existing_ids=publication.existing_ids,
-            published_ids=publication.published_ids,
-            prior_ids_by_path=publication.prior_ids_by_path,
-            deleted_paths=deleted_files,
-            checkpoint=checkpoint,
-            metadata=current_hashes,
-            files_count=len(attempted_paths),
-            protect_replacement=bool(modified_files or deleted_files),
-            reporter=reporter,
-            run_control=run_control,
+            IncrementalReplacementRequest(
+                policy=policy,
+                existing_ids=publication.existing_ids,
+                published_ids=publication.published_ids,
+                prior_ids_by_path=publication.prior_ids_by_path,
+                deleted_paths=deleted_files,
+                checkpoint=checkpoint,
+                metadata=current_hashes,
+                files_count=len(attempted_paths),
+                protect_replacement=bool(modified_files or deleted_files),
+                reporter=reporter,
+                run_control=run_control,
+            )
         )
         total = self.store.count_code()
         duration_ms = int((time.time() - start) * 1000)
@@ -1325,31 +1333,35 @@ class CodebaseIndexer:
         if resumed_publication is not None:
             return resumed_publication
         publication = self._incremental_commit.supersede_and_publish(
-            checkpoint=checkpoint,
-            hashes=changed_hashes,
-            to_index=to_index,
-            paths_to_index=paths_to_index,
-            attempted_paths=attempted_paths,
-            reporter=reporter,
-            limits=limits,
-            run_control=run_control,
+            IncrementalPublicationRequest(
+                checkpoint=checkpoint,
+                hashes=changed_hashes,
+                to_index=to_index,
+                paths_to_index=paths_to_index,
+                attempted_paths=attempted_paths,
+                reporter=reporter,
+                limits=limits,
+                run_control=run_control,
+            )
         )
         new_metadata = dict(previous_metadata)
         new_metadata.update(publication.published_hashes)
         for rel in delete_files:
             new_metadata.pop(rel, None)
         self._incremental_commit.commit_replacement(
-            policy=policy,
-            existing_ids=publication.existing_ids,
-            published_ids=publication.published_ids,
-            prior_ids_by_path=publication.prior_ids_by_path,
-            deleted_paths=delete_files,
-            checkpoint=checkpoint,
-            metadata=new_metadata,
-            files_count=len(attempted_paths),
-            protect_replacement=bool(modified_files or delete_files),
-            reporter=reporter,
-            run_control=run_control,
+            IncrementalReplacementRequest(
+                policy=policy,
+                existing_ids=publication.existing_ids,
+                published_ids=publication.published_ids,
+                prior_ids_by_path=publication.prior_ids_by_path,
+                deleted_paths=delete_files,
+                checkpoint=checkpoint,
+                metadata=new_metadata,
+                files_count=len(attempted_paths),
+                protect_replacement=bool(modified_files or delete_files),
+                reporter=reporter,
+                run_control=run_control,
+            )
         )
         total = self.store.count_code()
         duration_ms = int((time.time() - start) * 1000)

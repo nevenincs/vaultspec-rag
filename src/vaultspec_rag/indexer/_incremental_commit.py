@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple
 
 from ..job_control import NO_RUN_CONTROL, RunControlSignal
 from ._consumer_pipeline import UnsettledCodeConsumerError
 from ._route_migration import reconcile_generation_storage
-from ._run_ledger import CommitUnitKind
+from ._run_ledger_models import CommitUnitKind
 
 if TYPE_CHECKING:
     import pathlib
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
 
     from ..job_control import RunControl
     from ..progress import ProgressReporter
-    from ..store import VaultStore
+    from ..store_runtime import VaultStore
     from ._consumer_pipeline import CodePipelineLimits
     from ._generation_lifecycle import CodeGenerationLifecycle
     from ._resolved_policy import ResolvedIndexPolicy
@@ -48,6 +49,50 @@ class IncrementalPublication(NamedTuple):
     existing_ids: set[str]
     published_ids: set[str]
     published_hashes: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class IncrementalPublicationRequest:
+    """Inputs for one supersede-and-stream publication attempt."""
+
+    checkpoint: CodeRunCheckpoint
+    hashes: dict[str, str]
+    to_index: set[str]
+    paths_to_index: list[pathlib.Path]
+    attempted_paths: set[str]
+    reporter: ProgressReporter
+    limits: CodePipelineLimits
+    run_control: RunControl = NO_RUN_CONTROL
+
+
+@dataclass(frozen=True, slots=True)
+class IncrementalReplacementRequest:
+    """Inputs for the delete-and-metadata edge of an incremental publication."""
+
+    policy: ResolvedIndexPolicy
+    existing_ids: set[str]
+    published_ids: set[str]
+    metadata: dict[str, str]
+    files_count: int
+    protect_replacement: bool
+    reporter: ProgressReporter
+    prior_ids_by_path: dict[str, set[str]] | None = None
+    deleted_paths: set[str] | None = None
+    checkpoint: CodeRunCheckpoint | None = None
+    run_control: RunControl = NO_RUN_CONTROL
+
+
+@dataclass(frozen=True, slots=True)
+class PathPublicationRequest:
+    """State needed to stream paths and clean a failed partial publication."""
+
+    paths: list[pathlib.Path]
+    attempted_paths: set[str]
+    existing_ids: set[str]
+    reporter: ProgressReporter
+    checkpoint: CodeRunCheckpoint
+    limits: CodePipelineLimits
+    run_control: RunControl = NO_RUN_CONTROL
 
 
 class CodeIncrementalCommit:
@@ -83,15 +128,7 @@ class CodeIncrementalCommit:
 
     def supersede_and_publish(
         self,
-        *,
-        checkpoint: CodeRunCheckpoint,
-        hashes: dict[str, str],
-        to_index: set[str],
-        paths_to_index: list[pathlib.Path],
-        attempted_paths: set[str],
-        reporter: ProgressReporter,
-        limits: CodePipelineLimits,
-        run_control: RunControl = NO_RUN_CONTROL,
+        request: IncrementalPublicationRequest,
     ) -> IncrementalPublication:
         """Supersede this run's re-ingested snapshot, then stream and publish.
 
@@ -100,26 +137,30 @@ class CodeIncrementalCommit:
         mapping passed here decides what stays addressable. A second copy of
         that scoping rule is the kind that loses points rather than raising.
         """
-        run_control.checkpoint()
+        request.run_control.checkpoint()
         self._lifecycle.drift_owner.supersede_snapshot(
-            {rel: hashes[rel] for rel in to_index}
+            {rel: request.hashes[rel] for rel in request.to_index}
         )
-        run_control.checkpoint()
-        prior_ids_by_path = self._prior_ids_by_path(checkpoint, attempted_paths)
+        request.run_control.checkpoint()
+        prior_ids_by_path = self._prior_ids_by_path(
+            request.checkpoint, request.attempted_paths
+        )
         existing_ids: set[str] = (
-            set(self._store.get_code_ids_by_paths(attempted_paths))
-            if attempted_paths
+            set(self._store.get_code_ids_by_paths(request.attempted_paths))
+            if request.attempted_paths
             else set()
         )
-        run_control.checkpoint()
+        request.run_control.checkpoint()
         published_ids, published_hashes = self._publish_paths(
-            paths=paths_to_index,
-            attempted_paths=attempted_paths,
-            existing_ids=existing_ids,
-            reporter=reporter,
-            checkpoint=checkpoint,
-            limits=limits,
-            run_control=run_control,
+            PathPublicationRequest(
+                paths=request.paths_to_index,
+                attempted_paths=request.attempted_paths,
+                existing_ids=existing_ids,
+                reporter=request.reporter,
+                checkpoint=request.checkpoint,
+                limits=request.limits,
+                run_control=request.run_control,
+            )
         )
         return IncrementalPublication(
             prior_ids_by_path=prior_ids_by_path,
@@ -130,32 +171,27 @@ class CodeIncrementalCommit:
 
     def _publish_paths(
         self,
-        *,
-        paths: list[pathlib.Path],
-        attempted_paths: set[str],
-        existing_ids: set[str],
-        reporter: ProgressReporter,
-        checkpoint: CodeRunCheckpoint,
-        limits: CodePipelineLimits,
-        run_control: RunControl = NO_RUN_CONTROL,
+        request: PathPublicationRequest,
     ) -> tuple[set[str], dict[str, str]]:
         """Stream changed paths and roll back attempt-introduced IDs."""
         try:
             published_ids, _total, published_hashes = self._chunk_and_embed(
-                paths,
-                reporter=reporter,
-                checkpoint=checkpoint,
-                limits=limits,
-                run_control=run_control,
+                request.paths,
+                reporter=request.reporter,
+                checkpoint=request.checkpoint,
+                limits=request.limits,
+                run_control=request.run_control,
             )
         except UnsettledCodeConsumerError:
             raise
         except BaseException:
             self._discard_failed_additions(
-                attempted_paths=attempted_paths,
-                existing_ids=existing_ids,
+                attempted_paths=request.attempted_paths,
+                existing_ids=request.existing_ids,
                 protected_ids=set(
-                    checkpoint.ledger.iter_point_ids(checkpoint.generation_id)
+                    request.checkpoint.ledger.iter_point_ids(
+                        request.checkpoint.generation_id
+                    )
                 ),
             )
             raise
@@ -245,74 +281,63 @@ class CodeIncrementalCommit:
 
     def commit_replacement(
         self,
-        *,
-        policy: ResolvedIndexPolicy,
-        existing_ids: set[str],
-        published_ids: set[str],
-        prior_ids_by_path: dict[str, set[str]] | None = None,
-        deleted_paths: set[str] | None = None,
-        checkpoint: CodeRunCheckpoint | None = None,
-        metadata: dict[str, str],
-        files_count: int,
-        protect_replacement: bool,
-        reporter: ProgressReporter,
-        run_control: RunControl = NO_RUN_CONTROL,
+        request: IncrementalReplacementRequest,
     ) -> None:
         """Delete obsolete IDs and publish metadata at one safe control edge."""
         commit_started = False
         try:
-            run_control.checkpoint()
+            request.run_control.checkpoint()
             publication_span = (
                 (
-                    checkpoint.run_policy.protected("incremental code replacement")
-                    if checkpoint is not None
-                    else run_control.protected()
+                    request.checkpoint.run_policy.protected("incremental code replacement")
+                    if request.checkpoint is not None
+                    else request.run_control.protected()
                 )
-                if protect_replacement
+                if request.protect_replacement
                 else contextlib.nullcontext()
             )
             with publication_span:
                 commit_started = True
-                reporter.phase_start("delete removed", files_count)
+                request.reporter.phase_start("delete removed", request.files_count)
                 try:
                     self._delete_obsolete(
-                        existing_ids=existing_ids,
-                        published_ids=published_ids,
-                        prior_ids_by_path=prior_ids_by_path,
-                        deleted_paths=deleted_paths,
-                        checkpoint=checkpoint,
+                        existing_ids=request.existing_ids,
+                        published_ids=request.published_ids,
+                        prior_ids_by_path=request.prior_ids_by_path,
+                        deleted_paths=request.deleted_paths,
+                        checkpoint=request.checkpoint,
                     )
-                    reporter.advance(files_count)
+                    request.reporter.advance(request.files_count)
                 finally:
-                    reporter.phase_end()
-                reporter.phase_start("write metadata", 1)
+                    request.reporter.phase_end()
+                request.reporter.phase_start("write metadata", 1)
                 try:
-                    if checkpoint is None:
+                    if request.checkpoint is None:
                         self._write_meta(
-                            metadata,
-                            policy=policy,
+                            request.metadata,
+                            policy=request.policy,
                             published_points=self._store.count_code(),
                             published_files=self._store.count_code_files(),
                         )
                     else:
                         reconcile_generation_storage(
                             self._store,
-                            checkpoint,
-                            policy,
+                            request.checkpoint,
+                            request.policy,
                             ContentKind.CODE,
                         )
-                        checkpoint.publish_metadata(
+                        request.checkpoint.publish_metadata(
                             self._meta_path,
                             published_points=self._store.count_code(),
                             published_files=self._store.count_code_files(),
                         )
-                        checkpoint.publish_generation()
-                    reporter.advance(1)
+                        request.checkpoint.publish_generation()
+                    request.reporter.advance(1)
                 finally:
-                    reporter.phase_end()
+                    request.reporter.phase_end()
         except RunControlSignal:
-            if not commit_started and checkpoint is None:
-                introduced_ids = sorted(published_ids - existing_ids)
+            if not commit_started and request.checkpoint is None:
+                introduced_ids = sorted(request.published_ids - request.existing_ids)
                 try:
                     if introduced_ids:
                         self._store.delete_code_chunks(introduced_ids)
@@ -322,4 +347,4 @@ class CodeIncrementalCommit:
                         exc_info=True,
                     )
             raise
-        run_control.checkpoint()
+        request.run_control.checkpoint()
