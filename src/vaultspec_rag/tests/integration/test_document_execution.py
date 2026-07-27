@@ -57,7 +57,7 @@ from ...jobs import (
     validate_document_support_profile,
 )
 from ...service import ServiceRegistry
-from ...watcher_retry import WatcherRetryPolicy, WatcherSource
+from ...watcher_retry import WatcherRetryPolicy, WatcherSource, _WatcherRetryOptions
 from ._helpers import _document_policy
 
 if TYPE_CHECKING:
@@ -328,7 +328,14 @@ async def test_document_attempt_honors_cancellation_before_admission(
         with pytest.raises(CancelRequested):
             _run_indexing_attempt(
                 context,
-                dispatch=_AttemptDispatch(JobSource.DOCUMENT, manager, created.job.id, tmp_path, False, registry),
+                dispatch=_AttemptDispatch(
+                    JobSource.DOCUMENT,
+                    manager,
+                    created.job.id,
+                    tmp_path,
+                    False,
+                    registry,
+                ),
             )
     finally:
         registry.close_all()
@@ -391,23 +398,27 @@ def test_document_retry_state_and_resource_profile_are_independent(
     canonical_root = os.path.normcase(str(tmp_path.resolve()))
     code = WatcherRetryPolicy(
         tmp_path / "state" / "code.json",
-        canonical_root=canonical_root,
-        source=WatcherSource.CODE,
-        base_seconds=10,
-        max_seconds=60,
-        jitter_fraction=0,
-        failure_threshold=3,
-        now=0,
+        _WatcherRetryOptions(
+            canonical_root=canonical_root,
+            source=WatcherSource.CODE,
+            base_seconds=10,
+            max_seconds=60,
+            jitter_fraction=0,
+            failure_threshold=3,
+            now=0,
+        ),
     )
     document = WatcherRetryPolicy(
         tmp_path / "state" / "document.json",
-        canonical_root=canonical_root,
-        source=WatcherSource.DOCUMENT,
-        base_seconds=10,
-        max_seconds=60,
-        jitter_fraction=0,
-        failure_threshold=3,
-        now=0,
+        _WatcherRetryOptions(
+            canonical_root=canonical_root,
+            source=WatcherSource.DOCUMENT,
+            base_seconds=10,
+            max_seconds=60,
+            jitter_fraction=0,
+            failure_threshold=3,
+            now=0,
+        ),
     )
     code.mark_convergence_pending(now=1)
     code_before = code.state
