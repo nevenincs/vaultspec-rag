@@ -1035,3 +1035,64 @@ def test_a_resumed_code_run_over_a_moving_tree_completes(
             "retry_budget",
         }
         _assert_code_pipeline_released(indexer)
+
+
+@pytest.mark.subprocess_gpu
+class TestNoCudaHeadroomRefusedAtAdmission:
+    """A ceiling under the resident baseline is refused before any forward."""
+
+    def test_a_ceiling_at_the_baseline_refuses_before_dispatch(
+        self,
+        clean_config: None,
+        embedding_model: EmbeddingModel,
+        tmp_path: Path,
+    ) -> None:
+        """Admission refuses, naming the configured ceiling as the cause.
+
+        Enforcement compares peak and ceiling net of the resident baseline, so
+        a ceiling pinned AT that baseline leaves exactly zero admissible
+        headroom. Every forward would breach it, each reporting a "0.0 MiB
+        ceiling" that names neither the baseline that consumed it nor the knob
+        that would restore it. Refusing once, up front, replaces all of them.
+
+        Run here rather than beside the ceiling arithmetic because the premise
+        is a real resident baseline: the unit module loads no models, so its
+        baseline is structurally zero and nothing can be pinned beneath it.
+        The baseline only ratchets upward, so a later sample can widen the
+        breach but never close it.
+
+        Proven able to fail: returning early from ``_require_cuda_headroom``
+        instead of raising lets admission succeed and this fails with DID NOT
+        RAISE; restored, it refuses.
+        """
+        del clean_config
+        from ... import CodebaseIndexer, VaultStore
+        from ..._job_errors import JobError, JobErrorKind
+        from ...config import get_config
+        from ...memory_probe import sample_resident_cuda_baseline
+
+        # Production records the baseline after each shared model finishes
+        # loading; the fixture above loaded one, so this is that same call
+        # rather than a figure invented here. It ratchets, never shrinks.
+        baseline_mb = sample_resident_cuda_baseline()
+        assert baseline_mb > 0.0, (
+            "premise: the embedding model must be resident on the device"
+        )
+        get_config({"index_cuda_ceiling_mb": baseline_mb})
+        _write_code_memory_corpus(tmp_path)
+
+        with VaultStore(tmp_path, embedding_dim=embedding_model.dimension) as store:
+            indexer = CodebaseIndexer(tmp_path, embedding_model, store)
+            with pytest.raises(JobError) as refused:
+                indexer.full_index(
+                    reporter=NullProgressReporter(),
+                    preflight=indexer.preflight_content(),
+                )
+
+            assert refused.value.error_kind is JobErrorKind.CUDA_MEMORY_CEILING
+            assert "at or below" in refused.value.detail
+            assert "resident model baseline" in refused.value.detail
+            # Refused BEFORE any forward: nothing was encoded or written, and
+            # no mid-run slice label appears in the message.
+            assert "after-dense-forward" not in refused.value.detail
+            assert store.count_code() == 0
