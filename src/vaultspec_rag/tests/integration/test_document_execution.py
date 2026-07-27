@@ -20,6 +20,7 @@ from ..._job_errors import JobError, JobErrorKind
 from ..._store_models import DocumentChunk, DocumentPayload
 from ..._store_writes import VolumeReading
 from ...index_profiles import (
+    AdmissionEnvironment,
     IndexDomain,
     SupportMeasurement,
     get_index_support_profile,
@@ -461,13 +462,15 @@ def test_document_retry_state_and_resource_profile_are_independent(
                 source_files=profile.document.source_files + 1,
                 source_bytes=0,
             ),
-            backend="local",
-            available_ram_bytes=profile.minimum_ram_bytes,
-            store_volume=VolumeReading(
+            AdmissionEnvironment(
+                backend="local",
+                available_ram_bytes=profile.minimum_ram_bytes,
+                store_volume=VolumeReading(
                 role="vector store",
                 path=tmp_path,
                 measured_path=tmp_path,
                 free_bytes=profile.minimum_free_disk_bytes,
+                ),
             ),
         )
     assert caught.value.error_kind is JobErrorKind.CORPUS_LIMIT_EXCEEDED

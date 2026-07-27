@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "IndexDomain",
+    "AdmissionEnvironment",
     "IndexSupportProfile",
     "SupportMeasurement",
     "SupportProfileLimits",
@@ -62,6 +63,16 @@ class SupportMeasurement:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"{name} must be a non-negative integer")
+
+
+@dataclass(frozen=True, slots=True)
+class AdmissionEnvironment:
+    """Host and storage observations for one profile admission decision."""
+
+    backend: StorageBackend
+    available_ram_bytes: int
+    store_volume: VolumeReading
+    workspace_volume: VolumeReading | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -396,11 +407,7 @@ def validate_profile_admission(
     profile_name: str,
     domain: IndexDomain,
     measured: SupportMeasurement,
-    *,
-    backend: StorageBackend,
-    available_ram_bytes: int,
-    store_volume: VolumeReading,
-    workspace_volume: VolumeReading | None = None,
+    environment: AdmissionEnvironment,
 ) -> IndexSupportProfile:
     """Validate known host and corpus dimensions before mutable/GPU work.
 
@@ -417,25 +424,25 @@ def validate_profile_admission(
     unrelated number; the per-write floor still guards the run.
     """
     profile = get_index_support_profile(profile_name)
-    if backend not in profile.accepted_backends:
+    if environment.backend not in profile.accepted_backends:
         raise JobError(
             JobErrorKind.PROFILE_REQUIREMENTS_NOT_MET,
-            f"profile {profile.name!r} does not support backend {backend!r}",
+            f"profile {profile.name!r} does not support backend {environment.backend!r}",
         )
-    if available_ram_bytes < profile.minimum_ram_bytes:
+    if environment.available_ram_bytes < profile.minimum_ram_bytes:
         raise JobError(
             JobErrorKind.PROFILE_REQUIREMENTS_NOT_MET,
             f"profile {profile.name!r} requires "
             f"{human_bytes(profile.minimum_ram_bytes)} RAM; host reports "
-            f"{human_bytes(available_ram_bytes)}",
+                f"{human_bytes(environment.available_ram_bytes)}",
         )
-    store_free = store_volume.free_bytes
+    store_free = environment.store_volume.free_bytes
     if store_free is not None and store_free < profile.minimum_free_disk_bytes:
         raise JobError(
             JobErrorKind.DISK_PREFLIGHT_FAILED,
-            _store_disk_refusal(profile, store_volume, backend),
+            _store_disk_refusal(profile, environment.store_volume, environment.backend),
         )
-    _check_workspace_volume(store_volume, workspace_volume)
+    _check_workspace_volume(environment.store_volume, environment.workspace_volume)
     exceeded = profile.limits_for(domain).exceeded_by(measured)
     if exceeded is not None:
         dimension, actual, limit = exceeded

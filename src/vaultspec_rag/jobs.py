@@ -815,7 +815,7 @@ def validate_code_support_profile(
 
     from ._store_writes import probe_store_volume, probe_workspace_volume
     from .config import get_config
-    from .index_profiles import IndexDomain, validate_profile_admission
+    from .index_profiles import AdmissionEnvironment, IndexDomain, validate_profile_admission
     from .indexer._codebase_indexer import CodeIndexPreflight
 
     discovered = (
@@ -833,10 +833,12 @@ def validate_code_support_profile(
         cfg.index_support_profile,
         IndexDomain.CODE,
         measurement,
-        backend="server" if cfg.effective_server_mode() else "local",
-        available_ram_bytes=int(psutil.virtual_memory().total),
-        store_volume=probe_store_volume(root),
-        workspace_volume=probe_workspace_volume(root),
+        AdmissionEnvironment(
+            backend="server" if cfg.effective_server_mode() else "local",
+            available_ram_bytes=int(psutil.virtual_memory().total),
+            store_volume=probe_store_volume(root),
+            workspace_volume=probe_workspace_volume(root),
+        ),
     )
     return measurement
 
@@ -896,6 +898,7 @@ def validate_document_support_profile(
     from ._store_writes import probe_store_volume, probe_workspace_volume
     from .config import get_config
     from .index_profiles import (
+        AdmissionEnvironment,
         IndexDomain,
         SupportMeasurement,
         validate_profile_admission,
@@ -928,10 +931,12 @@ def validate_document_support_profile(
         cfg.index_support_profile,
         IndexDomain.DOCUMENT,
         measurement,
-        backend="server" if cfg.effective_server_mode() else "local",
-        available_ram_bytes=int(psutil.virtual_memory().total),
-        store_volume=probe_store_volume(root),
-        workspace_volume=probe_workspace_volume(root),
+        AdmissionEnvironment(
+            backend="server" if cfg.effective_server_mode() else "local",
+            available_ram_bytes=int(psutil.virtual_memory().total),
+            store_volume=probe_store_volume(root),
+            workspace_volume=probe_workspace_volume(root),
+        ),
     )
 
 
