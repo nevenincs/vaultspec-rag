@@ -367,10 +367,10 @@ def _served_donor_collection(
     """Return the collection a donor root serves for *kind*.
 
     Falls back to *derived* when the donor's root is unrecorded or its pointer
-    cannot be read. That is the safe direction: an unreadable pointer yields a
-    name that either appears in the donor's recorded collections, in which case
-    reuse proceeds against real data, or does not, in which case the donor is
-    skipped. Neither outcome invents a collection.
+    cannot be read. That is the safe direction: the derived name is the one the
+    donor's namespace declares, so an unreadable pointer consults either real
+    data or a collection the store reports as absent - a miss the seam encodes
+    normally. Neither outcome invents a collection.
     """
     if kind is not CollectionKind.CODE or not root:
         return derived
@@ -431,14 +431,16 @@ def discover_donor_candidates(
             if entry.backend == "server"
             else kind.collection_suffix
         )
-        # A donor that has published a rebuild serves
-        # ``<derived>_g<generation>``, so the derived name is either a
-        # collection it has superseded or one that never existed. Reading the
-        # donor's own pointer is what makes reuse consult what that root
-        # actually serves rather than a name this process guessed for it.
-        collection = _served_donor_collection(entry.root, kind, derived)
-        if collection not in entry.collections:
+        # The manifest declares which kinds a namespace holds, and it declares
+        # them under the derived base names only - a published rebuild's
+        # ``<derived>_g<generation>`` never appears there. So membership is
+        # asked of the derived name, and only then is the donor's own pointer
+        # read to learn which collection that kind is actually served from.
+        # Asking membership of the served name instead rejects every donor
+        # that has ever published a rebuild.
+        if derived not in entry.collections:
             continue
+        collection = _served_donor_collection(entry.root, kind, derived)
         candidates.append(
             DonorCandidate(
                 prefix=prefix,

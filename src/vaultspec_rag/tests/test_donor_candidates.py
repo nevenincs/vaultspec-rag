@@ -18,7 +18,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .. import store_schema
-from .._store_models import root_collection_prefix
+from .._store_models import (
+    generation_code_collection,
+    publish_served_code_collection,
+    root_collection_prefix,
+)
 from ..config._settings import get_config, reset_config
 from ..indexer._code_meta import (
     CODE_EMBED_SCHEMA,
@@ -221,6 +225,29 @@ class TestDiscovery:
         assert documents == []
         assert [candidate.prefix for candidate in code] == [prefix]
         assert code[0].collection == prefix + store_schema.CODE_COLLECTION
+
+    def test_published_rebuild_is_consulted_at_its_served_collection(
+        self, tmp_path: Path
+    ) -> None:
+        """A donor that rebuilt is discovered, at the collection it serves.
+
+        The manifest declares a namespace under the derived base names only,
+        so requiring the *served* generation name to appear there rejects
+        every donor that has ever published a rebuild. Mutate the membership
+        check to ask about ``collection`` instead of ``derived`` and this
+        fails on the emptiness assertion below.
+        """
+        target = _make_root(tmp_path, "target")
+        donor = _make_root(tmp_path, "donor")
+        record_root(donor, backend="server", last_indexed="2026-07-24T02:00:00")
+        prefix = root_collection_prefix(donor)
+        served = generation_code_collection(prefix + store_schema.CODE_COLLECTION, "g1")
+        publish_served_code_collection(donor, served)
+
+        found = discover_donor_candidates(target, CollectionKind.CODE)
+
+        assert [candidate.prefix for candidate in found] == [prefix]
+        assert found[0].collection == served
 
     def test_worktree_family_sibling_outranks_newer_stranger(
         self, tmp_path: Path
