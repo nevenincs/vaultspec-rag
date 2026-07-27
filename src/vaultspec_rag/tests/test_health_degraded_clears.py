@@ -27,7 +27,8 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from ..jobs import Source, record_finish, record_start, reset, snapshot
+from ..job_models import JobSource
+from ..jobs import record_finish, record_start, reset, snapshot
 from ..server._lifespan import _jobs_health
 
 if TYPE_CHECKING:
@@ -41,13 +42,13 @@ def _degrade_reasons() -> list[str]:
     return reasons
 
 
-def _failed(source: Source) -> str:
+def _failed(source: JobSource) -> str:
     job_id = record_start(source, "watcher")
     record_finish(job_id, error="cuda_memory_ceiling: ceiling exceeded")
     return job_id
 
 
-def _succeeded(source: Source) -> str:
+def _succeeded(source: JobSource) -> str:
     job_id = record_start(source, "watcher")
     record_finish(job_id, result="+1 /0 -0 (100ms)")
     return job_id
@@ -64,7 +65,7 @@ class TestDegradedVerdictTracksCurrentState:
         del isolated_status_dir
         reset()
         try:
-            _failed("code")
+            _failed(JobSource.CODE)
             reasons = _degrade_reasons()
         finally:
             reset()
@@ -80,8 +81,8 @@ class TestDegradedVerdictTracksCurrentState:
         del isolated_status_dir
         reset()
         try:
-            failed_id = _failed("code")
-            _succeeded("code")
+            failed_id = _failed(JobSource.CODE)
+            _succeeded(JobSource.CODE)
             records = {str(record["id"]): record for record in snapshot()}
             # Assert the failure actually reached the rollup first. Without
             # this the empty reason list below could equally mean "no failed
@@ -104,8 +105,8 @@ class TestDegradedVerdictTracksCurrentState:
         del isolated_status_dir
         reset()
         try:
-            _failed("code")
-            _succeeded("vault")
+            _failed(JobSource.CODE)
+            _succeeded(JobSource.VAULT)
             reasons = _degrade_reasons()
         finally:
             reset()
@@ -121,8 +122,8 @@ class TestDegradedVerdictTracksCurrentState:
         del isolated_status_dir
         reset()
         try:
-            _succeeded("code")
-            _failed("code")
+            _succeeded(JobSource.CODE)
+            _failed(JobSource.CODE)
             reasons = _degrade_reasons()
         finally:
             reset()
@@ -142,8 +143,8 @@ class TestDegradedVerdictTracksCurrentState:
         del isolated_status_dir
         reset()
         try:
-            _failed("code")
-            _succeeded("code")
+            _failed(JobSource.CODE)
+            _succeeded(JobSource.CODE)
             jobs_health, reasons = _jobs_health()
         finally:
             reset()
