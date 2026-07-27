@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
 
@@ -16,10 +16,82 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ...embeddings import EmbeddingModel
+    from ...indexer._content_policy import RootContentPolicy
+    from ...store_runtime import VaultStore
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(600)]
 
 _WAIT_SECONDS = 30.0
+
+
+class _InterruptedDocumentRun(NamedTuple):
+    """The durable progress recorded before the real indexing run was cancelled."""
+
+    ledger_path: Path
+    committed: int
+    generation_id: str
+
+
+def _interrupt_document_indexing(
+    tmp_path: Path,
+    embedding_model: EmbeddingModel,
+    store: VaultStore,
+    policy: RootContentPolicy,
+) -> _InterruptedDocumentRun:
+    """Cancel a real document index only after its first committed unit appears."""
+    from ... import store_schema
+    from ...config import get_config
+    from ...indexer import DocumentIndexer
+    from ...indexer._content_policy import ContentKind
+    from ...indexer._run_ledger_models import index_run_ledger_path
+    from ...indexer._run_ledger_runtime import RunLedger
+    from ...job_control import CancelRequested, RunControlToken
+
+    token = RunControlToken()
+    caught: list[BaseException] = []
+
+    def _run_interrupted() -> None:
+        try:
+            indexer = DocumentIndexer(
+                tmp_path,
+                embedding_model,
+                store,
+                content_policy=policy,
+            )
+            indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+                run_control=token,
+            )
+        except BaseException as exc:
+            caught.append(exc)
+
+    worker = threading.Thread(target=_run_interrupted, name="document-restart-test")
+    worker.start()
+    ledger_path = index_run_ledger_path(tmp_path / get_config().data_dir)
+    deadline = time.monotonic() + _WAIT_SECONDS
+    committed = 0
+    generation_id = ""
+    while time.monotonic() < deadline:
+        if ledger_path.exists():
+            ledger = RunLedger(ledger_path)
+            generation = ledger.latest_generation(
+                ContentKind.DOCUMENT,
+                collection_identity=store_schema.DOCUMENT_COLLECTION,
+            )
+            if generation is not None:
+                units = list(ledger.iter_units(generation.generation_id))
+                if units:
+                    committed = len(units)
+                    generation_id = generation.generation_id
+                    token.request_cancel()
+                    break
+        time.sleep(0.01)
+    worker.join(timeout=_WAIT_SECONDS)
+    assert not worker.is_alive()
+    assert committed > 0
+    assert len(caught) == 1 and isinstance(caught[0], CancelRequested)
+    return _InterruptedDocumentRun(ledger_path, committed, generation_id)
 
 
 def test_completed_source_generation_exposes_route_migration_evidence(
@@ -32,12 +104,12 @@ def test_completed_source_generation_exposes_route_migration_evidence(
     from ...indexer._code_meta import GENERATION_ID_KEY, read_meta_raw
     from ...indexer._content_policy import ContentKind
     from ...indexer._file_state import FileStateKind
-    from ...indexer._run_ledger import (
+    from ...indexer._run_ledger_models import (
         FinalizationPhase,
-        RunLedger,
         RunTerminalState,
         index_run_ledger_path,
     )
+    from ...indexer._run_ledger_runtime import RunLedger
     from ...store_runtime import VaultStore
 
     source = tmp_path / "module.py"
@@ -83,7 +155,8 @@ def test_code_and_document_publish_independent_generation_signatures(
     from ...indexer import CodebaseIndexer, DocumentIndexer
     from ...indexer._content_policy import ContentKind
     from ...indexer._document_meta import read_document_meta
-    from ...indexer._run_ledger import RunLedger, index_run_ledger_path
+    from ...indexer._run_ledger_models import index_run_ledger_path
+    from ...indexer._run_ledger_runtime import RunLedger
     from ...store_runtime import VaultStore
 
     (tmp_path / "module.py").write_text(
@@ -146,8 +219,7 @@ def test_document_restart_reuses_confirmed_slices_and_publishes_once(
     from ...config import get_config
     from ...indexer import DocumentIndexer
     from ...indexer._content_policy import ContentKind
-    from ...indexer._run_ledger import RunLedger, index_run_ledger_path
-    from ...job_control import CancelRequested, RunControlToken
+    from ...indexer._run_ledger_runtime import RunLedger
     from ...store_runtime import VaultStore
 
     get_config({"embedding_batch_size": 1})
@@ -157,57 +229,16 @@ def test_document_restart_reuses_confirmed_slices_and_publishes_once(
     )
     policy = _document_policy("restart.txt")
     store = VaultStore(tmp_path)
-    token = RunControlToken()
-    caught: list[BaseException] = []
+    interrupted = _interrupt_document_indexing(
+        tmp_path, embedding_model, store, policy
+    )
 
-    def _run_interrupted() -> None:
-        try:
-            indexer = DocumentIndexer(
-                tmp_path,
-                embedding_model,
-                store,
-                content_policy=policy,
-            )
-            indexer.full_index(
-                reporter=NullProgressReporter(),
-                preflight=indexer.preflight_content(),
-                run_control=token,
-            )
-        except BaseException as exc:
-            caught.append(exc)
-
-    worker = threading.Thread(target=_run_interrupted, name="document-restart-test")
-    worker.start()
-    deadline = time.monotonic() + _WAIT_SECONDS
-    ledger_path = index_run_ledger_path(tmp_path / get_config().data_dir)
-    committed = 0
-    generation_id = ""
-    while time.monotonic() < deadline:
-        if ledger_path.exists():
-            ledger = RunLedger(ledger_path)
-            generation = ledger.latest_generation(
-                ContentKind.DOCUMENT,
-                collection_identity=store_schema.DOCUMENT_COLLECTION,
-            )
-            if generation is not None:
-                units = list(ledger.iter_units(generation.generation_id))
-                if units:
-                    committed = len(units)
-                    generation_id = generation.generation_id
-                    token.request_cancel()
-                    break
-        time.sleep(0.01)
-    worker.join(timeout=_WAIT_SECONDS)
-    assert not worker.is_alive()
-    assert committed > 0
-    assert len(caught) == 1 and isinstance(caught[0], CancelRequested)
-
-    with sqlite3.connect(ledger_path) as connection:
+    with sqlite3.connect(interrupted.ledger_path) as connection:
         before = dict(
             connection.execute(
                 "SELECT unit_id, committed_at FROM commit_units "
                 "WHERE generation_id = ?",
-                (generation_id,),
+                (interrupted.generation_id,),
             ).fetchall()
         )
     indexer = DocumentIndexer(tmp_path, embedding_model, store, content_policy=policy)
@@ -215,22 +246,25 @@ def test_document_restart_reuses_confirmed_slices_and_publishes_once(
         reporter=NullProgressReporter(),
         preflight=indexer.preflight_content(),
     )
-    ledger = RunLedger(ledger_path)
+    ledger = RunLedger(interrupted.ledger_path)
     published = ledger.latest_generation(
         ContentKind.DOCUMENT,
         collection_identity=store_schema.DOCUMENT_COLLECTION,
     )
-    assert published is not None and published.generation_id == generation_id
-    with sqlite3.connect(ledger_path) as connection:
+    assert (
+        published is not None
+        and published.generation_id == interrupted.generation_id
+    )
+    with sqlite3.connect(interrupted.ledger_path) as connection:
         after = dict(
             connection.execute(
                 "SELECT unit_id, committed_at FROM commit_units "
                 "WHERE generation_id = ?",
-                (generation_id,),
+                (interrupted.generation_id,),
             ).fetchall()
         )
     assert before.items() <= after.items()
-    assert len(after) > committed
+    assert len(after) > interrupted.committed
     assert result.preprocess_skipped == 0
     assert store.count_document() == result.total
     store.close()
@@ -250,7 +284,7 @@ def test_each_kind_replays_only_its_final_unconfirmed_unit(tmp_path: Path) -> No
         resolve_index_policy,
     )
     from ...indexer._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
-    from ...indexer._run_ledger import RunOperation, RunTerminalState
+    from ...indexer._run_ledger_models import RunOperation, RunTerminalState
     from ...indexer._run_policy import RunPolicy
     from ...indexer._streaming import CodeFileSegment
 

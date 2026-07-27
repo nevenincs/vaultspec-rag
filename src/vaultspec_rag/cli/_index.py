@@ -563,7 +563,7 @@ def _print_service_domain_outcomes(raw_domains: object) -> bool:
         "Uses the running service when available; otherwise runs locally."
     ),
 )
-def handle_index(
+def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option schema.
     ctx: typer.Context,
     index_type: Annotated[
         str,

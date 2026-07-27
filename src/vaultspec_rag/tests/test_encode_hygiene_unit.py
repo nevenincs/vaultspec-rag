@@ -109,17 +109,13 @@ class _OOMSparseModel:
         texts: list[str],
         *,
         batch_size: int,
-        show_progress_bar: bool = False,
-        convert_to_tensor: bool = True,
-        convert_to_sparse_tensor: bool = False,
-        save_to_cpu: bool = False,
+        **options: object,
     ) -> Any:
         # Mirrors the production call site's keyword set; the sparse
         # encode path passes these explicitly, so a double that accepts
         # only batch_size fails on the call rather than on the OOM the
         # test is actually about.
-        del texts, show_progress_bar, convert_to_tensor
-        del convert_to_sparse_tensor, save_to_cpu
+        del texts, options
         import torch
 
         self.batch_sizes.append(batch_size)

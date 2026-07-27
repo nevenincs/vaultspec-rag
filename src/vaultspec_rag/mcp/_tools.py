@@ -222,7 +222,7 @@ async def _delegate[T](call: Callable[[], T | None]) -> T:
 
 
 @mcp.tool(title="Search vault", annotations=_READ_ONLY)
-async def search_vault(
+async def search_vault(  # noqa: PLR0913 - MCP exposes the stable flat tool input schema.
     query: str,
     top_k: int = _DEFAULT_TOP_K,
     doc_type: str | None = None,
@@ -265,7 +265,7 @@ async def search_vault(
 
 
 @mcp.tool(title="Search codebase", annotations=_READ_ONLY)
-async def search_codebase(
+async def search_codebase(  # noqa: PLR0913 - MCP exposes the stable flat tool input schema.
     query: str,
     top_k: int = _DEFAULT_TOP_K,
     language: str | None = None,
@@ -325,7 +325,7 @@ async def search_codebase(
 
 
 @mcp.tool(title="Search documents", annotations=_READ_ONLY)
-async def search_documents(
+async def search_documents(  # noqa: PLR0913 - MCP exposes the stable flat tool input schema.
     query: str,
     top_k: int = _DEFAULT_TOP_K,
     source_path: str | None = None,

@@ -16,7 +16,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
 from sentence_transformers.sentence_transformer import SentenceTransformer
@@ -46,7 +46,7 @@ from ...job_models import (
 )
 from ...progress import NullProgressReporter
 from ...registry import get_registry, reset_registry
-from ...store import VaultStore
+from ...store_runtime import VaultStore
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Generator
@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from _pytest.tmpdir import TempPathFactory
 
     from ..._store_models import VaultDocument
-    from ...job_manager import JobManager
+    from ...job_manager.manager import JobManager
     from ...service import ProjectSlot, ServiceRegistry
 
 pytestmark = pytest.mark.integration
@@ -70,6 +70,15 @@ _CONTROL_WAIT_SECONDS = 20.0
 # these should catch is a job that has genuinely stopped making progress.
 _MANAGED_WAIT_SECONDS = 240.0
 _CONTROL_POLL_SECONDS = 0.001
+
+
+class _RevisedVaultPublication(NamedTuple):
+    """The real rebuild state that must be visible before pause delivery."""
+
+    expected_ids: set[str]
+    document_id: str
+    metadata_before: dict[str, str]
+    marker: str
 
 
 def _managed_test_config(*, status_dir: Path | None = None) -> dict[str, object]:
@@ -680,6 +689,70 @@ def test_vault_stream_observes_control_between_published_slices(
         assert token.snapshot().delivered is control_request
 
 
+def _wait_for_clean_vault_publication(
+    token: RunControlToken, store: VaultStore
+) -> None:
+    deadline = time.monotonic() + _CONTROL_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        state = token.snapshot()
+        if state.protected_depth == 1 and store.count() == 0:
+            return
+        time.sleep(_CONTROL_POLL_SECONDS)
+    raise AssertionError(
+        "clean rebuild did not reach its protected empty-collection span"
+    )
+
+
+def _pause_clean_vault_rebuild(
+    indexer: VaultIndexer,
+    store: VaultStore,
+    token: RunControlToken,
+    gpu_lock: threading.Lock,
+) -> None:
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        gpu_lock.acquire()
+        try:
+            rebuild = executor.submit(
+                indexer.full_index,
+                True,
+                reporter=NullProgressReporter(),
+                run_control=token,
+            )
+            _wait_for_clean_vault_publication(token, store)
+            assert token.request_pause()
+            pending = token.snapshot()
+            assert pending.desired is ControlRequest.PAUSE
+            assert pending.delivered is None
+            assert pending.protected_depth == 1
+            gpu_lock.release()
+            with pytest.raises(PauseRequested):
+                rebuild.result(timeout=_CONTROL_WAIT_SECONDS)
+        finally:
+            if gpu_lock.locked():
+                gpu_lock.release()
+
+
+def _assert_revised_vault_publication(
+    indexer: VaultIndexer,
+    store: VaultStore,
+    publication: _RevisedVaultPublication,
+    token: RunControlToken,
+) -> None:
+    assert store.get_all_ids() == publication.expected_ids
+    metadata_after = indexer._load_meta()
+    assert set(metadata_after) == publication.expected_ids
+    assert (
+        metadata_after[publication.document_id]
+        != publication.metadata_before[publication.document_id]
+    )
+    stored_document = store.get_by_id(publication.document_id)
+    assert stored_document is not None
+    assert publication.marker in stored_document["content"]
+    final = token.snapshot()
+    assert final.delivered is ControlRequest.PAUSE
+    assert final.protected_depth == 0
+
+
 def test_clean_rebuild_defers_pause_until_complete_publication(
     tmp_path: Path,
     cpu_embedding_model: EmbeddingModel,
@@ -712,53 +785,18 @@ def test_clean_rebuild_defers_pause_until_complete_publication(
             encoding="utf-8",
         )
 
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            gpu_lock.acquire()
-            try:
-                rebuild = executor.submit(
-                    indexer.full_index,
-                    True,
-                    reporter=NullProgressReporter(),
-                    run_control=token,
-                )
-
-                deadline = time.monotonic() + _CONTROL_WAIT_SECONDS
-                publication_started = False
-                while time.monotonic() < deadline:
-                    state = token.snapshot()
-                    if state.protected_depth == 1 and store.count() == 0:
-                        publication_started = True
-                        break
-                    time.sleep(_CONTROL_POLL_SECONDS)
-                assert publication_started, (
-                    "clean rebuild did not reach its protected empty-collection span"
-                )
-
-                assert token.request_pause()
-                pending = token.snapshot()
-                assert pending.desired is ControlRequest.PAUSE
-                assert pending.delivered is None
-                assert pending.protected_depth == 1
-
-                gpu_lock.release()
-                with pytest.raises(PauseRequested):
-                    rebuild.result(timeout=_CONTROL_WAIT_SECONDS)
-            finally:
-                if gpu_lock.locked():
-                    gpu_lock.release()
-
-        assert store.get_all_ids() == expected_ids
-        metadata_after = indexer._load_meta()
-        assert set(metadata_after) == expected_ids
-        assert (
-            metadata_after[revised_document.id] != metadata_before[revised_document.id]
+        _pause_clean_vault_rebuild(indexer, store, token, gpu_lock)
+        _assert_revised_vault_publication(
+            indexer,
+            store,
+            _RevisedVaultPublication(
+                expected_ids,
+                revised_document.id,
+                metadata_before,
+                revised_marker,
+            ),
+            token,
         )
-        stored_document = store.get_by_id(revised_document.id)
-        assert stored_document is not None
-        assert revised_marker in stored_document["content"]
-        final = token.snapshot()
-        assert final.delivered is ControlRequest.PAUSE
-        assert final.protected_depth == 0
 
 
 @pytest.mark.parametrize(

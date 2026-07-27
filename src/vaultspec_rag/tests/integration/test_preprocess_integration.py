@@ -24,7 +24,7 @@ import subprocess
 import sys
 import textwrap
 from dataclasses import replace
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, NamedTuple, TypedDict
 
 import pytest
 
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
     from ...embeddings import EmbeddingModel
     from ...indexer import CodebaseIndexer
-    from ...store import VaultStore
+    from ...store_runtime import VaultStore
     from ..conftest import RagComponentsWithManifest
 
 pytestmark = [pytest.mark.integration]
@@ -99,6 +99,23 @@ class _PreprocProject(TypedDict):
     store: VaultStore
     model: EmbeddingModel
     reranker: CrossEncoder
+
+
+class _OffHookSetup(NamedTuple):
+    """The real indexed state that the preprocess kill-switch must preserve."""
+
+    indexer: CodebaseIndexer
+    store: VaultStore
+    source: Path
+    sentinel: Path
+    env_key: str
+    previous_env: str | None
+    metadata_path: Path
+    cache_root: Path
+    before_ids: set[str]
+    before_path_ids: list[str]
+    before_metadata: bytes
+    before_cache: dict[str, bytes]
     root: Path
 
 
@@ -139,6 +156,77 @@ def _sentinel_extractor(root: Path, sentinel: Path) -> Path:
         encoding="utf-8",
     )
     return script
+
+
+def _prepare_off_hook_setup(
+    rag_components: RagComponentsWithManifest,
+    tmp_path: Path,
+) -> _OffHookSetup:
+    """Index one extracted binary and snapshot the state the kill switch retains."""
+    from ... import CodebaseIndexer
+    from ...config import get_config
+    from ...indexer._preprocess_cache import preprocess_cache_dir
+    from ...store_runtime import VaultStore
+
+    model = rag_components["model"]
+    sentinel = tmp_path / "EXECUTED.flag"
+    extractor = _sentinel_extractor(tmp_path, sentinel)
+    _write_config(
+        tmp_path,
+        "version = 2\n\n"
+        '[[rule]]\npattern = "*.pdf"\n'
+        f"command = '''{_command(extractor)}'''\n"
+        'target = "code"\n'
+        'extractor_version = "1"\n'
+        'on_error = "skip"\n',
+    )
+    (tmp_path / ".vaultragignore").write_text(
+        f"/{extractor.name}\n",
+        encoding="utf-8",
+    )
+    source = tmp_path / "doc.pdf"
+    source.write_bytes(b"\x00\x01 binary")
+
+    env_key = EnvVar.PREPROCESS.value
+    previous_env = os.environ.get(env_key)
+    os.environ.pop(env_key, None)
+    reset_config()
+    store = VaultStore(tmp_path)
+    indexer = CodebaseIndexer(tmp_path, model, store)
+    baseline = indexer.full_index(
+        reporter=NullProgressReporter(),
+        preflight=indexer.preflight_content(),
+    )
+    assert baseline.preprocess_ok == 1
+    assert sentinel.exists()
+    sentinel.unlink()
+
+    cfg = get_config()
+    data_root = tmp_path / cfg.data_dir
+    metadata_path = data_root / cfg.code_index_metadata_file
+    cache_root = preprocess_cache_dir(data_root)
+    cache_root.mkdir(parents=True, exist_ok=True)
+    (cache_root / "preserved.json").write_bytes(b'{"preserved":true}')
+    before_ids = store.get_all_code_ids()
+    before_path_ids = store.get_code_ids_by_paths({"doc.pdf"})
+    before_metadata = metadata_path.read_bytes()
+    before_cache = _file_tree_bytes(cache_root)
+    assert before_ids
+    assert before_path_ids
+    return _OffHookSetup(
+        indexer,
+        store,
+        source,
+        sentinel,
+        env_key,
+        previous_env,
+        metadata_path,
+        cache_root,
+        before_ids,
+        before_path_ids,
+        before_metadata,
+        before_cache,
+    )
 
 
 def test_real_extractor_receives_canonical_options_and_retains_metadata(
@@ -395,7 +483,8 @@ def preproc_project(
     tmp_path: Path,
 ) -> Generator[_PreprocProject]:
     """A temp project with a command preprocess rule and a binary .pdf source."""
-    from ... import CodebaseIndexer, VaultStore
+    from ... import CodebaseIndexer
+    from ...store_runtime import VaultStore
 
     model = rag_components["model"]
 
@@ -492,65 +581,16 @@ class TestPreprocessEndToEnd:
         # The kill switch disables execution without erasing ownership. A
         # previously extracted code-owned path therefore remains published as
         # stale when its source changes while execution is off.
-        from ... import CodebaseIndexer, VaultStore
-        from ...config import get_config
         from ...indexer._content_policy import (
             AdmissionReason,
             ContentKind,
         )
-        from ...indexer._preprocess_cache import preprocess_cache_dir
-
-        model = rag_components["model"]
-        sentinel = tmp_path / "EXECUTED.flag"
-        extractor = _sentinel_extractor(tmp_path, sentinel)
-        _write_config(
-            tmp_path,
-            "version = 2\n\n"
-            '[[rule]]\npattern = "*.pdf"\n'
-            f"command = '''{_command(extractor)}'''\n"
-            'target = "code"\n'
-            'extractor_version = "1"\n'
-            'on_error = "skip"\n',
-        )
-        (tmp_path / ".vaultragignore").write_text(
-            f"/{extractor.name}\n",
-            encoding="utf-8",
-        )
-        source = tmp_path / "doc.pdf"
-        source.write_bytes(b"\x00\x01 binary")
-
-        key = EnvVar.PREPROCESS.value
-        prev = os.environ.get(key)
-        os.environ.pop(key, None)
-        reset_config()
-        store = VaultStore(tmp_path)
+        setup = _prepare_off_hook_setup(rag_components, tmp_path)
         try:
-            indexer = CodebaseIndexer(tmp_path, model, store)
-            baseline = indexer.full_index(
-                reporter=NullProgressReporter(),
-                preflight=indexer.preflight_content(),
-            )
-            assert baseline.preprocess_ok == 1
-            assert sentinel.exists()
-            sentinel.unlink()
-
-            cfg = get_config()
-            data_root = tmp_path / cfg.data_dir
-            metadata_path = data_root / cfg.code_index_metadata_file
-            cache_root = preprocess_cache_dir(data_root)
-            cache_root.mkdir(parents=True, exist_ok=True)
-            (cache_root / "preserved.json").write_bytes(b'{"preserved":true}')
-            before_ids = store.get_all_code_ids()
-            before_path_ids = store.get_code_ids_by_paths({"doc.pdf"})
-            before_metadata = metadata_path.read_bytes()
-            before_cache = _file_tree_bytes(cache_root)
-            assert before_ids
-            assert before_path_ids
-
-            os.environ[key] = "off"
+            os.environ[setup.env_key] = "off"
             reset_config()
-            source.write_bytes(b"\x00\x02 changed binary")
-            scan = indexer.scan_content()
+            setup.source.write_bytes(b"\x00\x02 changed binary")
+            scan = setup.indexer.scan_content()
             sample = next(item for item in scan.samples if item.path == "doc.pdf")
             assert (
                 scan.preprocess_mode,
@@ -559,7 +599,7 @@ class TestPreprocessEndToEnd:
                 sample.kind,
                 sample.admitted,
                 sample.reason,
-                source in scan.files,
+                setup.source in scan.files,
             ) == (
                 "off",
                 1,
@@ -570,10 +610,10 @@ class TestPreprocessEndToEnd:
                 True,
             )
 
-            result = indexer.incremental_index(
+            result = setup.indexer.incremental_index(
                 reporter=NullProgressReporter(),
-                changed_paths=[source],
-                preflight=indexer.preflight_changed_paths([source]),
+                changed_paths=[setup.source],
+                preflight=setup.indexer.preflight_changed_paths([setup.source]),
             )
 
             assert (result.added, result.updated, result.removed) == (0, 0, 0)
@@ -582,17 +622,20 @@ class TestPreprocessEndToEnd:
             assert result.preprocess_failures == [
                 "doc.pdf: preprocessing disabled; retained work as stale"
             ]
-            assert not sentinel.exists()
-            assert store.get_all_code_ids() == before_ids
-            assert store.get_code_ids_by_paths({"doc.pdf"}) == before_path_ids
-            assert metadata_path.read_bytes() == before_metadata
-            assert _file_tree_bytes(cache_root) == before_cache
+            assert not setup.sentinel.exists()
+            assert setup.store.get_all_code_ids() == setup.before_ids
+            assert (
+                setup.store.get_code_ids_by_paths({"doc.pdf"})
+                == setup.before_path_ids
+            )
+            assert setup.metadata_path.read_bytes() == setup.before_metadata
+            assert _file_tree_bytes(setup.cache_root) == setup.before_cache
         finally:
-            store.close()
-            if prev is None:
-                os.environ.pop(key, None)
+            setup.store.close()
+            if setup.previous_env is None:
+                os.environ.pop(setup.env_key, None)
             else:
-                os.environ[key] = prev
+                os.environ[setup.env_key] = setup.previous_env
             reset_config()
 
     @pytest.mark.timeout(600)
@@ -623,16 +666,17 @@ class TestPreprocessEndToEnd:
     def test_failing_preprocessor_never_converges_unchanged_source_hash(
         self, rag_components: RagComponentsWithManifest, tmp_path: Path
     ) -> None:
-        from ... import CodebaseIndexer, VaultStore
+        from ... import CodebaseIndexer
         from ..._job_errors import JobError, JobErrorKind
         from ...config import get_config
         from ...indexer._content_policy import ContentKind
         from ...indexer._file_state import FileStateKind
-        from ...indexer._run_ledger import (
-            RunLedger,
+        from ...indexer._run_ledger_models import (
             RunTerminalState,
             index_run_ledger_path,
         )
+        from ...indexer._run_ledger_runtime import RunLedger
+        from ...store_runtime import VaultStore
 
         model = rag_components["model"]
         script = tmp_path / "boom.py"
@@ -688,7 +732,8 @@ class TestPreprocessEndToEnd:
         # ignore file down the scoped path (exactly what the watcher does).
         # The membership-epoch check must force the unscoped reconcile and
         # prune the newly-ignored file's chunks.
-        from ... import CodebaseIndexer, VaultStore
+        from ... import CodebaseIndexer
+        from ...store_runtime import VaultStore
 
         model = rag_components["model"]
         (tmp_path / "keep.py").write_text(
@@ -732,7 +777,8 @@ class TestPreprocessEndToEnd:
     ) -> None:
         # TST-002: a preprocess-matched file whose extractor fails under
         # on_error=passthrough is chunked as raw text and stays searchable.
-        from ... import CodebaseIndexer, VaultSearcher, VaultStore
+        from ... import CodebaseIndexer, VaultSearcher
+        from ...store_runtime import VaultStore
 
         model = rag_components["model"]
         script = tmp_path / "boom.py"
@@ -776,7 +822,8 @@ class TestPreprocessEndToEnd:
     ) -> None:
         # TST-003: bumping a rule's command (the cache lever) re-extracts the
         # same unchanged source rather than serving stale cached output.
-        from ... import CodebaseIndexer, VaultSearcher, VaultStore
+        from ... import CodebaseIndexer, VaultSearcher
+        from ...store_runtime import VaultStore
 
         model = rag_components["model"]
 
@@ -836,8 +883,9 @@ class TestPreprocessEndToEnd:
     ) -> None:
         # Regression: the scoped/incremental path (used by
         # the watcher) must retain preprocessing failures as retryable work.
-        from ... import CodebaseIndexer, VaultStore
+        from ... import CodebaseIndexer
         from ..._job_errors import JobError, JobErrorKind
+        from ...store_runtime import VaultStore
 
         model = rag_components["model"]
         script = tmp_path / "boom.py"
