@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
-from .. import store_schema
+from .. import _typed_fields, store_schema
 from .._atomic_write import JsonWriteOptions, write_json_atomically
 from ._document_identity import normalize_document_source_path
 
@@ -144,27 +144,25 @@ def document_metadata_path(root_dir: Path) -> Path:
 
 def _object_dict(value: object, message: str) -> dict[str, object]:
     """Narrow one decoded JSON object to string-keyed storage."""
-    if not isinstance(value, dict) or not all(
-        isinstance(key, str) for key in cast("dict[object, object]", value)
-    ):
-        raise DocumentMetadataError(message)
-    return cast("dict[str, object]", value)
+    return _typed_fields.required_mapping(
+        value, on_invalid=lambda: DocumentMetadataError(message)
+    )
 
 
 def _required_str(payload: dict[str, object], key: str) -> str:
     """Read one required non-empty string from a sidecar object."""
-    value = payload.get(key)
-    if not isinstance(value, str) or not value:
-        raise DocumentMetadataError(f"document metadata {key} is invalid")
-    return value
+    return _typed_fields.required_str(
+        payload.get(key),
+        on_invalid=lambda: DocumentMetadataError(f"document metadata {key} is invalid"),
+    )
 
 
 def _required_int(payload: dict[str, object], key: str) -> int:
     """Read one required non-boolean integer from a sidecar object."""
-    value = payload.get(key)
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise DocumentMetadataError(f"document metadata {key} is invalid")
-    return value
+    return _typed_fields.required_int(
+        payload.get(key),
+        on_invalid=lambda: DocumentMetadataError(f"document metadata {key} is invalid"),
+    )
 
 
 def _file_from_payload(value: object) -> DocumentFileMetadata:
@@ -257,8 +255,13 @@ def _publish_document_meta_from_file_states(
     from ._file_state import iter_publishable_states
 
     (
-        meta_path, states, point_ids_for_path, generation_id,
-        membership_fingerprint, content_fingerprint, policy_snapshot,
+        meta_path,
+        states,
+        point_ids_for_path,
+        generation_id,
+        membership_fingerprint,
+        content_fingerprint,
+        policy_snapshot,
     ) = (
         request.meta_path,
         request.states,

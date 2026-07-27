@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import os
 import uuid
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, cast
 
+from . import _typed_fields
 from ._atomic_write import fsync_directory
 from .job_models import (
     DesiredJobState,
@@ -626,12 +626,10 @@ def _optional_telemetry_block(value: object, name: str) -> dict[str, object] | N
 
 
 def _required_mapping(value: object, name: str) -> dict[str, object]:
-    if not isinstance(value, dict):
-        raise TypeError(f"{name} must be an object with string keys")
-    untyped = cast("dict[object, object]", value)
-    if not all(isinstance(key, str) for key in untyped):
-        raise TypeError(f"{name} must be an object with string keys")
-    return cast("dict[str, object]", value)
+    return _typed_fields.required_mapping(
+        value,
+        on_invalid=lambda: TypeError(f"{name} must be an object with string keys"),
+    )
 
 
 def _required_list(value: object, name: str) -> list[object]:
@@ -641,36 +639,45 @@ def _required_list(value: object, name: str) -> list[object]:
 
 
 def _required_str(value: object, name: str, *, allow_empty: bool = False) -> str:
-    if not isinstance(value, str) or (not allow_empty and not value):
-        raise TypeError(f"{name} must be a non-empty string")
-    return value
+    return _typed_fields.required_str(
+        value,
+        allow_empty=allow_empty,
+        on_invalid=lambda: TypeError(f"{name} must be a non-empty string"),
+    )
 
 
 def _optional_str(value: object, name: str) -> str | None:
-    if value is None:
-        return None
-    return _required_str(value, name, allow_empty=True)
+    return _typed_fields.optional_str(
+        value, on_invalid=lambda: TypeError(f"{name} must be a non-empty string")
+    )
 
 
 def _required_int(value: object, name: str, *, minimum: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
-        raise TypeError(f"{name} must be an integer of at least {minimum}")
-    return value
+    return _typed_fields.required_int(
+        value,
+        minimum=minimum,
+        on_invalid=lambda: TypeError(
+            f"{name} must be an integer of at least {minimum}"
+        ),
+    )
 
 
 def _optional_int(value: object, name: str, *, minimum: int) -> int | None:
-    if value is None:
-        return None
-    return _required_int(value, name, minimum=minimum)
+    return _typed_fields.optional_int(
+        value,
+        minimum=minimum,
+        on_invalid=lambda: TypeError(
+            f"{name} must be an integer of at least {minimum}"
+        ),
+    )
 
 
 def _required_float(value: object, name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise TypeError(f"{name} must be numeric")
-    resolved = float(value)
-    if not math.isfinite(resolved):
-        raise ValueError(f"{name} must be finite")
-    return resolved
+    return _typed_fields.required_float(
+        value,
+        on_invalid=lambda: TypeError(f"{name} must be numeric"),
+        on_not_finite=lambda: ValueError(f"{name} must be finite"),
+    )
 
 
 def _required_nonnegative_float(value: object, name: str) -> float:
@@ -681,6 +688,8 @@ def _required_nonnegative_float(value: object, name: str) -> float:
 
 
 def _optional_float(value: object, name: str) -> float | None:
-    if value is None:
-        return None
-    return _required_float(value, name)
+    return _typed_fields.optional_float(
+        value,
+        on_invalid=lambda: TypeError(f"{name} must be numeric"),
+        on_not_finite=lambda: ValueError(f"{name} must be finite"),
+    )

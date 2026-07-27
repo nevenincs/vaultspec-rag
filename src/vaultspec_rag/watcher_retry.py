@@ -23,6 +23,7 @@ from enum import StrEnum
 from itertools import islice
 from typing import TYPE_CHECKING, Final, cast
 
+from . import _typed_fields
 from ._atomic_write import (
     JsonWriteOptions,
     NotDurableError,
@@ -1229,18 +1230,21 @@ def _read_state(path: Path) -> WatcherRetryState:
 
 
 def _required_text(raw: dict[str, object], key: str) -> str:
-    value = raw.get(key)
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"watcher retry field {key!r} must be non-empty text")
-    return value
+    return _typed_fields.required_str(
+        raw.get(key),
+        on_invalid=lambda: ValueError(
+            f"watcher retry field {key!r} must be non-empty text"
+        ),
+    )
 
 
 def _optional_text(value: object) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ValueError("optional watcher retry text must be text or null")
-    return value
+    return _typed_fields.optional_str(
+        value,
+        on_invalid=lambda: ValueError(
+            "optional watcher retry text must be text or null"
+        ),
+    )
 
 
 def _optional_error_kind(value: object) -> JobErrorKind | None:
@@ -1249,26 +1253,33 @@ def _optional_error_kind(value: object) -> JobErrorKind | None:
 
 
 def _nonnegative_int(raw: dict[str, object], key: str) -> int:
-    value = raw.get(key)
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError(f"watcher retry field {key!r} must be a nonnegative integer")
-    return value
+    return _typed_fields.required_int(
+        raw.get(key),
+        minimum=0,
+        on_invalid=lambda: ValueError(
+            f"watcher retry field {key!r} must be a nonnegative integer"
+        ),
+    )
 
 
 def _optional_nonnegative_int(value: object, key: str) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError(f"watcher retry field {key!r} must be null or nonnegative")
-    return value
+    return _typed_fields.optional_int(
+        value,
+        minimum=0,
+        on_invalid=lambda: ValueError(
+            f"watcher retry field {key!r} must be null or nonnegative"
+        ),
+    )
 
 
 def _optional_positive_int(value: object, key: str) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        raise ValueError(f"watcher retry field {key!r} must be null or positive")
-    return value
+    return _typed_fields.optional_int(
+        value,
+        minimum=1,
+        on_invalid=lambda: ValueError(
+            f"watcher retry field {key!r} must be null or positive"
+        ),
+    )
 
 
 def _optional_positive_number(value: object, key: str) -> float | None:
@@ -1291,10 +1302,10 @@ def _required_positive[T: (int, float)](
 
 
 def _required_bool(raw: dict[str, object], key: str) -> bool:
-    value = raw.get(key)
-    if not isinstance(value, bool):
-        raise ValueError(f"watcher retry field {key!r} must be a boolean")
-    return value
+    return _typed_fields.required_bool(
+        raw.get(key),
+        on_invalid=lambda: ValueError(f"watcher retry field {key!r} must be a boolean"),
+    )
 
 
 def _timestamp(raw: dict[str, object], key: str) -> float:
