@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, NamedTuple, cast
 
+from .._operator_commands import server_jobs_command
 from ._cli_format import NOT_REPORTED, _counted_unit, _duration_phrase
 
 if TYPE_CHECKING:
@@ -384,7 +385,7 @@ def _stalled_jobs_finding(
         return None
     return DegradedFinding(
         cause=f"{_counted_unit(stalled, 'indexing job')} stopped reporting progress",
-        command="vaultspec-rag server jobs --state active",
+        command=server_jobs_command(),
         family=STALLED_JOBS_FAMILY,
     )
 
@@ -534,7 +535,7 @@ def _health_is_degraded(payload: dict[str, object]) -> bool:
 #: token with no entry is still rendered, quoted verbatim inside the phrase, and
 #: falls back to the log filter for the named job.
 _DOMAIN_REASONS = {
-    "stalled": ("is stalled", "vaultspec-rag server jobs --state active"),
+    "stalled": ("is stalled", server_jobs_command()),
     "failed": ("failed", ""),
     "interrupted": ("was interrupted", ""),
 }

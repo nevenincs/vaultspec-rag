@@ -1400,3 +1400,72 @@ class TestAtomicJsonPublishHasOneWriter:
 
         assert len(seen) == 8, f"temp names repeated across writers: {sorted(seen)}"
         assert all(name.startswith(".sidecar.json.") for name in seen), sorted(seen)
+
+
+class TestOperatorCommandsHaveOneSpelling:
+    """A command we tell an operator to run is spelled in one place.
+
+    A remediation line is an instruction someone pastes into a shell, so every
+    flag in it promises that flag exists. ``server jobs`` once took
+    ``--running``; the option became ``--state active`` and two tests now
+    exist for no reason other than asserting the old spelling stays gone. A
+    guard against a renamed flag reappearing is a guard against copies that
+    were missed the first time.
+    """
+
+    def test_no_module_builds_its_own_port_option(self) -> None:
+        """Four modules computed this one conditional; three identically.
+
+        Proven able to fail: reintroducing the inline conditional in any
+        module fails this test on the offender list below.
+        """
+        offenders = [
+            f"{path.name}:{number}"
+            for path in _production_sources()
+            if path.name != "_operator_commands.py"
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            )
+            if '" --port {' in line or '" --port %' in line
+        ]
+        assert not offenders, (
+            f"a hand-built --port option at {offenders}; call port_option so "
+            "one rule decides when a port is known enough to name"
+        )
+
+    def test_no_module_spells_the_jobs_command(self) -> None:
+        """Its flags are the ones with a demonstrated history of changing."""
+        offenders = [
+            f"{path.name}:{number}"
+            for path in _production_sources()
+            if path.name != "_operator_commands.py"
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            )
+            if "vaultspec-rag server jobs " in line
+        ]
+        assert not offenders, (
+            f"a hand-spelled server-jobs command at {offenders}; call "
+            "server_jobs_command so a renamed flag changes in one place"
+        )
+
+    def test_the_renamed_flag_is_not_reachable(self) -> None:
+        """``--running`` was replaced by ``--state active`` and must stay gone.
+
+        The builder is the only thing that can emit this command now, so this
+        asks the builder rather than scanning for a string: no argument
+        combination may produce the retired option.
+        """
+        from .._operator_commands import server_jobs_command
+
+        rendered = [
+            server_jobs_command(),
+            server_jobs_command(8766),
+            server_jobs_command(8766, failed=True),
+            server_jobs_command(8766, index="code"),
+            server_jobs_command(8766, state="finished"),
+        ]
+        assert all("--running" not in command for command in rendered), rendered
+        assert all(
+            command.startswith("vaultspec-rag server jobs") for command in rendered
+        )
