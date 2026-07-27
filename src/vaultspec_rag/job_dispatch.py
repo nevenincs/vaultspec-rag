@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ._units import bytes_to_mib
@@ -41,7 +41,13 @@ class IndexJobBinding:
     code_preflight: CodeIndexPreflight | None
     document_preflight: DocumentIndexPreflight | None
     on_started: Callable[[JobSnapshot], None] | None = None
-    on_finished: Callable[[JobSnapshot, float, JobExecutionResult | None, BaseException | None], None] | None = None
+    on_finished: (
+        Callable[
+            [JobSnapshot, float, JobExecutionResult | None, BaseException | None],
+            None,
+        ]
+        | None
+    ) = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,12 +83,26 @@ def bind_index_job(binding: IndexJobBinding) -> JobOutcome:
     if spec.source is JobSource.VAULT:
         runner = partial(
             _run_vault_attempt,
-            dispatch=_AttemptDispatch(JobSource.VAULT, binding.manager, binding.job_id, root, clean, binding.registry),
+            dispatch=_AttemptDispatch(
+                JobSource.VAULT,
+                binding.manager,
+                binding.job_id,
+                root,
+                clean,
+                binding.registry,
+            ),
         )
     else:
         runner = partial(
             _run_indexing_attempt,
-            dispatch=_AttemptDispatch(spec.source, binding.manager, binding.job_id, root, clean, binding.registry),
+            dispatch=_AttemptDispatch(
+                spec.source,
+                binding.manager,
+                binding.job_id,
+                root,
+                clean,
+                binding.registry,
+            ),
         )
     return binding.manager.bind_dispatch(
         binding.job_id,
