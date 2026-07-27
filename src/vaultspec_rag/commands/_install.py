@@ -90,6 +90,18 @@ class _BuiltinSeedOptions:
     skip_mcp: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class _McpExtraRequest:
+    """One MCP extra reconciliation and its installation-facing outcome sink."""
+
+    target: Path
+    report: InstallReport
+    mode: InstallMode
+    enabled: bool
+    dry_run: bool
+    record_torch_inspect_error: bool = False
+
+
 def _seed_builtins(
     vaultspec_dir: Path,
     report: InstallReport,
@@ -138,32 +150,31 @@ def _seed_builtins(
         report.seeded.append((rel, "[REMOVE]"))
 
 
-def _reconcile_mcp_extra(
-    target: Path,
-    report: InstallReport,
-    mode: InstallMode,
-    *,
-    enabled: bool,
-    dry_run: bool,
-    record_torch_inspect_error: bool = False,
-) -> bool:
+def _reconcile_mcp_extra(request: _McpExtraRequest) -> bool:
     try:
-        pyproject = target / "pyproject.toml"
+        pyproject = request.target / "pyproject.toml"
         if pyproject.exists():
             pyproject.read_text(encoding="utf-8")
         result = reconcile_mcp_extra(
-            pyproject, mode=mode, enabled=enabled, dry_run=dry_run
+            pyproject,
+            mode=request.mode,
+            enabled=request.enabled,
+            dry_run=request.dry_run,
         )
     except Exception as exc:
         _record_project_inspection_error(
-            report,
+            request.report,
             exc,
-            record_torch_inspect_error=record_torch_inspect_error,
+            record_torch_inspect_error=request.record_torch_inspect_error,
         )
         return False
-    report.mcp_extra_action = result.action
-    report.warnings.extend(f"MCP extra: {conflict}" for conflict in result.conflicts)
-    report.mcp_errors.extend(f"MCP extra: {conflict}" for conflict in result.conflicts)
+    request.report.mcp_extra_action = result.action
+    request.report.warnings.extend(
+        f"MCP extra: {conflict}" for conflict in result.conflicts
+    )
+    request.report.mcp_errors.extend(
+        f"MCP extra: {conflict}" for conflict in result.conflicts
+    )
     return not result.conflicts
 
 
@@ -360,12 +371,14 @@ def _commit_mcp_placement_and_mode(
     try:
         snapshots = {path: file_snapshot(path) for path in _mcp_intent_paths(target)}
         if not _reconcile_mcp_extra(
-            target,
-            report,
-            mode,
-            enabled=enabled,
-            dry_run=False,
-            record_torch_inspect_error=configure_torch,
+            _McpExtraRequest(
+                target,
+                report,
+                mode,
+                enabled=enabled,
+                dry_run=False,
+                record_torch_inspect_error=configure_torch,
+            )
         ):
             rollback_errors = rollback_file_snapshots(snapshots)
             if rollback_errors:
@@ -694,12 +707,14 @@ def _prepare_mcp_transition(
     """Preflight and, for real runs, commit MCP placement and package mode."""
     mcp_skipped = "mcp" in skip
     if not mcp_skipped and not _reconcile_mcp_extra(
-        target,
-        report,
-        mode,
-        enabled=install_mcp,
-        dry_run=True,
-        record_torch_inspect_error=configure_torch,
+        _McpExtraRequest(
+            target,
+            report,
+            mode,
+            enabled=install_mcp,
+            dry_run=True,
+            record_torch_inspect_error=configure_torch,
+        )
     ):
         return False, False
 
