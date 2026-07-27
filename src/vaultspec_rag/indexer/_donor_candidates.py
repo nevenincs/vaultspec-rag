@@ -46,6 +46,7 @@ from ._document_meta import (
     document_metadata_path,
     read_document_meta,
 )
+from ._vault_meta import VAULT_CONTENT_EPOCH_KEY, VAULT_POINT_SCHEMA_KEY
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -75,13 +76,6 @@ __all__ = [
 #: every candidate adds read traffic against the shared server during
 #: indexing. A named constant so measurement can tune it in one place.
 DONOR_CANDIDATE_CAP = 3
-
-#: Mirrors of the vault sidecar's reserved keys (private to the vault
-#: indexer, which owns the write side). If the writer ever renames a key,
-#: these reads return ``None`` and every vault donor fails closed to
-#: ineligible - a hit-rate regression, never a correctness one.
-_VAULT_CONTENT_EPOCH_KEY = "__vault_content_epoch__"
-_VAULT_POINT_SCHEMA_KEY = "__vault_point_schema__"
 
 
 class CollectionKind(enum.Enum):
@@ -276,7 +270,7 @@ def read_donor_recorded_state(
         epoch_key, marker_key = _CODE_CONTENT_EPOCH_KEY, _CODE_EMBED_SCHEMA_KEY
     else:
         sidecar = root / cfg.data_dir / cfg.index_metadata_file
-        epoch_key, marker_key = _VAULT_CONTENT_EPOCH_KEY, _VAULT_POINT_SCHEMA_KEY
+        epoch_key, marker_key = VAULT_CONTENT_EPOCH_KEY, VAULT_POINT_SCHEMA_KEY
     raw = _read_json_object(sidecar)
     epoch = raw.get(epoch_key)
     marker = raw.get(marker_key)

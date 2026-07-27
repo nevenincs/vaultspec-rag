@@ -829,6 +829,83 @@ class TestAtomicReplaceHasOneImplementation:
         assert replace_atomically is not replace_durably
 
 
+class TestSidecarKeysAreNamedNotSpelled:
+    """A reserved sidecar key is written as a literal in exactly one module.
+
+    The code side kept its keys in a module both the writer and the reader
+    import. The vault side kept them private to the indexer, so the donor
+    reader spelled them out again - and said so, calling itself a mirror of
+    keys "private to the vault indexer, which owns the write side". The same
+    function imported the code keys from their owner two lines above. A test
+    made a third copy, and an integration test a fourth and fifth.
+
+    A mirrored payload key fails in the worst available way: renaming one does
+    not raise, it makes the reader's lookup return ``None``, every vault donor
+    falls to ineligible, and vector reuse quietly stops. Every answer stays
+    correct, there are just fewer of them, so no correctness test notices.
+
+    Checked as literals rather than as names, because the mirror was never a
+    shared name - it was the same string typed twice under two spellings
+    (``_SCHEMA_KEY`` here, ``_VAULT_POINT_SCHEMA_KEY`` there).
+    """
+
+    #: Reserved sidecar keys and the one module each may be spelled in.
+    _OWNERS: ClassVar[dict[str, str]] = {
+        "__vault_point_schema__": "_vault_meta.py",
+        "__vault_content_epoch__": "_vault_meta.py",
+        "__code_embed_schema__": "_code_meta.py",
+        "__code_content_epoch__": "_code_meta.py",
+        "__code_membership_epoch__": "_code_meta.py",
+    }
+
+    def test_no_module_but_the_owner_spells_a_reserved_key(self) -> None:
+        """A second spelling is a mirror, whatever name it is bound to."""
+        offenders: list[str] = []
+        for path in _every_production_file():
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Constant):
+                    continue
+                if not isinstance(node.value, str):
+                    continue
+                owner = self._OWNERS.get(node.value)
+                if owner is not None and path.name != owner:
+                    offenders.append(
+                        f"{path.name}:{node.lineno} spells {node.value!r} "
+                        f"(owned by {owner})"
+                    )
+        assert not offenders, (
+            f"a reserved sidecar key is spelled outside the module that owns "
+            f"it: {offenders}; import the constant, because a renamed key does "
+            "not raise - it silently makes every donor ineligible"
+        )
+
+    def test_the_reader_and_the_writer_share_one_object(self) -> None:
+        """Not equal strings - the same constant, reached from both sides.
+
+        Proven able to fail: rebinding either name in the donor reader to a
+        fresh literal of the same text fails this on the identity assertion
+        below, which equality would not catch.
+        """
+        from ..indexer import _donor_candidates, _vault_indexer, _vault_meta
+
+        assert (
+            _donor_candidates.VAULT_CONTENT_EPOCH_KEY
+            is _vault_meta.VAULT_CONTENT_EPOCH_KEY
+        )
+        assert (
+            _donor_candidates.VAULT_POINT_SCHEMA_KEY
+            is _vault_meta.VAULT_POINT_SCHEMA_KEY
+        )
+        assert (
+            _vault_indexer.VAULT_POINT_SCHEMA_KEY is _vault_meta.VAULT_POINT_SCHEMA_KEY
+        )
+        assert _vault_indexer.VAULT_POINT_SCHEMA is _vault_meta.VAULT_POINT_SCHEMA
+
+
 class TestManagedLogFiltersHaveOneRule:
     """Which log filters exist, and what makes one empty, is stated once.
 

@@ -41,6 +41,15 @@ from ..indexer._donor_candidates import (
     evaluate_donor_eligibility,
     read_donor_recorded_state,
 )
+from ..indexer._vault_meta import (
+    VAULT_CONTENT_EPOCH_KEY as _VAULT_EPOCH_KEY,
+)
+from ..indexer._vault_meta import (
+    VAULT_POINT_SCHEMA as _VAULT_SCHEMA,
+)
+from ..indexer._vault_meta import (
+    VAULT_POINT_SCHEMA_KEY as _VAULT_SCHEMA_KEY,
+)
 from ..storage_manifest import ManifestEntry, record_root
 
 if TYPE_CHECKING:
@@ -48,10 +57,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
-
-# Sidecar keys the vault indexer stamps (its write side owns the literals).
-_VAULT_EPOCH_KEY = "__vault_content_epoch__"
-_VAULT_SCHEMA_KEY = "__vault_point_schema__"
 
 
 @pytest.fixture(autouse=True)
@@ -100,7 +105,9 @@ def _write_code_sidecar(
     return path
 
 
-def _write_vault_sidecar(root: Path, *, epoch: str, marker: str = "2") -> Path:
+def _write_vault_sidecar(
+    root: Path, *, epoch: str, marker: str = _VAULT_SCHEMA
+) -> Path:
     cfg = get_config()
     path = root / cfg.data_dir / cfg.index_metadata_file
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -433,7 +440,9 @@ class TestRecordedState:
         cfg = get_config()
         path = donor / cfg.data_dir / cfg.index_metadata_file
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({_VAULT_SCHEMA_KEY: "2"}), encoding="utf-8")
+        path.write_text(
+            json.dumps({_VAULT_SCHEMA_KEY: _VAULT_SCHEMA}), encoding="utf-8"
+        )
 
         assert read_donor_recorded_state(donor, CollectionKind.VAULT) is None
 
