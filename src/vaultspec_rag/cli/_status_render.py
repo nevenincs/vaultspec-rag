@@ -129,6 +129,18 @@ class _StatusSignals:
     exit_code: int
 
 
+@dataclass(frozen=True, slots=True)
+class _StatusSummaryRequest:
+    """The status values rendered in the concise operator summary."""
+
+    state_label: str
+    port: int
+    port_listening: bool
+    health: dict[str, object] | None
+    operational: dict[str, object] | None
+    exit_code: int
+
+
 def _compute_token_match(
     expected_token: str | None,
     pid_alive: bool,
@@ -224,12 +236,14 @@ def _render_discovery_verdict(
         return
 
     _render_status_summary(
-        state_label=verdict.label,
-        port=port or _default_service_port() or 8766,
-        port_listening=verdict.signals.port_listening,
-        health=health,
-        operational=None,
-        exit_code=verdict.exit_code,
+        _StatusSummaryRequest(
+            state_label=verdict.label,
+            port=port or _default_service_port() or 8766,
+            port_listening=verdict.signals.port_listening,
+            health=health,
+            operational=None,
+            exit_code=verdict.exit_code,
+        )
     )
 
 
@@ -795,35 +809,31 @@ def _print_next_action(next_action: object) -> None:
         _print_status_lines(["Next action:", f"  {next_action}"])
 
 
-def _render_status_summary(
-    *,
-    state_label: str,
-    port: int,
-    port_listening: bool,
-    health: dict[str, object] | None,
-    operational: dict[str, object] | None,
-    exit_code: int,
-) -> None:
-    jobs = operational.get("jobs") if isinstance(operational, dict) else None
+def _render_status_summary(request: _StatusSummaryRequest) -> None:
+    jobs = (
+        request.operational.get("jobs")
+        if isinstance(request.operational, dict)
+        else None
+    )
     jobs_dict = cast("dict[str, object]", jobs) if isinstance(jobs, dict) else None
     lines = [
-        f"Server: {_plain_status_label(state_label)}",
-        f"Requests: {_status_health_label(health, port_listening=port_listening)}",
-        *_degraded_lines(operational, health),
+        f"Server: {_plain_status_label(request.state_label)}",
+        f"Requests: {_status_health_label(request.health, port_listening=request.port_listening)}",
+        *_degraded_lines(request.operational, request.health),
         f"Busy: {_status_busy_label(jobs_dict)}",
-        address_line(port),
-        f"Service env: {_status_env_label(health)}",
-        f"Uptime: {_status_uptime_label(health)}",
+        address_line(request.port),
+        f"Service env: {_status_env_label(request.health)}",
+        f"Uptime: {_status_uptime_label(request.health)}",
         f"Queue: {_status_queue_label(jobs_dict)}",
         f"Processed jobs: {_status_jobs_label(jobs_dict)}",
-        *_failure_lines(operational),
+        *_failure_lines(request.operational),
     ]
     _print_status_lines(lines)
     _print_current_job_detail(jobs_dict)
-    if isinstance(operational, dict):
-        _print_next_action(operational.get("next_action"))
-    if exit_code != 0:
-        raise typer.Exit(code=exit_code)
+    if isinstance(request.operational, dict):
+        _print_next_action(request.operational.get("next_action"))
+    if request.exit_code != 0:
+        raise typer.Exit(code=request.exit_code)
 
 
 def _render_status_detail(
@@ -915,12 +925,14 @@ def _render_port_only_status(
     if not verbose:
         rendered_state = "running" if state == "running" else state
         _render_status_summary(
-            state_label=rendered_state,
-            port=port,
-            port_listening=port_listening,
-            health=health,
-            operational=operational,
-            exit_code=exit_code,
+            _StatusSummaryRequest(
+                state_label=rendered_state,
+                port=port,
+                port_listening=port_listening,
+                health=health,
+                operational=operational,
+                exit_code=exit_code,
+            )
         )
         return
 
@@ -1047,12 +1059,14 @@ def _render_explicit_port_status(
         )
         return
     _render_status_summary(
-        state_label=state_label,
-        port=target_port,
-        port_listening=port_listening,
-        health=health,
-        operational=operational,
-        exit_code=exit_code,
+        _StatusSummaryRequest(
+            state_label=state_label,
+            port=target_port,
+            port_listening=port_listening,
+            health=health,
+            operational=operational,
+            exit_code=exit_code,
+        )
     )
 
 
@@ -1150,12 +1164,14 @@ def service_status(
             _print_detail_line("Server", "stopped")
         else:
             _render_status_summary(
-                state_label="stopped",
-                port=_default_service_port() or 8766,
-                port_listening=False,
-                health=None,
-                operational=None,
-                exit_code=3,
+                _StatusSummaryRequest(
+                    state_label="stopped",
+                    port=_default_service_port() or 8766,
+                    port_listening=False,
+                    health=None,
+                    operational=None,
+                    exit_code=3,
+                )
             )
             return
         raise typer.Exit(code=3)
@@ -1197,10 +1213,12 @@ def service_status(
         )
         return
     _render_status_summary(
-        state_label=signals.state_label,
-        port=target_port,
-        port_listening=signals.port_listening,
-        health=health,
-        operational=operational,
-        exit_code=signals.exit_code,
+        _StatusSummaryRequest(
+            state_label=signals.state_label,
+            port=target_port,
+            port_listening=signals.port_listening,
+            health=health,
+            operational=operational,
+            exit_code=signals.exit_code,
+        )
     )
