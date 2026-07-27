@@ -768,10 +768,4 @@ class CodeChunkProducer:
         submission: _SegmentSubmission,
     ) -> bool:
         """Submit every segment, stopping as soon as the consumer is gone."""
-        for segment in segments:
-            if not self.enqueue_segment(
-                segment,
-                submission,
-            ):
-                return False
-        return True
+        return all(self.enqueue_segment(segment, submission) for segment in segments)

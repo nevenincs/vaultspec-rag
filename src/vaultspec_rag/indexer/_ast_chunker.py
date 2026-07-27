@@ -208,8 +208,7 @@ class ASTChunker:
             parent_class_name: Class name inherited from an enclosing
                 class node, or ``None`` at the top level.
         """
-        source, source_bytes, top_nodes, out = (
-            context.source,
+        source_bytes, top_nodes, out = (
             context.source_bytes,
             context.top_nodes,
             context.out,
@@ -252,8 +251,7 @@ class ASTChunker:
         function_name: str | None,
         child_class_name: str | None,
     ) -> None:
-        source, source_bytes, top_nodes, out = (
-            context.source,
+        source_bytes, top_nodes, out = (
             context.source_bytes,
             context.top_nodes,
             context.out,
