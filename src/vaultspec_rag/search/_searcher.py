@@ -12,7 +12,8 @@ import logging
 import threading
 import time
 from contextlib import contextmanager, nullcontext
-from typing import TYPE_CHECKING, Protocol, cast
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol, TypedDict, Unpack, cast
 
 from .. import store_schema
 from .._store_search import HybridSearchRequest
@@ -96,6 +97,190 @@ class VaultGraphError(RuntimeError):
     """Raised when the VaultGraph fails to initialize."""
 
 
+class VaultSearcherConfigurationArguments(TypedDict, total=False):
+    """Named construction controls retained by the searcher boundary."""
+
+    graph_ttl_seconds: float | None
+    graph_provider: Callable[[], VaultGraph | None] | None
+    gpu_lock: threading.Lock | None
+    reranker: CrossEncoder | None
+    local_files_only: bool
+    quiesce_gate: QuiesceGate | None
+
+
+@dataclass(frozen=True, slots=True)
+class VaultSearcherConfiguration:
+    """Immutable dependencies and controls for one searcher instance."""
+
+    graph_ttl_seconds: float | None = None
+    graph_provider: Callable[[], VaultGraph | None] | None = None
+    gpu_lock: threading.Lock | None = None
+    reranker: CrossEncoder | None = None
+    local_files_only: bool = False
+    quiesce_gate: QuiesceGate | None = None
+
+
+class VaultSearchOptionArguments(TypedDict, total=False):
+    """Named vault filters accepted by the stable direct-search surface."""
+
+    doc_type: str | None
+    feature: str | None
+    date: str | None
+    tag: str | None
+    intent: str | None
+    like_ids: list[str | int] | None
+    unlike_ids: list[str | int] | None
+
+
+@dataclass(frozen=True, slots=True)
+class VaultSearchOptions:
+    """Immutable optional controls for a vault search."""
+
+    doc_type: str | None = None
+    feature: str | None = None
+    date: str | None = None
+    tag: str | None = None
+    intent: str | None = None
+    like_ids: list[str | int] | None = None
+    unlike_ids: list[str | int] | None = None
+
+
+class CodebaseSearchOptionArguments(TypedDict, total=False):
+    """Named codebase filters accepted by the stable direct-search surface."""
+
+    language: str | None
+    path: str | None
+    node_type: str | None
+    function_name: str | None
+    class_name: str | None
+    include_paths: list[str] | None
+    exclude_paths: list[str] | None
+    dedup_locales: bool | None
+    prefer: str | None
+    exclude_domains: list[str] | None
+    only_domains: list[str] | None
+    include_domains: list[str] | None
+    like_ids: list[str | int] | None
+    unlike_ids: list[str | int] | None
+    notes: dict[str, object] | None
+
+
+@dataclass(frozen=True, slots=True)
+class CodebaseSearchOptions:
+    """Immutable optional controls for a codebase search."""
+
+    language: str | None = None
+    path: str | None = None
+    node_type: str | None = None
+    function_name: str | None = None
+    class_name: str | None = None
+    include_paths: list[str] | None = None
+    exclude_paths: list[str] | None = None
+    dedup_locales: bool | None = None
+    prefer: str | None = None
+    exclude_domains: list[str] | None = None
+    only_domains: list[str] | None = None
+    include_domains: list[str] | None = None
+    like_ids: list[str | int] | None = None
+    unlike_ids: list[str | int] | None = None
+    notes: dict[str, object] | None = None
+
+
+class DocumentSearchOptionArguments(TypedDict, total=False):
+    """Named document filters accepted by the stable direct-search surface."""
+
+    source_path: str | None
+    extractor_id: str | None
+    extractor_version: str | None
+    locator_kind: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentSearchOptions:
+    """Immutable optional controls for a document search."""
+
+    source_path: str | None = None
+    extractor_id: str | None = None
+    extractor_version: str | None = None
+    locator_kind: str | None = None
+
+
+class CombinedSearchOptionArguments(
+    VaultSearchOptionArguments,
+    CodebaseSearchOptionArguments,
+    DocumentSearchOptionArguments,
+):
+    """Named filters accepted by the stable combined-search surface."""
+
+
+@dataclass(frozen=True, slots=True)
+class CombinedSearchOptions:
+    """Per-domain optional controls for one combined search."""
+
+    vault: VaultSearchOptions = VaultSearchOptions()
+    codebase: CodebaseSearchOptions = CodebaseSearchOptions()
+    document: DocumentSearchOptions = DocumentSearchOptions()
+
+    @classmethod
+    def from_arguments(
+        cls, arguments: CombinedSearchOptionArguments
+    ) -> CombinedSearchOptions:
+        """Partition the stable flat surface into domain-owned option values."""
+        return cls(
+            vault=VaultSearchOptions(
+                doc_type=arguments.get("doc_type"),
+                feature=arguments.get("feature"),
+                date=arguments.get("date"),
+                tag=arguments.get("tag"),
+                intent=arguments.get("intent"),
+            ),
+            codebase=CodebaseSearchOptions(
+                language=arguments.get("language"),
+                path=arguments.get("path"),
+                node_type=arguments.get("node_type"),
+                function_name=arguments.get("function_name"),
+                class_name=arguments.get("class_name"),
+                include_paths=arguments.get("include_paths"),
+                exclude_paths=arguments.get("exclude_paths"),
+                dedup_locales=arguments.get("dedup_locales"),
+                prefer=arguments.get("prefer"),
+                exclude_domains=arguments.get("exclude_domains"),
+                only_domains=arguments.get("only_domains"),
+                include_domains=arguments.get("include_domains"),
+            ),
+            document=DocumentSearchOptions(
+                source_path=arguments.get("source_path"),
+                extractor_id=arguments.get("extractor_id"),
+                extractor_version=arguments.get("extractor_version"),
+                locator_kind=arguments.get("locator_kind"),
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _EncodedSearchQuery:
+    """One parsed and encoded query shared by domain pipelines."""
+
+    parsed: ParsedQuery
+    text: str
+    dense_vector: list[float]
+    sparse_vector: SparseResult | None
+    top_k: int
+    timings: dict[str, float] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _CodebaseCandidateRequest:
+    """All inputs required by codebase candidate retrieval."""
+
+    encoded: _EncodedSearchQuery
+    store_filters: dict[str, str]
+    include_norm: list[str]
+    exclude_norm: list[str]
+    policy: NoisePolicy
+    options: CodebaseSearchOptions
+
+
 class VaultSearcher:
     """Orchestrates hybrid search across vault and codebase.
 
@@ -111,13 +296,7 @@ class VaultSearcher:
         root_dir: pathlib.Path,
         model: EmbeddingModel,
         store: VaultStore,
-        *,
-        graph_ttl_seconds: float | None = None,
-        graph_provider: Callable[[], VaultGraph | None] | None = None,
-        gpu_lock: threading.Lock | None = None,
-        reranker: CrossEncoder | None = None,
-        local_files_only: bool = False,
-        quiesce_gate: QuiesceGate | None = None,
+        **configuration: Unpack[VaultSearcherConfigurationArguments],
     ) -> None:
         """Initialize the searcher.
 
@@ -153,26 +332,27 @@ class VaultSearcher:
         from ..config import get_config
 
         cfg = get_config()
+        settings = VaultSearcherConfiguration(**configuration)
         resolved_ttl: float = (
-            graph_ttl_seconds
-            if graph_ttl_seconds is not None
+            settings.graph_ttl_seconds
+            if settings.graph_ttl_seconds is not None
             else float(cfg.graph_ttl_seconds)
         )
         self.root_dir = root_dir
         self.model = model
         self.store = store
-        self._graph_provider = graph_provider
+        self._graph_provider = settings.graph_provider
         self._graph_ttl: float = resolved_ttl
         self._cached_graph: VaultGraph | None = None
         self._graph_built_at: float = 0.0
         self._graph_lock = threading.Lock()
-        self._gpu_lock = gpu_lock
-        self._quiesce_gate = quiesce_gate
+        self._gpu_lock = settings.gpu_lock
+        self._quiesce_gate = settings.quiesce_gate
         self._reranker_enabled: bool = cfg.reranker_enabled
         self._reranker_model_name: str = cfg.reranker_model
         self._sparse_enabled: bool = cfg.sparse_enabled
-        self._reranker = reranker
-        self._local_files_only = local_files_only
+        self._reranker = settings.reranker
+        self._local_files_only = settings.local_files_only
         self._reranker_lock = threading.Lock()
 
     def _vault_docs_prefix(self) -> str:
@@ -395,20 +575,8 @@ class VaultSearcher:
 
     def _search_vault_encoded(
         self,
-        query_vector: list[float],
-        sparse_vector: SparseResult | None,
-        parsed: ParsedQuery,
-        query_text: str,
-        top_k: int,
-        *,
-        doc_type: str | None = None,
-        feature: str | None = None,
-        date: str | None = None,
-        tag: str | None = None,
-        intent: str | None = None,
-        like_ids: list[str | int] | None = None,
-        unlike_ids: list[str | int] | None = None,
-        timings: dict[str, float] | None = None,
+        encoded: _EncodedSearchQuery,
+        options: VaultSearchOptions,
     ) -> list[SearchResult]:
         """Search vault using pre-encoded dense and sparse vectors.
 
@@ -435,36 +603,38 @@ class VaultSearcher:
         """
         store_filters = {
             k: v
-            for k, v in parsed.filters.items()
+            for k, v in encoded.parsed.filters.items()
             if k in store_schema.VAULT_FILTER_KEYS
         }
-        if doc_type is not None:
-            store_filters["doc_type"] = doc_type
-        if feature is not None:
-            store_filters["feature"] = feature
-        if date is not None:
-            store_filters["date"] = date
-        if tag is not None:
-            store_filters["tag"] = tag
+        for key, value in (
+            ("doc_type", options.doc_type),
+            ("feature", options.feature),
+            ("date", options.date),
+            ("tag", options.tag),
+        ):
+            if value is not None:
+                store_filters[key] = value
 
         # Fetch extra candidates when reranker will narrow them down
-        fetch_limit = max(top_k * 4, 20) if self._reranker_enabled else top_k * 2
+        fetch_limit = (
+            max(encoded.top_k * 4, 20) if self._reranker_enabled else encoded.top_k * 2
+        )
         phase_started = time.perf_counter()
         raw_results: list[dict[str, object]] = cast(
             "list[dict[str, object]]",
             self.store.hybrid_search(
                 HybridSearchRequest(
-                    query_vector=query_vector,
-                    query_text=query_text,
+                    query_vector=encoded.dense_vector,
+                    query_text=encoded.text,
                     filters=store_filters or None,
                     limit=fetch_limit,
-                    sparse_vector=sparse_vector,
-                    like_ids=like_ids,
-                    unlike_ids=unlike_ids,
+                    sparse_vector=encoded.sparse_vector,
+                    like_ids=options.like_ids,
+                    unlike_ids=options.unlike_ids,
                 )
             ),
         )
-        _record_seconds(timings, PHASE_QDRANT, phase_started)
+        _record_seconds(encoded.timings, PHASE_QDRANT, phase_started)
 
         # Auto-generated feature-index documents are navigational document-lists
         # with no semantic content; they are never searchable and are
@@ -502,48 +672,46 @@ class VaultSearcher:
                     rerank_text=content or None,
                 ),
             )
-        _record_seconds(timings, PHASE_RESULT_MAPPING, phase_started)
+        _record_seconds(encoded.timings, PHASE_RESULT_MAPPING, phase_started)
 
         # Rerank the FULL fetched candidate set: grouping below can
         # collapse several chunks of one document into a single row, so
         # truncating before grouping could under-fill the final page
         # whenever one document's chunks dominate the rerank window.
         phase_started = time.perf_counter()
-        results = self._rerank(query_text, results, len(results), timings=timings)
-        _record_seconds(timings, PHASE_RERANK, phase_started)
+        results = self._rerank(
+            encoded.text, results, len(results), timings=encoded.timings
+        )
+        _record_seconds(encoded.timings, PHASE_RERANK, phase_started)
 
         phase_started = time.perf_counter()
         results = _group_chunks_by_document(results)
         graph = self._get_graph()
-        results = rerank_with_graph(results, self.root_dir, parsed, graph=graph)
+        results = rerank_with_graph(results, self.root_dir, encoded.parsed, graph=graph)
         # Intent-conditioned type x status prior: composes after the graph
         # nudges so the pipeline-role/status signal is primary and the graph
         # in-link/feature nudges break ties within the reweighted ordering. An
         # explicit intent argument wins; otherwise an inline ``intent:`` query
         # token selects the profile (the CLI surface, since a flag would breach
         # the frozen max-args lint ratchet).
-        effective_intent = intent or parsed.filters.get("intent")
+        effective_intent = options.intent or encoded.parsed.filters.get("intent")
         results = self._apply_intent_prior(results, effective_intent)
-        status_spec = parsed.filters.get("status")
+        status_spec = encoded.parsed.filters.get("status")
         if status_spec:
             results = apply_status_filter(results, status_spec)
-        _record_seconds(timings, PHASE_GRAPH_RERANK, phase_started)
-        if timings is not None:
-            timings[PHASE_POSTPROCESS] = (
-                timings.get(PHASE_RESULT_MAPPING, 0.0)
-                + timings.get(PHASE_RERANK, 0.0)
-                + timings.get(PHASE_GRAPH_RERANK, 0.0)
+        _record_seconds(encoded.timings, PHASE_GRAPH_RERANK, phase_started)
+        if encoded.timings is not None:
+            encoded.timings[PHASE_POSTPROCESS] = (
+                encoded.timings.get(PHASE_RESULT_MAPPING, 0.0)
+                + encoded.timings.get(PHASE_RERANK, 0.0)
+                + encoded.timings.get(PHASE_GRAPH_RERANK, 0.0)
             )
-        return results[:top_k]
+        return results[: encoded.top_k]
 
     @staticmethod
     def _build_codebase_store_filters(
         parsed: ParsedQuery,
-        language: str | None,
-        path: str | None,
-        node_type: str | None,
-        function_name: str | None,
-        class_name: str | None,
+        options: CodebaseSearchOptions,
     ) -> dict[str, str]:
         # No inline marker maps to ``path``: an in-query ``path:`` token is a
         # pattern and joins the include patterns instead, so the exact-path
@@ -554,11 +722,11 @@ class VaultSearcher:
             if k in ("language", "node_type", "function_name", "class_name")
         }
         for k, v in (
-            ("language", language),
-            ("path", path),
-            ("node_type", node_type),
-            ("function_name", function_name),
-            ("class_name", class_name),
+            ("language", options.language),
+            ("path", options.path),
+            ("node_type", options.node_type),
+            ("function_name", options.function_name),
+            ("class_name", options.class_name),
         ):
             if v is not None:
                 store_filters[k] = v
@@ -566,19 +734,7 @@ class VaultSearcher:
 
     def _fetch_codebase_candidates(
         self,
-        *,
-        query_vector: list[float],
-        sparse_vector: SparseResult | None,
-        query_text: str,
-        store_filters: dict[str, str],
-        top_k: int,
-        include_norm: list[str],
-        exclude_norm: list[str],
-        policy: NoisePolicy,
-        like_ids: list[str | int] | None,
-        unlike_ids: list[str | int] | None,
-        timings: dict[str, float] | None,
-        notes: dict[str, object] | None,
+        request: _CodebaseCandidateRequest,
     ) -> tuple[list[dict[str, object]], dict[str, int]]:
         """Fetch and hard-filter raw candidates, backfilling to fill ``top_k``.
 
@@ -595,19 +751,23 @@ class VaultSearcher:
         otherwise indistinguishable from a query that matched nothing, and a
         path pattern that matches no indexed path is the likelier mistake.
         """
-        has_glob = bool(include_norm or exclude_norm)
+        has_glob = bool(request.include_norm or request.exclude_norm)
         # Domain hide/only constraints are already pushed into Qdrant. Start
         # them at the ordinary rerank window and widen only when the legacy
         # missing-domain fallback actually depletes the survivors. Path globs
         # still run entirely in Python, so they retain the wider initial
         # window that protects the common post-filter case.
         if has_glob:
-            base = max(top_k * GLOB_FETCH_MULTIPLIER, 50)
+            base = max(request.encoded.top_k * GLOB_FETCH_MULTIPLIER, 50)
         else:
-            base = max(top_k * 4, 20) if self._reranker_enabled else top_k * 2
+            base = (
+                max(request.encoded.top_k * 4, 20)
+                if self._reranker_enabled
+                else request.encoded.top_k * 2
+            )
         cap = max(base * 4, 500)
-        pushdown_exclude = sorted(policy.hide) or None
-        pushdown_only = sorted(policy.only) or None
+        pushdown_exclude = sorted(request.policy.hide) or None
+        pushdown_only = sorted(request.policy.only) or None
 
         started = time.perf_counter()
         limit = base
@@ -620,29 +780,36 @@ class VaultSearcher:
                 "list[dict[str, object]]",
                 self.store.hybrid_search_codebase(
                     HybridSearchRequest(
-                        query_vector=query_vector,
-                        query_text=query_text,
-                        filters=store_filters or None,
+                        query_vector=request.encoded.dense_vector,
+                        query_text=request.encoded.text,
+                        filters=request.store_filters or None,
                         limit=limit,
-                        sparse_vector=sparse_vector,
-                        like_ids=like_ids,
-                        unlike_ids=unlike_ids,
+                        sparse_vector=request.encoded.sparse_vector,
+                        like_ids=request.options.like_ids,
+                        unlike_ids=request.options.unlike_ids,
                         exclude_domains=pushdown_exclude,
                         only_domains=pushdown_only,
                     )
                 ),
             )
-            globbed = _filter_raw_codebase_results_impl(raw, include_norm, exclude_norm)
-            kept, dropped = partition_hard_domains(globbed, policy)
+            globbed = _filter_raw_codebase_results_impl(
+                raw, request.include_norm, request.exclude_norm
+            )
+            kept, dropped = partition_hard_domains(globbed, request.policy)
             # Stop when the page is fillable, the index is exhausted for this
             # query (fewer raw rows than asked), or we hit the cap.
-            if len(kept) >= top_k or len(raw) < limit or limit >= cap:
+            if len(kept) >= request.encoded.top_k or len(raw) < limit or limit >= cap:
                 break
             limit = min(limit * 2, cap)
-        _record_seconds(timings, PHASE_QDRANT, started)
-        if notes is not None and include_norm and raw and not globbed:
-            notes["path_filter"] = {
-                "patterns": list(include_norm),
+        _record_seconds(request.encoded.timings, PHASE_QDRANT, started)
+        if (
+            request.options.notes is not None
+            and request.include_norm
+            and raw
+            and not globbed
+        ):
+            request.options.notes["path_filter"] = {
+                "patterns": list(request.include_norm),
                 "candidates_before_filter": len(raw),
             }
         if dropped:
@@ -651,28 +818,8 @@ class VaultSearcher:
 
     def _search_codebase_encoded(
         self,
-        query_vector: list[float],
-        sparse_vector: SparseResult | None,
-        parsed: ParsedQuery,
-        query_text: str,
-        top_k: int,
-        *,
-        language: str | None = None,
-        path: str | None = None,
-        node_type: str | None = None,
-        function_name: str | None = None,
-        class_name: str | None = None,
-        include_paths: list[str] | None = None,
-        exclude_paths: list[str] | None = None,
-        dedup_locales: bool | None = None,
-        prefer: str | None = None,
-        exclude_domains: list[str] | None = None,
-        only_domains: list[str] | None = None,
-        include_domains: list[str] | None = None,
-        like_ids: list[str | int] | None = None,
-        unlike_ids: list[str | int] | None = None,
-        notes: dict[str, object] | None = None,
-        timings: dict[str, float] | None = None,
+        encoded: _EncodedSearchQuery,
+        options: CodebaseSearchOptions,
     ) -> list[SearchResult]:
         """Search codebase using pre-encoded dense and sparse vectors.
 
@@ -723,90 +870,92 @@ class VaultSearcher:
         policy = resolve_noise_policy(
             cfg,
             exclude_domains=_merge_domain_tokens(
-                parsed, "exclude_domain", exclude_domains
+                encoded.parsed, "exclude_domain", options.exclude_domains
             ),
-            only_domains=_merge_domain_tokens(parsed, "only_domain", only_domains),
+            only_domains=_merge_domain_tokens(
+                encoded.parsed, "only_domain", options.only_domains
+            ),
             include_domains=_merge_domain_tokens(
-                parsed, "include_domain", include_domains
+                encoded.parsed, "include_domain", options.include_domains
             ),
         )
         effective_dedup = (
-            bool(cfg.dedup_locales_default) if dedup_locales is None else dedup_locales
+            bool(cfg.dedup_locales_default)
+            if options.dedup_locales is None
+            else options.dedup_locales
         )
 
-        store_filters = self._build_codebase_store_filters(
-            parsed, language, path, node_type, function_name, class_name
-        )
+        store_filters = self._build_codebase_store_filters(encoded.parsed, options)
         # Normalise caller patterns once. The codebase indexer stores POSIX
         # paths on every platform, so glob matching is consistent when caller
         # patterns carry the same convention. An inline ``path:`` token is one
         # more include pattern, matching how repeated patterns already union.
-        inline_scope = parsed.filters.get("path_scope")
+        inline_scope = encoded.parsed.filters.get("path_scope")
         include_norm = [
             p.replace("\\", "/")
             for p in [
-                *(include_paths or []),
+                *(options.include_paths or []),
                 *([inline_scope] if inline_scope else []),
             ]
         ]
         exclude_norm = (
-            [p.replace("\\", "/") for p in exclude_paths] if exclude_paths else []
+            [p.replace("\\", "/") for p in options.exclude_paths]
+            if options.exclude_paths
+            else []
         )
 
         raw_results, dropped = self._fetch_codebase_candidates(
-            query_vector=query_vector,
-            sparse_vector=sparse_vector,
-            query_text=query_text,
-            store_filters=store_filters,
-            top_k=top_k,
-            include_norm=include_norm,
-            exclude_norm=exclude_norm,
-            policy=policy,
-            like_ids=like_ids,
-            unlike_ids=unlike_ids,
-            timings=timings,
-            notes=notes,
+            _CodebaseCandidateRequest(
+                encoded=encoded,
+                store_filters=store_filters,
+                include_norm=include_norm,
+                exclude_norm=exclude_norm,
+                policy=policy,
+                options=options,
+            )
         )
-        if notes is not None and dropped:
-            notes["dropped_domains"] = dropped
+        if options.notes is not None and dropped:
+            options.notes["dropped_domains"] = dropped
 
         phase_started = time.perf_counter()
         results = _map_codebase_results_impl(raw_results)
-        _record_seconds(timings, PHASE_RESULT_MAPPING, phase_started)
+        _record_seconds(encoded.timings, PHASE_RESULT_MAPPING, phase_started)
 
         # Rerank the FULL surviving window (not a top_k slice) so the
         # post-rerank demote pass can lift a production result above noise
         # that initially out-scored it; truncation happens at return.
         phase_started = time.perf_counter()
-        results = self._rerank(query_text, results, len(results), timings=timings)
-        _record_seconds(timings, PHASE_RERANK, phase_started)
+        results = self._rerank(
+            encoded.text, results, len(results), timings=encoded.timings
+        )
+        _record_seconds(encoded.timings, PHASE_RERANK, phase_started)
 
         # Noise demote: subtract the penalty from demoted-domain results and
         # re-sort. Runs after rerank so query-relevance is scored first.
         phase_started = time.perf_counter()
         apply_domain_demotion(results, policy)
-        _record_seconds(timings, PHASE_DEMOTE, phase_started)
+        _record_seconds(encoded.timings, PHASE_DEMOTE, phase_started)
 
         # --prefer post-rerank score nudge (opt-in, layered over demote).
         phase_started = time.perf_counter()
-        _apply_prefer_nudge_impl(results, prefer)
-        _record_seconds(timings, PHASE_PREFER, phase_started)
+        _apply_prefer_nudge_impl(results, options.prefer)
+        _record_seconds(encoded.timings, PHASE_PREFER, phase_started)
 
         # Locale-variant collapse (default on via config; tri-state override).
         phase_started = time.perf_counter()
         if effective_dedup:
             results = _collapse_locale_variants(results)
-        _record_seconds(timings, PHASE_DEDUP, phase_started)
-        if timings is not None:
-            timings[PHASE_POSTPROCESS] = (
-                timings.get(PHASE_RESULT_MAPPING, 0.0)
-                + timings.get(PHASE_RERANK, 0.0)
-                + timings.get(PHASE_DEMOTE, 0.0)
-                + timings.get(PHASE_PREFER, 0.0)
-                + timings.get(PHASE_DEDUP, 0.0)
+        _record_seconds(encoded.timings, PHASE_DEDUP, phase_started)
+        if encoded.timings is not None:
+            encoded.timings[PHASE_POSTPROCESS] = (
+                encoded.timings.get(PHASE_RESULT_MAPPING, 0.0)
+                + encoded.timings.get(PHASE_RERANK, 0.0)
+                + encoded.timings.get(PHASE_DEMOTE, 0.0)
+                + encoded.timings.get(PHASE_PREFER, 0.0)
+                + encoded.timings.get(PHASE_DEDUP, 0.0)
             )
 
-        return results[:top_k]
+        return results[: encoded.top_k]
 
     def _encode_query(
         self,
@@ -862,14 +1011,7 @@ class VaultSearcher:
         self,
         raw_query: str,
         top_k: int = 5,
-        *,
-        doc_type: str | None = None,
-        feature: str | None = None,
-        date: str | None = None,
-        tag: str | None = None,
-        intent: str | None = None,
-        like_ids: list[str | int] | None = None,
-        unlike_ids: list[str | int] | None = None,
+        **options: Unpack[VaultSearchOptionArguments],
     ) -> list[SearchResult]:
         """Search only the vault collection.
 
@@ -893,13 +1035,7 @@ class VaultSearcher:
         results, _timings = self.search_vault_timed(
             raw_query,
             top_k=top_k,
-            doc_type=doc_type,
-            feature=feature,
-            date=date,
-            tag=tag,
-            intent=intent,
-            like_ids=like_ids,
-            unlike_ids=unlike_ids,
+            **options,
         )
         return results
 
@@ -907,14 +1043,7 @@ class VaultSearcher:
         self,
         raw_query: str,
         top_k: int = 5,
-        *,
-        doc_type: str | None = None,
-        feature: str | None = None,
-        date: str | None = None,
-        tag: str | None = None,
-        intent: str | None = None,
-        like_ids: list[str | int] | None = None,
-        unlike_ids: list[str | int] | None = None,
+        **options: Unpack[VaultSearchOptionArguments],
     ) -> tuple[list[SearchResult], dict[str, float]]:
         """Search vault and return phase timings for service diagnostics."""
         timings: dict[str, float] = {}
@@ -926,19 +1055,10 @@ class VaultSearcher:
         )
         timings[PHASE_EMBEDDING] = time.perf_counter() - phase_started
         results = self._search_vault_encoded(
-            query_vector,
-            sparse_vector,
-            parsed,
-            query_text,
-            top_k,
-            doc_type=doc_type,
-            feature=feature,
-            date=date,
-            tag=tag,
-            intent=intent,
-            like_ids=like_ids,
-            unlike_ids=unlike_ids,
-            timings=timings,
+            _EncodedSearchQuery(
+                parsed, query_text, query_vector, sparse_vector, top_k, timings
+            ),
+            VaultSearchOptions(**options),
         )
         return results, timings
 
@@ -946,22 +1066,7 @@ class VaultSearcher:
         self,
         raw_query: str,
         top_k: int = 5,
-        *,
-        language: str | None = None,
-        path: str | None = None,
-        node_type: str | None = None,
-        function_name: str | None = None,
-        class_name: str | None = None,
-        include_paths: list[str] | None = None,
-        exclude_paths: list[str] | None = None,
-        dedup_locales: bool | None = None,
-        prefer: str | None = None,
-        exclude_domains: list[str] | None = None,
-        only_domains: list[str] | None = None,
-        include_domains: list[str] | None = None,
-        like_ids: list[str | int] | None = None,
-        unlike_ids: list[str | int] | None = None,
-        notes: dict[str, object] | None = None,
+        **options: Unpack[CodebaseSearchOptionArguments],
     ) -> list[SearchResult]:
         """Search only the source codebase.
 
@@ -998,21 +1103,7 @@ class VaultSearcher:
         results, _timings = self.search_codebase_timed(
             raw_query,
             top_k=top_k,
-            language=language,
-            path=path,
-            node_type=node_type,
-            function_name=function_name,
-            class_name=class_name,
-            include_paths=include_paths,
-            exclude_paths=exclude_paths,
-            dedup_locales=dedup_locales,
-            prefer=prefer,
-            exclude_domains=exclude_domains,
-            only_domains=only_domains,
-            include_domains=include_domains,
-            like_ids=like_ids,
-            unlike_ids=unlike_ids,
-            notes=notes,
+            **options,
         )
         return results
 
@@ -1020,89 +1111,73 @@ class VaultSearcher:
         self,
         raw_query: str,
         top_k: int = 5,
-        *,
-        source_path: str | None = None,
-        extractor_id: str | None = None,
-        extractor_version: str | None = None,
-        locator_kind: str | None = None,
+        **options: Unpack[DocumentSearchOptionArguments],
     ) -> list[DocumentSearchResult]:
         """Search only the independent document collection."""
         results, _timings = self.search_document_timed(
             raw_query,
             top_k=top_k,
-            source_path=source_path,
-            extractor_id=extractor_id,
-            extractor_version=extractor_version,
-            locator_kind=locator_kind,
+            **options,
         )
         return results
 
     def _search_document_encoded(
         self,
-        query_vector: list[float],
-        sparse_vector: SparseResult | None,
-        parsed: ParsedQuery,
-        query_text: str,
-        top_k: int,
-        *,
-        source_path: str | None = None,
-        extractor_id: str | None = None,
-        extractor_version: str | None = None,
-        locator_kind: str | None = None,
-        timings: dict[str, float] | None = None,
+        encoded: _EncodedSearchQuery,
+        options: DocumentSearchOptions,
     ) -> list[DocumentSearchResult]:
         """Search documents from one already encoded query."""
         filters = {
             key: value
-            for key, value in parsed.filters.items()
+            for key, value in encoded.parsed.filters.items()
             if key in store_schema.DOCUMENT_QUERY_FILTER_KEYS
         }
         for key, value in (
-            ("source_path", source_path),
-            ("extractor_id", extractor_id),
-            ("extractor_version", extractor_version),
-            ("locator_kind", locator_kind),
+            ("source_path", options.source_path),
+            ("extractor_id", options.extractor_id),
+            ("extractor_version", options.extractor_version),
+            ("locator_kind", options.locator_kind),
         ):
             if value is not None:
                 filters[key] = value
 
         phase_started = time.perf_counter()
-        fetch_limit = max(top_k * 4, 20) if self._reranker_enabled else top_k * 2
+        fetch_limit = (
+            max(encoded.top_k * 4, 20) if self._reranker_enabled else encoded.top_k * 2
+        )
         raw_results = cast(
             "list[dict[str, object]]",
             self.store.hybrid_search_document(
                 HybridSearchRequest(
-                    query_vector=query_vector,
-                    query_text=query_text,
+                    query_vector=encoded.dense_vector,
+                    query_text=encoded.text,
                     filters=filters or None,
                     limit=fetch_limit,
-                    sparse_vector=sparse_vector,
+                    sparse_vector=encoded.sparse_vector,
                 )
             ),
         )
-        _record_seconds(timings, PHASE_QDRANT, phase_started)
+        _record_seconds(encoded.timings, PHASE_QDRANT, phase_started)
 
         phase_started = time.perf_counter()
         results = _map_document_results_impl(raw_results)
-        _record_seconds(timings, PHASE_RESULT_MAPPING, phase_started)
+        _record_seconds(encoded.timings, PHASE_RESULT_MAPPING, phase_started)
         phase_started = time.perf_counter()
-        results = self._rerank(query_text, results, top_k, timings=timings)
-        _record_seconds(timings, PHASE_RERANK, phase_started)
-        if timings is not None:
-            timings[PHASE_POSTPROCESS] = timings.get(
+        results = self._rerank(
+            encoded.text, results, encoded.top_k, timings=encoded.timings
+        )
+        _record_seconds(encoded.timings, PHASE_RERANK, phase_started)
+        if encoded.timings is not None:
+            encoded.timings[PHASE_POSTPROCESS] = encoded.timings.get(
                 PHASE_RESULT_MAPPING, 0.0
-            ) + timings.get(PHASE_RERANK, 0.0)
+            ) + encoded.timings.get(PHASE_RERANK, 0.0)
         return results
 
     def search_document_timed(
         self,
         raw_query: str,
         top_k: int = 5,
-        *,
-        source_path: str | None = None,
-        extractor_id: str | None = None,
-        extractor_version: str | None = None,
-        locator_kind: str | None = None,
+        **options: Unpack[DocumentSearchOptionArguments],
     ) -> tuple[list[DocumentSearchResult], dict[str, float]]:
         """Search documents and return phase timings for diagnostics."""
         timings: dict[str, float] = {}
@@ -1114,16 +1189,10 @@ class VaultSearcher:
         )
         timings[PHASE_EMBEDDING] = time.perf_counter() - phase_started
         results = self._search_document_encoded(
-            query_vector,
-            sparse_vector,
-            parsed,
-            query_text,
-            top_k,
-            source_path=source_path,
-            extractor_id=extractor_id,
-            extractor_version=extractor_version,
-            locator_kind=locator_kind,
-            timings=timings,
+            _EncodedSearchQuery(
+                parsed, query_text, query_vector, sparse_vector, top_k, timings
+            ),
+            DocumentSearchOptions(**options),
         )
         return results, timings
 
@@ -1131,54 +1200,13 @@ class VaultSearcher:
         self,
         raw_query: str,
         top_k: int = 5,
-        *,
-        doc_type: str | None = None,
-        feature: str | None = None,
-        date: str | None = None,
-        tag: str | None = None,
-        intent: str | None = None,
-        language: str | None = None,
-        path: str | None = None,
-        node_type: str | None = None,
-        function_name: str | None = None,
-        class_name: str | None = None,
-        include_paths: list[str] | None = None,
-        exclude_paths: list[str] | None = None,
-        dedup_locales: bool | None = None,
-        prefer: str | None = None,
-        exclude_domains: list[str] | None = None,
-        only_domains: list[str] | None = None,
-        include_domains: list[str] | None = None,
-        source_path: str | None = None,
-        extractor_id: str | None = None,
-        extractor_version: str | None = None,
-        locator_kind: str | None = None,
+        **options: Unpack[CombinedSearchOptionArguments],
     ) -> list[SearchResult | DocumentSearchResult]:
         """Search all three domains with explicit equal candidate allocation."""
         results, _timings = self.search_combined_timed(
             raw_query,
             top_k=top_k,
-            doc_type=doc_type,
-            feature=feature,
-            date=date,
-            tag=tag,
-            intent=intent,
-            language=language,
-            path=path,
-            node_type=node_type,
-            function_name=function_name,
-            class_name=class_name,
-            include_paths=include_paths,
-            exclude_paths=exclude_paths,
-            dedup_locales=dedup_locales,
-            prefer=prefer,
-            exclude_domains=exclude_domains,
-            only_domains=only_domains,
-            include_domains=include_domains,
-            source_path=source_path,
-            extractor_id=extractor_id,
-            extractor_version=extractor_version,
-            locator_kind=locator_kind,
+            **options,
         )
         return results
 
@@ -1186,28 +1214,7 @@ class VaultSearcher:
         self,
         raw_query: str,
         top_k: int = 5,
-        *,
-        doc_type: str | None = None,
-        feature: str | None = None,
-        date: str | None = None,
-        tag: str | None = None,
-        intent: str | None = None,
-        language: str | None = None,
-        path: str | None = None,
-        node_type: str | None = None,
-        function_name: str | None = None,
-        class_name: str | None = None,
-        include_paths: list[str] | None = None,
-        exclude_paths: list[str] | None = None,
-        dedup_locales: bool | None = None,
-        prefer: str | None = None,
-        exclude_domains: list[str] | None = None,
-        only_domains: list[str] | None = None,
-        include_domains: list[str] | None = None,
-        source_path: str | None = None,
-        extractor_id: str | None = None,
-        extractor_version: str | None = None,
-        locator_kind: str | None = None,
+        **options: Unpack[CombinedSearchOptionArguments],
     ) -> tuple[list[SearchResult | DocumentSearchResult], dict[str, float]]:
         """Search all domains from one encoding and deterministically select top-k."""
         timings: dict[str, float] = {}
@@ -1218,55 +1225,47 @@ class VaultSearcher:
             timings=timings,
         )
         timings[PHASE_EMBEDDING] = time.perf_counter() - phase_started
+        combined_options = CombinedSearchOptions.from_arguments(options)
+        encoded = _EncodedSearchQuery(
+            parsed, query_text, query_vector, sparse_vector, max(1, top_k)
+        )
 
         allocation = max(1, top_k)
         vault_timings: dict[str, float] = {}
         code_timings: dict[str, float] = {}
         document_timings: dict[str, float] = {}
         vault = self._search_vault_encoded(
-            query_vector,
-            sparse_vector,
-            parsed,
-            query_text,
-            allocation,
-            doc_type=doc_type,
-            feature=feature,
-            date=date,
-            tag=tag,
-            intent=intent,
-            timings=vault_timings,
+            _EncodedSearchQuery(
+                encoded.parsed,
+                encoded.text,
+                encoded.dense_vector,
+                encoded.sparse_vector,
+                encoded.top_k,
+                vault_timings,
+            ),
+            combined_options.vault,
         )
         code = self._search_codebase_encoded(
-            query_vector,
-            sparse_vector,
-            parsed,
-            query_text,
-            allocation,
-            language=language,
-            path=path,
-            node_type=node_type,
-            function_name=function_name,
-            class_name=class_name,
-            include_paths=include_paths,
-            exclude_paths=exclude_paths,
-            dedup_locales=dedup_locales,
-            prefer=prefer,
-            exclude_domains=exclude_domains,
-            only_domains=only_domains,
-            include_domains=include_domains,
-            timings=code_timings,
+            _EncodedSearchQuery(
+                encoded.parsed,
+                encoded.text,
+                encoded.dense_vector,
+                encoded.sparse_vector,
+                encoded.top_k,
+                code_timings,
+            ),
+            combined_options.codebase,
         )
         documents = self._search_document_encoded(
-            query_vector,
-            sparse_vector,
-            parsed,
-            query_text,
-            allocation,
-            source_path=source_path,
-            extractor_id=extractor_id,
-            extractor_version=extractor_version,
-            locator_kind=locator_kind,
-            timings=document_timings,
+            _EncodedSearchQuery(
+                encoded.parsed,
+                encoded.text,
+                encoded.dense_vector,
+                encoded.sparse_vector,
+                encoded.top_k,
+                document_timings,
+            ),
+            combined_options.document,
         )
         candidates: list[SearchResult | DocumentSearchResult] = [
             *vault,
@@ -1296,22 +1295,7 @@ class VaultSearcher:
         self,
         raw_query: str,
         top_k: int = 5,
-        *,
-        language: str | None = None,
-        path: str | None = None,
-        node_type: str | None = None,
-        function_name: str | None = None,
-        class_name: str | None = None,
-        include_paths: list[str] | None = None,
-        exclude_paths: list[str] | None = None,
-        dedup_locales: bool | None = None,
-        prefer: str | None = None,
-        exclude_domains: list[str] | None = None,
-        only_domains: list[str] | None = None,
-        include_domains: list[str] | None = None,
-        like_ids: list[str | int] | None = None,
-        unlike_ids: list[str | int] | None = None,
-        notes: dict[str, object] | None = None,
+        **options: Unpack[CodebaseSearchOptionArguments],
     ) -> tuple[list[SearchResult], dict[str, float]]:
         """Search codebase and return phase timings for service diagnostics."""
         timings: dict[str, float] = {}
@@ -1323,26 +1307,9 @@ class VaultSearcher:
         )
         timings[PHASE_EMBEDDING] = time.perf_counter() - phase_started
         results = self._search_codebase_encoded(
-            query_vector,
-            sparse_vector,
-            parsed,
-            query_text,
-            top_k,
-            language=language,
-            path=path,
-            node_type=node_type,
-            function_name=function_name,
-            class_name=class_name,
-            include_paths=include_paths,
-            exclude_paths=exclude_paths,
-            dedup_locales=dedup_locales,
-            prefer=prefer,
-            exclude_domains=exclude_domains,
-            only_domains=only_domains,
-            include_domains=include_domains,
-            like_ids=like_ids,
-            unlike_ids=unlike_ids,
-            notes=notes,
-            timings=timings,
+            _EncodedSearchQuery(
+                parsed, query_text, query_vector, sparse_vector, top_k, timings
+            ),
+            CodebaseSearchOptions(**options),
         )
         return results, timings
