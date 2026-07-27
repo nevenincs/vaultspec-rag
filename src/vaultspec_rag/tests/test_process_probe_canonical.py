@@ -830,6 +830,58 @@ class TestAtomicReplaceHasOneImplementation:
         assert replace_atomically is not replace_durably
 
 
+class TestModelLoadsBeforeTheLeaseEverywhere:
+    """Nothing takes a project lease and then loads the model.
+
+    Loading the model is the long, GPU-touching step. Doing it while holding a
+    project lease blocks every other root for its whole duration, so the order
+    is a rule, not a preference.
+
+    Fourteen functions across five modules pair the two calls. Two of them were
+    guarded - the vault and indexing dispatch runners - by a pair of test
+    methods that differed only in the function they named. The other twelve,
+    including four in the public API and one in the watcher, were not guarded
+    at all: the rule held there by habit.
+
+    So this replaces those two methods rather than joining them. A rule checked
+    on two of its fourteen sites by two copies of one check is worse than it
+    looks, because the copies make it read as covered.
+    """
+
+    def test_no_function_loads_the_model_inside_a_lease(self) -> None:
+        """Order the calls by position; the first lease must come after."""
+        offenders: list[str] = []
+        checked = 0
+        for path in _every_production_file():
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                    continue
+                calls = [
+                    inner.func.attr
+                    for inner in ast.walk(node)
+                    if isinstance(inner, ast.Call)
+                    and isinstance(inner.func, ast.Attribute)
+                ]
+                if "load_model" not in calls or "lease" not in calls:
+                    continue
+                checked += 1
+                if calls.index("load_model") > calls.index("lease"):
+                    offenders.append(f"{path.name}:{node.lineno} {node.name}")
+        assert checked >= 10, (
+            f"only {checked} functions pair load_model with lease; the scan "
+            "is looking wrongly, not the code getting cleaner"
+        )
+        assert not offenders, (
+            f"these load the model while holding a project lease: {offenders}; "
+            "the load is the long GPU step and the lease blocks every other "
+            "root for its duration"
+        )
+
+
 class TestPointsAreWrittenUnderTheCreatedVectorNames:
     """The store writes a point's vectors under the names it created them with.
 

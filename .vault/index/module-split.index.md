@@ -3,13 +3,15 @@ generated: true
 tags:
   - '#index'
   - '#module-split'
-date: '2026-07-25'
-modified: '2026-07-25'
+date: '2026-07-27'
+modified: '2026-07-27'
 related:
   - '[[2026-06-01-module-split-adr]]'
   - '[[2026-06-01-module-split-audit]]'
   - '[[2026-06-01-module-split-plan]]'
   - '[[2026-06-01-module-split-research]]'
+  - '[[2026-07-27-module-split-production-length-gate-research]]'
+  - '[[2026-07-27-module-split-production-package-seams-reference]]'
 ---
 
 # `module-split` feature index
@@ -30,6 +32,11 @@ Auto-generated index of all documents tagged with `#module-split`.
 
 - `2026-06-01-module-split-plan` - `module-split` `split monolithic modules into packages` plan
 
+### reference
+
+- `2026-07-27-module-split-production-package-seams-reference` - `module-split` reference: `production package seams`
+
 ### research
 
 - `2026-06-01-module-split-research` - module-split research: package + `__init__` re-export pattern
+- `2026-07-27-module-split-production-length-gate-research` - `module-split` research: `production length gate`

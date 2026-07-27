@@ -155,8 +155,13 @@ def _parse_job_dispatch_module() -> ast.Module:
     return ast.parse(textwrap.dedent(src))
 
 
-class TestIndexDispatchLoadModelBeforeLease:
-    """AST guard for the extracted production indexing dispatch module."""
+class TestIndexDispatchIsExtracted:
+    """AST guard for the extracted production indexing dispatch module.
+
+    The load-model-before-lease ordering this class used to check on two
+    named runners is now checked package-wide, on all fourteen functions
+    that pair the two calls rather than the two that had a test.
+    """
 
     def test_dispatch_implementations_are_extracted_from_jobs_facade(self) -> None:
         jobs_tree = _parse_jobs_module()
@@ -173,38 +178,6 @@ class TestIndexDispatchLoadModelBeforeLease:
         }
         assert "_bg_run" not in jobs_functions
         assert {"_run_vault_attempt", "_run_indexing_attempt"} <= dispatch_functions
-
-    def test_load_model_before_lease_in_vault_dispatch(self) -> None:
-        tree = _parse_job_dispatch_module()
-        node = _function_node_named(tree, "_run_vault_attempt")
-        calls = _call_names_in_order(node)
-        assert "load_model" in calls, "_run_vault_attempt must call load_model()"
-        assert "lease" in calls, "_run_vault_attempt must call lease()"
-        load_idx = calls.index("load_model")
-        lease_idx = calls.index("lease")
-        assert load_idx < lease_idx, (
-            f"load_model() (pos {load_idx}) must appear before lease() "
-            f"(pos {lease_idx}) in _run_vault_attempt"
-        )
-
-    def test_load_model_before_lease_in_indexing_dispatch(self) -> None:
-        """Covers code AND document, which were two runners and are now one.
-
-        The ordering was guarded on the vault and code runners and not on the
-        document one, so a third of the paths could have reordered silently.
-        Merging the two indexing runners made that a single ordering to guard.
-        """
-        tree = _parse_job_dispatch_module()
-        node = _function_node_named(tree, "_run_indexing_attempt")
-        calls = _call_names_in_order(node)
-        assert "load_model" in calls, "_run_indexing_attempt must call load_model()"
-        assert "lease" in calls, "_run_indexing_attempt must call lease()"
-        load_idx = calls.index("load_model")
-        lease_idx = calls.index("lease")
-        assert load_idx < lease_idx, (
-            f"load_model() (pos {load_idx}) must appear before lease() "
-            f"(pos {lease_idx}) in _run_indexing_attempt"
-        )
 
 
 # ---------------------------------------------------------------------------
