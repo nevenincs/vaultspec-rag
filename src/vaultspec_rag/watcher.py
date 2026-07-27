@@ -587,7 +587,49 @@ async def _persist_convergence_pending(
     return cancellation_requested
 
 
-async def _persist_observed_sources(  # noqa: PLR0912 - durable source settlement
+async def _await_shielded_persist_outcomes(
+    tasks: list[asyncio.Task[bool]],
+) -> tuple[list[bool | BaseException], bool]:
+    """Await every persist task under shield, absorbing outer cancellation.
+
+    Cancelling the awaiting coroutine must not cancel the shielded gather: it
+    cancels the still-unsettled member tasks instead, then re-awaits until
+    every task actually settles, so no accepted event batch is left
+    un-persisted by a cancellation that raced its commit.
+    """
+    cancellation_requested = False
+    grouped = asyncio.gather(*tasks, return_exceptions=True)
+    while True:
+        try:
+            outcomes = await asyncio.shield(grouped)
+        except asyncio.CancelledError:
+            cancellation_requested = True
+            for unsettled in tasks:
+                if not unsettled.done():
+                    unsettled.cancel()
+        else:
+            return outcomes, cancellation_requested
+
+
+def _collect_persist_outcomes(
+    outcomes: list[bool | BaseException],
+) -> tuple[bool, list[Exception]]:
+    """Fold gathered per-source outcomes into a cancellation flag and errors."""
+    cancellation_requested = False
+    errors: list[Exception] = []
+    for outcome in outcomes:
+        if isinstance(outcome, asyncio.CancelledError):
+            cancellation_requested = True
+        elif isinstance(outcome, Exception):
+            errors.append(outcome)
+        elif isinstance(outcome, bool):
+            cancellation_requested |= outcome
+        else:
+            raise outcome
+    return cancellation_requested, errors
+
+
+async def _persist_observed_sources(
     *,
     vault_events_observed: bool,
     code_events_observed: bool,
@@ -598,8 +640,6 @@ async def _persist_observed_sources(  # noqa: PLR0912 - durable source settlemen
     document_retry: WatcherRetryPolicy | None = None,
 ) -> bool:
     """Settle every source in one accepted batch before delivering cancellation."""
-    cancellation_requested = False
-    errors: list[Exception] = []
     operations = [
         (vault_events_observed, WatcherSource.VAULT, vault_retry),
         (code_events_observed, WatcherSource.CODE, code_retry),
@@ -619,26 +659,9 @@ async def _persist_observed_sources(  # noqa: PLR0912 - durable source settlemen
         for observed, source, policy in operations
         if observed
     ]
-    grouped = asyncio.gather(*tasks, return_exceptions=True)
-    while True:
-        try:
-            outcomes = await asyncio.shield(grouped)
-        except asyncio.CancelledError:
-            cancellation_requested = True
-            for unsettled in tasks:
-                if not unsettled.done():
-                    unsettled.cancel()
-        else:
-            break
-    for outcome in outcomes:
-        if isinstance(outcome, asyncio.CancelledError):
-            cancellation_requested = True
-        elif isinstance(outcome, Exception):
-            errors.append(outcome)
-        elif isinstance(outcome, bool):
-            cancellation_requested |= outcome
-        else:
-            raise outcome
+    outcomes, shield_cancellation = await _await_shielded_persist_outcomes(tasks)
+    collected_cancellation, errors = _collect_persist_outcomes(outcomes)
+    cancellation_requested = shield_cancellation or collected_cancellation
     if len(errors) == 1:
         raise errors[0]
     if errors:

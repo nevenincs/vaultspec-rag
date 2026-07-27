@@ -12,7 +12,11 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from starlette.responses import JSONResponse
+
 __all__ = [
+    "_BAD_REQUEST_MISSING_ROOT",
+    "_TRUTHY_QUERY_VALUES",
     "ProjectRootRequiredError",
     "_clamp_top_k",
     "_default_root",
@@ -41,6 +45,23 @@ if TYPE_CHECKING:
     from ..service import RegistryFullError
 
 logger = logging.getLogger("vaultspec_rag.server")
+
+_BAD_REQUEST_MISSING_ROOT = JSONResponse(
+    {
+        "ok": False,
+        "error": "bad_request",
+        "message": (
+            "project_root is required - "
+            "supply it in the request body (POST) or as a query parameter (GET)."
+        ),
+    },
+    status_code=400,
+)
+
+# The truthy spellings a boolean HTTP query flag accepts, shared by every
+# route that reads one (e.g. ``?failed=``, ``?fresh=``) so the accepted
+# vocabulary cannot drift between routes that each restate it.
+_TRUTHY_QUERY_VALUES: tuple[str, ...] = ("1", "true", "yes")
 
 
 class ProjectRootRequiredError(ValueError):

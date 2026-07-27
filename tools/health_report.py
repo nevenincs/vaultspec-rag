@@ -4,14 +4,20 @@ Prints one readable report covering every health dimension, grouping the worst
 offenders per dimension. ALWAYS exits 0 — this is the measurement instrument
 for the remediation campaign, not a gate. Gates live in:
 
-- ``tools/complexity_gate.py``  (cognitive + cyclomatic, baseline-calibrated)
+- ``[tool.complexipy]``         (cognitive complexity, baseline-calibrated)
+- ``[tool.pylint]``             (module length + class shape, baseline-calibrated)
 - ``[tool.ruff.lint.pylint]``   (function-size limits, baseline-calibrated)
-- ``ty`` via pre-commit/CI      (type checking, gating)
+- ``ty`` / ``basedpyright``     (type checking, gating)
+
+Every gate is configured declaratively in ``pyproject.toml`` and invoked
+directly by a ``just dev lint`` recipe. This module is the one place that
+composes them, and it exists to rank offenders across dimensions — not to
+re-implement any threshold, which would let the report and the gate disagree.
 
 Dimensions reported here:
 
 1. Cyclomatic complexity   (radon ``cc`` — worst blocks)
-2. Cognitive complexity    (flake8-cognitive-complexity — worst functions)
+2. Cognitive complexity    (complexipy — worst functions)
 3. Function-size limits    (ruff PLR091x/PLR1702 vs upstream DEFAULTS)
 4. Module length           (physical LOC — longest modules)
 5. Maintainability index   (radon ``mi`` — lowest-ranked modules)
@@ -39,6 +45,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from complexipy import file_complexity
 from radon.complexity import cc_rank, cc_visit
 from radon.metrics import mi_rank, mi_visit
 from rich.console import Console
@@ -91,37 +98,37 @@ def report_cyclomatic(top: int) -> None:
 
 
 def report_cognitive(top: int) -> None:
+    """Rank the worst cognitive-complexity functions across the whole tree.
+
+    The gate in ``[tool.complexipy]`` measures production only; this reports
+    the test tree alongside it, because the two populations differ enough that
+    collapsing them hides which one a hotspot belongs to.
+    """
     _section(
-        "Cognitive complexity (flake8 CCR001)",
-        f"gated at 20 via tools/complexity_gate.py; reporting > "
-        f"{COGNITIVE_REPORT_FLOOR}",
+        "Cognitive complexity (complexipy)",
+        f"production gated at 25 via [tool.complexipy]; reporting > "
+        f"{COGNITIVE_REPORT_FLOOR} across the whole tree",
     )
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "flake8",
-            "--select=CCR",
-            f"--max-cognitive-complexity={COGNITIVE_REPORT_FLOOR}",
-            "src",
-        ],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
-    pattern = re.compile(r"^(.*?):(\d+):\d+:\s+CCR001 .*\((\d+) > \d+\)")
     findings: list[tuple[int, str, str]] = []
-    for line in result.stdout.splitlines():
-        match = pattern.match(line.strip())
-        if match:
-            findings.append((int(match.group(3)), match.group(1), match.group(2)))
+    for path in _python_files():
+        scope = "test" if "tests" in path.parts else "prod"
+        for function in file_complexity(str(path)).functions:
+            if function.complexity > COGNITIVE_REPORT_FLOOR:
+                findings.append(
+                    (
+                        function.complexity,
+                        scope,
+                        f"{_rel(path)}:{function.line_start} {function.name}",
+                    )
+                )
     findings.sort(reverse=True)
 
     table = Table(show_header=True, header_style="bold")
     table.add_column("Cognitive", justify="right")
-    table.add_column("Module:line")
-    for value, module, line_no in findings[:top]:
-        table.add_row(str(value), f"{module}:{line_no}")
+    table.add_column("Scope")
+    table.add_column("Module:line Function")
+    for value, scope, location in findings[:top]:
+        table.add_row(str(value), scope, location)
     console.print(table)
 
 
@@ -183,7 +190,7 @@ def report_function_limits(top: int) -> None:
 def report_module_length(top: int) -> None:
     _section(
         "Module length (physical LOC)",
-        "enforced via tools/module_length.py (ceiling 3400, target 500)",
+        "gated by pylint C0302 via [tool.pylint.format] (ceiling 3400)",
     )
     lengths: list[tuple[int, str]] = []
     for path in _python_files():

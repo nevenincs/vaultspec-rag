@@ -20,6 +20,8 @@ dependencies = [
   "sentence-transformers>=5.0",
   "torch>=2.4",
   "transformers>=4.51",
+  "huggingface-hub>=1.24.0",
+  "numpy>=2.5.1",
   "qdrant-client>=1.16.0",
   "pydantic>=2.12.5",
   "rich>=14.3.2",
@@ -34,6 +36,9 @@ dependencies = [
   "psutil>=6.0.0",
   "tomlkit>=0.13",
   "packaging>=24.0",
+  "anyio>=4.14.2",
+  "starlette>=1.3.1",
+  "uvicorn>=0.51.0",
 ]
 description = "GPU-accelerated semantic search for your docs and source code: hybrid dense + sparse RAG on a local Qdrant backend, served to Claude Code and other MCP clients."
 keywords = [
@@ -72,21 +77,13 @@ version = "0.3.11"
   Repository = "https://github.com/nevenincs/vaultspec-rag"
 
   [project.optional-dependencies]
-  dev = [
-    "pytest>=9.0.3",
-    "pytest-asyncio>=1.3.0",
-    "pytest-timeout>=2.4.0",
-    "pytest-reportlog>=0.4.0",
-    "pytest-durations>=1.0.0",
-    "pytest-xdist>=3.8.0",
-    "ruff>=0.15.2",
-    "ty>=0.0.15",
-    "identify>=2.0.0",
-    "mdformat>=1.0.0",
-    "mdformat-frontmatter>=2.0.10",
-    "mdformat-gfm>=1.0.0",
-    "pymarkdownlnt>=0.9.0",
-  ]
+  # There is deliberately no `dev` extra here. The development toolchain lives
+  # in `[dependency-groups].dev` below, which is what `uv sync --group dev` and
+  # every CI job install. A `dev` extra existed alongside it and was installed
+  # by nothing; it had drifted into a stale subset, missing the type checker
+  # and every complexity, dead-code, dependency and security tool, so anyone
+  # who did install it got a toolchain that silently could not run the gates.
+  #
   # The agent-facing MCP server is an opt-in extra: the CLI and the HTTP search
   # daemon never import `mcp`, so a base install must not drag it (and, on
   # Windows, its `pywin32` transitive). Install `vaultspec-rag[mcp]` to run the
@@ -98,9 +95,15 @@ dev = [
   # The test suite imports `mcp` (it tests the optional MCP server surface), so
   # the dev environment provides it even though it is not a core dependency.
   "mcp>=1.28.1",
+  "bandit>=1.9.4",
   "basedpyright>=1.39",
-  "flake8>=7.3.0",
-  "flake8-cognitive-complexity>=0.1.0",
+  # Cognitive complexity. Implements the Sonar cognitive-complexity
+  # specification and is configured from `[tool.complexipy]` below, which
+  # replaced a flake8 plugin driven by command-line flags from a wrapper
+  # script. It also scores markedly stricter than the plugin did: the tree's
+  # worst function measured 20 under the plugin and 44 under this.
+  "complexipy>=6.2",
+  "deptry>=0.25.1",
   "identify>=2.0.0",
   "mdformat>=1.0.0",
   "mdformat-frontmatter>=2.0.10",
@@ -112,9 +115,14 @@ dev = [
   "pytest-reportlog>=0.4.0",
   "pytest-timeout>=2.4.0",
   "pytest-xdist>=3.8.0",
+  # Module length and the class-shape design limits ruff has no rule for
+  # (C0302, R0902, R0904, R0916). Everything else pylint would report is
+  # already covered by ruff and stays disabled.
+  "pylint>=4.0",
   "radon>=6.0.1",
   "ruff>=0.15.2",
   "ty>=0.0.15",
+  "vulture>=2.16",
   "xenon>=0.9.3",
 ]
 
@@ -184,8 +192,8 @@ target-version = "py313"
   # NOTE: preview is deliberately OFF here — enabling it globally changes the
   # behavior of stable rules (e.g. F401 submodule tracking) and surfaces
   # findings in src/ owned by the remediation campaign. The preview-only
-  # nesting-depth rule (PLR1702) is gated separately via
-  # tools/complexity_gate.py with a scoped `--select PLR1702 --preview` run.
+  # nesting-depth rule (PLR1702) is gated separately by `just dev lint
+  # nesting`, which runs a scoped `--select PLR1702 --preview` instead.
   ignore = ["TID252"]
   select = [
     "E",       # pycodestyle errors
@@ -227,7 +235,7 @@ target-version = "py313"
     # Ruff defaults: max-args=5, max-returns=6, max-branches=12,
     # max-statements=50, max-nested-blocks=5.
     # max-nested-blocks feeds PLR1702 (preview-only), which is enforced by
-    # tools/complexity_gate.py via `ruff check --select PLR1702 --preview`.
+    # `just dev lint nesting` via `ruff check --select PLR1702 --preview`.
     [tool.ruff.lint.pylint]
     max-args = 23         # baseline worst: 23 (44 functions exceed default 5)
     max-nested-blocks = 6 # baseline worst: 6 (indexer/_streaming.py)
@@ -271,3 +279,165 @@ typeCheckingMode = "strict"
   [[tool.basedpyright.executionEnvironments]]
   reportPrivateUsage = false
   root = "src/vaultspec_rag/tests"
+
+# Cognitive complexity — how much state a reader must hold to follow a
+# function, as distinct from the number of paths through it that `xenon`
+# measures. Nesting compounds the score here, so a deeply-indented function
+# ranks far worse than a flat one with the same branch count.
+#
+# BASELINE-CALIBRATED (captured 2026-07-27): 20 is the current worst
+# production function. Ratchet DOWN as hotspots are paid off; never raise.
+# Long-term target: 15, the tool's own default.
+#
+# Ratcheted 25 -> 20 once the seven functions above 20 were paid down by
+# extraction. The remaining distance, measured at the same time:
+#
+#     over 19:   7 functions
+#     over 18:  16
+#     over 17:  24
+#     over 16:  39
+#     over 15:  57      <- the target
+#
+# Production only. The tree's worst score overall is 44, in a test that walks
+# the AST of every module to prove a structural invariant; that shape is
+# inherent to the guard, not debt to pay down. Tests are measured by
+# `just dev audit complexity` instead, which reports without failing.
+[tool.complexipy]
+exclude = ["**/tests/**"]
+max-complexity-allowed = 20
+
+# pylint runs with every check off except the four that ruff has no rule for.
+# It is not a second general-purpose linter here — enabling more would produce
+# findings ruff already reports, under a different code, with no new signal.
+[tool.pylint.main]
+ignore-paths = [".*[\\/]tests[\\/].*"]
+jobs = 0
+
+[tool.pylint."messages control"]
+disable = ["all"]
+# C0302 too-many-lines            — module length; ruff has no rule for it
+# R0902 too-many-instance-attributes — class state a reader must track
+# R0904 too-many-public-methods   — class surface area
+# R0916 too-many-boolean-expressions — condition legibility
+enable = ["C0302", "R0902", "R0904", "R0916"]
+
+# Module length. This replaced a bespoke script that reimplemented the same
+# count; the ceiling is a ratchet, not a target — lower it whenever an
+# extraction lands, and never raise it.
+#
+# The census counts PRODUCTION modules only, because `ignore-paths` above
+# means those are the only ones this gate measures. An earlier census here
+# counted the whole tree, which set the ceiling against a 3398-line TEST
+# module the gate could never see and left ~450 lines of unused headroom over
+# the real subject. Count what the gate counts.
+#
+# Census (2026-07-27, 203 production modules):
+#
+#     over 3000:   0        <- the enforced ceiling; the tree meets it
+#     over 2500:   1
+#     over 2000:   4
+#     over 1500:   7
+#     over 1200:  20
+#     over 1000:  28
+#     over  500:  60        <- where modules should settle
+#
+# Longest production module: job_manager.py at 2955 lines.
+#
+# Test modules are NOT gated on length; the longest is 3942 lines. That is a
+# deliberate scope choice, but it does mean test growth is invisible here.
+# `just dev health` ranks the whole tree.
+[tool.pylint.format]
+max-module-lines = 3000
+
+# BASELINE-CALIBRATED (captured 2026-07-27): each sits at the current worst
+# offender, so the gate is green today and can only be ratcheted DOWN.
+# pylint defaults: max-attributes=7, max-public-methods=20, max-bool-expr=5.
+[tool.pylint.design]
+max-attributes = 28     # baseline worst: 28 (58 classes exceed the default 7)
+max-bool-expr = 9       # baseline worst: 9  (8 conditions exceed the default 5)
+max-public-methods = 39 # baseline worst: 39 (4 classes exceed the default 20)
+
+# Dead code. Advisory, not gating: vulture infers reachability and cannot see
+# dynamic dispatch, so a finding is a lead to confirm rather than a verdict.
+# Confidence 80 drops the guess-heavy tier that reports decorated and
+# lazily-bound callables as unused.
+[tool.vulture]
+exclude = ["*/tests/*", "*test_*.py"]
+ignore_decorators = [
+  "@app.command",
+  "@app.callback",
+  "@service_app.command",
+  "@click.command",
+  "@click.group",
+  "@pytest.fixture",
+  "@field_validator",
+  "@model_validator",
+  "@property",
+]
+# Every name here is fixed by a protocol this code implements, or is reachable
+# only through a string the scanner cannot follow. None is dead. Each was
+# confirmed by reading the site before being listed - the list is not a way to
+# quiet a finding that has not been read.
+#
+# - exc_type/exc_val/exc_tb: `__exit__` fixes the names of its three trailing
+#   parameters, so a context manager that ignores them reports each as unused.
+# - SupportedLanguage: imported under TYPE_CHECKING and referenced only from
+#   the string form `cast("SupportedLanguage", ...)`, which vulture does not
+#   resolve. Deleting the import breaks type checking.
+#
+# Two further names were listed here and have been REMOVED, because listing
+# them was the mistake this comment exists to prevent. They were the parameters
+# of a Protocol that typed a Windows call which had already moved to another
+# module: the Protocol had no remaining user and was dead. Reading the site
+# showed the names were fixed by a signature, which is true and irrelevant -
+# the question the scanner was actually asking is whether anything still uses
+# the thing they belong to. Follow a finding up to its owner before listing it.
+ignore_names = ["exc_type", "exc_val", "exc_tb", "SupportedLanguage"]
+min_confidence = 80
+paths = ["src/vaultspec_rag"]
+
+# Security. Advisory: this project spawns subprocesses (the vector-store
+# binary, the managed daemon) and builds store filter expressions by
+# construction, so the subprocess and SQL families report the design rather
+# than a defect. They stay ENABLED and are read per finding — suppressing a
+# family wholesale would also hide the first real one.
+#
+# The test tree is excluded by the `-x` flag in the `just dev audit security`
+# recipe, NOT by an `exclude_dirs` key here. bandit reads `skips` from this
+# table but silently ignores `exclude_dirs` from it: configured here the scan
+# returns 320 findings, 280 of them inside the tree this was meant to exclude.
+# A suppression that does not suppress is worse than none, so the exclusion
+# lives where it demonstrably takes effect.
+[tool.bandit]
+# B101: `assert` is pytest's contract, and the excluded test tree is where it
+# is load-bearing. Production invariants that must survive `-O` raise instead.
+skips = ["B101"]
+
+# Dependency drift. Reports imports that resolve only transitively — a
+# transitive bump can withdraw one without any change here.
+#
+# The test tree is excluded because it ships INSIDE the package, at
+# `src/vaultspec_rag/tests/`. deptry classifies by path, not by marker, so it
+# reads every `import pytest` there as production code reaching for a dev
+# dependency and reports the whole tree under DEP004. The exclusion is a
+# limitation of that classification, not a decision to stop checking tests.
+[tool.deptry]
+extend_exclude = [".*[\\/]tests[\\/].*"]
+known_first_party = ["vaultspec_rag"]
+
+  # Each entry is a deliberate declaration the scanner cannot infer, not a
+  # finding waved through. Nothing else is suppressed.
+  [tool.deptry.per_rule_ignores]
+  # DEP002 is "declared but never imported". Both of these are version FLOORS
+  # on packages reached through another dependency, pinned here on purpose:
+  # `transformers` is what sentence-transformers loads models through, and
+  # `tree-sitter` is the runtime `tree-sitter-language-pack` parses with. The
+  # only direct reference to `tree_sitter` is a typing-time import of `Node`.
+  # Dropping either pin would leave the floor to whatever the intermediate
+  # package happens to require.
+  DEP002 = ["transformers", "tree-sitter"]
+  # DEP003 is "imported but only transitive". `tqdm` arrives with the hub and
+  # is imported lazily behind ImportError, which the code treats as survivable
+  # by falling back to a plain download with no progress bar. Declaring it
+  # would make a genuinely optional import look mandatory.
+  DEP003 = ["tqdm"]

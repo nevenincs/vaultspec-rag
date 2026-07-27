@@ -241,6 +241,59 @@ def _add_pipeline_edges(
         existing.add(edge)
 
 
+def _generate_doc(
+    vault_dir: Path,
+    doc_type: str,
+    type_ordinal: int,
+    doc_index: int,
+) -> GeneratedDoc:
+    """Build one well-formed synthetic document for a fixed generation slot."""
+    feature = FEATURES[doc_index % len(FEATURES)]
+    needle = _needle_for(doc_type, doc_index)
+    date = f"2026-01-{(doc_index % 28) + 1:02d}"
+    stem = f"2026-01-{(doc_index % 28) + 1:02d}-{feature}-test-{doc_index:03d}"
+    doc_id = f"{doc_type}/{stem}"
+    status = _adr_status_for(type_ordinal) if doc_type == "adr" else ""
+    return GeneratedDoc(
+        doc_id=doc_id,
+        doc_type=doc_type,
+        feature=feature,
+        needle=needle,
+        date=date,
+        path=vault_dir / doc_type / f"{stem}.md",
+        related_ids=[],
+        status=status,
+    )
+
+
+def _add_density_edges(
+    docs: list[GeneratedDoc],
+    graph_edges: list[tuple[str, str]],
+    rng: random.Random,
+    density: float,
+) -> None:
+    """Add random related-links edges at the requested density."""
+    for doc in docs:
+        if rng.random() >= density:
+            continue
+        candidates = [d for d in docs if d.doc_id != doc.doc_id]
+        if not candidates:
+            continue
+        target = rng.choice(candidates)
+        doc.related_ids.append(target.doc_id)
+        graph_edges.append((doc.doc_id, target.doc_id))
+
+
+def _write_generated_doc(doc: GeneratedDoc) -> None:
+    """Render and write one well-formed document's markdown to disk."""
+    # related: strip doc_type prefix for wiki-link stem
+    related_stems = [rid.split("/", 1)[1] for rid in doc.related_ids]
+    fm = _make_frontmatter(doc.doc_type, doc.feature, doc.date, related_stems)
+    idx = int(doc.doc_id.split("-")[-1])
+    body = _make_body(doc.doc_type, doc.feature, doc.needle, idx, doc.status)
+    doc.path.write_text(fm + "\n" + body, encoding="utf-8")
+
+
 def build_synthetic_vault(
     root: Path,
     *,
@@ -284,50 +337,22 @@ def build_synthetic_vault(
 
     for dt in DOC_TYPES:
         for type_ordinal in range(per_type):
-            feature = FEATURES[doc_index % len(FEATURES)]
-            needle = _needle_for(dt, doc_index)
-            date = f"2026-01-{(doc_index % 28) + 1:02d}"
-            stem = f"2026-01-{(doc_index % 28) + 1:02d}-{feature}-test-{doc_index:03d}"
-            doc_id = f"{dt}/{stem}"
-            status = _adr_status_for(type_ordinal) if dt == "adr" else ""
-
-            docs.append(
-                GeneratedDoc(
-                    doc_id=doc_id,
-                    doc_type=dt,
-                    feature=feature,
-                    needle=needle,
-                    date=date,
-                    path=vault_dir / dt / f"{stem}.md",
-                    related_ids=[],
-                    status=status,
-                ),
-            )
-            needles[needle] = doc_id
+            doc = _generate_doc(vault_dir, dt, type_ordinal, doc_index)
+            docs.append(doc)
+            needles[doc.needle] = doc.doc_id
             if dt == "adr":
-                statuses[doc_id] = status
+                statuses[doc.doc_id] = doc.status
             doc_index += 1
 
     # Build graph links based on density.
-    for doc in docs:
-        if rng.random() < graph_density:
-            candidates = [d for d in docs if d.doc_id != doc.doc_id]
-            if candidates:
-                target = rng.choice(candidates)
-                doc.related_ids.append(target.doc_id)
-                graph_edges.append((doc.doc_id, target.doc_id))
+    _add_density_edges(docs, graph_edges, rng, graph_density)
 
     # Add deterministic pipeline-role edges on top of the random ones.
     _add_pipeline_edges(docs, graph_edges)
 
     # Write all documents.
     for doc in docs:
-        # related: strip doc_type prefix for wiki-link stem
-        related_stems = [rid.split("/", 1)[1] for rid in doc.related_ids]
-        fm = _make_frontmatter(doc.doc_type, doc.feature, doc.date, related_stems)
-        idx = int(doc.doc_id.split("-")[-1])
-        body = _make_body(doc.doc_type, doc.feature, doc.needle, idx, doc.status)
-        doc.path.write_text(fm + "\n" + body, encoding="utf-8")
+        _write_generated_doc(doc)
 
     # Optionally add malformed documents.
     if include_malformed:

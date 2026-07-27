@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import http.server
 import json
-import os
 import threading
 import time
 from typing import TYPE_CHECKING, Any, cast
@@ -21,6 +20,7 @@ from ._cli_helpers import (
     _isolated_status_dir,
     _label_values,
     _plain_lines,
+    _process_the_identity_check_recognises,
     _read_service_status,
     _running_service_record,
     _serving,
@@ -571,9 +571,17 @@ class TestHealthyServiceStaysQuiet:
 class TestServiceDaemonHelpers:
     """Tests for the service daemon helper functions."""
 
-    def test_is_our_service_current_process(self):
-        """Current process (Python) should be recognized as ours."""
-        assert _is_our_service(os.getpid()) is True
+    def test_is_our_service_live_process_running_the_package(self):
+        """A live process carrying the daemon's witness is recognized as ours.
+
+        The witness is what the fallback check reads when no health token can
+        be round-tripped, and it differs by platform: the executable image on
+        Windows, the command line elsewhere. A process running this package
+        under a python interpreter satisfies both, which is what makes this the
+        positive case against the dead, zero, and negative pids below.
+        """
+        with _process_the_identity_check_recognises() as pid:
+            assert _is_our_service(pid) is True
 
     def test_is_our_service_dead_pid(self):
         """A dead PID should return False."""

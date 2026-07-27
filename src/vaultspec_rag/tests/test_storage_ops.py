@@ -494,7 +494,7 @@ class TestSurveySnapshot:
                 sys.executable,
                 "-c",
                 "from vaultspec_rag.server._state import survey_snapshot;"
-                "from vaultspec_rag.server._routes import"
+                "from vaultspec_rag.server._routes_storage import"
                 " _serve_survey_from_snapshot as serve;"
                 "print(survey_snapshot(),"
                 " serve(None, 200, None, fresh=False))",
@@ -553,7 +553,7 @@ class TestGatherStorageSurveyCached:
         Proven able to fail: making ``_gather_storage_survey`` always recompute
         returns a payload without this prefix, failing the identity assertion.
         """
-        from ..server import _routes
+        from ..server import _routes_storage as _routes
 
         phantom = "r" + "a" * 12 + "_"
         self._publish([_survey(phantom, status="live")], computed_at="t1")
@@ -565,7 +565,7 @@ class TestGatherStorageSurveyCached:
         assert [n["prefix"] for n in namespaces] == [phantom]
 
     def test_filters_and_limit_apply_to_the_cached_list(self) -> None:
-        from ..server import _routes
+        from ..server import _routes_storage as _routes
 
         self._publish(
             [
@@ -592,7 +592,7 @@ class TestGatherStorageSurveyCached:
         snapshot in the slot, so the assertion that the slot now names the
         walked prefix reports the stale one instead. Restored, it passes.
         """
-        from ..server import _routes
+        from ..server import _routes_storage as _routes
         from ..server._state import survey_snapshot
 
         stale = "r" + "a" * 12 + "_"
@@ -626,7 +626,7 @@ class TestGatherStorageSurveyCached:
         yields no cached answer reports a dict instead of None. Restored,
         it passes.
         """
-        from ..server import _routes
+        from ..server import _routes_storage as _routes
 
         self._publish([_survey("r" + "d" * 12 + "_")], computed_at="t1")
         assert _routes._serve_survey_from_snapshot(None, 200, None, fresh=True) is None

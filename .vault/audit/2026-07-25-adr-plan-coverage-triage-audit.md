@@ -167,7 +167,7 @@ the Qdrant binary on disk) and the live service.
 ### mcp-sync-tools-already-retired | low | retired in place; archiving would take 77 documents
 
 `[[2026-03-07-mcp-sync-tools-adr]]` is the strongest retirement candidate by age
-and is already retired correctly: frontmatter carries `superseded_by: '2026-06-18-mcp-service-client-adr'` and its heading reads `(**status:** `superseded`)`. It is the one supersession marker among the nine, and it needs no
+and is already retired correctly: frontmatter carries `superseded_by: '2026-06-18-mcp-service-client-adr'` and its heading marks the status **superseded**. It is the one supersession marker among the nine, and it needs no
 further action.
 
 Archiving it is not available as a targeted operation and would be destructive.
