@@ -973,56 +973,90 @@ def _owned_qdrant_identity(
     )
 
     identity = read_qdrant_identity()
-    if (
-        identity is None
-        or identity.owner_pid != service_pid
-        or identity.owner_start_time <= 0.0
-        or identity.qdrant_pid <= 0
-        or identity.qdrant_start_time <= 0.0
+    if identity is None or not _is_owned_qdrant_identity(
+        identity,
+        _QdrantValidationContext(
+            service_pid=service_pid,
+            deadline=deadline,
+            expected_storage=Path(
+                str(get_config().qdrant_storage_dir)
+            ).expanduser().resolve(),
+            expected_version=QDRANT_SERVER_VERSION,
+            probe=probe_qdrant_endpoint,
+        ),
     ):
         return None
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        return None
-    if not pid_matches_start_time(
-        identity.owner_pid,
-        identity.owner_start_time,
-        timeout=remaining,
+    return identity
+
+
+@dataclass(frozen=True, slots=True)
+class _QdrantValidationContext:
+    """External facts required to validate one recorded Qdrant identity."""
+
+    service_pid: int
+    deadline: float
+    expected_storage: Path
+    expected_version: str
+    probe: Callable[..., object]
+
+
+def _is_owned_qdrant_identity(
+    identity: QdrantIdentity,
+    context: _QdrantValidationContext,
+) -> bool:
+    """Verify every immutable ownership witness before a Qdrant reap."""
+    recorded_storage = Path(identity.storage_path).expanduser().resolve()
+    remaining = context.deadline - time.monotonic()
+    identity_matches = (
+        identity.owner_pid == context.service_pid
+        and identity.owner_start_time > 0.0
+        and identity.qdrant_pid > 0
+        and identity.qdrant_start_time > 0.0
+        and recorded_storage == context.expected_storage
+        and identity.version == context.expected_version
+    )
+    if not identity_matches or remaining <= 0 or not pid_matches_start_time(
+        identity.owner_pid, identity.owner_start_time, timeout=remaining
     ):
-        return None
+        return False
+    return _qdrant_process_is_live(
+        identity,
+        deadline=context.deadline,
+        expected_version=context.expected_version,
+        probe=context.probe,
+    )
+
+
+def _qdrant_process_is_live(
+    identity: QdrantIdentity,
+    *,
+    deadline: float,
+    expected_version: str,
+    probe: Callable[..., object],
+) -> bool:
+    """Verify Qdrant's exact PID, listener, and protocol incarnation."""
     remaining = deadline - time.monotonic()
     if remaining <= 0 or not pid_matches_start_time(
-        identity.qdrant_pid,
-        identity.qdrant_start_time,
-        timeout=remaining,
+        identity.qdrant_pid, identity.qdrant_start_time, timeout=remaining
     ):
-        return None
-    cfg = get_config()
-    expected_storage = Path(str(cfg.qdrant_storage_dir)).expanduser().resolve()
-    recorded_storage = Path(identity.storage_path).expanduser().resolve()
+        return False
     remaining = deadline - time.monotonic()
-    if (
-        remaining <= 0
-        or recorded_storage != expected_storage
-        or identity.version != QDRANT_SERVER_VERSION
-        or not pid_image_matches(identity.qdrant_pid, "qdrant", timeout=remaining)
+    if remaining <= 0 or not pid_image_matches(
+        identity.qdrant_pid, "qdrant", timeout=remaining
     ):
-        return None
+        return False
     remaining = deadline - time.monotonic()
     if remaining <= 0 or not pid_listens_on_loopback_port(
         identity.qdrant_pid, identity.http_port, timeout=remaining
     ):
-        return None
+        return False
     remaining = deadline - time.monotonic()
     if remaining <= 0:
-        return None
-    probe = probe_qdrant_endpoint(
-        identity.http_port,
-        timeout=max(0.001, min(2.0, remaining / 2.0)),
+        return False
+    result = probe(
+        identity.http_port, timeout=max(0.001, min(2.0, remaining / 2.0))
     )
-    if not probe.ready or probe.version != QDRANT_SERVER_VERSION:
-        return None
-    return identity
+    return bool(getattr(result, "ready", False)) and getattr(result, "version", None) == expected_version
 
 
 def _reap_owned_qdrant(
