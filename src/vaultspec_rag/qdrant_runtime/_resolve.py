@@ -23,7 +23,7 @@ import time
 import urllib.error
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypedDict, Unpack, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -273,6 +273,52 @@ class QdrantIdentity:
     qdrant_start_time: float = 0.0
 
 
+class QdrantIdentityWriteArguments(TypedDict, total=False):
+    """Named identity fields retained by the supervisor-facing write surface."""
+
+    storage_path: str
+    version: str
+    owner_pid: int
+    http_port: int
+    qdrant_pid: int
+    qdrant_start_time: float | None
+    owner_start_time: float | None
+
+
+@dataclass(frozen=True)
+class QdrantIdentityWriteRequest:
+    """One complete managed-Qdrant identity publication request."""
+
+    storage_path: str
+    version: str
+    owner_pid: int
+    http_port: int
+    qdrant_pid: int = 0
+    qdrant_start_time: float | None = None
+    owner_start_time: float | None = None
+
+
+class QdrantAttachmentExpectationArguments(TypedDict, total=False):
+    """Named expected values retained by the attachment-facing surface."""
+
+    expected_port: int
+    expected_version: str
+    expected_storage: str
+    inspection_timeout: float
+
+
+@dataclass(frozen=True)
+class QdrantAttachmentRequest:
+    """Observed endpoint, managed record, and expected attachment identity."""
+
+    probe: QdrantEndpointProbe
+    identity: QdrantIdentity | None
+    expected_port: int
+    expected_version: str
+    expected_storage: str
+    inspection_timeout: float = 2.0
+
+
 def qdrant_identity_path() -> Path:
     """Path of the managed-Qdrant identity sidecar (machine-global)."""
     cfg = get_config()
@@ -455,14 +501,7 @@ def reap_qdrant_orphan(
 
 
 def write_qdrant_identity(
-    *,
-    storage_path: str,
-    version: str,
-    owner_pid: int,
-    http_port: int,
-    qdrant_pid: int = 0,
-    qdrant_start_time: float | None = None,
-    owner_start_time: float | None = None,
+    **arguments: Unpack[QdrantIdentityWriteArguments],
 ) -> Path:
     """Atomically write the managed-Qdrant identity sidecar.
 
@@ -483,10 +522,13 @@ def write_qdrant_identity(
     Returns:
         The path the sidecar was written to.
     """
+    request = QdrantIdentityWriteRequest(**arguments)
+    owner_start_time = request.owner_start_time
+    qdrant_start_time = request.qdrant_start_time
     if owner_start_time is None:
-        owner_start_time = pid_start_time(owner_pid)
+        owner_start_time = pid_start_time(request.owner_pid)
     if qdrant_start_time is None:
-        qdrant_start_time = pid_start_time(qdrant_pid)
+        qdrant_start_time = pid_start_time(request.qdrant_pid)
     path = qdrant_identity_path()
     from .._test_isolation import enforce_pytest_managed_singleton_containment
 
@@ -497,27 +539,25 @@ def write_qdrant_identity(
     write_json_atomically(
         path,
         {
-            "storage_path": storage_path,
-            "version": version,
-            "owner_pid": owner_pid,
-            "http_port": http_port,
-            "qdrant_pid": qdrant_pid,
+            "storage_path": request.storage_path,
+            "version": request.version,
+            "owner_pid": request.owner_pid,
+            "http_port": request.http_port,
+            "qdrant_pid": request.qdrant_pid,
             "qdrant_start_time": qdrant_start_time,
             "owner_start_time": owner_start_time,
         },
     )
-    logger.debug("wrote qdrant identity sidecar at %s (owner pid %d)", path, owner_pid)
+    logger.debug(
+        "wrote qdrant identity sidecar at %s (owner pid %d)", path, request.owner_pid
+    )
     return path
 
 
 def verify_attachable(
     probe: QdrantEndpointProbe,
     identity: QdrantIdentity | None,
-    *,
-    expected_port: int,
-    expected_version: str,
-    expected_storage: str,
-    inspection_timeout: float = 2.0,
+    **expectation: Unpack[QdrantAttachmentExpectationArguments],
 ) -> tuple[bool, str]:
     """Decide whether a running Qdrant is safe to attach to, with a reason.
 
@@ -530,86 +570,93 @@ def verify_attachable(
     Returns:
         ``(attachable, reason)``.
     """
-    if not probe.ready:
+    request = QdrantAttachmentRequest(
+        probe=probe,
+        identity=identity,
+        **expectation,
+    )
+    return _verify_attachment_request(request)
+
+
+def _verify_attachment_request(
+    request: QdrantAttachmentRequest,
+) -> tuple[bool, str]:
+    """Apply endpoint, identity, and capability gates before witness inspection."""
+    if not request.probe.ready:
         return False, "qdrant on the port is not ready (/readyz did not return 200)"
+    identity = request.identity
     if identity is None:
         return False, "no managed identity sidecar; the port holder is not ours"
-    if identity.http_port != expected_port:
-        return (
-            False,
+
+    reason: str | None = None
+    if identity.http_port != request.expected_port:
+        reason = (
             f"port mismatch: identity records {identity.http_port} != expected "
-            f"{expected_port}",
+            f"{request.expected_port}"
         )
-    if identity.version != expected_version:
-        return (
-            False,
+    elif identity.version != request.expected_version:
+        reason = (
             f"identity version mismatch: recorded {identity.version!r} != managed "
-            f"{expected_version!r}",
+            f"{request.expected_version!r}"
         )
-    if expected_version and probe.version != expected_version:
+    elif request.expected_version and request.probe.version != request.expected_version:
         # The capability gate is non-optional: an unreadable version (empty) is
         # a gate FAILURE, not a pass - attaching to a server whose version we
         # could not confirm defeats the version check.
-        running = probe.version or "<unreadable>"
-        return (
-            False,
+        running = request.probe.version or "<unreadable>"
+        reason = (
             f"version mismatch or unreadable: running {running!r} != managed "
-            f"{expected_version!r}",
+            f"{request.expected_version!r}"
         )
-    if os.path.normcase(os.path.normpath(identity.storage_path)) != os.path.normcase(
-        os.path.normpath(expected_storage)
+    elif os.path.normcase(os.path.normpath(identity.storage_path)) != os.path.normcase(
+        os.path.normpath(request.expected_storage)
     ):
-        return (
-            False,
+        reason = (
             f"storage mismatch: managed identity serves {identity.storage_path!r} "
-            f"!= expected {expected_storage!r}",
+            f"!= expected {request.expected_storage!r}"
         )
-    return _verify_attach_identity_witnesses(
-        identity,
-        expected_port=expected_port,
-        inspection_timeout=inspection_timeout,
-    )
+    if reason is not None:
+        return False, reason
+    return _verify_attach_identity_witnesses(request, identity)
 
 
 def _verify_attach_identity_witnesses(
+    request: QdrantAttachmentRequest,
     identity: QdrantIdentity,
-    *,
-    expected_port: int,
-    inspection_timeout: float,
 ) -> tuple[bool, str]:
     """Validate the complete live owner/child witness used for attachment."""
-    if identity.owner_start_time <= 0.0:
-        return False, "managed identity has no owner process-start witness"
-    if identity.qdrant_pid <= 0 or identity.qdrant_start_time <= 0.0:
-        return False, "managed identity has no complete child process witness"
-    deadline = time.monotonic() + max(0.0, inspection_timeout)
+    deadline = time.monotonic() + max(0.0, request.inspection_timeout)
 
     def remaining() -> float:
         return max(0.0, deadline - time.monotonic())
 
-    if not pid_matches_start_time(
+    reason: str | None = None
+    if identity.owner_start_time <= 0.0:
+        reason = "managed identity has no owner process-start witness"
+    elif identity.qdrant_pid <= 0 or identity.qdrant_start_time <= 0.0:
+        reason = "managed identity has no complete child process witness"
+    elif not pid_matches_start_time(
         identity.owner_pid,
         identity.owner_start_time,
         timeout=remaining(),
     ):
-        return False, "managed owner process incarnation does not match its witness"
-    if not pid_matches_start_time(
+        reason = "managed owner process incarnation does not match its witness"
+    elif not pid_matches_start_time(
         identity.qdrant_pid,
         identity.qdrant_start_time,
         timeout=remaining(),
     ):
-        return False, "managed child process incarnation does not match its witness"
-    if not pid_image_matches(identity.qdrant_pid, "qdrant", timeout=remaining()):
-        return False, "witnessed managed child image is not Qdrant"
-    if not pid_listens_on_loopback_port(
+        reason = "managed child process incarnation does not match its witness"
+    elif not pid_image_matches(identity.qdrant_pid, "qdrant", timeout=remaining()):
+        reason = "witnessed managed child image is not Qdrant"
+    elif not pid_listens_on_loopback_port(
         identity.qdrant_pid,
-        expected_port,
+        request.expected_port,
         timeout=remaining(),
     ):
-        return (
-            False,
-            "witnessed managed child does not own the expected loopback listener",
-        )
+        reason = "witnessed managed child does not own the expected loopback listener"
+    if reason is not None:
+        return False, reason
     return True, "attachable"
 
 
@@ -640,11 +687,7 @@ def classify_qdrant_state(
     """
     owner_state = owner_pid_witness_state(identity, timeout=owner_timeout)
     if not probe.listening:
-        if identity is not None and owner_state in {"dead", "replaced"}:
-            return "stale_identity"
-        if identity is not None and owner_state == "unknown":
-            return "owner_unverified"
-        return "absent"
+        return _classify_non_listening_identity(identity, owner_state)
     if identity is None:
         return "foreign"
     if owner_state == "live":
@@ -652,6 +695,18 @@ def classify_qdrant_state(
     if owner_state == "unknown":
         return "owner_unverified"
     return "managed_orphan"
+
+
+def _classify_non_listening_identity(
+    identity: QdrantIdentity | None,
+    owner_state: str,
+) -> str:
+    """Classify the no-listener branch without competing with a live owner."""
+    if identity is not None and owner_state in {"dead", "replaced"}:
+        return "stale_identity"
+    if identity is not None and owner_state == "unknown":
+        return "owner_unverified"
+    return "absent"
 
 
 def decide_qdrant_action(
