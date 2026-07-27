@@ -830,6 +830,93 @@ class TestAtomicReplaceHasOneImplementation:
         assert replace_atomically is not replace_durably
 
 
+class TestPyprojectWritesGoThroughOneWriter:
+    """Every pyproject rewrite preserves byte shape through one function.
+
+    ``write_doc_preserving_shape`` already had seven callers in two other
+    modules while ``apply_patch`` and ``remove_patch``, eight lines above it in
+    its own file, still inlined the same nine-statement sequence. The
+    repetition was not the worst of it: those two owe a stated promise to each
+    other - apply followed by remove leaves the file byte-identical - and a
+    promise between two hand-maintained copies of a byte-shaping routine holds
+    only while someone keeps them aligned.
+
+    Two shapes survive the round trip and neither is recoverable from the
+    parsed document: ``tomlkit`` always emits LF, and always exactly one
+    trailing newline. Both are read back off the file, which is why the
+    routine cannot be replaced by a plain dump.
+    """
+
+    def test_no_caller_reassembles_the_shape_preserving_write(self) -> None:
+        """The trailing-newline restore belongs to one writer."""
+        offenders: list[str] = []
+        for path in _every_production_file():
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                target = node.func
+                name = target.id if isinstance(target, ast.Name) else None
+                if name != "_match_trailing_newline":
+                    continue
+                enclosing = [
+                    outer.name
+                    for outer in ast.walk(tree)
+                    if isinstance(outer, ast.FunctionDef)
+                    and outer.lineno <= node.lineno <= (outer.end_lineno or 0)
+                ]
+                if "write_doc_preserving_shape" not in enclosing:
+                    offenders.append(f"{path.name}:{node.lineno} in {enclosing}")
+        assert not offenders, (
+            f"a caller restores the trailing-newline shape itself at "
+            f"{offenders}; call write_doc_preserving_shape, so the "
+            "apply/remove byte-symmetry is one function's property rather "
+            "than an agreement between copies"
+        )
+
+    def test_apply_then_remove_leaves_the_file_byte_identical(self) -> None:
+        """The promise the two copies existed to keep, across every shape.
+
+        Proven able to fail: dropping the ``_match_trailing_newline`` call from
+        the writer fails this on the no-trailing-newline shapes, and dropping
+        the CRLF restore fails it on the CRLF ones.
+        """
+        from ..torch_config._mutate import apply_patch, remove_patch
+
+        newline = chr(10)
+        carriage = chr(13) + newline
+        base = newline.join(
+            [
+                "[project]",
+                'name = "demo"',
+                'version = "0.1.0"',
+                "",
+                "[tool.other]",
+                "keep = true",
+            ]
+        )
+        shapes = [
+            base + newline,
+            base,
+            base + newline + newline,
+            base.replace(newline, carriage) + carriage,
+            base.replace(newline, carriage),
+            base.replace(newline, carriage) + carriage + carriage,
+        ]
+        for text in shapes:
+            with tempfile.TemporaryDirectory() as workspace:
+                pyproject = Path(workspace) / "pyproject.toml"
+                pyproject.write_text(text, encoding="utf-8", newline="")
+                before = pyproject.read_bytes()
+                apply_patch(pyproject)
+                assert pyproject.read_bytes() != before, "apply changed nothing"
+                remove_patch(pyproject)
+                assert pyproject.read_bytes() == before, repr(text[:40])
+
+
 class TestPublishGateAndRefusalAreShared:
     """The manifest admission gate and the feedback refusal each have one home.
 
