@@ -230,7 +230,13 @@ class TestShutdownAttribution:
         assert fields["initiator_pid"] == str(os.getpid())
         cmd = fields["initiator_cmd"]
         assert cmd
-        assert "pytest" in cmd.lower() or "python" in cmd.lower()
+        # The field must carry THIS process' own argv, which is the attribution
+        # it exists for - not a recognisable interpreter name. Asserting the
+        # launcher's shape instead reads as equivalent and is not: a parallel
+        # test runner's worker is spawned as `python -c ...`, so its argv[0] is
+        # "-c" and a name-shape assertion fails there while the recorded
+        # attribution is exactly right.
+        assert cmd.startswith(sys.argv[0])
         assert len(cmd) <= 300
         assert os.path.isdir(fields["initiator_cwd"])
         assert fields["initiator_cwd"] == os.getcwd()
