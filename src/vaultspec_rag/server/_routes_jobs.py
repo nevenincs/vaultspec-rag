@@ -10,6 +10,7 @@ handler, which applies the clamp and predicate this module provides.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import cast
 
 from .. import jobs as _jobs
@@ -505,65 +506,92 @@ def _increment(counts: dict[str, int], value: str) -> None:
     counts[value] = counts.get(value, 0) + 1
 
 
+@dataclass
+class _JobSummaryTally:
+    """Running per-record counts folded across the whole job snapshot."""
+
+    phases: dict[str, int] = field(default_factory=dict)
+    states: dict[str, int] = field(default_factory=dict)
+    desired_states: dict[str, int] = field(default_factory=dict)
+    sources: dict[str, int] = field(default_factory=dict)
+    triggers: dict[str, int] = field(default_factory=dict)
+    initiators: dict[str, int] = field(default_factory=dict)
+    active_initiators: dict[str, int] = field(default_factory=dict)
+    users: dict[str, int] = field(default_factory=dict)
+    stalled: int = 0
+    controllable: int = 0
+    control_pending: int = 0
+    retryable: int = 0
+    error_kinds: dict[str, int] = field(default_factory=dict)
+
+
+def _tally_job_initiator(
+    tally: _JobSummaryTally,
+    record: dict[str, object],
+    state: str,
+) -> None:
+    initiator = record.get("initiator")
+    if not isinstance(initiator, dict):
+        return
+    kind = str(cast("dict[str, object]", initiator).get("kind", "unknown"))
+    _increment(tally.initiators, kind)
+    if state not in _TERMINAL_STATES:
+        _increment(tally.active_initiators, kind)
+
+
+def _tally_job_runtime_user(tally: _JobSummaryTally, record: dict[str, object]) -> None:
+    runtime = record.get("runtime")
+    if not isinstance(runtime, dict):
+        return
+    user = str(cast("dict[str, object]", runtime).get("user", "unknown"))
+    _increment(tally.users, user)
+
+
+def _tally_job(tally: _JobSummaryTally, record: dict[str, object], now: float) -> None:
+    """Fold one job record's counts into the running summary tally."""
+    if _job_stalled(record, now):
+        tally.stalled += 1
+    if _job_controllable(record):
+        tally.controllable += 1
+    if _control_pending_age_seconds(record, now) is not None:
+        tally.control_pending += 1
+    if _job_capability(record, "retryable"):
+        tally.retryable += 1
+    kind = record.get("error_kind")
+    if isinstance(kind, str) and kind:
+        tally.error_kinds[kind] = tally.error_kinds.get(kind, 0) + 1
+    state = job_state(record)
+    phase = _job_phase(record, state)
+    desired_state = _job_desired_state(record)
+    source = _job_source(record)
+    trigger = _job_trigger(record)
+    _increment(tally.phases, phase)
+    _increment(tally.states, state)
+    _increment(tally.desired_states, desired_state)
+    _increment(tally.sources, source)
+    _increment(tally.triggers, trigger)
+    _tally_job_initiator(tally, record, state)
+    _tally_job_runtime_user(tally, record)
+
+
 def _job_summary(
     records: list[dict[str, object]],
     *,
     now: float,
 ) -> dict[str, object]:
-    phases: dict[str, int] = {}
-    states: dict[str, int] = {}
-    desired_states: dict[str, int] = {}
-    sources: dict[str, int] = {}
-    triggers: dict[str, int] = {}
-    initiators: dict[str, int] = {}
-    active_initiators: dict[str, int] = {}
-    users: dict[str, int] = {}
-    stalled = 0
-    controllable = 0
-    control_pending = 0
-    retryable = 0
-    error_kinds: dict[str, int] = {}
+    tally = _JobSummaryTally()
     for record in records:
-        if _job_stalled(record, now):
-            stalled += 1
-        if _job_controllable(record):
-            controllable += 1
-        if _control_pending_age_seconds(record, now) is not None:
-            control_pending += 1
-        if _job_capability(record, "retryable"):
-            retryable += 1
-        kind = record.get("error_kind")
-        if isinstance(kind, str) and kind:
-            error_kinds[kind] = error_kinds.get(kind, 0) + 1
-        state = job_state(record)
-        phase = _job_phase(record, state)
-        desired_state = _job_desired_state(record)
-        source = _job_source(record)
-        trigger = _job_trigger(record)
-        _increment(phases, phase)
-        _increment(states, state)
-        _increment(desired_states, desired_state)
-        _increment(sources, source)
-        _increment(triggers, trigger)
-        initiator = record.get("initiator")
-        if isinstance(initiator, dict):
-            kind = str(cast("dict[str, object]", initiator).get("kind", "unknown"))
-            _increment(initiators, kind)
-            if state not in _TERMINAL_STATES:
-                _increment(active_initiators, kind)
-        runtime = record.get("runtime")
-        if isinstance(runtime, dict):
-            user = str(cast("dict[str, object]", runtime).get("user", "unknown"))
-            _increment(users, user)
+        _tally_job(tally, record, now)
+    states = tally.states
     return {
-        "phases": phases,
+        "phases": tally.phases,
         "states": states,
-        "desired_states": desired_states,
-        "sources": sources,
-        "triggers": triggers,
-        "initiators": initiators,
-        "active_initiators": active_initiators,
-        "users": users,
+        "desired_states": tally.desired_states,
+        "sources": tally.sources,
+        "triggers": tally.triggers,
+        "initiators": tally.initiators,
+        "active_initiators": tally.active_initiators,
+        "users": tally.users,
         # ``phases`` remains the compatibility aggregation; lifecycle rollups
         # are always derived from canonical states.
         "running": states.get("running", 0),
@@ -578,11 +606,11 @@ def _job_summary(
         "failed": states.get("failed", 0),
         "cancelled": states.get("cancelled", 0),
         "interrupted": states.get("interrupted", 0),
-        "stalled": stalled,
-        "control_pending": control_pending,
-        "controllable": controllable,
-        "retryable": retryable,
-        "error_kinds": error_kinds,
+        "stalled": tally.stalled,
+        "control_pending": tally.control_pending,
+        "controllable": tally.controllable,
+        "retryable": tally.retryable,
+        "error_kinds": tally.error_kinds,
     }
 
 

@@ -16,6 +16,7 @@ import os
 import re
 import sys
 import threading
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict, cast
 
@@ -359,63 +360,90 @@ def _path_size(path: Path) -> int:
         return 0
 
 
+@dataclass
+class _ManagedSourceProgress:
+    """Running per-source tally threaded through the newest-first scan."""
+
+    remaining: int
+    remaining_bytes: int
+    scanned_bytes: int = 0
+    omitted_bytes: int = 0
+    record_truncations: int = 0
+    source_budget_exhausted: bool = False
+    newest_chunks: list[list[str]] = field(default_factory=list)
+
+
+def _consume_managed_source_path(
+    progress: _ManagedSourceProgress,
+    path: Path,
+    paths: list[Path],
+    index: int,
+) -> bool:
+    """Fold one rotated-log path's window into *progress*.
+
+    Returns True when the scan must stop: either the byte budget was already
+    spent before this path, or this path's read exhausted it.
+    """
+    if progress.remaining_bytes <= 0:
+        older_bytes = sum(_path_size(candidate) for candidate in paths[index:])
+        if older_bytes:
+            progress.source_budget_exhausted = True
+            progress.omitted_bytes += older_bytes
+        return True
+    window = _tail_file_window(path, progress.remaining, progress.remaining_bytes)
+    chunk = window["lines"]
+    progress.scanned_bytes += window["scanned_bytes"]
+    progress.remaining_bytes -= window["scanned_bytes"]
+    progress.omitted_bytes += window["omitted_bytes"]
+    progress.record_truncations += window["record_truncations"]
+    if window["source_budget_exhausted"]:
+        progress.source_budget_exhausted = True
+        progress.omitted_bytes += sum(
+            _path_size(candidate) for candidate in paths[index + 1 :]
+        )
+        if chunk:
+            progress.newest_chunks.append(chunk)
+            progress.remaining -= len(chunk)
+        return True
+    if chunk:
+        progress.newest_chunks.append(chunk)
+        progress.remaining -= len(chunk)
+    return False
+
+
 def _read_managed_source(
     status_dir: Path,
     source: ManagedLogGroupSource,
     lines: int,
 ) -> ManagedLogGroup:
-    remaining = max(0, lines)
-    newest_chunks: list[list[str]] = []
-    remaining_bytes = MAX_MANAGED_LOG_SOURCE_BYTES
-    scanned_bytes = 0
-    omitted_bytes = 0
-    record_truncations = 0
-    source_budget_exhausted = False
     paths = list(reversed(_rotated_log_paths(status_dir, _managed_log_name(source))))
+    progress = _ManagedSourceProgress(
+        remaining=max(0, lines),
+        remaining_bytes=MAX_MANAGED_LOG_SOURCE_BYTES,
+    )
     # Paths are chronological; read them newest-first so older generations are
     # never touched after the requested per-source record bound is satisfied.
     for index, path in enumerate(paths):
-        if remaining <= 0:
+        if progress.remaining <= 0:
             break
-        if remaining_bytes <= 0:
-            older_bytes = sum(_path_size(candidate) for candidate in paths[index:])
-            if older_bytes:
-                source_budget_exhausted = True
-                omitted_bytes += older_bytes
+        if _consume_managed_source_path(progress, path, paths, index):
             break
-        window = _tail_file_window(path, remaining, remaining_bytes)
-        chunk = window["lines"]
-        scanned_bytes += window["scanned_bytes"]
-        remaining_bytes -= window["scanned_bytes"]
-        omitted_bytes += window["omitted_bytes"]
-        record_truncations += window["record_truncations"]
-        if window["source_budget_exhausted"]:
-            source_budget_exhausted = True
-            omitted_bytes += sum(
-                _path_size(candidate) for candidate in paths[index + 1 :]
-            )
-            if chunk:
-                newest_chunks.append(chunk)
-                remaining -= len(chunk)
-            break
-        if not chunk:
-            continue
-        newest_chunks.append(chunk)
-        remaining -= len(chunk)
 
-    source_lines = [line for chunk in reversed(newest_chunks) for line in chunk]
+    source_lines = [
+        line for chunk in reversed(progress.newest_chunks) for line in chunk
+    ]
     group: ManagedLogGroup = {"source": source, "lines": source_lines}
-    if source_budget_exhausted or record_truncations:
+    if progress.source_budget_exhausted or progress.record_truncations:
         group["truncated"] = True
         group["marker"] = MANAGED_LOG_TRUNCATION_MARKER
         group["truncation"] = {
             "record_limit_bytes": MAX_MANAGED_LOG_RECORD_BYTES,
             "source_limit_bytes": MAX_MANAGED_LOG_SOURCE_BYTES,
-            "scanned_bytes": scanned_bytes,
+            "scanned_bytes": progress.scanned_bytes,
             "returned_content_bytes": 0,
-            "omitted_bytes_at_least": omitted_bytes,
-            "record_truncations": record_truncations,
-            "source_budget_exhausted": source_budget_exhausted,
+            "omitted_bytes_at_least": progress.omitted_bytes,
+            "record_truncations": progress.record_truncations,
+            "source_budget_exhausted": progress.source_budget_exhausted,
             "response_budget_exhausted": False,
             "omitted_response_records": 0,
         }

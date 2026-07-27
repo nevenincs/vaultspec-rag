@@ -253,6 +253,52 @@ def _survey_from_service(
     return surveys, queried_root
 
 
+def _survey_namespaces(
+    progress: StartupStatusReporter,
+    *,
+    root: str | None,
+    fresh: bool,
+    json_mode: bool,
+) -> tuple[list[NamespaceSurvey], dict[str, str] | None]:
+    """Fetch the survey from the running service, or read the store directly.
+
+    Service-first: a running daemon answers from its ``/storage/survey`` route.
+    When none answers, this opens its own client to the managed server (the
+    same path the destructive verbs use) and, with ``root``, narrows to that
+    root's namespace through the one ``root_collection_prefix`` derivation.
+    """
+    progress.stage("Asking the running service for its survey...")
+    fetched = _survey_from_service(root, fresh=fresh)
+    if fetched is not None:
+        return fetched
+
+    from ..storage_ops import gather_survey, server_storage_collections_dir
+
+    progress.stage("No service answered; reading the store directly...")
+    surveys = _run_storage_op(
+        _SURVEY_CMD,
+        json_mode,
+        lambda c: gather_survey(
+            c,
+            server_storage_collections_dir(),
+            on_progress=progress.stage,
+        ),
+    )
+    if root is None:
+        return surveys, None
+
+    import pathlib
+
+    from .._store_models import root_collection_prefix
+
+    prefix = root_collection_prefix(root)
+    queried_root = {
+        "root": str(pathlib.Path(root).resolve()),
+        "prefix": prefix,
+    }
+    return [s for s in surveys if s.prefix == prefix], queried_root
+
+
 @server_storage_app.command(
     "survey",
     help=(
@@ -301,56 +347,28 @@ def storage_survey(
         # otherwise resolve a relative path against its own inherited cwd,
         # silently disagreeing with the CLI-direct fallback.
         root = str(pathlib.Path(root).resolve())
-    queried_root: dict[str, str] | None = None
     # A survey counts points and walks the storage tree for every namespace,
     # which is minutes on a large backend. Reporting stays inside this block;
     # the table renders once it closes, so no result line can land inside a
-    # live frame.
+    # live frame. The CLI-direct fallback always computes live, so --fresh
+    # only needs to reach the service path.
     with StartupStatusReporter(json_mode=json_mode) as progress:
         progress.announce("Surveying stored index namespaces...")
-        progress.stage("Asking the running service for its survey...")
-        # The CLI-direct fallback below always computes live, so --fresh only
-        # needs to reach the service path.
-        fetched = _survey_from_service(root, fresh=fresh)
-        if fetched is not None:
-            surveys, queried_root = fetched
-        else:
-            from ..storage_ops import gather_survey, server_storage_collections_dir
-
-            progress.stage("No service answered; reading the store directly...")
-            surveys = _run_storage_op(
-                _SURVEY_CMD,
-                json_mode,
-                lambda c: gather_survey(
-                    c,
-                    server_storage_collections_dir(),
-                    on_progress=progress.stage,
-                ),
-            )
-            if root is not None:
-                import pathlib
-
-                from .._store_models import root_collection_prefix
-
-                prefix = root_collection_prefix(root)
-                queried_root = {
-                    "root": str(pathlib.Path(root).resolve()),
-                    "prefix": prefix,
-                }
-                surveys = [s for s in surveys if s.prefix == prefix]
+        surveys, queried_root = _survey_namespaces(
+            progress, root=root, fresh=fresh, json_mode=json_mode
+        )
     if orphaned_only:
         surveys = [s for s in surveys if s.status == "orphaned"]
     if unknown_only:
         surveys = [s for s in surveys if s.status == "unknown"]
     if json_mode:
         _emit_survey_json(surveys, queried_root)
-    else:
-        if queried_root is not None:
-            typer.echo(
-                f"Queried root: {queried_root['root']}  "
-                f"prefix: {queried_root['prefix']}"
-            )
-        _print_survey(surveys)
+        return
+    if queried_root is not None:
+        typer.echo(
+            f"Queried root: {queried_root['root']}  prefix: {queried_root['prefix']}"
+        )
+    _print_survey(surveys)
 
 
 # -- delete -----------------------------------------------------------------
