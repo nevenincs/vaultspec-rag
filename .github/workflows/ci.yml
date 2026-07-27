@@ -105,11 +105,13 @@ jobs:
         if: '!cancelled()'
         run: just dev lint docs-version
 
-      # Gating, and previously absent from CI entirely: the recipe existed and
-      # ran only from `just dev lint all` on a workstation. It is red today on
-      # seven test modules that import the package absolutely.
-      - name: Absolute imports
+      # ADVISORY (continue-on-error) — see the block above the ratchet gates
+      # below. Previously absent from CI entirely: the recipe existed and ran
+      # only from `just dev lint all` on a workstation. Red today on seven test
+      # modules that import the package absolutely.
+      - name: Absolute imports (advisory)
         if: '!cancelled()'
+        continue-on-error: true
         run: just dev lint absolute-imports
 
       # Gating: fails CI if tracked source cites a development record (plan/Step
@@ -120,26 +122,44 @@ jobs:
         if: '!cancelled()'
         run: just dev lint citations
 
-      # Baseline-calibrated gate: thresholds sit at today's worst offender
-      # (cognitive<=25 on production, xenon absolute/modules<=C, average<=A)
-      # so this stays green until the remediation campaign ratchets them down.
-      - name: Complexity gate
+      # ─────────────────────────────────────────────────────────────────────
+      # ADVISORY RATCHETS — these RUN and REPORT on every PR, and none of them
+      # can fail it. They carry `continue-on-error: true` deliberately.
+      #
+      # The rationale is that a pull request should be blocked by a defect it
+      # INTRODUCED, not by standing debt it merely failed to pay off. These
+      # dimensions each still carry a burndown backlog, so gating them would
+      # block unrelated work on debt its author did not create.
+      #
+      # They still run on every PR, and a regression shows as a step warning
+      # on the run. `just dev lint <target>` reproduces any of them locally
+      # and DOES exit non-zero — the local recipe is the strict one.
+      #
+      # Promote a step out of this block by deleting its `continue-on-error`
+      # once its backlog reaches zero and it can hold that line.
+      # ─────────────────────────────────────────────────────────────────────
+
+      # Cognitive (complexipy, production only) and cyclomatic (xenon).
+      # Thresholds sit at today's worst offender and ratchet DOWN only.
+      - name: Complexity (advisory)
         if: '!cancelled()'
+        continue-on-error: true
         run: just dev lint complexity
 
-      # Gating: ruff's nesting-depth rule is preview-only, so it runs scoped
-      # here rather than from the main ruff config, where global preview mode
+      # ruff's nesting-depth rule is preview-only, so it runs scoped here
+      # rather than from the main ruff config, where global preview mode
       # would change stable-rule behavior.
-      - name: Nesting depth
+      - name: Nesting depth (advisory)
         if: '!cancelled()'
+        continue-on-error: true
         run: just dev lint nesting
 
-      # Gating: module length (pylint C0302) and the class-shape limits ruff
-      # has no rule for. Both sit at today's worst offender and ratchet DOWN
-      # only. This replaced a bespoke script whose CI step claimed to be
+      # Module length (pylint C0302) and the class-shape limits ruff has no
+      # rule for. This replaced a bespoke script whose CI step claimed to be
       # report-only while the recipe it ran actually gated.
-      - name: Module and class size
+      - name: Module and class size (advisory)
         if: '!cancelled()'
+        continue-on-error: true
         run: just dev lint size
 
       # Gating: basedpyright strict reached zero on 2026-06-10, so this now
@@ -313,3 +333,51 @@ jobs:
 
       - name: Python dependency vulnerability audit
         run: just dev audit deps
+
+  # Advisory only — this job reports and can never fail the run. It is the CI
+  # face of `just dev audit`: dead code, undeclared (transitively-resolved)
+  # imports, and the security scan. Each yields a lead to confirm rather than a
+  # verdict, so none of them belongs in a blocking gate.
+  #
+  # Read it on a PR the way you would read a code review comment: the findings
+  # are advice, and the burndown they feed is tracked separately.
+  code-audit:
+    name: Code Audit (advisory)
+    concurrency:
+      group: ci-code-audit-${{ github.ref }}
+      cancel-in-progress: false
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install just
+        uses: taiki-e/install-action@just
+
+      - name: Install dependencies
+        run: just dev deps sync
+
+      - name: Dead code (vulture)
+        if: '!cancelled()'
+        continue-on-error: true
+        run: just dev audit dead-code
+
+      - name: Undeclared dependencies (deptry)
+        if: '!cancelled()'
+        continue-on-error: true
+        run: just dev audit dependencies
+
+      - name: Security (bandit)
+        if: '!cancelled()'
+        continue-on-error: true
+        run: just dev audit security

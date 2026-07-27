@@ -26,17 +26,21 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-      - name: Update uv.lock on release branch
+      # These three steps together refresh uv.lock on the release branch: the
+      # version bump release-please writes to pyproject.toml leaves the lock
+      # stale, and a stale lock fails `uv sync --locked` for anyone who checks
+      # the release branch out. Each step is named for what it DOES.
+      - name: Check out the release branch
         if: steps.release.outputs.pr && !steps.release.outputs.release_created
         uses: actions/checkout@v6.0.2
         with:
           ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
 
-      - name: Regenerate lockfile
+      - name: Set up uv
         if: steps.release.outputs.pr && !steps.release.outputs.release_created
         uses: astral-sh/setup-uv@v7
 
-      - name: Push updated lockfile
+      - name: Regenerate and push uv.lock
         if: steps.release.outputs.pr && !steps.release.outputs.release_created
         run: |
           uv lock

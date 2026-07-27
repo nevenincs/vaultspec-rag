@@ -536,7 +536,7 @@ class TestSupervision:
         tmp_path: Path,
     ) -> None:
         """A stopped supervisor leaves no qdrant process behind."""
-        from vaultspec_rag._process_probe import pid_alive
+        from ..._process_probe import pid_alive
 
         supervisor = QdrantSupervisor(
             real_qdrant_binary,

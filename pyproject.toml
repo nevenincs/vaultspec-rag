@@ -357,10 +357,26 @@ ignore_decorators = [
   "@model_validator",
   "@property",
 ]
-# `__exit__` fixes the names of its three trailing parameters, so a context
-# manager that ignores them reports each as an unused variable. The signature
-# is the protocol, not a choice.
-ignore_names = ["exc_type", "exc_val", "exc_tb"]
+# Every name here is fixed by a protocol this code implements, or is reachable
+# only through a string the scanner cannot follow. None is dead. Each was
+# confirmed by reading the site before being listed - the list is not a way to
+# quiet a finding that has not been read.
+#
+# - exc_type/exc_val/exc_tb: `__exit__` fixes the names of its three trailing
+#   parameters, so a context manager that ignores them reports each as unused.
+# - existing_path/new_path: positional-only parameters of the MoveFileExW
+#   Protocol, which mirrors the Windows API signature it types.
+# - SupportedLanguage: imported under TYPE_CHECKING and referenced only from
+#   the string form `cast("SupportedLanguage", ...)`, which vulture does not
+#   resolve. Deleting the import breaks type checking.
+ignore_names = [
+  "exc_type",
+  "exc_val",
+  "exc_tb",
+  "existing_path",
+  "new_path",
+  "SupportedLanguage",
+]
 min_confidence = 80
 paths = ["src/vaultspec_rag"]
 
