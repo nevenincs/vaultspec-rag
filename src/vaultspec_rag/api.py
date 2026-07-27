@@ -36,7 +36,13 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "AllIndexOutcomes",
+    "AllIndexOptions",
+    "CodebaseSearchRequest",
+    "CodeIndexOptions",
     "DomainIndexOutcome",
+    "DocumentIndexOptions",
+    "IndexOptions",
+    "VaultSearchRequest",
     "clean",
     "get_readiness",
     "get_related",
@@ -81,6 +87,80 @@ class AllIndexOutcomes:
     vault: DomainIndexOutcome
     code: DomainIndexOutcome
     document: DomainIndexOutcome
+
+
+@dataclass(frozen=True, slots=True)
+class IndexOptions:
+    """Common controls for one indexing operation."""
+
+    full: bool = False
+    clean: bool = False
+    reporter: ProgressReporter | None = None
+    model_name: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CodeIndexOptions(IndexOptions):
+    """Controls unique to codebase indexing."""
+
+    extra_excludes: list[str] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentIndexOptions(IndexOptions):
+    """Controls unique to document indexing."""
+
+    changed_paths: list[pathlib.Path] | None = None
+    extra_excludes: list[str] | None = None
+    content_policy: RootContentPolicy | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AllIndexOptions(IndexOptions):
+    """Controls shared by every domain in a combined indexing run."""
+
+    extra_excludes: list[str] | None = None
+    content_policy: RootContentPolicy | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VaultSearchRequest:
+    """One public vault-search request."""
+
+    root_dir: pathlib.Path
+    query: str
+    top_k: int = 5
+    doc_type: str | None = None
+    feature: str | None = None
+    date: str | None = None
+    tag: str | None = None
+    intent: str | None = None
+    like_ids: list[str | int] | None = None
+    unlike_ids: list[str | int] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CodebaseSearchRequest:
+    """One public codebase-search request."""
+
+    root_dir: pathlib.Path
+    query: str
+    top_k: int = 5
+    language: str | None = None
+    path: str | None = None
+    node_type: str | None = None
+    function_name: str | None = None
+    class_name: str | None = None
+    include_paths: list[str] | None = None
+    exclude_paths: list[str] | None = None
+    dedup_locales: bool | None = None
+    prefer: str | None = None
+    exclude_domains: list[str] | None = None
+    only_domains: list[str] | None = None
+    include_domains: list[str] | None = None
+    like_ids: list[str | int] | None = None
+    unlike_ids: list[str | int] | None = None
+    notes: dict[str, object] | None = None
 
 
 def _resolve(root_dir: pathlib.Path) -> pathlib.Path:
@@ -188,12 +268,7 @@ def index(
 
 def index_codebase(
     root_dir: pathlib.Path,
-    *,
-    full: bool = False,
-    clean: bool = False,
-    reporter: ProgressReporter | None = None,
-    model_name: str | None = None,
-    extra_excludes: list[str] | None = None,
+    options: CodeIndexOptions = CodeIndexOptions(),
 ) -> IndexResult:
     """Index codebase source files, returning an :class:`IndexResult`.
 
@@ -202,26 +277,21 @@ def index_codebase(
 
     Args:
         root_dir: Workspace root directory.
-        full: If ``True``, perform a full re-index; otherwise
-            incremental.
-        clean: If ``True``, drop and recreate the codebase collection.
-        reporter: Optional progress reporter.
-        model_name: Optional override for the dense embedding model name.
-        extra_excludes: Optional list of ad-hoc exclusion patterns.
+        options: Explicit controls for indexing and exclusions.
 
     Returns:
         An ``IndexResult`` with counts of added, updated, and
         removed code chunks.
     """
     root = _resolve(root_dir)
-    rep = reporter if reporter is not None else NullProgressReporter()
-    preflight = _preflight_code_index(root, extra_excludes=extra_excludes)
+    rep = options.reporter if options.reporter is not None else NullProgressReporter()
+    preflight = _preflight_code_index(root, extra_excludes=options.extra_excludes)
     registry = get_registry()
-    registry.load_model(model_name)
+    registry.load_model(options.model_name)
     with registry.lease(root) as slot:
-        if full or clean:
+        if options.full or options.clean:
             return slot.code_indexer.full_index(
-                clean=clean,
+                clean=options.clean,
                 reporter=rep,
                 preflight=preflight,
             )
@@ -233,46 +303,39 @@ def index_codebase(
 
 def index_documents(
     root_dir: pathlib.Path,
-    *,
-    full: bool = False,
-    clean: bool = False,
-    changed_paths: list[pathlib.Path] | None = None,
-    reporter: ProgressReporter | None = None,
-    model_name: str | None = None,
-    extra_excludes: list[str] | None = None,
-    content_policy: RootContentPolicy | None = None,
+    options: DocumentIndexOptions = DocumentIndexOptions(),
 ) -> IndexResult:
     """Index only explicitly routed documents into document storage."""
-    if changed_paths is not None and (full or clean):
+    if options.changed_paths is not None and (options.full or options.clean):
         raise ValueError("scoped document indexing cannot be full or clean")
     root = _resolve(root_dir)
-    rep = reporter if reporter is not None else NullProgressReporter()
+    rep = options.reporter if options.reporter is not None else NullProgressReporter()
     preflight = (
         _preflight_document_index(
             root,
-            extra_excludes=extra_excludes,
-            content_policy=content_policy,
+            extra_excludes=options.extra_excludes,
+            content_policy=options.content_policy,
         )
-        if changed_paths is None
+        if options.changed_paths is None
         else _preflight_document_scope(
             root,
-            changed_paths,
-            extra_excludes=extra_excludes,
-            content_policy=content_policy,
+            options.changed_paths,
+            extra_excludes=options.extra_excludes,
+            content_policy=options.content_policy,
         )
     )
     registry = get_registry()
-    registry.load_model(model_name)
+    registry.load_model(options.model_name)
     with registry.lease(root) as slot:
-        if full or clean:
+        if options.full or options.clean:
             return slot.document_indexer.full_index(
-                clean=clean,
+                clean=options.clean,
                 reporter=rep,
                 preflight=cast("DocumentIndexPreflight", preflight),
             )
         return slot.document_indexer.incremental_index(
             reporter=rep,
-            changed_paths=changed_paths,
+            changed_paths=options.changed_paths,
             preflight=preflight,
         )
 
@@ -288,74 +351,52 @@ def _domain_outcome(operation: Any) -> DomainIndexOutcome:
 
 def index_all(
     root_dir: pathlib.Path,
-    *,
-    full: bool = False,
-    clean: bool = False,
-    reporter: ProgressReporter | None = None,
-    model_name: str | None = None,
-    extra_excludes: list[str] | None = None,
-    content_policy: RootContentPolicy | None = None,
+    options: AllIndexOptions = AllIndexOptions(),
 ) -> AllIndexOutcomes:
     """Index every domain and return every success or failure independently."""
     return AllIndexOutcomes(
         vault=_domain_outcome(
             lambda: index(
                 root_dir,
-                full=full,
-                clean=clean,
-                reporter=reporter,
-                model_name=model_name,
+                full=options.full,
+                clean=options.clean,
+                reporter=options.reporter,
+                model_name=options.model_name,
             )
         ),
         code=_domain_outcome(
             lambda: index_codebase(
                 root_dir,
-                full=full,
-                clean=clean,
-                reporter=reporter,
-                model_name=model_name,
-                extra_excludes=extra_excludes,
+                CodeIndexOptions(
+                    full=options.full,
+                    clean=options.clean,
+                    reporter=options.reporter,
+                    model_name=options.model_name,
+                    extra_excludes=options.extra_excludes,
+                ),
             )
         ),
         document=_domain_outcome(
             lambda: index_documents(
                 root_dir,
-                full=full,
-                clean=clean,
-                reporter=reporter,
-                model_name=model_name,
-                extra_excludes=extra_excludes,
-                content_policy=content_policy,
+                DocumentIndexOptions(
+                    full=options.full,
+                    clean=options.clean,
+                    reporter=options.reporter,
+                    model_name=options.model_name,
+                    extra_excludes=options.extra_excludes,
+                    content_policy=options.content_policy,
+                ),
             )
         ),
     )
 
 
-def search_vault(
-    root_dir: pathlib.Path,
-    query: str,
-    *,
-    top_k: int = 5,
-    doc_type: str | None = None,
-    feature: str | None = None,
-    date: str | None = None,
-    tag: str | None = None,
-    intent: str | None = None,
-    like_ids: list[str | int] | None = None,
-    unlike_ids: list[str | int] | None = None,
-) -> list[SearchResult]:
+def search_vault(request: VaultSearchRequest) -> list[SearchResult]:
     """Search the documentation vault.
 
     Args:
-        root_dir: Workspace root directory.
-        query: Natural language search query.
-        top_k: Number of results to return.
-        doc_type: Optional vault doc-type filter (e.g. ``'adr'``).
-        feature: Optional feature-tag filter.
-        date: Optional ISO date filter.
-        tag: Optional free-form tag filter.
-        like_ids: Optional list of document IDs or point IDs to guide search.
-        unlike_ids: Optional list of document IDs or point IDs to push search away.
+        request: Query, root, ranking controls, and optional filters.
 
     Returns:
         Ranked list of SearchResult objects.
@@ -364,12 +405,12 @@ def search_vault(
 
     validate_search_filters(
         "vault",
-        doc_type=doc_type,
-        feature=feature,
-        date=date,
-        tag=tag,
+        doc_type=request.doc_type,
+        feature=request.feature,
+        date=request.date,
+        tag=request.tag,
     )
-    root = _resolve(root_dir)
+    root = _resolve(request.root_dir)
     registry = get_registry()
     # An empty or unbuilt vault index needs no query encoding: short-circuit
     # to an empty result without loading the GPU model (so an empty search is
@@ -379,42 +420,32 @@ def search_vault(
     registry.load_model()
     with registry.lease(root) as slot:
         return slot.searcher.search_vault(
-            query,
-            top_k=top_k,
-            doc_type=doc_type,
-            feature=feature,
-            date=date,
-            tag=tag,
-            intent=intent,
-            like_ids=like_ids,
-            unlike_ids=unlike_ids,
+            request.query,
+            top_k=request.top_k,
+            doc_type=request.doc_type,
+            feature=request.feature,
+            date=request.date,
+            tag=request.tag,
+            intent=request.intent,
+            like_ids=request.like_ids,
+            unlike_ids=request.unlike_ids,
         )
 
 
 def search_vault_timed(
-    root_dir: pathlib.Path,
-    query: str,
-    *,
-    top_k: int = 5,
-    doc_type: str | None = None,
-    feature: str | None = None,
-    date: str | None = None,
-    tag: str | None = None,
-    intent: str | None = None,
-    like_ids: list[str | int] | None = None,
-    unlike_ids: list[str | int] | None = None,
+    request: VaultSearchRequest,
 ) -> tuple[list[SearchResult], dict[str, float]]:
     """Search the vault and return phase timings for service diagnostics."""
     from .search import validate_search_filters
 
     validate_search_filters(
         "vault",
-        doc_type=doc_type,
-        feature=feature,
-        date=date,
-        tag=tag,
+        doc_type=request.doc_type,
+        feature=request.feature,
+        date=request.date,
+        tag=request.tag,
     )
-    root = _resolve(root_dir)
+    root = _resolve(request.root_dir)
     registry = get_registry()
     # Empty/unbuilt index: return an empty result without loading the model.
     indexed_count = registry.vault_doc_count(root)
@@ -431,15 +462,15 @@ def search_vault_timed(
     with registry.lease(root) as slot:
         project_lease_seconds = time.perf_counter() - phase_started
         results, timings = slot.searcher.search_vault_timed(
-            query,
-            top_k=top_k,
-            doc_type=doc_type,
-            feature=feature,
-            date=date,
-            tag=tag,
-            intent=intent,
-            like_ids=like_ids,
-            unlike_ids=unlike_ids,
+            request.query,
+            top_k=request.top_k,
+            doc_type=request.doc_type,
+            feature=request.feature,
+            date=request.date,
+            tag=request.tag,
+            intent=request.intent,
+            like_ids=request.like_ids,
+            unlike_ids=request.unlike_ids,
         )
     timings[PHASE_MODEL_LOAD] = model_load_seconds
     timings[PHASE_PROJECT_LEASE] = project_lease_seconds
@@ -447,51 +478,11 @@ def search_vault_timed(
     return results, timings
 
 
-def search_codebase(
-    root_dir: pathlib.Path,
-    query: str,
-    *,
-    top_k: int = 5,
-    language: str | None = None,
-    path: str | None = None,
-    node_type: str | None = None,
-    function_name: str | None = None,
-    class_name: str | None = None,
-    include_paths: list[str] | None = None,
-    exclude_paths: list[str] | None = None,
-    dedup_locales: bool | None = None,
-    prefer: str | None = None,
-    exclude_domains: list[str] | None = None,
-    only_domains: list[str] | None = None,
-    include_domains: list[str] | None = None,
-    like_ids: list[str | int] | None = None,
-    unlike_ids: list[str | int] | None = None,
-) -> list[SearchResult]:
+def search_codebase(request: CodebaseSearchRequest) -> list[SearchResult]:
     """Search the source codebase.
 
     Args:
-        root_dir: Workspace root directory.
-        query: Natural language search query or code snippet.
-        top_k: Number of results to return.
-        language: Optional language filter (e.g., ``'python'``,
-            ``'rust'``).
-        path: Optional exact-match path filter (KEYWORD payload
-            index).
-        node_type: Optional AST node type filter.
-        function_name: Optional function/method name filter.
-        class_name: Optional class/struct name filter.
-        include_paths: Optional fnmatch glob patterns kept by
-            post-query filter (e.g. ``['src/foo/**']``).
-        exclude_paths: Optional fnmatch glob patterns dropped by
-            post-query filter (e.g. ``['locales/*.yml',
-            'tests/**']``).
-        dedup_locales: When True, collapse near-tie locale variants
-            into a single canonical result. Opt-in.
-        prefer: Optional ``"prod" | "tests" | "docs"`` - applies a
-            small +/- score nudge to the matching category after
-            rerank. Opt-in.
-        like_ids: Optional list of chunk IDs or point IDs to guide search.
-        unlike_ids: Optional list of chunk IDs or point IDs to push search away.
+        request: Query, root, ranking controls, and optional filters.
 
     Returns:
         Ranked list of SearchResult objects.
@@ -500,20 +491,20 @@ def search_codebase(
 
     validate_search_filters(
         "code",
-        language=language,
-        path=path,
-        node_type=node_type,
-        function_name=function_name,
-        class_name=class_name,
-        include_paths=include_paths,
-        exclude_paths=exclude_paths,
-        dedup_locales=dedup_locales,
-        prefer=prefer,
-        exclude_domains=exclude_domains,
-        only_domains=only_domains,
-        include_domains=include_domains,
+        language=request.language,
+        path=request.path,
+        node_type=request.node_type,
+        function_name=request.function_name,
+        class_name=request.class_name,
+        include_paths=request.include_paths,
+        exclude_paths=request.exclude_paths,
+        dedup_locales=request.dedup_locales,
+        prefer=request.prefer,
+        exclude_domains=request.exclude_domains,
+        only_domains=request.only_domains,
+        include_domains=request.include_domains,
     )
-    root = _resolve(root_dir)
+    root = _resolve(request.root_dir)
     registry = get_registry()
     # Empty/unbuilt code index: return an empty result without loading the model.
     if registry.code_chunk_count(root) == 0:
@@ -521,22 +512,22 @@ def search_codebase(
     registry.load_model()
     with registry.lease(root) as slot:
         return slot.searcher.search_codebase(
-            query,
-            top_k=top_k,
-            language=language,
-            path=path,
-            node_type=node_type,
-            function_name=function_name,
-            class_name=class_name,
-            include_paths=include_paths,
-            exclude_paths=exclude_paths,
-            dedup_locales=dedup_locales,
-            prefer=prefer,
-            exclude_domains=exclude_domains,
-            only_domains=only_domains,
-            include_domains=include_domains,
-            like_ids=like_ids,
-            unlike_ids=unlike_ids,
+            request.query,
+            top_k=request.top_k,
+            language=request.language,
+            path=request.path,
+            node_type=request.node_type,
+            function_name=request.function_name,
+            class_name=request.class_name,
+            include_paths=request.include_paths,
+            exclude_paths=request.exclude_paths,
+            dedup_locales=request.dedup_locales,
+            prefer=request.prefer,
+            exclude_domains=request.exclude_domains,
+            only_domains=request.only_domains,
+            include_domains=request.include_domains,
+            like_ids=request.like_ids,
+            unlike_ids=request.unlike_ids,
         )
 
 
@@ -566,45 +557,27 @@ def _code_breadth_timings(
 
 
 def search_codebase_timed(
-    root_dir: pathlib.Path,
-    query: str,
-    *,
-    top_k: int = 5,
-    language: str | None = None,
-    path: str | None = None,
-    node_type: str | None = None,
-    function_name: str | None = None,
-    class_name: str | None = None,
-    include_paths: list[str] | None = None,
-    exclude_paths: list[str] | None = None,
-    dedup_locales: bool | None = None,
-    prefer: str | None = None,
-    exclude_domains: list[str] | None = None,
-    only_domains: list[str] | None = None,
-    include_domains: list[str] | None = None,
-    like_ids: list[str | int] | None = None,
-    unlike_ids: list[str | int] | None = None,
-    notes: dict[str, object] | None = None,
+    request: CodebaseSearchRequest,
 ) -> tuple[list[SearchResult], dict[str, float]]:
     """Search codebase and return phase timings for service diagnostics."""
     from .search import validate_search_filters
 
     validate_search_filters(
         "code",
-        language=language,
-        path=path,
-        node_type=node_type,
-        function_name=function_name,
-        class_name=class_name,
-        include_paths=include_paths,
-        exclude_paths=exclude_paths,
-        dedup_locales=dedup_locales,
-        prefer=prefer,
-        exclude_domains=exclude_domains,
-        only_domains=only_domains,
-        include_domains=include_domains,
+        language=request.language,
+        path=request.path,
+        node_type=request.node_type,
+        function_name=request.function_name,
+        class_name=request.class_name,
+        include_paths=request.include_paths,
+        exclude_paths=request.exclude_paths,
+        dedup_locales=request.dedup_locales,
+        prefer=request.prefer,
+        exclude_domains=request.exclude_domains,
+        only_domains=request.only_domains,
+        include_domains=request.include_domains,
     )
-    root = _resolve(root_dir)
+    root = _resolve(request.root_dir)
     registry = get_registry()
     # Empty/unbuilt code index: return an empty result without loading the model.
     indexed_count = registry.code_chunk_count(root)
@@ -626,23 +599,23 @@ def search_codebase_timed(
     with registry.lease(root) as slot:
         project_lease_seconds = time.perf_counter() - phase_started
         results, timings = slot.searcher.search_codebase_timed(
-            query,
-            top_k=top_k,
-            language=language,
-            path=path,
-            node_type=node_type,
-            function_name=function_name,
-            class_name=class_name,
-            include_paths=include_paths,
-            exclude_paths=exclude_paths,
-            dedup_locales=dedup_locales,
-            prefer=prefer,
-            exclude_domains=exclude_domains,
-            only_domains=only_domains,
-            include_domains=include_domains,
-            like_ids=like_ids,
-            unlike_ids=unlike_ids,
-            notes=notes,
+            request.query,
+            top_k=request.top_k,
+            language=request.language,
+            path=request.path,
+            node_type=request.node_type,
+            function_name=request.function_name,
+            class_name=request.class_name,
+            include_paths=request.include_paths,
+            exclude_paths=request.exclude_paths,
+            dedup_locales=request.dedup_locales,
+            prefer=request.prefer,
+            exclude_domains=request.exclude_domains,
+            only_domains=request.only_domains,
+            include_domains=request.include_domains,
+            like_ids=request.like_ids,
+            unlike_ids=request.unlike_ids,
+            notes=request.notes,
         )
     timings[PHASE_MODEL_LOAD] = model_load_seconds
     timings[PHASE_PROJECT_LEASE] = project_lease_seconds

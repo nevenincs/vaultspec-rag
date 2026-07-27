@@ -47,7 +47,11 @@ if TYPE_CHECKING:
     )
     from ._store_models import CodeChunk, VaultDocument
     from .api import (
+        AllIndexOptions,
+        CodebaseSearchRequest,
+        CodeIndexOptions,
         clean,
+        DocumentIndexOptions,
         get_readiness,
         get_related,
         get_service_state,
@@ -56,6 +60,7 @@ if TYPE_CHECKING:
         index_all,
         index_codebase,
         index_documents,
+        IndexOptions,
         list_documents,
         run_benchmark,
         run_quality_probe,
@@ -65,6 +70,7 @@ if TYPE_CHECKING:
         search_codebase_timed,
         search_vault,
         search_vault_timed,
+        VaultSearchRequest,
     )
     from .embeddings import EmbeddingModel, SparseResult
     from .graph_cache import GraphCache
@@ -90,12 +96,17 @@ if TYPE_CHECKING:
 # Maps each lazily-exported public name to the submodule that defines it.
 # Accessing ``vaultspec_rag.<name>`` imports the owning submodule on demand.
 _LAZY_EXPORTS: dict[str, str] = {
+    "AllIndexOptions": "api",
+    "CodebaseSearchRequest": "api",
+    "CodeIndexOptions": "api",
     "CodeCombinedSearchFilters": "_public_search",
     "CombinedSearchRequest": "_public_search",
     "DocumentCombinedSearchFilters": "_public_search",
     "DocumentSearchRequest": "_public_search",
     "VaultCombinedSearchFilters": "_public_search",
     "DocumentScanResult": "_public_index",
+    "DocumentIndexOptions": "api",
+    "IndexOptions": "api",
     "scan_documents": "_public_index",
     "search_combined": "_public_search",
     "search_combined_timed": "_public_search",
@@ -119,6 +130,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "search_codebase_timed": "api",
     "search_vault": "api",
     "search_vault_timed": "api",
+    "VaultSearchRequest": "api",
     "GraphCache": "graph_cache",
     "EmbeddingModel": "embeddings",
     "SparseResult": "embeddings",
@@ -141,6 +153,9 @@ _LAZY_EXPORTS: dict[str, str] = {
 }
 
 __all__ = [
+    "AllIndexOptions",
+    "CodebaseSearchRequest",
+    "CodeIndexOptions",
     "CodeChunk",
     "CodeCombinedSearchFilters",
     "CodebaseIndexer",
@@ -151,15 +166,18 @@ __all__ = [
     "DocumentScanResult",
     "DocumentSearchRequest",
     "DocumentSearchResult",
+    "DocumentIndexOptions",
     "EmbeddingModel",
     "GraphCache",
     "IndexResult",
+    "IndexOptions",
     "ParsedQuery",
     "SearchDomainOutcome",
     "SearchResult",
     "SparseResult",
     "VaultCombinedSearchFilters",
     "VaultDocument",
+    "VaultSearchRequest",
     "VaultIndexer",
     "VaultSearcher",
     "VaultStore",
