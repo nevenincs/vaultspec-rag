@@ -47,11 +47,21 @@ readme-assets out_dir='assets':
 #
 # Nothing here exists in the shipped CLI.
 #
+# The split is by CONSEQUENCE, not by tool:
+#
+#   lint   GATES. Read-only, and a finding fails the build. Every threshold
+#          sits at today's worst offender, so lint is green now and each
+#          threshold can only ever be ratcheted DOWN.
+#   fix    MUTATES. Everything automatically repairable, in one pass.
+#   audit  ADVISORY. Reports and never fails, because each dimension yields
+#          leads to confirm rather than verdicts. A dimension graduates into
+#          `lint` once it reaches zero and can hold there.
+#
 # Verbs:
 #   deps      dependency management (sync, upgrade, lock)
-#   lint      read-only static analysis (ruff, ty, taplo, mdformat, lychee, complexity, ...)
+#   lint      gating static analysis (ruff, ty, complexity, size, citations, ...)
 #   fix       auto-fix everything fixable (python, toml, vault)
-#   audit     supply-chain / security checks (uv audit)
+#   audit     advisory scans (security, dead code, duplication, dependencies)
 #   test      pytest
 #   build     uv build
 #   health    aggregate code-health report (complexity, LOC, MI, strict types)
@@ -62,10 +72,13 @@ readme-assets out_dir='assets':
 #   just dev lint type
 #   just dev lint complexity
 #   just dev lint type-strict
-#   just dev lint module-length
+#   just dev lint size
+#   just dev lint nesting
 #   just dev fix
 #   just dev fix python
-#   just dev audit deps
+#   just dev audit
+#   just dev audit security
+#   just dev audit dead-code
 #   just dev test python
 #   just dev build python
 #   just dev health
@@ -120,6 +133,23 @@ _dev-deps target='sync':
     } \
   }
 
+# The complexity gate measures PRODUCTION code. The test tree is measured by
+# `just dev audit complexity`, which reports without failing.
+#
+# The split is not a concession. The worst scores in this tree belong to guard
+# tests that walk the AST of every module to prove a structural invariant;
+# branch count and nesting are what those tests ARE, so gating them at a
+# production threshold would price the guard out rather than simplify it.
+# Production carries no such exemption and is gated at its current worst.
+#
+# Four of those guard blocks rank D against the `--max-absolute C` ceiling.
+# That regression reached the default branch unseen: the markdown step fails
+# earlier in the same CI job and aborts it, so the complexity step never ran.
+# A gate behind a red gate is not a gate.
+#
+# NOTE: the switch body is one continuation-joined logical line, so it must
+# never contain a `#` comment - PowerShell's `#` runs to the end of the joined
+# line and silently swallows every case after it, closing braces included.
 _dev-lint target='all':
   switch ("{{target}}") { \
     "python" { {{uvr}} ruff check src tools ; break } \
@@ -164,15 +194,26 @@ _dev-lint target='all':
       break \
     } \
     "complexity" { \
-      {{uvr}} python tools/complexity_gate.py ; \
+      $env:PYTHONIOENCODING = "utf-8" ; \
+      {{uvr}} complexipy src/vaultspec_rag ; \
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
+      Push-Location src ; \
+      {{uvr}} xenon vaultspec_rag --max-absolute C --max-modules C --max-average A -e "vaultspec_rag/tests/*" ; \
+      $xenonExit = $LASTEXITCODE ; \
+      if ($xenonExit -ne 0) { {{uvr}} radon cc vaultspec_rag -s -n C } \
+      Pop-Location ; \
+      exit $xenonExit \
+    } \
+    "nesting" { \
+      {{uvr}} ruff check src --select PLR1702 --preview ; \
+      break \
+    } \
+    "size" { \
+      {{uvr}} pylint src/vaultspec_rag --rcfile=pyproject.toml --recursive=y --score=n ; \
       break \
     } \
     "type-strict" { \
       {{uvr}} basedpyright ; \
-      break \
-    } \
-    "module-length" { \
-      {{uvr}} python tools/module_length.py ; \
       break \
     } \
     "docs-version" { \
@@ -209,7 +250,9 @@ _dev-lint target='all':
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
       just _dev-lint complexity ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-      just _dev-lint module-length ; \
+      just _dev-lint nesting ; \
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
+      just _dev-lint size ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
       just _dev-lint docs-version ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
@@ -220,7 +263,7 @@ _dev-lint target='all':
     } \
     default { \
       Write-Host "unknown dev lint target: {{target}}" -ForegroundColor Red ; \
-      Write-Host "  targets: python type type-strict links toml markdown workflow complexity module-length docs-version citations absolute-imports all" -ForegroundColor Red ; \
+      Write-Host "  targets: python type type-strict links toml markdown workflow complexity nesting size docs-version citations absolute-imports all" -ForegroundColor Red ; \
       exit 1 \
     } \
   }
@@ -275,12 +318,67 @@ _dev-fix target='all':
 # (CVE-2025-3000) and lifted the transitive setuptools pin past the PYSEC-2026-3447
 # fix (83.0.0). A future advisory with no upstream fix should be suppressed with
 # --ignore-until-fixed (self-expiring), never a bare --ignore without a comment.
-_dev-audit target:
+#
+# "deps" GATES: a published advisory against a pinned version is a verdict,
+# not a lead, and the `ci` recipe stops on it.
+#
+# Every other target is ADVISORY and exits 0 even with findings. Each yields a
+# lead to confirm rather than a verdict - vulture infers reachability it cannot
+# always see, bandit reports this project's deliberate subprocess and
+# filter-construction design alongside anything real, and deptry reports
+# imports that resolve transitively, which is a supply-chain risk rather than a
+# build break. The exit code is stated here because a check whose documented
+# contract and actual exit code disagree is worse than no check: this repo
+# shipped a CI step labelled "report-only" that gated, and a complexity gate
+# that never ran because an earlier step aborted the job.
+#
+# Promote a dimension into `dev lint` once its finding count reaches zero and
+# the gate can hold that line.
+#
+# NOTE: the switch body is one continuation-joined logical line, so it must
+# never contain a `#` comment - PowerShell's `#` runs to the end of the joined
+# line and silently swallows every case after it, closing braces included.
+_dev-audit target='all':
   switch ("{{target}}") { \
     "deps" { uv audit --locked --preview-features audit ; break } \
+    "security" { {{uvr}} bandit -c pyproject.toml -r src/vaultspec_rag -x "src/vaultspec_rag/tests" -q ; exit 0 } \
+    "dead-code" { {{uvr}} vulture ; exit 0 } \
+    "dependencies" { {{uvr}} deptry src/vaultspec_rag ; exit 0 } \
+    "duplication" { \
+      if (Get-Command npx -ErrorAction SilentlyContinue) { \
+        npx --yes jscpd@4 src/vaultspec_rag --min-lines 20 --min-tokens 70 --reporters console \
+      } else { \
+        Write-Host "npx not found - skipping duplication scan" -ForegroundColor Yellow \
+      } \
+      exit 0 \
+    } \
+    "complexity" { \
+      $env:PYTHONIOENCODING = "utf-8" ; \
+      {{uvr}} complexipy src/vaultspec_rag/tests --failed ; \
+      Push-Location src ; \
+      {{uvr}} xenon vaultspec_rag --max-absolute C --max-modules C --max-average A ; \
+      Pop-Location ; \
+      exit 0 \
+    } \
+    "all" { \
+      Write-Host "=== dependency advisories ===" -ForegroundColor Cyan ; \
+      just _dev-audit deps ; \
+      Write-Host "=== security ===" -ForegroundColor Cyan ; \
+      just _dev-audit security ; \
+      Write-Host "=== dead code ===" -ForegroundColor Cyan ; \
+      just _dev-audit dead-code ; \
+      Write-Host "=== undeclared dependencies ===" -ForegroundColor Cyan ; \
+      just _dev-audit dependencies ; \
+      Write-Host "=== duplication ===" -ForegroundColor Cyan ; \
+      just _dev-audit duplication ; \
+      Write-Host "=== test-tree cognitive complexity ===" -ForegroundColor Cyan ; \
+      just _dev-audit complexity ; \
+      exit 0 \
+    } \
     default { \
       Write-Host "unknown dev audit target: {{target}}" -ForegroundColor Red ; \
-      Write-Host "  targets: deps" -ForegroundColor Red ; \
+      Write-Host "  targets: deps security dead-code dependencies duplication complexity all" -ForegroundColor Red ; \
+      Write-Host "  (the cross-dimension ranking report is 'just dev health')" -ForegroundColor Red ; \
       exit 1 \
     } \
   }
