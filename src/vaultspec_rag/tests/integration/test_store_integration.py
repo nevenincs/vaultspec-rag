@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..._store_search import HybridSearchRequest
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -71,9 +73,11 @@ class TestVaultStore:
 
         query_vec = model.encode_query("architecture decision")
         results = store.hybrid_search(
-            query_vector=query_vec.tolist(),
-            _query_text="architecture decision",
-            limit=5,
+            HybridSearchRequest(
+                query_vector=query_vec.tolist(),
+                query_text="architecture decision",
+                limit=5,
+            )
         )
         assert len(results) > 0
         # Each result should have an id and path
@@ -139,10 +143,12 @@ class TestVaultStore:
         sparse_vec = model.encode_query_sparse(query_text)
 
         results = store.hybrid_search(
-            query_vector=query_vec.tolist(),
-            _query_text=query_text,
-            limit=5,
-            sparse_vector=sparse_vec,
+            HybridSearchRequest(
+                query_vector=query_vec.tolist(),
+                query_text=query_text,
+                limit=5,
+                sparse_vector=sparse_vec,
+            )
         )
         assert len(results) > 0
         for r in results:
@@ -165,9 +171,11 @@ class TestVaultStore:
             query_vec = model.encode_query("anything")
 
             results = store.hybrid_search(
-                query_vector=query_vec.tolist(),
-                _query_text="anything",
-                limit=5,
+                HybridSearchRequest(
+                    query_vector=query_vec.tolist(),
+                    query_text="anything",
+                    limit=5,
+                )
             )
             assert results == []
         finally:

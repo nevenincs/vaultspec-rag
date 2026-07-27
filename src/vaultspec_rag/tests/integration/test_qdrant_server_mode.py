@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..._store_search import HybridSearchRequest
 from ...config import EnvVar, reset_config
 from ...progress import NullProgressReporter
 from ...qdrant_runtime._resolve import resolve_binary
@@ -403,9 +404,11 @@ class TestServerModeWatcherEviction:
 
         def _hits() -> bool:
             results = store.hybrid_search(
-                query_vector=q_vec,
-                _query_text="uniquewatchertoken doomed decision",
-                limit=10,
+                HybridSearchRequest(
+                    query_vector=q_vec,
+                    query_text="uniquewatchertoken doomed decision",
+                    limit=10,
+                )
             )
             return any("uniquewatchertoken" in r.get("content", "") for r in results)
 
@@ -441,7 +444,11 @@ class TestServerModeWatcherEviction:
             # eviction from a search/store that simply stopped returning hits).
             init_vec = embedding_model.encode_query("Init initial body").tolist()
             init_results = store.hybrid_search(
-                query_vector=init_vec, _query_text="Init initial body", limit=10
+                HybridSearchRequest(
+                    query_vector=init_vec,
+                    query_text="Init initial body",
+                    limit=10,
+                )
             )
             assert any("Initial body" in r.get("content", "") for r in init_results), (
                 "kept sibling doc must still be searchable after eviction"

@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..._store_search import HybridSearchRequest
+
 if TYPE_CHECKING:
     from ..conftest import RagComponentsWithManifest as _RagComponents
 
@@ -400,10 +402,16 @@ class TestRerank:
 
         # Get real results from a vault search
         results = searcher.store.hybrid_search(
-            query_vector=rag_components["model"].encode_query("architecture").tolist(),
-            _query_text="architecture",
-            sparse_vector=rag_components["model"].encode_query_sparse("architecture"),
-            limit=10,
+            HybridSearchRequest(
+                query_vector=rag_components["model"]
+                .encode_query("architecture")
+                .tolist(),
+                query_text="architecture",
+                sparse_vector=rag_components["model"].encode_query_sparse(
+                    "architecture"
+                ),
+                limit=10,
+            )
         )
         from ... import SearchResult
 
@@ -445,14 +453,16 @@ class TestRerank:
         searcher._reranker_enabled = True
 
         results = searcher.store.hybrid_search(
-            query_vector=rag_components["model"]
-            .encode_query("dispatch architecture")
-            .tolist(),
-            _query_text="dispatch architecture",
-            sparse_vector=rag_components["model"].encode_query_sparse(
-                "dispatch architecture",
-            ),
-            limit=10,
+            HybridSearchRequest(
+                query_vector=rag_components["model"]
+                .encode_query("dispatch architecture")
+                .tolist(),
+                query_text="dispatch architecture",
+                sparse_vector=rag_components["model"].encode_query_sparse(
+                    "dispatch architecture",
+                ),
+                limit=10,
+            )
         )
         from ... import SearchResult
 

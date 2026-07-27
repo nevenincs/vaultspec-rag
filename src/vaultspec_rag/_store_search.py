@@ -13,6 +13,7 @@ the rest of the local-mode store layer.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -31,7 +32,30 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["_VaultSearchMixin"]
+__all__ = ["HybridSearchRequest", "_VaultSearchMixin"]
+
+
+@dataclass(frozen=True, slots=True)
+class HybridSearchRequest:
+    """One dense/sparse store retrieval operation and its filters."""
+
+    query_vector: list[float]
+    query_text: str
+    filters: dict[str, str] | None = None
+    limit: int = 5
+    sparse_vector: SparseResult | None = None
+    like_ids: list[str | int] | None = None
+    unlike_ids: list[str | int] | None = None
+    exclude_domains: list[str] | None = None
+    only_domains: list[str] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _HybridQuery:
+    prefetch: list[Any]
+    dense_query: Any
+    query_filter: Filter | None
+    limit: int
 
 
 class _VaultSearchMixin:
@@ -65,29 +89,13 @@ class _VaultSearchMixin:
 
     def hybrid_search(
         self,
-        query_vector: list[float],
-        _query_text: str,
-        filters: dict[str, str] | None = None,
-        limit: int = 5,
-        *,
-        sparse_vector: SparseResult | None = None,
-        like_ids: list[str | int] | None = None,
-        unlike_ids: list[str | int] | None = None,
+        request: HybridSearchRequest,
     ) -> list[dict[str, Any]]:
         """Execute hybrid dense + sparse search with RRF on vault_docs.
 
         Args:
-            query_vector: Dense query embedding.
-            query_text: Kept for interface compat (search uses
-                sparse_vector).
-            filters: Metadata filters (doc_type, feature, date).
-            limit: Max results to return.
-            sparse_vector: Pre-computed SPLADE sparse embedding
-                with ``.indices`` and ``.values`` attributes.
-            like_ids: Optional list of document IDs or point IDs to guide
-                search (positive feedback).
-            unlike_ids: Optional list of document IDs or point IDs to push
-                search away (negative feedback).
+            request: Dense/sparse vectors, filters, result limit, and optional
+                feedback values for this retrieval.
 
         Returns:
             List of result dicts with payload fields and
@@ -97,50 +105,34 @@ class _VaultSearchMixin:
             UnexpectedResponse: Logged and caught internally;
                 triggers dense-only fallback.
         """
-        query_filter = self._build_filter(filters)
-        dense_vec: list[float] = query_vector
+        query_filter = self._build_filter(request.filters)
+        dense_vec = request.query_vector
         dense_query: Any = self._build_dense_query(
             dense_vec,
-            like_ids,
-            unlike_ids,
+            request.like_ids,
+            request.unlike_ids,
             id_resolver=self._resolve_vault_feedback_id,
         )
         prefetch: list[Any] = self._build_prefetch(
-            dense_query, sparse_vector, query_filter, limit
+            dense_query, request.sparse_vector, query_filter, request.limit
         )
         scored_points = self._execute_hybrid_query(
-            self.TABLE_NAME, "vault", prefetch, dense_query, query_filter, limit
+            self.TABLE_NAME,
+            "vault",
+            _HybridQuery(prefetch, dense_query, query_filter, request.limit),
         )
 
         return self._points_to_dicts(scored_points, "doc_id")
 
     def hybrid_search_codebase(
         self,
-        query_vector: list[float],
-        _query_text: str,
-        filters: dict[str, str] | None = None,
-        limit: int = 5,
-        *,
-        sparse_vector: SparseResult | None = None,
-        like_ids: list[str | int] | None = None,
-        unlike_ids: list[str | int] | None = None,
-        exclude_domains: list[str] | None = None,
-        only_domains: list[str] | None = None,
+        request: HybridSearchRequest,
     ) -> list[dict[str, Any]]:
         """Execute hybrid dense + sparse search with RRF on codebase_docs.
 
         Args:
-            query_vector: Dense query embedding.
-            query_text: Kept for interface compat (search uses
-                sparse_vector).
-            filters: Codebase filters (language, path, etc.).
-            limit: Max results to return.
-            sparse_vector: Pre-computed SPLADE sparse embedding
-                with ``.indices`` and ``.values`` attributes.
-            like_ids: Optional list of chunk IDs or point IDs to guide
-                search (positive feedback).
-            unlike_ids: Optional list of chunk IDs or point IDs to push
-                search away (negative feedback).
+            request: Dense/sparse vectors, filters, result limit, optional
+                feedback values, and code-domain constraints for retrieval.
 
         Returns:
             List of result dicts with payload fields and
@@ -151,49 +143,45 @@ class _VaultSearchMixin:
                 triggers dense-only fallback.
         """
         query_filter = self._build_code_filter(
-            filters, exclude_domains=exclude_domains, only_domains=only_domains
+            request.filters,
+            exclude_domains=request.exclude_domains,
+            only_domains=request.only_domains,
         )
-        dense_vec: list[float] = query_vector
-        dense_query: Any = self._build_dense_query(dense_vec, like_ids, unlike_ids)
+        dense_vec = request.query_vector
+        dense_query: Any = self._build_dense_query(
+            dense_vec, request.like_ids, request.unlike_ids
+        )
         prefetch: list[Any] = self._build_prefetch(
-            dense_query, sparse_vector, query_filter, limit
+            dense_query,
+            request.sparse_vector,
+            query_filter,
+            request.limit,
         )
         scored_points = self._execute_hybrid_query(
             self.CODE_TABLE_NAME,
             "code",
-            prefetch,
-            dense_query,
-            query_filter,
-            limit,
+            _HybridQuery(prefetch, dense_query, query_filter, request.limit),
         )
 
         return self._points_to_dicts(scored_points, "chunk_id")
 
     def hybrid_search_document(
         self,
-        query_vector: list[float],
-        _query_text: str,
-        filters: dict[str, str] | None = None,
-        limit: int = 5,
-        *,
-        sparse_vector: SparseResult | None = None,
+        request: HybridSearchRequest,
     ) -> list[dict[str, Any]]:
         """Execute hybrid search against the independent document collection."""
-        query_filter = self._build_document_filter(filters)
-        dense_query: Any = query_vector
+        query_filter = self._build_document_filter(request.filters)
+        dense_query: Any = request.query_vector
         prefetch = self._build_prefetch(
             dense_query,
-            sparse_vector,
+            request.sparse_vector,
             query_filter,
-            limit,
+            request.limit,
         )
         scored_points = self._execute_hybrid_query(
             self.DOCUMENT_TABLE_NAME,
             "document",
-            prefetch,
-            dense_query,
-            query_filter,
-            limit,
+            _HybridQuery(prefetch, dense_query, query_filter, request.limit),
         )
         return self._points_to_dicts(scored_points, "document_id")
 
@@ -301,10 +289,7 @@ class _VaultSearchMixin:
         self,
         collection_name: str,
         source: IndexSource,
-        prefetch: list[Any],
-        dense_query: Any,
-        query_filter: Filter | None,
-        limit: int,
+        query: _HybridQuery,
     ) -> list[ScoredPoint]:
         from qdrant_client import models
         from qdrant_client.http.exceptions import (
@@ -320,22 +305,22 @@ class _VaultSearchMixin:
             self.ensure_table()
 
         with self._point_lock(collection_name):
-            if len(prefetch) < 2:
+            if len(query.prefetch) < 2:
                 results = self.client.query_points(
                     collection_name=collection_name,
-                    query=dense_query,
+                    query=query.dense_query,
                     using="dense",
-                    limit=limit,
-                    query_filter=query_filter,
+                    limit=query.limit,
+                    query_filter=query.query_filter,
                 )
                 return results.points  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]  # qdrant QueryResponse.points is untyped in stubs
 
             try:
                 results = self.client.query_points(
                     collection_name=collection_name,
-                    prefetch=prefetch,
+                    prefetch=query.prefetch,
                     query=models.RrfQuery(rrf=models.Rrf(k=60)),
-                    limit=limit,
+                    limit=query.limit,
                 )
                 return results.points  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]  # qdrant QueryResponse.points is untyped in stubs
             except (
@@ -349,10 +334,10 @@ class _VaultSearchMixin:
                 )
                 fallback = self.client.query_points(
                     collection_name=collection_name,
-                    query=dense_query,
+                    query=query.dense_query,
                     using="dense",
-                    limit=limit,
-                    query_filter=query_filter,
+                    limit=query.limit,
+                    query_filter=query.query_filter,
                 )
                 return fallback.points  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]  # qdrant QueryResponse.points is untyped in stubs
 
