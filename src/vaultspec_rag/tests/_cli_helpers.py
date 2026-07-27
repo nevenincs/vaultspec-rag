@@ -14,21 +14,17 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
     reset_config as reset_base_config,
 )
 
-from ..cli import (
-    _display_search_results,
-    _display_service_error,
-    _is_our_service,
-    _read_service_status,
-    _try_http_search,
-    _write_service_status,
-    app,
-)
+from ..cli import app
+from ..cli._process import _is_our_service
+from ..cli._render import _display_search_results, _display_service_error
+from ..cli._service_status import _read_service_status, _write_service_status
 from ..config import EnvVar
 from ..config import reset_config as reset_rag_config
 from ..serviceclient._compat import DataPlaneService, classify_service_version
 from ..serviceclient._transport import (
     DEFAULT_SEARCH_TIMEOUT_SECONDS,
     _get_search_timeout,
+    _try_http_search,
 )
 from ..torch_config._constants import TorchConfigAction
 from ._http_stubs import QuietHandler

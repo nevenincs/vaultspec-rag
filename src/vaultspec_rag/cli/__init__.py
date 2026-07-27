@@ -18,18 +18,24 @@ be a re-export with no caller. They are named in ``__all__`` because the import
 exists for its effect rather than for a symbol, and that is the difference
 between a deliberate side-effect import and one a later reader deletes as unused.
 
-What this package does export is the small set of names its own consumers reach
-through the package namespace rather than from the module that defines them:
-``console`` is read at call time through
+What this package exports is only what its own consumers reach through the
+package namespace rather than from the module that defines them: ``console``
+and ``TerminationResult``, both read at call time through
 ``import vaultspec_rag.cli as _cli``. Reading them at call time keeps the
 command modules from importing ``_core`` and the process module at their own
 import time, which is what would put them in the decorator-registration cycle
-described above. Everything else is imported from the module that owns it.
+described above.
+
+Everything else is imported from the module that owns it. That sentence used
+to be aspirational: twenty private names were re-exported here, and not one
+had a production reader by any route - no from-import, no attribute access.
+Production already reached each of them from its owning module, so the entry
+here existed for tests alone. A name kept alive that way proves nothing about
+the code that ships, and it makes this file look like the home of behaviour
+that lives elsewhere.
 """
 
 from __future__ import annotations
-
-from ..serviceclient._transport import _try_http_reindex, _try_http_search
 
 # Command submodules, imported purely so their decorators register against the
 # apps ``_app`` nests. Nothing here is re-exported.
@@ -55,50 +61,13 @@ from . import (
 )
 from ._app import app, run_cli
 from ._core import console
-from ._gpu_errors import _cpu_only_message, _no_gpu_message, _no_torch_message
-from ._process import (
-    TerminationResult,
-    _is_our_service,
-    _port_is_listening,
-    _service_child_env,
-    _spawn_service,
-    _terminate_pid,
-)
-from ._render import (
-    _display_search_results,
-    _display_service_error,
-    _render_install_report,
-    _render_uninstall_report,
-)
-from ._search import (
-    _suppress_hf_progress,  # pyright: ignore[reportPrivateUsage]  # _search lacks __all__; read through the package by its consumers
-)
-from ._service_status import (
-    _append_lifecycle_shutdown_log,
-    _log_file,
-    _read_service_status,
-    _status_file,
-    _write_service_status,
-)
+from ._process import TerminationResult
 
 __all__ = [
     "TerminationResult",
-    "_append_lifecycle_shutdown_log",
-    "_cpu_only_message",
-    "_display_search_results",
-    "_display_service_error",
     "_index",
     "_install",
-    "_is_our_service",
-    "_log_file",
-    "_no_gpu_message",
-    "_no_torch_message",
-    "_port_is_listening",
     "_preprocess",
-    "_read_service_status",
-    "_render_install_report",
-    "_render_uninstall_report",
-    "_service_child_env",
     "_service_doctor",
     "_service_jobs",
     "_service_lifecycle",
@@ -111,16 +80,9 @@ __all__ = [
     "_service_stop",
     "_service_storage",
     "_service_watcher",
-    "_spawn_service",
     "_status",
-    "_status_file",
     "_status_render",
     "_store",
-    "_suppress_hf_progress",
-    "_terminate_pid",
-    "_try_http_reindex",
-    "_try_http_search",
-    "_write_service_status",
     "app",
     "console",
     "run_cli",

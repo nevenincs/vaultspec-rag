@@ -225,7 +225,7 @@ class TestServiceLifecycleHelpers:
         """A socket bound and listening locally is reported as listening."""
         import socket
 
-        from ..cli import _port_is_listening
+        from ..cli._process import _port_is_listening
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind(("127.0.0.1", 0))
@@ -240,7 +240,7 @@ class TestServiceLifecycleHelpers:
         """An unbound ephemeral port returns False without raising."""
         import socket
 
-        from ..cli import _port_is_listening
+        from ..cli._process import _port_is_listening
 
         # Bind to find a free port, then close so it's unbound.
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -397,27 +397,27 @@ class TestServiceTokenIdentity:
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
     def test_token_match_returns_true(self) -> None:
-        from .. import cli
+        from ..cli._process import _is_our_service
 
         # A real daemon answering /health, and this process's own pid, which is
         # alive by construction rather than by assertion.
         with _health_service({"service_token": "abc"}) as (port, seen):
-            assert cli._is_our_service(os.getpid(), port=port, expected_token="abc")
+            assert _is_our_service(os.getpid(), port=port, expected_token="abc")
         assert seen == ["/health"]
 
     def test_token_mismatch_returns_false(self) -> None:
-        from .. import cli
+        from ..cli._process import _is_our_service
 
         # Token mismatch is authoritative - return False regardless of
         # whether the executable-name check would have passed.
         with _health_service({"service_token": "abc"}) as (port, _seen):
-            assert not cli._is_our_service(os.getpid(), port=port, expected_token="xyz")
+            assert not _is_our_service(os.getpid(), port=port, expected_token="xyz")
 
     def test_token_absent_in_response_falls_back(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Pre-upgrade daemon (no token in response) -> exe-name fallback."""
-        from .. import cli
+        from ..cli._process import _is_our_service
 
         # On Windows the exe-name check inspects the running pytest
         # process (always "python") so this hits the True branch.
@@ -426,7 +426,7 @@ class TestServiceTokenIdentity:
             _health_service({}) as (port, _seen),
             caplog.at_level("DEBUG", logger="vaultspec_rag.cli"),
         ):
-            result = cli._is_our_service(
+            result = _is_our_service(
                 os.getpid(),
                 port=port,
                 expected_token="abc",
@@ -443,22 +443,22 @@ class TestServiceTokenIdentity:
 
     def test_no_token_in_status_skips_token_check(self) -> None:
         """No expected_token (pre-upgrade service.json) -> exe-name only."""
-        from .. import cli
+        from ..cli._process import _is_our_service
 
         # The negative is proved against a server that would have answered:
         # it is bound and reachable for the whole call, so an empty request
         # log means the probe was skipped, not that it failed.
         with _health_service({"service_token": "irrelevant"}) as (port, seen):
-            cli._is_our_service(os.getpid(), port=port, expected_token=None)
+            _is_our_service(os.getpid(), port=port, expected_token=None)
             assert seen == []
 
     def test_health_probe_failure_falls_back(self) -> None:
         """Network failure on /health -> exe-name fallback, no exception."""
-        from .. import cli
+        from ..cli._process import _is_our_service
 
         # Nothing is bound on this port, so the probe fails for the reason
         # production fails: there is no daemon, not a function returning None.
-        result = cli._is_our_service(
+        result = _is_our_service(
             os.getpid(),
             port=_UNSERVED_PORT,
             expected_token="abc",

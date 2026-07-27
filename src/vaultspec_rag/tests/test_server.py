@@ -22,25 +22,27 @@ if TYPE_CHECKING:
     import httpx
     from starlette.applications import Starlette
 
+from ..capabilities import BackendCapabilities
 from ..config import EnvVar, reset_config
 from ..mcp._mcp import mcp
 from ..mcp._resources import analyze_feature
 from ..server import (
-    BackendCapabilities,
     HealthResponse,
     IndexResponse,
     IndexStatus,
     ProjectRootRequiredError,
     SearchResponse,
     SearchResultItem,
+    health_handler,
+)
+from ..server._lifecycle import _DiscoveryPublisher
+from ..server._utils import (
     _clamp_top_k,
     _default_root,
     _is_sensitive_path,
     _resolve_root,
     _validate_vault_root,
-    health_handler,
 )
-from ..server._lifecycle import _DiscoveryPublisher
 
 pytestmark = [pytest.mark.unit]
 

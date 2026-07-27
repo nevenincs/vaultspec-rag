@@ -719,15 +719,18 @@ class TestLifecycleShutdownLog:
         list in ``_append_lifecycle_shutdown_log`` fails the
         ``reason=cli_terminate`` assertion below; restoring it passes.
         """
-        from .. import cli
+        from ..cli._service_status import (
+            _append_lifecycle_shutdown_log,
+            _log_file,
+        )
 
-        cli._append_lifecycle_shutdown_log(
+        _append_lifecycle_shutdown_log(
             "cli_terminate",
             pid=123,
             platform="win32",
         )
 
-        content = cli._log_file().read_text(encoding="utf-8")
+        content = _log_file().read_text(encoding="utf-8")
         lines = content.splitlines()
         assert len(lines) == 1
         line = lines[0]
@@ -755,13 +758,16 @@ class TestLifecycleShutdownLog:
         ``logger.debug`` call in the ``except OSError`` branch fails the
         debug-record assertion; restoring it passes.
         """
-        from .. import cli
+        from ..cli._service_status import (
+            _append_lifecycle_shutdown_log,
+            _log_file,
+        )
 
-        occupied = cli._log_file()
+        occupied = _log_file()
         occupied.mkdir(parents=True, exist_ok=True)
 
         with caplog.at_level("DEBUG", logger="vaultspec_rag.cli"):
-            cli._append_lifecycle_shutdown_log("cli_terminate", pid=42)
+            _append_lifecycle_shutdown_log("cli_terminate", pid=42)
 
         # No exception escapes; the debug line is present.
         debug_records = [
@@ -803,7 +809,7 @@ class TestLifecycleShutdownLog:
         subject. The refusal to stop an unconfirmable process is covered
         where a live foreign pid is the recorded one.
         """
-        from .. import cli
+        from ..cli._service_status import _log_file
 
         creationflags = (
             subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
@@ -840,7 +846,7 @@ class TestLifecycleShutdownLog:
                 child.kill()
                 child.wait(timeout=10)
 
-        log_path = cli._log_file()
+        log_path = _log_file()
         assert log_path.exists(), (
             "a terminating stop must write the attribution audit line"
         )

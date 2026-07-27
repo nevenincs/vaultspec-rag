@@ -90,7 +90,8 @@ def test_maintenance_cycle_reclaims_only_time_confirmed_orphans(
     Aged empty orphan reclaimed; fresh orphan left waiting; reappearing
     root's grace clock cleared; cycles visible in the jobs registry.
     """
-    from ...cli import _spawn_service, _terminate_pid, _write_service_status
+    from ...cli._process import _spawn_service, _terminate_pid
+    from ...cli._service_status import _write_service_status
     from ...config import get_config
     from ._helpers import _get_ephemeral_port, _poll_health, _service_env
 
