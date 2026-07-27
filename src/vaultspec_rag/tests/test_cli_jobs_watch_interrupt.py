@@ -1,30 +1,29 @@
-"""Guard tests for the ``server jobs --watch`` interrupt path.
+"""Guard tests for the interruptible off-thread wait, and the jobs fetch.
 
-These are guard tests, not positive coverage. Their subject is that an operator
-interrupt is NOT swallowed and NOT deferred:
+These are guard tests, not positive coverage. Their subject is that an
+operator interrupt is NOT swallowed and NOT deferred:
 
-- the refresh runs off the main thread, so an interrupt arriving while the
-  service has yet to answer is serviced immediately instead of after the
-  request's timeout (on Windows a thread parked in a blocking socket read
-  reaches no interpreter check, so an inline refresh makes Ctrl+C inert for
-  however long the service takes);
-- the interrupt terminates the view on the conventional interrupted status
-  rather than the success the operator never got;
-- the refresh is a read request, so abandoning one mid-flight cannot leave the
-  service modified.
+- the wait runs off the main thread, so an interrupt arriving while a service
+  has yet to answer is serviced immediately instead of after the request's
+  timeout (on Windows a thread parked in a blocking socket read reaches no
+  interpreter check, so an inline wait makes Ctrl+C inert for however long the
+  service takes);
+- a failing call reaches the caller as its own exception rather than as a
+  missing result, which a caller would misread as a service being down;
+- the worker never outlives the process.
 
-The first test asserts the interrupt lands while the refresh is *still
-blocked*: run the refresh inline again and it fails, because the main thread
-never reaches its wait.
+The first test asserts the interrupt lands while the call is *still blocked*:
+run it inline again and it fails, because the main thread never reaches its
+wait. The remaining test holds the jobs fetch to being a read.
 
-The off-thread mechanism itself is shared with the start command's health
-wait, so those tests drive it at its own home rather than through a
-jobs-local alias, and a separate test holds the watch loop to using it.
+The live jobs view no longer polls on the main thread - it is an application
+that owns its own event loop and runs its fetches on Textual workers, and is
+covered by its own tests. What remains here is the shared wait, which the
+start command's health poll still uses, and the fetch those views share.
 """
 
 from __future__ import annotations
 
-import pathlib
 import threading
 import time
 
@@ -32,7 +31,6 @@ import pytest
 from typer.testing import CliRunner
 
 from ..cli import _service_jobs as jobs
-from ..cli import app
 from ..cli._process import _call_interruptibly
 
 pytestmark = [pytest.mark.unit]
@@ -101,61 +99,6 @@ def test_a_failed_refresh_is_reported_not_flattened_to_no_result() -> None:
     with pytest.raises(RuntimeError) as caught:
         _call_interruptibly(failing_refresh)
     assert caught.value is boom
-
-
-def test_the_watch_loop_owns_no_second_off_thread_wait() -> None:
-    """The watch loop must not grow its own copy of the off-thread wait.
-
-    Two copies of this mechanism would drift into a Ctrl+C that works in one
-    operator view and not the other. The guard is therefore about which
-    implementation exists, which the source answers directly - a counter
-    wrapped around the helper could only ever report that the call it replaced
-    was made.
-
-    Proven able to fail: replacing the ``_call_interruptibly(fetch)`` call in
-    the watch loop with a locally constructed ``threading.Thread`` fails both
-    assertions by name - the routing one on the missing call, the second-copy
-    one on the new thread; restored, both pass.
-    """
-    source = pathlib.Path(jobs.__file__).read_text(encoding="utf-8").splitlines()
-    watch_loop = "\n".join(line for line in source if not line.lstrip().startswith("#"))
-
-    assert "from ._process import _call_interruptibly" in watch_loop, (
-        "the watch loop must take the off-thread wait from the module that owns it"
-    )
-    assert "_call_interruptibly(fetch)" in watch_loop, (
-        "the refresh must route through the shared helper, not a local copy"
-    )
-    assert "threading.Thread(" not in watch_loop, (
-        "a second off-thread wait here is the drift this guard exists to prevent"
-    )
-
-
-def test_the_watch_loop_refreshes_against_a_real_service() -> None:
-    """Every refresh in a bounded watch run reaches the service."""
-    from ._cli_helpers import _jobs_empty_contract_server
-
-    server, thread, requests = _jobs_empty_contract_server()
-    try:
-        result = runner.invoke(
-            app,
-            [
-                "server",
-                "jobs",
-                "--watch",
-                "--refresh-count",
-                "2",
-                "--port",
-                str(server.server_address[1]),
-            ],
-        )
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
-
-    assert result.exit_code == 0
-    assert len(requests) == 2, "each refresh must reach the service"
 
 
 def test_the_watch_refresh_is_a_read_only_request() -> None:

@@ -92,6 +92,32 @@ def _format_seconds(raw: object) -> str:
     return _duration_phrase(int(raw_seconds), days=False)
 
 
+def _compact_duration(raw: object) -> str:
+    """Render a duration for a fixed-width column, largest two units.
+
+    The prose phrase is unusable in a table: "3 minutes 20 seconds" is wider
+    than the column that has to hold it, and its width changes with the value.
+    This is the same cascade in a bounded form, and it is a display choice
+    rather than a second opinion about the duration.
+
+    Returns an em dash for a missing measure, so an absent estimate reads as
+    absent instead of as zero.
+    """
+    if not isinstance(raw, int | float) or isinstance(raw, bool):
+        return "—"
+    total = int(max(0.0, float(raw)))
+    if total < 60:
+        return f"{total}s"
+    minutes, seconds = divmod(total, 60)
+    if minutes < 60:
+        return f"{minutes}m{seconds:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours}h{minutes:02d}m"
+    days, hours = divmod(hours, 24)
+    return f"{days}d{hours:02d}h"
+
+
 def _format_milliseconds(raw: object) -> str:
     if not isinstance(raw, int | float):
         return "not reported"
