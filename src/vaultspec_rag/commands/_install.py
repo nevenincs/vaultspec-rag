@@ -57,7 +57,7 @@ from ._mode import (
     resolve_rag_mode,
 )
 from ._models import InstallReport
-from ._torch_flow import _run_torch_config_install
+from ._torch_flow import TorchInstallOptions, _run_torch_config_install
 from ._workspace import (
     _ensure_workspace_dirs,
     _init_core_context,
@@ -1069,13 +1069,15 @@ def _install_run_unchecked(
     _run_torch_config_install(
         target=target,
         report=report,
-        dry_run=dry_run,
-        force=force,
-        configure_torch=configure_torch,
-        assume_yes=assume_yes,
-        sync_after=sync_after,
-        confirm=confirm,
-        torch_group=torch_group,
+        options=TorchInstallOptions(
+            dry_run=dry_run,
+            force=force,
+            configure_torch=configure_torch,
+            assume_yes=assume_yes,
+            sync_after=sync_after,
+            confirm=confirm,
+            torch_group=torch_group,
+        ),
     )
     if not dry_run:
         _maybe_warn_hf_auth(report)
