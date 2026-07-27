@@ -127,9 +127,6 @@ def index_all_domains(
     )
 
 
-# Source of an activity: the documentation vault, the source codebase, or
-# the service's own scheduled storage maintenance.
-Source = Literal["vault", "code", "document", "maintenance"]
 # What initiated the activity: a reindex tool call, the filesystem watcher,
 # or the daemon's periodic schedule.
 Trigger = Literal["tool", "watcher", "schedule"]
@@ -305,7 +302,7 @@ def register_on_job_complete(callback: Callable[[float], None]) -> None:
 
 
 def record_start(
-    source: Source,
+    source: JobSource,
     trigger: Trigger,
     *,
     project_root: Path | None = None,
@@ -803,7 +800,7 @@ def _admit_index_job(
     created = outcome.code == "job_created"
     if created:
         record_start(
-            "vault" if source is JobSource.VAULT else "code",
+            source,
             "tool",
             project_root=resolved_root,
             command=command,
@@ -1075,7 +1072,7 @@ def _prepare_index_job_activation(
 ) -> JobOutcome:
     """Publish legacy observability and bind execution outside the event loop."""
     root = Path(snapshot.spec.project_root) if snapshot.spec.project_root else None
-    source = snapshot.spec.source.value
+    source = snapshot.spec.source
     trigger: Trigger = (
         cast("Trigger", snapshot.initiator.kind)
         if snapshot.initiator.kind in {"watcher", "schedule"}
