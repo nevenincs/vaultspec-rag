@@ -494,50 +494,53 @@ def _copy_preview_node(
     restore_file_snapshot(destination, snapshot)
 
 
-def _reconcile_project_mcp(
-    mcp_target: Path,
-    target: Path,
-    report: InstallReport,
-    dry_run: bool,
-    force: bool,
-    mode: InstallMode,
-    mode_flipped: bool,
-    fresh_providers: tuple[Tool, ...] | None,
-) -> None:
+@dataclass(frozen=True, slots=True)
+class _ProjectMcpReconciliationRequest:
+    mcp_target: Path
+    target: Path
+    report: InstallReport
+    dry_run: bool
+    force: bool
+    mode: InstallMode
+    mode_flipped: bool
+    fresh_providers: tuple[Tool, ...] | None
+
+
+def _reconcile_project_mcp(request: _ProjectMcpReconciliationRequest) -> None:
     """Run Core's project MCP reconciliation against one concrete target."""
-    projected_mode_transition = dry_run and mode_flipped
+    projected_mode_transition = request.dry_run and request.mode_flipped
     try:
         result = mcp_sync(
-            dry_run=dry_run and not projected_mode_transition,
-            force=force,
+            dry_run=request.dry_run and not projected_mode_transition,
+            force=request.force,
             prune=True,
-            mode=mode,
+            mode=request.mode,
             provider="all",
             scope="project",
-            target_dir=mcp_target,
-            enrolled=fresh_providers,
+            target_dir=request.mcp_target,
+            enrolled=request.fresh_providers,
         )
     except Exception as exc:
         logger.error("project MCP sync failed during install: %s", exc)
-        report.mcp_errors.append(f"project MCP sync failed: {exc}")
+        request.report.mcp_errors.append(f"project MCP sync failed: {exc}")
         return
-    if dry_run:
-        _rewrite_preview_paths(result, mcp_target, target)
-    report.sync_results.append(result)
-    report.mcp_sync_results.append(result)
-    if dry_run and mode_flipped and not force:
+    if request.dry_run:
+        _rewrite_preview_paths(result, request.mcp_target, request.target)
+    request.report.sync_results.append(result)
+    request.report.mcp_sync_results.append(result)
+    if request.dry_run and request.mode_flipped and not request.force:
         migration = mcp_sync(
             dry_run=False,
-            mode=mode,
+            mode=request.mode,
             force_managed=frozenset({RAG_DISTRIBUTION_NAME}),
             provider="all",
             scope="project",
-            target_dir=mcp_target,
-            enrolled=fresh_providers,
+            target_dir=request.mcp_target,
+            enrolled=request.fresh_providers,
         )
-        _rewrite_preview_paths(migration, mcp_target, target)
-        report.sync_results.append(migration)
-        report.mcp_sync_results.append(migration)
+        _rewrite_preview_paths(migration, request.mcp_target, request.target)
+        request.report.sync_results.append(migration)
+        request.report.mcp_sync_results.append(migration)
 
 
 def _run_core_sync(
@@ -581,25 +584,29 @@ def _run_core_sync(
         if dry_run:
             Context().run(
                 _reconcile_project_mcp,
-                mcp_target,
-                target,
-                report,
-                dry_run,
-                force,
-                mode,
-                mode_flipped,
-                fresh_providers,
+                _ProjectMcpReconciliationRequest(
+                    mcp_target,
+                    target,
+                    report,
+                    dry_run,
+                    force,
+                    mode,
+                    mode_flipped,
+                    fresh_providers,
+                ),
             )
         else:
             _reconcile_project_mcp(
-                mcp_target,
-                target,
-                report,
-                dry_run,
-                force,
-                mode,
-                mode_flipped,
-                fresh_providers,
+                _ProjectMcpReconciliationRequest(
+                    mcp_target,
+                    target,
+                    report,
+                    dry_run,
+                    force,
+                    mode,
+                    mode_flipped,
+                    fresh_providers,
+                )
             )
 
     _finish_fresh_provider_enrollment(
