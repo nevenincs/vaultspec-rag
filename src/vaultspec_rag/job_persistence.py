@@ -8,7 +8,7 @@ import math
 import os
 import uuid
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, cast
 
 from ._atomic_write import fsync_directory
 from .job_models import (
@@ -75,19 +75,6 @@ class PersistenceWriteError(Exception):
     def __init__(self, detail: str, *, published: bool) -> None:
         super().__init__(detail)
         self.published = published
-
-
-class _MoveFileExW(Protocol):
-    argtypes: list[object]
-    restype: object
-
-    def __call__(
-        self,
-        existing_path: str,
-        new_path: str,
-        flags: int,
-        /,
-    ) -> int: ...
 
 
 def load_persisted_state(path: Path) -> PersistedManagerState:
@@ -166,17 +153,16 @@ def _atomic_replace(source: Path, destination: Path) -> None:
     ladder live in ``_atomic_write``. What stays here is the translation: a
     sync failure means the state IS published and only its crash-durability is
     in doubt, which this layer reports as ``published=True`` so a caller does
-    not roll back a write every reader can already see.
+    not roll back a write every reader can already see. Any other ``OSError``
+    means the replace itself failed - the Windows write-through move is atomic
+    and durable in one call, so a failure there published nothing - and
+    propagates for the caller to report as an unpublished write.
     """
     from ._atomic_write import NotDurableError, replace_durably
 
     try:
         replace_durably(source, destination)
     except NotDurableError as exc:
-        raise PersistenceWriteError(str(exc), published=True) from exc
-    except OSError as exc:
-        if os.name != "nt":
-            raise
         raise PersistenceWriteError(str(exc), published=True) from exc
 
 
