@@ -11,9 +11,10 @@ import functools
 import re
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, NoReturn, cast
+from typing import TYPE_CHECKING, Annotated, Any, NoReturn, cast
 
 import typer
+from typer.core import TyperCommand, TyperOption
 
 import vaultspec_rag.cli as _cli
 
@@ -811,6 +812,142 @@ class _JobControlFailureRequest:
     data: dict[str, object] | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _ServiceJobsOptions:
+    limit: int = 20
+    state: str | None = None
+    index: str | None = None
+    started_by: str | None = None
+    query: str | None = None
+    failed: bool = False
+    job_id: str | None = None
+    since: float | None = None
+    port: int | None = None
+    json_mode: bool = False
+    watch: bool = False
+    interval: float = 2.0
+    refresh_count: int | None = None
+
+
+class _ServiceJobsCommand(TyperCommand):
+    """Parse the jobs collection options into one command request."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.params.extend(
+            (
+                TyperOption(
+                    param_decls=["--limit"],
+                    type=int,
+                    default=20,
+                    help="Maximum number of matching jobs to show.",
+                ),
+                TyperOption(
+                    param_decls=["--state"],
+                    type=str,
+                    default=None,
+                    help=(
+                        "Filter by job state: active, waiting, finished, failed, "
+                        "or cancelled."
+                    ),
+                ),
+                TyperOption(
+                    param_decls=["--index"],
+                    type=str,
+                    default=None,
+                    help="Filter by index type: vault or code.",
+                ),
+                TyperOption(
+                    param_decls=["--started-by"],
+                    type=str,
+                    default=None,
+                    help=(
+                        "Filter by who started the job: manual requests or "
+                        "automatic updates."
+                    ),
+                ),
+                TyperOption(
+                    param_decls=["--query", "-q"],
+                    type=str,
+                    default=None,
+                    help="Filter by text in job id, outcome, or progress.",
+                ),
+                TyperOption(
+                    param_decls=["--failed"],
+                    default=False,
+                    is_flag=True,
+                    help="Show only failed jobs.",
+                ),
+                TyperOption(
+                    param_decls=["--job-id"],
+                    type=str,
+                    default=None,
+                    help="Show details for a job id or prefix.",
+                ),
+                TyperOption(
+                    param_decls=["--since"],
+                    type=float,
+                    default=None,
+                    help="Show jobs updated within the last N seconds.",
+                ),
+                TyperOption(
+                    param_decls=["--port"],
+                    type=int,
+                    default=None,
+                    help="Service port (defaults to running service).",
+                ),
+                TyperOption(
+                    param_decls=["--json"],
+                    default=False,
+                    is_flag=True,
+                    help=(
+                        f"{JSON_OPTION_HELP} Always use this for scripted waits: "
+                        "the human summary line unconditionally contains the words "
+                        "'active' and 'waiting'."
+                    ),
+                ),
+                TyperOption(
+                    param_decls=["--watch"],
+                    default=False,
+                    is_flag=True,
+                    help="Continuously refresh the human jobs view.",
+                ),
+                TyperOption(
+                    param_decls=["--interval"],
+                    type=float,
+                    default=2.0,
+                    help="Seconds between --watch refreshes.",
+                ),
+                TyperOption(
+                    param_decls=["--refresh-count"],
+                    type=int,
+                    default=None,
+                    help="Stop --watch after this many refreshes.",
+                ),
+            )
+        )
+
+    def invoke(self, ctx: typer.Context) -> Any:
+        params = ctx.params
+        return _run_service_jobs(
+            _ServiceJobsOptions(
+                limit=cast("int", params["limit"]),
+                state=cast("str | None", params["state"]),
+                index=cast("str | None", params["index"]),
+                started_by=cast("str | None", params["started_by"]),
+                query=cast("str | None", params["query"]),
+                failed=cast("bool", params["failed"]),
+                job_id=cast("str | None", params["job_id"]),
+                since=cast("float | None", params["since"]),
+                port=cast("int | None", params["port"]),
+                json_mode=cast("bool", params["json"]),
+                watch=cast("bool", params["watch"]),
+                interval=cast("float", params["interval"]),
+                refresh_count=cast("int | None", params["refresh_count"]),
+            )
+        )
+
+
 def _jobs_args(spec: _JobsQuery) -> dict[str, object]:
     args: dict[str, object] = {"limit": spec.limit}
     optional_args = {
@@ -1536,81 +1673,30 @@ def service_job_delete(
     _complete_job_control(command, result, json_mode=json_mode)
 
 
-@server_app.command("jobs")
-def service_jobs(
-    limit: Annotated[
-        int,
-        typer.Option("--limit", help="Maximum number of matching jobs to show."),
-    ] = 20,
-    state: Annotated[
-        str | None,
-        typer.Option(
-            "--state",
-            help=(
-                "Filter by job state: active, waiting, finished, failed, or cancelled."
-            ),
-        ),
-    ] = None,
-    index: Annotated[
-        str | None,
-        typer.Option("--index", help="Filter by index type: vault or code."),
-    ] = None,
-    started_by: Annotated[
-        str | None,
-        typer.Option(
-            "--started-by",
-            help="Filter by who started the job: manual requests or automatic updates.",
-        ),
-    ] = None,
-    query: Annotated[
-        str | None,
-        typer.Option(
-            "--query",
-            "-q",
-            help="Filter by text in job id, outcome, or progress.",
-        ),
-    ] = None,
-    failed: Annotated[
-        bool,
-        typer.Option("--failed", help="Show only failed jobs."),
-    ] = False,
-    job_id: Annotated[
-        str | None,
-        typer.Option("--job-id", help="Show details for a job id or prefix."),
-    ] = None,
-    since: Annotated[
-        float | None,
-        typer.Option("--since", help="Show jobs updated within the last N seconds."),
-    ] = None,
-    port: PortOption = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option(
-            "--json",
-            help=(
-                f"{JSON_OPTION_HELP} Always use this "
-                "for scripted waits: the human summary line unconditionally "
-                "contains the words 'active' and 'waiting'."
-            ),
-        ),
-    ] = False,
-    watch: Annotated[
-        bool,
-        typer.Option("--watch", help="Continuously refresh the human jobs view."),
-    ] = False,
-    interval: Annotated[
-        float,
-        typer.Option("--interval", help="Seconds between --watch refreshes."),
-    ] = 2.0,
-    refresh_count: Annotated[
-        int | None,
-        typer.Option(
-            "--refresh-count",
-            help="Stop --watch after this many refreshes.",
-        ),
-    ] = None,
-) -> None:
+@server_app.command(
+    "jobs",
+    cls=_ServiceJobsCommand,
+    help="Show recent index update activity from the running service.",
+)
+def service_jobs() -> None:
+    """Register the custom jobs command schema."""
+
+
+def _run_service_jobs(options: _ServiceJobsOptions) -> None:
     """Show recent index update activity from the running service."""
+    limit = options.limit
+    state = options.state
+    index = options.index
+    started_by = options.started_by
+    query = options.query
+    failed = options.failed
+    job_id = options.job_id
+    since = options.since
+    port = options.port
+    json_mode = options.json_mode
+    watch = options.watch
+    interval = options.interval
+    refresh_count = options.refresh_count
     phase, client_state = _jobs_state_filter(state, json_mode)
     source = _jobs_index_filter(index, json_mode)
     trigger = _jobs_started_by_filter(started_by, json_mode)
