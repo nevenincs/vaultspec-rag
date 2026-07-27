@@ -29,7 +29,7 @@ import pytest
 import typer
 
 from ..cli._progress import StartupStatusReporter
-from ..cli._service_start import _await_service_ready
+from ..cli._service_start import _await_service_ready, _ServiceReadinessRequest
 from ._http_stubs import QuietHandler
 from ._ports import free_loopback_port
 
@@ -90,11 +90,13 @@ class TestStartFailureOutcomes:
         log_path.write_text("Traceback: model load failed\n", encoding="utf-8")
         with pytest.raises(typer.Exit) as exit_info:
             _await_service_ready(
-                _dead_pid(),
-                free_loopback_port(),
-                log_path,
-                json_mode=True,
-                t0=time.perf_counter(),
+                _ServiceReadinessRequest(
+                    pid=_dead_pid(),
+                    port=free_loopback_port(),
+                    log_path=log_path,
+                    json_mode=True,
+                    started_at=time.perf_counter(),
+                )
             )
         assert exit_info.value.exit_code == 1
         envelope = self._envelope(capsys.readouterr().out)
@@ -109,12 +111,14 @@ class TestStartFailureOutcomes:
         log_path = tmp_path / "service.log"
         with pytest.raises(typer.Exit) as exit_info:
             _await_service_ready(
-                __import__("os").getpid(),
-                free_loopback_port(),
-                log_path,
-                json_mode=True,
-                t0=time.perf_counter(),
-                deadline=0.35,
+                _ServiceReadinessRequest(
+                    pid=__import__("os").getpid(),
+                    port=free_loopback_port(),
+                    log_path=log_path,
+                    json_mode=True,
+                    started_at=time.perf_counter(),
+                    deadline=0.35,
+                )
             )
         assert exit_info.value.exit_code == 1
         envelope = self._envelope(capsys.readouterr().out)
@@ -133,12 +137,14 @@ class TestStartFailureOutcomes:
             pytest.raises(typer.Exit) as exit_info,
         ):
             _await_service_ready(
-                __import__("os").getpid(),
-                free_loopback_port(),
-                log_path,
-                json_mode=True,
-                t0=time.perf_counter(),
-                progress=reporter,
+                _ServiceReadinessRequest(
+                    pid=__import__("os").getpid(),
+                    port=free_loopback_port(),
+                    log_path=log_path,
+                    json_mode=True,
+                    started_at=time.perf_counter(),
+                    progress=reporter,
+                )
             )
         # Interrupting the foreground wait leaves the detached daemon starting,
         # so the requested state is unconfirmed and the exit must stay non-zero.
@@ -184,12 +190,14 @@ class TestStartFailureOutcomes:
         try:
             log_path = tmp_path / "service.log"
             _await_service_ready(
-                __import__("os").getpid(),
-                port,
-                log_path,
-                json_mode=True,
-                t0=time.perf_counter(),
-                deadline=5.0,
+                _ServiceReadinessRequest(
+                    pid=__import__("os").getpid(),
+                    port=port,
+                    log_path=log_path,
+                    json_mode=True,
+                    started_at=time.perf_counter(),
+                    deadline=5.0,
+                )
             )
         finally:
             server.shutdown()
@@ -258,13 +266,15 @@ def test_the_daemons_phase_reaches_the_terminal_during_the_wait(
             pytest.raises(typer.Exit),
         ):
             _await_service_ready(
-                os.getpid(),
-                port,
-                log_path,
-                json_mode=False,
-                t0=time.perf_counter(),
-                progress=reporter,
-                deadline=0.6,
+                _ServiceReadinessRequest(
+                    pid=os.getpid(),
+                    port=port,
+                    log_path=log_path,
+                    json_mode=False,
+                    started_at=time.perf_counter(),
+                    progress=reporter,
+                    deadline=0.6,
+                )
             )
     finally:
         server.shutdown()
