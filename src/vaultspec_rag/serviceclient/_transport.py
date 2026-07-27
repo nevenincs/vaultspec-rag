@@ -43,7 +43,12 @@ from typing import TYPE_CHECKING, Any, Literal, NoReturn, cast
 
 from .._loopback_http import LOOPBACK_OPENER
 from .._operator_commands import server_jobs_command, server_status_command
-from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
+from .._source_types import (
+    PublicSourceType,
+    SourceTypeParseError,
+    parse_source_type,
+    unsupported_feedback_envelope,
+)
 from ..config import get_config, rag_default
 
 if TYPE_CHECKING:
@@ -1223,17 +1228,11 @@ def _try_http_search(
     except SourceTypeParseError as exc:
         return exc.as_error_envelope()
 
-    if source in {PublicSourceType.DOCUMENT, PublicSourceType.COMBINED} and (
-        like_ids or unlike_ids
-    ):
-        return {
-            "ok": False,
-            "error": "unsupported_feedback_for_search_type",
-            "message": (
-                f"feedback point ids are not supported for {source.value} search; "
-                "omit like_ids and unlike_ids"
-            ),
-        }
+    refusal = unsupported_feedback_envelope(
+        source, has_point_ids=bool(like_ids or unlike_ids)
+    )
+    if refusal is not None:
+        return refusal
 
     try:
         validate_search_filters(

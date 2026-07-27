@@ -229,29 +229,16 @@ def publish_document_meta_from_file_states(
     policy_snapshot: str,
 ) -> int:
     """Atomically publish one complete document manifest from ledger evidence."""
-    from ._file_state import FileStateKind
+    from ._file_state import iter_publishable_states
 
     files: list[DocumentFileMetadata] = []
-    previous_path: str | None = None
-    for state in states:
-        if not state.converged:
-            raise ValueError(
-                f"cannot publish unresolved file state for {state.rel_path}"
-            )
-        if previous_path is not None and state.rel_path <= previous_path:
-            raise ValueError("ledger file states must be uniquely path-sorted")
-        previous_path = state.rel_path
-        if state.state is not FileStateKind.INDEXED:
-            continue
-        assert state.content_hash is not None
-        point_ids = tuple(point_ids_for_path(state.rel_path))
+    for rel_path, content_hash in iter_publishable_states(states):
+        point_ids = tuple(point_ids_for_path(rel_path))
         if not point_ids:
             raise ValueError(
-                f"indexed document state has no retained points for {state.rel_path}"
+                f"indexed document state has no retained points for {rel_path}"
             )
-        files.append(
-            DocumentFileMetadata(state.rel_path, state.content_hash, point_ids)
-        )
+        files.append(DocumentFileMetadata(rel_path, content_hash, point_ids))
     write_document_meta(
         meta_path,
         DocumentIndexMetadata(
