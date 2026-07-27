@@ -11,9 +11,11 @@ research recorded).
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from http.server import ThreadingHTTPServer
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, TypedDict, cast
 
 import pytest
 
@@ -71,8 +73,71 @@ _REFRESH_TOOLS = {
 _CLEAN_TOOLS = {"clean_documents", "clean_all"}
 
 
+class _RecordedRequest(TypedDict):
+    """One JSON request the loopback daemon received on its actual wire."""
+
+    path: str
+    payload: dict[str, object]
+
+
 def _tools() -> list[Tool]:
     return asyncio.run(mcp.list_tools())
+
+
+@pytest.fixture
+def recording_daemon() -> Iterator[tuple[int, list[_RecordedRequest]]]:
+    """Run a loopback daemon that records the real MCP request payloads."""
+    requests: list[_RecordedRequest] = []
+
+    class _RecordingDaemonHandler(QuietHandler):
+        def do_POST(self) -> None:  # stdlib handler contract
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length)
+            parsed: object = json.loads(raw) if raw else {}
+            payload = (
+                cast("dict[str, object]", parsed) if isinstance(parsed, dict) else {}
+            )
+            requests.append({"path": self.path, "payload": payload})
+
+            if self.path == "/search":
+                response: dict[str, object] = {"results": [], "summary": "recorded"}
+            elif self.path == "/reindex":
+                response = {
+                    "ok": True,
+                    "added": 0,
+                    "updated": 0,
+                    "removed": 0,
+                    "total": 0,
+                    "duration_ms": 1,
+                }
+            else:
+                self.send_response(404)
+                self.end_headers()
+                return
+
+            encoded = json.dumps(response).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _RecordingDaemonHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield int(server.server_address[1]), requests
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _workspace(path: Path) -> Path:
+    """Create the smallest enrolled workspace accepted by the root resolver."""
+    (path / ".vault").mkdir(parents=True)
+    (path / ".vaultspec").mkdir()
+    return path
 
 
 class TestNarrowedSurface:
@@ -158,6 +223,62 @@ class TestNarrowedSurface:
                 props = set(tool.outputSchema.get("properties", {}))
                 assert {"results", "summary"} <= props, tool.name
                 assert {"results", "summary"} <= model_props
+
+
+class TestProjectRootWireContract:
+    """Optional MCP roots are concrete on the daemon wire, never a 400 input."""
+
+    def test_omitted_roots_are_concrete_and_explicit_roots_win(
+        self,
+        tmp_path: Path,
+        recording_daemon: tuple[int, list[_RecordedRequest]],
+    ) -> None:
+        """Exercise the MCP adapter through discovery and a loopback daemon.
+
+        The daemon records the actual JSON bodies after the adapter, discovery,
+        worker-thread offload, and shared HTTP client have all run. A direct
+        resolver assertion would miss a regression that resolved a root but
+        failed to serialize it into either request shape.
+        """
+        from ..mcp._tools import reindex_codebase, search_codebase
+        from ._cli_helpers import _running_service_record
+
+        port, requests = recording_daemon
+        explicit_root = _workspace(tmp_path / "explicit-project").resolve()
+        with _running_service_record(tmp_path / "status", port):
+            omitted_search = asyncio.run(search_codebase("wire root proof"))
+            omitted_reindex = asyncio.run(reindex_codebase())
+            explicit_search = asyncio.run(
+                search_codebase("wire root proof", project_root=str(explicit_root))
+            )
+            explicit_reindex = asyncio.run(
+                reindex_codebase(project_root=str(explicit_root))
+            )
+
+        assert omitted_search.results == []
+        assert omitted_reindex["ok"] is True
+        assert explicit_search.results == []
+        assert explicit_reindex["ok"] is True
+        assert len(requests) == 4
+
+        omitted = [requests[0]["payload"], requests[1]["payload"]]
+        explicit = [requests[2]["payload"], requests[3]["payload"]]
+        assert all(isinstance(payload, dict) for payload in omitted + explicit)
+        assert all(
+            isinstance(payload["project_root"], str)
+            and bool(payload["project_root"])
+            and Path(payload["project_root"]).is_absolute()
+            for payload in omitted
+        )
+        assert [payload["project_root"] for payload in explicit] == [
+            str(explicit_root),
+            str(explicit_root),
+        ]
+        assert requests[0]["path"] == "/search"
+        assert requests[1]["path"] == "/reindex"
+        assert requests[0]["payload"]["type"] == "code"
+        assert requests[1]["payload"]["type"] == "code"
+        assert requests[1]["payload"]["initiator_kind"] == "mcp"
 
 
 class _EmptyBody404Handler(QuietHandler):
