@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict, Unpack
 
 from .._sync_vocabulary import ProvisionAction
 
@@ -40,6 +40,39 @@ if TYPE_CHECKING:
     from ._models import ConfirmFn, InstallReport
 
 logger = logging.getLogger(__name__)
+
+
+class _ProvisionOptions(TypedDict, total=False):
+    local_only: bool
+    skip: set[str] | None
+    dry_run: bool
+    configure_torch: bool
+    assume_yes: bool
+    sync_after: bool
+    confirm: ConfirmFn | None
+
+
+@dataclass(frozen=True)
+class _ProvisionRequest:
+    target: Path
+    local_only: bool = False
+    skip: set[str] | None = None
+    dry_run: bool = False
+    configure_torch: bool = True
+    assume_yes: bool = False
+    sync_after: bool = False
+    confirm: ConfirmFn | None = None
+
+
+@dataclass(frozen=True)
+class _TorchProvisionRequest:
+    target: Path
+    dry_run: bool
+    skip: set[str]
+    configure_torch: bool
+    assume_yes: bool
+    sync_after: bool
+    confirm: ConfirmFn | None
 
 __all__ = [
     "ProvisionOutcome",
@@ -150,15 +183,13 @@ class ProvisionOutcome:
 
 def provision_dependencies(
     target: Path,
-    *,
-    local_only: bool = False,
-    skip: set[str] | None = None,
-    dry_run: bool = False,
-    configure_torch: bool = True,
-    assume_yes: bool = False,
-    sync_after: bool = False,
-    confirm: ConfirmFn | None = None,
+    **options: Unpack[_ProvisionOptions],
 ) -> ProvisionOutcome:
+    """Provision torch, models, and the Qdrant binary behind one door."""
+    return _provision_dependencies(_ProvisionRequest(target, **options))
+
+
+def _provision_dependencies(request: _ProvisionRequest) -> ProvisionOutcome:
     """Provision torch, models, and the Qdrant binary behind one door.
 
     Opt-out by default: every step runs unless opted out. ``local_only``
@@ -189,18 +220,33 @@ def provision_dependencies(
         A :class:`ProvisionOutcome` carrying one result per considered
         dependency.
     """
+    (
+        target, local_only, skip, dry_run, configure_torch, assume_yes,
+        sync_after, confirm,
+    ) = (
+        request.target,
+        request.local_only,
+        request.skip,
+        request.dry_run,
+        request.configure_torch,
+        request.assume_yes,
+        request.sync_after,
+        request.confirm,
+    )
     skip = {s.lower() for s in (skip or set())}
     outcome = ProvisionOutcome(dry_run=dry_run)
 
     outcome.steps.append(
         _provision_torch(
-            target=target,
-            dry_run=dry_run,
-            skip=skip,
-            configure_torch=configure_torch,
-            assume_yes=assume_yes,
-            sync_after=sync_after,
-            confirm=confirm,
+            _TorchProvisionRequest(
+                target,
+                dry_run,
+                skip,
+                configure_torch,
+                assume_yes,
+                sync_after,
+                confirm,
+            )
         )
     )
 
@@ -213,16 +259,7 @@ def provision_dependencies(
     return outcome
 
 
-def _provision_torch(
-    *,
-    target: Path,
-    dry_run: bool,
-    skip: set[str],
-    configure_torch: bool,
-    assume_yes: bool,
-    sync_after: bool,
-    confirm: ConfirmFn | None,
-) -> ProvisionStepResult:
+def _provision_torch(request: _TorchProvisionRequest) -> ProvisionStepResult:
     """Run the torch-config step and map it onto the shared vocabulary.
 
     The torch backend is two-phase: it patches the consumer pyproject
@@ -232,6 +269,18 @@ def _provision_torch(
     surface this heterogeneity honestly, distinct from a fetched binary's
     terminal ``downloaded``.
     """
+    (
+        target, dry_run, skip, configure_torch, assume_yes, sync_after,
+        confirm,
+    ) = (
+        request.target,
+        request.dry_run,
+        request.skip,
+        request.configure_torch,
+        request.assume_yes,
+        request.sync_after,
+        request.confirm,
+    )
     if not configure_torch or ProvisionStep.TORCH in skip:
         # Distinguish the two skip reasons so the report is not misread as an
         # operator opt-out when torch was simply configured by the dedicated step.
