@@ -381,6 +381,55 @@ def _document_text_splitter(execution_policy: ChunkExecutionPolicy) -> TextSplit
 _DEFAULT_EXECUTION_POLICY = ChunkExecutionPolicy()
 
 
+@dataclass(frozen=True, slots=True)
+class _DocumentChunkConstruction:
+    """Stable identity, provenance, and splitting settings for document chunks."""
+
+    rel_path: str
+    content_hash: str
+    document_metadata: DocumentMetadata | None = None
+    extractor_id: str | None = None
+    extractor_version: str | None = None
+    start_ordinal: int = 0
+    execution_policy: ChunkExecutionPolicy = _DEFAULT_EXECUTION_POLICY
+
+
+@dataclass(frozen=True, slots=True)
+class _RawDocumentRequest:
+    """One raw document read, identity, and decoding contract."""
+
+    path: pathlib.Path
+    rel_path: str
+    content_hash: str
+    source_limit: int | None
+    execution_policy: ChunkExecutionPolicy
+    run_control: RunControl
+
+
+@dataclass(frozen=True, slots=True)
+class _DocumentPreprocessRequest:
+    """One document extractor invocation and its cooperative control edge."""
+
+    content_hash: str
+    path: pathlib.Path
+    root_dir: pathlib.Path
+    prep: PreprocessContext
+    run_control: RunControl
+    preprocess_checkpoint: Callable[[], None] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _RawDocumentFallback:
+    """Fallback stream request before an extractor is available or succeeds."""
+
+    path: pathlib.Path
+    rel_path: str
+    expected_hash: str | None
+    source_limit: int | None
+    execution_policy: ChunkExecutionPolicy
+    run_control: RunControl
+
+
 def _decode_source(
     raw: bytes,
     path: pathlib.Path,
@@ -405,39 +454,32 @@ def _decode_source(
 
 def _document_chunks_from_text(
     text: str,
-    *,
-    rel_path: str,
-    content_hash: str,
-    document_metadata: DocumentMetadata | None = None,
-    extractor_id: str | None = None,
-    extractor_version: str | None = None,
-    start_ordinal: int = 0,
-    execution_policy: ChunkExecutionPolicy = _DEFAULT_EXECUTION_POLICY,
+    options: _DocumentChunkConstruction,
 ) -> list[DocumentChunk]:
     """Split decoded text into document-native chunks with stable identities."""
-    splitter = _document_text_splitter(execution_policy)
+    splitter = _document_text_splitter(options.execution_policy)
     chunks: list[DocumentChunk] = []
     for ordinal, content in enumerate(
         splitter.split_text(text),
-        start=start_ordinal,
+        start=options.start_ordinal,
     ):
         if not content.strip():
             continue
         payload = DocumentPayload(
-            source_path=rel_path,
+            source_path=options.rel_path,
             unit_ordinal=ordinal,
-            content_fingerprint=content_hash,
+            content_fingerprint=options.content_hash,
             content=content,
-            document_metadata=document_metadata or DocumentMetadata(),
-            extractor_id=extractor_id,
-            extractor_version=extractor_version,
+            document_metadata=options.document_metadata or DocumentMetadata(),
+            extractor_id=options.extractor_id,
+            extractor_version=options.extractor_version,
         )
         chunks.append(
             DocumentChunk(
                 document_point_id(
-                    source_path=rel_path,
+                    source_path=options.rel_path,
                     unit_ordinal=ordinal,
-                    content_fingerprint=content_hash,
+                    content_fingerprint=options.content_hash,
                 ),
                 payload,
             )
@@ -496,44 +538,40 @@ def _normalize_decoded_block(
 
 
 def _iter_raw_document_chunks(
-    path: pathlib.Path,
-    *,
-    rel_path: str,
-    content_hash: str,
-    max_source_bytes: int | None,
-    execution_policy: ChunkExecutionPolicy,
-    run_control: RunControl,
+    request: _RawDocumentRequest,
 ) -> Iterator[DocumentChunk]:
     """Decode and chunk raw document input with bounded live source memory."""
     digest = hashlib.blake2b()
-    decoder = codecs.getincrementaldecoder(execution_policy.encoding)(
-        errors=execution_policy.errors
+    decoder = codecs.getincrementaldecoder(request.execution_policy.encoding)(
+        errors=request.execution_policy.errors
     )
     total = 0
     ordinal = 0
     pending_cr = ""
-    with path.open("rb") as stream:
+    with request.path.open("rb") as stream:
         while block := stream.read(_SOURCE_READ_BLOCK_BYTES):
-            run_control.checkpoint()
+            request.run_control.checkpoint()
             total += len(block)
-            if max_source_bytes is not None and total > max_source_bytes:
+            if request.source_limit is not None and total > request.source_limit:
                 raise _SourceLimitExceededError(
-                    f"source exceeds max_source_bytes={max_source_bytes}"
+                    f"source exceeds max_source_bytes={request.source_limit}"
                 )
             digest.update(block)
             decoded = decoder.decode(block, final=False)
             decoded, pending_cr = _normalize_decoded_block(
                 decoded,
                 pending_cr,
-                normalize_newlines=execution_policy.normalize_newlines,
+                normalize_newlines=request.execution_policy.normalize_newlines,
                 final=False,
             )
             chunks = _document_chunks_from_text(
                 decoded,
-                rel_path=rel_path,
-                content_hash=content_hash,
-                start_ordinal=ordinal,
-                execution_policy=execution_policy,
+                _DocumentChunkConstruction(
+                    rel_path=request.rel_path,
+                    content_hash=request.content_hash,
+                    start_ordinal=ordinal,
+                    execution_policy=request.execution_policy,
+                ),
             )
             ordinal += len(chunks)
             yield from chunks
@@ -541,20 +579,24 @@ def _iter_raw_document_chunks(
         decoded, pending_cr = _normalize_decoded_block(
             decoded,
             pending_cr,
-            normalize_newlines=execution_policy.normalize_newlines,
+            normalize_newlines=request.execution_policy.normalize_newlines,
             final=True,
         )
         assert not pending_cr
         yield from _document_chunks_from_text(
             decoded,
-            rel_path=rel_path,
-            content_hash=content_hash,
-            start_ordinal=ordinal,
-            execution_policy=execution_policy,
+            _DocumentChunkConstruction(
+                rel_path=request.rel_path,
+                content_hash=request.content_hash,
+                start_ordinal=ordinal,
+                execution_policy=request.execution_policy,
+            ),
         )
-        run_control.checkpoint()
-    if digest.hexdigest() != content_hash:
-        raise RuntimeError(f"document source changed while streaming: {rel_path}")
+        request.run_control.checkpoint()
+    if digest.hexdigest() != request.content_hash:
+        raise RuntimeError(
+            f"document source changed while streaming: {request.rel_path}"
+        )
 
 
 def _document_chunks_from_output(
@@ -569,12 +611,14 @@ def _document_chunks_from_output(
     if output.units is None:
         return _document_chunks_from_text(
             output.text or "",
-            rel_path=rel_path,
-            content_hash=content_hash,
-            document_metadata=document_metadata,
-            extractor_id=output.preprocessor_id,
-            extractor_version=output.preprocessor_version,
-            execution_policy=execution_policy,
+            _DocumentChunkConstruction(
+                rel_path=rel_path,
+                content_hash=content_hash,
+                document_metadata=document_metadata,
+                extractor_id=output.preprocessor_id,
+                extractor_version=output.preprocessor_version,
+                execution_policy=execution_policy,
+            ),
         )
 
     # Hook-emitted units are the pipeline's responsibility to bound, exactly
@@ -626,30 +670,24 @@ def _document_chunks_from_output(
 
 
 def _document_preprocess_output(
-    *,
-    content_hash: str,
-    path: pathlib.Path,
-    root_dir: pathlib.Path,
-    prep: PreprocessContext,
-    run_control: RunControl,
-    preprocess_checkpoint: Callable[[], None] | None = None,
+    request: _DocumentPreprocessRequest,
 ) -> tuple[str, PreprocOutput | None, str | None]:
     """Run one document extractor while retaining cache and error disposition."""
-    rel_path = path.relative_to(root_dir).as_posix()
-    rule = prep.config.match(rel_path)
+    rel_path = request.path.relative_to(request.root_dir).as_posix()
+    rule = request.prep.config.match(rel_path)
     if rule is None or (rule.command is None and rule.entry_point is None):
         return "none", None, None
     identity = PreprocessCacheIdentity.from_rule(
         source_path=rel_path,
-        source_hash=content_hash,
+        source_hash=request.content_hash,
         rule=rule,
         mode="batch" if rule.batch else "single",
-        max_emitted_bytes=prep.max_emitted_bytes,
+        max_emitted_bytes=request.prep.max_emitted_bytes,
     )
-    output = read_cached_output(prep.cache_root, identity)
+    output = read_cached_output(request.prep.cache_root, identity)
     if output is not None and not _cached_output_within_cap(
         output,
-        prep.max_emitted_bytes,
+        request.prep.max_emitted_bytes,
     ):
         output = None
     if output is not None:
@@ -658,57 +696,54 @@ def _document_preprocess_output(
         return "ok", output, None
     if rule.batch:
         result = run_preprocessor_batch(
-            [path],
+            [request.path],
             rule,
-            max_emitted_bytes=prep.max_emitted_bytes,
-            project_root=prep.project_root,
-            checkpoint=preprocess_checkpoint or run_control.checkpoint,
-        )[str(path)]
+            max_emitted_bytes=request.prep.max_emitted_bytes,
+            project_root=request.prep.project_root,
+            checkpoint=request.preprocess_checkpoint or request.run_control.checkpoint,
+        )[str(request.path)]
     else:
         result = run_preprocessor(
-            path,
+            request.path,
             rule,
-            max_emitted_bytes=prep.max_emitted_bytes,
-            project_root=prep.project_root,
-            checkpoint=preprocess_checkpoint or run_control.checkpoint,
+            max_emitted_bytes=request.prep.max_emitted_bytes,
+            project_root=request.prep.project_root,
+            checkpoint=request.preprocess_checkpoint or request.run_control.checkpoint,
         )
     if result.status == "ok" and result.output is not None:
-        write_cached_output(prep.cache_root, identity, result.output)
+        write_cached_output(request.prep.cache_root, identity, result.output)
         return "ok", result.output, None
     return result.status, None, result.reason
 
 
 def _raw_document_stream(
-    path: pathlib.Path,
-    *,
-    rel_path: str,
-    expected_hash: str | None,
-    source_limit: int | None,
-    execution_policy: ChunkExecutionPolicy,
-    run_control: RunControl,
+    fallback: _RawDocumentFallback,
 ) -> DocumentFileChunkStreamResult:
     """Validate raw decoding, then return a bounded second-pass chunk stream."""
     content_hash, decodable = _validated_text_identity(
-        path,
-        max_source_bytes=source_limit,
-        execution_policy=execution_policy,
-        run_control=run_control,
+        fallback.path,
+        max_source_bytes=fallback.source_limit,
+        execution_policy=fallback.execution_policy,
+        run_control=fallback.run_control,
     )
-    if expected_hash is not None and content_hash != expected_hash:
-        raise RuntimeError(f"document source changed during fallback: {rel_path}")
+    if fallback.expected_hash is not None and content_hash != fallback.expected_hash:
+        raise RuntimeError(
+            f"document source changed during fallback: {fallback.rel_path}"
+        )
     if not decodable:
-        return DocumentFileChunkStreamResult(rel_path, content_hash, ())
+        return DocumentFileChunkStreamResult(fallback.rel_path, content_hash, ())
+    request = _RawDocumentRequest(
+        path=fallback.path,
+        rel_path=fallback.rel_path,
+        content_hash=content_hash,
+        source_limit=fallback.source_limit,
+        execution_policy=fallback.execution_policy,
+        run_control=fallback.run_control,
+    )
     return DocumentFileChunkStreamResult(
-        rel_path,
+        fallback.rel_path,
         content_hash,
-        _iter_raw_document_chunks(
-            path,
-            rel_path=rel_path,
-            content_hash=content_hash,
-            max_source_bytes=source_limit,
-            execution_policy=execution_policy,
-            run_control=run_control,
-        ),
+        _iter_raw_document_chunks(request),
     )
 
 
@@ -728,12 +763,14 @@ def stream_document_and_hash_file(
     source_limit = _effective_source_limit(prep, rule)
     if rule is None:
         return _raw_document_stream(
-            path,
-            rel_path=rel_path,
-            expected_hash=None,
-            source_limit=source_limit,
-            execution_policy=execution_policy,
-            run_control=run_control,
+            _RawDocumentFallback(
+                path=path,
+                rel_path=rel_path,
+                expected_hash=None,
+                source_limit=source_limit,
+                execution_policy=execution_policy,
+                run_control=run_control,
+            )
         )
     try:
         content_hash, _raw = _stream_source(
@@ -752,12 +789,14 @@ def stream_document_and_hash_file(
         )
     assert prep is not None
     status, output, reason = _document_preprocess_output(
-        content_hash=content_hash,
-        path=path,
-        root_dir=root_dir,
-        prep=prep,
-        run_control=run_control,
-        preprocess_checkpoint=preprocess_checkpoint,
+        _DocumentPreprocessRequest(
+            content_hash=content_hash,
+            path=path,
+            root_dir=root_dir,
+            prep=prep,
+            run_control=run_control,
+            preprocess_checkpoint=preprocess_checkpoint,
+        )
     )
     if status == "ok" and output is not None:
         return DocumentFileChunkStreamResult(
@@ -780,12 +819,14 @@ def stream_document_and_hash_file(
             preprocess_reason=reason,
         )
     return _raw_document_stream(
-        path,
-        rel_path=rel_path,
-        expected_hash=content_hash,
-        source_limit=source_limit,
-        execution_policy=execution_policy,
-        run_control=run_control,
+        _RawDocumentFallback(
+            path=path,
+            rel_path=rel_path,
+            expected_hash=content_hash,
+            source_limit=source_limit,
+            execution_policy=execution_policy,
+            run_control=run_control,
+        )
     )
 
 
