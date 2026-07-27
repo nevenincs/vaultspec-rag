@@ -16,7 +16,8 @@ remembering to copy them.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, cast
 
 from ..logging_config import log_event
 
@@ -25,11 +26,23 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
     from ..job_control import RunControl
-    from ..store import VaultStore
+    from ..store_runtime import VaultStore
     from ._vault_prep import IndexResult
 
 #: Namespace every index-run lifecycle event is emitted under.
 INDEX_EVENT_NAMESPACE = "service.index"
+
+
+@dataclass(frozen=True, slots=True)
+class IndexLifecycleRequest:
+    event_logger: logging.Logger
+    store: VaultStore
+    source: str
+    mode: str
+    clean: bool
+    root: pathlib.Path
+    run_control: RunControl
+    completion_fields: Callable[[IndexResult], Mapping[str, object]] | None = None
 
 
 def preprocess_completion_fields(result: IndexResult) -> dict[str, object]:
@@ -48,15 +61,8 @@ def preprocess_completion_fields(result: IndexResult) -> dict[str, object]:
 
 def run_index_lifecycle(
     body: Callable[[], IndexResult],
-    *,
-    event_logger: logging.Logger,
-    store: VaultStore,
-    source: str,
-    mode: str,
-    clean: bool,
-    root: pathlib.Path,
-    run_control: RunControl,
-    completion_fields: Callable[[IndexResult], Mapping[str, object]] | None = None,
+    request: IndexLifecycleRequest | None = None,
+    **legacy: object,
 ) -> IndexResult:
     """Run ``body`` as an observable, activity-stamped index run.
 
@@ -87,29 +93,33 @@ def run_index_lifecycle(
         Exception: Re-raises anything ``body`` raises, after emitting the
             ``failed`` event.
     """
+    if request is None:
+        request = IndexLifecycleRequest(**cast("dict[str, Any]", legacy))
+    elif legacy:
+        raise TypeError("use either IndexLifecycleRequest or named inputs")
     run_fields: dict[str, object] = {
-        "source": source,
-        "mode": mode,
-        "clean": clean,
-        "root": root,
+        "source": request.source,
+        "mode": request.mode,
+        "clean": request.clean,
+        "root": request.root,
     }
-    run_control.checkpoint()
-    log_event(event_logger, INDEX_EVENT_NAMESPACE, "started", fields=run_fields)
+    request.run_control.checkpoint()
+    log_event(request.event_logger, INDEX_EVENT_NAMESPACE, "started", fields=run_fields)
     try:
         # Stamp the activity clock at run START as well as at completion:
         # a long run spanning a maintenance tick must advance the ephemeral
         # idle clock before any reclaim evaluation can see a stale stamp
         # mid-write.
-        run_control.checkpoint()
-        store.touch_manifest_last_indexed()
-        run_control.checkpoint()
+        request.run_control.checkpoint()
+        request.store.touch_manifest_last_indexed()
+        request.run_control.checkpoint()
         result = body()
-        run_control.checkpoint()
-        store.touch_manifest_last_indexed()
-        run_control.checkpoint()
+        request.run_control.checkpoint()
+        request.store.touch_manifest_last_indexed()
+        request.run_control.checkpoint()
     except Exception as exc:
         log_event(
-            event_logger,
+            request.event_logger,
             INDEX_EVENT_NAMESPACE,
             "failed",
             severity=logging.ERROR,
@@ -126,10 +136,10 @@ def run_index_lifecycle(
         removed=result.removed,
         duration_ms=result.duration_ms,
     )
-    if completion_fields is not None:
-        completed_fields.update(completion_fields(result))
+    if request.completion_fields is not None:
+        completed_fields.update(request.completion_fields(result))
     log_event(
-        event_logger,
+        request.event_logger,
         INDEX_EVENT_NAMESPACE,
         "completed",
         fields=completed_fields,
