@@ -11,7 +11,7 @@ import functools
 import re
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Literal, NoReturn, cast
+from typing import TYPE_CHECKING, Annotated, NoReturn, cast
 
 import typer
 
@@ -23,6 +23,7 @@ from .._job_errors import (
     remediation,
 )
 from .._operator_commands import SERVICE_NOT_RUNNING_MESSAGE
+from ..job_models import DesiredJobState
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import (
     _try_http_admin,
@@ -71,7 +72,6 @@ _RESULT_RE = re.compile(
 # The stall threshold is service-domain: the server computes the
 # authoritative ``stalled`` flag; this constant only backs the fallback
 # for snapshots from an older service that lacks the flag.
-type _DesiredJobState = Literal["running", "paused", "cancelled"]
 
 
 def _resource_at(job: dict[str, object], key: str) -> dict[str, object] | None:
@@ -1340,7 +1340,7 @@ def _complete_job_control(
 def _set_job_state(
     action: str,
     reference: str,
-    state: _DesiredJobState,
+    state: DesiredJobState,
     *,
     port: int | None,
     json_mode: bool,
@@ -1399,7 +1399,9 @@ def service_job_pause(
     json_mode: JsonEnvelopeMode = False,
 ) -> None:
     """Request a cooperative pause for one job."""
-    _set_job_state("pause", job_id, "paused", port=port, json_mode=json_mode)
+    _set_job_state(
+        "pause", job_id, DesiredJobState.PAUSED, port=port, json_mode=json_mode
+    )
 
 
 @server_job_app.command("resume")
@@ -1412,7 +1414,9 @@ def service_job_resume(
     json_mode: JsonEnvelopeMode = False,
 ) -> None:
     """Resume one paused job through reconciliation."""
-    _set_job_state("resume", job_id, "running", port=port, json_mode=json_mode)
+    _set_job_state(
+        "resume", job_id, DesiredJobState.RUNNING, port=port, json_mode=json_mode
+    )
 
 
 @server_job_app.command("stop")
@@ -1435,7 +1439,7 @@ def service_job_stop(
     _set_job_state(
         "stop",
         job_id,
-        "cancelled",
+        DesiredJobState.CANCELLED,
         port=port,
         json_mode=json_mode,
         force=force,

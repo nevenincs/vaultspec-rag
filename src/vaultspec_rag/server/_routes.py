@@ -1079,14 +1079,17 @@ async def set_job_desired_state_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
+    from ..job_models import DesiredJobState
+
     try:
         payload = await _job_payload(request, required=True)
         state = _job_string(payload, "state")
         mode = _job_string(payload, "mode", default="graceful")
-        if state not in {"running", "paused", "cancelled"}:
+        if state not in set(DesiredJobState):
+            allowed = ", ".join(f"'{member}'" for member in DesiredJobState)
             raise _InvalidJobRequestError(
                 "invalid_desired_state",
-                "state must be 'running', 'paused', or 'cancelled'.",
+                f"state must be one of {allowed}.",
             )
         control_mode = _CONTROL_MODES.get(mode)
         if control_mode is None:
@@ -1098,7 +1101,6 @@ async def set_job_desired_state_route(request: Request) -> JSONResponse:
     except _InvalidJobRequestError as exc:
         return _job_error("set_desired_state", exc.code, str(exc))
 
-    from ..job_models import DesiredJobState
     from ..jobs import get_job_manager
 
     outcome = await get_job_manager().set_desired_state_async(
