@@ -33,7 +33,6 @@ from ._code_meta import (
 from ._consumer_pipeline import (
     CodeConsumerPipeline,
     CodePipelineBindings,
-    CodePipelineLimits,
     CodePipelineRun,
 )
 from ._content_discovery import (
@@ -65,7 +64,6 @@ from ._support_budget import CodeSupportBudget
 from ._vault_prep import IndexResult
 
 if TYPE_CHECKING:
-    import threading
     from collections.abc import Iterable
 
     from ..embeddings import EmbeddingModel
@@ -728,7 +726,7 @@ class CodebaseIndexer:
 
     def _prepare_full_collection(
         self,
-        checkpoint: CodeRunCheckpoint,
+        _checkpoint: CodeRunCheckpoint,
         *,
         effective_clean: bool,
         clean_has_confirmed_units: bool,
@@ -1056,8 +1054,8 @@ class CodebaseIndexer:
             run_control.checkpoint()
             if needs_embed_rebuild:
                 logger.info(
-                    "Codebase embedding input format changed; rebuilding the code index "
-                    "into a new generation",
+                    "Codebase embedding input format changed; rebuilding the code "
+                    "index into a new generation",
                 )
                 full_rebuild_clean = True
         if full_rebuild_clean is not None:

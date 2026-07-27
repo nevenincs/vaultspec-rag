@@ -391,6 +391,9 @@ class DocumentChunkingOptions:
     preprocess_checkpoint: Callable[[], None] | None = None
 
 
+_DEFAULT_DOCUMENT_CHUNKING_OPTIONS = DocumentChunkingOptions()
+
+
 @dataclass(frozen=True, slots=True)
 class _DocumentChunkConstruction:
     """Stable identity, provenance, and splitting settings for document chunks."""
@@ -772,7 +775,7 @@ def _raw_document_stream(
 def stream_document_and_hash_file(
     path: pathlib.Path,
     root_dir: pathlib.Path,
-    options: DocumentChunkingOptions = DocumentChunkingOptions(),
+    options: DocumentChunkingOptions = _DEFAULT_DOCUMENT_CHUNKING_OPTIONS,
 ) -> DocumentFileChunkStreamResult:
     """Hash and incrementally chunk one explicitly admitted document."""
     rel_path = path.relative_to(root_dir).as_posix()
@@ -852,7 +855,7 @@ def stream_document_and_hash_file(
 def chunk_document_and_hash_file(
     path: pathlib.Path,
     root_dir: pathlib.Path,
-    options: DocumentChunkingOptions = DocumentChunkingOptions(),
+    options: DocumentChunkingOptions = _DEFAULT_DOCUMENT_CHUNKING_OPTIONS,
 ) -> DocumentFileChunkResult:
     """Materialize the document stream for compatibility callers."""
     result = stream_document_and_hash_file(
