@@ -217,37 +217,49 @@ class TestStatusCommand:
 
 
 class TestServiceLifecycleHelpers:
-    """_port_is_listening + the canonical heartbeat-age reader."""
+    """The shared loopback connect probe + the canonical heartbeat-age reader."""
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def test_port_is_listening_true_for_open_socket(self):
-        """A socket bound and listening locally is reported as listening."""
+    def test_probe_reports_accepted_for_open_socket(self):
+        """A socket bound and listening locally is reported as accepting."""
         import socket
 
-        from ..cli._process import _port_is_listening
+        from .._loopback_http import (
+            FAST_CONNECT_TIMEOUT_SECONDS,
+            probe_loopback_connect,
+        )
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind(("127.0.0.1", 0))
         sock.listen(1)
         port = sock.getsockname()[1]
         try:
-            assert _port_is_listening(port) is True
+            assert (
+                probe_loopback_connect(port, timeout=FAST_CONNECT_TIMEOUT_SECONDS)
+                == "accepted"
+            )
         finally:
             sock.close()
 
-    def test_port_is_listening_false_for_closed_port(self):
-        """An unbound ephemeral port returns False without raising."""
+    def test_probe_reports_refused_for_closed_port(self):
+        """An unbound ephemeral port reads as refused without raising."""
         import socket
 
-        from ..cli._process import _port_is_listening
+        from .._loopback_http import (
+            FAST_CONNECT_TIMEOUT_SECONDS,
+            probe_loopback_connect,
+        )
 
         # Bind to find a free port, then close so it's unbound.
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
         sock.close()
-        assert _port_is_listening(port) is False
+        assert (
+            probe_loopback_connect(port, timeout=FAST_CONNECT_TIMEOUT_SECONDS)
+            == "refused"
+        )
 
     def test_heartbeat_age_missing_field(self):
         """No last_heartbeat → None (caller treats as 'no data')."""

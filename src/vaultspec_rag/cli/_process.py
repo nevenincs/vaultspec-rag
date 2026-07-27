@@ -63,7 +63,6 @@ __all__ = [
     "_call_interruptibly",
     "_is_our_service",
     "_port_is_available",
-    "_port_is_listening",
     "_probe_daemon_cuda",
     "_resolve_daemon_interpreter",
     "_service_child_env",
@@ -282,24 +281,6 @@ def _call_interruptibly[T](
     if failure is not None:
         raise failure
     return cast("T", outcome)
-
-
-def _port_is_listening(port: int) -> bool:
-    """Return True when ``127.0.0.1:port`` accepts a TCP connection.
-
-    Cheaper than a health probe (no HTTP round-trip, no JSON
-    parsing) and answers the "is anything listening" question that
-    ``service status`` needs to distinguish "PID alive but socket
-    silent" from "PID alive and serving".
-    """
-    import socket
-
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(1.0)
-    try:
-        return sock.connect_ex(("127.0.0.1", port)) == 0
-    finally:
-        sock.close()
 
 
 def _service_child_env(
