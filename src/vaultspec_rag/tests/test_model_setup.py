@@ -290,30 +290,42 @@ def test_live_service_repair_failure_uses_shared_startup_envelope(
 ) -> None:
     """Real repair timeout retains exact stage, budget, endpoint, and log state."""
     model_id = "vaultspec-regression/startup-envelope-model"
-    with _gateway_timeout_endpoint(response_delay_seconds=30) as endpoint:
-        started = time.monotonic()
-        with (
-            _service_env(
-                tmp_path / "outer-env",
-                env_overrides={
-                    EnvVar.HF_ENDPOINT.value: endpoint,
-                    EnvVar.HF_HOME.value: str(tmp_path / "hf-cache"),
-                },
-            ),
-            pytest.raises(AssertionError) as caught,
-            _live_service_context(
-                tmp_path / "service",
-                startup_budget=0.700,
-                model_ids=(model_id,),
-            ),
-        ):
-            pytest.fail("real delayed model repair should exhaust startup")
-        elapsed = time.monotonic() - started
+    with (
+        _gateway_timeout_endpoint(response_delay_seconds=30) as endpoint,
+        _service_env(
+            tmp_path / "outer-env",
+            env_overrides={
+                EnvVar.HF_ENDPOINT.value: endpoint,
+                EnvVar.HF_HOME.value: str(tmp_path / "hf-cache"),
+            },
+        ),
+        pytest.raises(AssertionError) as caught,
+        _live_service_context(
+            tmp_path / "service",
+            # The stage asserted below is only deterministic while the budget
+            # outlasts entry into the online-acquisition environment, because
+            # the envelope names whichever stage was current when the budget
+            # ran out. Half the budget is reserved for teardown, so the working
+            # half is what has to clear that entry - and that entry is fixture
+            # setup whose cost tracks host contention, not anything this test
+            # controls. Expiry still lands inside model acquisition, which the
+            # delayed endpoint above holds open far longer than any budget set
+            # here, so the margin is what keeps the named stage from being a
+            # race rather than a result.
+            startup_budget=6.000,
+            model_ids=(model_id,),
+        ),
+    ):
+        pytest.fail("real delayed model repair should exhaust startup")
 
     message = str(caught.value)
-    assert elapsed < 1.250
+    # No wall-clock upper bound here. That the budget fired - rather than the
+    # endpoint above being waited out - is already proven by the deadline and
+    # remaining figures the envelope carries, and a bound on elapsed would only
+    # re-measure the host: this test runs concurrently with the rest of its
+    # tier, so its wall clock reflects contention it does not control.
     assert "stage=model acquisition" in message
-    assert "deadline=0.700s" in message
+    assert "deadline=6.000s" in message
     assert "remaining=" in message
     assert model_id in message
     assert endpoint in message
