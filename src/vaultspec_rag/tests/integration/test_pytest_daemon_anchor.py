@@ -127,17 +127,25 @@ class TestEverySpawnedDaemonIsAnchored:
         from ...cli import _process as process_module
 
         source = Path(process_module.__file__).read_text(encoding="utf-8")
-        spawn = next(
-            node
-            for node in ast.walk(ast.parse(source))
-            if isinstance(node, ast.FunctionDef) and node.name == "_spawn_service"
-        )
-        called = {
-            node.func.id
-            for node in ast.walk(spawn)
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        module = ast.parse(source)
+        functions = {
+            node.name: node for node in module.body if isinstance(node, ast.FunctionDef)
         }
+        # Follow the call path rather than one body: the entry point is free to
+        # forward into a helper that does the spawning, and a guard pinned to a
+        # single function goes blind the moment it does.
+        called: set[str] = set()
+        pending, seen = ["_spawn_service"], set()
+        while pending:
+            name = pending.pop()
+            if name in seen or name not in functions:
+                continue
+            seen.add(name)
+            for node in ast.walk(functions[name]):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                    called.add(node.func.id)
+                    pending.append(node.func.id)
         assert "anchor_spawned_process_to_pytest" in called, (
-            "_spawn_service no longer anchors the process it spawned; a "
-            "hard-killed pytest run will strand its daemon"
+            "the _spawn_service call path no longer anchors the process it "
+            "spawned; a hard-killed pytest run will strand its daemon"
         )
