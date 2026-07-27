@@ -1234,22 +1234,118 @@ class TestAtomicJsonPublishHasOneWriter:
     #: copy of this one: it exists because the code sidecar can be large.
     STREAMING: ClassVar[str] = "_code_meta.py"
 
-    def test_no_module_hand_rolls_the_temp_write_and_replace(self) -> None:
+    #: Writes its recovery marker to a temp whose NAME a reaper globs, so the
+    #: spelling is a contract rather than an implementation detail. Delegating
+    #: it would leave the sweeper matching nothing and its test vacuously
+    #: green. Its durability step is shared; only the naming is its own.
+    NAMED_TEMP_CONTRACT: ClassVar[str] = "watcher_retry.py"
+
+    def test_no_function_hand_rolls_the_serialize_and_replace(self) -> None:
+        """Structural, not textual: the first version of this scan missed four.
+
+        It keyed on ``json.dumps`` within a few lines of a replace, so it saw
+        neither the ``json.dump(stream)`` form nor the sites whose serialize
+        and replace sat further apart. Both shapes were live. This walks each
+        function and asks whether it does BOTH, at any distance and in either
+        spelling.
+        """
         offenders: list[str] = []
         for path in _production_sources():
-            if path.name in {"_atomic_write.py", self.STREAMING}:
+            if path.name in {
+                "_atomic_write.py",
+                self.STREAMING,
+                self.NAMED_TEMP_CONTRACT,
+            }:
                 continue
-            lines = path.read_text(encoding="utf-8").splitlines()
-            for number, line in enumerate(lines, start=1):
-                if "json.dumps" not in line:
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                     continue
-                window = "\n".join(lines[max(0, number - 7) : number + 8])
-                if "replace_atomically" in window or "replace_durably" in window:
-                    offenders.append(f"{path.name}:{number}")
+                serializes = False
+                replaces = False
+                for inner in ast.walk(node):
+                    if not isinstance(inner, ast.Call):
+                        continue
+                    func = inner.func
+                    if (
+                        isinstance(func, ast.Attribute)
+                        and func.attr in {"dump", "dumps"}
+                        and isinstance(func.value, ast.Name)
+                        and func.value.id == "json"
+                    ):
+                        serializes = True
+                    if isinstance(func, ast.Name) and func.id in {
+                        "replace_atomically",
+                        "replace_durably",
+                    }:
+                        replaces = True
+                if serializes and replaces:
+                    offenders.append(f"{path.name}:{node.lineno} {node.name}")
         assert not offenders, (
             f"hand-rolled atomic JSON publish at {offenders}; call "
             "write_json_atomically so the temp file is named without collision "
             "and removed when the write or the replace fails"
+        )
+
+    def test_the_directory_fsync_has_one_implementation(self) -> None:
+        """Forcing a directory entry to disk belongs to ``_atomic_write``.
+
+        A second copy no-opped on Windows, so a crash-recovery record got a
+        replace with no write-through on the platform this project targets
+        first - the weaker half of a guarantee its own name promised. A third
+        synced freshly created directories, a different purpose built from the
+        identical three syscalls.
+
+        Keyed on the shape only a directory sync has: opened with a bare
+        ``os.O_RDONLY`` and fsynced by descriptor. A file sync passes
+        ``stream.fileno()``, and a file opened for writing ORs its flags, so
+        neither matches. Two looser predicates were tried first and both
+        flagged modules that merely open a file - one on ``os.O_RDONLY``
+        appearing anywhere in a line, one on any ``os.open`` plus any
+        descriptor fsync.
+        """
+
+        def _opens_a_directory(call: ast.Call) -> bool:
+            if not _is_attr_call(call, "os", "open") or len(call.args) != 2:
+                return False
+            flags = call.args[1]
+            return (
+                isinstance(flags, ast.Attribute)
+                and flags.attr == "O_RDONLY"
+                and isinstance(flags.value, ast.Name)
+                and flags.value.id == "os"
+            )
+
+        offenders: list[str] = []
+        for path in _production_sources():
+            if path.name == "_atomic_write.py":
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                    continue
+                calls = [
+                    inner for inner in ast.walk(node) if isinstance(inner, ast.Call)
+                ]
+                opens_directory = any(_opens_a_directory(call) for call in calls)
+                syncs_descriptor = any(
+                    _is_attr_call(call, "os", "fsync")
+                    and call.args
+                    and isinstance(call.args[0], ast.Name)
+                    for call in calls
+                )
+                if opens_directory and syncs_descriptor:
+                    offenders.append(f"{path.name}:{node.lineno} {node.name}")
+        assert not offenders, (
+            f"a directory fsync outside _atomic_write at {offenders}; call "
+            "fsync_directory, which replace_durably also uses, so the Windows "
+            "no-op and the POSIX sync are decided in one place"
         )
 
     def test_the_temp_file_is_removed_when_the_replace_fails(self) -> None:

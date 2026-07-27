@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-from .._atomic_write import replace_atomically
+from .._atomic_write import write_json_atomically
 from .._loopback_http import LOOPBACK_OPENER
 from .._process_probe import (
     START_TIME_TOLERANCE_SECONDS,
@@ -490,23 +490,18 @@ def write_qdrant_identity(
         operation="write the managed Qdrant identity",
         targets=(path,),
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(
-        json.dumps(
-            {
-                "storage_path": storage_path,
-                "version": version,
-                "owner_pid": owner_pid,
-                "http_port": http_port,
-                "qdrant_pid": qdrant_pid,
-                "qdrant_start_time": qdrant_start_time,
-                "owner_start_time": owner_start_time,
-            }
-        ),
-        encoding="utf-8",
+    write_json_atomically(
+        path,
+        {
+            "storage_path": storage_path,
+            "version": version,
+            "owner_pid": owner_pid,
+            "http_port": http_port,
+            "qdrant_pid": qdrant_pid,
+            "qdrant_start_time": qdrant_start_time,
+            "owner_start_time": owner_start_time,
+        },
     )
-    replace_atomically(tmp, path)
     logger.debug("wrote qdrant identity sidecar at %s (owner pid %d)", path, owner_pid)
     return path
 

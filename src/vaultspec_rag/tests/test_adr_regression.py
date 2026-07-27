@@ -431,10 +431,11 @@ class TestAtomicMetaWrite:
         from ..indexer import VaultIndexer
 
         src = inspect.getsource(VaultIndexer._write_meta)
-        assert "replace_atomically(" in src, (
+        assert "write_json_atomically(" in src, (
             "VaultIndexer._write_meta must publish through "
-            "_atomic_write.replace_atomically; a direct write_text() risks "
-            "corrupt metadata on crash"
+            "_atomic_write.write_json_atomically; a direct write_text() risks "
+            "corrupt metadata on crash, and a hand-rolled temp-and-replace "
+            "leaves the temp behind when the publish fails"
         )
 
     def test_codebase_indexer_write_meta_publishes_atomically(self):
@@ -443,10 +444,11 @@ class TestAtomicMetaWrite:
         from ..indexer import CodebaseIndexer
 
         src = inspect.getsource(CodebaseIndexer._write_meta)
-        assert "replace_atomically(" in src, (
+        assert "write_json_atomically(" in src, (
             "CodebaseIndexer._write_meta must publish through "
-            "_atomic_write.replace_atomically; a direct write_text() risks "
-            "corrupt metadata on crash"
+            "_atomic_write.write_json_atomically; a direct write_text() risks "
+            "corrupt metadata on crash, and a hand-rolled temp-and-replace "
+            "leaves the temp behind when the publish fails"
         )
 
 
