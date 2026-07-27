@@ -254,18 +254,20 @@ def _provision_torch(
 
     from ..torch_config._constants import TorchConfigAction
     from ._models import InstallReport
-    from ._torch_flow import _run_torch_config_install
+    from ._torch_flow import TorchInstallOptions, _run_torch_config_install
 
     report = InstallReport(action="provision", target=target)
     _run_torch_config_install(
         target=target,
         report=report,
-        dry_run=dry_run,
-        force=False,
-        configure_torch=True,
-        assume_yes=assume_yes,
-        sync_after=sync_after,
-        confirm=confirm,
+        options=TorchInstallOptions(
+            dry_run=dry_run,
+            force=False,
+            configure_torch=True,
+            assume_yes=assume_yes,
+            sync_after=sync_after,
+            confirm=confirm,
+        ),
     )
 
     action = report.torch_config_action

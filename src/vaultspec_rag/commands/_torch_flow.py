@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ..torch_config import _direct_dep, _inspect, _mutate
@@ -22,6 +23,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = ["_run_torch_config_install", "_run_torch_config_uninstall"]
+
+
+@dataclass(frozen=True, slots=True)
+class TorchInstallOptions:
+    """One install invocation's torch configuration controls."""
+
+    dry_run: bool
+    force: bool
+    configure_torch: bool
+    assume_yes: bool
+    sync_after: bool
+    confirm: ConfirmFn | None
+    torch_group: str | None = None
 
 
 def _confirm_torch_patch(
@@ -121,13 +135,7 @@ def _run_torch_config_install(
     *,
     target: Path,
     report: InstallReport,
-    dry_run: bool,
-    force: bool,
-    configure_torch: bool,
-    assume_yes: bool,
-    sync_after: bool,
-    confirm: ConfirmFn | None,
-    torch_group: str | None = None,
+    options: TorchInstallOptions,
 ) -> None:
     """Apply the cu130 torch-config patch to the consumer pyproject.
 
@@ -139,7 +147,7 @@ def _run_torch_config_install(
 
     See :mod:`vaultspec_rag.torch_config` for the matching predicate.
     """
-    if not configure_torch:
+    if not options.configure_torch:
         report.torch_config_action = TorchConfigAction.DISABLED
         return
 
@@ -159,19 +167,25 @@ def _run_torch_config_install(
         )
         return
     if state == TorchConfigState.CANONICAL:
-        _handle_canonical_state(pyproject, target, report, sync_after, torch_group)
+        _handle_canonical_state(
+            pyproject,
+            target,
+            report,
+            options.sync_after,
+            options.torch_group,
+        )
         return
     if state == TorchConfigState.CUSTOMISED:
         _handle_customised_state(pyproject, report)
         return
 
     # state is MISSING.
-    if dry_run:
+    if options.dry_run:
         report.torch_config_action = TorchConfigAction.DRY_RUN
         if not _direct_dep.has_direct_torch_dep(pyproject)[0]:
             preview_location = (
-                f"[dependency-groups].{torch_group}"
-                if torch_group is not None
+                f"[dependency-groups].{options.torch_group}"
+                if options.torch_group is not None
                 else "[project].dependencies"
             )
             report.warnings.append(
@@ -179,11 +193,17 @@ def _run_torch_config_install(
                 f"direct dependency `{DIRECT_TORCH_REQUIREMENT}` to "
                 f"{preview_location} so uv applies the cu130 source pin."
             )
-            if torch_group is not None:
-                report.warnings.append(_inert_pin_warning(torch_group))
+            if options.torch_group is not None:
+                report.warnings.append(_inert_pin_warning(options.torch_group))
         return
 
-    if not _confirm_torch_patch(pyproject, report, assume_yes, force, confirm):
+    if not _confirm_torch_patch(
+        pyproject,
+        report,
+        options.assume_yes,
+        options.force,
+        options.confirm,
+    ):
         return
 
     try:
@@ -201,9 +221,9 @@ def _run_torch_config_install(
 
     # The patch landed; the workspace is now in CANONICAL state. Ensure
     # torch is also a direct dependency so uv actually applies the source pin.
-    _ensure_torch_direct_dep(pyproject, report, torch_group)
+    _ensure_torch_direct_dep(pyproject, report, options.torch_group)
 
-    if sync_after and report.torch_direct_dep_action in {"already", "applied"}:
+    if options.sync_after and report.torch_direct_dep_action in {"already", "applied"}:
         _run_uv_sync_torch(target=target, report=report)
 
 
