@@ -18,7 +18,7 @@ from vaultspec_core.core.mcps import (  # pyright: ignore[reportMissingTypeStubs
 
 from .._workspace_layout import (
     VAULT_DATA_DIR,
-    VAULTSPEC_DIR,
+    WORKSPACE_DIR,
 )
 from ..builtins import list_builtins
 from ._mcp_extra import reconcile_mcp_extra
@@ -42,7 +42,7 @@ def _remove_candidates(
     # ``seed_builtins`` would write, derived from the same package tree
     # via ``list_builtins``. A new bundled file is then seeded and
     # removed by one source of truth and can never be orphaned.
-    vaultspec_dir = target / VAULTSPEC_DIR
+    vaultspec_dir = target / WORKSPACE_DIR
     candidates = [
         vaultspec_dir / rel
         for rel in list_builtins()
@@ -67,7 +67,7 @@ def _remove_candidates(
 #: (the machine-global status dir and ``.vault/data/``), so these are only
 #: ever stale residue; uninstall removes them defensively and idempotently.
 _OBSOLETE_SENTINEL_FILES = (".qdrant-initialized",)
-_OBSOLETE_SENTINEL_DIRS = (VAULTSPEC_DIR / "runtime",)
+_OBSOLETE_SENTINEL_DIRS = (WORKSPACE_DIR / "runtime",)
 
 
 def _remove_obsolete_sentinels(
@@ -382,7 +382,7 @@ def uninstall_run(
             report.warnings.append(message)
             return report
 
-    if not (target / VAULTSPEC_DIR).is_dir():
+    if not (target / WORKSPACE_DIR).is_dir():
         # No ``.vaultspec/`` means rag was never installed at this
         # target - anything we found in ``pyproject.toml`` belongs to
         # the user (or to a different project that happened to land in
