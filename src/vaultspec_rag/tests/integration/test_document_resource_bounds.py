@@ -12,7 +12,7 @@ from ..._job_errors import JobError, JobErrorKind
 from ...config import get_config
 from ...index_profiles import get_index_support_profile
 from ...job_control import RunControlToken
-from ...job_dispatch import _run_document_attempt
+from ...job_dispatch import _run_indexing_attempt
 from ...job_manager import JobAttemptContext, JobManager
 from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
 from ...service import ServiceRegistry
@@ -83,8 +83,9 @@ async def test_over_budget_document_is_refused_before_gpu_or_extractor(
     registry = ServiceRegistry()
     try:
         with pytest.raises(JobError) as caught:
-            _run_document_attempt(
+            _run_indexing_attempt(
                 context,
+                source=JobSource.DOCUMENT,
                 manager=manager,
                 job_id=created.job.id,
                 root=tmp_path,

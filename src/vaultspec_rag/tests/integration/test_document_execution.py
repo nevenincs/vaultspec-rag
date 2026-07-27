@@ -41,7 +41,7 @@ from ...indexer._preprocess_runner import run_preprocessor
 from ...indexer._run_policy import RunPolicy
 from ...indexer._streaming import iter_weighted_document_slices
 from ...job_control import CancelRequested, RunControlToken
-from ...job_dispatch import _run_document_attempt
+from ...job_dispatch import _run_indexing_attempt
 from ...job_manager import JobAttemptContext, JobManager
 from ...job_models import (
     JobInitiator,
@@ -325,8 +325,9 @@ async def test_document_attempt_honors_cancellation_before_admission(
     registry = ServiceRegistry()
     try:
         with pytest.raises(CancelRequested):
-            _run_document_attempt(
+            _run_indexing_attempt(
                 context,
+                source=JobSource.DOCUMENT,
                 manager=manager,
                 job_id=created.job.id,
                 root=tmp_path,
