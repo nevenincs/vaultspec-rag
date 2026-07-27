@@ -757,6 +757,21 @@ def _stream_encode_and_upsert_vault(
     return chunk_counts
 
 
+#: What separates the locational parts of an embedding input from each
+#: other, and the whole header from the content. Both builders composed
+#: this by hand with the same two literals. They are not decoration: the
+#: header is what lets a query match a chunk through its location rather
+#: than only its body, so code and document inputs drifting apart in format
+#: makes their scores quietly less comparable, and nothing fails.
+_EMBED_CONTEXT_SEPARATOR = " :: "
+_EMBED_HEADER_SEPARATOR = "\n"
+
+
+def _embed_text(context: list[str], content: str) -> str:
+    """Compose one embedding input: locational header, then raw content."""
+    return _EMBED_CONTEXT_SEPARATOR.join(context) + _EMBED_HEADER_SEPARATOR + content
+
+
 def _code_embed_text(chunk: CodeChunk) -> str:
     """Build the embedding input for a code chunk.
 
@@ -771,7 +786,7 @@ def _code_embed_text(chunk: CodeChunk) -> str:
         parts.append(chunk.class_name)
     if chunk.function_name:
         parts.append(chunk.function_name)
-    return " :: ".join(parts) + "\n" + chunk.content
+    return _embed_text(parts, chunk.content)
 
 
 def _document_embed_text(chunk: DocumentChunk) -> str:
@@ -782,7 +797,7 @@ def _document_embed_text(chunk: DocumentChunk) -> str:
         context.append(payload.title)
     if payload.section:
         context.append(payload.section)
-    return " :: ".join(context) + "\n" + payload.content
+    return _embed_text(context, payload.content)
 
 
 def encode_and_upsert_document_slice(
