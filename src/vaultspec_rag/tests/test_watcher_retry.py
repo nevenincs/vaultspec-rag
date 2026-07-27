@@ -14,6 +14,7 @@ import pytest
 from .._job_errors import JobError, JobErrorKind
 from ..watcher_control import (
     _STATE_TRANSACTION_WORKER_SLOTS,
+    _ObservedSource,
     _admit_watcher_attempt,
     _persist_observed_sources,
     _run_durable_retry_transaction,
@@ -719,10 +720,10 @@ async def test_mixed_batch_cancellation_hands_off_both_sources(
 
         persistence = asyncio.create_task(
             _persist_observed_sources(
-                vault_events_observed=True,
-                code_events_observed=True,
-                vault_retry=vault,
-                code_retry=code,
+                (
+                    _ObservedSource(True, WatcherSource.VAULT, vault),
+                    _ObservedSource(True, WatcherSource.CODE, code),
+                ),
                 root_dir=tmp_path,
             )
         )
