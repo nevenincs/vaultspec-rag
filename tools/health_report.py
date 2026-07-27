@@ -10,7 +10,7 @@ for the remediation campaign, not a gate. Gates live in:
 - ``ty`` / ``basedpyright``     (type checking, gating)
 
 Every gate is configured declaratively in ``pyproject.toml`` and invoked
-directly by a ``just dev lint`` recipe. This module is the one place that
+directly by a ``just lint`` recipe. This module is the one place that
 composes them, and it exists to rank offenders across dimensions — not to
 re-implement any threshold, which would let the report and the gate disagree.
 
