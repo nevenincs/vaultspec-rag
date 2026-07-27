@@ -22,17 +22,10 @@ from starlette.responses import JSONResponse
 import vaultspec_rag.server as _m
 
 from .._operator_commands import (
+    IndexCommandOptions,
     index_command,
     server_jobs_command,
     server_status_command,
-)
-from ..search._result_shaping import (
-    PHASE_EMBEDDING,
-    PHASE_MODEL_LOAD,
-    PHASE_POSTPROCESS,
-    PHASE_PROJECT_LEASE,
-    PHASE_QDRANT,
-    PHASE_RERANK,
 )
 from .._source_types import (
     INDEX_SOURCES,
@@ -45,6 +38,14 @@ from .._source_types import (
 from .._store_locks import VaultStoreLockedError
 from ..concurrency import get_search_limiter
 from ..logging_config import log_event
+from ..search._result_shaping import (
+    PHASE_EMBEDDING,
+    PHASE_MODEL_LOAD,
+    PHASE_POSTPROCESS,
+    PHASE_PROJECT_LEASE,
+    PHASE_QDRANT,
+    PHASE_RERANK,
+)
 from ..service import RegistryFullError
 from ._auth import require_token
 from ._search_availability import (
@@ -161,7 +162,7 @@ def _empty_search_diagnostics(
 ) -> dict[str, object]:
     source = index_state["source"]
     remediation = [
-        index_command(source, port=port),
+        index_command(source, IndexCommandOptions(port=port)),
         server_status_command(),
         server_jobs_command(port),
     ]
@@ -208,13 +209,13 @@ def _classify_search_result(
     port: int | None,
 ) -> SearchResponseClassification:
     """Apply availability classification and stable-empty diagnostics."""
-    from ._routes import _canonical_job_snapshot
+    from ._routes import canonical_job_snapshot
 
     index_state = cast("dict[str, object]", result.get("index_state", {}))
     classification = classify_search_response(
         result,
         before_snapshot=job_snapshot_before,
-        after_snapshot=_canonical_job_snapshot(),
+        after_snapshot=canonical_job_snapshot(),
         requested_root=root,
         source=source,
         request_id=request_id,
@@ -243,12 +244,12 @@ def _classify_collection_disappearance(
     port: int | None,
 ) -> SearchResponseClassification | None:
     """Classify one instantaneous missing-collection search observation."""
-    from ._routes import _canonical_job_snapshot
+    from ._routes import canonical_job_snapshot
 
     return classify_qdrant_collection_disappearance(
         exc,
         before_snapshot=job_snapshot_before,
-        after_snapshot=_canonical_job_snapshot(),
+        after_snapshot=canonical_job_snapshot(),
         requested_root=root,
         source=source,
         request_id=request_id,
@@ -466,7 +467,7 @@ def _execute_search_request(
         index_state_seconds = time.perf_counter() - phase_started
         phase_started = time.perf_counter()
         from ._models import SearchResultItem
-        from ._routes import _search_summary
+        from ._routes import search_summary
 
         items = [
             SearchResultItem.model_validate(result, from_attributes=True).model_dump(
@@ -477,7 +478,7 @@ def _execute_search_request(
         response: dict[str, object] = {
             "request_id": request_id,
             "results": items,
-            "summary": _search_summary(len(results), index_state),
+            "summary": search_summary(len(results), index_state),
             "filtered": notes.get("dropped_domains"),
             "path_filter": notes.get("path_filter"),
             "timing": {
@@ -521,7 +522,7 @@ def _execute_search_request(
 
 
 async def search_route(request: Request) -> JSONResponse:
-    from ._routes import _canonical_job_snapshot
+    from ._routes import canonical_job_snapshot
 
     denied = require_token(request)
     if denied is not None:
@@ -554,7 +555,7 @@ async def search_route(request: Request) -> JSONResponse:
     except ValueError as exc:
         return _bad_request_invalid_root(exc)
 
-    job_snapshot_before = _canonical_job_snapshot()
+    job_snapshot_before = canonical_job_snapshot()
     search_source = search_type.value
     run = partial(
         _execute_search_request,

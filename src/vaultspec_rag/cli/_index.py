@@ -24,6 +24,7 @@ import typer
 import vaultspec_rag.cli as _cli
 
 from .._operator_commands import (
+    IndexCommandOptions,
     index_command,
     index_source_option,
     server_status_command,
@@ -207,7 +208,7 @@ def _validate_dry_run_request(
     if index_type is PublicSourceType.VAULT:
         message = "Dry run is available for code and document indexing."
         remediation = [
-            index_command(source, dry_run=True)
+            index_command(source, IndexCommandOptions(dry_run=True))
             for source in (PublicSourceType.CODE, PublicSourceType.DOCUMENT)
         ]
         if json_mode:
@@ -235,7 +236,11 @@ def _validate_dry_run_request(
         )
     _plain(message)
     _plain("Run:")
-    _plain(f"  {index_command(PublicSourceType.CODE, dry_run=True, dry_run_limit=50)}")
+    command = index_command(
+        PublicSourceType.CODE,
+        IndexCommandOptions(dry_run=True, dry_run_limit=50),
+    )
+    _plain(f"  {command}")
     raise typer.Exit(code=2)
 
 
@@ -397,7 +402,8 @@ def _validate_rebuild(ctx: typer.Context, json_mode: bool) -> None:
         # Every source the flag accepts, so a new one reaches the operator
         # here instead of being accepted but never offered.
         remediation = [
-            index_command(source, rebuild=True) for source in PublicSourceType
+            index_command(source, IndexCommandOptions(rebuild=True))
+            for source in PublicSourceType
         ]
         msg = (
             "--rebuild is destructive; pass an explicit --type "

@@ -15,6 +15,7 @@ module's business.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "SERVICE_NOT_RUNNING_MESSAGE",
+    "IndexCommandOptions",
     "index_command",
     "index_source_option",
     "port_option",
@@ -29,6 +31,20 @@ __all__ = [
     "server_start_command",
     "server_status_command",
 ]
+
+
+@dataclass(frozen=True)
+class IndexCommandOptions:
+    """Optional flags for one operator-facing index command."""
+
+    rebuild: bool = False
+    dry_run: bool = False
+    dry_run_limit: object | None = None
+    full: bool = False
+    port: object | None = None
+
+
+_DEFAULT_INDEX_COMMAND_OPTIONS = IndexCommandOptions()
 
 
 def port_option(port: object | None) -> str:
@@ -152,12 +168,7 @@ def index_source_option(
 
 def index_command(
     source: object | None = None,
-    *,
-    rebuild: bool = False,
-    dry_run: bool = False,
-    dry_run_limit: object | None = None,
-    full: bool = False,
-    port: object | None = None,
+    options: IndexCommandOptions = _DEFAULT_INDEX_COMMAND_OPTIONS,
 ) -> str:
     """Return the ``index`` invocation an operator should run.
 
@@ -168,7 +179,7 @@ def index_command(
     names, their order, and which source spellings exist.
     """
     command = "vaultspec-rag index"
-    if rebuild:
+    if options.rebuild:
         command += " --rebuild"
     if source is not None:
         from ._source_types import PublicSourceType as _Source
@@ -179,10 +190,10 @@ def index_command(
             else _Source(_Source.COMBINED if source == "all" else source)
         )
         command += f" --type {index_source_option(resolved)}"
-    if dry_run:
+    if options.dry_run:
         command += " --dry-run"
-    if dry_run_limit is not None:
-        command += f" --dry-run-limit {dry_run_limit}"
-    if full:
+    if options.dry_run_limit is not None:
+        command += f" --dry-run-limit {options.dry_run_limit}"
+    if options.full:
         command += " --full"
-    return command + port_option(port)
+    return command + port_option(options.port)
