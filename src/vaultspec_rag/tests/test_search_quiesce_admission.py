@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ..embeddings import EmbeddingModel
-    from ..store import VaultStore
+    from ..store_runtime import VaultStore
 
 pytestmark = [pytest.mark.unit]
 

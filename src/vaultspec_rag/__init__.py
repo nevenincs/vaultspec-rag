@@ -10,7 +10,7 @@ Exports:
     High-level API: index(), search_vault(), search_codebase(), search_all(),
     index_codebase(), list_documents(), get_related()
 
-    Core classes: VaultStore, VaultSearcher, VaultIndexer, CodebaseIndexer,
+    Core classes: VaultSearcher, VaultIndexer, CodebaseIndexer,
     EmbeddingModel, VaultDocument, CodeChunk, SearchResult, ParsedQuery
 
 The public names above resolve lazily through :pep:`562` ``__getattr__``: the
@@ -50,8 +50,10 @@ if TYPE_CHECKING:
         AllIndexOptions,
         CodebaseSearchRequest,
         CodeIndexOptions,
-        clean,
         DocumentIndexOptions,
+        IndexOptions,
+        VaultSearchRequest,
+        clean,
         get_readiness,
         get_related,
         get_service_state,
@@ -60,7 +62,6 @@ if TYPE_CHECKING:
         index_all,
         index_codebase,
         index_documents,
-        IndexOptions,
         list_documents,
         run_benchmark,
         run_quality_probe,
@@ -70,7 +71,6 @@ if TYPE_CHECKING:
         search_codebase_timed,
         search_vault,
         search_vault_timed,
-        VaultSearchRequest,
     )
     from .embeddings import EmbeddingModel, SparseResult
     from .graph_cache import GraphCache
@@ -91,7 +91,6 @@ if TYPE_CHECKING:
         parse_query,
         rerank_with_graph,
     )
-    from .store import VaultStore
 
 # Maps each lazily-exported public name to the submodule that defines it.
 # Accessing ``vaultspec_rag.<name>`` imports the owning submodule on demand.
@@ -149,38 +148,36 @@ _LAZY_EXPORTS: dict[str, str] = {
     "rerank_with_graph": "search",
     "CodeChunk": "_store_models",
     "VaultDocument": "_store_models",
-    "VaultStore": "store",
 }
 
 __all__ = [
     "AllIndexOptions",
-    "CodebaseSearchRequest",
-    "CodeIndexOptions",
     "CodeChunk",
     "CodeCombinedSearchFilters",
+    "CodeIndexOptions",
     "CodebaseIndexer",
+    "CodebaseSearchRequest",
     "CombinedSearchOutcome",
     "CombinedSearchRequest",
     "DocumentCombinedSearchFilters",
+    "DocumentIndexOptions",
     "DocumentIndexer",
     "DocumentScanResult",
     "DocumentSearchRequest",
     "DocumentSearchResult",
-    "DocumentIndexOptions",
     "EmbeddingModel",
     "GraphCache",
-    "IndexResult",
     "IndexOptions",
+    "IndexResult",
     "ParsedQuery",
     "SearchDomainOutcome",
     "SearchResult",
     "SparseResult",
     "VaultCombinedSearchFilters",
     "VaultDocument",
-    "VaultSearchRequest",
     "VaultIndexer",
+    "VaultSearchRequest",
     "VaultSearcher",
-    "VaultStore",
     "__version__",
     "clean",
     "get_readiness",

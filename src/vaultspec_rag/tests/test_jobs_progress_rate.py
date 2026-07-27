@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -27,6 +28,16 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
+
+
+@dataclass(frozen=True, slots=True)
+class _Cadence:
+    """One replayed reporting cadence: a step advancing at a fixed rate."""
+
+    step: str
+    advances_per_second: float
+    count: int
+    start_at: float
 
 
 class TestProgressRateWindow:
@@ -238,17 +249,17 @@ class TestRealisticProgressCadence:
     def _replay(
         self,
         record: dict[str, object],
+        cadence: _Cadence,
         *,
-        step: str,
-        advances_per_second: float,
-        count: int,
-        start_at: float,
         first_completed: int = 0,
     ) -> float:
         """Drive ``_sample_progress`` at a fixed cadence; return the last time."""
         from ..jobs import _sample_progress
 
-        interval = 1.0 / advances_per_second
+        step = cadence.step
+        count = cadence.count
+        start_at = cadence.start_at
+        interval = 1.0 / cadence.advances_per_second
         at = start_at
         _sample_progress(
             record,
@@ -282,10 +293,12 @@ class TestRealisticProgressCadence:
         record: dict[str, object] = {"id": "j1"}
         self._replay(
             record,
-            step="chunk + embed",
-            advances_per_second=_PRODUCTION_ADVANCES_PER_SECOND,
-            count=_PRODUCTION_FILE_COUNT,
-            start_at=1000.0,
+            _Cadence(
+                step="chunk + embed",
+                advances_per_second=_PRODUCTION_ADVANCES_PER_SECOND,
+                count=_PRODUCTION_FILE_COUNT,
+                start_at=1000.0,
+            ),
         )
         rate = _window_rate(self._window(record))
         assert rate is not None
@@ -295,10 +308,12 @@ class TestRealisticProgressCadence:
         record: dict[str, object] = {"id": "j1"}
         self._replay(
             record,
-            step="chunk + embed",
-            advances_per_second=_PRODUCTION_ADVANCES_PER_SECOND,
-            count=_PRODUCTION_FILE_COUNT,
-            start_at=1000.0,
+            _Cadence(
+                step="chunk + embed",
+                advances_per_second=_PRODUCTION_ADVANCES_PER_SECOND,
+                count=_PRODUCTION_FILE_COUNT,
+                start_at=1000.0,
+            ),
         )
         window = self._window(record)
         # Coalescing must bound memory, not grow one sample per report.
@@ -315,19 +330,23 @@ class TestRealisticProgressCadence:
         record: dict[str, object] = {"id": "j1"}
         last_at = self._replay(
             record,
-            step="chunk + embed",
-            advances_per_second=_PRODUCTION_ADVANCES_PER_SECOND,
-            count=780,
-            start_at=1000.0,
+            _Cadence(
+                step="chunk + embed",
+                advances_per_second=_PRODUCTION_ADVANCES_PER_SECOND,
+                count=780,
+                start_at=1000.0,
+            ),
         )
         # The GPU consumer fills its queue and the producer drops to the
         # drain rate. An operator watching now needs the current throughput.
         self._replay(
             record,
-            step="chunk + embed",
-            advances_per_second=10.0,
-            count=40,
-            start_at=last_at,
+            _Cadence(
+                step="chunk + embed",
+                advances_per_second=10.0,
+                count=40,
+                start_at=last_at,
+            ),
             first_completed=781,
         )
         rate = _window_rate(self._window(record))

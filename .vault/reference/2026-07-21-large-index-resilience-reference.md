@@ -3,7 +3,7 @@ tags:
   - '#reference'
   - '#large-index-resilience'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-27'
 related:
   - "[[2026-06-02-index-gpu-pipeline-adr]]"
   - "[[2026-06-02-index-perf-hardening-adr]]"
@@ -12,14 +12,15 @@ related:
   - "[[2026-07-21-index-backpressure-storage-hygiene-adr]]"
   - "[[2026-07-21-service-job-control-reference]]"
 ---
-
 # `large-index-resilience` reference: `retry, checkpoint, and memory-control seams`
+
+## Summary
 
 This reference maps incident items B7 through B10 to the current index, watcher, job,
 and embedding implementation. It records concrete change and real-test seams without
 starting the poisoned workload or attributing unmeasured CUDA growth to one mechanism.
 
-## Failure and retry topology
+### Failure and retry topology
 
 - `src/vaultspec_rag/jobs.py:542-665` launches vault and code reindex work in unbounded
   background tasks or threads. The global task set at line 75 is not keyed by exact job
@@ -40,7 +41,7 @@ rather than a total job deadline, because a healthy 250,000-chunk run is legitim
 long. Persist consecutive failures, classification, `next_retry_at`, and circuit state
 per watcher target; coalesce pending paths while open.
 
-## Checkpoint gap
+### Checkpoint gap
 
 - `src/vaultspec_rag/jobs.py:82-131` persists active-job display state and converts
   abandoned jobs to interrupted, but not committed indexing progress.
@@ -61,7 +62,7 @@ complete only when all its chunks commit. Stable point IDs permit replay to skip
 already committed under the same signature; incompatible signatures invalidate the run
 safely. Compact the journal only after atomic final metadata and purge completion.
 
-## Host-memory amplification
+### Host-memory amplification
 
 The full build has a bounded producer/consumer queue, but both incremental paths retain
 the corpus and its vectors:
@@ -81,7 +82,7 @@ to tens of gigabytes before sparse vectors and object overhead. Stream increment
 scan/chunk/encode/upsert, use weighted backpressure by estimated bytes/chunks, and clear
 vector fields immediately after a successful upsert.
 
-## CUDA retention and safety controls
+### CUDA retention and safety controls
 
 - `src/vaultspec_rag/embeddings.py:492-541` and `:600-638` have finite dense and sparse
   CUDA-OOM batch-halving ladders, but OOM recovery is not a proactive ceiling.
@@ -113,7 +114,7 @@ Enforce configured ceilings with a typed `memory_limit` or `gpu_memory_ceiling` 
 outcome after cleanup and checkpointing. Do not extend the global GPU lock over tensor
 conversion, cache release, instrumentation, or storage I/O.
 
-## Supported-corpus boundary
+### Supported-corpus boundary
 
 `src/vaultspec_rag/store.py:63` suppresses the local Qdrant collection-size warning but
 does not replace it with an honest support contract. Admission should declare explicit
@@ -122,7 +123,7 @@ chunks is below the previously accepted approximately 84,000-file capability tar
 it is the acceptance floor rather than input to reject. Limits above that floor must be
 derived from benchmarks; a larger profile may require external Qdrant.
 
-## Cancellation boundary
+### Cancellation boundary
 
 The sibling service-job-control research owns the operator API decision. Relevant seams
 for this feature are the cooperative checkpoints it requires:
@@ -140,7 +141,7 @@ Cancellation checks belong at phase, file, queue, retry, and slice boundaries, b
 after the GPU forward-pass critical section. `cancelled` is terminal only after writes
 cease and writer/GPU resources are released.
 
-## Real-behavior regression matrix
+### Real-behavior regression matrix
 
 - Interrupt a deterministic multi-slice isolated run after committed slices, restart on
   the same storage, and verify resume begins above zero with exact final IDs/counts.

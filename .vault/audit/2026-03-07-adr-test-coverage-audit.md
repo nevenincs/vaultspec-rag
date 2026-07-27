@@ -3,16 +3,21 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # ADR Test Coverage Audit — 2026-03-07
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 For each ADR: does a test exist that would **fail** if the decision were violated?
 
 ______________________________________________________________________
 
-## 1. gpu-only-rag-stack (2026-03-06)
+### 1. gpu-only-rag-stack (2026-03-06)
 
 **Decision:** GPU-only inference with SentenceTransformer(Qwen3-Embedding-0.6B) + SparseEncoder(splade-v3). No CPU fallback. CUDA required.
 
@@ -26,7 +31,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 2. rag-stack-migration (2026-03-06)
+### 2. rag-stack-migration (2026-03-06)
 
 **Decision:** Superseded by gpu-only-rag-stack. Not independently testable.
 
@@ -34,7 +39,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 3. blake2b-file-hashing (2026-03-07)
+### 3. blake2b-file-hashing (2026-03-07)
 
 **Decision:** Use `hashlib.blake2b` via `hashlib.file_digest()` for file change detection.
 
@@ -46,7 +51,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 4. manual-node-walking (2026-03-07)
+### 4. manual-node-walking (2026-03-07)
 
 **Decision:** Use `node.child_by_field_name("name")` for metadata extraction, not Query API.
 
@@ -59,7 +64,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 5. mcp-sync-tools (2026-03-07)
+### 5. mcp-sync-tools (2026-03-07)
 
 **Decision:** MCP tools should be plain `def`, not `async def`. SDK auto-wraps in `anyio.to_thread.run_sync()`.
 
@@ -71,7 +76,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 6. path-resolve-engine-cache (2026-03-07)
+### 6. path-resolve-engine-cache (2026-03-07)
 
 **Decision:** Use `Path.resolve()` to normalize vault paths before engine cache lookup.
 
@@ -83,7 +88,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 7. qdrant-filter-on-prefetch (2026-03-07)
+### 7. qdrant-filter-on-prefetch (2026-03-07)
 
 **Decision:** Filters must go on each Prefetch individually, not top-level `query_filter`.
 
@@ -97,7 +102,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 8. qdrant-payload-indexes-local (2026-03-07)
+### 8. qdrant-payload-indexes-local (2026-03-07)
 
 **Decision:** Call `create_payload_index()` at setup time for forward compatibility.
 
@@ -110,7 +115,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 9. qwen3-no-document-prompt (2026-03-07)
+### 9. qwen3-no-document-prompt (2026-03-07)
 
 **Decision:** Documents encoded without prompt; queries use `prompt_name="query"`.
 
@@ -122,7 +127,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 10. score-normalization (2026-03-07)
+### 10. score-normalization (2026-03-07)
 
 **Decision:** Sigmoid + min-max normalization in `search_all()` before combining vault and code results.
 
@@ -135,7 +140,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 11. threading-lock-for-singleton (2026-03-07)
+### 11. threading-lock-for-singleton (2026-03-07)
 
 **Decision:** Use `threading.Lock` with double-checked locking for `get_comp()`.
 
@@ -147,7 +152,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 12. vaultgraph-cache (2026-03-07)
+### 12. vaultgraph-cache (2026-03-07)
 
 **Decision:** Cache VaultGraph with `threading.Lock` and explicit invalidation after reindex.
 
@@ -159,7 +164,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Summary
+### Summary
 
 | #   | ADR                          | Verdict | Key Gap                                                                                 |
 | --- | ---------------------------- | ------- | --------------------------------------------------------------------------------------- |
@@ -179,3 +184,7 @@ ______________________________________________________________________
 **Result: 1 COVERED, 3 PARTIAL, 7 GAP, 1 N/A.**
 
 Seven ADR decisions have no test that would catch a regression. Four of those (blake2b, path-resolve, score-normalization, vaultgraph-cache) are also not implemented, meaning the gap is compounded: both the implementation and the safety net are missing.
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

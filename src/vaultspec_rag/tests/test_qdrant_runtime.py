@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .._sync_vocabulary import ProvisionAction
-from ..config import EnvVar, reset_config
+from ..config._settings import reset_config
+from ..config._types import EnvVar
 from ..qdrant_runtime._constants import (
     QDRANT_ASSET_SHA256,
     QDRANT_SERVER_VERSION,
@@ -167,7 +168,7 @@ class TestPreExecDigestGuard:
     def test_corrupted_binary_refused_before_spawn(
         self, isolated_status_dir: Path
     ) -> None:
-        from ..config import get_config
+        from ..config._settings import get_config
         from ..qdrant_runtime._supervise import start_supervised_from_config
 
         _ = isolated_status_dir
@@ -422,7 +423,7 @@ class TestResolution:
 
 class TestConfigKnobs:
     def test_defaults(self) -> None:
-        from ..config import get_config
+        from ..config._settings import get_config
 
         cfg = get_config()
         assert cfg.qdrant_server is True
@@ -431,7 +432,7 @@ class TestConfigKnobs:
         assert "qdrant-server" in str(cfg.qdrant_storage_dir)
 
     def test_env_overrides(self) -> None:
-        from ..config import get_config
+        from ..config._settings import get_config
 
         previous = {
             var: os.environ.get(var.value)

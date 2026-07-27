@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#search-index-availability'
 date: '2026-07-21'
-modified: '2026-07-22'
+modified: '2026-07-27'
 related:
   - "[[2026-07-21-search-index-availability-research]]"
   - "[[2026-07-21-search-index-availability-reference]]"
@@ -12,10 +12,9 @@ related:
   - "[[2026-07-21-service-job-control-adr]]"
   - "[[2026-07-21-large-index-resilience-adr]]"
 ---
-
 # `search-index-availability` adr: `authoritative empty search responses during index work` | (**status:** `accepted`)
 
-## Problem statement
+## Problem Statement
 
 Issue 252 establishes that an empty Hypertext Transfer Protocol (HTTP) `/search` response is
 not authoritative when index
@@ -26,24 +25,6 @@ and manufactures false negatives for automated consumers.
 The accepted empty-search decision requires operational state to distinguish no match from
 unavailable or changing index state. The current route derives availability from collection
 counts and does not close the race between retrieval and response emission.
-
-## Terms
-
-- An **authoritative empty response** is an HTTP 200 response whose empty `results` array may
-  safely be interpreted as no match in the currently published index.
-- A **convergence job** is an index operation bringing one project root and one source toward
-  the files currently on disk.
-- A **nonterminal convergence job** is a canonical `JobManager` index job in `queued`,
-  `running`, `pausing`, `paused`, or `cancelling`.
-- The **normalized source** is `vault` for the vault search branch and `code` for the code or
-  codebase search branch.
-- The **resolved root** is the request root returned by `_resolve_root`. Snapshot roots are
-  expanded and resolved without requiring the path to exist, normalized with the host
-  platform's path-case rules, and compared for equality. Prefix matches are forbidden.
-- A **canonical snapshot** is a copied `JobManager` resource with `spec`, `state`, and `id`.
-- **Stable** means neither observation contains a matching nonterminal convergence job. It
-  does not claim that future generation-ledger evidence is available.
-- GPU means graphics processing unit. CI means continuous integration.
 
 ## Considerations
 
@@ -242,6 +223,24 @@ becomes an additional reason to apply this same contract to an otherwise-empty r
 future change that blocks nonempty results requires its own architectural decision record.
 
 ## Rationale
+
+### Terms
+
+- An **authoritative empty response** is an HTTP 200 response whose empty `results` array may
+  safely be interpreted as no match in the currently published index.
+- A **convergence job** is an index operation bringing one project root and one source toward
+  the files currently on disk.
+- A **nonterminal convergence job** is a canonical `JobManager` index job in `queued`,
+  `running`, `pausing`, `paused`, or `cancelling`.
+- The **normalized source** is `vault` for the vault search branch and `code` for the code or
+  codebase search branch.
+- The **resolved root** is the request root returned by `_resolve_root`. Snapshot roots are
+  expanded and resolved without requiring the path to exist, normalized with the host
+  platform's path-case rules, and compared for equality. Prefix matches are forbidden.
+- A **canonical snapshot** is a copied `JobManager` resource with `spec`, `state`, and `id`.
+- **Stable** means neither observation contains a matching nonterminal convergence job. It
+  does not claim that future generation-ledger evidence is available.
+- GPU means graphics processing unit. CI means continuous integration.
 
 The chosen guard protects the only currently ambiguous outcome: an empty result whose
 authority is undermined by overlapping index work. It preserves useful search availability,

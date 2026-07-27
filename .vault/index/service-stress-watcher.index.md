@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#service-stress-watcher'
-date: '2026-07-25'
-modified: '2026-07-25'
+date: '2026-07-27'
+modified: '2026-07-27'
 related:
   - '[[2026-06-05-service-stress-watcher-W01-P01-S01]]'
   - '[[2026-06-05-service-stress-watcher-W01-P01-S02]]'
@@ -28,10 +28,10 @@ Auto-generated index of all documents tagged with `#service-stress-watcher`.
 
 ### exec
 
-- `2026-06-05-service-stress-watcher-W01-P01-S01` - Implement concurrent database stress test under Server Mode
-- `2026-06-05-service-stress-watcher-W01-P01-S02` - Implement filesystem watcher file-creation integration test
+- `2026-06-05-service-stress-watcher-W01-P01-S01` - 2026-06-05-service-stress-watcher-W01-P01-S01
+- `2026-06-05-service-stress-watcher-W01-P01-S02` - 2026-06-05-service-stress-watcher-W01-P01-S02
 - `2026-06-05-service-stress-watcher-W01-P01-summary` - `service-stress-watcher` `W01-P01` summary
-- `2026-06-05-service-stress-watcher-W01-P02-S03` - Run and pass watcher integration tests
+- `2026-06-05-service-stress-watcher-W01-P02-S03` - 2026-06-05-service-stress-watcher-W01-P02-S03
 - `2026-06-05-service-stress-watcher-W01-P02-summary` - `service-stress-watcher` `W01-P02` summary
 
 ### plan

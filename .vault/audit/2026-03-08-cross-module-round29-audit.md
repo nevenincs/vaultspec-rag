@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 29: Cross-Module Integration Audit
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Date:** 2026-03-08
 **Scope:** Boundary conditions between indexer ↔ store, search ↔ store, api.py ↔ store/searcher, watcher ↔ indexer ↔ gpu_sem, CLI ↔ MCP server
@@ -14,7 +19,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Executive Summary
+### Executive Summary
 
 Found **2 CRITICAL race conditions** and **1 HIGH data corruption risk**:
 
@@ -26,7 +31,7 @@ All other boundaries checked are correct.
 
 ______________________________________________________________________
 
-## Detailed Findings
+### Detailed Findings
 
 ### 1. indexer → store boundary: Drop → recreate race window
 
@@ -208,7 +213,7 @@ However, there is a subtle edge case: if `search_vault` tool is called **before*
 
 ______________________________________________________________________
 
-## Test Coverage
+### Test Coverage
 
 **Tested boundaries:**
 
@@ -224,6 +229,21 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
+### Files Affected
+
+- `src/vaultspec_rag/indexer.py` (lines 684-687, 1218-1223)
+- `src/vaultspec_rag/store.py` (lines 186-198)
+- `src/vaultspec_rag/mcp_server.py` (lines 343-354, 374-385)
+- `src/vaultspec_rag/api.py` (lines 95-97)
+
+______________________________________________________________________
+
+### Conclusion
+
+2 CRITICAL race conditions identified with high impact. The first (drop → search race) can cause immediate search failures. The second (metadata loss) can cause index corruption over time. The HIGH-priority graph cache issue degrades search quality silently.
+
+All three are fixable with small targeted changes. Recommend prioritizing CRITICAL issues first, then adding integration tests for the affected code paths.
+
 ## Recommendations
 
 | Priority | Issue                          | Action                                                                                    | Effort |
@@ -234,18 +254,3 @@ ______________________________________________________________________
 | MEDIUM   | Test coverage                  | Add integration tests for concurrent drop+search, write failures, direct full_index calls | Medium |
 
 ______________________________________________________________________
-
-## Files Affected
-
-- `src/vaultspec_rag/indexer.py` (lines 684-687, 1218-1223)
-- `src/vaultspec_rag/store.py` (lines 186-198)
-- `src/vaultspec_rag/mcp_server.py` (lines 343-354, 374-385)
-- `src/vaultspec_rag/api.py` (lines 95-97)
-
-______________________________________________________________________
-
-## Conclusion
-
-2 CRITICAL race conditions identified with high impact. The first (drop → search race) can cause immediate search failures. The second (metadata loss) can cause index corruption over time. The HIGH-priority graph cache issue degrades search quality silently.
-
-All three are fixable with small targeted changes. Recommend prioritizing CRITICAL issues first, then adding integration tests for the affected code paths.

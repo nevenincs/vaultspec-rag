@@ -14,7 +14,7 @@ from vaultspec_rag import jobs as _managed_jobs
 from vaultspec_rag._job_errors import JobError, JobErrorKind, remediation
 from vaultspec_rag.cli import app
 from vaultspec_rag.job_control import RunControlToken
-from vaultspec_rag.job_manager._control import _AttemptTerminal
+from vaultspec_rag.job_manager._control import AttemptTerminal
 from vaultspec_rag.job_models import (
     DesiredJobState,
     IndexResilienceSnapshot,
@@ -65,7 +65,7 @@ async def _seed_terminal_resilience_job(
         assert started.code == "attempt_started"
         terminal = manager.finish_attempt(
             job_id,
-            _AttemptTerminal(
+            AttemptTerminal(
                 attempt=1,
                 task=owner_task,
                 state=JobState.INTERRUPTED,

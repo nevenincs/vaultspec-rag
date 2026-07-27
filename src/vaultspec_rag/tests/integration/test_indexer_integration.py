@@ -39,7 +39,7 @@ def _configure_cpu_code_index(
     **overrides: object,
 ) -> None:
     """Select a tiny real CPU encoder while retaining production indexing."""
-    from ...config import get_config
+    from ...config._settings import get_config
 
     values: dict[str, object] = {
         "data_dir": ".index-memory-test",
@@ -173,14 +173,15 @@ class TestLargeCodeIndexHighWater:
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        from ... import CodebaseIndexer, VaultStore
+        from ... import CodebaseIndexer
+        from ...store_runtime import VaultStore
 
         spec = CorpusSpec(files=2, chunks_per_file=3)
         prepare_corpus(tmp_path, spec)
         store = VaultStore(tmp_path)
         try:
             indexer = CodebaseIndexer(tmp_path, embedding_model, store)
-            with caplog.at_level(logging.INFO, logger="vaultspec_rag.store"):
+            with caplog.at_level(logging.INFO, logger="vaultspec_rag.store_ingest"):
                 result = indexer.full_index(
                     reporter=NullProgressReporter(),
                     preflight=indexer.preflight_content(),
@@ -201,9 +202,10 @@ class TestLargeCodeIndexHighWater:
         embedding_model: EmbeddingModel,
         tmp_path_factory: TempPathFactory,
     ) -> None:
-        from ... import CodebaseIndexer, VaultStore
-        from ...config import get_config
+        from ... import CodebaseIndexer
+        from ...config._settings import get_config
         from ...index_profiles import get_index_support_profile
+        from ...store_runtime import VaultStore
 
         def _run(files: int) -> MeasuredIndexRun:
             root = tmp_path_factory.mktemp(f"large-code-{files}")
@@ -312,9 +314,10 @@ class TestCodeIndexMemoryCeilings:
         cpu_code_embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
-        from ... import CodebaseIndexer, VaultStore
+        from ... import CodebaseIndexer
         from ..._job_errors import JobError, JobErrorKind
         from ...job_dispatch import _code_resilience
+        from ...store_runtime import VaultStore
 
         _configure_cpu_code_index(
             cpu_code_embedding_model.dimension,
@@ -357,11 +360,12 @@ class TestCodeIndexMemoryCeilings:
         tmp_path: Path,
     ) -> None:
         del clean_config
-        from ... import CodebaseIndexer, VaultStore
+        from ... import CodebaseIndexer
         from ..._job_errors import JobError, JobErrorKind
-        from ...config import get_config
+        from ...config._settings import get_config
         from ...job_dispatch import _code_resilience
         from ...memory_probe import current_cuda_mb, current_rss_mb
+        from ...store_runtime import VaultStore
 
         allocated_mb, reserved_mb = current_cuda_mb()
         measured_cuda_mb = max(allocated_mb, reserved_mb)
@@ -409,8 +413,9 @@ class TestCodeIndexBlockedStoreDeadline:
         cpu_code_embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
-        from ... import CodebaseIndexer, VaultStore
+        from ... import CodebaseIndexer
         from ..._job_errors import JobError, JobErrorKind
+        from ...store_runtime import VaultStore
 
         _configure_cpu_code_index(
             cpu_code_embedding_model.dimension,
@@ -428,7 +433,9 @@ class TestCodeIndexBlockedStoreDeadline:
                 tmp_path,
                 cpu_code_embedding_model,
                 store,
-                gpu_lock=gpu_gate,
+                options=CodebaseIndexer.Options(
+                    gpu_lock=gpu_gate,
+                ),
             )
             point_lock = store._collection_locks[store.CODE_TABLE_NAME]
             gpu_gate.acquire()
@@ -484,9 +491,10 @@ class TestDocumentIndexMemoryAndWriteDeadline:
         cpu_code_embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
-        from ... import DocumentIndexer, VaultStore
-        from ...config import get_config
+        from ... import DocumentIndexer
+        from ...config._settings import get_config
         from ...job_dispatch import _document_resilience
+        from ...store_runtime import VaultStore
 
         _configure_cpu_code_index(
             cpu_code_embedding_model.dimension,
@@ -532,9 +540,10 @@ class TestDocumentIndexMemoryAndWriteDeadline:
         cpu_code_embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
-        from ... import DocumentIndexer, VaultStore
+        from ... import DocumentIndexer
         from ..._job_errors import JobError, JobErrorKind
         from ...job_dispatch import _document_resilience
+        from ...store_runtime import VaultStore
 
         _configure_cpu_code_index(
             cpu_code_embedding_model.dimension,
@@ -576,8 +585,9 @@ class TestDocumentIndexMemoryAndWriteDeadline:
         cpu_code_embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
-        from ... import DocumentIndexer, VaultStore
+        from ... import DocumentIndexer
         from ...job_control import CancelRequested, RunControlToken
+        from ...store_runtime import VaultStore
 
         _configure_cpu_code_index(
             cpu_code_embedding_model.dimension,
@@ -630,8 +640,9 @@ class TestDocumentIndexMemoryAndWriteDeadline:
         cpu_code_embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
-        from ... import DocumentIndexer, VaultStore
+        from ... import DocumentIndexer
         from ..._job_errors import JobError, JobErrorKind
+        from ...store_runtime import VaultStore
 
         _configure_cpu_code_index(
             cpu_code_embedding_model.dimension,
@@ -711,7 +722,7 @@ class TestDocumentPreparation:
         )
 
         from ... import prepare_document
-        from ...config import get_config
+        from ...config._settings import get_config
 
         root: Path = rag_components["root"]
         docs_dir: Path = root / get_config().docs_dir
@@ -778,7 +789,7 @@ class TestIndexEdgeCases:
         empty-docs early-return silently preserved the old rows.
         """
         from ...indexer import VaultIndexer
-        from ...store import VaultStore
+        from ...store_runtime import VaultStore
         from ..corpus import build_synthetic_vault
 
         root: Path = tmp_path_factory.mktemp("full-index-empty-regression")
@@ -958,8 +969,8 @@ class _CorpusChurn:
 
 def _cancel_after_first_code_slice(store: object, token: object) -> None:
     """Cancel only once production storage has published one real slice."""
-    from ... import VaultStore
     from ...job_control import RunControlToken
+    from ...store_runtime import VaultStore
 
     assert isinstance(store, VaultStore)
     assert isinstance(token, RunControlToken)
@@ -990,8 +1001,9 @@ def test_a_resumed_code_run_over_a_moving_tree_completes(
     a matter of timing, and a test that demanded it would be flaky; a run that
     aborts, however, is the defect, and that cannot happen by timing.
     """
-    from ... import CodebaseIndexer, VaultStore
+    from ... import CodebaseIndexer
     from ...job_control import CancelRequested, RunControlToken
+    from ...store_runtime import VaultStore
 
     count = 8
     _write_code_memory_corpus(tmp_path, count)
@@ -1066,10 +1078,11 @@ class TestNoCudaHeadroomRefusedAtAdmission:
         RAISE; restored, it refuses.
         """
         del clean_config
-        from ... import CodebaseIndexer, VaultStore
+        from ... import CodebaseIndexer
         from ..._job_errors import JobError, JobErrorKind
-        from ...config import get_config
+        from ...config._settings import get_config
         from ...memory_probe import sample_resident_cuda_baseline
+        from ...store_runtime import VaultStore
 
         # Production records the baseline after each shared model finishes
         # loading; the fixture above loaded one, so this is that same call

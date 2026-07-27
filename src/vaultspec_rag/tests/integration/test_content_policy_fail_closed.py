@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
     from ...indexer import CodebaseIndexer
-    from ...store import VaultStore
+    from ...store_runtime import VaultStore
 
 pytestmark = [pytest.mark.integration]
 
@@ -55,9 +55,9 @@ def policy_boundary_project(
     tmp_path: Path,
 ) -> Generator[PolicyBoundaryProject]:
     """Seed a real collection, sidecar, and cache behind conflicting routing."""
-    from ... import CodebaseIndexer, VaultStore
+    from ... import CodebaseIndexer
     from ..._store_models import CodeChunk
-    from ...config import get_config
+    from ...config._settings import get_config
     from ...indexer._content_policy import (
         ContentKind,
         ContentRoute,
@@ -66,6 +66,7 @@ def policy_boundary_project(
     )
     from ...indexer._preprocess_cache import preprocess_cache_dir
     from ...indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
+    from ...store_runtime import VaultStore
 
     routed_dir = tmp_path / "incoming"
     routed_dir.mkdir()
@@ -110,9 +111,11 @@ def policy_boundary_project(
         tmp_path,
         cast("Any", None),
         store,
-        content_policy=RootContentPolicy(
-            SourceProfileVersion.EXPLICIT_ONLY_V1,
-            (ContentRoute("incoming/*", ContentKind.CODE),),
+        options=CodebaseIndexer.Options(
+            content_policy=RootContentPolicy(
+                SourceProfileVersion.EXPLICIT_ONLY_V1,
+                (ContentRoute("incoming/*", ContentKind.CODE),),
+            )
         ),
     )
     try:
@@ -130,7 +133,7 @@ def test_api_rejects_invalid_policy_before_model_or_store_acquisition(
     tmp_path: Path,
 ) -> None:
     """A fresh API process fails on policy even when CUDA is unavailable."""
-    from ...config import get_config
+    from ...config._settings import get_config
     from ...indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
 
     root = tmp_path / "invalid-api-root"
@@ -226,10 +229,11 @@ def test_missing_mismatched_and_foreign_preflights_are_mutation_free(
     tmp_path: Path,
 ) -> None:
     """Direct mutators reject absent or forged authority before store writes."""
-    from ... import CodebaseIndexer, VaultStore
+    from ... import CodebaseIndexer
     from ..._store_models import CodeChunk
-    from ...config import get_config
+    from ...config._settings import get_config
     from ...indexer._codebase_indexer import CodeScopedPreflight
+    from ...store_runtime import VaultStore
 
     root = tmp_path / "target"
     foreign_root = tmp_path / "foreign"
@@ -300,7 +304,7 @@ def test_missing_mismatched_and_foreign_preflights_are_mutation_free(
 def test_invalid_job_policy_does_not_admit_or_persist_a_job(tmp_path: Path) -> None:
     """Job validation fails before canonical or compatibility ledger mutation."""
     from ... import jobs
-    from ...config import get_config
+    from ...config._settings import get_config
     from ...indexer._preprocess_config import (
         PREPROCESS_CONFIG_FILENAME,
         PreprocessPolicyError,

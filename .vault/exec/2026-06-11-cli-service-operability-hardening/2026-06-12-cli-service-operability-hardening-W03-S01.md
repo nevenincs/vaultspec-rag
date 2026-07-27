@@ -1,21 +1,21 @@
 ---
 tags: ['#exec', '#cli-service-operability-hardening']
 date: '2026-06-12'
-modified: '2026-06-30'
-step_id: 'W03.S01'
+modified: '2026-07-27'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-search-freshness-and-empty-results-adr]]'
 ---
-
 # `cli-service-operability-hardening` W03.S01 - search empty-result diagnostics
 
-## Step
+## Description
+
+### Step
 
 Implemented the first Wave 03 slice: service-backed search responses now include
 actionable index state and empty-result recovery guidance.
 
-## Changes
+### Changes
 
 - Added service search `index_state` metadata:
   - `source`,
@@ -39,7 +39,7 @@ actionable index state and empty-result recovery guidance.
 - Normalized direct HTTP `type="code"` search diagnostics so code searches report code
   index state instead of vault index state.
 
-## Verification
+### Verification
 
 - `uv run pytest src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`
 - `uv run pytest src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py src/vaultspec_rag/tests/integration/test_service_state.py`
@@ -47,7 +47,15 @@ actionable index state and empty-result recovery guidance.
 - `uv run pytest src/vaultspec_rag/tests/test_cli.py -k SearchTimeoutDefaults`
 - `uv run ruff check src/vaultspec_rag/server/_routes.py src/vaultspec_rag/cli/_http_search.py src/vaultspec_rag/cli/_search.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`
 
-## Manual Persona Test
+## Outcome
+
+Empty service-backed searches no longer look like silent failure when the requested
+index source is missing. The user gets a machine-readable reason and safe recovery
+commands.
+
+## Notes
+
+### Manual Persona Test
 
 Persona: Agent searching for implementation locations in a codebase that may not be
 indexed yet.
@@ -70,13 +78,7 @@ Observed:
 - A normal service-backed code search still returned ranked results and included
   `index_state.status=available`.
 
-## Outcome
-
-Empty service-backed searches no longer look like silent failure when the requested
-index source is missing. The user gets a machine-readable reason and safe recovery
-commands.
-
-## Deferred
+### Deferred
 
 - No last-indexed timestamp exists yet, so this slice cannot distinguish stale from
   merely available.

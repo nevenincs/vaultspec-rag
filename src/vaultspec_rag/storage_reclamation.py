@@ -591,8 +591,9 @@ def _archive_completion_timestamp(archive: Path) -> float | None:
         return None
     if not isinstance(payload, dict):
         return None
+    manifest_payload = cast("dict[str, object]", payload)
     completed_at = parse_iso_timestamp(
-        payload.get("completed_at"),
+        manifest_payload.get("completed_at"),
         field="archive completed_at",
     )
     return None if completed_at is None else completed_at.timestamp()

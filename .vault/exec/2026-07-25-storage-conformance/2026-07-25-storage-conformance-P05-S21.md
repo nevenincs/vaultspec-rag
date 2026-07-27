@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#storage-conformance'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-27'
 step_id: 'S21'
 related:
   - "[[2026-07-25-storage-conformance-plan]]"
@@ -55,3 +55,4 @@ and sweeping another session's file into this merge is exactly the failure mode
 that makes a merge unreviewable. Format runs are now scoped to changed files.
 
 ## Notes
+Template evidence: intro_commit=313fdd9ad03fc74d3e0be01c09819d5268deb45a; template_commit=313fdd9ad03fc74d3e0be01c09819d5268deb45a:.vaultspec/templates/exec-step.md requires Description, Outcome, and Notes. This repair preserves the retained record text and adds no new implementation claim.

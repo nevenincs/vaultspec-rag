@@ -3,16 +3,25 @@ tags:
   - '#plan'
   - '#tool-env-gpu-continuity'
 date: '2026-07-14'
-modified: '2026-07-22'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-07-14-tool-env-gpu-continuity-adr]]'
   - '[[2026-07-14-tool-env-gpu-continuity-research]]'
 ---
-
-<!-- RETIRED: S14 -->
-
 # `tool-env-gpu-continuity` plan
+
+## Description
+
+Implements the accepted tool-env-gpu-continuity ADR: make the GPU torch contract
+survive the uv tool lifecycle and make every failure of it legible. P01 delivers the
+env classifier and the exact-command remediation on the CPU-wheel refusal and the
+installer warning (ADR A/B/C); P02 the daemon-stamped warming status phase (ADR D);
+P03 the jobs json signposting and the canonical install documentation (ADR E plus A
+docs); P04 the full-suite run and the mandated on-box manual persona pass, including
+the execution-phase gate on uv --index behaviour for tool installs.
+
+## Steps
 
 ### Phase `P01` - Env classification and exact-command remediation
 
@@ -46,18 +55,6 @@ Signpost server jobs --json in the human summary and help, and document the cano
 Full-suite and on-box verification, including the execution-phase gate on the uv --index behaviour for uv tool installs on Windows and the manual persona pass mandated for CLI operability changes.
 
 - [x] `P04.S13` - Run the full unit and integration suites with the machine service stopped and isolated status and storage dirs, fixing any regressions the new surfaces introduce; `src/vaultspec_rag/tests`.
-
-## Description
-
-Implements the accepted tool-env-gpu-continuity ADR: make the GPU torch contract
-survive the uv tool lifecycle and make every failure of it legible. P01 delivers the
-env classifier and the exact-command remediation on the CPU-wheel refusal and the
-installer warning (ADR A/B/C); P02 the daemon-stamped warming status phase (ADR D);
-P03 the jobs json signposting and the canonical install documentation (ADR E plus A
-docs); P04 the full-suite run and the mandated on-box manual persona pass, including
-the execution-phase gate on uv --index behaviour for tool installs.
-
-## Steps
 
 ## Parallelization
 

@@ -1,6 +1,7 @@
 set positional-arguments := false
-set shell := ["pwsh", "-NoProfile", "-Command"]
-set windows-shell := ["pwsh.exe", "-NoProfile", "-Command"]
+set quiet := true
+set shell := ["pwsh", "-NoProfile", "-File", "scripts/run-just-recipe.ps1"]
+set windows-shell := ["pwsh.exe", "-NoProfile", "-File", "scripts/run-just-recipe.ps1"]
 
 # Every recipe that merely *runs* a tool from the existing environment uses this
 # runner. --no-sync keeps `uv run` from re-resolving and rebuilding the project
@@ -12,6 +13,7 @@ uvr := "uv run --no-sync"
 export VIRTUAL_ENV := justfile_directory() + "/.venv"
 export PATH := if os_family() == "windows" { VIRTUAL_ENV + "/Scripts;" + env_var('PATH') } else { VIRTUAL_ENV + "/bin:" + env_var('PATH') }
 
+# List available recipes.
 default:
   @just --list
 
@@ -21,7 +23,7 @@ default:
 # Requires the managed search server running and this repo's own index current.
 # ===========================================================================
 
-# readme-assets - regenerate the README terminal-render SVGs
+# Regenerate the README terminal-render SVGs.
 readme-assets out_dir='assets':
   {{uvr}} python scripts/render_readme_assets.py {{out_dir}}
 
@@ -71,7 +73,7 @@ readme-assets out_dir='assets':
 # ci - full pipeline: lint → audit → vault check → test
 # ===========================================================================
 
-# ci - full pipeline: lint → audit → vault check → test
+# Run lint, audit, vault validation, and tests.
 ci:
   just lint all
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -82,6 +84,7 @@ ci:
   just test all
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+# Manage project dependencies.
 deps target='sync':
   switch ("{{target}}") { \
     "sync" { uv sync --locked --group dev ; break } \
@@ -112,6 +115,8 @@ deps target='sync':
 # NOTE: the switch body is one continuation-joined logical line, so it must
 # never contain a `#` comment - PowerShell's `#` runs to the end of the joined
 # line and silently swallows every case after it, closing braces included.
+
+# Run static analysis and documentation checks.
 lint target='all':
   switch ("{{target}}") { \
     "python" { {{uvr}} ruff check src tools ; break } \
@@ -230,6 +235,7 @@ lint target='all':
     } \
   }
 
+# Apply available formatters and automatic fixes.
 fix target='all':
   switch ("{{target}}") { \
     "python" { \
@@ -300,6 +306,8 @@ fix target='all':
 # NOTE: the switch body is one continuation-joined logical line, so it must
 # never contain a `#` comment - PowerShell's `#` runs to the end of the joined
 # line and silently swallows every case after it, closing braces included.
+
+# Audit project dependencies and code quality.
 audit target='all':
   switch ("{{target}}") { \
     "deps" { uv audit --locked --preview-features audit ; break } \
@@ -384,6 +392,8 @@ audit target='all':
 # comment inside the switch - PowerShell's `#` runs to the end of the joined
 # line and silently swallows every case after it, including the closing
 # braces (this broke every target, not just "gpu", the last time it happened).
+
+# Run project test suites.
 test target='all':
   switch ("{{target}}") { \
     "python" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -n auto --dist loadfile -m "not (integration or quality or performance or robustness or subprocess_gpu or cuda)" ; break } \
@@ -403,6 +413,7 @@ test target='all':
     } \
   }
 
+# Build Python distribution artifacts.
 build target:
   switch ("{{target}}") { \
     "python" { uv build ; break } \
@@ -416,5 +427,7 @@ build target:
 # Aggregate code-health report: worst offenders per dimension (cyclomatic,
 # cognitive, function limits, module LOC, maintainability, strict types).
 # Measurement only — always exits 0. Pass --fast to skip basedpyright.
+
+# Report code-health metrics; always exits zero.
 health *args='':
   {{uvr}} python tools/health_report.py {{args}}

@@ -3,14 +3,28 @@ tags:
   - '#plan'
   - '#search-noise-filtering'
 date: '2026-06-30'
-modified: '2026-07-22'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-06-30-search-noise-filtering-adr]]'
   - '[[2026-06-30-search-noise-filtering-research]]'
 ---
-
 # `search-noise-filtering` plan
+
+## Description
+
+Implements the `search-noise-filtering` ADR. Code search on this repo measured
+70.8% non-production hits and a 44.2% duplicate rate at `k=12`, the duplicates
+almost entirely agent worktree clones echoing real `src/` files at identical
+scores. The work introduces one shared, worker-safe domain classifier; persists
+a per-chunk `domain` payload at index time for cheap pushdown; adds reversible
+`--exclude-domain` / `--only-domain` filters and a demote-or-hide policy pass
+with no-silent-depletion backfill; declares a persistent per-project noise
+profile with shipped defaults; flips the conservative locale-dedup default on;
+and threads one filter contract through every adapter. Success is a measured
+noise@k reduction against the recorded baseline.
+
+## Steps
 
 ### Phase `P01` - Foundation: shared domain classifier and index-time domain
 
@@ -33,21 +47,6 @@ Thread one filter contract through api, service route, CLI, and MCP, then prove 
 
 - [x] `P03.S06` - Thread the domain filter and profile contract identically through the facade, service search route, CLI flags, and the MCP tool, rejecting domain filters for vault search, with parity tests; `src/vaultspec_rag/server/_routes.py`.
 - [x] `P03.S07` - Add a performance benchmark replaying the fixed query set against the live index asserting a noise@k reduction versus baseline, reindex and re-measure, and document the noise controls; `src/vaultspec_rag/tests/benchmarks/bench_search_noise.py`.
-
-## Description
-
-Implements the `search-noise-filtering` ADR. Code search on this repo measured
-70.8% non-production hits and a 44.2% duplicate rate at `k=12`, the duplicates
-almost entirely agent worktree clones echoing real `src/` files at identical
-scores. The work introduces one shared, worker-safe domain classifier; persists
-a per-chunk `domain` payload at index time for cheap pushdown; adds reversible
-`--exclude-domain` / `--only-domain` filters and a demote-or-hide policy pass
-with no-silent-depletion backfill; declares a persistent per-project noise
-profile with shipped defaults; flips the conservative locale-dedup default on;
-and threads one filter contract through every adapter. Success is a measured
-noise@k reduction against the recorded baseline.
-
-## Steps
 
 ## Parallelization
 

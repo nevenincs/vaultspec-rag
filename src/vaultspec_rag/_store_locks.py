@@ -1,6 +1,6 @@
 """Process-level locking primitives for the local-file Qdrant store.
 
-Split out of ``store.py`` to keep the store module focused on collection and
+Split out of ``store_runtime.py`` to keep the store runtime focused on collection and
 point operations. These helpers are stdlib-only (no qdrant, torch, or other
 heavy imports) so they stay cheap to import from anywhere that needs the lock
 or its error type.
@@ -10,16 +10,34 @@ from __future__ import annotations
 
 import time
 from contextlib import ExitStack, contextmanager, suppress
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     import pathlib
     from collections.abc import Generator, Mapping
+    from types import TracebackType
+
+
+class ReentrantLock(Protocol):
+    """Minimal lock contract shared by local collection guards."""
+
+    def __enter__(self, blocking: bool = True, timeout: float = -1.0) -> bool: ...
+
+    def __exit__(
+        self,
+        t: type[BaseException] | None,
+        v: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None: ...
+
+    def acquire(self, blocking: bool = True, timeout: float = -1.0) -> bool: ...
+
+    def release(self) -> None: ...
 
 
 @contextmanager
 def acquire_collection_locks(
-    locks: Mapping[str, Any],
+    locks: Mapping[str, ReentrantLock],
 ) -> Generator[None]:
     """Acquire collection guards in deterministic name order."""
     with ExitStack() as stack:
@@ -30,7 +48,7 @@ def acquire_collection_locks(
 
 @contextmanager
 def acquire_collection_locks_bounded(
-    locks: Mapping[str, Any],
+    locks: Mapping[str, ReentrantLock],
     *,
     deadline_seconds: float,
 ) -> Generator[bool]:
@@ -50,7 +68,7 @@ def acquire_collection_locks_bounded(
     healthy store - which is why the ordinary lock acquisition stays unbounded.
     """
     deadline = time.monotonic() + deadline_seconds
-    acquired: list[Any] = []
+    acquired: list[ReentrantLock] = []
     all_held = True
     try:
         for name in sorted(locks):

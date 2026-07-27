@@ -23,7 +23,8 @@ from typer.testing import CliRunner
 from ..cli import app
 from ..cli._index import _apply_preprocess_off_env
 from ..cli._process import _service_child_env
-from ..config import EnvVar, get_config, reset_config
+from ..config._settings import get_config, reset_config
+from ..config._types import EnvVar
 from ._scaffold import make_workspace
 
 if TYPE_CHECKING:

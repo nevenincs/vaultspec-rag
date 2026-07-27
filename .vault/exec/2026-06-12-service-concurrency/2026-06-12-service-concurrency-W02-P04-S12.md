@@ -3,19 +3,18 @@ tags:
   - '#exec'
   - '#service-concurrency'
 date: '2026-06-12'
-modified: '2026-06-30'
+modified: '2026-07-27'
 step_id: 'S12'
 related:
   - "[[2026-06-12-service-concurrency-plan]]"
 ---
-
 # Re-run the quality benchmarks to validate contextual embeddings and record deltas
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/tests/benchmarks`
-
-## Description
 
 - Re-run the quality harness with contextual code-chunk headers and
   per-surface query instructions active (shared run with the rerank step).
@@ -28,3 +27,5 @@ chunking integration tests. The harness ran while three concurrent index jobs
 saturated the GPU, doubling as an adversarial co-load sample.
 
 ## Notes
+
+Evidence gap: the original record contains no Notes section with authored incident, deferred-work, or follow-up evidence.

@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#qdrant-server-provisioning'
 date: '2026-06-12'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-06-12-qdrant-server-provisioning-adr]]'
@@ -64,6 +64,8 @@ and `server start --qdrant` consent flags. Grounded in the
 `2026-06-12-service-concurrency-adr` backend-aware store locks.
 
 ## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
 
 ## Parallelization
 

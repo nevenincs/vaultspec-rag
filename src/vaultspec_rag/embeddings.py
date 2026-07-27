@@ -16,7 +16,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, cast
 
-from .config import EnvVar
+from .config._types import EnvVar
 from .job_control import timed_gpu_lock
 
 if TYPE_CHECKING:
@@ -267,7 +267,7 @@ class EmbeddingModel:
         keeps each sub-batch length-uniform and minimises padding
         waste on variable-length corpora.
         """
-        from .config import get_config
+        from .config._settings import get_config
 
         return get_config().embedding_encode_batch_size
 
@@ -278,7 +278,7 @@ class EmbeddingModel:
         Returns:
             Character limit from VaultSpecConfigWrapper.
         """
-        from .config import get_config
+        from .config._settings import get_config
 
         return get_config().max_embed_chars
 
@@ -380,7 +380,7 @@ class EmbeddingModel:
         import torch
         from sentence_transformers import SparseEncoder
 
-        from .config import get_config
+        from .config._settings import get_config
 
         cfg = get_config()
         dense_name = model_name or cfg.embedding_model

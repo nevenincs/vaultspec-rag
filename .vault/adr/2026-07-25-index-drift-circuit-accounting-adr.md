@@ -3,12 +3,13 @@ tags:
   - '#adr'
   - '#index-drift-circuit-accounting'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - "[[2026-07-25-index-resume-drift-race-adr]]"
   - "[[2026-07-25-index-resume-drift-race-research]]"
   - "[[2026-07-21-large-index-resilience-adr]]"
   - '[[2026-07-25-document-index-drift-parity-adr]]'
+  - '[[2026-07-27-index-drift-circuit-accounting-grounding-research]]'
 ---
 
 # `index-drift-circuit-accounting` adr: `the circuit breaker counts faults, not superseded paths` | (**status:** `accepted`)

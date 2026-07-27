@@ -282,7 +282,7 @@ def prepare_document_workload(
 
 def measure_document_workload(root: Path) -> DocumentWorkloadMeasurement:
     """Measure production discovery, extraction, chunking, and queue weights."""
-    from ...config import get_config
+    from ...config._settings import get_config
     from ...indexer import DocumentIndexer
     from ...indexer._chunk_worker import (
         DocumentChunkingOptions,
@@ -352,7 +352,7 @@ def _validate_measurement(
     import psutil
 
     from ..._store_writes import probe_store_volume
-    from ...config import get_config
+    from ...config._settings import get_config
     from ...index_profiles import (
         AdmissionEnvironment,
         IndexDomain,
@@ -380,7 +380,7 @@ def _run_interrupted_index(
     interrupt_after_units: int,
 ) -> tuple[str, int]:
     """Interrupt after durable units exist and return their generation evidence."""
-    from ...config import get_config
+    from ...config._settings import get_config
     from ...indexer._run_ledger_models import index_run_ledger_path
     from ...job_control import CancelRequested, RunControlToken
 
@@ -483,7 +483,7 @@ def run_document_acceptance(
 ) -> DocumentAcceptanceReport:
     """Run real extraction, CUDA embedding, Qdrant writes, interruption, and resume."""
     from ... import EmbeddingModel, store_schema
-    from ...config import get_config
+    from ...config._settings import get_config
     from ...indexer import DocumentIndexer
     from ...indexer._content_policy import ContentKind
     from ...indexer._run_ledger_models import index_run_ledger_path

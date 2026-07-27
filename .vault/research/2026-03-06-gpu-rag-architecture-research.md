@@ -3,10 +3,13 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # GPU-Only RAG Architecture: Grounding Report
+
+## Findings
+
+### Retained preamble
 
 Date: 2026-03-06
 Context7: NOT AVAILABLE. All data from WebSearch + WebFetch + GitHub source verification.
@@ -26,7 +29,7 @@ Sources:
 
 ______________________________________________________________________
 
-## 1. GPU-Native Embedding Inference
+### 1. GPU-Native Embedding Inference
 
 ### Option A: sentence-transformers (RECOMMENDED)
 
@@ -90,7 +93,7 @@ model = AutoModel.from_pretrained("Qwen/Qwen3-Embedding-0.6B",
 
 ______________________________________________________________________
 
-## 2. Embedding Model Comparison
+### 2. Embedding Model Comparison
 
 ### VRAM Footprint & Key Metrics
 
@@ -139,7 +142,7 @@ Rule of thumb: fp16 VRAM ~= 2 bytes x params + overhead
 
 ______________________________________________________________________
 
-## 3. Sparse/Hybrid Search on GPU (Without BM42/fastembed)
+### 3. Sparse/Hybrid Search on GPU (Without BM42/fastembed)
 
 ### Option A: SPLADE on GPU via sentence-transformers SparseEncoder (RECOMMENDED)
 
@@ -213,7 +216,7 @@ If single-model simplicity is preferred and you accept the FlagEmbedding depende
 
 ______________________________________________________________________
 
-## 4. Vector Database for GPU-Only Stack
+### 4. Vector Database for GPU-Only Stack
 
 ### Qdrant (Local Mode) -- STILL RECOMMENDED
 
@@ -253,7 +256,7 @@ Qdrant remains the best choice even with GPU embeddings:
 
 ______________________________________________________________________
 
-## 5. GPU Indexing Pipeline Architecture
+### 5. GPU Indexing Pipeline Architecture
 
 ### Efficient Batch Embedding on GPU
 
@@ -316,7 +319,7 @@ sparse_embeddings = sparse_model.encode(
 
 ______________________________________________________________________
 
-## 6. Recommended GPU-Only Stack
+### 6. Recommended GPU-Only Stack
 
 | Component            | Choice                                                     | Rationale                                                    |
 | -------------------- | ---------------------------------------------------------- | ------------------------------------------------------------ |
@@ -355,7 +358,7 @@ rag = [
 
 ______________________________________________________________________
 
-## 7. Risks & Open Questions
+### 7. Risks & Open Questions
 
 | Risk                                                          | Severity | Mitigation                                                 |
 | ------------------------------------------------------------- | -------- | ---------------------------------------------------------- |
@@ -365,3 +368,7 @@ ______________________________________________________________________
 | Qwen3 0.6B quality vs nomic 768d tradeoff                     | Low      | Qwen3 scores higher on MTEB multilingual (64.33 vs 62.28)  |
 | BGE-M3 alternative needs FlagEmbedding dependency             | Low      | Only if single-model hybrid is desired                     |
 | SparseEncoder v5 maturity (released 2025)                     | Low      | Well-documented, backed by Hugging Face/UKP Lab            |
+
+## Sources
+
+No separate sources is recorded in the retained prior research body. Source: retained prior research body.

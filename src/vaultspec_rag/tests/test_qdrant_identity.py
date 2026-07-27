@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ..config import EnvVar, reset_config
+from ..config._settings import reset_config
+from ..config._types import EnvVar
 from ..qdrant_runtime._resolve import (
     QdrantEndpointProbe,
     QdrantIdentity,

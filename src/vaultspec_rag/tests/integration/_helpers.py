@@ -20,7 +20,7 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
 )
 
 from ..._process_probe import pid_alive
-from ...config import reset_config as reset_rag_config
+from ...config._settings import reset_config as reset_rag_config
 from ...serviceclient._transport import _try_http_health
 from .._ports import free_loopback_port
 

@@ -4,18 +4,19 @@ tags:
   - '#exec'
   - '#operability-hardening'
 date: '2026-06-09'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-06-09-operability-hardening-plan]]'
 ---
-
 # operability-hardening W02-P03-S07
 
-## Summary
+## Description
+
+### Summary
 
 Convert missing `project_root` into HTTP 400 with a clear message, not a 500.
 
-## Changes
+### Changes
 
 **`src/vaultspec_rag/server/_utils.py`**
 
@@ -54,10 +55,18 @@ Convert missing `project_root` into HTTP 400 with a clear message, not a 500.
   `project_root` is absent in HTTP mode. No mocks, no GPU, validation fires
   before any model/store access.
 
-## Verification
+### Verification
 
 - `ruff check` — all checks passed (0 violations).
 - `ty check` — all checks passed (0 diagnostics).
 - `pytest TestProjectRootRequiredError TestRouteMissingProjectRoot` — 9/9 passed.
 - `pytest test_server.py` — 114 passed, 1 pre-existing failure
   (`test_vault_resource_raises_in_http_mode`, also failing on `main`).
+
+## Outcome
+
+Evidence gap: the original record contains no outcome or result section; a result is not established here.
+
+## Notes
+
+Evidence gap: the original record contains no Notes section with authored incident, deferred-work, or follow-up evidence.

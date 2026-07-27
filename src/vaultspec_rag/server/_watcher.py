@@ -34,7 +34,7 @@ from .._workspace_layout import (
 from ..logging_config import log_event
 
 if TYPE_CHECKING:
-    from ..config import VaultSpecConfigWrapper
+    from ..config._settings import VaultSpecConfigWrapper
     from ..job_models import JobSnapshot
     from ..service import ProjectSlot, ServiceRegistry
 
@@ -154,7 +154,7 @@ _watcher_restarts: dict[Path, tuple[int | None, float | None]] = {}
 
 def _watcher_task_done(root: Path, task: asyncio.Task[None]) -> None:
     """Turn a natural intake exit into the normal drain/restart lifecycle."""
-    from ..watcher_control import WatcherInitializationError
+    from ..watcher_intake import WatcherInitializationError
 
     error = None if task.cancelled() else task.exception()
     init_failed = isinstance(error, WatcherInitializationError)
@@ -197,7 +197,7 @@ def _ensure_watcher_soon(root: Path) -> None:
     it does not, the slot is warmed on a worker thread and the watcher
     registered afterwards.
     """
-    from ..config import get_config
+    from ..config._settings import get_config
 
     if not get_config().watch_enabled:
         return
@@ -241,7 +241,7 @@ async def _run_deferred_watcher_start(
     """Warm one exact registry owner and publish only a valid generation."""
     import anyio.to_thread
 
-    from ..config import get_config
+    from ..config._settings import get_config
 
     try:
         slot = await anyio.to_thread.run_sync(lambda: owner_registry.peek_project(root))
@@ -269,8 +269,13 @@ async def _run_deferred_watcher_start(
             debounce_ms, cooldown_s = restart or (None, None)
             _start_watcher_locked(
                 _StartWatcherRequest(
-                    root, slot, owner_registry, get_config(), debounce_ms,
-                    cooldown_s, _watcher_stop_generations.get(root, 0),
+                    root,
+                    slot,
+                    owner_registry,
+                    get_config(),
+                    debounce_ms,
+                    cooldown_s,
+                    _watcher_stop_generations.get(root, 0),
                 )
             )
 
@@ -316,7 +321,7 @@ def _ensure_watcher(
         The :class:`WatcherStartOutcome` describing the root's real state on
         return. Only ``running`` outcomes mean a watcher is watching.
     """
-    from ..config import get_config
+    from ..config._settings import get_config
 
     cfg = get_config()
     # watch_enabled is the sole opt-out: when disabled the service is
@@ -367,8 +372,12 @@ def _warm_and_publish_watcher(
     # Resolve the project slot OUTSIDE the lock - peek_project() has its own
     # per-root locking and can take 50-200ms on cold start.
     root, registry, cfg, debounce_ms, cooldown_s, expected_generation = (
-        request.root, request.registry, request.cfg, request.debounce_ms,
-        request.cooldown_s, request.expected_generation,
+        request.root,
+        request.registry,
+        request.cfg,
+        request.debounce_ms,
+        request.cooldown_s,
+        request.expected_generation,
     )
     try:
         slot = registry.peek_project(root)
@@ -394,8 +403,13 @@ def _warm_and_publish_watcher(
         )
         outcome = _start_watcher_locked(
             _StartWatcherRequest(
-                root, slot, registry, cfg, requested_debounce,
-                requested_cooldown, _watcher_stop_generations.get(root, 0),
+                root,
+                slot,
+                registry,
+                cfg,
+                requested_debounce,
+                requested_cooldown,
+                _watcher_stop_generations.get(root, 0),
             )
         )
         if not (outcome.running or outcome.pending):
@@ -406,8 +420,13 @@ def _warm_and_publish_watcher(
 def _start_watcher_locked(request: _StartWatcherRequest) -> WatcherStartOutcome:
     """Publish a warmed watcher while ``_watcher_lock`` still owns its epoch."""
     root, slot, registry, cfg, debounce_ms, cooldown_s, expected_generation = (
-        request.root, request.slot, request.registry, request.cfg,
-        request.debounce_ms, request.cooldown_s, request.expected_generation,
+        request.root,
+        request.slot,
+        request.registry,
+        request.cfg,
+        request.debounce_ms,
+        request.cooldown_s,
+        request.expected_generation,
     )
     if _watcher_stop_generations.get(root, 0) != expected_generation:
         return WatcherStartOutcome.UNAVAILABLE
@@ -421,7 +440,8 @@ def _start_watcher_locked(request: _StartWatcherRequest) -> WatcherStartOutcome:
     if not bool(cfg.watch_enabled):
         return WatcherStartOutcome.DISABLED
 
-    from ..watcher_control import WatcherConfiguration, watch_and_reindex
+    from ..watcher_intake import watch_and_reindex
+    from ..watcher_runtime import WatcherConfiguration
 
     debounce = (
         int(debounce_ms) if debounce_ms is not None else int(cfg.watch_debounce_ms)
@@ -579,7 +599,7 @@ async def _watcher_release_error(
 
 async def _drain_watcher(root: Path, drain: _WatcherDrain) -> bool:
     """Boundedly join intake and exact manager resources for one root."""
-    from ..config import get_config
+    from ..config._settings import get_config
 
     timeout = float(get_config().job_shutdown_timeout_seconds)
     deadline = asyncio.get_running_loop().time() + timeout
@@ -620,8 +640,12 @@ async def _drain_watcher(root: Path, drain: _WatcherDrain) -> bool:
             try:
                 _warm_and_publish_watcher(
                     _WarmWatcherRequest(
-                        root, restart_registry, get_config(), debounce_ms,
-                        cooldown_s, restart_generation,
+                        root,
+                        restart_registry,
+                        get_config(),
+                        debounce_ms,
+                        cooldown_s,
+                        restart_generation,
                     )
                 )
             except Exception:
@@ -779,7 +803,7 @@ async def _wait_for_watcher_cleanup(
     timed-out private drain remains retryable and never changes the
     corresponding canonical job state.
     """
-    from ..config import get_config
+    from ..config._settings import get_config
 
     timeout = (
         float(get_config().job_shutdown_timeout_seconds)

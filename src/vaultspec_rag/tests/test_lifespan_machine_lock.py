@@ -28,7 +28,8 @@ from .._machine_lock import (
     machine_lock_path,
     release_machine_lock,
 )
-from ..config import EnvVar, reset_config
+from ..config._settings import reset_config
+from ..config._types import EnvVar
 from ..server._lifespan import service_lifespan
 from ._http_stubs import QuietHandler
 

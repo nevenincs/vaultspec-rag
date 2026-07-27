@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING
 import pytest
 from qdrant_client import QdrantClient, models
 
-from ...config import EnvVar, reset_config
+from ...config._settings import reset_config
+from ...config._types import EnvVar
 from .._cli_helpers import app, runner
 from ._helpers import provisioned_qdrant_binary, serve_qdrant
 

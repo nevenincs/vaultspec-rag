@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#index-completeness-guard'
-date: '2026-07-25'
-modified: '2026-07-25'
+date: '2026-07-27'
+modified: '2026-07-27'
 related:
   - '[[2026-07-25-index-completeness-guard-P01-S01]]'
   - '[[2026-07-25-index-completeness-guard-P01-S02]]'

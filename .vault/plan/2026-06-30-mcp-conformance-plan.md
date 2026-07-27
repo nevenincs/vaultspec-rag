@@ -3,15 +3,20 @@ tags:
   - '#plan'
   - '#mcp-conformance'
 date: '2026-06-30'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-06-30-mcp-conformance-adr]]'
   - '[[2026-06-30-mcp-search-scope-adr]]'
   - '[[2026-06-30-mcp-conformance-research]]'
 ---
-
 # `mcp-conformance` plan
+
+## Description
+
+No separate description is recorded in the retained prior plan body. Source: retained prior plan body.
+
+## Steps
 
 ### Phase `P01` - Machine-singleton discovery resolution
 
@@ -56,10 +61,10 @@ Add a standing real-behavior conformance test matrix covering cross-status-direc
 - [x] `P06.S12` - Add real-behavior tests for cross-status-directory discovery resolution and staleness rejection; `src/vaultspec_rag/tests/test_machine_discovery_resolution.py`.
 - [x] `P06.S13` - Add conformance tests for the narrowed MCP surface and tool annotations; `src/vaultspec_rag/tests/test_mcp_conformance_surface.py`.
 
-## Description
-
-## Steps
-
 ## Parallelization
 
+No separate parallelization is recorded in the retained prior plan body. Source: retained prior plan body.
+
 ## Verification
+
+No separate verification is recorded in the retained prior plan body. Source: retained prior plan body.

@@ -3,14 +3,19 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Audit: CLI and API Facade
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 Feature: cli.py Typer CLI, api.py engine singleton
 
-## 2026-03-06 -- Review (Passes 9-26)
+### 2026-03-06 -- Review (Passes 9-26)
 
 ### cli.py: GPU Status Display Updated
 
@@ -36,3 +41,7 @@ Workspace layout resolution with git worktree detection, UNC path stripping, `.g
 ### logging_config.py: CLEAN (Pass 26)
 
 RichHandler-based logging with singleton console, `VAULTSPEC_RAG_LOG_LEVEL` env var support. No issues.
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#async-service-index'
 date: '2026-06-04'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L3
 related:
   - '[[2026-06-04-async-service-index-adr]]'
@@ -66,6 +66,8 @@ Move the jobs registry and background task execution routines into the core libr
 This plan implements asynchronous background reindexing on the RAG resident service, allowing the client CLI to run the `index` command without blocking or timing out (Issue #160). It also addresses search lock contention and request timeouts during multi-agent concurrent execution on Windows shared-worktrees by enforcing request timeouts on service-delegated calls and fail-fast diagnostics on Qdrant database lock conflicts (Issue #162).
 
 ## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
 
 ## Parallelization
 

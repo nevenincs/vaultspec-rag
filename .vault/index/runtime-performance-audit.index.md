@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#runtime-performance-audit'
-date: '2026-07-25'
-modified: '2026-07-25'
+date: '2026-07-27'
+modified: '2026-07-27'
 related:
   - '[[2026-07-21-runtime-performance-audit-codebase-hot-paths-reference]]'
   - '[[2026-07-21-runtime-performance-audit-implementation-review-audit]]'

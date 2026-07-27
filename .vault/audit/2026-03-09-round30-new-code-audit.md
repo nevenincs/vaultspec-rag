@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 30: New Code Correctness Audit + ADR Regression Test Coverage
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Date:** 2026-03-09
 **Auditor:** Claude Code
@@ -14,7 +19,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Part A: New Code Correctness Audit
+### Part A: New Code Correctness Audit
 
 ### 1. MCP Server Graph Invalidation ✅ CORRECT
 
@@ -125,7 +130,7 @@ def _write_meta(self, meta: dict[str, str]) -> None:
 
 ______________________________________________________________________
 
-## Part B: ADR Regression Test Coverage
+### Part B: ADR Regression Test Coverage
 
 ### Current Coverage Status
 
@@ -223,7 +228,7 @@ class TestAtomicMetaWrite:
 
 ______________________________________________________________________
 
-## Summary of New Architectural Invariants NOT Covered by ADR Tests
+### Summary of New Architectural Invariants NOT Covered by ADR Tests
 
 | Invariant                                   | Location           | Priority | Test Status     | Note                                 |
 | ------------------------------------------- | ------------------ | -------- | --------------- | ------------------------------------ |
@@ -234,16 +239,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Recommendations
-
-1. **Add `TestGraphCacheInvalidation`** to `test_adr_regression.py` (inspect-based source check)
-1. **Add `TestAsyncioRunSafety`** to `test_cli.py` (verify asyncio.run in sync context)
-1. **Add `TestAtomicMetaWrite`** to `test_adr_regression.py` (explicit atomic write pattern verification)
-1. **Add integration test** for graph cache invalidation during concurrent search (advanced; can defer)
-
-______________________________________________________________________
-
-## Audit Verdict
+### Audit Verdict
 
 | Category                 | Result     | Details                                             |
 | ------------------------ | ---------- | --------------------------------------------------- |
@@ -253,3 +249,12 @@ ______________________________________________________________________
 | **Test Coverage**        | ⚠️ PARTIAL | 3 architectural invariants missing regression tests |
 
 **Overall:** Code is **production-ready**. Test coverage gaps are **informational** (not blocking); 3 new unit tests recommended to prevent future regressions.
+
+## Recommendations
+
+1. **Add `TestGraphCacheInvalidation`** to `test_adr_regression.py` (inspect-based source check)
+1. **Add `TestAsyncioRunSafety`** to `test_cli.py` (verify asyncio.run in sync context)
+1. **Add `TestAtomicMetaWrite`** to `test_adr_regression.py` (explicit atomic write pattern verification)
+1. **Add integration test** for graph cache invalidation during concurrent search (advanced; can defer)
+
+______________________________________________________________________

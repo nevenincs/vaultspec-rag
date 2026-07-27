@@ -3,19 +3,18 @@ tags:
   - '#exec'
   - '#service-concurrency'
 date: '2026-06-12'
-modified: '2026-06-30'
+modified: '2026-07-27'
 step_id: 'S07'
 related:
   - "[[2026-06-12-service-concurrency-plan]]"
 ---
-
 # Rerank with token-bounded full candidate content instead of 200-char snippets and expose reranker max-length configuration
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/search/_searcher.py`
-
-## Description
 
 - Rerank on rerank_text (full candidate content) instead of the 200-char
   display snippet; cap input chars at ~6x the token bound to spare
@@ -30,3 +29,5 @@ The CrossEncoder now scores real content. Combined with chunking, rerank
 inputs are the matched chunk, token-bounded by the model tokenizer.
 
 ## Notes
+
+Evidence gap: the original record contains no Notes section with authored incident, deferred-work, or follow-up evidence.

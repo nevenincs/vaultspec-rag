@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#service-status-convergence'
 date: '2026-06-11'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-06-11-service-status-convergence-research]]'
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
@@ -85,3 +85,7 @@ Some older documentation language around `server service` and MCP parity must be
 - **Rule slug:** `manual-cli-persona-required`.
   **Rule:** Every CLI operability change must end with a named manual persona test in
   addition to automated tests.
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

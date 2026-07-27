@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#index-backpressure-storage-hygiene'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -201,3 +201,5 @@ with file:line evidence, to ground an ADR covering the six handover asks.
   and/or lazy creation on first upsert (S3).
 - **Ask 6 (startup hygiene):** disk-vs-collections diff in survey; report and make
   debris reclaimable (S5).
+## Sources
+- Evidence cited inline: `src/vaultspec_rag/indexer/_codebase_indexer.py`, `src/vaultspec_rag/indexer/_streaming.py`.

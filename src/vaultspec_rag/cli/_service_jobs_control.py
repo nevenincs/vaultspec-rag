@@ -441,5 +441,3 @@ def service_job_delete(
     )
     result = _try_http_delete_job(exact_id, resolved_port)
     _complete_job_control(command, result, json_mode=json_mode)
-
-

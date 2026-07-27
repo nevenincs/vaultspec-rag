@@ -3,7 +3,7 @@ tags:
   - '#audit'
   - '#ecosystem-integration'
 date: '2026-04-11'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-06-ecosystem-integration-adr]]'
   - '[[2026-04-06-ecosystem-integration-plan]]'
@@ -70,7 +70,7 @@ would be ignored without `-f`.
 managed by core; core expects to control tracking.
 
 R1 | MEDIUM | ADR missing plan back-link
-ADR `related:` field did not include `[[2026-04-06-ecosystem-integration-plan]]`.
+ADR `related:` field did not include ``2026-04-06-ecosystem-integration-plan``.
 **Status:** FIXED — added back-link.
 
 R2 | LOW | Plan has non-standard `revised:` frontmatter field
@@ -81,3 +81,15 @@ documented in heading and body text.
 L1 | LOW | pymarkdown.json change minimal and correct
 Only `vaultspec` appended to `allowed_elements`. Required for CLAUDE.md.
 **Status:** PASS.
+
+## Scope
+
+Retained audit evidence: 2026-04-06-ecosystem-integration-adr, 2026-04-06-ecosystem-integration-plan, 2026-04-06-ecosystem-integration-research are listed in frontmatter; the audit title and retained sections define the reviewed subject.
+
+## Findings
+
+Retained audit evidence: the detailed review entries in this document constitute the findings inventory.
+
+## Recommendations
+
+Evidence gap: the retained audit body and complete git log --follow history state no separate recommendations. No recommendation is asserted.

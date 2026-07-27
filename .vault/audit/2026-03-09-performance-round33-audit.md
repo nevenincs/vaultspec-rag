@@ -3,12 +3,17 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Performance Audit — Round 33 (2026-03-09)
 
-## Executive Summary
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
+
+### Executive Summary
 
 **Status:** 1 CRITICAL design limitation, 4 HIGH inefficiencies, 1 MEDIUM concern, 1 LOW recommendation.
 
@@ -16,7 +21,7 @@ The vaultspec-rag codebase exhibits **no memory explosion bugs** during indexing
 
 ______________________________________________________________________
 
-## 1. VaultIndexer.full_index() Memory Path
+### 1. VaultIndexer.full_index() Memory Path
 
 ### Summary
 
@@ -55,7 +60,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 2. search.py Bottlenecks
+### 2. search.py Bottlenecks
 
 ### CRITICAL: VaultGraph Rebuilt on Every TTL Expiry (No Caching Invalidation)
 
@@ -132,7 +137,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 3. config.py Defaults Review
+### 3. config.py Defaults Review
 
 **Status:** Defaults are reasonable.
 
@@ -140,7 +145,7 @@ All 10 defaults are well-tuned. No chunk configuration exposed (chunk_size/chunk
 
 ______________________________________________________________________
 
-## 4. embeddings.py OOM Backoff
+### 4. embeddings.py OOM Backoff
 
 **Status:** OOM handling is CORRECT.
 
@@ -154,7 +159,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Summary Table
+### Summary Table
 
 | Finding                          | Severity | Type         | Location                | Recommendation                   |
 | -------------------------------- | -------- | ------------ | ----------------------- | -------------------------------- |
@@ -168,7 +173,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Conclusions
+### Conclusions
 
 1. **Memory Safety:** No OOM bugs. Designs correct for anticipated vault/codebase sizes.
 
@@ -187,7 +192,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Audit Metadata
+### Audit Metadata
 
 | Field            | Value                                    |
 | ---------------- | ---------------------------------------- |
@@ -197,3 +202,7 @@ ______________________________________________________________________
 | Python Version   | 3.13                                     |
 
 **Next audit:** Round 34 — Threading contention in concurrent indexer execution.
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

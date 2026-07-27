@@ -3,15 +3,20 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Test Compliance Audit Round 2
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 Date: 2026-03-07
 Auditor: docs-researcher-2-2
 
-## Checks performed
+### Checks performed
 
 For each file: scanned for all CLAUDE.md prohibited patterns:
 
@@ -23,7 +28,7 @@ For each file: scanned for all CLAUDE.md prohibited patterns:
 
 ______________________________________________________________________
 
-## File: `src/vaultspec_rag/tests/test_indexer_unit.py`
+### File: `src/vaultspec_rag/tests/test_indexer_unit.py`
 
 - **Banned patterns:** None found
 - **Markers:** `pytestmark = [pytest.mark.unit]` at module level (line 26) -- OK
@@ -34,7 +39,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## File: `src/vaultspec_rag/tests/integration/test_embeddings.py`
+### File: `src/vaultspec_rag/tests/integration/test_embeddings.py`
 
 (Note: task listed `src/vaultspec_rag/tests/test_embeddings.py` but this file is at `integration/test_embeddings.py`)
 
@@ -47,7 +52,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## File: `src/vaultspec_rag/tests/test_search_unit.py`
+### File: `src/vaultspec_rag/tests/test_search_unit.py`
 
 - **Banned patterns:** None found
 - **Markers:** Each class has `pytestmark: ClassVar = [pytest.mark.unit]` -- OK. Five classes, all marked.
@@ -58,7 +63,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## File: `src/vaultspec_rag/tests/conftest.py`
+### File: `src/vaultspec_rag/tests/conftest.py`
 
 - **Banned patterns:** None found
 - **Markers:** N/A (conftest, not a test file)
@@ -69,7 +74,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## File: `src/vaultspec_rag/tests/integration/test_indexer_integration.py`
+### File: `src/vaultspec_rag/tests/integration/test_indexer_integration.py`
 
 - **Banned patterns:** None found
 - **Markers:** `pytestmark = [pytest.mark.integration]` at module level (line 9) -- OK
@@ -80,7 +85,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## File: `src/vaultspec_rag/tests/integration/conftest.py`
+### File: `src/vaultspec_rag/tests/integration/conftest.py`
 
 - **Banned patterns:** None found
 - **Markers:** N/A (conftest)
@@ -91,7 +96,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## File: `conftest.py` (repo root)
+### File: `conftest.py` (repo root)
 
 - **Banned patterns:** None found
 - **Markers:** N/A (conftest, intentionally empty)
@@ -101,7 +106,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Summary
+### Summary
 
 | File                                    | Mocks | unittest | Tautological | skip | Markers          | Verdict |
 | --------------------------------------- | ----- | -------- | ------------ | ---- | ---------------- | ------- |
@@ -116,3 +121,7 @@ ______________________________________________________________________
 **Total violations: 0**
 
 All 7 audited files are fully compliant with CLAUDE.md testing standards.
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

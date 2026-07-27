@@ -20,13 +20,12 @@ from ..indexer._code_meta import (
 )
 from ..indexer._content_policy import AdmissionDisposition, AdmissionReason, ContentKind
 from ..indexer._file_state import FileState, FileStateKind
-from ..indexer._run_ledger import (
-    _RESUMABLE_STATES,  # pyright: ignore[reportPrivateUsage]  # the bound under test
+from ..indexer._run_ledger_models import (
     INDEX_RUN_LEDGER_FILENAME,
+    RESUMABLE_STATES,
     CommitUnit,
     CommitUnitKind,
     FinalizationPhase,
-    RunLedger,
     RunLedgerCompatibilityError,
     RunLedgerCorruptionError,
     RunLedgerIndexedPathCollisionError,
@@ -36,6 +35,7 @@ from ..indexer._run_ledger import (
     RunTerminalState,
     index_run_ledger_path,
 )
+from ..indexer._run_ledger_runtime import RunLedger
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -937,7 +937,7 @@ def test_a_repeatedly_failing_generation_retires_instead_of_resuming(
     assert retired.terminal_state is RunTerminalState.INVALIDATED
     assert retired.terminal_detail is not None
     assert "consecutive failed attempts" in retired.terminal_detail
-    assert RunTerminalState.INVALIDATED not in _RESUMABLE_STATES
+    assert RunTerminalState.INVALIDATED not in RESUMABLE_STATES
 
 
 def test_a_succeeding_generation_never_accrues_resume_failures(

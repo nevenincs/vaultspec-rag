@@ -3,95 +3,85 @@ tags:
   - '#adr'
   - '#module-split'
 date: '2026-06-01'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-01-module-split-research]]"
   - "[[2026-06-01-module-split-audit]]"
+  - '[[2026-07-27-module-split-production-length-gate-research]]'
 ---
-
-# `module-split` adr: monolith-to-package split via `__init__` re-export | (**status:** `accepted`)
+# `module-split` adr: direct-owner decomposition of overlength modules | (**status:** `accepted`)
 
 ## Problem Statement
 
-Several source modules have grown into monoliths — `cli.py` (4286 lines),
-`indexer.py` (2099), `mcp_server.py` (1641), `torch_config.py` (1263),
-`search.py` (952), `commands.py` (943) — which the module-split audit flagged
-as hard to navigate, review, and extend (ADR-B's #142 work would bloat the two
-worst offenders further). This ADR fixes the strategy for breaking each
-oversized module into a package while guaranteeing the public import surface is
-unchanged, so no production caller or test must be edited.
+Overlength production and test modules obstruct review and local reasoning. The
+original facade approach preserved legacy import paths at the cost of leaving
+each former module boundary as a second, non-owning surface. This ADR settles
+the decomposition strategy for the current overlength set, including
+`store.py`, without keeping compatibility facades alive.
 
 ## Considerations
 
-- **The re-export contract is the spine.** Each `module.py` becomes a package
-  `module/` whose `__init__.py` re-exports the *verbatim* pre-split public
-  surface through an explicit `__all__`. That surface includes the
-  `_`-prefixed helpers that tests import directly (e.g. `cli._spawn_service`,
-  `mcp_server._ensure_watcher`, `commands._classify_uv_sync_result`): they are
-  de-facto public and must stay importable from the package root.
-- **Cohesive code moves into `_`-prefixed submodules**; shared module-level
-  state stays in the package `__init__`.
-- **`mcp_server` is special.** The module-level `mcp = FastMCP(...)` drives the
-  `@mcp.tool()`/`@mcp.resource()`/`@mcp.prompt()` decorators. The package
-  `__init__` owns `mcp` and the other shared globals (`_registry`,
-  `_watcher_*`, `_SERVICE_TOKEN`, `_http_mode`), then imports the tool
-  submodules so their decorators register against the one instance. The
-  console-script entry point `vaultspec_rag.mcp_server:main` must remain
-  importable from the package root.
-- **Ordering.** Execute low-risk → high-risk to validate the pattern early:
-  `commands`, `torch_config`, `search`, `indexer`, `cli`, then `mcp_server`.
+- **One behavior has one importable home.** Every importer moves to the
+  concrete module that owns the behavior. A package root never re-exports a
+  moved name merely to preserve an old import path.
+- **Tests follow production ownership.** A test that needs an implementation
+  detail imports that concrete owner; test-only compatibility surfaces are not
+  retained.
+- **State retains an explicit owner.** A package root may own initialization
+  state only when the state itself is the behavior, never as a forwarding
+  facade.
+- **Responsibility is the seam.** Extraction boundaries follow independently
+  testable responsibilities, with direct importer migration in the same step.
 
 ## Constraints
 
-- **No public-surface change.** Tests must pass *unedited*. The full relevant
-  test suite plus ruff, ruff-format, and ty must be green after each module
-  split; that is the gate.
-- **Circular-import hazard (mcp_server).** Tool submodules import `mcp` from the
-  package while the package imports the submodules — the `__init__` must define
-  globals before importing submodules.
-- **Typer registration order (cli).** The app and sub-apps must be created and
-  nested before any command decorator runs; the app submodule imports first.
-- **Stable parents.** This is a pure structural refactor of in-repo modules; no
-  new dependency, no frontier risk. `store.py` is explicitly out of scope (kept
-  single-file — one cohesive class).
+- **Behavior must not change.** Each extraction carries its real behavior tests
+  and the affected importers, then passes the relevant suite, format, lint,
+  and type checks.
+- **The production contracts remain stable.** Direct importer migration may
+  change source import paths but must not add a parallel API or alter runtime
+  behavior.
+- **Existing lifecycle and storage ownership decisions remain binding.** A
+  split cannot copy lifecycle, locking, or service-domain logic across owners.
+- **This is an in-repo structural refactor.** It adds no dependency and does
+  not widen external protocols.
 
 ## Implementation
 
-For each in-scope module, create the package directory, move each cohesive
-section into a `_`-prefixed submodule per the audit's section map, write
-`__init__.py` to import from the submodules and re-export the exact prior
-surface via `__all__`, and delete the original `module.py`. Intra-module
-references become submodule imports; shared state and (for `mcp_server`) the
-`mcp` instance live in `__init__`. The entry point and all decorator
-registrations are preserved. Each module is one plan phase, landed only when
-the full suite is green and the linters/type-checker are clean.
+For every overlength module, identify cohesive concrete owners, move each
+owner to its own module, and migrate every production and test import directly
+to that owner. Delete the former monolith only after no importer resolves
+through it. Test files split into independently collected modules by behavior
+domain; shared test helpers live in one concrete helper module rather than a
+compatibility collection shim. Each extraction is separately verified before
+the next dependent extraction begins.
 
 ## Rationale
 
-The audit established that every oversized module except `store.py` has natural
-internal seams and a well-defined external surface, so the package + re-export
-pattern decomposes them without an API break. Making "no public-surface change"
-the hard gate means the existing 640+ tests are the safety net; any regression
-shows up immediately. Sequencing the riskiest module (`mcp_server`, with FastMCP
-registration and the entry point) last lets the pattern prove itself on simpler
-modules first.
+`2026-07-27-module-split-production-length-gate-research` establishes that a
+facade conflicts with the canonical-code rule, and the focused ownership audit
+identifies workable responsibility seams for the current candidates. Direct
+migration removes the former boundary instead of making it permanent, which is
+the only option consistent with one behavior and one implementation. Including
+`store.py` applies the same maintainability requirement to the longest cohesive
+class rather than preserving an exemption.
 
 ## Consequences
 
-- **Gains.** Smaller, navigable, reviewable files; new feature code (e.g. #142)
-  lands in focused submodules instead of growing a monolith; clearer ownership.
-- **Honest difficulties.** This is a large mechanical refactor touching ~10k
-  lines; the risk is a missed re-export or, for `mcp_server`, a decorator-order
-  / circular-import bug. The full-suite gate and risk-ascending order mitigate
-  this. Test files that import deep private helpers keep working only because
-  `__all__` re-exports them — a deliberate, documented coupling.
-- **Pitfalls.** `__init__` import order matters (apps-before-commands;
-  globals-before-tool-submodules). `store.py` stays whole by design.
+- **Gains.** Smaller, navigable files with a single owner per behavior and
+  imports that reveal that ownership.
+- **Honest difficulties.** This is a broad mechanical refactor; missed direct
+  imports, cyclic dependencies, and moved test helpers are the main risks.
+- **Pitfalls.** Extraction must not turn a concrete state owner into a facade,
+  duplicate service/storage behavior, or retain a symbol solely for tests.
 
 ## Codification candidates
 
-- **Rule slug:** `module-package-reexport-preserves-surface`.
-  **Rule:** When a module is split into a package, its `__init__.py` must
-  re-export the verbatim pre-split public surface (an explicit `__all__` that
-  includes any `_`-prefixed names imported elsewhere) so no import changes and
-  tests pass unedited.
+- **Rule slug:** `module-splits-migrate-to-direct-owners`.
+  **Rule:** A module split migrates every caller to the concrete owner in the
+  same change. No forwarding module, package-root re-export, compatibility
+  alias, or test-only surface survives the split.
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

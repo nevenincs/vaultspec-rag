@@ -16,7 +16,8 @@ from vaultspec_core.logging_config import (  # pyright: ignore[reportMissingType
     reset_logging,
 )
 
-from ..config import EnvVar, rag_default
+from ..config._settings import rag_default
+from ..config._types import EnvVar
 from ..logging_config import configure_logging
 
 pytestmark = [pytest.mark.unit]
@@ -30,7 +31,7 @@ def _resolve_root_level(value: str | None) -> int:
     else:
         os.environ[EnvVar.LOG_LEVEL.value] = value
     try:
-        from ..config import reset_config
+        from ..config._settings import reset_config
 
         reset_config()
         reset_logging()
@@ -41,7 +42,7 @@ def _resolve_root_level(value: str | None) -> int:
             os.environ.pop(EnvVar.LOG_LEVEL.value, None)
         else:
             os.environ[EnvVar.LOG_LEVEL.value] = previous
-        from ..config import reset_config as _reset
+        from ..config._settings import reset_config as _reset
 
         _reset()
         reset_logging()

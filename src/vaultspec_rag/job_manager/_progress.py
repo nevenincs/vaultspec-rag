@@ -21,13 +21,13 @@ from .state import (
     JobManagerState,
     JobRuntimeOwner,
 )
-from .models import ProgressUpdate, ResourceUpdate
 
 if TYPE_CHECKING:
     import asyncio
     import threading
 
     from ..job_control import RunControlToken
+    from .models import ProgressUpdate, ResourceUpdate
 
 logger = logging.getLogger("vaultspec_rag.jobs")
 
@@ -108,17 +108,14 @@ class JobManagerProgress(JobManagerState):
         raw_step = cast("object", update.step)
         raw_completed = cast("object", update.completed)
         raw_total = cast("object", update.total)
-        validation_error = _progress_validation_error(
-            raw_step, raw_completed, raw_total
-        )
-        if validation_error is not None:
+        normalized_progress = _normalize_progress(raw_step, raw_completed, raw_total)
+        if isinstance(normalized_progress, str):
             return self._error(
                 command,
                 "invalid_progress",
-                validation_error,
+                normalized_progress,
             )
-        normalized_step = raw_step.strip()
-        normalized_total = raw_total
+        normalized_step, normalized_completed, normalized_total = normalized_progress
         with self._lock:
             backup = self._capture_state_locked()
             managed = self._active.get(job_id)
@@ -148,7 +145,7 @@ class JobManagerProgress(JobManagerState):
                 revision=previous.revision + 1,
                 progress=JobProgress(
                     step=normalized_step,
-                    completed=raw_completed,
+                    completed=normalized_completed,
                     total=normalized_total,
                     last_updated=time.time(),
                 ),
@@ -169,6 +166,7 @@ class JobManagerProgress(JobManagerState):
                 message="The current attempt progress was updated.",
                 job=self._snapshot_locked(managed),
             )
+
     def flush_persistence(self) -> JobOutcome:
         """Idempotently retry the latest dirty manager generation."""
         command = "flush_persistence"
@@ -222,7 +220,6 @@ class JobManagerProgress(JobManagerState):
                     self._restore_state_locked(backup)
                 return False
             return True
-
 
     def update_execution_resources(
         self,
@@ -402,26 +399,18 @@ class JobManagerProgress(JobManagerState):
             return True
 
 
-def _progress_validation_error(
+def _normalize_progress(
     step: object,
     completed: object,
     total: object,
-) -> str | None:
-    """Return the operator-facing reason one progress publication is invalid."""
+) -> tuple[str, int, int | None] | str:
+    """Validate and normalize one untrusted progress publication."""
     if not isinstance(step, str) or not step.strip():
         return "Progress step is required."
-    if (
-        not isinstance(completed, int)
-        or isinstance(completed, bool)
-        or completed < 0
-        or (
-            total is not None
-            and (
-                not isinstance(total, int)
-                or isinstance(total, bool)
-                or total < completed
-            )
-        )
-    ):
+    if not isinstance(completed, int) or isinstance(completed, bool) or completed < 0:
         return "Progress counts must satisfy 0 <= completed <= total when total is set."
-    return None
+    if total is None:
+        return step.strip(), completed, None
+    if not isinstance(total, int) or isinstance(total, bool) or total < completed:
+        return "Progress counts must satisfy 0 <= completed <= total when total is set."
+    return step.strip(), completed, total

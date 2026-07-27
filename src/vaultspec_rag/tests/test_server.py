@@ -23,7 +23,8 @@ if TYPE_CHECKING:
     from starlette.applications import Starlette
 
 from ..capabilities import BackendCapabilities
-from ..config import EnvVar, reset_config
+from ..config._settings import reset_config
+from ..config._types import EnvVar
 from ..mcp._mcp import mcp
 from ..mcp._resources import analyze_feature
 from ..server import (

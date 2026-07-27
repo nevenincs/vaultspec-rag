@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#operability-hardening'
 date: '2026-06-09'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-09-operability-hardening-research]]"
 ---
@@ -120,3 +120,7 @@ make the UX and model-access fixes idiomatic rather than bespoke.
 - **Rule slug:** `lifecycle-verbs-truthful-exit`.
   **Rule:** service lifecycle verbs must return accurate exit codes — non-zero on a blocked
   or failed start, and a distinct code for an orphaned/divergent daemon state.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

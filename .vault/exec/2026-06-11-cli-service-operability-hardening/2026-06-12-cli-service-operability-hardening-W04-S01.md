@@ -3,26 +3,26 @@ tags:
   - '#exec'
   - '#cli-service-operability-hardening'
 date: '2026-06-12'
-modified: '2026-06-30'
-step_id: W04.S01
+modified: '2026-07-27'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-server-bound-search-production-readiness-adr]]'
 ---
-
 # Wave 04 Slice 01 - Timeout Diagnostics And Coarse Timing
 
-## Persona
+## Description
+
+### Persona
 
 Power user running several agent searches while the resident service may be busy or slow.
 
-## Hardening Target
+### Hardening Target
 
 The prior timeout surface only said that the HTTP search timed out after the client
 budget. It did not tell the operator whether the service was ready, whether same-project
 searches were serialized, whether jobs were active, or what command should be run next.
 
-## Research
+### Research
 
 Service-backed RAG discovery was run against the resident service:
 
@@ -36,7 +36,7 @@ The relevant implementation locations were:
 - `src/vaultspec_rag/server/_routes.py`
 - `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`
 
-## Implementation
+### Implementation
 
 - Added coarse server-route timing to successful `/search` responses:
   - `status_seconds`
@@ -57,14 +57,22 @@ The relevant implementation locations were:
   - `timeout_seconds`
   - `remediation`.
 
-## Automated Evidence
+### Automated Evidence
 
 - `uv run ruff check src/vaultspec_rag/cli/_http_search.py src/vaultspec_rag/cli/_render.py src/vaultspec_rag/server/_routes.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`
 - `uv run pytest src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`
 
 Result: 4 passed.
 
-## Manual Persona Test
+## Outcome
+
+This slice makes timeout failures actionable without adding more competing status
+interfaces. It does not yet solve performance or true queue attribution. It exposes the
+current server-bound cost clearly enough for the next performance and backpressure slice.
+
+## Notes
+
+### Manual Persona Test
 
 The resident service was restarted to exercise the current implementation:
 
@@ -99,7 +107,7 @@ Observed:
   - backend contract table
   - next actions.
 
-## Manual Finding
+### Manual Finding
 
 The first remediation attempt incorrectly suggested:
 
@@ -112,13 +120,7 @@ remediation was corrected to:
 
 and the integration test now asserts that exact command appears in timeout diagnostics.
 
-## Outcome
-
-This slice makes timeout failures actionable without adding more competing status
-interfaces. It does not yet solve performance or true queue attribution. It exposes the
-current server-bound cost clearly enough for the next performance and backpressure slice.
-
-## Post-Review Corrections
+### Post-Review Corrections
 
 Code review found that timeout diagnostic probes could throw while handling the original
 timeout. The probe path now catches health/jobs probe failures and returns
@@ -127,12 +129,12 @@ that `active_indexing_conflict` overstated confidence when the jobs probe failed
 diagnostic now uses `summary.running` when available and reports `null` when conflict
 state cannot be established.
 
-## Deferred
+### Deferred
 
 - Search while indexing still needs a controlled manual reproduction.
 - `server status --port` was later implemented in the status convergence follow-up.
 
-## Follow-Up: Avoid Redundant Cold Status Work
+### Follow-Up: Avoid Redundant Cold Status Work
 
 Manual measurement after a daemon restart showed the first service-backed search paying a
 visible pre-search status cost:
@@ -165,7 +167,7 @@ Observed against current resident service PID `50236` on port `8766`:
   attribution still requires a service-domain diagnostic search API rather than wrapper
   timing around the public list-returning search functions.
 
-## Follow-Up: Search Phase Timing
+### Follow-Up: Search Phase Timing
 
 Added service-domain timed search variants for the HTTP route:
 
@@ -208,7 +210,7 @@ Observed against current resident service PID `58528` on port `8766`:
 - the remaining cold cost was attributable to setup fields, especially project/model
   setup outside the core query phases.
 
-## Follow-Up: GPU Queue Wait Timing
+### Follow-Up: GPU Queue Wait Timing
 
 Added true GPU-lock wait timing inside the service-domain searcher:
 
@@ -237,7 +239,7 @@ Observed against resident service PID `18512` on port `8766`:
   `project_lease_seconds` (`~6.53s`), confirming the remaining startup slowdown is setup
   latency, not observed GPU-lock contention.
 
-## Follow-Up: Search Request Correlation
+### Follow-Up: Search Request Correlation
 
 Added request correlation for service-backed search:
 
@@ -265,7 +267,7 @@ Observed against resident service PID `59728` on port `8766`:
 - `server logs --contains 1d11935dd18e4e258c955439653fb339` returned a structured
   `service.lifecycle event=search` line with the same id.
 
-## Follow-Up: Reranker Readiness And Cold Project Lease
+### Follow-Up: Reranker Readiness And Cold Project Lease
 
 Manual measurement after request correlation showed that cold service-backed search was
 still paying a large first-project setup cost under `project_lease_seconds`. In the

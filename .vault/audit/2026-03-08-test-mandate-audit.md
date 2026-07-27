@@ -3,16 +3,21 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Test Mandate Compliance Audit — 2026-03-08
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Audit Scope:** All test files under `src/vaultspec_rag/tests/`
 **Mandate:** CLAUDE.md testing standards (absolute prohibitions)
 **Status:** ✅ **FULL COMPLIANCE**
 
-## Summary
+### Summary
 
 All test files in the project are **100% compliant** with the CLAUDE.md testing mandate. No violations of any category were found.
 
@@ -26,7 +31,7 @@ All test files in the project are **100% compliant** with the CLAUDE.md testing 
 
 ______________________________________________________________________
 
-## Files Audited (27 total)
+### Files Audited (27 total)
 
 ### Root Level Test Configuration
 
@@ -74,7 +79,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Detailed Findings
+### Detailed Findings
 
 ### 1. Mocks, Patches, Fakes, Stubs, Monkeypatches
 
@@ -178,7 +183,7 @@ All integration tests exercise real hardware:
 
 ______________________________________________________________________
 
-## Audit Methodology
+### Audit Methodology
 
 1. **Grep scan:** Searched all .py files in `src/vaultspec_rag/tests/` for banned patterns
 
@@ -201,22 +206,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Recommendations
-
-The test suite is in excellent compliance. No corrective actions required.
-
-### Going Forward
-
-Maintain this standard by:
-
-1. **New tests:** Always add exactly one marker (`@pytest.mark.unit|integration|quality|performance|robustness`)
-1. **Fixtures:** Use real objects from vaultspec_rag (EmbeddingModel, VaultStore, VaultIndexer)
-1. **Data isolation:** Use `tmp_path`, `rag_components` (fast), or `rag_components_full` (quality only)
-1. **Review:** Before merging, check for mocks/patches/unittest imports in new test files
-
-______________________________________________________________________
-
-## Audit Checklist
+### Audit Checklist
 
 - [x] No mocks, patches, fakes, stubs, monkeypatches
 - [x] No unittest imports
@@ -234,3 +224,18 @@ ______________________________________________________________________
 **Files Scanned:** 27
 **Violations Found:** 0
 **Compliance Score:** 100%
+
+## Recommendations
+
+The test suite is in excellent compliance. No corrective actions required.
+
+### Going Forward
+
+Maintain this standard by:
+
+1. **New tests:** Always add exactly one marker (`@pytest.mark.unit|integration|quality|performance|robustness`)
+1. **Fixtures:** Use real objects from vaultspec_rag (EmbeddingModel, VaultStore, VaultIndexer)
+1. **Data isolation:** Use `tmp_path`, `rag_components` (fast), or `rag_components_full` (quality only)
+1. **Review:** Before merging, check for mocks/patches/unittest imports in new test files
+
+______________________________________________________________________

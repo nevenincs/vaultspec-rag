@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..indexer._chunk_producer import _SingleProductionOptions
+from ..indexer._chunk_producer import SingleProductionOptions
 from ..progress import NullProgressReporter
 
 if TYPE_CHECKING:
@@ -78,7 +78,7 @@ def produce_file_results(
     if singles:
         producer.produce_singles(
             singles,
-            _SingleProductionOptions(
+            SingleProductionOptions(
                 publish_result=_publish,
                 consumer_failed=lambda: False,
                 reporter=progress,

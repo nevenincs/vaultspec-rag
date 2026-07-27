@@ -25,10 +25,11 @@ from .watcher_retry import (
     WatcherRetryUnavailableError,
     WatcherSource,
 )
-from .watcher_runtime import _DurableTransactionRequest, _ObservedSource
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from .watcher_runtime import ObservedSource
 
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,16 @@ _CANCELLATION_DURABILITY_SECONDS = 3.0
 _CANCELLATION_FALLBACK_SECONDS = 2.0
 _STATE_TRANSACTION_WORKER_SLOTS = threading.BoundedSemaphore(4)
 _CANCELLATION_FALLBACK_WORKER_SLOTS = threading.BoundedSemaphore(2)
+
+
+@dataclass(frozen=True, slots=True)
+class _DurableTransactionRequest:
+    """Durability identity and recovery behavior for one state operation."""
+
+    source: WatcherSource
+    root_dir: Path
+    action: str
+    cancellation_fallback: Callable[[], object] | None = None
 
 
 async def _run_bounded_transaction[T](
@@ -172,7 +183,7 @@ async def _attempt_durable_transaction[T](
             return result, state.cancellation_requested
 
 
-async def _run_durable_retry_transaction[T](
+async def run_durable_retry_transaction[T](
     operation: Callable[[], T],
     *,
     source: WatcherSource,
@@ -309,7 +320,7 @@ async def _persist_convergence_pending(
     root_dir: Path,
 ) -> bool:
     """Persist one accepted event batch even when shutdown races it."""
-    _state, cancellation_requested = await _run_durable_retry_transaction(
+    _state, cancellation_requested = await run_durable_retry_transaction(
         policy.mark_convergence_pending,
         source=source,
         root_dir=root_dir,
@@ -361,8 +372,8 @@ def _collect_persist_outcomes(
     return cancellation_requested, errors
 
 
-async def _persist_observed_sources(
-    observed_sources: tuple[_ObservedSource, ...],
+async def persist_observed_sources(
+    observed_sources: tuple[ObservedSource, ...],
     *,
     root_dir: Path,
 ) -> bool:
@@ -388,7 +399,7 @@ async def _persist_observed_sources(
     return cancellation_requested
 
 
-async def _admit_watcher_attempt(
+async def admit_watcher_attempt(
     policy: WatcherRetryPolicy,
     *,
     source: WatcherSource,
@@ -396,7 +407,7 @@ async def _admit_watcher_attempt(
 ) -> WatcherRetryDecision:
     """Admit atomically, settling a claim if cancellation raced its commit."""
     attempt_token = policy.reserve_admission()
-    decision, cancellation_requested = await _run_durable_retry_transaction(
+    decision, cancellation_requested = await run_durable_retry_transaction(
         lambda: policy.admit_reserved(attempt_token, now=time.time()),
         source=source,
         root_dir=root_dir,
@@ -407,7 +418,7 @@ async def _admit_watcher_attempt(
         return decision
     attempt_generation = decision.attempt_generation
     if decision.admitted and attempt_generation is not None:
-        await _run_durable_retry_transaction(
+        await run_durable_retry_transaction(
             lambda: policy.record_interrupted(attempt_generation),
             source=source,
             root_dir=root_dir,
@@ -417,13 +428,13 @@ async def _admit_watcher_attempt(
     raise asyncio.CancelledError
 
 
-def _raise_if_cancellation_requested(requested: bool) -> None:
+def raise_if_cancellation_requested(requested: bool) -> None:
     """Deliver cancellation only after the selected durable outcome exists."""
     if requested:
         raise asyncio.CancelledError
 
 
-async def _initialize_retry_policies(
+async def initialize_retry_policies(
     root_dir: Path,
     *,
     document_enabled: bool,
@@ -432,7 +443,7 @@ async def _initialize_retry_policies(
     initialized: list[tuple[WatcherRetryPolicy, bool]] = []
     for source in (WatcherSource.VAULT, WatcherSource.CODE):
         initialized.append(
-            await _run_durable_retry_transaction(
+            await run_durable_retry_transaction(
                 lambda selected=source: WatcherRetryPolicy.for_root(root_dir, selected),
                 source=source,
                 root_dir=root_dir,
@@ -441,13 +452,13 @@ async def _initialize_retry_policies(
         )
     document: tuple[WatcherRetryPolicy, bool] | None = None
     if document_enabled:
-        document = await _run_durable_retry_transaction(
+        document = await run_durable_retry_transaction(
             lambda: WatcherRetryPolicy.for_root(root_dir, WatcherSource.DOCUMENT),
             source=WatcherSource.DOCUMENT,
             root_dir=root_dir,
             action="initialize",
         )
-    _raise_if_cancellation_requested(
+    raise_if_cancellation_requested(
         any(cancelled for _policy, cancelled in initialized)
         or (document is not None and document[1])
     )

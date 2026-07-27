@@ -56,7 +56,9 @@ from ..commands._mode import (
     RAG_MCP_MODULE,
     infer_rag_upgrade_mode,
 )
-from ..config import EnvVar, persist_local_only, read_persisted_local_only, reset_config
+from ..config._paths import persist_local_only, read_persisted_local_only
+from ..config._settings import reset_config
+from ..config._types import EnvVar
 
 if TYPE_CHECKING:
     from pathlib import Path

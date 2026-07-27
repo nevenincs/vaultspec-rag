@@ -3,19 +3,18 @@ tags:
   - '#exec'
   - '#index-backpressure-storage-hygiene'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-27'
 step_id: 'S13'
 related:
   - "[[2026-07-21-index-backpressure-storage-hygiene-plan]]"
 ---
-
 # stamp ephemeral (root under the platform temp dir) and refresh a persisted last_indexed timestamp at manifest registration
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/storage_manifest.py`
-
-## Description
 
 The manifest already carried a `last_indexed` field that nothing stamped.
 Added `VaultStore.touch_manifest_last_indexed()` (server-mode only,
@@ -31,3 +30,5 @@ correct (a stamping root is live by definition).
 Committed as `feat(storage): persisted last_indexed activity clock stamped by every index run (#242)`; `TestLastIndexedStamping` green.
 
 ## Notes
+
+Evidence gap: the original record contains no Notes section with authored incident, deferred-work, or follow-up evidence.

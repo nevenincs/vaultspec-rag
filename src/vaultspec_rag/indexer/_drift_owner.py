@@ -23,12 +23,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from ._run_ledger import RunLedgerIndexedPathCollisionError
+from ._run_ledger_models import RunLedgerIndexedPathCollisionError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from ..store import VaultStore
+    from ..store_runtime import VaultStore
     from ._run_checkpoint import CodeRunCheckpoint
     from ._streaming import CodeFileSegment
 

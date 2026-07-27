@@ -3,14 +3,19 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Audit: Embeddings GPU Pivot
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 Feature: embeddings.py GPU rewrite (sentence-transformers + Qwen3 + SPLADE v3)
 
-## 2026-03-06 -- Initial Review (Passes 15-17)
+### 2026-03-06 -- Initial Review (Passes 15-17)
 
 ### embeddings.py Rewrite: VERIFIED CORRECT
 
@@ -43,7 +48,7 @@ config.py now has correct GPU defaults:
 
 pyproject.toml: `sentence-transformers>=5.0`, `torch>=2.4`, `transformers>=4.51`, plain `qdrant-client>=1.12.0`. fastembed removed.
 
-## Pass 28 — Full encode method review
+### Pass 28 — Full encode method review
 
 All encode methods verified correct:
 
@@ -53,3 +58,7 @@ All encode methods verified correct:
 - `encode_query_sparse()`: single query SPLADE encoding, returns `results[0]`.
 
 No new issues found.
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

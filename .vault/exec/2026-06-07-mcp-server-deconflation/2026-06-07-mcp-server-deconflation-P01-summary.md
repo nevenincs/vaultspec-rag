@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#mcp-server-deconflation'
 date: '2026-06-08'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-06-07-mcp-server-deconflation-plan]]'
 ---
@@ -26,3 +26,7 @@ Success. The package is now split successfully, and `mcp` has been moved to an o
 
 - Handled import resolution and restructuring to decouple the `mcp` transport from `vaultspec_rag/server`.
 - Replaced direct MCP tool calls in integration tests with calls strictly from `vaultspec_rag.mcp`.
+
+## Description
+
+Retained summary evidence: 2026-06-07-mcp-server-deconflation-plan are listed in frontmatter; the summary title and existing sections are the available phase record. No implementation claim is added.

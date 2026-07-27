@@ -1,7 +1,7 @@
 """Persisted prefix-to-root manifest for storage lifecycle management.
 
 Server-mode collections are namespaced by ``root_collection_prefix`` - a
-one-way blake2b hash of the resolved root path (see ``store.py``). A
+one-way blake2b hash of the resolved root path (see ``store_runtime.py``). A
 collection name therefore cannot be reversed to its source root, and the
 in-memory ``ServiceRegistry`` holds only currently-leased roots, not a
 durable record of every root ever indexed. Without a persisted mapping
@@ -28,9 +28,9 @@ read-modify-write.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 import threading
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
@@ -48,6 +48,7 @@ __all__ = [
     "manifest_path",
     "reconcile_manifest",
     "record_collection_identity",
+    "record_restored_archive",
     "record_root",
     "rekey_prefix",
     "remove_prefix",
@@ -60,7 +61,7 @@ __all__ = [
 ]
 
 # Filename of the manifest inside the managed service (``status_dir``)
-# directory. Mirrors the local-only marker convention in ``config.py``.
+# directory. Mirrors the local-only marker convention in ``config/_paths.py``.
 _MANIFEST_FILENAME = "storage-manifest.json"
 _SNAPSHOT_MANIFEST_FILENAME = "snapshot-manifest.json"
 
@@ -76,7 +77,7 @@ class ManifestReconcileResult:
     """Outcome of reconciling the manifest's bookkeeping against the server.
 
     Named for the manifest because a second, unrelated reconcile result lives
-    in ``storage_ops``: that one reports a single collection's *geometry*
+    in ``storage_reconciliation``: that one reports a single collection's *geometry*
     converging toward its target, while this one reports which *prefix records*
     were dropped or kept. Two modules in this package previously called both
     ``ReconcileResult``, which reads as one type until you notice the fields
@@ -183,12 +184,12 @@ def write_snapshot_manifest(
     """Atomically publish a deterministic manifest after an archive completes."""
     path = snapshot_manifest_path(archive_namespace_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": 1,
         # This is the archive's completion clock, written only after every
         # artifact has reached the archive directory.  Retention must not use
         # a copied metadata file's source mtime as a proxy for archive age.
         "completed_at": datetime.now(UTC).isoformat(),
-    payload = {
-        "version": 1,
         "prefix": manifest.prefix,
         "root": manifest.root,
         "storage_schema_version": manifest.storage_schema_version,
@@ -231,7 +232,7 @@ def manifest_path() -> Path:
     """Return the path of the persisted storage manifest."""
     # Function-local to avoid an import cycle with the store, which imports
     # this module's collection-prefix helpers.
-    from .config import managed_status_dir
+    from .config._settings import managed_status_dir
 
     return managed_status_dir() / _MANIFEST_FILENAME
 
@@ -495,6 +496,37 @@ def record_collection_identity(
             collection_identity=merged,
         )
         _write_manifest(entries)
+
+
+def record_restored_archive(
+    root: Path | str,
+    *,
+    storage_schema_version: int,
+    collections: tuple[str, ...],
+    identities: dict[str, store_schema.CollectionIdentity],
+) -> ManifestEntry:
+    """Persist archived provenance for a restored server namespace.
+
+    Restore creates no vectors and therefore must not stamp current process
+    identity or schema values.  The archive's own records are the only honest
+    provenance for the recovered collections; an absent identity remains absent
+    and is consequently reported as unverifiable by the existing survey path.
+    """
+    resolved = str(Path(root).resolve())
+    prefix = root_collection_prefix(root)
+    with _LOCK:
+        entries = load_manifest()
+        entry = ManifestEntry(
+            prefix=prefix,
+            root=resolved,
+            backend="server",
+            storage_schema_version=storage_schema_version,
+            collections=collections,
+            collection_identity=dict(identities),
+        )
+        entries[prefix] = entry
+        _write_manifest(entries)
+    return entry
 
 
 def remove_prefix(prefix: str) -> bool:

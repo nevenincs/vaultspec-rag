@@ -25,12 +25,12 @@ from ._service_jobs_query import (
 from ._service_jobs_watch import (
     _exit_invalid_watch_args,
     _JobsWatchRequest,
-    _stop_watching,
     _watch_jobs,
 )
 
 if TYPE_CHECKING:
     from typer._click import Context as ClickContext
+
 
 @dataclass(frozen=True, slots=True)
 class _ServiceJobsOptions:
@@ -46,7 +46,6 @@ class _ServiceJobsOptions:
     json_mode: bool = False
     watch: bool = False
     interval: float = 2.0
-    refresh_count: int | None = None
 
 
 class _ServiceJobsCommand(TyperCommand):
@@ -130,19 +129,13 @@ class _ServiceJobsCommand(TyperCommand):
                     param_decls=["--watch"],
                     default=False,
                     is_flag=True,
-                    help="Continuously refresh the human jobs view.",
+                    help="Open the interactive jobs interface with per-job controls.",
                 ),
                 TyperOption(
                     param_decls=["--interval"],
                     type=float,
                     default=2.0,
-                    help="Seconds between --watch refreshes.",
-                ),
-                TyperOption(
-                    param_decls=["--refresh-count"],
-                    type=int,
-                    default=None,
-                    help="Stop --watch after this many refreshes.",
+                    help="Seconds between refreshes in the interactive interface.",
                 ),
             )
         )
@@ -163,7 +156,6 @@ class _ServiceJobsCommand(TyperCommand):
                 json_mode=cast("bool", params["json"]),
                 watch=cast("bool", params["watch"]),
                 interval=cast("float", params["interval"]),
-                refresh_count=cast("int | None", params["refresh_count"]),
             )
         )
 
@@ -191,7 +183,6 @@ def _run_service_jobs(options: _ServiceJobsOptions) -> None:
     json_mode = options.json_mode
     watch = options.watch
     interval = options.interval
-    refresh_count = options.refresh_count
     phase, client_state = _jobs_state_filter(state, json_mode)
     source = _jobs_index_filter(index, json_mode)
     trigger = _jobs_started_by_filter(started_by, json_mode)
@@ -216,19 +207,15 @@ def _run_service_jobs(options: _ServiceJobsOptions) -> None:
     )
     fetch = functools.partial(_fetch_jobs_result, spec)
     if watch:
-        try:
-            _watch_jobs(
-                _JobsWatchRequest(
-                    fetch=fetch,
-                    job_id=job_id,
-                    port=resolved_port,
-                    interval=interval,
-                    refresh_count=refresh_count,
-                    client_state=client_state,
-                )
+        _watch_jobs(
+            _JobsWatchRequest(
+                fetch=fetch,
+                job_id=job_id,
+                port=resolved_port,
+                interval=interval,
+                client_state=client_state,
             )
-        except KeyboardInterrupt:
-            _stop_watching()
+        )
         return
 
     result = fetch()

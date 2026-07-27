@@ -3,7 +3,7 @@ tags:
   - '#audit'
   - '#comprehensive-code-review'
 date: '2026-06-08'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-06-01-module-split-adr]]'
 ---
@@ -29,3 +29,15 @@ In `src/vaultspec_rag/mcp/_admin_tools.py`, the `benchmark()` and `quality()` to
 ## MCP Deconflation-002 | MEDIUM | Log reading tool bypasses REST API
 
 In `src/vaultspec_rag/mcp/_admin_tools.py`, the `get_logs()` tool uses a direct local thread call (`read_service_log(lines)`) instead of routing through `_call_daemon("/logs")`. An inline comment notes this was done because `/logs` returns a `PlainTextResponse` while `_call_daemon` expects JSON. This violates the separation of concerns between MCP and the service runtime. The server should expose a JSON-formatted log endpoint to ensure all MCP interactions flow through the canonical daemon REST boundary.
+
+## Scope
+
+Retained audit evidence: 2026-06-01-module-split-adr are listed in frontmatter; the audit title and retained sections define the reviewed subject.
+
+## Findings
+
+Retained audit evidence: the detailed review entries in this document constitute the findings inventory.
+
+## Recommendations
+
+Evidence gap: the retained audit body and complete git log --follow history state no separate recommendations. No recommendation is asserted.

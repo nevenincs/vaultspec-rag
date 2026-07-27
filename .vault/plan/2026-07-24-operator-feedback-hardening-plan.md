@@ -3,14 +3,20 @@ tags:
   - '#plan'
   - '#operator-feedback-hardening'
 date: '2026-07-24'
-modified: '2026-07-24'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-07-24-operator-feedback-hardening-adr]]'
   - '[[2026-07-24-operator-feedback-hardening-audit]]'
+  - '[[2026-07-27-operator-feedback-hardening-grounding-research]]'
 ---
-
 # `operator-feedback-hardening` plan
+
+## Description
+
+No separate description is recorded in the retained prior plan body. Source: retained prior plan body.
+
+## Steps
 
 ### Phase `P01` - Render channel
 
@@ -37,10 +43,10 @@ Make what is reported readable and actionable, and keep the operator able to int
 - [x] `P03.S09` - Keep the main thread interruptible across blocking operator polls; `src/vaultspec_rag/cli/_process.py`.
 - [x] `P03.S10` - Route every operator-facing size through one byte vocabulary; `src/vaultspec_rag/_units.py`.
 
-## Description
-
-## Steps
-
 ## Parallelization
 
+No separate parallelization is recorded in the retained prior plan body. Source: retained prior plan body.
+
 ## Verification
+
+No separate verification is recorded in the retained prior plan body. Source: retained prior plan body.

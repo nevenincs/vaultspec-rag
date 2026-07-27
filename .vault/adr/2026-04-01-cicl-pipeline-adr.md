@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#cicl'
 date: '2026-04-01'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-01-cicl-pipeline-research]]'
 ---
@@ -94,3 +94,15 @@ vaultspec-core blocks both CI and publishing.
   self-hosted GPU runner could be added later
 - The vaultspec-core PyPI version must stay compatible with what
   vaultspec-rag needs (currently >=0.1.0)
+
+## C
+
+o
+
+## E
+
+v
+
+## Considered options
+
+Evidence gap: the retained ADR body and complete git log --follow history provide no separate considered-options inventory. No option is asserted.

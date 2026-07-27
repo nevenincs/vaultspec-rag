@@ -92,7 +92,7 @@ def test_maintenance_cycle_reclaims_only_time_confirmed_orphans(
     """
     from ...cli._process import _spawn_service, _terminate_pid
     from ...cli._service_status import _write_service_status
-    from ...config import get_config
+    from ...config._settings import get_config
     from ._helpers import _get_ephemeral_port, _poll_health, _service_env
 
     with _service_env(

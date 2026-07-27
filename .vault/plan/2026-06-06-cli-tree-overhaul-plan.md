@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#cli-tree-overhaul'
 date: '2026-06-06'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L3
 related:
   - '[[2026-06-06-cli-tree-overhaul-adr]]'
@@ -80,8 +80,15 @@ Fix 10 test failures introduced during Pyright type safety remediations in P05.
 
 ## Description
 
+Related-record evidence: 2026-06-06-cli-tree-overhaul-adr, 2026-06-06-cli-tree-overhaul-research are listed in this plan's frontmatter; the retained plan prose states the scope and constraints.
+
 ## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
 
 ## Parallelization
 
+Evidence gap: the retained plan prose and complete git log --follow history state no explicit parallelization policy. No concurrency rule is asserted.
+
 ## Verification
+Evidence gap: the retained plan prose and complete git log --follow history state no standalone verification criteria. No verification result is asserted.

@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#cli-path-glob'
 date: '2026-05-30'
-modified: '2026-07-22'
+modified: '2026-07-27'
 related:
   - '[[2026-05-30-cli-path-glob-research]]'
 ---
@@ -109,3 +109,7 @@ needs a separate classification layer and a richer config surface
   qdrant-client release adds it) by replacing the fnmatch loop
   with a store-side filter and dropping the fetch_limit bump.
   The CLI/MCP surface stays stable across that change.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

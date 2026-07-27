@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
     import pathspec
 
-    from ..config import PreprocessMode
+    from ..config._types import PreprocessMode
     from ..job_control import RunControl
     from ._resolved_policy import ResolvedIndexPolicy
 

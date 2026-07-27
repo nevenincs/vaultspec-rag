@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from ..config import EnvVar
+from ..config._types import EnvVar
 
 pytestmark = [pytest.mark.unit]
 

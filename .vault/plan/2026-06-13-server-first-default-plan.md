@@ -3,11 +3,13 @@ tags:
   - '#plan'
   - '#server-first-default'
 date: '2026-06-13'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L3
 related:
   - '[[2026-06-13-server-first-default-adr]]'
   - '[[2026-06-13-provisioning-setup-adr]]'
+  - '[[2026-06-12-serving-runtime-research]]'
+  - '[[2026-06-12-qdrant-server-provisioning-research]]'
 ---
 
 # `server-first-default` plan
@@ -129,6 +131,8 @@ This plan executes the two accepted ADRs that reframe vaultspec-rag from local-f
 The current state grounds every Step. The runtime default lives in `config.py` as `qdrant_server` defaulting to `False`; `server/_lifespan.py` already supervises the Qdrant child when that flag is on and the existing backend-aware store locking and per-root namespaced collections carry over unchanged, so W01 only flips the default and adds the local-only selection knob rather than re-implementing supervision. The setup surface lives in `commands/_install.py` (orchestrator) and `cli/_install.py` (Typer wrapper), with the torch configurator in `torch_config/`, the model warmup path in `cli/_service_lifecycle.py`, and the Qdrant provisioner in `qdrant_runtime/_provision.py`; W02 adds a front-door orchestrator over those backends, never a rewrite. The readiness verb (W03) is built in the service domain (`api.py`) first so the CLI and MCP adapt to shared behavior rather than duplicating it, honoring the service-domain-owns-operability rule, and stays bounded and read-only per operator-views-are-bounded. W04 reframes the docs and closes with the mandatory operator-persona validation required by the cli-operability-needs-persona-tests rule. The verify-before-execute security contract in `qdrant_runtime/_supervise.py` is preserved untouched, and no Step bundles the binary, honoring pinned-binaries-verify-before-execute and the pure-Python wheel constraint.
 
 ## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
 
 ## Parallelization
 

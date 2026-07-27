@@ -3,14 +3,37 @@ tags:
   - '#plan'
   - '#service-health-client-hardening'
 date: '2026-07-22'
-modified: '2026-07-23'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-07-22-service-health-client-hardening-adr]]'
   - '[[2026-07-22-service-health-client-hardening-research]]'
 ---
-
 # `service-health-client-hardening` plan
+
+## Description
+
+Executes `2026-07-22-service-health-client-hardening-adr`, grounded in
+`2026-07-22-service-health-client-hardening-research`. One ADR governs all three
+Phases: `P01` delivers D1, `P02` delivers D3, and `P03` delivers D2 together
+with D5.
+
+The Phase order is not a convenience. D1's sequencing constraint is binding: the
+redirect correction must land and be verified before any consolidation begins,
+because the refusing opener is presently the only thing confining a consistent
+responder to the local port. Running `P03` first would move the health call onto
+a redirect-following client and hold that window open for the duration of the
+migration. `P02` sits between them because the bounded default it establishes is
+the default the new health owner inherits.
+
+Scope boundary, stated because the adjacent defect is easy to conflate with this
+work: the self-referential identity check in the service stop path is NOT
+addressed here. D4 defers it to its own record. No Step in this plan repairs it,
+and no Step, record, or commit arising from this plan may be described as
+repairing it. The redirect correction narrows the conditions under which that
+weakness can be reached; it does not make the check sound.
+
+## Steps
 
 ### Phase `P01` - correct the redirect defect on the shared transport
 
@@ -56,30 +79,10 @@ Judge the whole plan against the authorizing decision, by a reviewer with no aut
 
 - [x] `P04.S22` - Review the delivered plan against its authorizing decision and record the verdict, confirming that redirect refusal is transport-wide rather than health-only, that the credential-bearing request path is asserted and not only the health path, that every repointed call site preserves its sentinel semantics with no exception escaping the two envelope-bound verbs, that the caller enumeration behind the bounded default was performed rather than assumed, and that no delivered code, test, record, or commit message describes the deferred stop-path identity check as fixed; `the reviewer must have no authorship in this plan, and the author of all twenty-one preceding Steps is ineligible;`.vault/audit/2026-07-22-service-health-client-hardening-audit.md\`.
 
-## Description
-
-Executes `2026-07-22-service-health-client-hardening-adr`, grounded in
-`2026-07-22-service-health-client-hardening-research`. One ADR governs all three
-Phases: `P01` delivers D1, `P02` delivers D3, and `P03` delivers D2 together
-with D5.
-
-The Phase order is not a convenience. D1's sequencing constraint is binding: the
-redirect correction must land and be verified before any consolidation begins,
-because the refusing opener is presently the only thing confining a consistent
-responder to the local port. Running `P03` first would move the health call onto
-a redirect-following client and hold that window open for the duration of the
-migration. `P02` sits between them because the bounded default it establishes is
-the default the new health owner inherits.
-
-Scope boundary, stated because the adjacent defect is easy to conflate with this
-work: the self-referential identity check in the service stop path is NOT
-addressed here. D4 defers it to its own record. No Step in this plan repairs it,
-and no Step, record, or commit arising from this plan may be described as
-repairing it. The redirect correction narrows the conditions under which that
-weakness can be reached; it does not make the check sound.
-
-## Steps
-
 ## Parallelization
 
+No separate parallelization is recorded in the retained prior plan body. Source: retained prior plan body.
+
 ## Verification
+
+No separate verification is recorded in the retained prior plan body. Source: retained prior plan body.

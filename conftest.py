@@ -103,7 +103,7 @@ def _reset_singleton_config_caches() -> None:
     """Make early environment containment visible to both config layers."""
     from vaultspec_core.config import reset_config
 
-    from vaultspec_rag.config import reset_config as reset_rag_config
+    from vaultspec_rag.config._settings import reset_config as reset_rag_config
 
     reset_config()
     reset_rag_config()

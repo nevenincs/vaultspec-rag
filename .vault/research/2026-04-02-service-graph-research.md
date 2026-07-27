@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#service-graph'
 date: '2026-04-02'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-02-release-readiness-audit]]'
   - '[[2026-03-09-graph-embedding-round36-audit]]'
@@ -389,3 +389,7 @@ uvicorn replacement at beta if real lifecycle management gaps emerge.
 | 3. CLI service commands | dmypy pattern (subprocess + status file + health poll) | Alpha            |
 | 4. Windows Service      | Rust binary via `windows-service` crate + maturin      | Beta             |
 | 5. ASGI server upgrade  | Granian (Rust ASGI with supervisor)                    | Evaluate at beta |
+
+## Sources
+
+Evidence gap: the retained research body and manifest provenance state no separate sources list. No source is asserted.

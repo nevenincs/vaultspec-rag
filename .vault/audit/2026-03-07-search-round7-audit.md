@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # search.py Deep Audit (Round 7)
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 Date: 2026-03-07
 Auditor: docs-researcher-2-2
@@ -14,7 +19,7 @@ File: `src/vaultspec_rag/search.py` (398 lines)
 
 ______________________________________________________________________
 
-## 1. `_normalize_minmax()` min==max edge case (lines 151-166)
+### 1. `_normalize_minmax()` min==max edge case (lines 151-166)
 
 **Verdict: CORRECT**
 
@@ -38,7 +43,7 @@ No issues.
 
 ______________________________________________________________________
 
-## 2. `search_all()` score combination (lines 365-393)
+### 2. `search_all()` score combination (lines 365-393)
 
 **Verdict: MOSTLY CORRECT, one docstring issue**
 
@@ -58,7 +63,7 @@ The weighting is correct. No off-by-one. Both sources get equal weight (0.5) so 
 
 ______________________________________________________________________
 
-## 3. `rerank_with_graph()` boost formula (lines 102-148)
+### 3. `rerank_with_graph()` boost formula (lines 102-148)
 
 **Verdict: CORRECT after sigmoid fix, but scores exceed 1.0**
 
@@ -83,7 +88,7 @@ Scores can now reach up to 2.0 (for a score of 1.0 with 10+ in-links). With the 
 
 ______________________________________________________________________
 
-## 4. `_rerank()` method (lines 223-238)
+### 4. `_rerank()` method (lines 223-238)
 
 **Verdict: CORRECT with one edge case note**
 
@@ -111,7 +116,7 @@ for result, score in zip(results, scores, strict=True):
 
 ______________________________________________________________________
 
-## 5. `parse_query()` and `_FILTER_PATTERN` (lines 35-99)
+### 5. `parse_query()` and `_FILTER_PATTERN` (lines 35-99)
 
 **Verdict: CORRECT, one minor edge case**
 
@@ -145,7 +150,7 @@ Pattern: `r"\b(type|feature|date|tag|lang|path|func|class|nodetype):(\S+)"`
 
 ______________________________________________________________________
 
-## 6. Filter propagation in `search_vault()` and `search_codebase()` (lines 254-363)
+### 6. Filter propagation in `search_vault()` and `search_codebase()` (lines 254-363)
 
 **Verdict: CORRECT**
 
@@ -179,7 +184,7 @@ Then overlays explicit keyword args (lines 326-333). Keyword args take precedenc
 
 ______________________________________________________________________
 
-## 7. Unguarded `None` access
+### 7. Unguarded `None` access
 
 **Verdict: NO ISSUES FOUND**
 
@@ -191,7 +196,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 8. Additional findings
+### 8. Additional findings
 
 ### `_get_reranker()` not thread-safe (line 196-221)
 
@@ -211,7 +216,7 @@ This is correct behavior: each source returns its top `top_k` results, then the 
 
 ______________________________________________________________________
 
-## Summary
+### Summary
 
 | #   | Issue                                                            | Severity | Action                 |
 | --- | ---------------------------------------------------------------- | -------- | ---------------------- |
@@ -227,3 +232,7 @@ ______________________________________________________________________
 | 10  | `_reranker_top_k` unused dead code                               | LOW      | Delete field           |
 
 **No HIGH or MEDIUM issues found.** The sigmoid fix (Task #64) has resolved the negative-score graph boost bug identified in Round 5.
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#preprocess-hooks'
 date: '2026-06-10'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L3
 related:
   - '[[2026-06-10-preprocess-hooks-adr]]'
@@ -228,6 +228,8 @@ touched, so the `gpu-consumer-single-thread` and `index-workers-stay-cpu-only` r
 throughout (the command form is CPU-only by process construction).
 
 ## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
 
 ## Parallelization
 

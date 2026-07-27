@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#torch-dependency-group'
 date: '2026-06-24'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-06-24-torch-dependency-group-adr]]'
@@ -58,6 +58,8 @@ mocks. Grounded in the ADR and its research; planning artifact only, ADR pending
 
 ## Steps
 
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
+
 ## Parallelization
 
 P01 lays the write path and selector that P02 and P03 build on, so it lands first. Within P01,
@@ -74,7 +76,7 @@ The plan is complete when every Step is closed and all of the following hold:
 
 - `vaultspec-rag install --torch-group <NAME>` writes `torch` under
   `[dependency-groups].<NAME>` and not `[project].dependencies`, with the cu130
-  `[[tool.uv.index]]` and `[tool.uv.sources]` block still written.
+  ``tool.uv.index`` and `[tool.uv.sources]` block still written.
 - The ownership marker records the written location; uninstall removes the managed dep from
   that surface only, and a legacy boolean-`true` marker still removes from
   `[project].dependencies`.

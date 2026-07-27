@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#cli-search-filters'
 date: '2026-05-28'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-05-28-cli-search-filters-plan]]'
   - '[[2026-05-28-cli-search-filters-research]]'
@@ -63,3 +63,7 @@ in use and avoids inventing a new transport.
   an explicit error instead of a misleading top-k. This is a behavioural
   change but aligns advertised flags with actual semantics.
 - Future search types (e.g. `all`) inherit the same guard automatically.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

@@ -6,7 +6,7 @@ tags:
   - '#adr'
   - '#qdrant-performance'
 date: '2026-06-05'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-05-qdrant-performance-research]]"
 ---
@@ -53,3 +53,7 @@ Grounded in findings from `2026-06-05-qdrant-performance-research`, transitionin
 
 - **Rule slug:** `qdrant-server-mode-fallback`.
   **Rule:** Always maintain local-file mode compatibility when implementing network-based Qdrant client interfaces.
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

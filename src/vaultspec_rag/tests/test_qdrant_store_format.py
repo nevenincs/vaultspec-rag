@@ -28,7 +28,8 @@ from ..cli._status_labels import (
     VECTOR_SERVICE_FAMILY,
     degradation_findings,
 )
-from ..config import EnvVar, reset_config
+from ..config._settings import reset_config
+from ..config._types import EnvVar
 from ..qdrant_runtime._constants import QdrantRuntimeState
 from ..qdrant_runtime._resolve import QdrantIdentity
 from ..qdrant_runtime._store_format import (

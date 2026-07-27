@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 14 Audit -- cli.py (full audit)
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Auditor:** docs-researcher-2-2
 **File:** `src/vaultspec_rag/cli.py` (469 lines)
@@ -14,7 +19,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Check 1: `test` Command
+### Check 1: `test` Command
 
 ### `handle_test()` (lines 446-464)
 
@@ -46,7 +51,7 @@ def handle_test(ctx: typer.Context):
 
 ______________________________________________________________________
 
-## Check 2: GPU Error Handling
+### Check 2: GPU Error Handling
 
 ### `_handle_gpu_error()` (lines 34-48)
 
@@ -77,7 +82,7 @@ Line 41: `"CUDA" in str(exc) or "cuda" in str(exc)` could match RuntimeError mes
 
 ______________________________________________________________________
 
-## Check 3: `--target` Ignored for `test` and `server`
+### Check 3: `--target` Ignored for `test` and `server`
 
 ### `main()` callback (lines 129-130)
 
@@ -96,7 +101,7 @@ If a user runs `vaultspec-rag --target /foo test`, the `--target` flag has no ef
 
 ______________________________________________________________________
 
-## Check 4: `configure_logging(debug, verbose)` Precedence
+### Check 4: `configure_logging(debug, verbose)` Precedence
 
 ### Line 123
 
@@ -119,7 +124,7 @@ The CLI does not enforce mutual exclusivity or document precedence. R21-m9 noted
 
 ______________________________________________________________________
 
-## Check 5: UTF-8 Reconfiguration
+### Check 5: UTF-8 Reconfiguration
 
 ### Lines 14-17
 
@@ -136,7 +141,7 @@ if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
 
 ______________________________________________________________________
 
-## Check 6: `handle_index` -- Full vs Incremental
+### Check 6: `handle_index` -- Full vs Incremental
 
 ### Lines 210-228
 
@@ -173,7 +178,7 @@ Since the store was just created fresh (empty), `incremental_index()` will work 
 
 ______________________________________________________________________
 
-## Check 7: `handle_search` -- Store/Model Creation and Cleanup
+### Check 7: `handle_search` -- Store/Model Creation and Cleanup
 
 ### Lines 287-297
 
@@ -203,7 +208,7 @@ If `EmbeddingModel()` raises an exception that is NOT `ImportError` or `RuntimeE
 
 ______________________________________________________________________
 
-## Check 8: `--clean` Flag -- Delete `.qdrant/` Before Reindexing
+### Check 8: `--clean` Flag -- Delete `.qdrant/` Before Reindexing
 
 ### Lines 181-194
 
@@ -232,7 +237,7 @@ The `PermissionError` handler gives a clear error message and exits cleanly.
 
 ______________________________________________________________________
 
-## Check 9: `handle_server` / MCP Start
+### Check 9: `handle_server` / MCP Start
 
 ### `mcp_start()` (lines 359-365)
 
@@ -250,7 +255,7 @@ Note: The `_ctx` parameter is unused (accepted to satisfy Typer's callback signa
 
 ______________________________________________________________________
 
-## Check 10: Unhandled Exceptions
+### Check 10: Unhandled Exceptions
 
 ### Exception handling coverage
 
@@ -290,7 +295,7 @@ Same issue as `handle_search` -- `VaultStore(target)` created at line 341 but ne
 
 ______________________________________________________________________
 
-## Summary
+### Summary
 
 | ID     | Severity | Finding                                                                                                 |
 | ------ | -------- | ------------------------------------------------------------------------------------------------------- |
@@ -305,3 +310,7 @@ ______________________________________________________________________
 | R14-m7 | MINOR    | `handle_status` does not close VaultStore                                                               |
 
 **2 MEDIUM findings. 7 MINOR findings.**
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

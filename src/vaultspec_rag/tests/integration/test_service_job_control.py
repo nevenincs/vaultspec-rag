@@ -18,7 +18,8 @@ from typer.testing import CliRunner
 import vaultspec_rag.server as _server_state
 
 from ...cli import app
-from ...config import EnvVar, reset_config
+from ...config._settings import reset_config
+from ...config._types import EnvVar
 from ...job_models import (
     DesiredJobState,
     JobInitiator,

@@ -19,10 +19,10 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from ... import VaultStore, jobs, server
+from ... import jobs, server
 from ..._store_search import HybridSearchRequest
 from ...concurrency import get_encode_limiter, reset_limiters
-from ...config import get_config
+from ...config._settings import get_config
 from ...indexer._vault_prep import prepare_document
 from ...job_models import (
     DesiredJobState,
@@ -34,6 +34,7 @@ from ...job_models import (
 from ...progress import NullProgressReporter
 from ...server import WatcherStartOutcome
 from ...server import _watcher as watcher_lifecycle
+from ...store_runtime import VaultStore
 from ...watcher_retry import WatcherRetryPolicy, WatcherSource
 from ..benchmarks.bench_large_index_resilience import (
     CorpusSpec,
@@ -584,7 +585,7 @@ class TestLargeIndexSearchHeadroom:
                 root,
                 embedding_model,
                 store,
-                gpu_lock=gpu_lock,
+                options=CodebaseIndexer.Options(gpu_lock=gpu_lock),
             )
             bootstrap = (
                 root / "src" / "acceptance_workload" / "000" / ("module_000000.py")

@@ -230,6 +230,12 @@ class EnvVar(StrEnum):
     VIRTUAL_ENV = "VIRTUAL_ENV"
 
 
+#: Default for ``EnvVar.STATUS_DIR``, declared beside the env var it defaults
+#: so every consumer - the persistence layer and the config wrapper alike -
+#: imports the one literal instead of each keeping its own copy.
+STATUS_DIR_DEFAULT = "~/.vaultspec-rag"
+
+
 def hf_cache_only() -> bool:
     """Return whether supported Hugging Face offline mode is enabled.
 

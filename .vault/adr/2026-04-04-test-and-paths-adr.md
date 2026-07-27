@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#test-and-paths'
 date: '2026-04-04'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-04-test-and-paths-research]]'
   - '[[2026-04-02-service-graph-adr]]'
@@ -119,3 +119,7 @@ couples assertions to hand-maintained content.
 - `test-project/` deletion is permanent — quality probes replaced by
   generated needles
 - `VAULTSPEC_RAG_*` env var convention established for future config
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

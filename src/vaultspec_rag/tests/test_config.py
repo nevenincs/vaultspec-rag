@@ -10,15 +10,9 @@ from pathlib import Path
 import pytest
 
 from .._job_errors import JobError, JobErrorKind
-from ..config import (
-    _ENV_OVERRIDE_MAP,
-    _SETTING_BOUNDS,
-    EnvVar,
-    VaultSpecConfigWrapper,
-    get_config,
-    hf_cache_only,
-    reset_config,
-)
+from ..config._schema import ENV_OVERRIDE_MAP, SETTING_BOUNDS
+from ..config._settings import VaultSpecConfigWrapper, get_config, reset_config
+from ..config._types import EnvVar, hf_cache_only
 from ..memory_probe import MemoryBudget
 from ._scaffold import restore_env, set_env
 
@@ -320,24 +314,28 @@ def test_cuda_ceiling_auto_derives_or_falls_back_to_profile() -> None:
     # that happens to present one.
     from .. import memory_probe
 
-    derived = memory_probe.cuda_ceiling_from_observation(memory_probe.CudaCeilingObservation(
-        device_total_mb=16376.0,
-        free_mb=None,
-        configured_mb=0.0,
-        headroom_mb=2048.0,
-        profile_cuda_mb=12288.0,
-        baseline_mb=0.0,
-    ))
+    derived = memory_probe.cuda_ceiling_from_observation(
+        memory_probe.CudaCeilingObservation(
+            device_total_mb=16376.0,
+            free_mb=None,
+            configured_mb=0.0,
+            headroom_mb=2048.0,
+            profile_cuda_mb=12288.0,
+            baseline_mb=0.0,
+        )
+    )
     assert derived == 16376.0 - 2048.0
 
-    fallback = memory_probe.cuda_ceiling_from_observation(memory_probe.CudaCeilingObservation(
-        device_total_mb=None,
-        free_mb=None,
-        configured_mb=0.0,
-        headroom_mb=2048.0,
-        profile_cuda_mb=12288.0,
-        baseline_mb=0.0,
-    ))
+    fallback = memory_probe.cuda_ceiling_from_observation(
+        memory_probe.CudaCeilingObservation(
+            device_total_mb=None,
+            free_mb=None,
+            configured_mb=0.0,
+            headroom_mb=2048.0,
+            profile_cuda_mb=12288.0,
+            baseline_mb=0.0,
+        )
+    )
     assert fallback == 12288.0
 
 
@@ -354,14 +352,16 @@ def test_cuda_ceiling_auto_is_absolute_over_free_plus_resident_baseline() -> Non
     from .. import memory_probe
 
     baseline = 5000.0
-    ceiling = memory_probe.cuda_ceiling_from_observation(memory_probe.CudaCeilingObservation(
-        device_total_mb=16000.0,
-        free_mb=6000.0,
-        configured_mb=0.0,
-        headroom_mb=2048.0,
-        profile_cuda_mb=12288.0,
-        baseline_mb=baseline,
-    ))
+    ceiling = memory_probe.cuda_ceiling_from_observation(
+        memory_probe.CudaCeilingObservation(
+            device_total_mb=16000.0,
+            free_mb=6000.0,
+            configured_mb=0.0,
+            headroom_mb=2048.0,
+            profile_cuda_mb=12288.0,
+            baseline_mb=baseline,
+        )
+    )
     budget = memory_probe.MemoryBudget(
         cuda_ceiling_mb=ceiling,
         cuda_baseline_mb=baseline,
@@ -377,14 +377,16 @@ def test_cuda_ceiling_auto_is_absolute_over_free_plus_resident_baseline() -> Non
     assert ceiling == baseline + 6000.0 - 2048.0
 
     # An idle-device free reading recovers the total - headroom clamp.
-    clamped = memory_probe.cuda_ceiling_from_observation(memory_probe.CudaCeilingObservation(
-        device_total_mb=16000.0,
-        free_mb=15500.0,
-        configured_mb=0.0,
-        headroom_mb=2048.0,
-        profile_cuda_mb=12288.0,
-        baseline_mb=baseline,
-    ))
+    clamped = memory_probe.cuda_ceiling_from_observation(
+        memory_probe.CudaCeilingObservation(
+            device_total_mb=16000.0,
+            free_mb=15500.0,
+            configured_mb=0.0,
+            headroom_mb=2048.0,
+            profile_cuda_mb=12288.0,
+            baseline_mb=baseline,
+        )
+    )
     assert clamped == 16000.0 - 2048.0
 
 
@@ -1218,7 +1220,7 @@ def test_code_noise_profile_defaults() -> None:
 
 
 def test_parse_domain_set_drops_unknown_and_prod() -> None:
-    from ..config import VaultSpecConfigWrapper as W
+    from ..config._settings import VaultSpecConfigWrapper as W
 
     # ``prod`` is never noise; ``bogus`` is not a domain - both dropped.
     assert W._parse_domain_set("tests, prod, bogus, locale") == frozenset(
@@ -1405,8 +1407,8 @@ def test_every_ranged_setting_rejects_a_malformed_environment_value() -> None:
     # A sweep, so a knob added later cannot quietly opt out of coercion.
     # Mutation: returning the default instead of raising in _coerce_env's
     # except branch fails on the first key in the table.
-    for key, bound in _SETTING_BOUNDS.items():
-        env_var = _ENV_OVERRIDE_MAP.get(key)
+    for key, bound in SETTING_BOUNDS.items():
+        env_var = ENV_OVERRIDE_MAP.get(key)
         assert env_var is not None, f"{key} declares a range but no env var"
         prev = set_env(env_var, "notavalue")
         try:
@@ -1429,7 +1431,7 @@ def test_every_flag_rejects_an_unrecognised_token() -> None:
     flags = [key for key, value in defaults.items() if isinstance(value, bool)]
     assert flags, "expected the settings table to carry boolean flags"
     for key in flags:
-        env_var = _ENV_OVERRIDE_MAP.get(key)
+        env_var = ENV_OVERRIDE_MAP.get(key)
         assert env_var is not None, f"{key} is a flag with no env var"
         prev = set_env(env_var, "treu")
         try:

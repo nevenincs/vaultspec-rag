@@ -3,14 +3,19 @@ tags:
   - '#plan'
   - '#index-throughput'
 date: '2026-07-24'
-modified: '2026-07-26'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-07-24-index-throughput-research]]'
   - '[[2026-07-24-index-throughput-adr]]'
 ---
-
 # `index-throughput` plan
+
+## Description
+
+Execute the accepted throughput decision: bound encode-job admission to one machine-wide slot (P01), make ingest wait semantics explicit with a correctness barrier (P02), and align the vault and document encode paths with the code path's proven producer/consumer overlap plus worker-pool vault parsing (P03), then measure against the research baselines, verify, and land (P04). Grounded by the stage-decomposition research in related frontmatter; all GPU and storage rules invariant.
+
+## Steps
 
 ### Phase `P01` - GPU-job admission gate
 
@@ -49,12 +54,6 @@ Before/after wall-clock measurement of a contended window and a rebuild-class jo
 - [x] `P04.S12` - run the full quality gates on the changed surface and fold measured numbers into the ADR consequences; `repository quality gates;`.vault/adr/2026-07-24-index-throughput-adr.md\`.
 - [x] `P04.S13` - commit the throughput work with a why-focused message and push to origin main; `git`.
 - [x] `P04.S18` - cap requires-python below 3.14 so the published metadata matches the runtime interpreter guard that already rejects 3.14, and add a .python-version pin so fresh worktree venvs resolve a supported interpreter; `pyproject.toml`; `.python-version`.
-
-## Description
-
-Execute the accepted throughput decision: bound encode-job admission to one machine-wide slot (P01), make ingest wait semantics explicit with a correctness barrier (P02), and align the vault and document encode paths with the code path's proven producer/consumer overlap plus worker-pool vault parsing (P03), then measure against the research baselines, verify, and land (P04). Grounded by the stage-decomposition research in related frontmatter; all GPU and storage rules invariant.
-
-## Steps
 
 ## Parallelization
 

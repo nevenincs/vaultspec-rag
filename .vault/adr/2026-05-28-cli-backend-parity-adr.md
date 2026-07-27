@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#cli-backend-parity'
 date: '2026-05-28'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-05-28-cli-backend-parity-research]]'
   - '[[2026-05-28-cli-search-filters-adr]]'
@@ -120,3 +120,7 @@ collision and is consistent with the present `--node-type` naming.
 - Wave 2 remains free to add `--json`, watchdog, divergence-check, and
   glob-path-filter capabilities without touching the surfaces Wave 1
   ships.
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

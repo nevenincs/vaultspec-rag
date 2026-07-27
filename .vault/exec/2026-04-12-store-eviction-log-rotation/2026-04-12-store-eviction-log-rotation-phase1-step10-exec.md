@@ -3,28 +3,28 @@ tags:
   - '#exec'
   - '#store-eviction-log-rotation'
 date: '2026-04-12'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-phase1-plan]]'
   - '[[2026-04-12-store-eviction-log-rotation-adr]]'
 ---
 
-# store-eviction-log-rotation phase-1 step-10
+## Description
 
-## goal
+### Goal
 
 Add six end-to-end integration tests under
 `src/vaultspec_rag/tests/integration/test_service_eviction.py`
 covering ADR D9 eviction matrix and ADR D6 `close_all` drain.
 Extract shared subprocess helpers into `_helpers.py` first.
 
-## files touched
+### Files touched
 
 - `src/vaultspec_rag/tests/integration/_helpers.py` (new)
 - `src/vaultspec_rag/tests/integration/test_service_eviction.py` (new)
 - `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`
 
-## what was done
+### What was done
 
 - Sub-step 10.0: extracted `_get_ephemeral_port`, `_poll_health`,
   `_wait_for_exit`, and `_service_env` from `test_service_lifecycle.py`
@@ -44,14 +44,28 @@ Extract shared subprocess helpers into `_helpers.py` first.
   FastMCP client over streamable HTTP. No mocks, patches, or skips.
 - `test_log_rotation_post_rollover_writes_to_active` uses a unique
   marker string in post-rollover search queries and asserts the
-  marker appears in `service.log` but NOT in `service.log.1` — the
+  marker appears in `service.log` but NOT in `service.log.1` â€” the
   direct regression guard for D1's re-`dup2` invariant.
 - `test_close_all_drains_busy_slots` spawns 8 concurrent searches
   against 8 distinct project roots, calls `_terminate_pid`, and
   asserts shutdown completes within 10s (5s drain + 2s grace +
   teardown epsilon) and `service.json` is cleaned up.
 
-## deviations
+## Outcome
+
+### Test results
+
+- `pre-commit run --files <step10 files>` clean (ruff, ty).
+- Subprocess GPU tests run in step 12 final verification. Step 10
+  commit lands the test file; step 12 executes the full suite.
+
+### Commit hash
+
+`4624660 test(integration): add eviction and log rotation integration tests`
+
+## Notes
+
+### Deviations
 
 - `test_idle_ttl_evicts_quiescent_slots` uses `IDLE_TTL_SECONDS=10`
   (not the plan's example of 2s). First-search cold-start on this
@@ -61,21 +75,11 @@ Extract shared subprocess helpers into `_helpers.py` first.
 - `test_evict_busy_returns_busy` assertion is
   `saw_busy or result.get("evicted") is True`. The plan asks for
   "at least one of 20 returned reason='busy'", but on a fast GPU
-  the busy window may close between calls — accepting either a
+  the busy window may close between calls â€” accepting either a
   busy observation OR eventual successful eviction preserves the
   intent (verify skip-busy discipline works, no crashes) while
   staying robust.
 
-## test results
-
-- `pre-commit run --files <step10 files>` clean (ruff, ty).
-- Subprocess GPU tests run in step 12 final verification. Step 10
-  commit lands the test file; step 12 executes the full suite.
-
-## commit hash
-
-`4624660 test(integration): add eviction and log rotation integration tests`
-
-## time spent
+### Time spent
 
 ~15 minutes (files were partially drafted on entry).

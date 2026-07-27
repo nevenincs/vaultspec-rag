@@ -3,19 +3,18 @@ tags:
   - '#exec'
   - '#index-backpressure-storage-hygiene'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-27'
 step_id: 'S11'
 related:
   - "[[2026-07-21-index-backpressure-storage-hygiene-plan]]"
 ---
-
 # add preflight tests covering refusal, pass-through, and envelope shape
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/tests/`
-
-## Description
 
 Confirmed PR 246's `test_store_writes.py` already covers refusal
 (`floor breach`, impossible estimate with canonical disk-full phrasing),
@@ -28,3 +27,5 @@ tests.
 Closed as verified-upstream plus the S10 CLI tests.
 
 ## Notes
+
+Evidence gap: the original record contains no Notes section with authored incident, deferred-work, or follow-up evidence.

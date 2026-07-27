@@ -3,14 +3,27 @@ tags:
   - '#plan'
   - '#storage-namespace-hygiene'
 date: '2026-07-14'
-modified: '2026-07-21'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-07-14-storage-namespace-hygiene-adr]]'
   - '[[2026-07-14-storage-namespace-hygiene-research]]'
 ---
-
 # `storage-namespace-hygiene` plan
+
+## Description
+
+Implements the accepted storage-namespace-hygiene decision (see the ADR and
+research in related). P01 makes the storage survey O(1): the daemon holds a
+survey snapshot (list plus computed_at) that the maintenance cycle publishes
+instead of discarding, a one-shot startup warmer fills the cold slot, and the
+route serves the snapshot with filters applied post-cache, honest freshness
+metadata, and a fresh=true recompute path. P02 gives consumers and test
+harnesses a sanctioned, idempotent per-root teardown by adding root
+addressing to the existing storage delete verb, then documents both. The HTTP
+plane stays read-only; no destruction route is added.
+
+## Steps
 
 ### Phase `P01` - Survey snapshot cache
 
@@ -31,20 +44,6 @@ Root-addressed idempotent namespace delete on the existing CLI verb, plus docume
 - [x] `P02.S08` - Add --root to the storage delete verb: normalize the root exactly as registration does, resolve via root_collection_prefix, dispatch through delete_prefix, and make an absent namespace an idempotent exit-0 already_absent success in both human and json modes with resolved prefix and queried root in the envelope; `src/vaultspec_rag/cli/_service_storage.py`.
 - [x] `P02.S09` - Test the delete --root matrix: resolution parity with registration, removed, already_absent exit 0, unknown refusal, and json envelope shape; `src/vaultspec_rag/tests/test_storage_adversarial.py`.
 - [x] `P02.S10` - Document delete --root harness-teardown recipe and the survey freshness semantics across docs/cli.md and docs/storage-maintenance.md; `docs/cli.md`.
-
-## Description
-
-Implements the accepted storage-namespace-hygiene decision (see the ADR and
-research in related). P01 makes the storage survey O(1): the daemon holds a
-survey snapshot (list plus computed_at) that the maintenance cycle publishes
-instead of discarding, a one-shot startup warmer fills the cold slot, and the
-route serves the snapshot with filters applied post-cache, honest freshness
-metadata, and a fresh=true recompute path. P02 gives consumers and test
-harnesses a sanctioned, idempotent per-root teardown by adding root
-addressing to the existing storage delete verb, then documents both. The HTTP
-plane stays read-only; no destruction route is added.
-
-## Steps
 
 ## Parallelization
 

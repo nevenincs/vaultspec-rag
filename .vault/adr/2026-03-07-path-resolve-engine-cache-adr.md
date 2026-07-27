@@ -3,20 +3,35 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-03-07-continuous-research]]'
 ---
-
 # `gpu-rag-stack` adr: `Use Path.resolve() for engine cache key` | (**status:** `accepted`)
 
-## Context
+## Problem Statement
+
+### Context
 
 `api.py` creates RAG engines keyed by vault path. But pathlib comparison is
 lexical: `Path("./project") != Path("project")` despite pointing to the same
 location. This causes unnecessary engine recreation and wasted GPU memory.
 
-## Decision
+## Considerations
+
+No separate considerations is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Considered options
+
+No separate considered options is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Constraints
+
+No separate constraints is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Implementation
+
+### Decision
 
 Use `Path.resolve()` to normalize vault paths before using them as cache keys.
 

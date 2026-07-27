@@ -46,7 +46,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .._named_root import env_named_root
-from ..config import EnvVar
+from ..config._types import EnvVar
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

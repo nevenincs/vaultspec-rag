@@ -20,6 +20,7 @@ from typer.core import TyperCommand, TyperOption
 
 if TYPE_CHECKING:
     import typer
+    from typer._click import Context as ClickContext
 
 from .._operator_commands import (
     server_jobs_command,
@@ -27,7 +28,8 @@ from .._operator_commands import (
     server_status_command,
 )
 from .._process_probe import pid_alive
-from ..config import EnvVar, get_config
+from ..config._settings import get_config
+from ..config._types import EnvVar
 from ..serviceclient._compat import (
     VERSION_ERROR_MISMATCH,
     ServiceVersionVerdict,
@@ -36,7 +38,7 @@ from ..serviceclient._compat import (
 from ..serviceclient._discovery import (
     SERVICE_PHASE_WARMING,
     _delete_service_status,
-    _read_service_status,
+    read_service_status,
 )
 from ..serviceclient._transport import _try_http_health
 from ._app import (
@@ -61,7 +63,7 @@ from ._process import (
     _spawn_service,
 )
 from ._progress import StartupStatusReporter
-from ._render import _address_line
+from ._render import address_line
 from ._service_lifecycle import (
     _fail_lifecycle,
     _lifecycle_success,
@@ -232,7 +234,7 @@ class _ServiceStartCommand(TyperCommand):
             )
         )
 
-    def invoke(self, ctx: typer.Context) -> Any:
+    def invoke(self, ctx: ClickContext) -> Any:
         """Dispatch parsed Click parameters as the typed start options."""
         params = ctx.params
         return _run_service_start(
@@ -385,7 +387,7 @@ def _existing_service_running() -> _AttachCandidate | None:
     a transient probe failure cannot erase a running daemon's discovery file
     (issue #204).
     """
-    status = _read_service_status()
+    status = read_service_status()
     if status is None:
         return None
     existing_pid = int(status["pid"])
@@ -585,7 +587,7 @@ def _guard_start_preconditions(port: int, json_mode: bool) -> None:
 
     machine_holder = machine_lock_live_holder()
     if machine_holder:
-        warming = _service_phase(_read_service_status()) == SERVICE_PHASE_WARMING
+        warming = _service_phase(read_service_status()) == SERVICE_PHASE_WARMING
         owner_line = (
             f"A vaultspec-rag service already owns this machine "
             f"(pid {machine_holder}) and is warming up (loading models); "
@@ -641,7 +643,7 @@ def _attach_existing_service(
             ),
             human_lines=(
                 _process_line(existing_pid),
-                _address_line(existing_port),
+                address_line(existing_port),
             ),
             next_actions=existing.version.remediation(),
             pid=existing_pid,
@@ -656,7 +658,7 @@ def _attach_existing_service(
             human_title="Service already running",
             human_lines=(
                 _process_line(existing_pid),
-                _address_line(existing_port),
+                address_line(existing_port),
             ),
             pid=existing_pid,
             port=existing_port,
@@ -669,7 +671,7 @@ def _attach_existing_service(
         human_title=f"Service already running (health: {health_status})",
         human_lines=(
             _process_line(existing_pid),
-            _address_line(existing_port),
+            address_line(existing_port),
             "The service is serving but not fully ready; searches may "
             "fail or queue until it recovers.",
             "Watch: vaultspec-rag server status",
@@ -684,7 +686,7 @@ def _attach_existing_service(
 
 def _attach_warming_service(json_mode: bool) -> bool:
     """Attach to a live owned daemon that has not bound its port yet."""
-    warming_status = _read_service_status()
+    warming_status = read_service_status()
     if warming_status is None or (
         _service_phase(warming_status) != SERVICE_PHASE_WARMING
     ):
@@ -750,7 +752,7 @@ def service_start() -> None:
     """Register the custom command; it dispatches through ``_ServiceStartCommand``."""
 
 
-def _run_service_start(ctx: typer.Context, options: _ServiceStartOptions) -> None:
+def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None:
     """Start the background search service from parsed command options."""
     port = options.port
     updates = options.updates
@@ -970,7 +972,7 @@ def _startup_phase_label(health: dict[str, object] | None) -> str:
         raw = health.get("status")
         if isinstance(raw, str) and raw:
             return f"serving, health: {raw}"
-    status = _read_service_status()
+    status = read_service_status()
     if _service_phase(status) == SERVICE_PHASE_WARMING:
         detail = status.get("phase_detail") if isinstance(status, dict) else None
         if isinstance(detail, str) and detail:
@@ -1010,7 +1012,7 @@ def _fail_start_died(
     """
     _delete_service_status()
     tail = _tail_daemon_log(log_path)
-    human = [_process_line(pid), _address_line(port)]
+    human = [_process_line(pid), address_line(port)]
     if tail:
         human.append("Last log lines:")
         human.extend(f"  {ln}" for ln in tail)
@@ -1063,7 +1065,7 @@ def _emit_start_succeeded(
         human_title="Service started",
         human_lines=(
             _process_line(serving_pid),
-            _address_line(request.port),
+            address_line(request.port),
             f"Startup: {startup_s:.1f}s",
             f"Log: {request.log_path}",
             *reason_lines,

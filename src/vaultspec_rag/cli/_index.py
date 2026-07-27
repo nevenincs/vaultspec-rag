@@ -38,7 +38,7 @@ from .._source_types import (
 )
 from .._store_locks import VaultStoreLockedError
 from .._store_writes import InsufficientDiskSpaceError
-from ..config import EnvVar
+from ..config._types import EnvVar
 from ..serviceclient._compat import resolve_data_plane_service
 from ..serviceclient._transport import _try_http_reindex
 from ._app import (

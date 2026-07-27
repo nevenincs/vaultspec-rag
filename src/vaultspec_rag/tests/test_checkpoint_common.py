@@ -28,13 +28,13 @@ from ..indexer._checkpoint_common import (
 from ..indexer._content_policy import ContentKind
 from ..indexer._document_checkpoint import DocumentRunConfiguration
 from ..indexer._run_checkpoint import CodeRunConfiguration
-from ..indexer._run_ledger import (
-    RunLedger,
+from ..indexer._run_ledger_models import (
     RunOperation,
     RunSignature,
     RunTerminalState,
     index_run_ledger_path,
 )
+from ..indexer._run_ledger_runtime import RunLedger
 
 if TYPE_CHECKING:
     from pathlib import Path

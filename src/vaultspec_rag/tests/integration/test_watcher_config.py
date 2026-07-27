@@ -16,7 +16,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ... import server
-from ...config import EnvVar, get_config, reset_config
+from ...config._settings import get_config, reset_config
+from ...config._types import EnvVar
 from ...server import WatcherStartOutcome
 
 if TYPE_CHECKING:

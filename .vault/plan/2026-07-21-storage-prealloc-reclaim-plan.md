@@ -3,14 +3,19 @@ tags:
   - '#plan'
   - '#storage-prealloc-reclaim'
 date: '2026-07-21'
-modified: '2026-07-22'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-07-21-storage-prealloc-reclaim-adr]]'
   - '[[2026-07-21-storage-prealloc-reclaim-research]]'
 ---
-
 # `storage-prealloc-reclaim` plan
+
+## Description
+
+No separate description is recorded in the retained prior plan body. Source: retained prior plan body.
+
+## Steps
 
 ### Phase `P01` - Drift detection and the reconcile primitive
 
@@ -52,10 +57,10 @@ Document the reconcile contract and accepted WAL residue, then bring lint, type,
 - [x] `P05.S14` - Document the reconcile contract, the automatic convergence behaviour, and the accepted write-ahead log residue; `docs/storage.md`.
 - [x] `P05.S15` - Bring lint, type, and unit gates green across the changed surface; `src/vaultspec_rag`.
 
-## Description
-
-## Steps
-
 ## Parallelization
 
+No separate parallelization is recorded in the retained prior plan body. Source: retained prior plan body.
+
 ## Verification
+
+No separate verification is recorded in the retained prior plan body. Source: retained prior plan body.

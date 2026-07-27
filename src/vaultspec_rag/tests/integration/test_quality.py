@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
     from ...embeddings import EmbeddingModel
     from ...search import SearchResult
-    from ...store import VaultStore
+    from ...store_runtime import VaultStore
     from ..conftest import RagComponentsWithManifest
 
 pytestmark = [pytest.mark.integration, pytest.mark.quality]

@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#index-backpressure-storage-hygiene'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-27'
 step_id: 'S22'
 related:
   - "[[2026-07-21-index-backpressure-storage-hygiene-plan]]"
@@ -30,3 +30,4 @@ Committed as the structural-isolation commit; the suite-level guard test
 asserts the machine-global dirs are never the session's resolved targets.
 
 ## Notes
+Template evidence: intro_commit=cdd61fe69100896ddf1b31f56e327d8fdfd778b9; template_commit=cdd61fe69100896ddf1b31f56e327d8fdfd778b9:.vaultspec/templates/exec-step.md requires Description, Outcome, and Notes. This repair preserves the retained record text and adds no new implementation claim.

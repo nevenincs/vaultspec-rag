@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, TypedDict, Unpack
 
 from . import store_schema
 from ._store_writes import DISK_FLOOR_BYTES as _DISK_FLOOR_BYTES
-from .storage_survey import _is_canonical_prefix
-from .storage_survey_ops import _dir_bytes
+from .storage_survey import is_canonical_prefix
+from .storage_survey_ops import directory_size_bytes
 
 if TYPE_CHECKING:
     import threading
@@ -234,7 +234,7 @@ def read_geometry(
     entries: list[GeometryEntry] = []
     for descriptor in descriptors:
         name = descriptor.name
-        if not _is_canonical_prefix(_prefix_of(name)):
+        if not is_canonical_prefix(_prefix_of(name)):
             continue
         try:
             info = client.get_collection(collection_name=name)
@@ -244,7 +244,7 @@ def read_geometry(
         target = getattr(info.config.optimizer_config, "default_segment_number", None)
         footprint: int | None = None
         if storage_dir is not None:
-            footprint = _dir_bytes(storage_dir / name)
+            footprint = directory_size_bytes(storage_dir / name)
         entries.append(
             GeometryEntry(
                 collection=name,
@@ -324,7 +324,7 @@ class _StabilityTracker:
         return self._run >= _CONVERGENCE_STABLE_SAMPLES
 
 
-def _await_convergence(
+def await_convergence(
     client: QdrantClient,
     collection: str,
     path: Path | None,
@@ -382,7 +382,7 @@ def _await_convergence_request(
             return None
         return (
             int(info.segments_count or 0),
-            _dir_bytes(path) if path is not None else 0,
+            directory_size_bytes(path) if path is not None else 0,
             _is_settled(info),
         )
 
@@ -474,7 +474,7 @@ def _reconcile_collection(request: _CollectionRequest) -> ReconcileResult:
     # with someone else's bytes.
     bytes_before = entry.footprint_bytes
     if path is not None:
-        bytes_before = _dir_bytes(path)
+        bytes_before = directory_size_bytes(path)
 
     # A merge inflates before it shrinks, and these backends are reconciled
     # precisely because they are short on space. Refuse rather than push a
@@ -520,17 +520,15 @@ def _reconcile_collection(request: _CollectionRequest) -> ReconcileResult:
             reason="not_awaited",
         )
 
-    converged = _await_convergence_request(
-        _ConvergenceRequest(
-            client,
-            entry.collection,
-            path,
-            budget_s,
-            poll_s,
-            sleep,
-            monotonic,
-            stop,
-        )
+    converged = await_convergence(
+        client,
+        entry.collection,
+        path,
+        budget_s=budget_s,
+        poll_s=poll_s,
+        sleep=sleep,
+        monotonic=monotonic,
+        stop=stop,
     )
     if converged is None:
         return ReconcileResult(

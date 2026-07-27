@@ -228,7 +228,7 @@ def parse_reserved_count(raw: Mapping[str, object], key: str) -> int | None:
 
 def code_meta_path(root: pathlib.Path) -> pathlib.Path:
     """Return the code index metadata sidecar path for *root*."""
-    from .config import get_config
+    from .config._settings import get_config
 
     cfg = get_config()
     return root / cfg.data_dir / cfg.code_index_metadata_file

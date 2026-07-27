@@ -26,7 +26,7 @@ def test_raw_document_full_and_scoped_incremental_stay_isolated(
     tmp_path: Path,
 ) -> None:
     from ...indexer import CodebaseIndexer, DocumentIndexer
-    from ...store import VaultStore
+    from ...store_runtime import VaultStore
 
     source = tmp_path / "reference.txt"
     source.write_text("Initial document-only material.", encoding="utf-8")
@@ -39,7 +39,7 @@ def test_raw_document_full_and_scoped_incremental_stay_isolated(
             tmp_path,
             embedding_model,
             store,
-            content_policy=policy,
+            options=CodebaseIndexer.Options(content_policy=policy),
         )
         document_indexer = DocumentIndexer(
             tmp_path,
@@ -95,7 +95,7 @@ def test_extracted_document_preserves_native_metadata_without_code_points(
     tmp_path: Path,
 ) -> None:
     from ...indexer import CodebaseIndexer, DocumentIndexer
-    from ...store import VaultStore
+    from ...store_runtime import VaultStore
 
     extractor = tmp_path / "record_extractor.py"
     extractor.write_text(
@@ -146,7 +146,7 @@ def test_extracted_document_preserves_native_metadata_without_code_points(
             tmp_path,
             embedding_model,
             store,
-            content_policy=policy,
+            options=CodebaseIndexer.Options(content_policy=policy),
         )
         result = document_indexer.full_index(
             reporter=NullProgressReporter(),

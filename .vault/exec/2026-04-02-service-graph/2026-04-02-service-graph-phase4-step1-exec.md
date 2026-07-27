@@ -3,21 +3,23 @@ tags:
   - '#exec'
   - '#service-graph'
 date: '2026-04-02'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-02-service-graph-phase1-plan]]'
 ---
 
 # service-graph phase-4 step-1: service daemon commands
 
-## Summary
+## Description
+
+### Summary
 
 Replaced the Docker-oriented stubs in `cli.py` with functional dmypy-style
 `service start`, `service stop`, and `service status` commands (D1). Added
 `__main__` argparse block to `mcp_server.py` for subprocess `--port`
 invocation.
 
-## Files modified
+### Files modified
 
 - `src/vaultspec_rag/cli.py` -- added module-level imports (`json`,
   `signal`, `subprocess`, `time`, `contextlib`, `datetime`). Added 8
@@ -38,8 +40,14 @@ invocation.
   liveness, status file round-trip, JSON validation, missing/invalid
   files, and health probe on non-listening port.
 
-## Test results
+## Outcome
+
+### Test results
 
 - 38 CLI tests pass (34 in test_cli.py + 4 in test_cli_warmup.py)
 - ruff check and ruff format clean
 - ty type checker clean
+
+## Notes
+
+No separate notes is recorded in the retained prior execution record. Source: retained prior execution record body.

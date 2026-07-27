@@ -78,7 +78,7 @@ def compute_code_epochs(
     preprocess_rules: Sequence[PreprocessRule],
 ) -> tuple[str, str]:
     """Compute the (membership, content) epoch pair from resolved inputs."""
-    from ..config import get_config
+    from ..config._settings import get_config
 
     cfg = get_config()
     membership = _config_epoch.code_membership_epoch(

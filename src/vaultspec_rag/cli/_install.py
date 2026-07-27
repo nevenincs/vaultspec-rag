@@ -2,14 +2,14 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import click
 import typer
 from tomlkit.exceptions import ParseError
 from typer._types import TyperChoice
 from typer.core import TyperCommand, TyperOption
-from typer.main import TyperPath
+from typer.models import TyperPath
 from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
     InstallMode,
 )
@@ -18,6 +18,9 @@ import vaultspec_rag.cli as _cli
 
 from ._app import _global_target, app
 from ._render import _plain, _render_install_report, _render_uninstall_report
+
+if TYPE_CHECKING:
+    from typer._click import Context as ClickContext
 
 # Group name used when ``--torch-group`` is passed without an explicit
 # value. Surfaced both in the help text and as the Click ``flag_value``.
@@ -230,7 +233,7 @@ class _InstallCommand(TyperCommand):
                 # the default group rather than demanding an argument.
                 param._flag_needs_value = True  # pyright: ignore[reportPrivateUsage]  # Click optional-value mechanism
 
-    def invoke(self, ctx: typer.Context) -> Any:
+    def invoke(self, ctx: "ClickContext") -> Any:
         """Dispatch parsed Click parameters as one install request."""
         params = ctx.params
         mode = cast("str | None", params["mode"])
@@ -271,7 +274,7 @@ def handle_install() -> None:
     """Register the custom command; it dispatches through ``_InstallCommand``."""
 
 
-def _run_install(ctx: typer.Context, options: _InstallOptions) -> None:
+def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
     """Set up vaultspec-rag in a workspace.
 
     Creates the required workspace folders, installs bundled rules and
@@ -463,7 +466,7 @@ class _UninstallCommand(TyperCommand):
             )
         )
 
-    def invoke(self, ctx: typer.Context) -> Any:
+    def invoke(self, ctx: "ClickContext") -> Any:
         """Dispatch parsed Click parameters as one uninstall request."""
         params = ctx.params
         return _run_uninstall(
@@ -492,7 +495,7 @@ def handle_uninstall() -> None:
     """Register the custom command; it dispatches through ``_UninstallCommand``."""
 
 
-def _run_uninstall(ctx: typer.Context, options: _UninstallOptions) -> None:
+def _run_uninstall(ctx: "ClickContext", options: _UninstallOptions) -> None:
     """Remove vaultspec-rag setup from a workspace.
 
     Without --force, this only previews what would be removed. Vault

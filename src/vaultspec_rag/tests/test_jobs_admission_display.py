@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import pytest
 
-from ..cli._service_jobs import _render_jobs_feed
+from ..cli._service_jobs_presentation import _render_jobs_feed
 
 pytestmark = [pytest.mark.unit]
 

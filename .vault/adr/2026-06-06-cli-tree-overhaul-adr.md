@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#cli-tree-overhaul'
 date: '2026-06-06'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-06-06-cli-tree-overhaul-research]]'
 ---
@@ -42,3 +42,7 @@ Collapsing `service` into `server` directly addresses discoverability: operators
 
 - **ADR and research bodies must be authored before a feature is marked complete, not after.** Leaving these empty at ship time requires a retrospective reconstruction pass and breaks the documentation dependency chain.
 - **Dev-harness complexity gates ship baseline-calibrated with a documented ratchet path.** Gates set once and never lowered decay into noise; the ratchet path (periodic threshold reductions) must be documented at the time the gates are introduced.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

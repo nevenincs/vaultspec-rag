@@ -41,7 +41,7 @@ def collect_gitignore_patterns(root_dir: pathlib.Path) -> list[str]:
     raw pattern list so both the compiled spec and the membership epoch can
     be built from one traversal.
     """
-    from ..config import get_config
+    from ..config._settings import get_config
 
     cfg = get_config()
     fixed_patterns: list[str] = [

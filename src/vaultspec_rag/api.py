@@ -35,12 +35,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "AllIndexOutcomes",
     "AllIndexOptions",
-    "CodebaseSearchRequest",
+    "AllIndexOutcomes",
     "CodeIndexOptions",
-    "DomainIndexOutcome",
+    "CodebaseSearchRequest",
     "DocumentIndexOptions",
+    "DomainIndexOutcome",
     "IndexOptions",
     "VaultSearchRequest",
     "clean",
@@ -268,7 +268,7 @@ def index(
 
 def index_codebase(
     root_dir: pathlib.Path,
-    options: CodeIndexOptions = CodeIndexOptions(),
+    options: CodeIndexOptions | None = None,
 ) -> IndexResult:
     """Index codebase source files, returning an :class:`IndexResult`.
 
@@ -283,6 +283,8 @@ def index_codebase(
         An ``IndexResult`` with counts of added, updated, and
         removed code chunks.
     """
+    if options is None:
+        options = CodeIndexOptions()
     root = _resolve(root_dir)
     rep = options.reporter if options.reporter is not None else NullProgressReporter()
     preflight = _preflight_code_index(root, extra_excludes=options.extra_excludes)
@@ -303,9 +305,11 @@ def index_codebase(
 
 def index_documents(
     root_dir: pathlib.Path,
-    options: DocumentIndexOptions = DocumentIndexOptions(),
+    options: DocumentIndexOptions | None = None,
 ) -> IndexResult:
     """Index only explicitly routed documents into document storage."""
+    if options is None:
+        options = DocumentIndexOptions()
     if options.changed_paths is not None and (options.full or options.clean):
         raise ValueError("scoped document indexing cannot be full or clean")
     root = _resolve(root_dir)
@@ -351,9 +355,11 @@ def _domain_outcome(operation: Any) -> DomainIndexOutcome:
 
 def index_all(
     root_dir: pathlib.Path,
-    options: AllIndexOptions = AllIndexOptions(),
+    options: AllIndexOptions | None = None,
 ) -> AllIndexOutcomes:
     """Index every domain and return every success or failure independently."""
+    if options is None:
+        options = AllIndexOptions()
     return AllIndexOutcomes(
         vault=_domain_outcome(
             lambda: index(
@@ -403,12 +409,15 @@ def search_vault(request: VaultSearchRequest) -> list[SearchResult]:
     """
     from .search import SearchFilterOptions, validate_search_filters
 
-    validate_search_filters("vault", SearchFilterOptions(
-        doc_type=request.doc_type,
-        feature=request.feature,
-        date=request.date,
-        tag=request.tag,
-    ))
+    validate_search_filters(
+        "vault",
+        SearchFilterOptions(
+            doc_type=request.doc_type,
+            feature=request.feature,
+            date=request.date,
+            tag=request.tag,
+        ),
+    )
     root = _resolve(request.root_dir)
     registry = get_registry()
     # An empty or unbuilt vault index needs no query encoding: short-circuit
@@ -437,12 +446,15 @@ def search_vault_timed(
     """Search the vault and return phase timings for service diagnostics."""
     from .search import SearchFilterOptions, validate_search_filters
 
-    validate_search_filters("vault", SearchFilterOptions(
-        doc_type=request.doc_type,
-        feature=request.feature,
-        date=request.date,
-        tag=request.tag,
-    ))
+    validate_search_filters(
+        "vault",
+        SearchFilterOptions(
+            doc_type=request.doc_type,
+            feature=request.feature,
+            date=request.date,
+            tag=request.tag,
+        ),
+    )
     root = _resolve(request.root_dir)
     registry = get_registry()
     # Empty/unbuilt index: return an empty result without loading the model.
@@ -487,20 +499,23 @@ def search_codebase(request: CodebaseSearchRequest) -> list[SearchResult]:
     """
     from .search import SearchFilterOptions, validate_search_filters
 
-    validate_search_filters("code", SearchFilterOptions(
-        language=request.language,
-        path=request.path,
-        node_type=request.node_type,
-        function_name=request.function_name,
-        class_name=request.class_name,
-        include_paths=request.include_paths,
-        exclude_paths=request.exclude_paths,
-        dedup_locales=request.dedup_locales,
-        prefer=request.prefer,
-        exclude_domains=request.exclude_domains,
-        only_domains=request.only_domains,
-        include_domains=request.include_domains,
-    ))
+    validate_search_filters(
+        "code",
+        SearchFilterOptions(
+            language=request.language,
+            path=request.path,
+            node_type=request.node_type,
+            function_name=request.function_name,
+            class_name=request.class_name,
+            include_paths=request.include_paths,
+            exclude_paths=request.exclude_paths,
+            dedup_locales=request.dedup_locales,
+            prefer=request.prefer,
+            exclude_domains=request.exclude_domains,
+            only_domains=request.only_domains,
+            include_domains=request.include_domains,
+        ),
+    )
     root = _resolve(request.root_dir)
     registry = get_registry()
     # Empty/unbuilt code index: return an empty result without loading the model.
@@ -559,20 +574,23 @@ def search_codebase_timed(
     """Search codebase and return phase timings for service diagnostics."""
     from .search import SearchFilterOptions, validate_search_filters
 
-    validate_search_filters("code", SearchFilterOptions(
-        language=request.language,
-        path=request.path,
-        node_type=request.node_type,
-        function_name=request.function_name,
-        class_name=request.class_name,
-        include_paths=request.include_paths,
-        exclude_paths=request.exclude_paths,
-        dedup_locales=request.dedup_locales,
-        prefer=request.prefer,
-        exclude_domains=request.exclude_domains,
-        only_domains=request.only_domains,
-        include_domains=request.include_domains,
-    ))
+    validate_search_filters(
+        "code",
+        SearchFilterOptions(
+            language=request.language,
+            path=request.path,
+            node_type=request.node_type,
+            function_name=request.function_name,
+            class_name=request.class_name,
+            include_paths=request.include_paths,
+            exclude_paths=request.exclude_paths,
+            dedup_locales=request.dedup_locales,
+            prefer=request.prefer,
+            exclude_domains=request.exclude_domains,
+            only_domains=request.only_domains,
+            include_domains=request.include_domains,
+        ),
+    )
     root = _resolve(request.root_dir)
     registry = get_registry()
     # Empty/unbuilt code index: return an empty result without loading the model.
@@ -696,9 +714,9 @@ def clean(
     """
     source_type = parse_source_type(clean_type, allow_aliases=True)
     root = _resolve(root_dir)
-    from .config import get_config
+    from .config._settings import get_config
     from .registry import get_registry
-    from .store import VaultStore
+    from .store_runtime import VaultStore
 
     cfg = get_config()
     cleared: list[str] = []
@@ -774,7 +792,7 @@ def get_status(root_dir: pathlib.Path) -> dict[str, object]:
         vram_gb = 0.0
 
     from .capabilities import backend_capabilities_dict
-    from .config import get_config
+    from .config._settings import get_config
     from .index_profiles import index_support_profile_status
     from .jobs import index_job_status
     from .registry import get_registry
@@ -1051,7 +1069,7 @@ def get_service_state(
     from datetime import datetime
 
     from ._store_locks import VaultStoreLockedError
-    from .config import get_config
+    from .config._settings import get_config
     from .registry import get_registry
     from .service import RegistryFullError
 

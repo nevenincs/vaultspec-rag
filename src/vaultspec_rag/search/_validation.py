@@ -224,7 +224,7 @@ def _reject_filters_for_mismatched_search_type(
 
 def validate_search_filters(
     search_type: str | PublicSourceType,
-    options: SearchFilterOptions = SearchFilterOptions(),
+    options: SearchFilterOptions | None = None,
 ) -> None:
     """Validate that the search filters match the requested search_type.
 
@@ -233,6 +233,8 @@ def validate_search_filters(
         InvalidFilterForSearchTypeError: If a filter is supplied that is
             incompatible with the search_type (including an unknown domain).
     """
+    if options is None:
+        options = SearchFilterOptions()
     canonical = parse_source_type(search_type, allow_aliases=True)
     canonical_name = canonical.value
     _validate_prefer(options.prefer)

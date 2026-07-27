@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#server-bound-search-production-readiness'
-date: '2026-07-25'
-modified: '2026-07-25'
+date: '2026-07-27'
+modified: '2026-07-27'
 related:
   - '[[2026-06-11-server-bound-search-production-readiness-adr]]'
   - '[[2026-06-11-server-bound-search-production-readiness-research]]'

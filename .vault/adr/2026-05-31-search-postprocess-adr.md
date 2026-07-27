@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#search-postprocess'
 date: '2026-05-31'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-05-31-search-postprocess-research]]'
 ---
@@ -94,3 +94,7 @@ lookup addresses the complaint without over-engineering.
   different translations with tied scores would collapse;
   user opts out by leaving `--dedup-locales` off (the default).
 - No new dependencies, no new exception suppression.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

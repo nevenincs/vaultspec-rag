@@ -44,7 +44,7 @@ def resolve_preprocess_context(
     """
     if not config:
         return None
-    from ..config import get_config
+    from ..config._settings import get_config
 
     cfg = get_config()
     if cfg.preprocess_mode == "off":

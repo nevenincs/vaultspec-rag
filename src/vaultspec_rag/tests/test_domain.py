@@ -15,14 +15,16 @@ class TestClassifyDomain:
     pytestmark: ClassVar = [pytest.mark.unit]
 
     def test_prod_default(self):
-        assert classify_domain("src/vaultspec_rag/store.py") == "prod"
+        assert classify_domain("src/vaultspec_rag/store_runtime.py") == "prod"
         assert classify_domain("lib/util.rs") == "prod"
         assert classify_domain("main.go") == "prod"
 
     def test_worktree_clone_wins_over_inner_src(self):
         # An inner src/ inside an agent worktree clone is still a clone.
         assert (
-            classify_domain(".claude/worktrees/agent-abc/src/vaultspec_rag/store.py")
+            classify_domain(
+                ".claude/worktrees/agent-abc/src/vaultspec_rag/store_runtime.py"
+            )
             == "worktree"
         )
         assert classify_domain(".git/worktrees/wt1/lib/core.py") == "worktree"

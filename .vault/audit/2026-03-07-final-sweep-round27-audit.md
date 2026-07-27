@@ -3,12 +3,17 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 27 Audit -- Final Sweep (__init__.py, mcp_server.py second pass, root conftest.py)
 
-## __init__.py
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
+
+### __init__.py
 
 ### R27-PASS: Exports are complete and correct
 
@@ -20,7 +25,7 @@ All 17 exports in `__all__` match real symbols in their source modules. The impo
 
 __File:__ `__init__.py:17` (missing `SparseResult` in import)
 
-## mcp_server.py (Second Pass)
+### mcp_server.py (Second Pass)
 
 ### R27-PASS: R21-M6 and R21-M7 are fixed
 
@@ -63,7 +68,7 @@ Lines 265-271: The `reindex_vault` `IndexResponse` does not set the `files` fiel
 
 __File:__ `mcp_server.py:265-271`
 
-## Root conftest.py
+### Root conftest.py
 
 ### R27-M3: Root `conftest.py` imports constants at module level, coupling all pytest runs to vaultspec_rag (Major)
 
@@ -79,7 +84,7 @@ The root conftest only does `from vaultspec_rag.tests.constants import ...` with
 
 __File:__ `conftest.py`
 
-## Previously-Flagged Issues: Status Update
+### Previously-Flagged Issues: Status Update
 
 | ID      | Issue                                               | Status                                                                                                                                                                                                                                                                                                             |
 | ------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -88,7 +93,7 @@ __File:__ `conftest.py`
 | R21-M7  | get_comp() not thread-safe                          | __FIXED.__ Uses `threading.Lock` with double-checked locking.                                                                                                                                                                                                                                                      |
 | R21-m11 | reindex_vault clean=True might not clear collection | __NOT AN ISSUE.__ `VaultIndexer.full_index()` explicitly deletes all existing docs before upserting (indexer.py:681-684).                                                                                                                                                                                          |
 
-## Summary
+### Summary
 
 | Severity | Count | IDs                    |
 | -------- | ----- | ---------------------- |
@@ -101,3 +106,7 @@ __Key themes:__
 1. __Root conftest coupling__ (M3): Unconditional import of `vaultspec_rag` breaks non-RAG test runs when the package isn't installed.
 1. __Previously-flagged fixes confirmed__ (R21-M6, R21-M7): Both are properly fixed with `asyncio.to_thread` and `threading.Lock`.
 1. __R21-C1 downgraded__: Symlink traversal check is actually correct -- `resolve()` on both sides handles all scenarios. The test suite confirms this.
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

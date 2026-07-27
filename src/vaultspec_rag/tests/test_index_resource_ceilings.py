@@ -19,7 +19,8 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 from .._units import bytes_to_mib, mib_to_bytes
-from ..config import EnvVar, reset_config
+from ..config._settings import reset_config
+from ..config._types import EnvVar
 from ..index_profiles import SupportProfileLimits
 
 if TYPE_CHECKING:

@@ -1,7 +1,7 @@
 ---
 tags: ['#audit', '#cli-service-operability-hardening']
 date: '2026-06-11'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-service-status-convergence-adr]]'
@@ -235,3 +235,7 @@ the keyword argument block. Ruff and Ty pass on the touched jobs files after the
   a low-level assertion that the default propagates into `urlopen`.
 - Some legacy tests still use direct token mutation around Starlette routes; a later
   hardening pass should add resident-service coverage for the status route family.
+
+## Recommendations
+
+Evidence gap: the retained audit body and complete git log --follow history state no separate recommendations. No recommendation is asserted.

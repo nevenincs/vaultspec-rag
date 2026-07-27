@@ -27,7 +27,7 @@ from ..._machine_lock import (
     release_machine_lock,
     release_machine_lock_lease,
 )
-from ...config import EnvVar
+from ...config._types import EnvVar
 from ._helpers import _get_ephemeral_port, _get_ephemeral_qdrant_port
 from ._machine_lock_holder import spawn_foreign_machine_lock_holder
 

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from .._job_errors import JobErrorKind
-from ..config import EnvVar
+from ..config._types import EnvVar
 from ..indexer._content_policy import ContentKind
 from ..indexer._preprocess_config import (
     PREPROCESS_CONFIG_FILENAME,

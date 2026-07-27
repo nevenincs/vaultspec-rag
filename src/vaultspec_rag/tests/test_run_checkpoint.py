@@ -16,9 +16,12 @@ from ..indexer._content_policy import (
 )
 from ..indexer._drift_owner import CodeDriftOwner
 from ..indexer._file_state import FileState, FileStateKind
-from ..indexer._resolved_policy import IndexPolicyResolutionOptions, resolve_index_policy
+from ..indexer._resolved_policy import (
+    IndexPolicyResolutionOptions,
+    resolve_index_policy,
+)
 from ..indexer._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
-from ..indexer._run_ledger import (
+from ..indexer._run_ledger_models import (
     FinalizationPhase,
     RunLedgerCompatibilityError,
     RunLedgerIndexedPathCollisionError,
@@ -395,7 +398,7 @@ def drift_store(
     collection can tell those two outcomes apart.
     """
     del isolated_singleton_dirs
-    from ..config import reset_config
+    from ..config._settings import reset_config
     from ..store_runtime import VaultStore
 
     reset_config()

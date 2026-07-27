@@ -3,14 +3,19 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Audit: Config and Dependencies
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 Feature: config.py, pyproject.toml, __init__.py
 
-## 2026-03-06 -- Review (Passes 17-28)
+### 2026-03-06 -- Review (Passes 17-28)
 
 ### config.py: Defaults Updated for GPU
 
@@ -34,3 +39,7 @@ Line 1-5: Now says "GPU-native embedding pipeline using sentence-transformers + 
 ### Open Issues
 
 - Task #46 \[LOW\]: config.py:24 still has `lance_dir: ".lance"` dead default.
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

@@ -3,14 +3,32 @@ tags:
   - '#plan'
   - '#index-drift-hardening'
 date: '2026-07-13'
-modified: '2026-07-14'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-07-13-index-drift-hardening-adr]]'
   - '[[2026-07-13-index-drift-hardening-research]]'
 ---
-
 # `index-drift-hardening` plan
+
+## Description
+
+Implements the accepted `index-drift-hardening` ADR (D1-D10), grounded in the
+same-day research. Two halves land as one feature. First, a two-tier per-root
+config epoch in the index meta sidecars makes index-shaping configuration drift a
+dependable, self-healing reindex signal: membership drift (ignore-file and
+preprocess-pattern edits) forces the unscoped incremental whose set arithmetic
+prunes newly-ignored and admits newly-un-ignored files, while content drift
+(preprocess invocation fields, `html_strip`, `vault_chunk_chars`) escalates to a
+clean rebuild, checked at every incremental entry beside the existing embed-schema
+sentinel. Second, preprocess hooks flip on by default under per-root
+trust-on-first-use: a status-dir trust store keyed on the blake2b of the resolved
+rule set, tri-state control (`default`, `trust_all`, `off`) with env and CLI
+parity modeled on `local_only`, trust/untrust/status CLI verbs, loud
+skip-warnings on daemon paths, and no backwards compatibility for the removed
+`VAULTSPEC_RAG_PREPROCESS_ENABLED` knob (owner decision at ADR approval).
+
+## Steps
 
 ### Phase `P01` - Config-epoch drift sentinels
 
@@ -45,25 +63,6 @@ Close the residual watcher gaps (ADR D9), prove the drift self-heal and TOFU enf
 - [x] `P04.S12` - Re-resolve the preprocess config when .vaultragpreprocess.toml changes by admitting it in the change filter for that purpose only, and add .md to the watcher code-extension set to match the indexer language map; `src/vaultspec_rag/watcher.py`.
 - [x] `P04.S13` - Prove the drift self-heal and TOFU enforcement end-to-end against real backends: an ignore-file edit prunes stale chunks on the next watcher or reindex run, an untrusted preprocess config skips with the loud warning while a trusted one executes, and the trust store isolates via the status-dir knob; `src/vaultspec_rag/tests/integration/test_preprocess_integration.py`.
 - [x] `P04.S14` - Document the tri-state, the trust flow, and the drift-epoch self-healing in the README and the server start help text, replacing every mention of the removed enable knob; `README.md`.
-
-## Description
-
-Implements the accepted `index-drift-hardening` ADR (D1-D10), grounded in the
-same-day research. Two halves land as one feature. First, a two-tier per-root
-config epoch in the index meta sidecars makes index-shaping configuration drift a
-dependable, self-healing reindex signal: membership drift (ignore-file and
-preprocess-pattern edits) forces the unscoped incremental whose set arithmetic
-prunes newly-ignored and admits newly-un-ignored files, while content drift
-(preprocess invocation fields, `html_strip`, `vault_chunk_chars`) escalates to a
-clean rebuild, checked at every incremental entry beside the existing embed-schema
-sentinel. Second, preprocess hooks flip on by default under per-root
-trust-on-first-use: a status-dir trust store keyed on the blake2b of the resolved
-rule set, tri-state control (`default`, `trust_all`, `off`) with env and CLI
-parity modeled on `local_only`, trust/untrust/status CLI verbs, loud
-skip-warnings on daemon paths, and no backwards compatibility for the removed
-`VAULTSPEC_RAG_PREPROCESS_ENABLED` knob (owner decision at ADR approval).
-
-## Steps
 
 ## Parallelization
 

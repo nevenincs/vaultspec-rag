@@ -19,7 +19,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ..._store_search import HybridSearchRequest
-from ...config import EnvVar, reset_config
+from ...config._settings import reset_config
+from ...config._types import EnvVar
 from ...progress import NullProgressReporter
 from ...qdrant_runtime._resolve import resolve_binary
 from ...qdrant_runtime._supervise import QdrantSupervisor
@@ -335,7 +336,7 @@ class TestServerModeDeletionEviction:
         """Deleting a vault document then scoped-reindexing evicts it from
         the vault collection, in server mode."""
         from ... import VaultIndexer
-        from ...config import get_config
+        from ...config._settings import get_config
         from ...store_runtime import VaultStore
 
         build_synthetic_vault(tmp_path, n_docs=6, seed=7)
@@ -379,7 +380,8 @@ class TestServerModeWatcherEviction:
         from ... import CodebaseIndexer, VaultIndexer
         from ...graph_cache import GraphCache
         from ...store_runtime import VaultStore
-        from ...watcher_control import WatcherConfiguration, watch_and_reindex
+        from ...watcher_intake import watch_and_reindex
+        from ...watcher_runtime import WatcherConfiguration
 
         vault_dir = tmp_path / ".vault"
         adr_dir = vault_dir / "adr"
@@ -478,7 +480,8 @@ class TestServerModeWatcherEviction:
         from ...graph_cache import GraphCache
         from ...search import VaultSearcher
         from ...store_runtime import VaultStore
-        from ...watcher_control import WatcherConfiguration, watch_and_reindex
+        from ...watcher_intake import watch_and_reindex
+        from ...watcher_runtime import WatcherConfiguration
 
         vault_dir = tmp_path / ".vault"
         vault_dir.mkdir(parents=True)
@@ -624,7 +627,7 @@ class TestServerFirstStartupSelection:
 
     def test_default_config_selects_server_mode(self) -> None:
         """With no opt-out set, the resident service starts server mode."""
-        from ...config import get_config
+        from ...config._settings import get_config
 
         prev_server = os.environ.get(EnvVar.QDRANT_SERVER.value)
         prev_local = os.environ.get(EnvVar.LOCAL_ONLY.value)
@@ -658,7 +661,7 @@ class TestServerFirstStartupSelection:
         never publishes ``QDRANT_URL``, so a store opens in on-disk mode
         with point-operation locks engaged - the backend-aware local path.
         """
-        from ...config import get_config
+        from ...config._settings import get_config
         from ...store_runtime import VaultStore
 
         prev_local = os.environ.get(EnvVar.LOCAL_ONLY.value)

@@ -27,6 +27,14 @@ if TYPE_CHECKING:
 #: the locked qdrant-client (1.18.x as of this pin).
 QDRANT_SERVER_VERSION: Final[str] = "1.18.2"
 
+#: The pinned Qdrant server cannot complete uploaded-snapshot recovery on
+#: Windows. Archives remain portable: restore them with a supported
+#: non-Windows Qdrant server.
+WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON: Final[str] = (
+    "windows_server_archive_restore_unsupported: "
+    "restore the archive with a supported non-Windows Qdrant server"
+)
+
 #: Base URL for upstream release downloads. The effective download URL
 #: is ``{base}/v{version}/{asset}``.
 QDRANT_RELEASE_BASE_URL: Final[str] = (

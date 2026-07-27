@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#code-document-index-boundary'
 date: '2026-07-21'
-modified: '2026-07-22'
+modified: '2026-07-27'
 related:
   - "[[2026-06-10-preprocess-hooks-adr]]"
   - "[[2026-06-11-preprocess-hooks-audit]]"
@@ -232,3 +232,7 @@ The remaining architecture choice is whether document-target preprocessing ships
 own searchable content kind immediately (O3) or whether the first release only prevents it
 from widening code membership (O2). O3 preserves the full generic preprocessing capability
 and is recommended.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

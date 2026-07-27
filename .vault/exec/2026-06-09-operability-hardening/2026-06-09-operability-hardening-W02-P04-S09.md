@@ -3,20 +3,19 @@ tags:
   - '#exec'
   - '#operability-hardening'
 date: '2026-06-09'
-modified: '2026-06-30'
+modified: '2026-07-27'
 step_id: 'S09'
 related:
   - "[[2026-06-09-operability-hardening-plan]]"
 ---
-
 # Detect a healthy orphaned daemon via port probe when service.json is absent
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/cli/_service_lifecycle.py`
 - `src/vaultspec_rag/cli/_service_status.py`
-
-## Description
 
 Both `service_status` and `service_stop` previously returned immediately with
 exit 3 / exit 0 respectively when `_read_service_status()` returned None, with
@@ -42,7 +41,7 @@ prints a yellow Panel explaining the orphaned state and raises
 `typer.Exit(code=4)`. If the probe returns None, falls through to the existing
 "not running" message + `return`.
 
-## Tests
+### Tests
 
 `src/vaultspec_rag/tests/test_service_lifecycle_helpers.py`:
 
@@ -56,3 +55,7 @@ prints a yellow Panel explaining the orphaned state and raises
 `ruff check` and `ty check` both clean. 9 unit tests pass (4 directly covering
 this step). Live-service orphan detection (actually wiping service.json while
 the daemon is running) is covered by W04 integration re-validation.
+
+## Notes
+
+Evidence gap: the original record contains no Notes section with authored incident, deferred-work, or follow-up evidence.

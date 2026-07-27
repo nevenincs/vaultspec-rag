@@ -22,7 +22,8 @@ from typer.testing import CliRunner
 import vaultspec_rag.server as _m
 
 from ...cli import app
-from ...config import EnvVar, reset_config
+from ...config._settings import reset_config
+from ...config._types import EnvVar
 from ...logging_config import (
     MANAGED_LOG_TRUNCATION_MARKER,
     MAX_MANAGED_LOG_SOURCE_BYTES,
@@ -421,14 +422,8 @@ def test_admin_transport_preserves_live_structured_log_error(
     }
 
 
-def test_uvicorn_access_only_traffic_drives_live_service_log_rollover(
-    tmp_path: Path,
-) -> None:
-    """Real Uvicorn access records rotate without an application log event."""
-    port = free_loopback_port()
-    log_path = tmp_path / "service.log"
-    marker = "ACCESS_ONLY_FINAL_MARKER_4fcb5f"
-    code = r"""
+def _uvicorn_access_rollover_probe_code() -> str:
+    return r"""
 import os
 import sys
 from pathlib import Path
@@ -480,71 +475,102 @@ finally:
 if capture is None or capture.persistence_error is not None:
     os._exit(82)
 """
-    process = subprocess.Popen(
-        [sys.executable, "-c", code, str(log_path), str(port)],
+
+
+def _start_uvicorn_access_rollover_probe(
+    log_path: Path, port: int
+) -> subprocess.Popen[bytes]:
+    return subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            _uvicorn_access_rollover_probe_code(),
+            str(log_path),
+            str(port),
+        ],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    try:
-        deadline = time.monotonic() + 10.0
-        while time.monotonic() < deadline:
-            if process.poll() is not None:
-                pytest.fail(
-                    f"Uvicorn access probe exited early with {process.returncode}"
-                )
-            try:
-                with urllib.request.urlopen(
-                    f"http://127.0.0.1:{port}/health",
-                    timeout=0.5,
-                ) as response:
-                    if response.status == 200:
-                        break
-            except OSError:
-                time.sleep(0.02)
-        else:
-            pytest.fail("Uvicorn access probe did not become ready")
 
-        for index in range(100):
-            with urllib.request.urlopen(
-                f"http://127.0.0.1:{port}/health?access={index:04d}",
-                timeout=2.0,
-            ) as response:
-                assert response.status == 200
 
-        rollover_deadline = time.monotonic() + 5.0
-        rotated = log_path.with_name("service.log.1")
-        while time.monotonic() < rollover_deadline and not rotated.exists():
-            time.sleep(0.01)
-        assert rotated.exists(), "access-only traffic never triggered rollover"
+def _get_probe_response(port: int, path: str) -> int:
+    with urllib.request.urlopen(
+        f"http://127.0.0.1:{port}{path}", timeout=2.0
+    ) as response:
+        return response.status
 
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/health?marker={marker}",
-            timeout=2.0,
-        ) as response:
-            assert response.status == 200
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/stop",
-            timeout=2.0,
-        ) as response:
-            assert response.status == 200
-        process.wait(timeout=15.0)
-    finally:
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5.0)
 
-    assert process.returncode == 0
-    generations = sorted(tmp_path.glob("service.log*"))
+def _wait_for_uvicorn_access_probe(process: subprocess.Popen[bytes], port: int) -> None:
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            pytest.fail(f"Uvicorn access probe exited early with {process.returncode}")
+        try:
+            if _get_probe_response(port, "/health") == 200:
+                return
+        except OSError:
+            time.sleep(0.02)
+    pytest.fail("Uvicorn access probe did not become ready")
+
+
+def _send_access_only_traffic(port: int) -> None:
+    for index in range(100):
+        assert _get_probe_response(port, f"/health?access={index:04d}") == 200
+
+
+def _wait_for_rotated_log(log_path: Path) -> None:
+    rotated = log_path.with_name("service.log.1")
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline and not rotated.exists():
+        time.sleep(0.01)
+    assert rotated.exists(), "access-only traffic never triggered rollover"
+
+
+def _stop_uvicorn_access_probe(process: subprocess.Popen[bytes], port: int) -> None:
+    assert _get_probe_response(port, "/stop") == 200
+    process.wait(timeout=15.0)
+
+
+def _terminate_probe_if_needed(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5.0)
+
+
+def _assert_access_rollover_logs(log_path: Path, marker: str) -> None:
+    generations = sorted(log_path.parent.glob("service.log*"))
     assert {path.name for path in generations} == {
         "service.log",
         "service.log.1",
         "service.log.2",
     }
     assert all(path.stat().st_size <= 1024 for path in generations)
-    retained = b"".join(path.read_bytes() for path in generations)
-    assert retained.count(marker.encode()) == 1
+    assert (
+        b"".join(path.read_bytes() for path in generations).count(marker.encode()) == 1
+    )
+
+
+def test_uvicorn_access_only_traffic_drives_live_service_log_rollover(
+    tmp_path: Path,
+) -> None:
+    """Real Uvicorn access records rotate without an application log event."""
+    port = free_loopback_port()
+    log_path = tmp_path / "service.log"
+    marker = "ACCESS_ONLY_FINAL_MARKER_4fcb5f"
+    process = _start_uvicorn_access_rollover_probe(log_path, port)
+    try:
+        _wait_for_uvicorn_access_probe(process, port)
+        _send_access_only_traffic(port)
+        _wait_for_rotated_log(log_path)
+        assert _get_probe_response(port, f"/health?marker={marker}") == 200
+        _stop_uvicorn_access_probe(process, port)
+    finally:
+        _terminate_probe_if_needed(process)
+
+    assert process.returncode == 0
+    _assert_access_rollover_logs(log_path, marker)

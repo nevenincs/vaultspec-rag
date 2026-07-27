@@ -30,7 +30,8 @@ import pytest
 from rich.console import Console
 
 from .. import CodebaseIndexer
-from ..config import EnvVar, reset_config
+from ..config._settings import reset_config
+from ..config._types import EnvVar
 from ..indexer import _chunk_worker
 from ..indexer._content_policy import ContentKind
 from ..indexer._preprocess_cache import preprocess_cache_dir
@@ -40,7 +41,7 @@ from ..indexer._preprocess_config import (
     PreprocessRule,
 )
 from ..indexer._preprocess_runner import PreprocessAbortError
-from ..indexer._run_ledger import CommitUnit, CommitUnitKind
+from ..indexer._run_ledger_models import CommitUnit, CommitUnitKind
 from ..progress import RichProgressReporter
 from ._chunk_production import produce_chunks
 from ._import_probe import assert_fresh_import_excludes, import_probe_source

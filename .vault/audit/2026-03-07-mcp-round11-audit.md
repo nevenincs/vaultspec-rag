@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 11 Audit -- mcp_server.py (deep dive, post-fix verification)
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Auditor:** docs-researcher-2-2
 **File:** `src/vaultspec_rag/mcp_server.py` (356 lines)
@@ -14,7 +19,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Check 1: `get_comp()` Thread Safety
+### Check 1: `get_comp()` Thread Safety
 
 ### Lines 43-84
 
@@ -53,7 +58,7 @@ The `_comp` assignment at line 73-80 is inside the lock, so only one thread can 
 
 ______________________________________________________________________
 
-## Check 2: Async Tools with `anyio.to_thread.run_sync()`
+### Check 2: Async Tools with `anyio.to_thread.run_sync()`
 
 | Tool                 | Line | Declaration                      | Uses `anyio.to_thread.run_sync()`? |
 | -------------------- | ---- | -------------------------------- | ---------------------------------- |
@@ -78,7 +83,7 @@ The `get_vault_document` resource at line 320 is a plain `def` that calls `get_c
 
 ______________________________________________________________________
 
-## Check 3: Path Traversal Fix
+### Check 3: Path Traversal Fix
 
 ### `get_code_file()` (lines 243-260)
 
@@ -102,7 +107,7 @@ Raises `ValueError` (not returning error string) on traversal attempt. Raises `F
 
 ______________________________________________________________________
 
-## Check 4: Error Responses as Exceptions
+### Check 4: Error Responses as Exceptions
 
 All tools raise exceptions on error:
 
@@ -118,7 +123,7 @@ No tool returns error strings. All errors propagate as exceptions, which FastMCP
 
 ______________________________________________________________________
 
-## Check 5: `top_k` Bounds
+### Check 5: `top_k` Bounds
 
 ### `_clamp_top_k()` (lines 130-132)
 
@@ -144,7 +149,7 @@ Not called in:
 
 ______________________________________________________________________
 
-## Check 6: `SearchResultItem` Schema Sync
+### Check 6: `SearchResultItem` Schema Sync
 
 ### `SearchResult` (search.py lines 61-78)
 
@@ -164,7 +169,7 @@ If fields are added to `SearchResult`, `SearchResultItem` must be manually updat
 
 ______________________________________________________________________
 
-## Check 7: `IndexResponse.files` Default
+### Check 7: `IndexResponse.files` Default
 
 ### `reindex_vault()` (lines 279-285)
 
@@ -202,7 +207,7 @@ In reality, vault indexing processes documents (not "files" in the codebase sens
 
 ______________________________________________________________________
 
-## Check 8: `anyio` Import
+### Check 8: `anyio` Import
 
 ### Line 15
 
@@ -214,7 +219,7 @@ import anyio
 
 ______________________________________________________________________
 
-## Check 9: `reindex_vault clean=True` Behavior
+### Check 9: `reindex_vault clean=True` Behavior
 
 ### `reindex_vault()` (lines 275-276)
 
@@ -258,7 +263,7 @@ For a "clean" re-index, `store.recreate_collection()` or `_client.delete_collect
 
 ______________________________________________________________________
 
-## Check 10: Unguarded `comp` Field Access
+### Check 10: Unguarded `comp` Field Access
 
 All tools call `get_comp()` first, which either:
 
@@ -271,7 +276,7 @@ There is no code path where `get_comp()` returns a partially-initialized `RagCom
 
 ______________________________________________________________________
 
-## Summary
+### Summary
 
 | ID     | Severity | Finding                                                                                                                           |
 | ------ | -------- | --------------------------------------------------------------------------------------------------------------------------------- |
@@ -291,3 +296,7 @@ ______________________________________________________________________
 | R21-m12: No `top_k` bounds checking                                     | **FIXED** -- `_clamp_top_k()` limits to [1, 100]                         |
 
 **1 MEDIUM finding (R11-M1). 3 MINOR findings.**
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

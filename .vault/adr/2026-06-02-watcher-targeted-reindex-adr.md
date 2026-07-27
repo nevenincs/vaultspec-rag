@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#watcher-targeted-reindex'
 date: '2026-06-02'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-02-watcher-targeted-reindex-research]]"
 ---
@@ -101,3 +101,7 @@ from `2026-04-04-vaultragignore-adr`.
 
 None. This decision is local to the watcher-reindex path and does not introduce
 a durable cross-session constraint beyond the feature itself.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

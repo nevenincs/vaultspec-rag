@@ -24,7 +24,8 @@ from .._machine_lock import (
     machine_lock_path,
     release_machine_lock,
 )
-from ..config import EnvVar, reset_config
+from ..config._settings import reset_config
+from ..config._types import EnvVar
 from ..serviceclient._discovery import (
     DISCOVERY_REASON_POINTER_FOREIGN,
     DISCOVERY_REASON_POINTER_INVALID,

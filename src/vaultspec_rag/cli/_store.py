@@ -8,7 +8,7 @@ import typer
 
 from .._operator_commands import server_status_command
 from .._store_locks import VaultStoreLockedError
-from ..store import VaultStore
+from ..store_runtime import VaultStore
 from ._render import _emit_json_error_and_exit, _plain
 
 if TYPE_CHECKING:

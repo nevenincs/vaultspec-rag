@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#storage-conformance'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-27'
 step_id: 'S11'
 related:
   - "[[2026-07-25-storage-conformance-plan]]"
@@ -16,6 +16,8 @@ related:
 - `src/vaultspec_rag/tests/test_store_conformance.py`
 
 ## Description
+
+Plan evidence: `2026-07-25-storage-conformance-plan` marks `P02.S11` closed for Cover the three verdicts with guard tests, and prove each fails against a deliberately conforming fixture.
 
 ## Outcome
 
@@ -40,3 +42,4 @@ Restored: `14 passed`. Regression check across the store-dependent modules -
 store, preprocess store, index reuse, storage ops, donor candidates - `138 passed`.
 
 ## Notes
+Template evidence: intro_commit=1c1b0441e97f7423e71cd4e4fc0e3096126888bb; template_commit=1c1b0441e97f7423e71cd4e4fc0e3096126888bb:.vaultspec/templates/exec-step.md requires Description, Outcome, and Notes. This repair preserves the retained record text and adds no new implementation claim.

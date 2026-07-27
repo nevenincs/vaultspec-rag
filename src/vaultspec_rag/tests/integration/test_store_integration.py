@@ -43,7 +43,7 @@ class TestVaultStore:
 
     def test_vault_store_context_manager(self, tmp_path: Path) -> None:
         """VaultStore should support the context manager protocol."""
-        from ... import VaultStore
+        from ...store_runtime import VaultStore
 
         with VaultStore(tmp_path) as store:
             assert store._client is not None
@@ -54,7 +54,7 @@ class TestVaultStore:
     def test_vault_store_locked_raises_typed_exception(self, tmp_path: Path) -> None:
         """Opening the same Qdrant storage twice must raise VaultStoreLockedError."""
         from ..._store_locks import VaultStoreLockedError
-        from ...store import VaultStore
+        from ...store_runtime import VaultStore
 
         first = VaultStore(tmp_path)
         try:
@@ -161,7 +161,7 @@ class TestVaultStore:
         """Searching a fresh VaultStore with no indexed docs should return
         empty results without crashing.
         """
-        from ... import VaultStore
+        from ...store_runtime import VaultStore
 
         model = rag_components["model"]
         store = VaultStore(tmp_path)
@@ -206,11 +206,11 @@ class TestServedCodeCollectionPointer:
         Proven able to fail: having ``resolve_served_code_collection`` ignore
         the pointer and return ``derived_name`` fails both assertions below.
         """
-        from ... import VaultStore
         from ..._store_models import (
             publish_served_code_collection,
             resolve_served_code_collection,
         )
+        from ...store_runtime import VaultStore
 
         publish_served_code_collection(tmp_path, "codebase_docs_g2")
         assert (
@@ -266,8 +266,8 @@ class TestServedCodeCollectionPointer:
         ``_prefix + CODE_TABLE_NAME`` reports the derived collection's points
         here and fails the second count; restoring returns it to green.
         """
-        from ... import VaultStore
         from ..._store_models import publish_served_code_collection
+        from ...store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
         try:
@@ -482,8 +482,8 @@ class TestServedCodeCollectionPointer:
         operations land on the served collection and fails the served-count
         assertion below.
         """
-        from ... import VaultStore
         from ..._store_models import generation_code_collection
+        from ...store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
         try:

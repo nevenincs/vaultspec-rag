@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#vault-pipeline-search'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 step_id: 'S11'
 related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
@@ -11,11 +11,11 @@ related:
 
 # Reindex and regression-test that status and related are present on results
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/tests/integration/test_vault_payload_fields.py`
-
-## Description
 
 - Authored `test_vault_payload_fields.py` (quality-marked), driving a freshly indexed
   synthetic corpus that now emits all three ADR heading formats and pipeline edges.

@@ -15,14 +15,16 @@ from vaultspec_core.config import (
 )
 
 from .._env_values import BOOL_SHAPE, parse_bool
-from ._paths import _STATUS_DIR_DEFAULT, read_persisted_local_only
+from ._paths import read_persisted_local_only
 from ._schema import _ENV_OVERRIDE_MAP, _SETTING_BOUNDS, _rejection
-from ._types import _VALID_PREPROCESS_MODES, EnvVar, PreprocessMode
+from ._types import _VALID_PREPROCESS_MODES, STATUS_DIR_DEFAULT, EnvVar, PreprocessMode
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+
+
 class VaultSpecConfigWrapper:
     """Wraps VaultSpecConfig to provide RAG-specific attributes.
 
@@ -119,7 +121,7 @@ class VaultSpecConfigWrapper:
         "qdrant_dir": "qdrant",
         "index_metadata_file": "index_meta.json",
         "code_index_metadata_file": "code_index_meta.json",
-        "status_dir": "~/.vaultspec-rag",
+        "status_dir": STATUS_DIR_DEFAULT,
         "log_file": "service.log",
         "graph_ttl_seconds": 300.0,
         "embedding_batch_size": 64,
@@ -971,21 +973,6 @@ def reset_config() -> None:
     _cached_config = None
 
 
-# Keep the persistence-layer default in lock-step with the class default so the
-# local-only marker lands in the same managed directory the config resolves. An
-# explicit raise (not assert) so the invariant holds under python -O, where a
-# silent drift would write the marker to a directory the resolver never reads.
-# Same-module invariant check: the class-private defaults table is read here to
-# fail fast at import if the persistence-layer default drifts from the config default.
-_rag_status_dir_default: object = VaultSpecConfigWrapper._RAG_DEFAULTS[  # pyright: ignore[reportPrivateUsage]
-    "status_dir"
-]
-if _rag_status_dir_default != _STATUS_DIR_DEFAULT:
-    raise RuntimeError(
-        "status_dir default drifted between persistence layer and config defaults"
-    )
-
-
 # Every numeric setting must declare its admissible range, and every declared
 # range must belong to a real setting. Checked at import so a new knob cannot
 # land without a range - the omission that let a negative TTL and a zero batch
@@ -1007,6 +994,7 @@ if _orphaned_bounds:
     raise RuntimeError(
         "bounds declared for unknown settings: " + ", ".join(_orphaned_bounds)
     )
+
 
 def configured_model_repos() -> tuple[tuple[str, str], ...]:
     """Return every model repo this build needs, label first."""

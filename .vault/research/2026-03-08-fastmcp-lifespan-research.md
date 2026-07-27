@@ -3,30 +3,33 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-03-07-continuous-research]]'
 ---
-
 # FastMCP Lifespan Context Research for Task #25
+
+## Findings
+
+### Retained preamble
 
 **Date**: 2026-03-08
 **Task**: #25 (Refactor mcp_server.py to use FastMCP lifespan context)
 **Status**: Complete
 
-## Executive Summary
+### Executive Summary
 
 **RECOMMENDATION: Close Task #25 as "not beneficial".**
 
 The current `get_comp()` lazy-initialization pattern with `threading.Lock` is **strictly better** than FastMCP's lifespan context for this use case. The lifespan approach has three critical disadvantages:
 
 1. **Forces eager initialization** at server startup (5-15s GPU delay) vs lazy init on first request
-1. **No error recovery mechanism** — if lifespan fails, server startup fails (current approach caches errors)
-1. **Thread safety still required** — lifespan context object must be thread-safe for access from worker threads
+1. **No error recovery mechanism** â€” if lifespan fails, server startup fails (current approach caches errors)
+1. **Thread safety still required** â€” lifespan context object must be thread-safe for access from worker threads
 
 ______________________________________________________________________
 
-## Verified: FastMCP Lifespan API (SDK-bundled v1.0+)
+### Verified: FastMCP Lifespan API (SDK-bundled v1.0+)
 
 ### What works
 
@@ -64,7 +67,7 @@ async def search_vault(query: str, ctx: Context) -> SearchResponse:
 
 ______________________________________________________________________
 
-## Problem: Startup Blocking
+### Problem: Startup Blocking
 
 ### Current approach (lazy init)
 
@@ -95,12 +98,12 @@ For VaultSpec:
 
 - MCP server is a **background service** often started in advance
 - First client request may come seconds or minutes later
-- Blocking the event loop for 5-15s is **poor UX** — the server appears hung
+- Blocking the event loop for 5-15s is **poor UX** â€” the server appears hung
 - **Verdict**: Lazy init is better for this architecture
 
 ______________________________________________________________________
 
-## Problem: Error Recovery
+### Problem: Error Recovery
 
 ### Current approach
 
@@ -120,8 +123,8 @@ def get_comp() -> RagComponents:
 
 **Caching strategy**:
 
-- First request with no GPU → exception cached in `_comp_error`
-- Subsequent requests → immediately re-raise cached error
+- First request with no GPU â†’ exception cached in `_comp_error`
+- Subsequent requests â†’ immediately re-raise cached error
 - Prevents retry loop on every request (good!)
 - But allows **server to stay alive** while reporting init failure
 
@@ -144,11 +147,11 @@ async def app_lifespan(server):
 - MCP server process exits
 - Client sees connection reset
 
-**Problem**: No way to distinguish "server is running but init failed" from "server crashed". This is **worse** for debugging — users won't know if it's a GPU issue or a server crash.
+**Problem**: No way to distinguish "server is running but init failed" from "server crashed". This is **worse** for debugging â€” users won't know if it's a GPU issue or a server crash.
 
 ______________________________________________________________________
 
-## Problem: Thread Safety
+### Problem: Thread Safety
 
 ### Current approach
 
@@ -205,22 +208,22 @@ async def search_vault(query: str, ctx: Context) -> SearchResponse:
 
 ______________________________________________________________________
 
-## Current Architecture Assessment (Verified)
+### Current Architecture Assessment (Verified)
 
 From prior research (docs/research/2026-03-08-fastmcp-workspace-root.md):
 
-> "The current `get_comp()` pattern with `_comp_lock` is functionally equivalent to a lifespan — it initializes once and caches. The main difference is:
+> "The current `get_comp()` pattern with `_comp_lock` is functionally equivalent to a lifespan â€” it initializes once and caches. The main difference is:
 >
 > - Lifespan: initialized at server start, before any requests
 > - get_comp(): initialized lazily on first request
 >
-> Lazy initialization is actually better for the current use case — it avoids blocking server startup on GPU model loading (5-15s). The server starts instantly and the first request triggers initialization."
+> Lazy initialization is actually better for the current use case â€” it avoids blocking server startup on GPU model loading (5-15s). The server starts instantly and the first request triggers initialization."
 
 This assessment is **correct**. The lazy pattern is optimal here.
 
 ______________________________________________________________________
 
-## Why not lifespan?
+### Why not lifespan?
 
 | Aspect                | Current get_comp()                     | Lifespan                           | Winner   |
 | --------------------- | -------------------------------------- | ---------------------------------- | -------- |
@@ -233,7 +236,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## When would lifespan be better?
+### When would lifespan be better?
 
 Lifespan becomes beneficial only if:
 
@@ -246,7 +249,7 @@ None of these apply to VaultSpec.
 
 ______________________________________________________________________
 
-## Recommendation
+### Recommendation
 
 **CLOSE TASK #25 as "Not Beneficial".**
 
@@ -267,7 +270,9 @@ The refactor would:
 
 ______________________________________________________________________
 
-## Supporting Documentation
+## Sources
+
+### Supporting Documentation
 
 - **API verification**: Tested `FastMCP.__init__(lifespan=...)` with MCP SDK 1.26.0
 - **Context access**: Confirmed `ctx.request_context.lifespan_context` in tools

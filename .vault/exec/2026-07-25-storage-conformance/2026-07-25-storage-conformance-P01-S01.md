@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#storage-conformance'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-27'
 step_id: 'S01'
 related:
   - "[[2026-07-25-storage-conformance-plan]]"
@@ -41,3 +41,4 @@ than a frozen-tree one. It is used only as a floor - the closeout run must meet
 or exceed it, plus the tests this plan adds.
 
 ## Notes
+Template evidence: intro_commit=bb97c918472220397b2f4b63f5dfbd0549b70a78; template_commit=bb97c918472220397b2f4b63f5dfbd0549b70a78:.vaultspec/templates/exec-step.md requires Description, Outcome, and Notes. This repair preserves the retained record text and adds no new implementation claim.

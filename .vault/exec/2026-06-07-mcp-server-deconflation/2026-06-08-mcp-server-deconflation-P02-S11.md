@@ -3,22 +3,23 @@ tags:
   - "#exec"
   - "#mcp-server-deconflation"
 date: '2026-06-08'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - "[[2026-06-07-mcp-server-deconflation-plan]]"
 ---
-
 # mcp-server-deconflation P02 S11
 
-## Intent
+## Description
+
+### Intent
 
 Update `mcp_server` entrypoint in framework rules and sync; `.vaultspec/rules/`.
 
-## Context
+### Context
 
 The legacy module `vaultspec_rag.mcp_server` was refactored. The MCP transport logic is now housed in `vaultspec_rag.mcp:main` (used for the `vaultspec-search-mcp` CLI entrypoint), while the REST service is now purely `vaultspec_rag.server`. The framework documentation `.vaultspec/rules/rules/vaultspec-rag.builtin.md` still contained references to `mcp_server:main`.
 
-## Action
+### Action
 
 - Updated `.vaultspec/rules/rules/vaultspec-rag.builtin.md` to reference `vaultspec_rag.mcp:main` instead of `vaultspec_rag.mcp_server:main`.
 - Verified that `vaultspec-rag.builtin.json` MCP config properly delegates to `vaultspec-search-mcp` entrypoint (which was already mapped to `vaultspec_rag.mcp:main` in `pyproject.toml`).
@@ -27,3 +28,7 @@ The legacy module `vaultspec_rag.mcp_server` was refactored. The MCP transport l
 ## Outcome
 
 All documentation accurately reflects the module deconflation. The MCP adapter properly uses the standard entrypoint mapping.
+
+## Notes
+
+Evidence gap: the original record contains no Notes section with authored incident, deferred-work, or follow-up evidence.

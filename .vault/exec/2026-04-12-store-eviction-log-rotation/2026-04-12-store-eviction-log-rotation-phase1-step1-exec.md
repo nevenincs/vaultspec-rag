@@ -3,27 +3,27 @@ tags:
   - '#exec'
   - '#store-eviction-log-rotation'
 date: '2026-04-12'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-phase1-plan]]'
   - '[[2026-04-12-store-eviction-log-rotation-adr]]'
 ---
 
-# store-eviction-log-rotation phase-1 step-1
+## Description
 
-## goal
+### Goal
 
 Extend `VaultSpecConfigWrapper` with the four ADR D8 knobs
 (`service_idle_ttl_seconds`, `service_max_projects`,
 `service_log_max_bytes`, `service_log_backup_count`) wired through
 `EnvVar` and `_ENV_OVERRIDE_MAP`.
 
-## files touched
+### Files touched
 
 - `src/vaultspec_rag/config.py`
 - `src/vaultspec_rag/tests/test_config.py` (new)
 
-## what was done
+### What was done
 
 - Added four new `EnvVar` members with the `VAULTSPEC_RAG_SERVICE_*`
   env var names.
@@ -34,21 +34,25 @@ Extend `VaultSpecConfigWrapper` with the four ADR D8 knobs
   assertions and four env-override tests that manipulate
   `os.environ` inside try/finally (no monkeypatch).
 
-## test results
+## Outcome
+
+### Test results
 
 - `uv run pytest src/vaultspec_rag/tests/test_config.py -x -q` -
   8 passed.
 - Pre-commit run on the two files passed all hooks (ruff, format,
   ty).
 
-## deviations
-
-None.
-
-## commit hash
+### Commit hash
 
 `b11954e feat(config): add service eviction and log rotation config keys`
 
-## time spent
+## Notes
+
+### Deviations
+
+None.
+
+### Time spent
 
 ~10 minutes.

@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#vault-pipeline-search'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 step_id: 'S10'
 related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
@@ -11,11 +11,11 @@ related:
 
 # Map related and status from Qdrant rows in the vault search path
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/search/_searcher.py`
-
-## Description
 
 - Mapped `status` from the Qdrant row (`r.get("status", "")`) onto the vault `SearchResult`
   in `_search_vault_encoded`.

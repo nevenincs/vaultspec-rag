@@ -3,21 +3,22 @@ tags:
   - '#research'
   - '#index-perf-hardening'
 date: '2026-06-02'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-03-06-codebase-indexer-tech-stack-research]]"
 ---
-
 # `index-perf-hardening` research: `codebase indexing performance: parallelism, GPU pipelining, hardware acceleration`
 
-## Problem
+## Findings
+
+### Problem
 
 `vaultspec-rag index` on a large tree (~84k files) spends over an hour in the `chunk files` stage (~21 files/s) while the GPU sits idle the entire time. The originating bug
 report is `#154`; the umbrella rework is `#155`. This document grounds every candidate
 optimization against both the current source and current upstream documentation, so the
 sibling ADR can choose an architecture with evidence rather than guesswork.
 
-## Current pipeline (code findings)
+### Current pipeline (code findings)
 
 `CodebaseIndexer._full_index_locked` runs seven stages strictly sequentially
 (`src/vaultspec_rag/indexer/_codebase_indexer.py`):
@@ -76,7 +77,7 @@ twice (~112s) before `scan vault`. The current in-process path opens the store a
 the model once (`cli/_index.py:330-369`), so this is likely a service-delegation-then-
 fallback double warmup; confirm on the reporter's installed version.
 
-## Online research findings (verified 2026-06-02)
+### Online research findings (verified 2026-06-02)
 
 ### O1 — py-tree-sitter holds the GIL for parse and traverse
 
@@ -84,7 +85,7 @@ fallback double warmup; confirm on the reporter's installed version.
 `tree_sitter/binding/parser.c`), and all `Node` attribute access is GIL-bound Python.
 Threads cannot achieve multi-core parallelism for AST work; `ProcessPoolExecutor` /
 multiprocessing is required. Free-threaded wheels do not exist
-([py-tree-sitter #458](https://github.com/tree-sitter/py-tree-sitter/issues/458), open
+(py-tree-sitter #458, open
 2026-05-22). Confidence: high.
 
 ### O2 — Query API shrinks the constant, not the concurrency model
@@ -94,7 +95,7 @@ Python call per visited node, but still does not release the GIL and still mater
 one Python object per captured node. It reduces per-file Python time but does not remove
 the need for processes. Thread-safety contract: a `Query` is immutable and shareable
 across threads; a `QueryCursor` and a `Parser` are not — one per worker.
-[Tree-sitter Query API](https://tree-sitter.github.io/tree-sitter/using-parsers/queries/4-api.html).
+Tree-sitter Query API.
 Confidence: high on contract, medium on magnitude.
 
 ### O3 — ProcessPoolExecutor best practices (Python 3.13)
@@ -104,7 +105,7 @@ file **paths** not contents (avoid pickling bytes both ways); raise `chunksize` 
 for many small files; return one compact per-file result (a `slots=True` dataclass holding
 lists, not thousands of tiny objects). `max_workers` defaults to `os.process_cpu_count()`
 in 3.13.
-[concurrent.futures docs](https://docs.python.org/3/library/concurrent.futures.html).
+concurrent.futures docs.
 Confidence: high.
 
 ### O4 — defer free-threaded CPython 3.13t
@@ -112,7 +113,7 @@ Confidence: high.
 PyTorch announced (2026-05-14) it is dropping 3.13t support in nightlies and the upcoming
 2.13 release; the path forward is 3.14t. tree-sitter has no free-threaded wheels. Both
 hard native deps are unready — defer, revisit on 3.14t.
-[PyTorch dev-discuss](https://dev-discuss.pytorch.org/t/dropping-python-3-13t-free-threaded-support-in-nightlies-and-in-the-future-pytorch-2-13-release/3386).
+PyTorch dev-discuss.
 Confidence: high.
 
 ### O5 — raise encode batch_size; do not multi-stream dense+sparse
@@ -123,8 +124,8 @@ resident weights). Overlapping dense and SPLADE on separate CUDA streams is
 counterproductive: two compute-bound matmul kernels serialize on the tensor cores
 regardless of stream. Keep them sequential on the default stream and get overlap from the
 CPU/GPU pipeline instead.
-[SBERT efficiency](https://sbert.net/docs/sentence_transformer/usage/efficiency.html),
-[single-GPU stream serialization](https://discuss.pytorch.org/t/using-cuda-stream-to-perform-parallel-inference/206071).
+SBERT efficiency,
+single-GPU stream serialization.
 Confidence: high on direction, medium on the exact optimum (benchmark).
 
 ### O6 — accel ladder: fp16/bf16 (have it) -> ONNX-O4 -> torch.compile/TensorRT
@@ -134,7 +135,7 @@ highest documented short-text GPU speedup (~1.83x) and is officially supported b
 sentence-transformers — the next lever if needed. `torch.compile` and TensorRT are
 unofficial for SBERT, carry recompile/export risk, and should wait until profiling proves
 the encoder dominates.
-[SBERT efficiency](https://sbert.net/docs/sentence_transformer/usage/efficiency.html).
+SBERT efficiency.
 Confidence: high on ordering.
 
 ### O7 — bounded-queue producer/consumer; CUDA only in the consumer
@@ -145,10 +146,10 @@ to the encode batch size and upserts. Critical gotchas: workers must never initi
 CUDA; use the `spawn` start method if any worker could touch CUDA; bound the queue (or use
 lazy `map`/a bounded submit window) so memory stays capped; keep a single GPU consumer so
 device access stays serialized.
-[CUDA fork/spawn](https://discuss.pytorch.org/t/runtimeerror-cannot-re-initialize-cuda-in-forked-subprocess-to-use-cuda-with-multiprocessing-you-must-use-the-spawn-start-method/14083).
+CUDA fork/spawn.
 Confidence: high.
 
-## Synthesis — recommended architecture (input to the ADR)
+### Synthesis — recommended architecture (input to the ADR)
 
 The two structural changes attack the whole hour; the rest are tuning on top.
 
@@ -170,7 +171,7 @@ Deferred / experimental: free-threaded 3.13t (O4 — defer to 3.14t), tree-sitte
 rewrite (O2 — secondary), ONNX-O4 / torch.compile / TensorRT (O6 — only if the encoder
 proves dominant after the structural fixes).
 
-## Open questions for the ADR
+### Open questions for the ADR
 
 - Process-pool sizing default and override knob (env var vs config); interaction with the
   resident HTTP service which already holds a GPU and per-root locks.
@@ -182,3 +183,7 @@ proves dominant after the structural fixes).
   re-import amortization.
 - Benchmark methodology and the corpus used to demonstrate the "dramatic" speedup
   acceptance bar.
+
+## Sources
+
+Evidence gap: the retained research body has no separately labelled Sources section.

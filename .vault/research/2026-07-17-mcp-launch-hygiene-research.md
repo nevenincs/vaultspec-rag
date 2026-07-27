@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#mcp-launch-hygiene'
 date: '2026-07-17'
-modified: '2026-07-17'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -55,3 +55,7 @@ installer already resolves the mode before this step runs, and `uv add --group <
 
 Source: `commands/_uv_sync.py`; `commands/_install.py` mode resolution;
 issue 231 item 3.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

@@ -49,7 +49,7 @@ def get_search_limiter() -> anyio.CapacityLimiter:
     """Return the shared limiter for interactive search dispatches."""
     global _search_limiter
     if _search_limiter is None:
-        from .config import get_config
+        from .config._settings import get_config
 
         with _lock:
             if _search_limiter is None:
@@ -63,7 +63,7 @@ def get_index_limiter() -> anyio.CapacityLimiter:
     """Return the shared limiter for long-running index-job dispatches."""
     global _index_limiter
     if _index_limiter is None:
-        from .config import get_config
+        from .config._settings import get_config
 
         with _lock:
             if _index_limiter is None:

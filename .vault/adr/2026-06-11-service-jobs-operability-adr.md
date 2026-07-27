@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#service-jobs-operability'
 date: '2026-06-11'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-06-11-service-jobs-operability-research]]'
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
@@ -81,3 +81,7 @@ by unit tests alone.
 - **Rule slug:** `long-running-work-has-correlation`.
   **Rule:** Long-running service work must expose a stable job id, initiator, liveness,
   and correlation fields suitable for joining status, jobs, and logs.
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

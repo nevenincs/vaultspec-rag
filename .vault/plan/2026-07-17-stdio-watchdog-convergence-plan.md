@@ -3,14 +3,19 @@ tags:
   - '#plan'
   - '#stdio-watchdog-convergence'
 date: '2026-07-17'
-modified: '2026-07-17'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-07-17-stdio-watchdog-convergence-adr]]'
   - '[[2026-07-17-stdio-watchdog-convergence-research]]'
 ---
-
 # `stdio-watchdog-convergence` plan
+
+## Description
+
+No separate description is recorded in the retained prior plan body. Source: retained prior plan body.
+
+## Steps
 
 ### Phase `P01` - Watchdog convergence
 
@@ -32,10 +37,10 @@ Document the anchor layering and close both issues with the audit.
 
 - [x] `P03.S05` - Update the stdio server lifetime docs with the pipe-creator primary anchor and chain fallback; `docs/mcp.md`.
 
-## Description
-
-## Steps
-
 ## Parallelization
 
+No separate parallelization is recorded in the retained prior plan body. Source: retained prior plan body.
+
 ## Verification
+
+No separate verification is recorded in the retained prior plan body. Source: retained prior plan body.

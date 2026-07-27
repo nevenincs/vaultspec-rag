@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#index-throughput'
 date: '2026-07-24'
-modified: '2026-07-24'
+modified: '2026-07-27'
 step_id: 'S04'
 related:
   - "[[2026-07-24-index-throughput-plan]]"
@@ -24,3 +24,4 @@ Ingest-barrier guard tests (`tests/integration/test_ingest_barrier.py`, commit `
 Post-merge addendum: both post-rebase obligations are discharged on the merged main tree. (1) The barrier proof was re-run as one uninterrupted sequence - `apply_ingest_barrier` weakened to return before fence and count turned both guards red on `DID NOT RAISE IngestVerificationError`; restored, 5/5 green, working tree byte-identical. (2) The binding composition proof landed as `TestBarrierComposesWithSliceWriter` (commit `60f0e11b`): the acknowledged-never-applies injection goes THROUGH the slice writer during a production rebuild, the run fails at the barrier before stale-purge and metadata publish, and neutralizing the barrier's count comparison was observed red on the missing rejection before restore to 6/6 green.
 
 ## Notes
+Template evidence: intro_commit=d81c21c6f44aed3da9929714232da41e21367d60; template_commit=d81c21c6f44aed3da9929714232da41e21367d60:.vaultspec/templates/exec-step.md requires Description, Outcome, and Notes. This repair preserves the retained record text and adds no new implementation claim.

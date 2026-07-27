@@ -6,7 +6,7 @@ from typing import ClassVar
 
 import pytest
 
-from ..config import get_config, reset_config
+from ..config._settings import get_config, reset_config
 from ..search._models import SearchResult
 from ..search._noise import (
     NoisePolicy,
@@ -156,15 +156,18 @@ class TestDomainValidation:
         )
 
         with pytest.raises(InvalidFilterForSearchTypeError):
-            validate_search_filters("code", SearchFilterOptions(exclude_domains=["bogus"]))
+            validate_search_filters(
+                "code", SearchFilterOptions(exclude_domains=["bogus"])
+            )
 
     def test_known_domains_accepted(self) -> None:
         from ..search import SearchFilterOptions, validate_search_filters
 
         # Does not raise.
-        validate_search_filters("code", SearchFilterOptions(
-            exclude_domains=["tests"], only_domains=["prod"]
-        ))
+        validate_search_filters(
+            "code",
+            SearchFilterOptions(exclude_domains=["tests"], only_domains=["prod"]),
+        )
 
     def test_domain_filters_require_code_type(self) -> None:
         from ..search import (
@@ -174,7 +177,9 @@ class TestDomainValidation:
         )
 
         with pytest.raises(InvalidFilterForSearchTypeError):
-            validate_search_filters("vault", SearchFilterOptions(exclude_domains=["tests"]))
+            validate_search_filters(
+                "vault", SearchFilterOptions(exclude_domains=["tests"])
+            )
 
 
 class TestApplyDomainDemotion:

@@ -3,12 +3,17 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 21 Audit -- search.py, cli.py, mcp_server.py
 
-## search.py
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
+
+### search.py
 
 ### R21-M1: `search_all` mixes incomparable scores after reranking (Major)
 
@@ -59,7 +64,7 @@ The module docstring (line 3) says "graph-aware re-ranking" but `rerank_with_gra
 
 **File:** `search.py:3`
 
-## cli.py
+### cli.py
 
 ### R21-M4: `handle_search` creates new `VaultStore` and `EmbeddingModel` per invocation (Major)
 
@@ -97,7 +102,7 @@ Line 125: `configure_logging(debug=debug, level="INFO" if verbose else None)`. I
 
 **File:** `cli.py:125`
 
-## mcp_server.py
+### mcp_server.py
 
 ### R21-C1: `get_code_file` path traversal check is bypassable on Windows (Critical)
 
@@ -162,3 +167,7 @@ All search tools accept `top_k: int = 5` with no bounds checking. A caller can p
 Line 105: `files: int = Field(default=0, ...)`. For vault reindex (line 233-239), the `files` field is not set, so it defaults to 0. This is technically correct (vault indexer result may not have a `files` attribute), but the response will show `files: 0` which could confuse users into thinking no files were processed.
 
 **File:** `mcp_server.py:105, 233-239`
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

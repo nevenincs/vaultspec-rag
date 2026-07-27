@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#service-job-control'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-27'
 related:
   - "[[2026-07-21-service-job-control-reference]]"
   - "[[2026-06-04-async-service-index-adr]]"
@@ -212,3 +212,7 @@ No fake indexer, monkeypatch, skip, or xfail is an acceptable substitute.
 - **O3 - One killable process per indexing job.** Deferred: enables real force kill but
   requires a parent-owned GPU/IPC architecture, cross-process locking, and new recovery
   semantics. It must not be smuggled into the CRUD implementation.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

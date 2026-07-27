@@ -3,14 +3,19 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Audit: Indexer Pipeline
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 Feature: indexer.py document preparation, text splitting, batch indexing
 
-## 2026-03-06 -- Review (Passes 18-25)
+### 2026-03-06 -- Review (Passes 18-25)
 
 ### Architecture: SOLID
 
@@ -33,7 +38,7 @@ Three sites in indexer.py used `.tolist()` on SparseResult fields:
 
 - Task #45 (by proxy): indexer.py:42 docstring says device example "cpu" -- [LOW]
 
-## Pass 27 — Full indexer.py review
+### Pass 27 — Full indexer.py review
 
 Full line-by-line audit. All confirmed correct:
 
@@ -46,7 +51,7 @@ Full line-by-line audit. All confirmed correct:
 
 No new issues found.
 
-## 2026-03-06 -- Major Overhaul (Tasks #3, #4, #9)
+### 2026-03-06 -- Major Overhaul (Tasks #3, #4, #9)
 
 ### Critical Bug Fixes (Task #3 -- RESOLVED)
 
@@ -96,3 +101,7 @@ No new issues found.
 - Chunk ID format: hash presence, uniqueness
 
 All 102 unit tests pass. No open issues.
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

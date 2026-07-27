@@ -9,7 +9,8 @@ how the integration suite isolates runtime state.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+import os
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -315,9 +316,16 @@ def test_snapshot_manifest_stamps_its_own_completion_time(tmp_path: Path) -> Non
     artifact's pre-existing modification time makes the written timestamp fall
     outside the real write interval below.
     """
+    archive_dir = tmp_path / "archive" / "rdeadbeefcafe"
+    copied_metadata = archive_dir / "document-metadata.json"
+    copied_metadata.parent.mkdir(parents=True)
+    copied_metadata.write_text("{}", encoding="utf-8")
+    old_mtime = (datetime.now(UTC) - timedelta(days=31)).timestamp()
+    os.utime(copied_metadata, (old_mtime, old_mtime))
+
     before = datetime.now(UTC)
     written = write_snapshot_manifest(
-        tmp_path / "archive" / "rdeadbeefcafe",
+        archive_dir,
         StorageSnapshotManifest(
             prefix="rdeadbeefcafe_",
             root=None,
@@ -332,4 +340,5 @@ def test_snapshot_manifest_stamps_its_own_completion_time(tmp_path: Path) -> Non
     assert isinstance(completed_at, str)
     stamped = datetime.fromisoformat(completed_at)
     assert stamped.tzinfo is not None
+    assert stamped.utcoffset() == timedelta(0)
     assert before <= stamped <= after

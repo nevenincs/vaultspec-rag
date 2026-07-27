@@ -186,10 +186,10 @@ def test_readiness_report_publishes_this_installs_release() -> None:
 def test_the_cli_parent_stamps_the_release_into_the_discovery_file() -> None:
     """The spawn-time write records the release that launched the daemon."""
     from ..cli._service_status import _write_service_status
-    from ..serviceclient._discovery import _read_service_status
+    from ..serviceclient._discovery import read_service_status
 
     _write_service_status(os.getpid(), 1)
-    status = _read_service_status()
+    status = read_service_status()
 
     assert status is not None
     assert status[SERVICE_VERSION_FIELD] == local_package_version()

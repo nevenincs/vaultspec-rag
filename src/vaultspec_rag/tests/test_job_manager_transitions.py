@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from ..job_control import QuiesceGate, RunControlToken
-from ..job_manager._control import _AttemptTerminal
+from ..job_manager._control import AttemptTerminal
 from ..job_manager.manager import JobManager
 from ..job_manager.models import (
     JobAttemptContext,
@@ -298,7 +298,7 @@ class TestManagedJobTransitions:
             )
             failed = manager.finish_attempt(
                 job_id,
-                _AttemptTerminal(
+                AttemptTerminal(
                     attempt=1,
                     task=task,
                     state=JobState.FAILED,
@@ -311,7 +311,7 @@ class TestManagedJobTransitions:
             assert (
                 manager.finish_attempt(
                     job_id,
-                    _AttemptTerminal(
+                    AttemptTerminal(
                         attempt=1,
                         task=task,
                         state=JobState.SUCCEEDED,

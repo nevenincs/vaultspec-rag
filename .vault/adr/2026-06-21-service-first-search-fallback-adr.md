@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#service-first-search-fallback'
 date: '2026-06-21'
-modified: '2026-06-21'
+modified: '2026-07-27'
 related:
   - "[[2026-06-21-service-first-search-fallback-research]]"
 ---
@@ -104,3 +104,7 @@ the robust escalation.
   configured local-only mode); an unreachable or absent service with no mandate
   exits with the service-down envelope, and any mandated local run is bounded by
   a wall-clock deadline that releases the store lock on expiry.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.
