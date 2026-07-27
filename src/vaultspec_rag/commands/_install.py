@@ -27,10 +27,10 @@ from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissin
 )
 
 from .._workspace_layout import (
-    VAULTSPEC_DIR,
-    VAULTSPEC_MCP_OWNERSHIP,
-    VAULTSPEC_PROVIDERS,
-    VAULTSPEC_WORKSPACE,
+    MCP_OWNERSHIP_MANIFEST,
+    PROVIDERS_MANIFEST,
+    WORKSPACE_DIR,
+    WORKSPACE_MANIFEST,
 )
 from ..builtins import list_builtins, seed_builtins
 from ..torch_config._constants import TorchConfigAction
@@ -213,7 +213,7 @@ def _project_surface_inspection_error(pyproject: Path) -> Exception | None:
 
 def _mcp_intent_paths(target: Path) -> tuple[Path, ...]:
     pyproject = target / "pyproject.toml"
-    workspace = target / VAULTSPEC_WORKSPACE
+    workspace = target / WORKSPACE_MANIFEST
     transactional = [
         pyproject,
         pyproject.with_suffix(pyproject.suffix + ".lock"),
@@ -221,7 +221,7 @@ def _mcp_intent_paths(target: Path) -> tuple[Path, ...]:
         workspace.with_suffix(workspace.suffix + ".lock"),
     ]
     transactional.extend(
-        target / VAULTSPEC_DIR / relative for relative in list_builtins()
+        target / WORKSPACE_DIR / relative for relative in list_builtins()
     )
     return tuple(dict.fromkeys(transactional))
 
@@ -268,10 +268,10 @@ def _prepare_install_target(
 
 def _fresh_provider_transaction_paths(target: Path) -> tuple[Path, ...]:
     """Return every project artifact a fresh dual-host sync can mutate."""
-    manifest = target / VAULTSPEC_PROVIDERS
+    manifest = target / PROVIDERS_MANIFEST
     claude = target / ".mcp.json"
     codex = target / ".codex" / "config.toml"
-    ownership = target / VAULTSPEC_MCP_OWNERSHIP
+    ownership = target / MCP_OWNERSHIP_MANIFEST
     files = (manifest, claude, codex, ownership)
     return (
         *files,
@@ -371,7 +371,7 @@ def _commit_mcp_placement_and_mode(
         if persist_mode:
             persist_rag_mode(target, mode)
         _seed_builtins(
-            target / VAULTSPEC_DIR,
+            target / WORKSPACE_DIR,
             report,
             False,
             force,
@@ -417,8 +417,8 @@ def _mcp_preview_projection(
         projection = Path(raw) / "workspace"
         projection.mkdir()
 
-        source_vaultspec = target / VAULTSPEC_DIR
-        projected_vaultspec = projection / VAULTSPEC_DIR
+        source_vaultspec = target / WORKSPACE_DIR
+        projected_vaultspec = projection / WORKSPACE_DIR
         projected_vaultspec.mkdir()
 
         for name in ("providers.json", "workspace.json", "mcp-ownership.json"):
@@ -976,7 +976,7 @@ def _install_run_unchecked(
         else resolve_rag_mode(target, mode)
     )
 
-    vaultspec_dir = target / VAULTSPEC_DIR
+    vaultspec_dir = target / WORKSPACE_DIR
 
     # Placement is the first MCP transition boundary. A conflict or inspection
     # failure stops the operation before source, package mode, provider config,

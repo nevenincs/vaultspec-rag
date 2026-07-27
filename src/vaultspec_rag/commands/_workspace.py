@@ -13,7 +13,7 @@ from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStub
 
 from .._workspace_layout import (
     VAULT_DIR,
-    VAULTSPEC_DIR,
+    WORKSPACE_DIR,
     workspace_directories,
 )
 
@@ -49,7 +49,7 @@ def _resolve_target(path: Path | None, *, bootstrap: bool) -> Path:
         return target
     target.mkdir(parents=True, exist_ok=True)
     (target / VAULT_DIR).mkdir(exist_ok=True)
-    (target / VAULTSPEC_DIR).mkdir(exist_ok=True)
+    (target / WORKSPACE_DIR).mkdir(exist_ok=True)
     return target
 
 

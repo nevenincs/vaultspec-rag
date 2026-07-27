@@ -20,7 +20,7 @@ from pathlib import Path
 
 from ._workspace_layout import (
     VAULT_DIR,
-    VAULTSPEC_DIR,
+    WORKSPACE_DIR,
 )
 from .search._validation import INDEXABLE_DOC_TYPES
 
@@ -277,7 +277,7 @@ def build_synthetic_vault(
         (vault_dir / dt).mkdir(parents=True, exist_ok=True)
 
     # Also create .vaultspec so workspace resolution works.
-    (root / VAULTSPEC_DIR).mkdir(parents=True, exist_ok=True)
+    (root / WORKSPACE_DIR).mkdir(parents=True, exist_ok=True)
 
     per_type = max(1, n_docs // len(DOC_TYPES))
     doc_index = 0

@@ -9,7 +9,7 @@ their own idea of what it contains.
 Everything here is RELATIVE to a project root, because both shapes the callers
 use need that: the topology module holds these as module constants and
 compares them against paths it is given, while the install and workspace verbs
-join them onto a target. A caller writes ``root / VAULTSPEC_MCPS`` and the
+join them onto a target. A caller writes ``root / WORKSPACE_MCPS`` and the
 join reads the same either way.
 
 Naming the workspace directory in code is deliberate and not a vault
@@ -22,15 +22,15 @@ from __future__ import annotations
 from pathlib import Path
 
 __all__ = [
-    "VAULTSPEC_DIR",
-    "VAULTSPEC_MCPS",
-    "VAULTSPEC_MCP_OWNERSHIP",
-    "VAULTSPEC_PROVIDERS",
-    "VAULTSPEC_RULES",
-    "VAULTSPEC_SKILLS",
-    "VAULTSPEC_WORKSPACE",
+    "MCP_OWNERSHIP_MANIFEST",
+    "PROVIDERS_MANIFEST",
     "VAULT_DATA_DIR",
     "VAULT_DIR",
+    "WORKSPACE_DIR",
+    "WORKSPACE_MANIFEST",
+    "WORKSPACE_MCPS",
+    "WORKSPACE_RULES",
+    "WORKSPACE_SKILLS",
     "workspace_directories",
 ]
 
@@ -41,18 +41,21 @@ __all__ = [
 VAULT_DIR = Path(".vault")
 VAULT_DATA_DIR = VAULT_DIR / "data"
 
-#: The workspace directory itself.
-VAULTSPEC_DIR = Path(".vaultspec")
+#: The workspace directory itself. Named WORKSPACE_ rather than VAULTSPEC_
+#: because this codebase reserves the ``VAULTSPEC_`` identifier prefix for
+#: environment-variable names, and a guard asserts every such literal is a
+#: declared setting - which these paths are not.
+WORKSPACE_DIR = Path(".vaultspec")
 
 #: The provider-source subdirectories a workspace is scaffolded with.
-VAULTSPEC_RULES = VAULTSPEC_DIR / "rules"
-VAULTSPEC_MCPS = VAULTSPEC_DIR / "mcps"
-VAULTSPEC_SKILLS = VAULTSPEC_DIR / "skills"
+WORKSPACE_RULES = WORKSPACE_DIR / "rules"
+WORKSPACE_MCPS = WORKSPACE_DIR / "mcps"
+WORKSPACE_SKILLS = WORKSPACE_DIR / "skills"
 
 #: The manifests the install and topology paths read and write.
-VAULTSPEC_WORKSPACE = VAULTSPEC_DIR / "workspace.json"
-VAULTSPEC_PROVIDERS = VAULTSPEC_DIR / "providers.json"
-VAULTSPEC_MCP_OWNERSHIP = VAULTSPEC_DIR / "mcp-ownership.json"
+WORKSPACE_MANIFEST = WORKSPACE_DIR / "workspace.json"
+PROVIDERS_MANIFEST = WORKSPACE_DIR / "providers.json"
+MCP_OWNERSHIP_MANIFEST = WORKSPACE_DIR / "mcp-ownership.json"
 
 
 def workspace_directories() -> tuple[Path, ...]:
@@ -70,8 +73,8 @@ def workspace_directories() -> tuple[Path, ...]:
     return (
         VAULT_DIR,
         VAULT_DATA_DIR,
-        VAULTSPEC_DIR,
-        VAULTSPEC_RULES,
-        VAULTSPEC_MCPS,
-        VAULTSPEC_SKILLS,
+        WORKSPACE_DIR,
+        WORKSPACE_RULES,
+        WORKSPACE_MCPS,
+        WORKSPACE_SKILLS,
     )
