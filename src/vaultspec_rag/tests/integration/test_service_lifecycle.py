@@ -27,9 +27,10 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from typer.testing import CliRunner
 
+from ..._loopback_http import probe_loopback_connect
 from ..._process_probe import pid_alive
 from ...cli import app
-from ...cli._process import _port_is_listening, _spawn_service, _terminate_pid
+from ...cli._process import _spawn_service, _terminate_pid
 from ...cli._service_status import (
     _read_service_status,
     _status_file,
@@ -204,6 +205,15 @@ def _terminate_test_processes(pids: list[int]) -> None:
         if pid_alive(pid):
             _terminate_pid(pid)
             _wait_for_exit(pid, timeout=15.0)
+
+
+def _port_is_listening(port: int) -> bool:
+    """Whether anything accepts a loopback connect, at the conservative bound.
+
+    Lifecycle asserts here claim a listener is present or gone, so they wait
+    out the full pre-existing deadline rather than trading accuracy for speed.
+    """
+    return probe_loopback_connect(port, timeout=1.0) == "accepted"
 
 
 def _wait_for_listeners_closed(*ports: int, timeout: float = 10.0) -> bool:

@@ -41,7 +41,11 @@ import urllib.parse
 import urllib.request
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, cast
 
-from .._loopback_http import LOOPBACK_OPENER
+from .._loopback_http import (
+    FAST_CONNECT_TIMEOUT_SECONDS,
+    LOOPBACK_OPENER,
+    probe_loopback_connect,
+)
 from .._operator_commands import server_jobs_command, server_status_command
 from .._source_types import (
     PublicSourceType,
@@ -246,7 +250,10 @@ def _status_file_token() -> str:
 
 
 def _try_http_health(
-    port: int, timeout: float = DEFAULT_HEALTH_TIMEOUT_SECONDS
+    port: int,
+    timeout: float = DEFAULT_HEALTH_TIMEOUT_SECONDS,
+    *,
+    connect_timeout: float | None = FAST_CONNECT_TIMEOUT_SECONDS,
 ) -> dict[str, Any] | None:
     """Probe the ungated ``/health`` route, distinguishing down from unhealthy.
 
@@ -262,7 +269,16 @@ def _try_http_health(
 
     Args:
         port: TCP port to probe on ``127.0.0.1``.
-        timeout: Bounded maximum wait. There is no unbounded option.
+        timeout: Bounded maximum wait for the whole exchange once a connection
+            is accepted. There is no unbounded option.
+        connect_timeout: Bound on the TCP connect alone; a connect that does
+            not complete within it reads as unreachable without waiting out
+            the OS's slow refusal (~1s on Windows). Only the connect is
+            bounded this tightly - a live service that answers slowly is still
+            given the full *timeout*. A caller for whom a rare false
+            "unreachable" would become a false success claim (a stop verb
+            confirming its target is gone) passes ``None`` to wait for the
+            OS's authoritative refusal instead.
 
     Returns:
         The parsed body when the service answers; a structured mapping carrying
@@ -270,6 +286,17 @@ def _try_http_health(
         (the service is up, so this is not the same as unreachable); or ``None``
         when it cannot be reached at all. Never raises.
     """
+    if (
+        connect_timeout is not None
+        and probe_loopback_connect(port, timeout=min(connect_timeout, timeout))
+        == "refused"
+    ):
+        logger.debug(
+            "health probe on port=%d: nothing accepted a connection within %.3fs",
+            port,
+            min(connect_timeout, timeout),
+        )
+        return None
     url = f"http://127.0.0.1:{port}/health"
     try:
         with LOOPBACK_OPENER.open(url, timeout=timeout) as resp:
@@ -444,8 +471,23 @@ def _do_http_call(
     different bound passes one explicitly; there is deliberately no way to ask
     for none, and a non-finite or non-positive request resolves to the default
     rather than to an immediately-expired deadline.
+
+    Before the request is sent, a short bounded connect decides whether
+    anything is accepting on the port at all, so a dead service surfaces as
+    connection-refused in ~0.15s instead of after the OS's slow refusal (~1s
+    on Windows). Every caller of this entry point maps refused to its
+    "service down" outcome (a fallback or a structured down report), for which
+    the residual misread - a live listener whose kernel accept queue is full -
+    is tolerable. Only the connect is bounded this tightly; a live service
+    keeps the whole resolved timeout to answer.
     """
     resolved_timeout = _get_admin_timeout(timeout)
+    connect_bound = min(FAST_CONNECT_TIMEOUT_SECONDS, resolved_timeout)
+    if probe_loopback_connect(port, timeout=connect_bound) == "refused":
+        raise ConnectionRefusedError(
+            f"nothing accepted a TCP connection on 127.0.0.1:{port} "
+            f"within {connect_bound:.3f}s"
+        )
     deadline = time.monotonic() + resolved_timeout
     started = time.monotonic()
 
