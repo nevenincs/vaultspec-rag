@@ -433,7 +433,10 @@ class TestRunWriteWithRetry:
             run_store_operation_with_retry(op, description="test", policy=None)
         assert len(calls) == 1
 
-    def test_transient_exhaustion_raises_original_error(self) -> None:
+    def test_transient_exhaustion_raises_original_error(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         calls: list[int] = []
         original = ConnectionError("refused")
 
@@ -448,6 +451,12 @@ class TestRunWriteWithRetry:
             run_store_operation_with_retry(op, description="test", policy=None)
         assert len(calls) == 3
         assert caught.value is original
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "vaultspec_rag._store_writes"
+            and record.levelno == logging.ERROR
+        ] == ["store operation test failed after 3 attempts: refused"]
 
     def test_remaining_budget_clamps_the_admitted_operation_timeout(self) -> None:
         admitted_timeouts: list[int] = []
