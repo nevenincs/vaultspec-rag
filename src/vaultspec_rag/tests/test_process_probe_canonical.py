@@ -26,6 +26,7 @@ from unittest.mock import patch
 import pytest
 
 from .. import _process_probe
+from .._operator_commands import index_command
 
 pytestmark = [pytest.mark.unit]
 
@@ -1497,6 +1498,55 @@ class TestOperatorCommandsHaveOneSpelling:
         assert not offenders, (
             f"the service-not-running sentence is spelled again at {offenders}; "
             "import SERVICE_NOT_RUNNING_MESSAGE"
+        )
+
+    def test_no_module_spells_an_index_command(self) -> None:
+        """The index verb is a family, not a set of unrelated one-offs.
+
+        Counting repeats made this look like it was not duplication - each of
+        the thirteen sites named a different flag combination. What repeats is
+        the VOCABULARY: the verb, its flag names and their order, and which
+        source spellings exist.
+        """
+        offenders = [
+            f"{path.name}:{number}"
+            for path in _production_sources()
+            if path.name != "_operator_commands.py"
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            )
+            if "vaultspec-rag index" in line
+        ]
+        assert not offenders, (
+            f"a hand-spelled index command at {offenders}; call index_command "
+            "so a renamed flag changes in one place"
+        )
+
+    def test_every_source_reaches_the_rebuild_remediation(self) -> None:
+        """A source the flag accepts must be a source the operator is offered.
+
+        The four spellings were hand-enumerated, so a new member of
+        PublicSourceType would have been accepted by --type and silently
+        missing from the rebuild remediation - the operator would never be
+        told the command that fixes their index.
+
+        Proven able to fail: pinning that remediation to a fixed list fails
+        this test on the missing-source assertion below.
+        """
+        import inspect
+
+        from .._source_types import PublicSourceType
+        from ..cli import _index
+
+        source = inspect.getsource(_index)
+        rendered = {index_command(member, rebuild=True) for member in PublicSourceType}
+        assert len(rendered) == len(PublicSourceType), (
+            "two source types render the same rebuild command"
+        )
+        assert "for source in PublicSourceType" in source, (
+            "the rebuild remediation must be derived from PublicSourceType, "
+            "not enumerated, or a new source type is accepted by --type and "
+            "never offered to the operator"
         )
 
     def test_the_renamed_flag_is_not_reachable(self) -> None:

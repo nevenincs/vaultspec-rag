@@ -23,7 +23,11 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
-from .._operator_commands import server_status_command
+from .._operator_commands import (
+    index_command,
+    index_source_option,
+    server_status_command,
+)
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from .._store_locks import VaultStoreLockedError
 from .._store_writes import InsufficientDiskSpaceError
@@ -192,8 +196,8 @@ def _validate_dry_run_request(
     if index_type is PublicSourceType.VAULT:
         message = "Dry run is available for code and document indexing."
         remediation = [
-            "vaultspec-rag index --type code --dry-run",
-            "vaultspec-rag index --type document --dry-run",
+            index_command(source, dry_run=True)
+            for source in (PublicSourceType.CODE, PublicSourceType.DOCUMENT)
         ]
         if json_mode:
             _emit_json_error_and_exit(
@@ -220,7 +224,7 @@ def _validate_dry_run_request(
         )
     _plain(message)
     _plain("Run:")
-    _plain("  vaultspec-rag index --type code --dry-run --dry-run-limit 50")
+    _plain(f"  {index_command(PublicSourceType.CODE, dry_run=True, dry_run_limit=50)}")
     raise typer.Exit(code=2)
 
 
@@ -395,11 +399,10 @@ def _validate_rebuild(ctx: typer.Context, json_mode: bool) -> None:
         logger.debug("click ParameterSource probe failed: %s", exc, exc_info=True)
         type_is_explicit = True
     if not type_is_explicit:
+        # Every source the flag accepts, so a new one reaches the operator
+        # here instead of being accepted but never offered.
         remediation = [
-            "vaultspec-rag index --rebuild --type vault",
-            "vaultspec-rag index --rebuild --type code",
-            "vaultspec-rag index --rebuild --type document",
-            "vaultspec-rag index --rebuild --type all",
+            index_command(source, rebuild=True) for source in PublicSourceType
         ]
         msg = (
             "--rebuild is destructive; pass an explicit --type "
@@ -945,9 +948,7 @@ def handle_clean(
     state: CLIState = ctx.obj
     target = state.target
     source = _parse_index_source(clean_type, command="clean", json_mode=json_mode)
-    canonical_clean_type = (
-        "all" if source is PublicSourceType.COMBINED else source.value
-    )
+    canonical_clean_type = index_source_option(source)
     if json_mode and not yes:
         _emit_json_error_and_exit(
             "clean",
