@@ -14,6 +14,7 @@ import logging
 import os
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs]  # no stubs for vaultspec_core
@@ -42,10 +43,34 @@ if TYPE_CHECKING:
     from ..embeddings import EmbeddingModel
     from ..job_control import RunControl
     from ..progress import ProgressReporter
-    from ..store import VaultStore
+    from ..store_runtime import VaultStore
     from ._reuse import DonorReuseContext, ReuseStats
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class _DocumentPreparationWindow:
+    """Bounded document-preparation work shared by the refill loop."""
+
+    path_iter: Iterator[pathlib.Path]
+    pending: set[Future[VaultDocument | None]]
+    pool: ThreadPoolExecutor
+    root_dir: pathlib.Path
+    run_control: RunControl
+    max_in_flight: int
+    exhausted: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _VaultEncodeWork:
+    """One incremental document batch and the counts it may replace."""
+
+    docs: list[VaultDocument]
+    existing_counts: dict[str, int]
+    slice_size: int
+    reporter: ProgressReporter
+    run_control: RunControl
 
 
 @contextlib.contextmanager
@@ -65,26 +90,18 @@ def _controlled_phase(
     run_control.checkpoint()
 
 
-def _fill_document_window(
-    path_iter: Iterator[pathlib.Path],
-    pending: set[Future[VaultDocument | None]],
-    pool: ThreadPoolExecutor,
-    root_dir: pathlib.Path,
-    run_control: RunControl,
-    *,
-    max_in_flight: int,
-    exhausted: bool,
-) -> bool:
+def _fill_document_window(window: _DocumentPreparationWindow) -> None:
     """Fill one bounded preparation window and return iterator exhaustion."""
-    while not exhausted and len(pending) < max_in_flight:
-        run_control.checkpoint()
+    while not window.exhausted and len(window.pending) < window.max_in_flight:
+        window.run_control.checkpoint()
         try:
-            path = next(path_iter)
+            path = next(window.path_iter)
         except StopIteration:
-            exhausted = True
+            window.exhausted = True
         else:
-            pending.add(pool.submit(prepare_document, path, root_dir))
-    return exhausted
+            window.pending.add(
+                window.pool.submit(prepare_document, path, window.root_dir)
+            )
 
 
 def _collect_prepared_document(
@@ -544,32 +561,15 @@ class VaultIndexer:
             run_control=run_control,
         )
 
-        reuse_stats: ReuseStats | None = None
-        if docs_to_index:
-            reuse_stats, donor_reuse = self._resolve_reuse()
-            new_counts = _stream_encode_and_upsert_vault(
+        reuse_stats = self._encode_incremental_documents(
+            _VaultEncodeWork(
                 docs=docs_to_index,
+                existing_counts=stored_counts,
                 slice_size=slice_size,
-                model=self.model,
-                store=self.store,
-                gpu_lock=self._gpu_lock,
                 reporter=reporter,
                 run_control=run_control,
-                reuse=donor_reuse,
             )
-            self._purge_shrunk_chunk_tails(
-                stored_counts,
-                new_counts,
-                run_control=run_control,
-            )
-        else:
-            with _controlled_phase(
-                reporter,
-                run_control,
-                "embed + upsert documents",
-                0,
-            ):
-                pass
+        )
 
         with _controlled_phase(
             reporter,
@@ -679,6 +679,38 @@ class VaultIndexer:
             )
         return docs_to_index
 
+    def _encode_incremental_documents(
+        self,
+        work: _VaultEncodeWork,
+    ) -> ReuseStats | None:
+        """Encode changed documents or emit the empty embedding phase."""
+        if not work.docs:
+            with _controlled_phase(
+                work.reporter,
+                work.run_control,
+                "embed + upsert documents",
+                0,
+            ):
+                pass
+            return None
+        reuse_stats, donor_reuse = self._resolve_reuse()
+        new_counts = _stream_encode_and_upsert_vault(
+            docs=work.docs,
+            slice_size=work.slice_size,
+            model=self.model,
+            store=self.store,
+            gpu_lock=self._gpu_lock,
+            reporter=work.reporter,
+            run_control=work.run_control,
+            reuse=donor_reuse,
+        )
+        self._purge_shrunk_chunk_tails(
+            work.existing_counts,
+            new_counts,
+            run_control=work.run_control,
+        )
+        return reuse_stats
+
     def _prepare_documents_bounded(
         self,
         paths: Iterable[pathlib.Path],
@@ -690,32 +722,28 @@ class VaultIndexer:
         """Prepare documents with bounded queued work and control-aware unwind."""
         max_workers = min(32, (os.cpu_count() or 1) + 4)
         max_in_flight = max_workers * 2
-        path_iter = iter(paths)
-        pending: set[Future[VaultDocument | None]] = set()
+        window = _DocumentPreparationWindow(
+            path_iter=iter(paths),
+            pending=set(),
+            pool=ThreadPoolExecutor(max_workers=max_workers),
+            root_dir=self.root_dir,
+            run_control=run_control,
+            max_in_flight=max_in_flight,
+        )
         docs: list[VaultDocument] = []
-        exhausted = False
-        pool = ThreadPoolExecutor(max_workers=max_workers)
 
         try:
-            exhausted = _fill_document_window(
-                path_iter,
-                pending,
-                pool,
-                self.root_dir,
-                run_control,
-                max_in_flight=max_in_flight,
-                exhausted=exhausted,
-            )
-            while pending:
+            _fill_document_window(window)
+            while window.pending:
                 run_control.checkpoint()
                 done, _not_done = wait(
-                    pending,
+                    window.pending,
                     timeout=0.1,
                     return_when=FIRST_COMPLETED,
                 )
                 run_control.checkpoint()
                 for future in done:
-                    pending.remove(future)
+                    window.pending.remove(future)
                     _collect_prepared_document(
                         future,
                         docs,
@@ -723,22 +751,14 @@ class VaultIndexer:
                     )
                     reporter.advance()
                     run_control.checkpoint()
-                exhausted = _fill_document_window(
-                    path_iter,
-                    pending,
-                    pool,
-                    self.root_dir,
-                    run_control,
-                    max_in_flight=max_in_flight,
-                    exhausted=exhausted,
-                )
+                _fill_document_window(window)
         except BaseException:
-            for future in pending:
+            for future in window.pending:
                 future.cancel()
-            pool.shutdown(wait=True, cancel_futures=True)
+            window.pool.shutdown(wait=True, cancel_futures=True)
             raise
         else:
-            pool.shutdown(wait=True)
+            window.pool.shutdown(wait=True)
         run_control.checkpoint()
         return docs
 
@@ -840,7 +860,7 @@ class VaultIndexer:
             run_control=run_control,
         )
 
-        reuse_stats: ReuseStats | None = None
+        existing_counts: dict[str, int] = {}
         if docs_to_index:
             run_control.checkpoint()
             try:
@@ -855,30 +875,15 @@ class VaultIndexer:
                 )
                 existing_counts = {}
             run_control.checkpoint()
-            reuse_stats, donor_reuse = self._resolve_reuse()
-            new_counts = _stream_encode_and_upsert_vault(
+        reuse_stats = self._encode_incremental_documents(
+            _VaultEncodeWork(
                 docs=docs_to_index,
+                existing_counts=existing_counts,
                 slice_size=slice_size,
-                model=self.model,
-                store=self.store,
-                gpu_lock=self._gpu_lock,
                 reporter=reporter,
                 run_control=run_control,
-                reuse=donor_reuse,
             )
-            self._purge_shrunk_chunk_tails(
-                existing_counts,
-                new_counts,
-                run_control=run_control,
-            )
-        else:
-            with _controlled_phase(
-                reporter,
-                run_control,
-                "embed + upsert documents",
-                0,
-            ):
-                pass
+        )
 
         with _controlled_phase(
             reporter,

@@ -435,42 +435,47 @@ def validate_acceptance_admission(
     return preflight
 
 
-def run_acceptance(
-    root: Path,
-    spec: CorpusSpec,
-    *,
-    expected_chunks: int,
-    clean: bool,
-    local_files_only: bool,
-    sample_interval_seconds: float,
-) -> AcceptanceReport:
+@dataclass(frozen=True, slots=True)
+class AcceptanceRequest:
+    """Inputs for one real production code-index acceptance run."""
+
+    root: Path
+    spec: CorpusSpec
+    expected_chunks: int
+    clean: bool
+    local_files_only: bool
+    sample_interval_seconds: float
+
+
+def run_acceptance(request: AcceptanceRequest) -> AcceptanceReport:
     """Run profile admission and the real production code-index pipeline."""
-    from ... import CodebaseIndexer, EmbeddingModel, VaultStore
+    from ... import CodebaseIndexer, EmbeddingModel
     from ...config import get_config
+    from ...store_runtime import VaultStore
 
-    resolved = root.resolve()
-    preparation = prepare_corpus(resolved, spec)
+    resolved = request.root.resolve()
+    preparation = prepare_corpus(resolved, request.spec)
     cfg = get_config()
-    preflight = validate_acceptance_admission(resolved, spec)
+    preflight = validate_acceptance_admission(resolved, request.spec)
 
-    model = EmbeddingModel(local_files_only=local_files_only)
+    model = EmbeddingModel(local_files_only=request.local_files_only)
     store = VaultStore(resolved)
     try:
         indexer = CodebaseIndexer(resolved, model, store)
         measured = measure_full_index(
             indexer,
             preflight,
-            clean=clean,
-            sample_interval_seconds=sample_interval_seconds,
+            clean=request.clean,
+            sample_interval_seconds=request.sample_interval_seconds,
         )
         result = measured.result
         resources = measured.resources
         measurement = indexer.support_measurement
         stored_chunks = store.count_code()
-        if result.files != spec.files:
+        if result.files != request.spec.files:
             raise RuntimeError(
                 f"production index processed {result.files} files; "
-                f"expected {spec.files}"
+                f"expected {request.spec.files}"
             )
         if stored_chunks != result.total:
             raise RuntimeError(
@@ -481,10 +486,10 @@ def run_acceptance(
                 "generated-chunk measurement diverged from the published collection: "
                 f"{measurement.generated_chunks} != {result.total}"
             )
-        if result.total < expected_chunks:
+        if result.total < request.expected_chunks:
             raise RuntimeError(
                 f"accepted corpus produced {result.total} chunks; floor is "
-                f"{expected_chunks}"
+                f"{request.expected_chunks}"
             )
         return AcceptanceReport(
             schema_version=_SCHEMA_VERSION,
@@ -492,9 +497,9 @@ def run_acceptance(
             profile=str(cfg.index_support_profile),
             backend="server" if cfg.qdrant_server else "local",
             corpus={
-                **asdict(spec),
+                **asdict(request.spec),
                 **asdict(preparation),
-                "expected_chunks": spec.expected_chunks,
+                "expected_chunks": request.spec.expected_chunks,
             },
             result=asdict(result),
             measurement=asdict(measurement),
@@ -568,12 +573,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
     else:
         report = run_acceptance(
-            args.root,
-            spec,
-            expected_chunks=expected_chunks,
-            clean=args.clean,
-            local_files_only=args.local_files_only,
-            sample_interval_seconds=args.sample_interval,
+            AcceptanceRequest(
+                root=args.root,
+                spec=spec,
+                expected_chunks=expected_chunks,
+                clean=args.clean,
+                local_files_only=args.local_files_only,
+                sample_interval_seconds=args.sample_interval,
+            )
         )
         payload = asdict(report)
     rendered = json.dumps(payload, indent=2) + "\n"
