@@ -359,18 +359,39 @@ class TestCodeIndexMemoryCeilings:
         embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
+        """A ceiling a hair above the resident baseline breaches on a forward.
+
+        The ceiling must be derived from the resident baseline, because that is
+        the figure enforcement subtracts from both sides. Deriving it from the
+        live reserved reading instead makes the test order-dependent: reserved
+        is allocator cache, which no ceiling governs, and an earlier run in the
+        same process leaves it far above what the models actually hold. The
+        ceiling then lands above anything this corpus can allocate, admission
+        releases the cache anyway, and the index completes - passing alone and
+        failing DID NOT RAISE behind any test that warmed the allocator.
+
+        Proven able to fail: dropping the ``+ 0.001`` pins the ceiling at the
+        baseline, admission refuses before dispatch, and with no forward ever
+        sampled this fails on ``assert snapshot is not None``; restored, the
+        first slice breaches mid-run.
+        """
         del clean_config
         from ... import CodebaseIndexer
         from ..._job_errors import JobError, JobErrorKind
         from ...config._settings import get_config
         from ...job_dispatch import _code_resilience
-        from ...memory_probe import current_cuda_mb, current_rss_mb
+        from ...memory_probe import current_rss_mb, sample_resident_cuda_baseline
         from ...store_runtime import VaultStore
 
-        allocated_mb, reserved_mb = current_cuda_mb()
-        measured_cuda_mb = max(allocated_mb, reserved_mb)
-        assert measured_cuda_mb > 0.0
-        ceiling_mb = measured_cuda_mb + 0.001
+        # The same call production makes once each shared model finishes
+        # loading; the fixture above loaded one. It ratchets, never shrinks.
+        baseline_mb = sample_resident_cuda_baseline()
+        assert baseline_mb > 0.0, (
+            "premise: the embedding model must be resident on the device"
+        )
+        # Positive headroom, so admission admits the run; small enough that the
+        # first real forward's activations cross it.
+        ceiling_mb = baseline_mb + 0.001
         get_config(
             {
                 "index_cuda_ceiling_mb": ceiling_mb,
@@ -395,7 +416,10 @@ class TestCodeIndexMemoryCeilings:
             cuda_ceiling_mb = snapshot.cuda_ceiling_mb
             assert cuda_ceiling_mb is not None
             assert cuda_ceiling_mb == ceiling_mb
-            assert snapshot.peak_cuda_reserved_mb > cuda_ceiling_mb
+            # The captured forward peak is what the ceiling governs; reserved
+            # rides above it as a diagnostic the comparison never reads.
+            assert snapshot.peak_cuda_allocated_mb > cuda_ceiling_mb
+            assert snapshot.peak_cuda_reserved_mb >= snapshot.peak_cuda_allocated_mb
             resilience = _code_resilience(indexer)
             assert resilience.cuda_ceiling_mb == cuda_ceiling_mb
             assert resilience.peak_cuda_allocated_mb == snapshot.peak_cuda_allocated_mb
