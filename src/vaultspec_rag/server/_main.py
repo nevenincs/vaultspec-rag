@@ -89,6 +89,81 @@ def _resolve_daemon_argv() -> tuple[int | None, int | None]:
     return args.port, args.parent_pid
 
 
+def _run_http_daemon(port: int) -> None:
+    """Run the standalone HTTP daemon and enforce its shutdown contract."""
+    import uvicorn
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+
+    from ..config import get_config
+    from ..logging_config import configure_logging, install_daemon_log_capture
+
+    # Install ordering (CRITICAL): argparse → configure_logging → capture → uvicorn.
+    configure_logging(level="INFO")
+    cfg = get_config()
+    log_capture = install_daemon_log_capture(
+        _m._resolve_log_path(),
+        max_bytes=int(cfg.managed_log_max_bytes),
+        backup_count=int(cfg.managed_log_backup_count),
+    )
+    daemon_exit_code = 0
+    try:
+        from ..jobs import register_on_job_complete
+        from ._routes import ROUTES as READ_ONLY_ROUTES
+
+        def _on_reindex_complete(duration_s: float) -> None:
+            _m.incr("reindex_total")
+            _m.observe("reindex_last_duration_seconds", duration_s)
+
+        register_on_job_complete(_on_reindex_complete)
+        app = Starlette(
+            routes=[Route("/health", health_handler), *READ_ONLY_ROUTES],
+            lifespan=service_lifespan,
+        )
+        _m._daemon_process = True
+        _m._daemon_log_capture = log_capture
+        uvicorn.run(
+            app,
+            host="127.0.0.1",
+            port=port,
+            timeout_graceful_shutdown=30,
+            log_level="info",
+            lifespan="on",
+        )
+    except BaseException:
+        daemon_exit_code = 1
+        raise
+    finally:
+        try:
+            _m._registry.close_all()
+        finally:
+            capture_closed = log_capture.close()
+        if _m._daemon_process:
+            os._exit(daemon_exit_code if capture_closed else 1)
+        if not capture_closed:
+            raise RuntimeError(
+                "service log drain did not finish within its shutdown bound"
+            )
+
+
+def _run_stdio_mcp(parent_pid: int | None) -> None:
+    """Run the thin stdio MCP client without loading the indexing model."""
+    try:
+        from ..mcp import mcp
+    except ImportError as exc:
+        raise RuntimeError(_missing_mcp_extra_message(exc)) from exc
+
+    from ._stdio_lifetime import install_stdio_lifetime_watchdog
+
+    install_stdio_lifetime_watchdog(parent_pid)
+    _m._registry._on_close_project = _m._stop_watcher  # pyright: ignore[reportPrivateUsage]
+    try:
+        mcp.run(transport="stdio")
+    finally:
+        _m._stop_all_watchers()
+        _m._registry.close_all()
+
+
 def main(port: int | None = None) -> None:
     """Start the RAG daemon on stdio or HTTP transport.
 
@@ -123,125 +198,6 @@ def main(port: int | None = None) -> None:
     _m._service_port = port or 0
 
     if port is not None:
-        import uvicorn
-        from starlette.applications import Starlette
-        from starlette.routing import Route
-
-        from ..config import get_config
-        from ..logging_config import (
-            configure_logging,
-            install_daemon_log_capture,
-        )
-
-        # Install ordering (CRITICAL):
-        # argparse → configure_logging → install_daemon_log_capture → uvicorn.run.
-        # The spawned daemon inherits the parent's stdout/stderr FD
-        # redirection onto service.log via Popen. Core's configure_logging
-        # installs its normal stderr sink; install_daemon_log_capture replaces
-        # it with one canonical stream and redirects fds 1/2 into a pipe whose
-        # bounded drain is the only service.log writer. Rotation is a stdio-mode
-        # asymmetry on purpose: stdio is one-shot CLI tooling, not a
-        # long-lived daemon, so no rotation is needed there.
-        configure_logging(level="INFO")
-        cfg = get_config()
-        log_capture = install_daemon_log_capture(
-            _m._resolve_log_path(),
-            max_bytes=int(cfg.managed_log_max_bytes),
-            backup_count=int(cfg.managed_log_backup_count),
-        )
-
-        daemon_exit_code = 0
-        try:
-            from ..jobs import register_on_job_complete
-            from ._routes import ROUTES as READ_ONLY_ROUTES
-
-            def _on_reindex_complete(duration_s: float) -> None:
-                _m.incr("reindex_total")
-                _m.observe("reindex_last_duration_seconds", duration_s)
-
-            register_on_job_complete(_on_reindex_complete)
-
-            # ``/health`` stays UNGATED (registered here, not in
-            # ``_routes``); the read-only routes (e.g. token-gated ``/logs``)
-            # register from ``_routes.ROUTES`` on this same app. The daemon
-            # serves native REST only: no MCP mount, no ASGI wrappers, just
-            # Starlette ``Route``s. The MCP is a separate stdio client that
-            # reaches these routes over HTTP.
-            app = Starlette(
-                routes=[
-                    Route("/health", health_handler),
-                    *READ_ONLY_ROUTES,
-                ],
-                lifespan=service_lifespan,
-            )
-
-            # Arm the standalone-daemon exit backstop before the event loop
-            # starts. ``service_lifespan`` forces a prompt ``os._exit`` after its
-            # bounded shutdown so a wedged ``to_thread`` worker cannot hang the
-            # interpreter-exit executor join. The stashed capture lets that exit
-            # flush ``service.log`` first. Both are read only via the package
-            # alias; the in-process embedded-reuse lifespan never sets them.
-            _m._daemon_process = True
-            _m._daemon_log_capture = log_capture
-
-            uvicorn.run(
-                app,
-                host="127.0.0.1",
-                port=port,
-                timeout_graceful_shutdown=30,
-                log_level="info",
-                lifespan="on",
-            )
-        except BaseException:
-            daemon_exit_code = 1
-            raise
-        finally:
-            try:
-                _m._registry.close_all()
-            finally:
-                capture_closed = log_capture.close()
-            # Standalone-daemon exit backstop. ``service_lifespan`` forces its own
-            # ``os._exit`` on the clean-serving and guarded-startup-failure paths,
-            # so reaching here on the daemon means ``uvicorn.run`` returned or
-            # raised WITHOUT that exit firing - a failed port bind, or a startup
-            # error uvicorn surfaced before the lifespan ran. Force the exit so the
-            # interpreter-exit executor join cannot wedge this daemon alive owning
-            # nothing (the orphan-accumulation class). The in-process
-            # embedded-reuse host (no ``_daemon_process``) skips it and enforces
-            # the log-drain contract instead.
-            if _m._daemon_process:
-                os._exit(daemon_exit_code if capture_closed else 1)
-            if not capture_closed:
-                raise RuntimeError(
-                    "service log drain did not finish within its shutdown bound"
-                )
-    else:
-        # stdio is the sole MCP transport. ``mcp`` is imported only here:
-        # the HTTP daemon no longer mounts any MCP app, so it never needs
-        # the package, and ``mcp`` is an optional extra rather than a core
-        # dependency. The guarded ImportError keeps the actionable
-        # pywin32/missing-extra message on the one path that requires it.
-        try:
-            from ..mcp import mcp
-        except ImportError as exc:  # missing mcp extra, or a broken pywin32 link
-            raise RuntimeError(_missing_mcp_extra_message(exc)) from exc
-
-        # The watchdog is stdio-only: this process's lifetime is its client
-        # connection, unlike the HTTP daemon above, which outlives its
-        # spawner by design. stdin EOF stays the primary exit; the watchdog
-        # reaps the shim when the spawning chain breaks without an EOF
-        # (abandoned generations, killed uv.exe).
-        from ._stdio_lifetime import install_stdio_lifetime_watchdog
-
-        install_stdio_lifetime_watchdog(parent_pid)
-
-        # No model load: the stdio MCP holds no GPU resource. Every tool
-        # delegates to the running daemon over HTTP through serviceclient,
-        # so a model loaded here would be dead weight (and would violate
-        # the thin-client "load no Torch" contract).
-        _m._registry._on_close_project = _m._stop_watcher  # pyright: ignore[reportPrivateUsage]
-        try:
-            mcp.run(transport="stdio")
-        finally:
-            _m._stop_all_watchers()
-            _m._registry.close_all()
+        _run_http_daemon(port)
+        return
+    _run_stdio_mcp(parent_pid)
