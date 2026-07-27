@@ -6,7 +6,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from . import store_schema
 from ._atomic_write import replace_atomically
@@ -16,6 +16,7 @@ from .storage_manifest import (
     SnapshotCollection,
     StorageSnapshotManifest,
     load_manifest,
+    snapshot_manifest_path,
     write_snapshot_manifest,
 )
 from .storage_reconciliation import ReconcileBatch, reconcile_collections
@@ -493,25 +494,27 @@ def _read_archive_records(manifest_path: Path) -> tuple[tuple[str, str, int], ..
     try:
         if manifest_path.stat().st_size <= 0:
             raise RuntimeError(f"archive manifest is empty: {manifest_path}")
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        payload: object = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"archive manifest is unreadable: {manifest_path}") from exc
     if not isinstance(payload, dict):
         raise RuntimeError(f"archive manifest is invalid: {manifest_path}")
-    raw_records = payload.get("collections")
+    raw_records = cast("dict[str, object]", payload).get("collections")
     if not isinstance(raw_records, list):
         message = f"archive manifest has no collection records: {manifest_path}"
         raise RuntimeError(message)
-    return tuple(_archive_record(record, manifest_path) for record in raw_records)
+    records = cast("list[object]", raw_records)
+    return tuple(_archive_record(record, manifest_path) for record in records)
 
 
 def _archive_record(record: object, manifest_path: Path) -> tuple[str, str, int]:
     """Validate one persisted snapshot record before using its file name."""
     if not isinstance(record, dict):
         raise RuntimeError(f"archive manifest has an invalid record: {manifest_path}")
-    name = record.get("name")
-    snapshot_file = record.get("snapshot_file")
-    points = record.get("points")
+    fields = cast("dict[str, object]", record)
+    name = fields.get("name")
+    snapshot_file = fields.get("snapshot_file")
+    points = fields.get("points")
     if (
         not isinstance(name, str)
         or not isinstance(snapshot_file, str)
@@ -567,17 +570,32 @@ def sweep_archive(
 
 
 def _archive_directories(archive_dir: Path) -> list[tuple[float, int, Path]]:
-    """Measure direct, non-linked completed archive directories."""
+    """Measure direct completed archive directories by their manifest clock."""
     archives: list[tuple[float, int, Path]] = []
     for path in archive_dir.iterdir():
         if not path.is_dir() or path.is_symlink():
             continue
-        try:
-            stat = path.stat()
-        except OSError:
+        completed_at = _archive_completion_timestamp(path)
+        if completed_at is None:
             continue
-        archives.append((stat.st_mtime, _archive_size(path), path))
+        archives.append((completed_at, _archive_size(path), path))
     return archives
+
+
+def _archive_completion_timestamp(archive: Path) -> float | None:
+    """Return one archive's persisted completion clock, never a file mtime."""
+    manifest = snapshot_manifest_path(archive)
+    try:
+        payload: object = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    completed_at = parse_iso_timestamp(
+        payload.get("completed_at"),
+        field="archive completed_at",
+    )
+    return None if completed_at is None else completed_at.timestamp()
 
 
 def _archive_size(archive: Path) -> int:
