@@ -5,6 +5,7 @@ tags:
 date: '2026-03-07'
 modified: '2026-07-27'
 ---
+
 # API Verification Report â€” 2026-03-07
 
 ## Findings
@@ -76,22 +77,22 @@ source code is ASCII, but worth noting for future hardening.
 
 Runtime test results:
 
-| Grammar name | Status                                                     |
-| ------------ | ---------------------------------------------------------- |
-| `python`     | OK                                                         |
-| `rust`       | OK                                                         |
-| `javascript` | OK                                                         |
-| `typescript` | OK                                                         |
-| `tsx`        | OK                                                         |
-| `go`         | OK                                                         |
-| `java`       | OK                                                         |
-| `c`          | OK                                                         |
-| `cpp`        | OK                                                         |
+| Grammar name | Status                                                       |
+| ------------ | ------------------------------------------------------------ |
+| `python`     | OK                                                           |
+| `rust`       | OK                                                           |
+| `javascript` | OK                                                           |
+| `typescript` | OK                                                           |
+| `tsx`        | OK                                                           |
+| `go`         | OK                                                           |
+| `java`       | OK                                                           |
+| `c`          | OK                                                           |
+| `cpp`        | OK                                                           |
 | `c_sharp`    | **FAILED** â€” `Could not find language library for c_sharp` |
-| `csharp`     | OK                                                         |
-| `ruby`       | OK                                                         |
-| `bash`       | OK                                                         |
-| `kotlin`     | OK                                                         |
+| `csharp`     | OK                                                           |
+| `ruby`       | OK                                                           |
+| `bash`       | OK                                                           |
+| `kotlin`     | OK                                                           |
 
 **The correct grammar name is `csharp`, not `c_sharp`.**
 

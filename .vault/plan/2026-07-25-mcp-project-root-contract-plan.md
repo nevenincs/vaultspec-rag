@@ -9,6 +9,7 @@ related:
   - '[[2026-07-25-mcp-project-root-contract-adr]]'
   - '[[2026-07-25-mcp-project-root-contract-research]]'
 ---
+
 # `mcp-project-root-contract` plan
 
 ## Description

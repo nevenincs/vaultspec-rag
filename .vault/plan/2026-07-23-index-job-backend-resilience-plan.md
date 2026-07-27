@@ -9,6 +9,7 @@ related:
   - '[[2026-07-23-index-job-backend-resilience-adr]]'
   - '[[2026-07-23-index-job-backend-resilience-research]]'
 ---
+
 # `index-job-backend-resilience` plan
 
 ## Description

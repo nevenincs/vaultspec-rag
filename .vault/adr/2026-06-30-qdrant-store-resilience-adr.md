@@ -8,6 +8,7 @@ related:
   - "[[2026-06-30-qdrant-store-resilience-research]]"
   - '[[2026-06-30-qdrant-store-resilience-audit]]'
 ---
+
 # `qdrant-store-resilience` adr: `Detect, quarantine, and retry a corrupt collection on supervised start` | (**status:** `accepted`)
 
 ## Problem Statement

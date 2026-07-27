@@ -8,6 +8,7 @@ step_id: 'S15'
 related:
   - "[[2026-06-12-service-concurrency-plan]]"
 ---
+
 # Narrow gpu_lock holds to model forward calls only across the search encode and rerank paths
 
 ## Description

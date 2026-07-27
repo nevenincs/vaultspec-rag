@@ -27,4 +27,5 @@ targets.
 Committed with the P07 test commit; 34 jobs-unit tests green.
 
 ## Notes
+
 Template evidence: intro_commit=cdd61fe69100896ddf1b31f56e327d8fdfd778b9; template_commit=cdd61fe69100896ddf1b31f56e327d8fdfd778b9:.vaultspec/templates/exec-step.md requires Description, Outcome, and Notes. This repair preserves the retained record text and adds no new implementation claim.

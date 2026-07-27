@@ -8,6 +8,7 @@ related:
   - '[[2026-04-12-index-progress-bars-reference]]'
   - '[[2026-04-12-index-progress-bars-adr]]'
 ---
+
 # index-progress-bars research
 
 ## Findings

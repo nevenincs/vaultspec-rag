@@ -9,6 +9,7 @@ related:
   - '[[2026-07-17-mcp-launch-hygiene-adr]]'
   - '[[2026-07-17-mcp-launch-hygiene-research]]'
 ---
+
 # `mcp-launch-hygiene` plan
 
 ## Description

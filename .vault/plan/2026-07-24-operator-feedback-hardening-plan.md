@@ -10,6 +10,7 @@ related:
   - '[[2026-07-24-operator-feedback-hardening-audit]]'
   - '[[2026-07-27-operator-feedback-hardening-grounding-research]]'
 ---
+
 # `operator-feedback-hardening` plan
 
 ## Description

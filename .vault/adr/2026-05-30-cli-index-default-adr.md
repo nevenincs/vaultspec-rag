@@ -117,6 +117,7 @@ the code collection, making the new guard's narrative dishonest.
 - The `clean` / `index` asymmetry is now explicitly documented as
   intentional. Future commands should look at destructiveness,
   not symmetry, when deciding whether to make flags required.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

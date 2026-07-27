@@ -693,9 +693,7 @@ class DocumentIndexer:
         # Route the lock-bracketed forward captures into this job's own
         # budget so checkpoints enforce the job's demand rather than a
         # process-wide high-water.
-        with record_forward_peaks(
-            request.budget.memory_budget.record_forward_peak_mb
-        ):
+        with record_forward_peaks(request.budget.memory_budget.record_forward_peak_mb):
             encode_and_upsert_document_slice(
                 DocumentSliceRequest(
                     chunks=request.selected,
@@ -968,9 +966,9 @@ class DocumentIndexer:
     ) -> None:
         """Replace one file generation and account for obsolete points."""
         replacement.current[replacement.rel] = replacement.metadata
-        obsolete = set(
-            replacement.old.point_ids if replacement.old else ()
-        ) - set(replacement.metadata.point_ids)
+        obsolete = set(replacement.old.point_ids if replacement.old else ()) - set(
+            replacement.metadata.point_ids
+        )
         if obsolete:
             obsolete_ids = tuple(sorted(obsolete))
             self.store.delete_document_content_chunks(list(obsolete_ids))

@@ -114,7 +114,8 @@ def bind_index_job(binding: IndexJobBinding) -> JobOutcome:
 
 def _run_vault_attempt(
     context: JobAttemptContext,
-    *, dispatch: _AttemptDispatch,
+    *,
+    dispatch: _AttemptDispatch,
 ) -> JobExecutionResult:
     """Run one vault attempt through the exact service registry."""
     from .jobs import JobProgressReporter
@@ -159,7 +160,8 @@ def _run_vault_attempt(
 
 def _run_indexing_attempt(
     context: JobAttemptContext,
-    *, dispatch: _AttemptDispatch,
+    *,
+    dispatch: _AttemptDispatch,
 ) -> JobExecutionResult:
     """Run one code or document attempt through fresh execution authority.
 

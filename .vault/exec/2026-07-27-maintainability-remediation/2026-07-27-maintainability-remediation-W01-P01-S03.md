@@ -8,6 +8,7 @@ step_id: 'S03'
 related:
   - "[[2026-07-27-maintainability-remediation-plan]]"
 ---
+
 ## Outcome
 
 Reconciled the active registry assertion seam. The registry scenarios import the canonical public `AttemptTerminal` model rather than the removed private spelling, keeping persisted attempt completion assertions on the direct job-control contract.

@@ -679,9 +679,7 @@ def _validated_managed_log_group(
     """Validate one exact source group from the live response."""
     data = cast("dict[str, object]", raw) if isinstance(raw, dict) else None
     lines = (
-        _validated_managed_log_lines(data.get("lines"), limit=limit)
-        if data
-        else None
+        _validated_managed_log_lines(data.get("lines"), limit=limit) if data else None
     )
     if data is None or data.get("source") != expected_source or lines is None:
         return None
@@ -1113,6 +1111,8 @@ def install_daemon_log_capture(
 
         _report_handler_close_failures(close_failures)
         return capture
+
+
 type EventExcInfo = (
     bool
     | BaseException

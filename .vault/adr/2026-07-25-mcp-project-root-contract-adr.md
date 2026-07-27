@@ -7,6 +7,7 @@ modified: '2026-07-27'
 related:
   - "[[2026-07-25-mcp-project-root-contract-research]]"
 ---
+
 # `mcp-project-root-contract` adr: `the mcp surface resolves the root the daemon must never guess` | (**status:** `accepted`)
 
 ## Problem Statement

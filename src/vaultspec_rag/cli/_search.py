@@ -359,17 +359,52 @@ def _try_in_process_search(
     not.
     """
     (
-        target, query, search_type, max_results, language, path, node_type,
-        function_name, class_name, include_paths, exclude_paths, dedup_locales,
-        prefer, doc_type, feature, date, tag, source_path, extractor_id,
-        extractor_version, locator_kind, json_mode, envelope,
+        target,
+        query,
+        search_type,
+        max_results,
+        language,
+        path,
+        node_type,
+        function_name,
+        class_name,
+        include_paths,
+        exclude_paths,
+        dedup_locales,
+        prefer,
+        doc_type,
+        feature,
+        date,
+        tag,
+        source_path,
+        extractor_id,
+        extractor_version,
+        locator_kind,
+        json_mode,
+        envelope,
     ) = (
-        request.target, request.query, request.search_type, request.max_results,
-        request.language, request.path, request.node_type, request.function_name,
-        request.class_name, request.include_paths, request.exclude_paths,
-        request.dedup_locales, request.prefer, request.doc_type, request.feature,
-        request.date, request.tag, request.source_path, request.extractor_id,
-        request.extractor_version, request.locator_kind, request.json_mode,
+        request.target,
+        request.query,
+        request.search_type,
+        request.max_results,
+        request.language,
+        request.path,
+        request.node_type,
+        request.function_name,
+        request.class_name,
+        request.include_paths,
+        request.exclude_paths,
+        request.dedup_locales,
+        request.prefer,
+        request.doc_type,
+        request.feature,
+        request.date,
+        request.tag,
+        request.source_path,
+        request.extractor_id,
+        request.extractor_version,
+        request.locator_kind,
+        request.json_mode,
         request.envelope,
     )
     import vaultspec_rag
@@ -444,30 +479,34 @@ def _try_in_process_search(
         )
         with status_ctx:
             if search_type is PublicSourceType.CODE:
-                results = vaultspec_rag.search_codebase(CodebaseSearchRequest(
-                    root_dir=target,
-                    query=query,
-                    top_k=max_results,
-                    language=language,
-                    path=path,
-                    node_type=node_type,
-                    function_name=function_name,
-                    class_name=class_name,
-                    include_paths=include_paths,
-                    exclude_paths=exclude_paths,
-                    dedup_locales=dedup_locales,
-                    prefer=prefer,
-                ))
+                results = vaultspec_rag.search_codebase(
+                    CodebaseSearchRequest(
+                        root_dir=target,
+                        query=query,
+                        top_k=max_results,
+                        language=language,
+                        path=path,
+                        node_type=node_type,
+                        function_name=function_name,
+                        class_name=class_name,
+                        include_paths=include_paths,
+                        exclude_paths=exclude_paths,
+                        dedup_locales=dedup_locales,
+                        prefer=prefer,
+                    )
+                )
             elif search_type is PublicSourceType.VAULT:
-                results = vaultspec_rag.search_vault(VaultSearchRequest(
-                    root_dir=target,
-                    query=query,
-                    top_k=max_results,
-                    doc_type=doc_type,
-                    feature=feature,
-                    date=date,
-                    tag=tag,
-                ))
+                results = vaultspec_rag.search_vault(
+                    VaultSearchRequest(
+                        root_dir=target,
+                        query=query,
+                        top_k=max_results,
+                        doc_type=doc_type,
+                        feature=feature,
+                        date=date,
+                        tag=tag,
+                    )
+                )
             elif search_type is PublicSourceType.DOCUMENT:
                 results = vaultspec_rag.search_documents(
                     DocumentSearchRequest(
@@ -532,25 +571,28 @@ def _validate_and_handle_filters(request: _InProcessSearchRequest) -> None:
     )
 
     try:
-        validate_search_filters(request.search_type, SearchFilterOptions(
-            language=request.language,
-            path=request.path,
-            node_type=request.node_type,
-            function_name=request.function_name,
-            class_name=request.class_name,
-            doc_type=request.doc_type,
-            feature=request.feature,
-            date=request.date,
-            tag=request.tag,
-            include_paths=request.include_paths,
-            exclude_paths=request.exclude_paths,
-            dedup_locales=request.dedup_locales,
-            prefer=request.prefer,
-            source_path=request.source_path,
-            extractor_id=request.extractor_id,
-            extractor_version=request.extractor_version,
-            locator_kind=request.locator_kind,
-        ))
+        validate_search_filters(
+            request.search_type,
+            SearchFilterOptions(
+                language=request.language,
+                path=request.path,
+                node_type=request.node_type,
+                function_name=request.function_name,
+                class_name=request.class_name,
+                doc_type=request.doc_type,
+                feature=request.feature,
+                date=request.date,
+                tag=request.tag,
+                include_paths=request.include_paths,
+                exclude_paths=request.exclude_paths,
+                dedup_locales=request.dedup_locales,
+                prefer=request.prefer,
+                source_path=request.source_path,
+                extractor_id=request.extractor_id,
+                extractor_version=request.extractor_version,
+                locator_kind=request.locator_kind,
+            ),
+        )
     except InvalidPreferValueError as exc:
         msg = str(exc)
         if request.json_mode:
@@ -1123,10 +1165,28 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
     prefer = _search_prefer_filter(prefer, json_mode=json_mode)
     search_type = _validate_search_type(search_type, json_mode=json_mode)
     local_request = _InProcessSearchRequest(
-        target, query, search_type, max_results, language, path, structure,
-        function_name, class_name, include_paths, exclude_paths, dedup_locales,
-        prefer, doc_type, feature, date, tag, source_path, extractor_id,
-        extractor_version, locator_kind, json_mode,
+        target,
+        query,
+        search_type,
+        max_results,
+        language,
+        path,
+        structure,
+        function_name,
+        class_name,
+        include_paths,
+        exclude_paths,
+        dedup_locales,
+        prefer,
+        doc_type,
+        feature,
+        date,
+        tag,
+        source_path,
+        extractor_id,
+        extractor_version,
+        locator_kind,
+        json_mode,
     )
     _validate_and_handle_filters(local_request)
 
@@ -1211,9 +1271,7 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
     with _local_search_deadline(deadline, json_mode=json_mode):
         envelope: dict[str, object] = {}
         try:
-            results = _try_in_process_search(
-                replace(local_request, envelope=envelope)
-            )
+            results = _try_in_process_search(replace(local_request, envelope=envelope))
 
             _render_in_process_results(
                 _InProcessRenderRequest(

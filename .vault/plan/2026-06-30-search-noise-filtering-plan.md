@@ -9,6 +9,7 @@ related:
   - '[[2026-06-30-search-noise-filtering-adr]]'
   - '[[2026-06-30-search-noise-filtering-research]]'
 ---
+
 # `search-noise-filtering` plan
 
 ## Description

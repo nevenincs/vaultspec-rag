@@ -147,13 +147,13 @@ Verdict: **aligned**.
 
 ### risks flagged at plan time â€” status
 
-| risk                                   | outcome                                                                    |
-| :------------------------------------- | :------------------------------------------------------------------------- |
-| tomlkit drops non-ASCII chars          | n/a (round-trip test passes; tomlkit is ASCII-clean by design)             |
-| `apply_patch` destroys user formatting | verified false (`test_apply_preserves_user_comments`)                      |
-| `uv sync` fails                        | fenced: `check=False`, becomes warning                                     |
+| risk                                   | outcome                                                                        |
+| :------------------------------------- | :----------------------------------------------------------------------------- |
+| tomlkit drops non-ASCII chars          | n/a (round-trip test passes; tomlkit is ASCII-clean by design)                 |
+| `apply_patch` destroys user formatting | verified false (`test_apply_preserves_user_comments`)                          |
+| `uv sync` fails                        | fenced: `check=False`, becomes warning                                         |
 | Non-TTY UX surprise                    | CLI reads `sys.stdin.isatty()` â†’ passes `confirm=None` â†’ "skipped-non-tty" |
-| `diagnose_torch` classification wrong  | pinned by parametrized tests                                               |
+| `diagnose_torch` classification wrong  | pinned by parametrized tests                                                   |
 
 ### sign-off
 

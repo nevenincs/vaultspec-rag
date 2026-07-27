@@ -172,6 +172,7 @@ complains about.
 - `service.lifecycle` log lines change the log volume slightly
   (startup + shutdown per process lifetime). No per-request or
   per-tool spam.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

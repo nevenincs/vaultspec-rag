@@ -9,6 +9,7 @@ related:
   - '[[2026-07-25-index-lifecycle-consolidation-adr]]'
   - '[[2026-07-25-index-lifecycle-consolidation-research]]'
 ---
+
 # `index-lifecycle-consolidation` plan
 
 ## Description

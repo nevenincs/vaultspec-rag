@@ -8,6 +8,7 @@ step_id: 'S02'
 related:
   - "[[2026-07-27-maintainability-remediation-plan]]"
 ---
+
 ## Outcome
 
 Reconciled the active run-ledger validation extraction before ledger ownership migration. The legacy `_run_ledger.py` module is deleted and its models, runtime lifecycle, durable commits, file evidence, and finalization each have a single concrete owner; direct importer migration is complete.

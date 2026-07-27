@@ -9,6 +9,7 @@ related:
   - '[[2026-07-22-service-health-client-hardening-adr]]'
   - '[[2026-07-22-service-health-client-hardening-research]]'
 ---
+
 # `service-health-client-hardening` plan
 
 ## Description

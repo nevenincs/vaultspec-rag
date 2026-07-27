@@ -8,6 +8,7 @@ step_id: 'S14'
 related:
   - "[[2026-06-12-service-concurrency-plan]]"
 ---
+
 # Extend stress tests to assert cross-collection concurrency and same-collection exclusion semantics
 
 ## Description

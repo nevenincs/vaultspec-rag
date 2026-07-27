@@ -61,15 +61,17 @@ class TestGenerationReclaimAgainstRealStorage:
         client = _client(tmp_path, served, superseded)
         publish_served_code_collection(tmp_path, served)
         try:
-            results, stamps = reclaim_superseded_generations(GenerationReclaimRequest(
-                client=client,
-                roots={str(tmp_path): _DERIVED},
-                stamps={superseded: _LONG_AGO},
-                now=_NOW,
-                grace_hours=24.0,
-                reader_present=lambda _root: False,
-                dry_run=False,
-            ))
+            results, stamps = reclaim_superseded_generations(
+                GenerationReclaimRequest(
+                    client=client,
+                    roots={str(tmp_path): _DERIVED},
+                    stamps={superseded: _LONG_AGO},
+                    now=_NOW,
+                    grace_hours=24.0,
+                    reader_present=lambda _root: False,
+                    dry_run=False,
+                )
+            )
             live = _live(client)
         finally:
             client.close()
@@ -97,15 +99,17 @@ class TestGenerationReclaimAgainstRealStorage:
         client = _client(tmp_path, served, superseded)
         publish_served_code_collection(tmp_path, served)
         try:
-            _results, stamps = reclaim_superseded_generations(GenerationReclaimRequest(
-                client=client,
-                roots={str(tmp_path): _DERIVED},
-                stamps={superseded: _LONG_AGO},
-                now=_NOW,
-                grace_hours=24.0,
-                reader_present=lambda _root: True,
-                dry_run=False,
-            ))
+            _results, stamps = reclaim_superseded_generations(
+                GenerationReclaimRequest(
+                    client=client,
+                    roots={str(tmp_path): _DERIVED},
+                    stamps={superseded: _LONG_AGO},
+                    now=_NOW,
+                    grace_hours=24.0,
+                    reader_present=lambda _root: True,
+                    dry_run=False,
+                )
+            )
             live = _live(client)
         finally:
             client.close()
@@ -137,15 +141,17 @@ class TestGenerationReclaimAgainstRealStorage:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{ not json", encoding="utf-8")
         try:
-            _results, stamps = reclaim_superseded_generations(GenerationReclaimRequest(
-                client=client,
-                roots={str(tmp_path): _DERIVED},
-                stamps={superseded: _LONG_AGO},
-                now=_NOW,
-                grace_hours=24.0,
-                reader_present=lambda _root: False,
-                dry_run=False,
-            ))
+            _results, stamps = reclaim_superseded_generations(
+                GenerationReclaimRequest(
+                    client=client,
+                    roots={str(tmp_path): _DERIVED},
+                    stamps={superseded: _LONG_AGO},
+                    now=_NOW,
+                    grace_hours=24.0,
+                    reader_present=lambda _root: False,
+                    dry_run=False,
+                )
+            )
             live = _live(client)
         finally:
             client.close()
@@ -171,15 +177,17 @@ class TestGenerationReclaimAgainstRealStorage:
         client = _client(tmp_path, served, superseded)
         publish_served_code_collection(tmp_path, served)
         try:
-            results, _stamps = reclaim_superseded_generations(GenerationReclaimRequest(
-                client=client,
-                roots={str(tmp_path): _DERIVED},
-                stamps={superseded: _LONG_AGO},
-                now=_NOW,
-                grace_hours=24.0,
-                reader_present=lambda _root: False,
-                dry_run=True,
-            ))
+            results, _stamps = reclaim_superseded_generations(
+                GenerationReclaimRequest(
+                    client=client,
+                    roots={str(tmp_path): _DERIVED},
+                    stamps={superseded: _LONG_AGO},
+                    now=_NOW,
+                    grace_hours=24.0,
+                    reader_present=lambda _root: False,
+                    dry_run=True,
+                )
+            )
             live = _live(client)
         finally:
             client.close()

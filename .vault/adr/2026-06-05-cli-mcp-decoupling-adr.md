@@ -52,6 +52,7 @@ Decoupling all functional orchestration from CLI/MCP ensures that the backend re
 
 - **Rule slug:** `interface-layer-zero-business-logic`.
   **Rule:** CLI and MCP modules must not contain custom business logic, loop orchestrations, or ML model configurations; they must delegate all operational tasks to the unified backend facade.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

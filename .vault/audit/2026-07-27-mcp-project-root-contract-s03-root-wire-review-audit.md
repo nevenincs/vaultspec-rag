@@ -7,6 +7,7 @@ modified: '2026-07-27'
 related:
   - "[[2026-07-25-mcp-project-root-contract-plan]]"
 ---
+
 # `mcp-project-root-contract` audit: `s03 root wire review`
 
 ## Scope

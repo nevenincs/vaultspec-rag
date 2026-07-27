@@ -5,6 +5,7 @@ tags:
 date: '2026-03-08'
 modified: '2026-07-27'
 ---
+
 # Round 26 Audit: embeddings.py Deep Dive
 
 ## Scope

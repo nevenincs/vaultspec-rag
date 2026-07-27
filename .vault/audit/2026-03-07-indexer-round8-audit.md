@@ -5,6 +5,7 @@ tags:
 date: '2026-03-07'
 modified: '2026-07-27'
 ---
+
 # Round 8 Audit -- indexer.py (deep dive)
 
 ## Scope

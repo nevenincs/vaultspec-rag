@@ -191,6 +191,8 @@ This is deterministic — no content drift, no fragile stem matching.
 - Should `data_dir` be absolute or always relative to `root_dir`? (Recommendation: relative by default, env override can be absolute)
 - Should `handle_quality()` keep `test-project/` or fully migrate to synthetic? (Recommendation: fully migrate — `test-project/` is 415 static docs of debt)
 - Should `_RAG_DEFAULTS` resolve paths eagerly (at config creation) or lazily (at access)? (Recommendation: lazily — config is created before root_dir is known in some flows)
+
 ## Sources
+
 - Evidence cited inline: `README.md`, `src/vaultspec_rag/tests/corpus.py`.
 - Related record identifiers: `2026-04-02-service-graph-adr`, `2026-04-02-service-graph-code-review-audit`.

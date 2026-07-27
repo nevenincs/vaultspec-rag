@@ -8,6 +8,7 @@ step_id: 'S20'
 related:
   - "[[2026-06-12-service-concurrency-plan]]"
 ---
+
 # Introduce env-tunable search and index capacity limiters replacing shared default thread-pool usage
 
 ## Description
@@ -18,6 +19,7 @@ related:
 
 - Add `concurrency.py` with lazy, env-tunable capacity limiters: search
   pool (default 16) and index-job pool (default 4), plus limiter_stats().
+
 - Wire the search route, both background reindex jobs, and both watcher
   reindex paths onto their limiters.
 

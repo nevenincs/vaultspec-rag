@@ -8,6 +8,7 @@ step_id: 'S12'
 related:
   - '[[2026-06-09-operability-hardening-plan]]'
 ---
+
 # Flatten `server service` nesting — lift lifecycle commands to `server`
 
 ## Description

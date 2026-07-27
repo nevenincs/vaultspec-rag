@@ -5,6 +5,7 @@ tags:
 date: '2026-03-08'
 modified: '2026-07-27'
 ---
+
 # Round 24 Audit: Watcher, CLI Fast-Path, MCP Client
 
 ## Scope

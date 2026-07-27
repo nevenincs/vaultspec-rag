@@ -137,5 +137,7 @@ environment is **not** a blocker — the onnxruntime CUDA-13 nightly coexists wi
 - Dense-only now, or leave a seam for SPLADE-encoder ONNX later?
 - Where the parity gate lives (a new real-GPU test) and the cosine/top-k thresholds.
 - Default-on vs opt-in is decided by the benchmark, not pre-committed.
+
 ## Sources
+
 - Related record identifiers: `2026-06-02-rag-index-performance-research`.

@@ -9,6 +9,7 @@ related:
   - '[[2026-07-23-service-orphan-reaping-adr]]'
   - '[[2026-07-23-service-orphan-reaping-research]]'
 ---
+
 # `service-orphan-reaping` plan
 
 ## Description

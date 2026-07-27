@@ -361,40 +361,44 @@ def _dispatch_public_search(
     from ..api import CodebaseSearchRequest, VaultSearchRequest
 
     if request.search_type is PublicSourceType.VAULT:
-        results, timings = vaultspec_rag.search_vault_timed(VaultSearchRequest(
-            root_dir=request.root,
-            query=request.query,
-            top_k=request.top_k,
-            doc_type=request.payload.get("doc_type"),
-            feature=request.payload.get("feature"),
-            date=request.payload.get("date"),
-            tag=request.payload.get("tag"),
-            intent=request.payload.get("intent"),
-            like_ids=request.payload.get("like_ids"),
-            unlike_ids=request.payload.get("unlike_ids"),
-        ))
+        results, timings = vaultspec_rag.search_vault_timed(
+            VaultSearchRequest(
+                root_dir=request.root,
+                query=request.query,
+                top_k=request.top_k,
+                doc_type=request.payload.get("doc_type"),
+                feature=request.payload.get("feature"),
+                date=request.payload.get("date"),
+                tag=request.payload.get("tag"),
+                intent=request.payload.get("intent"),
+                like_ids=request.payload.get("like_ids"),
+                unlike_ids=request.payload.get("unlike_ids"),
+            )
+        )
         return results, timings, None
     if request.search_type is PublicSourceType.CODE:
-        results, timings = vaultspec_rag.search_codebase_timed(CodebaseSearchRequest(
-            root_dir=request.root,
-            query=request.query,
-            top_k=request.top_k,
-            language=request.payload.get("language"),
-            path=request.payload.get("path"),
-            node_type=request.payload.get("node_type"),
-            function_name=request.payload.get("function_name"),
-            class_name=request.payload.get("class_name"),
-            include_paths=request.payload.get("include_paths"),
-            exclude_paths=request.payload.get("exclude_paths"),
-            dedup_locales=request.payload.get("dedup_locales"),
-            prefer=request.payload.get("prefer"),
-            exclude_domains=request.payload.get("exclude_domains"),
-            only_domains=request.payload.get("only_domains"),
-            include_domains=request.payload.get("include_domains"),
-            like_ids=request.payload.get("like_ids"),
-            unlike_ids=request.payload.get("unlike_ids"),
-            notes=notes,
-        ))
+        results, timings = vaultspec_rag.search_codebase_timed(
+            CodebaseSearchRequest(
+                root_dir=request.root,
+                query=request.query,
+                top_k=request.top_k,
+                language=request.payload.get("language"),
+                path=request.payload.get("path"),
+                node_type=request.payload.get("node_type"),
+                function_name=request.payload.get("function_name"),
+                class_name=request.payload.get("class_name"),
+                include_paths=request.payload.get("include_paths"),
+                exclude_paths=request.payload.get("exclude_paths"),
+                dedup_locales=request.payload.get("dedup_locales"),
+                prefer=request.payload.get("prefer"),
+                exclude_domains=request.payload.get("exclude_domains"),
+                only_domains=request.payload.get("only_domains"),
+                include_domains=request.payload.get("include_domains"),
+                like_ids=request.payload.get("like_ids"),
+                unlike_ids=request.payload.get("unlike_ids"),
+                notes=notes,
+            )
+        )
         return results, timings, None
     if request.search_type is PublicSourceType.DOCUMENT:
         results, timings = vaultspec_rag.search_documents_timed(

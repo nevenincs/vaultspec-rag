@@ -16,7 +16,9 @@ related:
 - `src/vaultspec_rag/config.py`
 
 - Register `QDRANT_QUANTIZATION` environment variable under `EnvVar` StrEnum.
+
 - Enlist the environment variable under the configuration wrapper's mapping index `_ENV_OVERRIDE_MAP`.
+
 - Provide default setting `qdrant_quantization` mapping to `None` in `_RAG_DEFAULTS`.
 
 ## Outcome

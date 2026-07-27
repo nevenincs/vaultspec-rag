@@ -21,8 +21,10 @@ related:
   and a graded gold mapping: `ndcg_at_k` (gain = grade, the headline), `rank_of_first_grade`,
   `authoritative_at_k` (orientation grade-3-in-top-k signal), `mrr_at_first_grade` (debugging
   signal), and `role_precision_at_k` (sanity guard).
+
 - Used exponential gain `2**grade - 1` with `log2(rank+1)` discount; documents absent from
   gold are grade 0; ideal-DCG-zero guarded to return 0.0.
+
 - Moved the typing-only `collections.abc` imports under `TYPE_CHECKING` to satisfy lint.
 
 ## Outcome

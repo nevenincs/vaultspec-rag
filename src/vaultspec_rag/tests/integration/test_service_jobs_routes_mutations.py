@@ -112,7 +112,7 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
                         "mode": "incremental",
                         "start_paused": True,
                     },
-                )
+                ),
             )
             assert created.status_code == 202, created.text
             job = cast("dict[str, Any]", created.json()["job"])
@@ -127,20 +127,18 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
                         "state": "cancelled",
                         "expected_revision": job["revision"],
                     },
-                )
+                ),
             )
             assert cancelled.status_code == 200, cancelled.text
 
             manager.begin_shutdown()
             retried = await _assert_mutation_overlaps_auth_probe(
-                client,
-                client.post(f"/jobs/{job_id}/retry", headers=headers)
+                client, client.post(f"/jobs/{job_id}/retry", headers=headers)
             )
             assert retried.status_code == 202, retried.text
 
             deleted = await _assert_mutation_overlaps_auth_probe(
-                client,
-                client.delete(f"/jobs/{job_id}", headers=headers)
+                client, client.delete(f"/jobs/{job_id}", headers=headers)
             )
             assert deleted.status_code == 200, deleted.text
     finally:

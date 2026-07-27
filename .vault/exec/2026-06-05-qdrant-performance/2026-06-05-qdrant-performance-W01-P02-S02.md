@@ -16,8 +16,11 @@ related:
 - `src/vaultspec_rag/store.py`
 
 - Refactor `__init__` in `VaultStore` to read `qdrant_url` and `qdrant_api_key` from configuration wrapper.
+
 - Bypass `FileLock` instantiation and acquisition if `qdrant_url` is configured.
+
 - Establish `QdrantClient` connection using the server URL and API key.
+
 - Fall back to standard local file-based Qdrant client connection and local directory locks if the URL is not set.
 
 ## Outcome

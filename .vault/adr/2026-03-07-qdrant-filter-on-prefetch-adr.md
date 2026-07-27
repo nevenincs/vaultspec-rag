@@ -8,6 +8,7 @@ related:
   - '[[2026-03-08-qdrant-filter-verification-research]]'
   - '[[2026-03-07-libdoc-verification-research]]'
 ---
+
 # `gpu-rag-stack` adr: `Filters must go on each Prefetch, not top-level query_filter` | (**status:** `accepted`)
 
 ## Problem Statement

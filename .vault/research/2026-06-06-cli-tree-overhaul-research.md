@@ -6,6 +6,7 @@ date: '2026-06-06'
 modified: '2026-07-27'
 related: []
 ---
+
 # `cli-tree-overhaul` research: `CLI Tree Overhaul Research`
 
 ## Findings

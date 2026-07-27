@@ -113,6 +113,7 @@ assert the chunks are evicted.
   **Rule:** Any application-level debounce or cooldown layered on top of the filesystem
   watcher must guarantee its last pending batch is flushed on a quiet tree (e.g. via the
   `awatch` idle tick), never only on the next filesystem event.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

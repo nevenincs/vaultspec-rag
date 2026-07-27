@@ -8,6 +8,7 @@ step_id: 'S09'
 related:
   - "[[2026-06-12-service-concurrency-plan]]"
 ---
+
 # Update unit and GPU tests for content reranking and the bounded nudge, run the quality harness, and record deltas
 
 ## Description
@@ -18,6 +19,7 @@ related:
 
 - Run the unit suites for content reranking and the bounded nudge (rerank
   bound test against a real VaultGraph; updated store/meta round-trip tests).
+
 - Run the search quality harness against the fully reworked retrieval stack.
 
 ## Outcome

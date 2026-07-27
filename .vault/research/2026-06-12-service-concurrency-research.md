@@ -364,5 +364,7 @@ not in the pipeline engineering.
   vs off; keep, replace, or scope it to vault accordingly.
 - **O14 — Server-mode collection schema.** HNSW config, fp16 vector datatype, default
   scalar quantization, sparse index params — decided together with O1.
+
 ## Sources
+
 - Related record identifiers: `2026-06-11-server-bound-search-production-readiness-adr`, `2026-04-02-service-graph-adr`, `2026-06-02-index-gpu-pipeline-adr`.

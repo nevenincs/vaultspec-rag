@@ -19,6 +19,7 @@ related:
 
 - Authored `test_vault_payload_fields.py` (quality-marked), driving a freshly indexed
   synthetic corpus that now emits all three ADR heading formats and pipeline edges.
+
 - Asserted: a modern-status ADR surfaces its exact status; the legacy no-marker ADR resolves
   to empty status; a linked document surfaces its related edges; and no result title leaks
   the `(**status:` marker.

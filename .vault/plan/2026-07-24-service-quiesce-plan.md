@@ -9,6 +9,7 @@ related:
   - '[[2026-07-24-service-quiesce-adr]]'
   - '[[2026-07-24-service-quiesce-research]]'
 ---
+
 # `service-quiesce` plan
 
 ## Description

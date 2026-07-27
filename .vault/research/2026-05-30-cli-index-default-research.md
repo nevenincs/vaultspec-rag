@@ -113,5 +113,7 @@ This closes the footgun without breaking the daily-driver UX and
 without requiring users to type more for the safe-by-default
 invocation. The asymmetry with `clean --type required` is
 intentional — `clean` has no safe default; `index` does.
+
 ## Sources
+
 - Evidence cited inline: `README.md`, `tests/test_cli.py`.

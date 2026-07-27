@@ -50,6 +50,7 @@ class _MetaPublishRequest:
     published_points_count: int
     published_files_count: int | None = None
 
+
 #: Version of the embedding-input format for code chunks. ``2`` embeds
 #: a one-line locational header (path, class, function) ahead of the
 #: chunk text; ``1`` (or an absent marker over a non-empty collection)
@@ -201,8 +202,13 @@ def _publish_meta_from_file_states(request: _MetaPublishRequest) -> int:
     from ._file_state import iter_publishable_states
 
     (
-        meta_path, states, generation_id, membership_epoch, content_epoch,
-        published_points_count, published_files_count,
+        meta_path,
+        states,
+        generation_id,
+        membership_epoch,
+        content_epoch,
+        published_points_count,
+        published_files_count,
     ) = (
         request.meta_path,
         request.states,

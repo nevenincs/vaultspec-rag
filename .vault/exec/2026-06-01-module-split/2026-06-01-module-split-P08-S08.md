@@ -18,7 +18,9 @@ related:
 - `src/vaultspec_rag/tests/integration/test_install.py`
 
 - Replaced the installer test monolith with nine direct behavior-domain modules.
+
 - Extracted concrete install helpers and package-level fixture registration.
+
 - Restored the five Windows junction and reparse safety scenarios identified by review.
 
 ## Outcome

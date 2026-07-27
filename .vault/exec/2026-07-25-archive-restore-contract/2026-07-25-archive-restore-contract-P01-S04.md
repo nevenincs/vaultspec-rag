@@ -8,6 +8,7 @@ step_id: 'S04'
 related:
   - "[[2026-07-25-archive-restore-contract-plan]]"
 ---
+
 # `P01.S04` completed archive integrity gate
 
 ## Scope

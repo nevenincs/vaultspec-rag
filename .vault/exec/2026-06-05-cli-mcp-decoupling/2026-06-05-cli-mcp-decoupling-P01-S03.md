@@ -16,8 +16,11 @@ related:
 - `src/vaultspec_rag/api.py`
 
 - Implement `run_quality_probe` in `src/vaultspec_rag/api.py` using a temporary directory slot.
+
 - Generate synthetic vault, index it, run needle-based precision probes, and calculate precision.
+
 - Close and evict the temporary project slot prior to cleaning up.
+
 - Expose the function in the public `__all__` facade list.
 
 ## Outcome

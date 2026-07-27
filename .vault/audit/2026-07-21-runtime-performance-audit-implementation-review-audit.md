@@ -190,7 +190,7 @@ code to address them.
 
 ## Scope
 
-Retained audit evidence:  are listed in frontmatter; the audit title and retained sections define the reviewed subject.
+Retained audit evidence: are listed in frontmatter; the audit title and retained sections define the reviewed subject.
 
 ## Findings
 

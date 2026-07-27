@@ -42,6 +42,7 @@ class _StatusContractOptions:
     jobs: dict[str, object] | None = None
     jobs_status_code: int = 200
 
+
 if typing.TYPE_CHECKING:
     from pathlib import Path
 

@@ -141,10 +141,7 @@ def _module_name(path: Path) -> str:
 
 def _source_modules() -> dict[str, Path]:
     """Return every package source, including tests that import split owners."""
-    return {
-        _module_name(path): path
-        for path in sorted(_PACKAGE_ROOT.rglob("*.py"))
-    }
+    return {_module_name(path): path for path in sorted(_PACKAGE_ROOT.rglob("*.py"))}
 
 
 def _module_bound_names(nodes: list[ast.stmt]) -> set[str]:
@@ -323,8 +320,7 @@ def test_moved_owner_imports_request_owner_defined_bindings() -> None:
             for alias in node.names:
                 if alias.name == "*" or alias.name not in owner_names[target]:
                     offenders.append(
-                        f"{importer}:{node.lineno} imports {alias.name!r} "
-                        f"from {target}"
+                        f"{importer}:{node.lineno} imports {alias.name!r} from {target}"
                     )
     assert not offenders, (
         f"default-import re-export(s) from moved owner(s): {offenders}. "

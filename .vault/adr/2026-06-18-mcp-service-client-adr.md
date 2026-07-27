@@ -173,6 +173,7 @@ delivered.
   **Rule:** CLI and MCP must consume one shared service-client surface; neither may carry
   bespoke business logic or a duplicate wire client — all behavior lives in the backend
   libraries.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

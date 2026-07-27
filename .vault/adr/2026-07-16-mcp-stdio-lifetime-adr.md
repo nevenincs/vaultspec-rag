@@ -8,6 +8,7 @@ related:
   - "[[2026-07-16-mcp-stdio-lifetime-research]]"
   - '[[2026-07-16-mcp-stdio-lifetime-audit]]'
 ---
+
 # `mcp-stdio-lifetime` adr: `The stdio shim owns its lifetime: ancestor-chain watchdog behind stdin EOF` | (**status:** `accepted`)
 
 ## Problem Statement

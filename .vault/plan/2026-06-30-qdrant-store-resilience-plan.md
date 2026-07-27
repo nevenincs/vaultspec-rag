@@ -9,6 +9,7 @@ related:
   - '[[2026-06-30-qdrant-store-resilience-adr]]'
   - '[[2026-06-30-qdrant-store-resilience-research]]'
 ---
+
 # `qdrant-store-resilience` plan
 
 ## Description

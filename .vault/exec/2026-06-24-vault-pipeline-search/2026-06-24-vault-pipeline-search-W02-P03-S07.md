@@ -19,11 +19,14 @@ related:
 
 - Added backtick/whitespace-tolerant `_STATUS_RE` and `_STATUS_SUFFIX_RE` patterns for the
   canonical ADR H1 status marker.
+
 - Refactored title extraction into `_first_h1` (raw heading) plus `_extract_title`, which now
   strips the trailing `| (**status:** ...)` suffix - fixing the prior leak of the marker into
   the displayed title.
+
 - Added `_extract_status` returning the lowercased status value, or empty for legacy
   no-marker and non-ADR headings (callers treat empty as unknown/active).
+
 - Exported the new helper in `__all__`.
 
 ## Outcome

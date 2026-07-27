@@ -9,6 +9,7 @@ related:
   - '[[2026-07-23-chunk-id-uniqueness-adr]]'
   - '[[2026-07-23-chunk-id-uniqueness-research]]'
 ---
+
 # `chunk-id-uniqueness` plan
 
 ## Description

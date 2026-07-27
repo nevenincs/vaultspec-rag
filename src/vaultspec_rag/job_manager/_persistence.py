@@ -341,6 +341,8 @@ class JobManagerPersistence(JobManagerState):
             message=f"Job state could not be persisted: {detail}",
             job=job,
         )
+
+
 @dataclass(frozen=True, slots=True)
 class _SnapshotTransition:
     state: JobState

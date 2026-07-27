@@ -8,6 +8,7 @@ step_id: 'S10'
 related:
   - "[[2026-06-09-operability-hardening-plan]]"
 ---
+
 # Persist the service token into service.json during the start health-poll
 
 ## Description

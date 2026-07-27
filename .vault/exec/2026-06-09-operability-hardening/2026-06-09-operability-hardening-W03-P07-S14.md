@@ -8,6 +8,7 @@ step_id: 'S14'
 related:
   - '[[2026-06-09-operability-hardening-plan]]'
 ---
+
 # Author the indexing and retrieval architecture guide
 
 ## Description

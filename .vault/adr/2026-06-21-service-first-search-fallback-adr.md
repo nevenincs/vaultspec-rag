@@ -104,6 +104,7 @@ the robust escalation.
   configured local-only mode); an unreachable or absent service with no mandate
   exits with the service-down envelope, and any mandated local run is bounded by
   a wall-clock deadline that releases the store lock on expiry.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

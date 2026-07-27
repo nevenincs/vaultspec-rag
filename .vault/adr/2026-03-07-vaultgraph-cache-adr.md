@@ -8,6 +8,7 @@ related:
   - '[[2026-03-07-threading-lock-for-singleton-adr]]'
   - '[[2026-03-07-continuous-research]]'
 ---
+
 # `gpu-rag-stack` adr: `VaultGraph cache with threading.Lock and explicit invalidation` | (**status:** `accepted`)
 
 ## Problem Statement

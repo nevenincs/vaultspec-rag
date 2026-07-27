@@ -255,5 +255,3 @@ def hf_cache_only() -> bool:
         parse_bool(os.environ.get(var.value, "")) is True
         for var in (EnvVar.HF_HUB_OFFLINE, EnvVar.TRANSFORMERS_OFFLINE)
     )
-
-

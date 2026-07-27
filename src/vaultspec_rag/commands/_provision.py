@@ -74,6 +74,7 @@ class _TorchProvisionRequest:
     sync_after: bool
     confirm: ConfirmFn | None
 
+
 __all__ = [
     "ProvisionOutcome",
     "ProvisionStep",
@@ -221,8 +222,14 @@ def _provision_dependencies(request: _ProvisionRequest) -> ProvisionOutcome:
         dependency.
     """
     (
-        target, local_only, skip, dry_run, configure_torch, assume_yes,
-        sync_after, confirm,
+        target,
+        local_only,
+        skip,
+        dry_run,
+        configure_torch,
+        assume_yes,
+        sync_after,
+        confirm,
     ) = (
         request.target,
         request.local_only,
@@ -270,7 +277,12 @@ def _provision_torch(request: _TorchProvisionRequest) -> ProvisionStepResult:
     terminal ``downloaded``.
     """
     (
-        target, dry_run, skip, configure_torch, assume_yes, sync_after,
+        target,
+        dry_run,
+        skip,
+        configure_torch,
+        assume_yes,
+        sync_after,
         confirm,
     ) = (
         request.target,

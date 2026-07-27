@@ -108,6 +108,7 @@ class _SupervisorConfig:
     log_backup_count: int = _MANAGED_LOG_BACKUP_COUNT_DEFAULT
     migrated_from: str = ""
 
+
 # Recovery bound: how many collections may be quarantined within one supervised
 # start before the start fails loudly instead of quarantining further. A
 # pathological store (many corrupt collections, or a non-load panic the parser
