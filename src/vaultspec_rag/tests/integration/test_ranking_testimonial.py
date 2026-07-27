@@ -25,6 +25,8 @@ from ..quality._frozen_corpus import materialize_frozen_vault
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+    from sentence_transformers import CrossEncoder
+
     from ... import VaultSearcher
     from ...embeddings import EmbeddingModel
 
@@ -96,6 +98,7 @@ def _repo_root() -> Path:
 @pytest.fixture(scope="session")
 def testimonial_searcher(
     embedding_model: EmbeddingModel,
+    shared_reranker: CrossEncoder,
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Generator[VaultSearcher]:
     """Index a hermetic frozen-reference vault and yield a searcher.
@@ -111,7 +114,9 @@ def testimonial_searcher(
     materialize_frozen_vault(root, repo_root=_repo_root())
     (root / ".vaultspec").mkdir(parents=True, exist_ok=True)
     components = _index_corpus(root, embedding_model)
-    searcher = VaultSearcher(root, components["model"], components["store"])
+    searcher = VaultSearcher(
+        root, components["model"], components["store"], reranker=shared_reranker
+    )
     try:
         yield searcher
     finally:
