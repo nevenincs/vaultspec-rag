@@ -34,7 +34,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict, Unpack
 
 from .. import store_schema
 from ._code_meta import CODE_EMBED_SCHEMA
@@ -54,6 +54,24 @@ if TYPE_CHECKING:
     from ..storage_manifest import ManifestEntry
 
 logger = logging.getLogger(__name__)
+
+
+class _EligibilityOptions(TypedDict, total=False):
+    kind: CollectionKind
+    expected_content_epoch: str
+    expected_schema: VectorSchema | None
+    donor_schema_probe: Callable[[str], VectorSchema | None] | None
+    expected_model: ModelIdentity | None
+
+
+@dataclass(frozen=True)
+class _EligibilityRequest:
+    candidate: DonorCandidate
+    kind: CollectionKind
+    expected_content_epoch: str
+    expected_schema: VectorSchema | None = None
+    donor_schema_probe: Callable[[str], VectorSchema | None] | None = None
+    expected_model: ModelIdentity | None = None
 
 __all__ = [
     "DONOR_CANDIDATE_CAP",
@@ -446,13 +464,13 @@ def discover_donor_candidates(
 
 def evaluate_donor_eligibility(
     candidate: DonorCandidate,
-    *,
-    kind: CollectionKind,
-    expected_content_epoch: str,
-    expected_schema: VectorSchema | None = None,
-    donor_schema_probe: Callable[[str], VectorSchema | None] | None = None,
-    expected_model: ModelIdentity | None = None,
+    **options: Unpack[_EligibilityOptions],
 ) -> DonorEligibility:
+    """Apply every eligibility gate to one candidate."""
+    return _evaluate_donor_eligibility(_EligibilityRequest(candidate, **options))
+
+
+def _evaluate_donor_eligibility(request: _EligibilityRequest) -> DonorEligibility:
     """Apply every eligibility gate to one candidate.
 
     Gates, all of which must pass:
@@ -486,6 +504,17 @@ def evaluate_donor_eligibility(
     Returns:
         A :class:`DonorEligibility` naming every failed gate.
     """
+    (
+        candidate, kind, expected_content_epoch, expected_schema,
+        donor_schema_probe, expected_model,
+    ) = (
+        request.candidate,
+        request.kind,
+        request.expected_content_epoch,
+        request.expected_schema,
+        request.donor_schema_probe,
+        request.expected_model,
+    )
     reasons: list[IneligibilityReason] = []
     if candidate.kind is not kind:
         reasons.append(IneligibilityReason.KIND_MISMATCH)
