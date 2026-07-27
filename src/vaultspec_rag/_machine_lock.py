@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from ._atomic_write import write_json_atomically
+from ._atomic_write import JsonWriteOptions, write_json_atomically
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -180,7 +180,9 @@ def publish_machine_discovery(
     )
     with _lease_guard:
         _require_active_lease(lease, operation="publish machine discovery")
-        write_json_atomically(pointer, payload, indent=2, durable=True)
+        write_json_atomically(
+            pointer, payload, JsonWriteOptions(indent=2, durable=True)
+        )
 
 
 def delete_machine_discovery(lease: MachineLockLease) -> None:

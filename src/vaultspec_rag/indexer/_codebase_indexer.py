@@ -14,7 +14,7 @@ import pathlib
 import time
 from typing import TYPE_CHECKING
 
-from .._atomic_write import write_json_atomically
+from .._atomic_write import JsonWriteOptions, write_json_atomically
 from .._index_breadth import PUBLISHED_FILES_KEY, PUBLISHED_POINTS_KEY
 from .._store_models import (
     generation_code_collection,
@@ -1436,7 +1436,7 @@ class CodebaseIndexer:
         # produces is comparable rather than reading as "cannot tell".
         if published_files is not None:
             stamped[PUBLISHED_FILES_KEY] = str(published_files)
-        write_json_atomically(self._meta_path, stamped, indent=2)
+        write_json_atomically(self._meta_path, stamped, JsonWriteOptions(indent=2))
 
     def _read_meta_raw(self) -> dict[str, str]:
         """Load the sidecar JSON verbatim, reserved keys included."""

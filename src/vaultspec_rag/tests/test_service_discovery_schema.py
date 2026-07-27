@@ -22,6 +22,7 @@ import pytest
 
 import vaultspec_rag.server as _m
 
+from .._atomic_write import JsonWriteOptions, write_json_atomically
 from .._machine_lock import acquire_machine_lock_lease, release_machine_lock_lease
 from ..cli._service_status import _write_service_status
 from ..config import EnvVar, reset_config
@@ -52,6 +53,21 @@ def _is_second_precision_offset_iso(value: str) -> bool:
     return (
         parsed.utcoffset() is not None and parsed.microsecond == 0 and "." not in value
     )
+
+
+def test_atomic_json_options_publish_exact_bytes_and_clean_up(tmp_path: Path) -> None:
+    """The production writer retains each observable serialization choice."""
+    target = tmp_path / "state.json"
+    target.write_bytes(b"obsolete")
+
+    write_json_atomically(
+        target,
+        {"z": 1, "a": "value"},
+        JsonWriteOptions(indent=2, sort_keys=True, compact=True, durable=True),
+    )
+
+    assert target.read_bytes() == b'{\n  "a":"value",\n  "z":1\n}'
+    assert list(tmp_path.glob(".state.json.*.tmp")) == []
 
 
 @pytest.fixture

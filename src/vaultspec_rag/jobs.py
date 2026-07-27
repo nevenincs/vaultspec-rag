@@ -22,12 +22,8 @@ from ._job_errors import STALL_THRESHOLD_SECONDS, classify_error_text
 from ._runtime_identity import process_identity_fields
 from .config import managed_status_dir
 from .job_control import NO_RUN_CONTROL
-from .job_manager import (
-    MAX_RECORDS,
-    JobAttemptContext,
-    JobExecutionResult,
-    JobManager,
-)
+from .job_manager.manager import JobManager
+from .job_manager.models import MAX_RECORDS, JobAttemptContext, JobExecutionResult
 from .job_models import (
     DesiredJobState,
     JobInitiator,
@@ -158,7 +154,7 @@ def _persist_active_snapshot() -> None:
     bookkeeping must not fail a job.
     """
 
-    from ._atomic_write import write_json_atomically
+    from ._atomic_write import JsonWriteOptions, write_json_atomically
 
     with _lock:
         active = [
@@ -179,7 +175,9 @@ def _persist_active_snapshot() -> None:
         ]
     try:
         write_json_atomically(
-            cast("Path", _active_snapshot_path()), {"active": active}, durable=True
+            cast("Path", _active_snapshot_path()),
+            {"active": active},
+            JsonWriteOptions(durable=True),
         )
     except OSError:
         logger.debug("could not persist active-jobs snapshot", exc_info=True)

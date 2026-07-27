@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
-from .._atomic_write import write_json_atomically
+from .._atomic_write import JsonWriteOptions, write_json_atomically
 from .._rmtree import remove_tree
 from .._sync_vocabulary import ProvisionAction
 from .._units import human_bytes
@@ -347,7 +347,9 @@ def _write_manifest(
         "source": source,
         "provisioned_at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
-    write_json_atomically(version_dir / MANIFEST_FILENAME, manifest, indent=2)
+    write_json_atomically(
+        version_dir / MANIFEST_FILENAME, manifest, JsonWriteOptions(indent=2)
+    )
 
 
 def _existing_install_state(version_dir: Path, expected_sha256: str) -> str:

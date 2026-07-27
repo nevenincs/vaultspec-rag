@@ -21,7 +21,7 @@ from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs
     scan_vault,
 )
 
-from .._atomic_write import write_json_atomically
+from .._atomic_write import JsonWriteOptions, write_json_atomically
 from ..job_control import NO_RUN_CONTROL
 from . import _config_epoch
 from ._index_lifecycle import run_index_lifecycle
@@ -1118,7 +1118,7 @@ class VaultIndexer:
             VAULT_POINT_SCHEMA_KEY: VAULT_POINT_SCHEMA,
             VAULT_CONTENT_EPOCH_KEY: self._current_vault_content_epoch(),
         }
-        write_json_atomically(self._meta_path, stamped, indent=2)
+        write_json_atomically(self._meta_path, stamped, JsonWriteOptions(indent=2))
         run_control.checkpoint()
 
     def _read_meta_raw(self) -> dict[str, str]:

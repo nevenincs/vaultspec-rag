@@ -22,7 +22,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, cast
 
-from ._atomic_write import write_json_atomically
+from ._atomic_write import JsonWriteOptions, write_json_atomically
 
 if TYPE_CHECKING:
     import pathlib
@@ -72,4 +72,4 @@ def record_generation_stamps(stamps: Mapping[str, str]) -> None:
     leaves the previous map intact rather than a half-written one that would
     read as a set of restarted clocks.
     """
-    write_json_atomically(stamps_path(), dict(stamps), indent=2)
+    write_json_atomically(stamps_path(), dict(stamps), JsonWriteOptions(indent=2))

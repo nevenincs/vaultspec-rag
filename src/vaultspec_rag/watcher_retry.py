@@ -23,7 +23,12 @@ from enum import StrEnum
 from itertools import islice
 from typing import TYPE_CHECKING, Final, cast
 
-from ._atomic_write import NotDurableError, replace_durably, write_json_atomically
+from ._atomic_write import (
+    JsonWriteOptions,
+    NotDurableError,
+    replace_durably,
+    write_json_atomically,
+)
 from ._job_errors import JobError, JobErrorKind, classify_error_text
 from ._process_probe import pid_alive, pid_is_zombie, pid_start_time
 from ._store_locks import FileLock
@@ -1030,7 +1035,11 @@ def _write_state(path: Path, state: WatcherRetryState) -> None:
             state.last_error_kind.value if state.last_error_kind is not None else None
         )
         payload["circuit_state"] = state.circuit_state.value
-        write_json_atomically(path, payload, sort_keys=True, compact=True, durable=True)
+        write_json_atomically(
+            path,
+            payload,
+            JsonWriteOptions(sort_keys=True, compact=True, durable=True),
+        )
     except OSError as exc:
         raise _state_io_failure("write", path, exc) from exc
 
