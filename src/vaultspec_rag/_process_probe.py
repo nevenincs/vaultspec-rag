@@ -29,11 +29,12 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -436,8 +437,66 @@ def pid_listens_on_loopback_port(
     )
 
 
-def iter_process_info(attrs: list[str]) -> Iterator[dict[str, Any]]:
-    """Yield ``psutil`` info dicts for every process this one can inspect.
+class _ProcessInfo(Mapping[str, Any]):
+    """One process's requested attributes, read ON DEMAND and cached per read.
+
+    Attribute cost is wildly uneven on Windows, and the spread is what makes
+    laziness load-bearing rather than a micro-optimisation. ``cmdline``, ``name``
+    and ``exe`` are sub-millisecond reads; ``ppid`` and ``create_time`` have no
+    cheap path and fall back to a FULL-SYSTEM process snapshot per process -
+    measured at 46ms and 20ms each against a 1700-process table. Materialising
+    every requested attribute for every process therefore makes any scan
+    quadratic: the same walk took 72-86s eagerly and ~2s reading the expensive
+    attributes only for the processes that matched.
+
+    Every scan here filters on ``cmdline`` and keeps a handful of processes, so
+    paying for ``ppid``/``create_time`` on the ~1700 it discards was pure waste -
+    and not harmless waste: it is what pushed the orphan reap past a minute and
+    made a reasonable subprocess timeout read as a hung reap.
+
+    A value is ``None`` when the attribute could not be read - the process
+    exited mid-scan, or belongs to another user. ``None`` is "could not tell",
+    never a negative fact about the attribute, and every caller must treat a
+    missing witness as no evidence rather than as a non-match it may act on.
+    """
+
+    def __init__(self, process: Any, attrs: tuple[str, ...]) -> None:
+        self._process = process
+        self._attrs = attrs
+        self._values: dict[str, Any] = {}
+
+    def __getitem__(self, key: str) -> Any:
+        if key not in self._attrs:
+            raise KeyError(key)
+        if key not in self._values:
+            self._values[key] = self._read(key)
+        return self._values[key]
+
+    def _read(self, key: str) -> Any:
+        import psutil
+
+        try:
+            if key == "pid":
+                return int(self._process.pid)
+            return getattr(self._process, key)()
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as exc:
+            logger.debug("process scan could not read %s: %s", key, exc)
+            return None
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._attrs)
+
+    def __len__(self) -> int:
+        return len(self._attrs)
+
+
+def iter_process_info(attrs: list[str]) -> Iterator[Mapping[str, Any]]:
+    """Yield a lazy attribute view for every process this one can inspect.
+
+    Each yielded mapping reads an attribute only when the caller asks for it
+    (see :class:`_ProcessInfo` for why that is the difference between a
+    two-second scan and a ninety-second one), so a caller MUST test its cheap
+    discriminator - the command line - before touching anything else.
 
     Skips the two conditions that are NORMAL while walking a live process
     table - a process exiting mid-scan, and another user's process that is not
@@ -451,16 +510,18 @@ def iter_process_info(attrs: list[str]) -> Iterator[dict[str, Any]]:
     import psutil
 
     try:
-        processes = list(psutil.process_iter(attrs))
+        pids = psutil.pids()
     except Exception as exc:
         logger.warning("could not enumerate processes: %s", exc)
         raise OSError(f"could not enumerate processes: {exc}") from exc
-    for process in processes:
+    requested = tuple(attrs)
+    for pid in pids:
         try:
-            yield dict(process.info)
+            process = psutil.Process(pid)
         except (psutil.NoSuchProcess, psutil.AccessDenied) as exc:
             logger.debug("process scan skipped a process: %s", exc)
             continue
+        yield _ProcessInfo(process, requested)
 
 
 def send_signal(pid: int, sig: int) -> bool:

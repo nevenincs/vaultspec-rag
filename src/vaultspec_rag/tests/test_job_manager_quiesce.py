@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import os
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -24,16 +23,13 @@ from ..job_models import (
     JobSpec,
     JobState,
 )
+from ._job_roots import _TEST_PROJECT_ROOT, _TEST_PROJECT_ROOT_OTHER
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
 
 pytestmark = [pytest.mark.unit]
-
-_TEST_PROJECT_ROOT = os.path.abspath(os.path.join(os.sep, "project"))
-_TEST_PROJECT_ROOT_OTHER = os.path.abspath(os.path.join(os.sep, "other"))
-_TEST_PROJECT_ROOT_DIFFERENT = os.path.abspath(os.path.join(os.sep, "different"))
 
 
 class TestGpuLockWaitTelemetry:

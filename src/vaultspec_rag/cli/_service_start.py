@@ -754,16 +754,8 @@ def service_start() -> None:
 
 def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None:
     """Start the background search service from parsed command options."""
-    port = options.port
-    updates = options.updates
-    update_delay_ms = options.update_delay_ms
-    repeat_update_delay_s = options.repeat_update_delay_s
-    local_only = options.local_only
-    qdrant = options.qdrant
-    qdrant_auto_provision = options.qdrant_auto_provision
-    no_preprocess = options.no_preprocess
     json_mode = options.json_mode
-    preprocess_forward: Literal["off"] | None = "off" if no_preprocess else None
+    preprocess_forward: Literal["off"] | None = "off" if options.no_preprocess else None
     with StartupStatusReporter(json_mode=json_mode) as progress:
         # The very first thing the command does, before any probe that can
         # block. Everything below - the machine-lock probe, a first-use qdrant
@@ -799,16 +791,16 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
             return
 
         progress.stage("Checking the port and machine singleton...")
-        _guard_start_preconditions(port, json_mode)
+        _guard_start_preconditions(options.port, json_mode)
 
         # Server mode is the default backend, so the qdrant-binary guard runs
         # by default. --local-only (and an explicit --no-qdrant) select the
         # on-disk store and skip it, so a default start fails fast on a missing
         # binary while the local opt-out never touches the server.
-        if not local_only and qdrant is not False:
+        if not options.local_only and options.qdrant is not False:
             progress.stage("Checking the Qdrant server binary...")
             _ensure_qdrant_binary(
-                auto_provision=qdrant_auto_provision,
+                auto_provision=options.qdrant_auto_provision,
                 json_mode=json_mode,
                 progress=progress,
             )
@@ -835,22 +827,22 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
         t0 = time.perf_counter()
         progress.stage("Launching the service process...")
         start_request = _PreparedServiceRequest(
-            port=port,
+            port=options.port,
             log_path=log_path,
-            updates=updates,
-            update_delay_ms=update_delay_ms,
-            repeat_update_delay_s=repeat_update_delay_s,
-            qdrant=qdrant,
-            local_only=local_only,
+            updates=options.updates,
+            update_delay_ms=options.update_delay_ms,
+            repeat_update_delay_s=options.repeat_update_delay_s,
+            qdrant=options.qdrant,
+            local_only=options.local_only,
             preprocess_forward=preprocess_forward,
             json_mode=json_mode,
         )
         pid = _spawn_prepared_service(start_request)
-        _write_service_status(pid, port)
+        _write_service_status(pid, options.port)
         _await_service_ready(
             _ServiceReadinessRequest(
                 pid=pid,
-                port=port,
+                port=options.port,
                 log_path=log_path,
                 json_mode=json_mode,
                 started_at=t0,

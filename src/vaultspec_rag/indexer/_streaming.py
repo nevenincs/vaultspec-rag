@@ -450,22 +450,17 @@ class _VectorEncodeRequest:
 
 def _encode_slice_vector_fields(request: _VectorEncodeRequest) -> None:
     """Populate one bounded slice, dropping all array/tensor owners on return."""
+    # Both stay local: the donor adoption below rebinds them to the miss
+    # sub-slice, and the ``finally`` drops that slice's owners.
     chunks = request.chunks
     slice_texts = request.slice_texts
-    model = request.model
-    gpu_lock = request.gpu_lock
-    sparse_enabled = request.sparse_enabled
-    encode_batch_size = request.encode_batch_size
-    after_encode = request.after_encode
-    after_forward = request.after_forward
-    on_cuda_oom = request.on_cuda_oom
     reuse = request.reuse
     if reuse is not None:
         chunks, slice_texts = _adopt_donor_vectors(
             reuse,
             chunks,
             slice_texts,
-            sparse_enabled=sparse_enabled,
+            sparse_enabled=request.sparse_enabled,
         )
         if not chunks:
             # Every point was adopted from a donor: no forward pass runs and
@@ -473,35 +468,35 @@ def _encode_slice_vector_fields(request: _VectorEncodeRequest) -> None:
             # fires so caller-side accounting (memory-probe checkpoints)
             # stays balanced; ``after_forward`` does not, because no forward
             # happened.
-            if after_encode is not None:
-                after_encode()
+            if request.after_encode is not None:
+                request.after_encode()
             return
     encode_started = time.perf_counter()
     dense_device: object | None = None
     dense_cpu: object | None = None
     sparse: Iterable[_SparseVectorLike | None] | None = None
     try:
-        with timed_gpu_lock(gpu_lock):
-            dense_device = model.encode_documents_on_device(
+        with timed_gpu_lock(request.gpu_lock):
+            dense_device = request.model.encode_documents_on_device(
                 slice_texts,
-                batch_size=encode_batch_size,
+                batch_size=request.encode_batch_size,
             )
-        if after_forward is not None:
-            after_forward("dense")
+        if request.after_forward is not None:
+            request.after_forward("dense")
         dense_cpu = _transfer_to_cpu(dense_device)
         dense_device = None
-        if sparse_enabled:
-            sparse = model.encode_documents_sparse(
+        if request.sparse_enabled:
+            sparse = request.model.encode_documents_sparse(
                 slice_texts,
-                batch_size=encode_batch_size,
-                gpu_lock=gpu_lock,
+                batch_size=request.encode_batch_size,
+                gpu_lock=request.gpu_lock,
             )
-            if after_forward is not None:
-                after_forward("sparse")
+            if request.after_forward is not None:
+                request.after_forward("sparse")
         else:
             sparse = [None] * len(slice_texts)
-        if after_encode is not None:
-            after_encode()
+        if request.after_encode is not None:
+            request.after_encode()
         _populate_vector_fields(chunks, dense_cpu, sparse)
         if reuse is not None:
             reuse.stats.record_encode(
@@ -511,8 +506,8 @@ def _encode_slice_vector_fields(request: _VectorEncodeRequest) -> None:
     except Exception as exc:
         from .._gpu import is_cuda_out_of_memory
 
-        if on_cuda_oom is not None and is_cuda_out_of_memory(exc):
-            on_cuda_oom(exc)
+        if request.on_cuda_oom is not None and is_cuda_out_of_memory(exc):
+            request.on_cuda_oom(exc)
         raise
     finally:
         # Chunk fields own the store-ready lists. Drop accelerator/CPU arrays

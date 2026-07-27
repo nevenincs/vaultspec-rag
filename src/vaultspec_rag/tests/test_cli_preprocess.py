@@ -22,7 +22,7 @@ from typer.testing import CliRunner
 
 from ..cli import app
 from ..cli._index import _apply_preprocess_off_env
-from ..cli._process import _service_child_env
+from ..cli._process import _build_service_child_env, _ServiceChildEnvRequest
 from ..config._settings import get_config, reset_config
 from ..config._types import EnvVar
 from ._scaffold import make_workspace
@@ -421,7 +421,7 @@ def test_child_env_forwards_no_preprocess(
 ) -> None:
     # The forwarded off flag sets the kill switch in the daemon env.
     monkeypatch.delenv(EnvVar.PREPROCESS.value, raising=False)
-    env = _service_child_env(preprocess_mode="off")
+    env = _build_service_child_env(_ServiceChildEnvRequest(preprocess_mode="off"))
     assert env[EnvVar.PREPROCESS.value] == "off"
 
 
@@ -430,7 +430,7 @@ def test_child_env_leaves_operator_preprocess_env_untouched(
 ) -> None:
     # No flag: an operator-set preprocess env survives into the daemon.
     monkeypatch.setenv(EnvVar.PREPROCESS.value, "off")
-    env = _service_child_env(preprocess_mode=None)
+    env = _build_service_child_env(_ServiceChildEnvRequest(preprocess_mode=None))
     assert env[EnvVar.PREPROCESS.value] == "off"
 
 

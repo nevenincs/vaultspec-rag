@@ -76,6 +76,7 @@ from textual.widgets import Static
 
 from .._loopback_http import LOOPBACK_OPENER
 from .._units import human_bytes
+from ..concurrency import LIMITER_STAT_FIELDS
 from ..serviceclient._transport import (
     DEFAULT_ADMIN_TIMEOUT_SECONDS,
     _read_service_response,
@@ -106,7 +107,6 @@ _SEPARATOR = "  ·  "
 
 _METRIC_PREFIX = "vaultspec_rag_"
 _POOL_INFIX = "_pool_"
-_POOL_STATS = ("total_tokens", "borrowed_tokens", "waiting")
 #: Pool order as an operator reads it: the scarce machine-wide encode gate
 #: first, then the dispatch pools behind it.
 _POOL_ORDER = ("encode", "index", "search")
@@ -184,18 +184,17 @@ class ServiceStatusHeader:
         return None
 
 
-def _opt_int(raw: object) -> int | None:
-    """Read an integer field, treating anything else as unreported."""
-    if isinstance(raw, bool) or not isinstance(raw, int | float):
-        return None
-    return int(raw)
-
-
 def _opt_float(raw: object) -> float | None:
-    """Read a float field, treating anything else as unreported."""
+    """Read a numeric field, treating anything else as unreported."""
     if isinstance(raw, bool) or not isinstance(raw, int | float):
         return None
     return float(raw)
+
+
+def _opt_int(raw: object) -> int | None:
+    """Read an integer field, treating anything else as unreported."""
+    numeric = _opt_float(raw)
+    return None if numeric is None else int(numeric)
 
 
 def _opt_bool(raw: object) -> bool | None:
@@ -237,7 +236,7 @@ def _parse_seat_pools(text: str) -> tuple[SeatPool, ...]:
         if not metric.startswith(_METRIC_PREFIX):
             continue
         pool, infix, stat = metric[len(_METRIC_PREFIX) :].partition(_POOL_INFIX)
-        if not infix or stat not in _POOL_STATS or not pool:
+        if not infix or stat not in LIMITER_STAT_FIELDS or not pool:
             continue
         try:
             parsed = int(float(value))

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING
 
 import pytest
@@ -17,8 +16,7 @@ from ..job_models import (
     JobSpec,
     JobState,
 )
-
-_TEST_PROJECT_ROOT = os.path.abspath(os.path.join(os.sep, "project"))
+from ._job_roots import _TEST_PROJECT_ROOT
 
 if TYPE_CHECKING:
     import asyncio

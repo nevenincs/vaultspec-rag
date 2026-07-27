@@ -8,10 +8,25 @@ own exception type and message while sharing the narrowing logic.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+class Narrower[T](Protocol):
+    """One narrowing predicate, callable with only its error factory.
+
+    Lets a caller that reads several differently typed fields with one message
+    vocabulary pass the predicate as data instead of writing one wrapper per
+    type, each differing only in which predicate it names.
+    """
+
+    def __call__(
+        self, value: object, /, *, on_invalid: Callable[[], BaseException]
+    ) -> T:
+        """Narrow *value*, raising what ``on_invalid`` constructs."""
+        ...
 
 
 def required_str(
@@ -82,18 +97,6 @@ def required_float(
     if not math.isfinite(resolved):
         raise (on_not_finite or on_invalid)()
     return resolved
-
-
-def optional_float(
-    value: object,
-    *,
-    on_invalid: Callable[[], BaseException],
-    on_not_finite: Callable[[], BaseException] | None = None,
-) -> float | None:
-    """Narrow one optional finite numeric field."""
-    if value is None:
-        return None
-    return required_float(value, on_invalid=on_invalid, on_not_finite=on_not_finite)
 
 
 def required_mapping(

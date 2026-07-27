@@ -15,6 +15,7 @@ from ._cli_format import _format_mb, _format_milliseconds, _format_seconds, _pat
 from ._render import _plain, address_line
 from ._service_jobs_query import (
     _empty_jobs_message,
+    _filter_is_set,
     _job_awaiting_admission,
     _job_is_waiting,
     _jobs_from_result,
@@ -397,14 +398,14 @@ def _filters_label(result: dict[str, object]) -> str:
         visible.append("state active")
     elif state == "waiting":
         visible.append("state waiting")
-    elif state not in (None, "", False):
+    elif _filter_is_set(state):
         visible.append(f"state {state}")
 
     for key in ("phase", "source", "trigger", "query", "job_id", "since"):
         if key == "phase" and state in ("active", "waiting"):
             continue
         value = filters.get(key)
-        if value not in (None, "", False):
+        if _filter_is_set(value):
             value_text = values.get(str(value), str(value))
             visible.append(f"{labels[key]} {value_text}")
     if filters.get("failed") is True:

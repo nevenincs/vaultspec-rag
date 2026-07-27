@@ -10,7 +10,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ...progress import NullProgressReporter
-from ._helpers import _document_policy
+from ._helpers import (
+    _content_kind_indexers,
+    _document_policy,
+    _full_index_code_then_document,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -25,7 +29,6 @@ def test_raw_document_full_and_scoped_incremental_stay_isolated(
     embedding_model: EmbeddingModel,
     tmp_path: Path,
 ) -> None:
-    from ...indexer import CodebaseIndexer, DocumentIndexer
     from ...store_runtime import VaultStore
 
     source = tmp_path / "reference.txt"
@@ -35,26 +38,11 @@ def test_raw_document_full_and_scoped_incremental_stay_isolated(
     policy = _document_policy("reference.txt")
     store = VaultStore(tmp_path)
     try:
-        code_indexer = CodebaseIndexer(
+        _, document_indexer = _full_index_code_then_document(
             tmp_path,
             embedding_model,
             store,
-            options=CodebaseIndexer.Options(content_policy=policy),
-        )
-        document_indexer = DocumentIndexer(
-            tmp_path,
-            embedding_model,
-            store,
-            content_policy=policy,
-        )
-
-        code_indexer.full_index(
-            reporter=NullProgressReporter(),
-            preflight=code_indexer.preflight_content(),
-        )
-        document_indexer.full_index(
-            reporter=NullProgressReporter(),
-            preflight=document_indexer.preflight_content(),
+            policy,
         )
 
         assert store.get_code_ids_by_paths({"reference.txt"}) == []
@@ -94,7 +82,6 @@ def test_extracted_document_preserves_native_metadata_without_code_points(
     embedding_model: EmbeddingModel,
     tmp_path: Path,
 ) -> None:
-    from ...indexer import CodebaseIndexer, DocumentIndexer
     from ...store_runtime import VaultStore
 
     extractor = tmp_path / "record_extractor.py"
@@ -136,17 +123,11 @@ def test_extracted_document_preserves_native_metadata_without_code_points(
     policy = _document_policy("*.record")
     store = VaultStore(tmp_path)
     try:
-        document_indexer = DocumentIndexer(
+        code_indexer, document_indexer = _content_kind_indexers(
             tmp_path,
             embedding_model,
             store,
-            content_policy=policy,
-        )
-        code_indexer = CodebaseIndexer(
-            tmp_path,
-            embedding_model,
-            store,
-            options=CodebaseIndexer.Options(content_policy=policy),
+            policy,
         )
         result = document_indexer.full_index(
             reporter=NullProgressReporter(),

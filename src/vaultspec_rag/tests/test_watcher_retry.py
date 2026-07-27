@@ -26,7 +26,7 @@ from ..watcher_retry import (
     WatcherSource,
     _WatcherRetryOptions,
 )
-from ..watcher_runtime import ObservedSource
+from ..watcher_runtime import _ObservedSource
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -721,8 +721,8 @@ async def test_mixed_batch_cancellation_hands_off_both_sources(
         persistence = asyncio.create_task(
             persist_observed_sources(
                 (
-                    ObservedSource(True, WatcherSource.VAULT, vault),
-                    ObservedSource(True, WatcherSource.CODE, code),
+                    _ObservedSource(True, WatcherSource.VAULT, vault),
+                    _ObservedSource(True, WatcherSource.CODE, code),
                 ),
                 root_dir=tmp_path,
             )

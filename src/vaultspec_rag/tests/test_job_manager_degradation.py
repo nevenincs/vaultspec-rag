@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -23,16 +22,12 @@ if TYPE_CHECKING:
     from pathlib import Path
 from ..jobs import (
     index_job_status,
-    record_start,
     reset,
     snapshot,
 )
+from ._jobs_restore_helpers import job_recorded_by_a_now_dead_process
 
 pytestmark = [pytest.mark.unit]
-
-_TEST_PROJECT_ROOT = os.path.abspath(os.path.join(os.sep, "project"))
-_TEST_PROJECT_ROOT_OTHER = os.path.abspath(os.path.join(os.sep, "other"))
-_TEST_PROJECT_ROOT_DIFFERENT = os.path.abspath(os.path.join(os.sep, "different"))
 
 
 class TestInterruptedJobDegradationSplit:
@@ -119,10 +114,9 @@ class TestInterruptedJobDegradationSplit:
 
         reset()
         try:
-            job_id = record_start(JobSource.CODE, "tool")
-            # Losing the in-memory ring while the persisted snapshot survives
-            # is exactly what a killed daemon leaves behind.
-            reset()
+            # An empty in-memory ring beside a surviving snapshot written by a
+            # process that is gone is exactly what a killed daemon leaves.
+            job_id = job_recorded_by_a_now_dead_process()
             assert restore_interrupted() == 1
             records = {record["id"]: record for record in snapshot()}
             assert records[job_id]["phase"] == "interrupted"

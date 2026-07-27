@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import threading
 from typing import TYPE_CHECKING, cast
 
@@ -32,15 +31,12 @@ from ._job_manager_transition_helpers import (
     create_paused_vault_job,
     resume_paused_job,
 )
+from ._job_roots import _TEST_PROJECT_ROOT
 
 if TYPE_CHECKING:
     from .. import job_models
 
 pytestmark = [pytest.mark.unit]
-
-_TEST_PROJECT_ROOT = os.path.abspath(os.path.join(os.sep, "project"))
-_TEST_PROJECT_ROOT_OTHER = os.path.abspath(os.path.join(os.sep, "other"))
-_TEST_PROJECT_ROOT_DIFFERENT = os.path.abspath(os.path.join(os.sep, "different"))
 
 
 class TestManagedJobTransitions:

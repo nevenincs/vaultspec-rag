@@ -13,7 +13,6 @@ import vaultspec_rag.mcp._admin_client as admin
 from vaultspec_rag.cli import app
 
 from ._service_jobs_support import (
-    _ANSI_RE,
     _DEAD_PORT,
     _cli_jobs_payload,
     _jobs_http_server,

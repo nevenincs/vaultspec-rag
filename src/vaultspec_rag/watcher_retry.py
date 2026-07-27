@@ -1191,8 +1191,8 @@ def _read_state(path: Path) -> WatcherRetryState:
         convergence_pending=_required_bool(raw, "convergence_pending"),
         unscoped_required=_required_bool(raw, "unscoped_required"),
         convergence_generation=_nonnegative_int(raw, "convergence_generation"),
-        attempt_generation=_optional_nonnegative_int(
-            raw.get("attempt_generation"), "attempt_generation"
+        attempt_generation=_optional_int_at_least(
+            raw.get("attempt_generation"), "attempt_generation", 0
         ),
         attempt_token=_optional_text(raw.get("attempt_token")),
         attempt_started_at=_optional_timestamp(raw.get("attempt_started_at")),
@@ -1229,13 +1229,29 @@ def _read_state(path: Path) -> WatcherRetryState:
     return state
 
 
-def _required_text(raw: dict[str, object], key: str) -> str:
-    return _typed_fields.required_str(
+def _required_field[T](
+    raw: dict[str, object],
+    key: str,
+    narrow: _typed_fields.Narrower[T],
+    expectation: str,
+) -> T:
+    """Read one required state field, naming what it had to be."""
+    return narrow(
         raw.get(key),
         on_invalid=lambda: ValueError(
-            f"watcher retry field {key!r} must be non-empty text"
+            f"watcher retry field {key!r} must be {expectation}"
         ),
     )
+
+
+def _required_text(raw: dict[str, object], key: str) -> str:
+    """Bind the non-empty-text expectation to the two-argument reader shape."""
+    return _required_field(raw, key, _typed_fields.required_str, "non-empty text")
+
+
+def _required_bool(raw: dict[str, object], key: str) -> bool:
+    """Bind the boolean expectation to the two-argument reader shape."""
+    return _required_field(raw, key, _typed_fields.required_bool, "a boolean")
 
 
 def _optional_text(value: object) -> str | None:
@@ -1262,24 +1278,19 @@ def _nonnegative_int(raw: dict[str, object], key: str) -> int:
     )
 
 
-def _optional_nonnegative_int(value: object, key: str) -> int | None:
+def _optional_int_at_least(value: object, key: str, minimum: int) -> int | None:
     return _typed_fields.optional_int(
         value,
-        minimum=0,
+        minimum=minimum,
         on_invalid=lambda: ValueError(
-            f"watcher retry field {key!r} must be null or nonnegative"
+            f"watcher retry field {key!r} must be null or at least {minimum}"
         ),
     )
 
 
 def _optional_positive_int(value: object, key: str) -> int | None:
-    return _typed_fields.optional_int(
-        value,
-        minimum=1,
-        on_invalid=lambda: ValueError(
-            f"watcher retry field {key!r} must be null or positive"
-        ),
-    )
+    """Bind the positive bound to the two-argument reader shape."""
+    return _optional_int_at_least(value, key, 1)
 
 
 def _optional_positive_number(value: object, key: str) -> float | None:
@@ -1299,13 +1310,6 @@ def _required_positive[T: (int, float)](
     if value is None:
         raise ValueError(f"watcher retry field {key!r} must be positive")
     return value
-
-
-def _required_bool(raw: dict[str, object], key: str) -> bool:
-    return _typed_fields.required_bool(
-        raw.get(key),
-        on_invalid=lambda: ValueError(f"watcher retry field {key!r} must be a boolean"),
-    )
 
 
 def _timestamp(raw: dict[str, object], key: str) -> float:

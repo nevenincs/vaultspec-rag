@@ -33,8 +33,8 @@ from .job_models import (
 )
 from .logging_config import log_event
 from .watcher_durability import (
-    _raise_if_cancellation_requested,
-    _run_durable_retry_transaction,
+    raise_if_cancellation_requested,
+    run_durable_retry_transaction,
 )
 from .watcher_retry import (
     WatcherRetryDecision,
@@ -413,7 +413,7 @@ async def _settle_retry_failure(
     """Persist one managed orchestration or execution failure."""
     generation, _requires_unscoped = _retry_generation_for_attempt(slot, attempt)
     retry_source = WatcherSource(slot.source.value)
-    state, cancellation_requested = await _run_durable_retry_transaction(
+    state, cancellation_requested = await run_durable_retry_transaction(
         partial(slot.retry_policy.record_failure, error, generation),
         source=retry_source,
         root_dir=slot.root,
@@ -421,7 +421,7 @@ async def _settle_retry_failure(
         cancellation_fallback=slot.retry_policy.write_recovery_marker,
     )
     _clear_retry_generation(slot, generation)
-    _raise_if_cancellation_requested(cancellation_requested)
+    raise_if_cancellation_requested(cancellation_requested)
     log_event(
         logger,
         "service.watcher",
@@ -445,7 +445,7 @@ async def _settle_retry_interrupted(
     """Release one managed claim while retaining durable dirty intent."""
     generation, _requires_unscoped = _retry_generation_for_attempt(slot, attempt)
     retry_source = WatcherSource(slot.source.value)
-    state, cancellation_requested = await _run_durable_retry_transaction(
+    state, cancellation_requested = await run_durable_retry_transaction(
         lambda: slot.retry_policy.record_interrupted(generation),
         source=retry_source,
         root_dir=slot.root,
@@ -453,7 +453,7 @@ async def _settle_retry_interrupted(
         cancellation_fallback=slot.retry_policy.write_recovery_marker,
     )
     _clear_retry_generation(slot, generation)
-    _raise_if_cancellation_requested(cancellation_requested)
+    raise_if_cancellation_requested(cancellation_requested)
     return state
 
 
@@ -470,7 +470,7 @@ async def _settle_managed_retry(
     )
     retry_source = WatcherSource(slot.source.value)
     if snapshot.state is JobState.SUCCEEDED:
-        state, cancellation_requested = await _run_durable_retry_transaction(
+        state, cancellation_requested = await run_durable_retry_transaction(
             lambda: slot.retry_policy.record_success(generation),
             source=retry_source,
             root_dir=slot.root,
@@ -479,7 +479,7 @@ async def _settle_managed_retry(
         )
     elif snapshot.state is JobState.FAILED:
         failure = error or RuntimeError(snapshot.result or "watcher indexing failed")
-        state, cancellation_requested = await _run_durable_retry_transaction(
+        state, cancellation_requested = await run_durable_retry_transaction(
             partial(slot.retry_policy.record_failure, failure, generation),
             source=retry_source,
             root_dir=slot.root,
@@ -487,7 +487,7 @@ async def _settle_managed_retry(
             cancellation_fallback=slot.retry_policy.write_recovery_marker,
         )
     else:
-        state, cancellation_requested = await _run_durable_retry_transaction(
+        state, cancellation_requested = await run_durable_retry_transaction(
             lambda: slot.retry_policy.record_interrupted(generation),
             source=retry_source,
             root_dir=slot.root,
@@ -495,7 +495,7 @@ async def _settle_managed_retry(
             cancellation_fallback=slot.retry_policy.write_recovery_marker,
         )
     _clear_retry_generation(slot, generation)
-    _raise_if_cancellation_requested(cancellation_requested)
+    raise_if_cancellation_requested(cancellation_requested)
     return state
 
 

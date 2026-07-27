@@ -1,16 +1,17 @@
 """Unit tests for service-start watcher flag -> env translation.
 
 The daemon inherits config only via the environment, so ``service start``
-flags are translated into ``VAULTSPEC_RAG_WATCH*`` by ``_service_child_env``.
-These tests exercise that pure function against the real ``os.environ`` -
-no subprocess, no mocks.
+flags are translated into ``VAULTSPEC_RAG_WATCH*`` by
+``_build_service_child_env`` - the same call the daemon spawn makes with the
+request it assembled from the flags. These tests exercise that pure function
+against the real ``os.environ`` - no subprocess, no mocks.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from ..cli._process import _service_child_env
+from ..cli._process import _build_service_child_env, _ServiceChildEnvRequest
 from ..config._types import EnvVar
 from ._scaffold import restore_env, set_env
 
@@ -18,24 +19,26 @@ pytestmark = [pytest.mark.unit]
 
 
 def test_unset_flags_add_no_watch_env() -> None:
-    env = _service_child_env()
+    env = _build_service_child_env(_ServiceChildEnvRequest())
     assert EnvVar.WATCH_ENABLED.value not in env
     assert EnvVar.WATCH_DEBOUNCE_MS.value not in env
     assert EnvVar.WATCH_COOLDOWN_S.value not in env
 
 
 def test_watch_true_sets_enabled_one() -> None:
-    env = _service_child_env(watch=True)
+    env = _build_service_child_env(_ServiceChildEnvRequest(watch=True))
     assert env[EnvVar.WATCH_ENABLED.value] == "1"
 
 
 def test_watch_false_sets_enabled_zero() -> None:
-    env = _service_child_env(watch=False)
+    env = _build_service_child_env(_ServiceChildEnvRequest(watch=False))
     assert env[EnvVar.WATCH_ENABLED.value] == "0"
 
 
 def test_debounce_and_cooldown_translate_to_strings() -> None:
-    env = _service_child_env(watch_debounce_ms=500, watch_cooldown_s=1.5)
+    env = _build_service_child_env(
+        _ServiceChildEnvRequest(watch_debounce_ms=500, watch_cooldown_s=1.5)
+    )
     assert env[EnvVar.WATCH_DEBOUNCE_MS.value] == "500"
     assert env[EnvVar.WATCH_COOLDOWN_S.value] == "1.5"
 
@@ -45,7 +48,7 @@ def test_unset_watch_flag_preserves_operator_env() -> None:
     # when no --watch/--no-watch flag is given.
     prev = set_env(EnvVar.WATCH_ENABLED, "0")
     try:
-        env = _service_child_env(watch=None)
+        env = _build_service_child_env(_ServiceChildEnvRequest(watch=None))
         assert env[EnvVar.WATCH_ENABLED.value] == "0"
     finally:
         restore_env(EnvVar.WATCH_ENABLED, prev)
@@ -54,7 +57,7 @@ def test_unset_watch_flag_preserves_operator_env() -> None:
 def test_set_watch_flag_overrides_operator_env() -> None:
     prev = set_env(EnvVar.WATCH_ENABLED, "0")
     try:
-        env = _service_child_env(watch=True)
+        env = _build_service_child_env(_ServiceChildEnvRequest(watch=True))
         assert env[EnvVar.WATCH_ENABLED.value] == "1"
     finally:
         restore_env(EnvVar.WATCH_ENABLED, prev)
@@ -63,24 +66,24 @@ def test_set_watch_flag_overrides_operator_env() -> None:
 def test_rag_root_is_stripped_from_child_env() -> None:
     prev = set_env(EnvVar.RAG_ROOT, "/some/project")
     try:
-        env = _service_child_env()
+        env = _build_service_child_env(_ServiceChildEnvRequest())
         assert EnvVar.RAG_ROOT.value not in env
     finally:
         restore_env(EnvVar.RAG_ROOT, prev)
 
 
 def test_unset_local_only_adds_no_local_only_env() -> None:
-    env = _service_child_env()
+    env = _build_service_child_env(_ServiceChildEnvRequest())
     assert EnvVar.LOCAL_ONLY.value not in env
 
 
 def test_local_only_true_sets_enabled_one() -> None:
-    env = _service_child_env(local_only=True)
+    env = _build_service_child_env(_ServiceChildEnvRequest(local_only=True))
     assert env[EnvVar.LOCAL_ONLY.value] == "1"
 
 
 def test_local_only_false_sets_enabled_zero() -> None:
-    env = _service_child_env(local_only=False)
+    env = _build_service_child_env(_ServiceChildEnvRequest(local_only=False))
     assert env[EnvVar.LOCAL_ONLY.value] == "0"
 
 
@@ -89,7 +92,7 @@ def test_unset_local_only_flag_preserves_operator_env() -> None:
     # when no --local-only flag selects a value (None).
     prev = set_env(EnvVar.LOCAL_ONLY, "1")
     try:
-        env = _service_child_env(local_only=None)
+        env = _build_service_child_env(_ServiceChildEnvRequest(local_only=None))
         assert env[EnvVar.LOCAL_ONLY.value] == "1"
     finally:
         restore_env(EnvVar.LOCAL_ONLY, prev)
@@ -98,7 +101,7 @@ def test_unset_local_only_flag_preserves_operator_env() -> None:
 def test_set_local_only_flag_overrides_operator_env() -> None:
     prev = set_env(EnvVar.LOCAL_ONLY, "1")
     try:
-        env = _service_child_env(local_only=False)
+        env = _build_service_child_env(_ServiceChildEnvRequest(local_only=False))
         assert env[EnvVar.LOCAL_ONLY.value] == "0"
     finally:
         restore_env(EnvVar.LOCAL_ONLY, prev)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import inspect
-import os
 import subprocess
 import sys
 import textwrap
@@ -23,10 +22,6 @@ if TYPE_CHECKING:
     from ..embeddings import EmbeddingModel
 
 pytestmark = [pytest.mark.unit]
-
-_TEST_PROJECT_ROOT = os.path.abspath(os.path.join(os.sep, "project"))
-_TEST_PROJECT_ROOT_OTHER = os.path.abspath(os.path.join(os.sep, "other"))
-_TEST_PROJECT_ROOT_DIFFERENT = os.path.abspath(os.path.join(os.sep, "different"))
 
 
 def test_job_models_are_defined_exactly_once() -> None:

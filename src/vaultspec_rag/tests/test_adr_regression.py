@@ -410,10 +410,16 @@ class TestWatcherGraphInvalidation:
             "WatcherConfiguration must carry the project GraphCache so the watcher "
             "can invalidate graph data after vault reindex"
         )
+        # The watcher takes a single configuration object, so checking only
+        # its own parameters can no longer see a searcher reintroduced through
+        # that object; both sides are checked for the retired name.
         watcher_signature = inspect.signature(watch_and_reindex)
-        assert "searcher" not in watcher_signature.parameters, (
-            "watch_and_reindex must not retain the old private searcher "
-            "invalidation path"
+        carriers = set(watcher_signature.parameters) | set(
+            configuration_signature.parameters
+        )
+        assert "searcher" not in carriers, (
+            "neither watch_and_reindex nor WatcherConfiguration may retain the "
+            "old private searcher invalidation path"
         )
 
 
@@ -657,14 +663,33 @@ assert not loaded, loaded
 
         from ..server import _lifespan, _main
 
-        src = inspect.getsource(_main.main)
-        http_branch = src.split("if port is not None:")[1].split("else:")[0]
-        stdio_branch = src.split("if port is not None:")[1].split("else:")[1]
-        assert "install_stdio_lifetime_watchdog" not in http_branch, (
+        # ``main`` is a dispatcher: the transport branches are the two runner
+        # functions it selects between, so the guard reads their sources. The
+        # dispatch assertions pin which runner each branch reaches; without
+        # them the watchdog checks below could pass against a main that routes
+        # stdio into the HTTP daemon. Every split is a partition so that a
+        # reshaped dispatcher fails on the assertion naming what went missing
+        # rather than crashing on an index before any assertion is reached.
+        main_src = inspect.getsource(_main.main)
+        _, port_branch, dispatch = main_src.partition("if port is not None:")
+        assert port_branch, (
+            "main must select its transport by branching on the port; the "
+            "guard cannot tell the two dispatch paths apart without it"
+        )
+        http_dispatch, _, stdio_dispatch = dispatch.partition("return")
+        assert "_run_http_daemon(port)" in http_dispatch, (
+            "the port branch of main must run the HTTP daemon"
+        )
+        assert "_run_stdio_mcp(" in stdio_dispatch, (
+            "the portless branch of main must run the stdio MCP client"
+        )
+        http_src = inspect.getsource(_main._run_http_daemon)
+        stdio_src = inspect.getsource(_main._run_stdio_mcp)
+        assert "install_stdio_lifetime_watchdog" not in main_src + http_src, (
             "the HTTP daemon must never install the stdio lifetime watchdog; "
             "a daemon that dies with its spawner breaks the resident service"
         )
-        assert "install_stdio_lifetime_watchdog" in stdio_branch, (
+        assert "install_stdio_lifetime_watchdog" in stdio_src, (
             "the stdio branch must install the lifetime watchdog"
         )
         assert "install_stdio_lifetime_watchdog" not in inspect.getsource(_lifespan), (

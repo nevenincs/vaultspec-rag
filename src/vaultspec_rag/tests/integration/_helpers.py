@@ -29,11 +29,16 @@ if TYPE_CHECKING:
     from collections.abc import Generator, Mapping
     from pathlib import Path
 
+    from ...embeddings import EmbeddingModel
+    from ...indexer import CodebaseIndexer, DocumentIndexer
     from ...indexer._content_policy import RootContentPolicy
     from ...qdrant_runtime._supervise import QdrantSupervisor
+    from ...store_runtime import VaultStore
 
 __all__ = [
+    "_content_kind_indexers",
     "_document_policy",
+    "_full_index_code_then_document",
     "_get_ephemeral_port",
     "_get_ephemeral_qdrant_port",
     "_make_root",
@@ -114,6 +119,62 @@ def _document_policy(pattern: str) -> RootContentPolicy:
         SourceProfileVersion.CONVENTIONAL_V1,
         (ContentRoute(pattern, ContentKind.DOCUMENT),),
     )
+
+
+def _content_kind_indexers(
+    root: Path,
+    embedding_model: EmbeddingModel,
+    store: VaultStore,
+    policy: RootContentPolicy,
+) -> tuple[CodebaseIndexer, DocumentIndexer]:
+    """Build the code and document indexers for one root under one policy.
+
+    Both content kinds share the store and the policy, which is what makes
+    their isolation assertable: anything one domain claims, the other saw the
+    same routing for. The import stays function-local so this helper module
+    keeps its light import cost.
+    """
+    from ...indexer import CodebaseIndexer, DocumentIndexer
+
+    code_indexer = CodebaseIndexer(
+        root,
+        embedding_model,
+        store,
+        options=CodebaseIndexer.Options(content_policy=policy),
+    )
+    document_indexer = DocumentIndexer(
+        root,
+        embedding_model,
+        store,
+        content_policy=policy,
+    )
+    return code_indexer, document_indexer
+
+
+def _full_index_code_then_document(
+    root: Path,
+    embedding_model: EmbeddingModel,
+    store: VaultStore,
+    policy: RootContentPolicy,
+) -> tuple[CodebaseIndexer, DocumentIndexer]:
+    """Full-index one root through both content kinds, code first."""
+    from ...progress import NullProgressReporter
+
+    code_indexer, document_indexer = _content_kind_indexers(
+        root,
+        embedding_model,
+        store,
+        policy,
+    )
+    code_indexer.full_index(
+        reporter=NullProgressReporter(),
+        preflight=code_indexer.preflight_content(),
+    )
+    document_indexer.full_index(
+        reporter=NullProgressReporter(),
+        preflight=document_indexer.preflight_content(),
+    )
+    return code_indexer, document_indexer
 
 
 def _make_root(tmp_path: Path) -> Path:

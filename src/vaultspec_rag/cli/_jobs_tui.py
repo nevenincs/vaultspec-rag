@@ -1161,10 +1161,7 @@ class JobsTuiApp(App[None]):
         self.call_from_thread(self._after_control, job_id, action, result)
 
     def action_job_retry(self) -> None:
-        job = self._actionable("retry")
-        if job is not None:
-            self._mark_pending(job, "retry")
-            self._send_retry(_job_id(job))
+        self._request_send("retry", self._send_retry)
 
     @work(thread=True, group=_CONTROL_GROUP)
     def _send_retry(self, job_id: str) -> None:
@@ -1177,15 +1174,23 @@ class JobsTuiApp(App[None]):
         self.call_from_thread(self._after_control, job_id, "retry", result)
 
     def action_job_delete(self) -> None:
-        job = self._actionable("delete")
-        if job is not None:
-            self._mark_pending(job, "delete")
-            self._send_delete(_job_id(job))
+        self._request_send("delete", self._send_delete)
 
     @work(thread=True, group=_CONTROL_GROUP)
     def _send_delete(self, job_id: str) -> None:
         result = _try_http_delete_job(job_id, self._port)
         self.call_from_thread(self._after_control, job_id, "delete", result)
+
+    def _request_send(self, action: str, send: Callable[[str], object]) -> None:
+        """Mark the selected job pending for *action*, then hand it to *send*.
+
+        The state transitions go through ``_request_state`` instead: they carry
+        a revision and an expected state, which this shape has no place for.
+        """
+        job = self._actionable(action)
+        if job is not None:
+            self._mark_pending(job, action)
+            send(_job_id(job))
 
     def _actionable(self, action: str) -> dict[str, object] | None:
         """Return the selected job when it permits *action*, else ``None``.

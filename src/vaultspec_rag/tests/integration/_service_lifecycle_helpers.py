@@ -298,7 +298,7 @@ def _signalable_live_service(
     qdrant_source: tuple[Path, Path],
 ) -> Generator[tuple[int, int]]:
     """Run the real daemon in a Windows-signalable process group."""
-    from ...cli._process import _service_child_env
+    from ...cli._process import _build_service_child_env, _ServiceChildEnvRequest
     from .conftest import _cleanup_service_process
 
     offline_env = {
@@ -319,7 +319,7 @@ def _signalable_live_service(
             "--port",
             str(port),
         ]
-        child_env = _service_child_env(watch=False)
+        child_env = _build_service_child_env(_ServiceChildEnvRequest(watch=False))
         creationflags = (
             getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
             if sys.platform == "win32"

@@ -149,17 +149,11 @@ def _object_dict(value: object, message: str) -> dict[str, object]:
     )
 
 
-def _required_str(payload: dict[str, object], key: str) -> str:
-    """Read one required non-empty string from a sidecar object."""
-    return _typed_fields.required_str(
-        payload.get(key),
-        on_invalid=lambda: DocumentMetadataError(f"document metadata {key} is invalid"),
-    )
-
-
-def _required_int(payload: dict[str, object], key: str) -> int:
-    """Read one required non-boolean integer from a sidecar object."""
-    return _typed_fields.required_int(
+def _required[T](
+    payload: dict[str, object], key: str, narrow: _typed_fields.Narrower[T]
+) -> T:
+    """Read one required sidecar field, narrowed by *narrow*."""
+    return narrow(
         payload.get(key),
         on_invalid=lambda: DocumentMetadataError(f"document metadata {key} is invalid"),
     )
@@ -174,8 +168,8 @@ def _file_from_payload(value: object) -> DocumentFileMetadata:
     ):
         raise DocumentMetadataError("document metadata point IDs are invalid")
     return DocumentFileMetadata(
-        _required_str(payload, "source_path"),
-        _required_str(payload, "content_fingerprint"),
+        _required(payload, "source_path", _typed_fields.required_str),
+        _required(payload, "content_fingerprint", _typed_fields.required_str),
         tuple(cast("list[str]", raw_ids)),
     )
 
@@ -195,21 +189,25 @@ def _from_payload(value: object) -> DocumentIndexMetadata:
         complete = payload.get("complete")
         if not isinstance(complete, bool):
             raise DocumentMetadataError("document metadata completeness is invalid")
-        meta_schema_version = _required_int(payload, "meta_schema_version")
+        meta_schema_version = _required(
+            payload, "meta_schema_version", _typed_fields.required_int
+        )
         raw_generation_id = payload.get("generation_id")
         generation_id = (
-            _required_str(payload, "generation_id")
+            _required(payload, "generation_id", _typed_fields.required_str)
             if raw_generation_id is not None
             else None
         )
         return DocumentIndexMetadata(
-            _required_str(payload, "membership_fingerprint"),
-            _required_str(payload, "content_fingerprint"),
-            _required_str(payload, "policy_snapshot"),
+            _required(payload, "membership_fingerprint", _typed_fields.required_str),
+            _required(payload, "content_fingerprint", _typed_fields.required_str),
+            _required(payload, "policy_snapshot", _typed_fields.required_str),
             files,
             generation_id=generation_id,
             meta_schema_version=meta_schema_version,
-            storage_schema_version=_required_int(payload, "storage_schema_version"),
+            storage_schema_version=_required(
+                payload, "storage_schema_version", _typed_fields.required_int
+            ),
             complete=complete,
         )
     except (TypeError, ValueError) as exc:

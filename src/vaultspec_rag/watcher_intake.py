@@ -27,11 +27,11 @@ from .job_models import (
 from .logging_config import log_event
 from .registry import get_registry
 from .watcher_durability import (
-    _admit_watcher_attempt,
-    _initialize_retry_policies,
-    _persist_observed_sources,
-    _raise_if_cancellation_requested,
-    _run_durable_retry_transaction,
+    admit_watcher_attempt,
+    initialize_retry_policies,
+    persist_observed_sources,
+    raise_if_cancellation_requested,
+    run_durable_retry_transaction,
 )
 from .watcher_execution import _submit_watcher_job
 from .watcher_policy import (
@@ -216,20 +216,15 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
         This coroutine does not propagate exceptions from indexing.
         Indexing errors are caught and logged via ``logger.exception``.
     """
+    # Only the two the ``watch_filter`` closure reads on every path event are
+    # bound locally; every other input is read off the configuration where it
+    # is used.
     root_dir = configuration.root_dir
     vault_dir = configuration.vault_dir
-    vault_indexer = configuration.vault_indexer
-    code_indexer = configuration.code_indexer
-    stop_event = configuration.stop_event
-    graph_cache = configuration.graph_cache
-    document_indexer = configuration.document_indexer
-    debounce = configuration.debounce
-    cooldown = configuration.cooldown
-    registry = configuration.registry
     try:
-        vault_retry, code_retry, document_retry = await _initialize_retry_policies(
+        vault_retry, code_retry, document_retry = await initialize_retry_policies(
             root_dir,
-            document_enabled=document_indexer is not None,
+            document_enabled=configuration.document_indexer is not None,
         )
     except Exception as exc:
         log_event(
@@ -249,8 +244,8 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
         "started",
         root=root_dir,
         vault=vault_dir,
-        debounce_ms=debounce,
-        cooldown_seconds=f"{cooldown:.0f}",
+        debounce_ms=configuration.debounce,
+        cooldown_seconds=f"{configuration.cooldown:.0f}",
         vault_circuit_state=vault_retry.state.circuit_state,
         vault_next_retry_at=f"{vault_retry.state.next_retry_at:.3f}",
         code_circuit_state=code_retry.state.circuit_state,
@@ -266,11 +261,11 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
     )
     resolved_root = root_dir.resolve()
     if (
-        vault_indexer.root_dir.resolve() != resolved_root
-        or code_indexer.root_dir.resolve() != resolved_root
+        configuration.vault_indexer.root_dir.resolve() != resolved_root
+        or configuration.code_indexer.root_dir.resolve() != resolved_root
         or (
-            document_indexer is not None
-            and document_indexer.root_dir.resolve() != resolved_root
+            configuration.document_indexer is not None
+            and configuration.document_indexer.root_dir.resolve() != resolved_root
         )
     ):
         raise ValueError("watcher indexers must belong to the watched project root")
@@ -278,7 +273,9 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
     # Each source owns one convergence slot. Manager callbacks and attempt
     # runners cross the event-loop/worker-thread boundary, so generation
     # transfer is protected by the slot's real thread lock.
-    owner_registry = registry if registry is not None else get_registry()
+    owner_registry = (
+        configuration.registry if configuration.registry is not None else get_registry()
+    )
     vault_slot = _WatcherConvergenceSlot(
         JobSource.VAULT,
         resolved_root,
@@ -307,16 +304,16 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
     # the prior intake snapshot while the unconditional control-file event is
     # still sent to the indexer, whose entry gate then fails closed.
     code_policy: list[ResolvedIndexPolicy | None] = [
-        refresh_watcher_policy(code_indexer, root_dir, None)
+        refresh_watcher_policy(configuration.code_indexer, root_dir, None)
     ]
 
     try:
         async for changes in awatch(
             root_dir,
-            debounce=debounce,
+            debounce=configuration.debounce,
             rust_timeout=_WATCH_IDLE_TICK_MS,
             yield_on_timeout=True,
-            stop_event=stop_event,
+            stop_event=configuration.stop_event,
             watch_filter=lambda _change, path: (
                 is_vault_change(Path(path), vault_dir)
                 or is_code_change(Path(path), root_dir, vault_dir, code_policy[0])
@@ -333,7 +330,7 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
             )
             if policy_changed:
                 code_policy[0] = refresh_watcher_policy(
-                    code_indexer,
+                    configuration.code_indexer,
                     root_dir,
                     code_policy[0],
                 )
@@ -353,7 +350,7 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
                 ),
             )
 
-            cancellation_requested = await _persist_observed_sources(
+            cancellation_requested = await persist_observed_sources(
                 (
                     _ObservedSource(
                         vault_events_observed, WatcherSource.VAULT, vault_retry
@@ -375,8 +372,8 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
                 ),
                 root_dir=root_dir,
             )
-            _raise_if_cancellation_requested(cancellation_requested)
-            if stop_event.is_set():
+            raise_if_cancellation_requested(cancellation_requested)
+            if configuration.stop_event.is_set():
                 break
 
             now = time.monotonic()
@@ -386,9 +383,9 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
                 code_slot,
                 document_slot,
                 reconciliation=_WatcherReconciliation(
-                    cooldown=cooldown,
+                    cooldown=configuration.cooldown,
                     now=now,
-                    graph_cache=graph_cache,
+                    graph_cache=configuration.graph_cache,
                 ),
             )
     except Exception as exc:
@@ -467,13 +464,13 @@ async def _reconcile_watcher_slot(
         _observe_slot_owner(slot, manager, job_id, now=now)
 
     retry_source = WatcherSource(slot.source.value)
-    retry_state, refresh_cancelled = await _run_durable_retry_transaction(
+    retry_state, refresh_cancelled = await run_durable_retry_transaction(
         slot.retry_policy.refresh,
         source=retry_source,
         root_dir=slot.root,
         action="refresh",
     )
-    _raise_if_cancellation_requested(refresh_cancelled)
+    raise_if_cancellation_requested(refresh_cancelled)
 
     with slot.lock:
         if slot.job_id is not None or not (
@@ -498,7 +495,7 @@ async def _reconcile_watcher_slot(
         )
         return
 
-    decision = await _admit_watcher_attempt(
+    decision = await admit_watcher_attempt(
         slot.retry_policy,
         source=retry_source,
         root_dir=slot.root,

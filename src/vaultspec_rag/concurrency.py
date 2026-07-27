@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     import anyio
 
 __all__ = [
+    "LIMITER_STAT_FIELDS",
     "get_encode_limiter",
     "get_index_limiter",
     "get_search_limiter",
@@ -99,6 +100,13 @@ def _stats(limiter: anyio.CapacityLimiter | None) -> dict[str, Any]:
         "borrowed_tokens": int(stats.borrowed_tokens),
         "waiting": int(stats.tasks_waiting),
     }
+
+
+#: The fields a limiter reports, taken from the reporter rather than written
+#: out again: the metrics exporter names a gauge after each, and the status
+#: header parses those gauge names back, so a field renamed here has to reach
+#: both sides at once or the header silently stops reading what is emitted.
+LIMITER_STAT_FIELDS: tuple[str, ...] = tuple(_stats(None))
 
 
 def limiter_stats() -> dict[str, dict[str, Any]]:

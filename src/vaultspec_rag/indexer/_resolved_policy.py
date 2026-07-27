@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import pathspec
 
+from .. import _typed_fields
 from ..config._settings import get_config
 from . import _config_epoch, _ignore_specs
 from ._content_policy import (
@@ -192,27 +193,35 @@ def _thaw_none(payload: object) -> None:
 
 
 def _thaw_bool(payload: object) -> bool:
-    if not isinstance(payload, bool):
-        raise TypeError("canonical bool payload must be a bool")
-    return payload
+    return _typed_fields.required_bool(
+        payload,
+        on_invalid=lambda: TypeError("canonical bool payload must be a bool"),
+    )
 
 
 def _thaw_int(payload: object) -> int:
-    if isinstance(payload, bool) or not isinstance(payload, int):
-        raise TypeError("canonical int payload must be an int")
-    return payload
+    return _typed_fields.required_int(
+        payload,
+        on_invalid=lambda: TypeError("canonical int payload must be an int"),
+    )
 
 
 def _thaw_str(payload: object) -> str:
-    if not isinstance(payload, str):
-        raise TypeError("canonical str payload must be a string")
-    return payload
+    return _typed_fields.required_str(
+        payload,
+        allow_empty=True,
+        on_invalid=lambda: TypeError("canonical str payload must be a string"),
+    )
 
 
 def _thaw_float(payload: object) -> float:
-    if not isinstance(payload, str):
-        raise TypeError("canonical float payload must be a string")
-    return float(payload)
+    return float(
+        _typed_fields.required_str(
+            payload,
+            allow_empty=True,
+            on_invalid=lambda: TypeError("canonical float payload must be a string"),
+        )
+    )
 
 
 def _thaw_scalar(tag: _ScalarTag, payload: object) -> object:

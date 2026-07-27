@@ -22,17 +22,13 @@ from ._render import _emit_json, _emit_json_error_and_exit, _plain
 from ._service_jobs_presentation import _render_job_detail
 from ._service_jobs_query import _jobs_from_result, job_revision
 
-
-@dataclass(frozen=True, slots=True)
-class _JobStateChangeRequest:
-    """One requested desired-state transition for a service job."""
-
-    action: str
-    reference: str
-    state: DesiredJobState
-    port: int | None
-    json_mode: bool
-    force: bool = False
+#: The desired state each ``server job`` control verb asks the service for.
+#: Stated once so a verb cannot request a state its own name contradicts.
+_DESIRED_STATE_FOR_ACTION: dict[str, DesiredJobState] = {
+    "pause": DesiredJobState.PAUSED,
+    "resume": DesiredJobState.RUNNING,
+    "stop": DesiredJobState.CANCELLED,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,26 +291,30 @@ def _complete_job_control(
     _render_job_control_outcome(result)
 
 
-def _set_job_state(request: _JobStateChangeRequest) -> None:
-    command = _job_control_command(request.action)
-    resolved_port = _job_control_port(
-        request.port, command=command, json_mode=request.json_mode
-    )
+def _set_job_state(
+    action: str,
+    reference: str,
+    port: int | None,
+    json_mode: bool,
+    force: bool = False,
+) -> None:
+    command = _job_control_command(action)
+    resolved_port = _job_control_port(port, command=command, json_mode=json_mode)
     exact_id, job = _exact_job_for_control(
-        request.reference,
+        reference,
         resolved_port,
         command=command,
-        json_mode=request.json_mode,
+        json_mode=json_mode,
     )
-    revision = _require_job_revision(job, command=command, json_mode=request.json_mode)
+    revision = _require_job_revision(job, command=command, json_mode=json_mode)
     result = _try_http_set_job_desired_state(
         exact_id,
-        request.state,
+        _DESIRED_STATE_FOR_ACTION[action],
         resolved_port,
         expected_revision=revision,
-        mode="force" if request.force else "graceful",
+        mode="force" if force else "graceful",
     )
-    _complete_job_control(command, result, json_mode=request.json_mode)
+    _complete_job_control(command, result, json_mode=json_mode)
 
 
 @server_job_app.command("show")
@@ -345,15 +345,7 @@ def service_job_pause(
     json_mode: JsonEnvelopeMode = False,
 ) -> None:
     """Request a cooperative pause for one job."""
-    _set_job_state(
-        _JobStateChangeRequest(
-            action="pause",
-            reference=job_id,
-            state=DesiredJobState.PAUSED,
-            port=port,
-            json_mode=json_mode,
-        )
-    )
+    _set_job_state("pause", job_id, port, json_mode)
 
 
 @server_job_app.command("resume")
@@ -363,15 +355,7 @@ def service_job_resume(
     json_mode: JsonEnvelopeMode = False,
 ) -> None:
     """Resume one paused job through reconciliation."""
-    _set_job_state(
-        _JobStateChangeRequest(
-            action="resume",
-            reference=job_id,
-            state=DesiredJobState.RUNNING,
-            port=port,
-            json_mode=json_mode,
-        )
-    )
+    _set_job_state("resume", job_id, port, json_mode)
 
 
 @server_job_app.command("stop")
@@ -388,16 +372,7 @@ def service_job_stop(
     ] = False,
 ) -> None:
     """Request cancellation without disabling automatic updates."""
-    _set_job_state(
-        _JobStateChangeRequest(
-            action="stop",
-            reference=job_id,
-            state=DesiredJobState.CANCELLED,
-            port=port,
-            json_mode=json_mode,
-            force=force,
-        )
-    )
+    _set_job_state("stop", job_id, port, json_mode, force)
 
 
 @server_job_app.command("retry")

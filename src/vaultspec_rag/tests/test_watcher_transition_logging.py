@@ -37,9 +37,9 @@ from ..job_models import (
 from ..service import ServiceRegistry
 from ..watcher_retry import WatcherRetryPolicy, WatcherSource, _WatcherRetryOptions
 from ..watcher_runtime import (
-    WatcherConvergenceSlot,
     _log_managed_transition,
     _TransitionLogContext,
+    _WatcherConvergenceSlot,
 )
 
 pytestmark = [pytest.mark.unit]
@@ -120,7 +120,7 @@ def _log(
     caplog: pytest.LogCaptureFixture,
 ) -> list[tuple[str, int]]:
     root = Path("/tmp/root")
-    slot = WatcherConvergenceSlot(
+    slot = _WatcherConvergenceSlot(
         source=JobSource.CODE,
         root=root,
         registry=ServiceRegistry(),
@@ -137,7 +137,12 @@ def _log(
         ),
     )
     caplog.clear()
-    with caplog.at_level(logging.DEBUG, logger="vaultspec_rag.watcher"):
+    # Raise the level on the logger that actually emits. The module logs through
+    # ``getLogger(__name__)``, so its name IS the defining module - taking it
+    # from the function keeps this correct if the module is ever renamed. A
+    # hard-coded sibling name silently raises nothing, leaving capture at the
+    # mercy of whatever level an earlier test in the same process left behind.
+    with caplog.at_level(logging.DEBUG, logger=_log_managed_transition.__module__):
         _log_managed_transition(
             slot,
             _snapshot(state),

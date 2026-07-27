@@ -245,6 +245,7 @@ class TestNoStructurallyIdenticalFunctions:
         ): _DISTINCT_PROSE,
         (
             "_readiness.py:dimension",
+            "cli/_jobs_tui_status.py:seat_pool",
             "commands/_provision.py:result_for",
         ): _FIND_FIRST,
         (

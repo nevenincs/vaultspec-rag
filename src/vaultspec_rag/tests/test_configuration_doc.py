@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from ..config._schema import ENV_OVERRIDE_MAP
+from ..config._schema import _ENV_OVERRIDE_MAP
 from ..config._settings import VaultSpecConfigWrapper
 from ..config._types import EnvVar
 from .constants import PROJECT_ROOT
@@ -55,7 +55,7 @@ _CODE_SPAN = re.compile(r"`([^`]+)`")
 
 _DEFAULTS: dict[str, Any] = VaultSpecConfigWrapper._RAG_DEFAULTS  # pyright: ignore[reportPrivateUsage]
 _SETTINGS_KEY_BY_ENV: dict[str, str] = {
-    member.value: key for key, member in ENV_OVERRIDE_MAP.items()
+    member.value: key for key, member in _ENV_OVERRIDE_MAP.items()
 }
 
 pytestmark.append(
@@ -254,7 +254,7 @@ def test_config_only_table_lists_exactly_the_keys_with_no_env_var() -> None:
     documented-only.
     """
     documented = set(_config_only_rows(_DOC))
-    expected = set(_DEFAULTS) - set(ENV_OVERRIDE_MAP)
+    expected = set(_DEFAULTS) - set(_ENV_OVERRIDE_MAP)
     assert documented == expected, (
         "the config-only table disagrees with the settings override map, so "
         "it tells operators a key is unreachable from the environment when it "

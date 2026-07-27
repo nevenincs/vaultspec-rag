@@ -235,6 +235,18 @@ def job_revision(job: dict[str, object]) -> int | None:
     return revision
 
 
+def _filter_is_set(value: object) -> bool:
+    """Report whether a filter value narrows the job list at all.
+
+    An unset filter arrives three ways - absent as ``None``, empty as ``""``,
+    and unticked as ``False`` - and every reader has to treat all three the
+    same or it describes a filter nobody applied. The trio was spelled out at
+    each site, so a fourth spelling of "unset" would have reached whichever
+    sites got remembered.
+    """
+    return value not in (None, "", False)
+
+
 def _empty_jobs_message(result: dict[str, object], job_id: str | None) -> str:
     message = "No jobs have been reported by this service yet."
     if job_id:
@@ -253,8 +265,7 @@ def _empty_jobs_message(result: dict[str, object], job_id: str | None) -> str:
         ):
             message = "There are no active or waiting jobs."
         elif any(
-            key != "limit" and value not in (None, "", False)
-            for key, value in filters.items()
+            key != "limit" and _filter_is_set(value) for key, value in filters.items()
         ):
             message = "No jobs matched these filters."
     return message
