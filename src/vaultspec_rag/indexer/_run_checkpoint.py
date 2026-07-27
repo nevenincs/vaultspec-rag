@@ -3,22 +3,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from .. import store_schema
 from ._checkpoint_common import RunCheckpointBase, configuration_fingerprint
 from ._code_meta import CODE_EMBED_SCHEMA, publish_meta_from_file_states
 from ._content_policy import AdmissionDisposition, AdmissionReason, ContentKind
 from ._file_state import FileState
-from ._run_ledger import (
+from ._run_ledger_models import (
     CommitUnit,
     CommitUnitKind,
-    RunLedger,
     RunLedgerCompatibilityError,
     RunOperation,
     RunSignature,
     index_run_ledger_path,
 )
+from ._run_ledger_runtime import RunLedger
 from ._run_policy import DurableProgressKind, RunPolicy
 
 if TYPE_CHECKING:
@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 __all__ = [
     "CodeRunCheckpoint",
     "CodeRunConfiguration",
+    "CodeRunOpenRequest",
 ]
 
 
@@ -68,6 +69,21 @@ class CodeRunConfiguration:
             raise TypeError("sparse_enabled must be a bool")
 
 
+@dataclass(frozen=True, slots=True)
+class CodeRunOpenRequest:
+    """All compatibility inputs for opening one code generation."""
+
+    data_root: Path
+    root_dir: Path
+    policy: ResolvedIndexPolicy
+    run_policy: RunPolicy
+    operation: RunOperation
+    clean: bool
+    model_identity: str
+    dense_dimensions: int
+    configuration: CodeRunConfiguration
+
+
 @dataclass(slots=True)
 class CodeRunCheckpoint(RunCheckpointBase):
     """One code generation's durable segment and publication authority."""
@@ -78,39 +94,36 @@ class CodeRunCheckpoint(RunCheckpointBase):
     @classmethod
     def open(
         cls,
-        *,
-        data_root: Path,
-        root_dir: Path,
-        policy: ResolvedIndexPolicy,
-        run_policy: RunPolicy,
-        operation: RunOperation,
-        clean: bool,
-        model_identity: str,
-        dense_dimensions: int,
-        configuration: CodeRunConfiguration,
+        request: CodeRunOpenRequest | None = None,
+        **legacy: object,
     ) -> CodeRunCheckpoint:
         """Open or resume the compatible code generation for one attempt."""
-        kind_fingerprints = policy.fingerprints_for(ContentKind.CODE)
+        if request is None:
+            request = CodeRunOpenRequest(**cast("dict[str, Any]", legacy))
+        elif legacy:
+            raise TypeError("use either a CodeRunOpenRequest or named inputs")
+        kind_fingerprints = request.policy.fingerprints_for(ContentKind.CODE)
         signature = RunSignature(
-            root_identity=str(root_dir.resolve()),
+            root_identity=str(request.root_dir.resolve()),
             collection_identity=store_schema.CODE_COLLECTION,
             source_type=ContentKind.CODE,
-            operation=operation,
-            clean=clean,
-            model_identity=model_identity,
-            dense_dimensions=dense_dimensions,
+            operation=request.operation,
+            clean=request.clean,
+            model_identity=request.model_identity,
+            dense_dimensions=request.dense_dimensions,
             embedding_schema=int(CODE_EMBED_SCHEMA),
             payload_schema=store_schema.STORAGE_SCHEMA_VERSION,
             content_epoch=kind_fingerprints.content,
             membership_epoch=kind_fingerprints.membership,
-            preprocessing_identity=policy.fingerprints.execution,
-            configuration_fingerprint=configuration_fingerprint(configuration),
-            policy_fingerprint=policy.fingerprints.snapshot,
+            preprocessing_identity=request.policy.fingerprints.execution,
+            configuration_fingerprint=configuration_fingerprint(request.configuration),
+            policy_fingerprint=request.policy.fingerprints.snapshot,
         )
-        ledger = RunLedger(index_run_ledger_path(data_root))
+        ledger = RunLedger(index_run_ledger_path(request.data_root))
         generation = ledger.start_generation(signature)
         if (
-            operation in (RunOperation.INCREMENTAL, RunOperation.SCOPED_INCREMENTAL)
+            request.operation
+            in (RunOperation.INCREMENTAL, RunOperation.SCOPED_INCREMENTAL)
             and generation.parent_generation_id is None
         ):
             raise RunLedgerCompatibilityError(
@@ -120,8 +133,8 @@ class CodeRunCheckpoint(RunCheckpointBase):
         return cls(
             ledger=ledger,
             generation=generation,
-            policy=policy,
-            run_policy=run_policy,
+            policy=request.policy,
+            run_policy=request.run_policy,
         )
 
     def unit_for(self, segment: CodeFileSegment, source_digest: str) -> CommitUnit:
