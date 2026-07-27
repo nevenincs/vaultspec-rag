@@ -222,6 +222,18 @@ class _ServiceDelegationRequest:
     allow_fallback: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _IndexRunRequest:
+    """One source selection that may execute locally or only scan."""
+
+    index_type: PublicSourceType
+    rebuild: bool
+    model: str | None
+    exclude: list[str] | None
+    target: pathlib.Path
+    json_mode: bool
+
+
 def _validate_dry_run_request(
     index_type: PublicSourceType,
     json_mode: bool,
@@ -397,21 +409,20 @@ def _render_hidden_dry_run_files(
 
 
 def _handle_dry_run(
-    index_type: PublicSourceType,
-    json_mode: bool,
-    target: pathlib.Path,
-    exclude: list[str] | None,
+    request: _IndexRunRequest,
     dry_run_limit: int,
     no_preprocess: bool,
 ) -> None:
-    _validate_dry_run_request(index_type, json_mode, dry_run_limit)
+    _validate_dry_run_request(request.index_type, request.json_mode, dry_run_limit)
     if no_preprocess:
         _apply_preprocess_off_env()
-    scan = _scan_dry_run_sources(index_type, target, exclude, dry_run_limit)
-    if json_mode:
+    scan = _scan_dry_run_sources(
+        request.index_type, request.target, request.exclude, dry_run_limit
+    )
+    if request.json_mode:
         _emit_dry_run_json(scan)
         return
-    _render_dry_run(scan, index_type, dry_run_limit)
+    _render_dry_run(scan, request.index_type, dry_run_limit)
 
 
 def _validate_rebuild(ctx: typer.Context, json_mode: bool) -> None:
@@ -645,10 +656,7 @@ def handle_index(
 
     if dry_run:
         _handle_dry_run(
-            source,
-            json_mode,
-            target,
-            exclude,
+            _IndexRunRequest(source, rebuild, model, exclude, target, json_mode),
             dry_run_limit,
             no_preprocess,
         )
@@ -700,17 +708,12 @@ def handle_index(
     if no_preprocess:
         _apply_preprocess_off_env()
 
-    _try_in_process_indexing(source, rebuild, model, exclude, target, json_mode)
+    _try_in_process_indexing(
+        _IndexRunRequest(source, rebuild, model, exclude, target, json_mode)
+    )
 
 
-def _try_in_process_indexing(
-    index_type: PublicSourceType,
-    rebuild: bool,
-    model: str | None,
-    exclude: list[str] | None,
-    target: pathlib.Path,
-    json_mode: bool,
-) -> None:
+def _try_in_process_indexing(request: _IndexRunRequest) -> None:
     import contextlib
 
     import vaultspec_rag
@@ -723,7 +726,7 @@ def _try_in_process_indexing(
     # broker parsing stdout got a syntax error instead of an outcome.
     reporter_ctx: AbstractContextManager[ProgressReporter] = (
         contextlib.nullcontext(NullProgressReporter())
-        if json_mode
+        if request.json_mode
         else RichProgressReporter(_cli.console)
     )
     with reporter_ctx as reporter:
@@ -734,22 +737,18 @@ def _try_in_process_indexing(
         try:
             v_res, c_res, d_res, all_outcomes = _execute_source_indexing(
                 vaultspec_rag,
-                index_type=index_type,
-                target=target,
-                rebuild=rebuild,
+                request=request,
                 reporter=reporter,
-                model=model,
-                exclude=exclude,
             )
         except VaultStoreLockedError as exc:
-            if json_mode:
+            if request.json_mode:
                 _emit_json_error_and_exit(
                     "index",
-                    "rebuild_locked" if rebuild else "index_locked",
+                    "rebuild_locked" if request.rebuild else "index_locked",
                     "Cannot update the index because the local index is busy.",
                     1,
                     db_path=str(exc.db_path),
-                    index_type=index_type.value,
+                    index_type=request.index_type.value,
                     remediation=[
                         server_status_command(),
                         "Use --port with a running service for concurrent work.",
@@ -762,13 +761,13 @@ def _try_in_process_indexing(
             # A RuntimeError subclass: without this branch the disk
             # preflight refusal would fall into the GPU-error handler
             # and be misdiagnosed as a torch problem.
-            if json_mode:
+            if request.json_mode:
                 _emit_json_error_and_exit(
                     "index",
                     "disk_preflight_failed",
                     str(exc),
                     1,
-                    index_type=index_type.value,
+                    index_type=request.index_type.value,
                     remediation=[
                         "vaultspec-rag server storage survey",
                         "vaultspec-rag server storage prune --dry-run",
@@ -782,7 +781,7 @@ def _try_in_process_indexing(
 
     in_process_sources = _collect_index_rows(v_res, c_res, d_res, all_outcomes)
 
-    if json_mode:
+    if request.json_mode:
         _emit_json(
             True,
             "index",
@@ -851,12 +850,8 @@ def _render_failed_index_rows(rows: list[dict[str, object]]) -> None:
 def _execute_source_indexing(
     api: Any,
     *,
-    index_type: PublicSourceType,
-    target: pathlib.Path,
-    rebuild: bool,
+    request: _IndexRunRequest,
     reporter: Any,
-    model: str | None,
-    exclude: list[str] | None,
 ) -> tuple[
     IndexResult | None,
     IndexResult | None,
@@ -866,38 +861,38 @@ def _execute_source_indexing(
     """Execute exactly one canonical source selection without fallback."""
     from ..api import AllIndexOptions, CodeIndexOptions, DocumentIndexOptions
 
-    if index_type is PublicSourceType.COMBINED:
+    if request.index_type is PublicSourceType.COMBINED:
         return (
             None,
             None,
             None,
-            api.index_all(target, AllIndexOptions(
-                clean=rebuild,
+            api.index_all(request.target, AllIndexOptions(
+                clean=request.rebuild,
                 reporter=reporter,
-                model_name=model,
-                extra_excludes=exclude,
+                model_name=request.model,
+                extra_excludes=request.exclude,
             )),
         )
-    if index_type is PublicSourceType.VAULT:
+    if request.index_type is PublicSourceType.VAULT:
         return (
             api.index(
-                target,
-                clean=rebuild,
+                request.target,
+                clean=request.rebuild,
                 reporter=reporter,
-                model_name=model,
+                model_name=request.model,
             ),
             None,
             None,
             None,
         )
-    if index_type is PublicSourceType.CODE:
+    if request.index_type is PublicSourceType.CODE:
         return (
             None,
-            api.index_codebase(target, CodeIndexOptions(
-                clean=rebuild,
+            api.index_codebase(request.target, CodeIndexOptions(
+                clean=request.rebuild,
                 reporter=reporter,
-                model_name=model,
-                extra_excludes=exclude,
+                model_name=request.model,
+                extra_excludes=request.exclude,
             )),
             None,
             None,
@@ -905,11 +900,11 @@ def _execute_source_indexing(
     return (
         None,
         None,
-        api.index_documents(target, DocumentIndexOptions(
-            clean=rebuild,
+        api.index_documents(request.target, DocumentIndexOptions(
+            clean=request.rebuild,
             reporter=reporter,
-            model_name=model,
-            extra_excludes=exclude,
+            model_name=request.model,
+            extra_excludes=request.exclude,
         )),
         None,
     )
