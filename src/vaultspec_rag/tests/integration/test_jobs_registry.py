@@ -16,6 +16,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import subprocess
+import sys
 import threading
 import time
 from typing import TYPE_CHECKING, cast
@@ -34,10 +37,13 @@ from ...job_models import (
     JobInitiator,
     JobMode,
     JobOperation,
+    JobOutcomeStatus,
     JobSource,
     JobSpec,
     JobState,
 )
+from ...server._routes import _service_job_snapshot
+from ...server._routes_jobs import _job_with_liveness
 from ...serviceclient._discovery import _default_service_port
 from ...serviceclient._transport import _try_http_admin
 from ._helpers import _make_root
@@ -51,6 +57,22 @@ if TYPE_CHECKING:
 _JOB_COMPLETION_TIMEOUT_SECONDS = 120.0
 _JOB_POLL_INTERVAL_SECONDS = 0.1
 _TERMINAL_JOB_PHASES = frozenset({"done", "error", "failed"})
+
+
+def _exited_process_pid() -> int:
+    """Return the pid of a process that has already exited.
+
+    A literal high pid is a guess the OS is free to contradict; a pid this
+    process reaped is observably dead, which is what the liveness guard needs
+    to distinguish from a running owner.
+    """
+    with subprocess.Popen(
+        [sys.executable, "-c", ""],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    ) as process:
+        process.wait()
+        return process.pid
 
 
 @pytest.fixture
@@ -318,6 +340,238 @@ def test_concurrent_writers_do_not_corrupt(_clean_jobs: None) -> None:
         assert entry["phase"] == "done"
         assert entry["result"] == "ok"
         assert isinstance(entry["finished_at"], float)
+
+
+class TestJobResourceDeletion:
+    """Deletion and resolution span both registries the jobs list unions."""
+
+    pytestmark = pytest.mark.unit
+
+    @staticmethod
+    def _terminal_job_with_activity_record(root: Path) -> str:
+        """Admit one canonical job, shadow it, and drive it terminal."""
+        manager = _jobs.get_job_manager()
+        outcome = manager.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.CODE,
+                str(root),
+                JobMode.INCREMENTAL,
+            ),
+            JobInitiator(
+                kind="cli",
+                command="reindex_codebase",
+                project_root=str(root),
+            ),
+        )
+        assert outcome.job is not None
+        job_id = outcome.job.id
+        _jobs.record_start(
+            JobSource.CODE,
+            "tool",
+            project_root=root,
+            command="reindex_codebase",
+            _record_id=job_id,
+        )
+        _jobs.record_finish(job_id, result="ok")
+        manager.set_desired_state(job_id, DesiredJobState.CANCELLED)
+        return job_id
+
+    @pytest.mark.usefixtures("isolated_status_dir")
+    def test_delete_removes_the_shadowing_activity_record(
+        self,
+        _clean_jobs: None,
+        tmp_path: Path,
+    ) -> None:
+        """A deleted job must not return through the other registry.
+
+        Canonical history and the activity ring hold the same job under one id,
+        and the jobs list is their union. Deleting canonical history alone left
+        the shadow behind, which then surfaced as a row the operator had just
+        deleted and could no longer address.
+        """
+        job_id = self._terminal_job_with_activity_record(tmp_path)
+        assert any(row["id"] == job_id for row in _service_job_snapshot())
+
+        outcome = _jobs.delete_job(job_id)
+
+        assert outcome.status is JobOutcomeStatus.OK
+        assert outcome.code == "job_deleted"
+        # The union, not either half: a shadow surviving here is the bug.
+        assert not any(row["id"] == job_id for row in _service_job_snapshot())
+        assert _jobs.find_job(job_id) is None
+
+    @pytest.mark.usefixtures("isolated_status_dir")
+    def test_activity_only_record_is_addressable_and_deletable(
+        self,
+        _clean_jobs: None,
+    ) -> None:
+        """A listed row with no canonical twin must resolve and delete.
+
+        Maintenance cycles and restart-restored runs only ever exist as
+        activity records. They were listed but not addressable, so every
+        control verb - which resolves through the detail route - reported the
+        id missing for a row plainly on screen.
+        """
+        job_id = _jobs.record_start(
+            JobSource.MAINTENANCE,
+            "schedule",
+            command="storage_maintenance",
+        )
+        _jobs.record_finish(job_id, result="swept")
+        assert _jobs.get_job_manager().get(job_id) is None
+        assert any(row["id"] == job_id for row in _service_job_snapshot())
+
+        assert _jobs.find_job(job_id) is not None
+        outcome = _jobs.delete_job(job_id)
+
+        assert outcome.status is JobOutcomeStatus.OK
+        assert outcome.code == "job_deleted"
+        assert not any(row["id"] == job_id for row in _service_job_snapshot())
+
+    @pytest.mark.usefixtures("isolated_status_dir")
+    def test_delete_refuses_a_running_activity_record(
+        self,
+        _clean_jobs: None,
+        tmp_path: Path,
+    ) -> None:
+        """Deletion is history-only and never reaches unfinished work.
+
+        Guard: reaching an activity record with no terminal check would let
+        delete silently drop the only trace of a run still in flight. The
+        assertion below names ``job_not_terminal`` exactly, because a bare
+        "errored" check passes for every rejection reason.
+        """
+        job_id = _jobs.record_start(
+            JobSource.CODE,
+            "watcher",
+            project_root=tmp_path,
+        )
+
+        outcome = _jobs.delete_job(job_id)
+
+        assert outcome.status is JobOutcomeStatus.ERROR
+        assert outcome.code == "job_not_terminal"
+        assert any(row["id"] == job_id for row in _service_job_snapshot())
+
+    def test_activity_record_reports_truthful_capabilities(
+        self,
+        _clean_jobs: None,
+    ) -> None:
+        """Every listed row states what it supports, whichever registry owns it."""
+        running_id = _jobs.record_start(JobSource.VAULT, "tool")
+        finished_id = _jobs.record_start(JobSource.VAULT, "tool")
+        _jobs.record_finish(finished_id, result="ok")
+
+        rows = {
+            str(row["id"]): row
+            for row in (
+                _job_with_liveness(record, now=time.time())
+                for record in _jobs.snapshot()
+            )
+        }
+
+        assert rows[finished_id]["capabilities"] == {
+            "pausable": False,
+            "resumable": False,
+            "cancellable": False,
+            "retryable": False,
+            "deletable": True,
+            "force_killable": False,
+        }
+        running_capabilities = cast(
+            "dict[str, object]", rows[running_id]["capabilities"]
+        )
+        assert running_capabilities["deletable"] is False
+
+
+class TestInterruptedRestoreOwnership:
+    """Restart adoption never claims work another live process still owns."""
+
+    pytestmark = pytest.mark.unit
+
+    @staticmethod
+    def _write_active_snapshot(
+        status_dir: Path,
+        entries: list[dict[str, object]],
+    ) -> None:
+        (status_dir / "jobs-active.json").write_text(
+            json.dumps({"active": entries}),
+            encoding="utf-8",
+        )
+
+    def test_live_owner_is_skipped_and_dead_owner_is_restored(
+        self,
+        _clean_jobs: None,
+        isolated_status_dir: Path,
+    ) -> None:
+        """Guard: adopting a live process's run publishes a phantom record.
+
+        The running-jobs snapshot is one machine-wide path written by every
+        process that indexes, so an entry found there is not necessarily this
+        service's abandoned work. Adopting one that is still running invents an
+        ``interrupted`` row under an id this service cannot address - exactly
+        the unaddressable rows deletion cannot clear.
+
+        The dead-owner and missing-pid assertions are the other direction: a
+        guard that skipped everything would pass a live-owner-only check while
+        silently discarding every genuinely interrupted run.
+        """
+        self._write_active_snapshot(
+            isolated_status_dir,
+            [
+                {
+                    "id": "owned-by-a-live-process",
+                    "source": "code",
+                    "trigger": "tool",
+                    "started_at": 1.0,
+                    "progress": None,
+                    "initiator": None,
+                    "pid": os.getpid(),
+                },
+                {
+                    "id": "owned-by-a-dead-process",
+                    "source": "vault",
+                    "trigger": "watcher",
+                    "started_at": 1.0,
+                    "progress": None,
+                    "initiator": None,
+                    "pid": _exited_process_pid(),
+                },
+                {
+                    "id": "written-before-the-pid-field",
+                    "source": "code",
+                    "trigger": "tool",
+                    "started_at": 1.0,
+                    "progress": None,
+                    "initiator": None,
+                },
+            ],
+        )
+
+        restored = _jobs.restore_interrupted()
+
+        ids = {str(entry["id"]) for entry in _jobs.snapshot()}
+        assert "owned-by-a-live-process" not in ids
+        assert "owned-by-a-dead-process" in ids
+        assert "written-before-the-pid-field" in ids
+        assert restored == 2
+
+    def test_running_record_carries_its_owning_pid(
+        self,
+        _clean_jobs: None,
+        isolated_status_dir: Path,
+    ) -> None:
+        """The snapshot records an owner, or the guard above has nothing to read."""
+        _jobs.record_start(JobSource.VAULT, "tool")
+
+        raw = (isolated_status_dir / "jobs-active.json").read_text(encoding="utf-8")
+        entries = cast(
+            "list[dict[str, object]]",
+            cast("dict[str, object]", json.loads(raw))["active"],
+        )
+
+        assert [entry["pid"] for entry in entries] == [os.getpid()]
 
 
 class TestManagedJobPersistence:
