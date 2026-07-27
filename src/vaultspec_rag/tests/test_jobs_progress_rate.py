@@ -161,9 +161,11 @@ class TestProgressRateWindow:
         assert shaped["progress_rate_per_second"] is None
         assert shaped["estimated_remaining_seconds"] is None
 
-    def test_step_without_a_total_reports_no_estimate(self) -> None:
+    def test_unsampled_job_reports_no_estimate(self) -> None:
         from ..server._routes_jobs import _job_with_liveness
 
+        # No sampling window exists for this id, so there is no measurement
+        # to report - neither a rate nor a projection.
         record: dict[str, object] = {
             "id": "j1",
             "phase": "running",
@@ -197,4 +199,184 @@ class TestProgressRateWindow:
         }
         shaped = _job_with_liveness(record, now=250.0)
         assert shaped["progress_rate_per_second"] is None
+        assert shaped["estimated_remaining_seconds"] is None
+
+
+# Measured against this tree: chunk production reports once per file and
+# emits ~390 advances/second (median inter-advance gap 1.8ms) over the 483
+# source files, because the producer chunks far faster than the GPU drains.
+# These are the numbers the replays below run at.
+_PRODUCTION_ADVANCES_PER_SECOND = 390.0
+_PRODUCTION_FILE_COUNT = 483
+
+
+class TestRealisticProgressCadence:
+    """The estimate must survive the cadence real indexing actually emits.
+
+    A window bounded only by sample count holds ~40ms of history at the
+    measured rate, which can never satisfy the one-second span guard. The
+    result is an estimator that declines in every real run - a defect, not
+    honesty. These replays drive the production functions at the measured
+    cadence and assert an answer arrives.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _own_status_dir(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> Iterator[None]:
+        from ..config import reset_config
+
+        monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", str(tmp_path / "status"))
+        reset_config()
+        reset()
+        yield
+        reset()
+        reset_config()
+
+    def _replay(
+        self,
+        record: dict[str, object],
+        *,
+        step: str,
+        advances_per_second: float,
+        count: int,
+        start_at: float,
+        first_completed: int = 0,
+    ) -> float:
+        """Drive ``_sample_progress`` at a fixed cadence; return the last time."""
+        from ..jobs import _sample_progress
+
+        interval = 1.0 / advances_per_second
+        at = start_at
+        _sample_progress(
+            record,
+            step=step,
+            previous_step=record.get("_replay_step"),
+            completed=first_completed,
+            at=at,
+        )
+        record["_replay_step"] = step
+        for offset in range(1, count + 1):
+            at = start_at + offset * interval
+            _sample_progress(
+                record,
+                step=step,
+                previous_step=step,
+                completed=first_completed + offset,
+                at=at,
+            )
+        return at
+
+    def _window(self, record: dict[str, object]) -> deque[tuple[float, int]]:
+        return cast("deque[tuple[float, int]]", record["progress_window"])
+
+    def test_per_file_chunk_cadence_still_yields_a_rate(self) -> None:
+        from ..jobs import _window_rate
+
+        # Mutation check: making ``_sample_progress`` append every report
+        # unconditionally (dropping the coalescing) makes this fail on the
+        # ``rate is not None`` assertion below, not on an import - the
+        # 16-sample window then spans 0.039s and the span guard refuses.
+        record: dict[str, object] = {"id": "j1"}
+        self._replay(
+            record,
+            step="chunk + embed",
+            advances_per_second=_PRODUCTION_ADVANCES_PER_SECOND,
+            count=_PRODUCTION_FILE_COUNT,
+            start_at=1000.0,
+        )
+        rate = _window_rate(self._window(record))
+        assert rate is not None
+        assert rate == pytest.approx(_PRODUCTION_ADVANCES_PER_SECOND, rel=0.05)
+
+    def test_the_window_stays_bounded_under_a_fast_step(self) -> None:
+        record: dict[str, object] = {"id": "j1"}
+        self._replay(
+            record,
+            step="chunk + embed",
+            advances_per_second=_PRODUCTION_ADVANCES_PER_SECOND,
+            count=_PRODUCTION_FILE_COUNT,
+            start_at=1000.0,
+        )
+        window = self._window(record)
+        # Coalescing must bound memory, not grow one sample per report.
+        assert window.maxlen is not None
+        assert len(window) <= window.maxlen
+
+    def test_the_rate_tracks_a_slowdown_rather_than_the_step_average(self) -> None:
+        from ..jobs import _window_rate
+
+        # Mutation check: comparing the coalescing interval against
+        # ``samples[-1]`` instead of ``samples[-2]`` holds the oldest sample
+        # forever, so the window becomes a whole-step average and this fails
+        # on the ``rate < 50`` assertion below.
+        record: dict[str, object] = {"id": "j1"}
+        last_at = self._replay(
+            record,
+            step="chunk + embed",
+            advances_per_second=_PRODUCTION_ADVANCES_PER_SECOND,
+            count=780,
+            start_at=1000.0,
+        )
+        # The GPU consumer fills its queue and the producer drops to the
+        # drain rate. An operator watching now needs the current throughput.
+        self._replay(
+            record,
+            step="chunk + embed",
+            advances_per_second=10.0,
+            count=40,
+            start_at=last_at,
+            first_completed=781,
+        )
+        rate = _window_rate(self._window(record))
+        assert rate is not None
+        # The whole-step average is ~135/s; recent throughput is ~10/s.
+        assert rate < 50.0
+
+    def test_the_whole_chain_answers_at_production_cadence(self) -> None:
+        from ..server._routes_jobs import _job_with_liveness
+
+        # Real wall clock through the real registry, in the shape a real run
+        # emits: the producer chunks a burst of files at full speed, blocks on
+        # the full segment queue while the GPU drains it, then bursts again.
+        # One burst alone fills a 16-sample window in under 30ms, which is
+        # precisely why a count-bounded window can never answer here.
+        job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+        record_progress(job_id, "chunk + embed", 0, _PRODUCTION_FILE_COUNT)
+        started = time.monotonic()
+        units = 0
+        while time.monotonic() - started < 1.2:
+            for _ in range(16):
+                units += 1
+                record_progress(job_id, "chunk + embed", units, _PRODUCTION_FILE_COUNT)
+                time.sleep(1.0 / _PRODUCTION_ADVANCES_PER_SECOND)
+            time.sleep(0.3)
+
+        record = next(e for e in snapshot() if e["id"] == job_id)
+        shaped = _job_with_liveness(record, now=time.time())
+        rate = shaped["progress_rate_per_second"]
+        remaining = shaped["estimated_remaining_seconds"]
+        assert isinstance(rate, float) and rate > 0
+        assert isinstance(remaining, float) and remaining > 0
+        assert remaining == pytest.approx(
+            (_PRODUCTION_FILE_COUNT - units) / rate, rel=0.05
+        )
+
+    def test_a_step_without_a_total_reports_a_rate_and_no_estimate(self) -> None:
+        from ..server._routes_jobs import _job_with_liveness
+
+        # Document embedding publishes a count with no total. Throughput is
+        # a measurement and is reported; there is no completion point to
+        # project onto, so the remaining time stays unknown.
+        job_id = record_start(JobSource.DOCUMENT, "tool", command="reindex_documents")
+        record_progress(job_id, "embed + upsert document chunks", 0, None)
+        time.sleep(1.2)
+        record_progress(job_id, "embed + upsert document chunks", 600, None)
+
+        record = next(e for e in snapshot() if e["id"] == job_id)
+        shaped = _job_with_liveness(record, now=time.time())
+        assert isinstance(shaped["progress_rate_per_second"], float)
+        assert cast("float", shaped["progress_rate_per_second"]) > 0
         assert shaped["estimated_remaining_seconds"] is None

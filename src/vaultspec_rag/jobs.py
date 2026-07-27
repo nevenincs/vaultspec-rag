@@ -129,6 +129,15 @@ _PROGRESS_WINDOW_SAMPLES = 16
 # interval and yield a rate off by orders of magnitude. Refusing to
 # answer until the window spans a real interval costs one refresh.
 _MIN_RATE_SPAN_SECONDS = 1.0
+# Retained samples are spaced by at least this interval. Chunk production
+# reports per file and measures ~385 reports/second on a real tree, so a
+# window bounded only by sample count holds ~40ms of history and can never
+# satisfy the span guard above - the two bounds cancel and the rate is
+# never available. Coalescing every report that lands inside the interval
+# into the newest sample keeps the window bounded by count while still
+# spanning a real interval, without discarding the current count: the
+# newest sample always carries it.
+_PROGRESS_SAMPLE_MIN_INTERVAL_SECONDS = 0.25
 _on_job_complete_callbacks: list[Callable[[float], None]] = []
 _manager_lock = threading.Lock()
 _job_manager: JobManager | None = None
@@ -382,6 +391,11 @@ def _sample_progress(
     The window is discarded when the step changes, and when the count moves
     backwards - a resumed attempt replays committed units, so measuring
     across that reset would report a negative rate or a wildly low one.
+
+    Reports arriving faster than
+    :data:`_PROGRESS_SAMPLE_MIN_INTERVAL_SECONDS` are coalesced into the
+    newest sample rather than appended, so a bounded window spans a real
+    interval however fast the step reports.
     """
     window = record.get(_PROGRESS_WINDOW_KEY)
     samples = (
@@ -391,7 +405,17 @@ def _sample_progress(
     )
     if previous_step != step or (samples and completed < samples[-1][1]):
         samples.clear()
-    samples.append((at, completed))
+    # Measured against the last committed sample, never the newest one: the
+    # newest is overwritten in place, so comparing against it would hold the
+    # window open forever and turn the rate into a whole-step average that
+    # cannot track a slowdown.
+    if (
+        len(samples) >= 2
+        and at - samples[-2][0] < _PROGRESS_SAMPLE_MIN_INTERVAL_SECONDS
+    ):
+        samples[-1] = (at, completed)
+    else:
+        samples.append((at, completed))
     record[_PROGRESS_WINDOW_KEY] = samples
 
 
