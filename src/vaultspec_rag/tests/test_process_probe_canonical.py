@@ -1139,9 +1139,9 @@ class TestNoCompatibilityAliases:
     WIN_CREATE_NO_WINDOW`` and friends - each giving one fact a second name in
     a module that did not own it. Two carried comments admitting the motive:
     "Kept under the existing names so importers and tests are unaffected" and
-    "Compatibility aliases for the established focused rollback tests". That is
-    the shape canonical-code forbids: an alias reads as an abstraction, hides
-    the real owner, and survives every later refactor.
+    "Compatibility aliases for the established focused rollback tests". An
+    alias reads as an abstraction, hides the real owner, and survives every
+    later refactor, so there must not be one.
 
     The scan is structural rather than name-based, because the next alias will
     not be spelled like the last one.
