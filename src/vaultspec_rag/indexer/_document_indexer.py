@@ -228,6 +228,22 @@ class _DocumentPublishRequest:
     run_control: RunControl
 
 
+@dataclass(frozen=True, slots=True)
+class _DocumentSliceWriteRequest:
+    """One ordered document-slice publication request."""
+
+    selected: list[DocumentChunk]
+    unit: CommitUnit
+    ordinal: int
+    rel_path: str
+    budget: _DocumentResourceBudget
+    checkpoint: DocumentRunCheckpoint
+    writer: _SliceWriter
+    run_control: RunControl
+    reuse: DonorReuseContext | None = None
+    release_cache: bool = True
+
+
 class DocumentIndexer:
     """Index only paths explicitly admitted to the document domain."""
 
@@ -555,18 +571,21 @@ class DocumentIndexer:
                     )
                     if not request.checkpoint.slice_committed(unit):
                         self._encode_slice_through_writer(
-                            selected,
-                            unit=unit,
-                            ordinal=ordinal,
-                            rel_path=result.rel_path,
-                            budget=request.budget,
-                            checkpoint=request.checkpoint,
-                            writer=writer,
-                            run_control=request.run_control,
-                            reuse=self._donor_reuse,
-                            release_cache=(
-                                following is None or (ordinal + 1) % flush_slices == 0
-                            ),
+                            _DocumentSliceWriteRequest(
+                                selected=selected,
+                                unit=unit,
+                                ordinal=ordinal,
+                                rel_path=result.rel_path,
+                                budget=request.budget,
+                                checkpoint=request.checkpoint,
+                                writer=writer,
+                                run_control=request.run_control,
+                                reuse=self._donor_reuse,
+                                release_cache=(
+                                    following is None
+                                    or (ordinal + 1) % flush_slices == 0
+                                ),
+                            )
                         )
                     point_ids.extend(chunk.id for chunk in selected)
                     request.reporter.advance(len(selected))
@@ -598,17 +617,7 @@ class DocumentIndexer:
 
     def _encode_slice_through_writer(
         self,
-        selected: list[DocumentChunk],
-        *,
-        unit: CommitUnit,
-        ordinal: int,
-        rel_path: str,
-        budget: _DocumentResourceBudget,
-        checkpoint: DocumentRunCheckpoint,
-        writer: _SliceWriter,
-        run_control: RunControl,
-        reuse: DonorReuseContext | None = None,
-        release_cache: bool = True,
+        request: _DocumentSliceWriteRequest,
     ) -> None:
         """Encode one uncommitted slice and hand its publication to the writer.
 
@@ -620,44 +629,48 @@ class DocumentIndexer:
         from ..config import get_config
         from ..memory_probe import record_forward_peaks
 
-        self.store.disk_headroom_preflight(len(selected))
+        self.store.disk_headroom_preflight(len(request.selected))
 
         def _after_forward(kind: str) -> None:
-            run_control.checkpoint()
-            budget.checkpoint_runtime_resources(
-                f"{rel_path} slice-{ordinal} after-{kind}-forward"
+            request.run_control.checkpoint()
+            request.budget.checkpoint_runtime_resources(
+                f"{request.rel_path} slice-{request.ordinal} after-{kind}-forward"
             )
-            run_control.checkpoint()
+            request.run_control.checkpoint()
 
         def _on_cuda_oom(exc: BaseException) -> None:
-            budget.fail_cuda_oom(f"{rel_path} slice-{ordinal} allocator-oom", exc)
+            request.budget.fail_cuda_oom(
+                f"{request.rel_path} slice-{request.ordinal} allocator-oom", exc
+            )
 
         def _on_storage_confirmed() -> None:
-            checkpoint.record_confirmed_slice(unit)
-            budget.checkpoint_runtime_resources(
-                f"{rel_path} slice-{ordinal} after store"
+            request.checkpoint.record_confirmed_slice(request.unit)
+            request.budget.checkpoint_runtime_resources(
+                f"{request.rel_path} slice-{request.ordinal} after store"
             )
 
         # Route the lock-bracketed forward captures into this job's own
         # budget so checkpoints enforce the job's demand rather than a
         # process-wide high-water.
-        with record_forward_peaks(budget.memory_budget.record_forward_peak_mb):
+        with record_forward_peaks(
+            request.budget.memory_budget.record_forward_peak_mb
+        ):
             encode_and_upsert_document_slice(
-                selected,
+                request.selected,
                 model=self.model,
                 store=self.store,
                 gpu_lock=self._gpu_lock,
-                release_cache=release_cache,
+                release_cache=request.release_cache,
                 encode_batch_size=int(
                     get_config().embedding_document_encode_batch_size
                 ),
-                write_policy=checkpoint.run_policy.store_write_policy,
+                write_policy=request.checkpoint.run_policy.store_write_policy,
                 on_storage_confirmed=_on_storage_confirmed,
                 after_forward=_after_forward,
                 on_cuda_oom=_on_cuda_oom,
-                run_control=run_control,
-                reuse=reuse,
-                writer=writer,
+                run_control=request.run_control,
+                reuse=request.reuse,
+                writer=request.writer,
             )
 
     def _open_checkpoint(
