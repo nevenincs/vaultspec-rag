@@ -121,10 +121,6 @@ def log_event(
     target_logger: logging.Logger,
     namespace: str,
     event: str,
-    *,
-    severity: int = logging.INFO,
-    exc_info: Any = None,
-    fields: Mapping[str, object] | None = None,
     **extra_fields: object,
 ) -> None:
     """Emit a parseable service event through the configured logger.
@@ -142,6 +138,9 @@ def log_event(
         msg = f"invalid log event name: {event!r}"
         raise ValueError(msg)
 
+    severity = cast("int", extra_fields.pop("severity", logging.INFO))
+    exc_info = extra_fields.pop("exc_info", None)
+    fields = cast("Mapping[str, object] | None", extra_fields.pop("fields", None))
     combined_fields: dict[str, object] = {}
     if fields is not None:
         combined_fields.update(fields)
