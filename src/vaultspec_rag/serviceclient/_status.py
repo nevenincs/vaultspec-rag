@@ -79,6 +79,7 @@ __all__ = [
     "DiscoveryStatus",
     "LivenessSignals",
     "ReconcileOutcome",
+    "ReconcileRequest",
     "compose_discovery_status",
     "reconcile_discovery",
 ]
@@ -197,88 +198,45 @@ def compose_discovery_status(
     """
     facts = signals or LivenessSignals()
 
-    if resolution.state == DISCOVERY_STATE_DEGRADED:
-        return DiscoveryStatus(
-            state=STATUS_DEGRADED,
-            label=_degraded_label(resolution),
-            exit_code=EXIT_FAULT,
-            resolution=resolution,
-            signals=facts,
-            health=health,
-        )
-
-    if resolution.state == DISCOVERY_STATE_ABSENT:
-        return DiscoveryStatus(
-            state=STATUS_STOPPED,
-            label="stopped (no service is running)",
-            exit_code=EXIT_STOPPED,
-            resolution=resolution,
-            signals=facts,
-            health=health,
-        )
-
-    # Ready: an address resolved, so the liveness facts decide whether the
-    # daemon behind it is actually serving.
-    if not facts.pid_alive:
-        return DiscoveryStatus(
-            state=STATUS_CRASHED,
-            label="crashed (recorded process is not running)",
-            exit_code=EXIT_FAULT,
-            resolution=resolution,
-            signals=facts,
-            health=health,
-        )
-    if not facts.pid_matches_service:
-        return DiscoveryStatus(
-            state=STATUS_CRASHED,
-            label="crashed (PID reused by an unrelated process)",
-            exit_code=EXIT_FAULT,
-            resolution=resolution,
-            signals=facts,
-            health=health,
-        )
-    # A daemon that stamped ``warming`` holds the singleton and is loading
-    # models: its silent port and unstarted heartbeat are expected, so this is
-    # checked before either is treated as a fault.
-    if facts.phase == SERVICE_PHASE_WARMING:
-        return DiscoveryStatus(
-            state=STATUS_WARMING,
-            label=LABEL_WARMING,
-            exit_code=EXIT_WARMING,
-            resolution=resolution,
-            signals=facts,
-            health=health,
-        )
-    if not facts.port_listening:
-        return DiscoveryStatus(
-            state=STATUS_CRASHED,
-            label=LABEL_CRASHED_PORT_SILENT,
-            exit_code=EXIT_FAULT,
-            resolution=resolution,
-            signals=facts,
-            health=health,
-        )
-    if facts.heartbeat_stale:
-        return DiscoveryStatus(
-            state=STATUS_CRASHED,
-            label=LABEL_CRASHED_HEARTBEAT_STALE,
-            exit_code=EXIT_FAULT,
-            resolution=resolution,
-            signals=facts,
-            health=health,
-        )
-
-    source = (
-        "" if resolution.source == DISCOVERY_SOURCE_MACHINE_POINTER else " (legacy)"
-    )
+    state, label, exit_code = _discovery_status_fields(resolution, facts)
     return DiscoveryStatus(
-        state=STATUS_RUNNING,
-        label=f"running{source}",
-        exit_code=EXIT_RUNNING,
+        state=state,
+        label=label,
+        exit_code=exit_code,
         resolution=resolution,
         signals=facts,
         health=health,
     )
+
+
+def _discovery_status_fields(
+    resolution: MachineResolution, facts: LivenessSignals
+) -> tuple[str, str, int]:
+    """Classify fixed resolution and liveness facts into one operator verdict."""
+    if resolution.state == DISCOVERY_STATE_DEGRADED:
+        return STATUS_DEGRADED, _degraded_label(resolution), EXIT_FAULT
+    if resolution.state == DISCOVERY_STATE_ABSENT:
+        return STATUS_STOPPED, "stopped (no service is running)", EXIT_STOPPED
+
+    # Ready: an address resolved, so the liveness facts decide whether the
+    # daemon behind it is actually serving.
+    # A daemon that stamped ``warming`` holds the singleton and is loading
+    # models: its silent port and unstarted heartbeat are expected, so this is
+    # checked before either is treated as a fault.
+    for failed, state, label, exit_code in (
+        (not facts.pid_alive, STATUS_CRASHED, "crashed (recorded process is not running)", EXIT_FAULT),
+        (not facts.pid_matches_service, STATUS_CRASHED, "crashed (PID reused by an unrelated process)", EXIT_FAULT),
+        (facts.phase == SERVICE_PHASE_WARMING, STATUS_WARMING, LABEL_WARMING, EXIT_WARMING),
+        (not facts.port_listening, STATUS_CRASHED, LABEL_CRASHED_PORT_SILENT, EXIT_FAULT),
+        (facts.heartbeat_stale, STATUS_CRASHED, LABEL_CRASHED_HEARTBEAT_STALE, EXIT_FAULT),
+    ):
+        if failed:
+            return state, label, exit_code
+
+    source = (
+        "" if resolution.source == DISCOVERY_SOURCE_MACHINE_POINTER else " (legacy)"
+    )
+    return STATUS_RUNNING, f"running{source}", EXIT_RUNNING
 
 
 #: Reconcile outcomes. ``already_converged`` means discovery agreed on the
@@ -320,6 +278,24 @@ class ReconcileOutcome:
             "detail": self.detail,
             "service": self.final.as_dict(),
         }
+
+
+def _ignore_attempt(_attempt: int, _verdict: DiscoveryStatus) -> None:
+    """Drop a poll observation, for callers that want no reporting."""
+
+
+@dataclass(frozen=True, slots=True)
+class ReconcileRequest:
+    """Dependencies and timing controls for one bounded discovery reconcile."""
+
+    resolve: Callable[[], MachineResolution]
+    probe_liveness: Callable[[MachineResolution], LivenessSignals]
+    probe_health: Callable[[int], dict[str, Any] | None]
+    timeout_s: float = RECONCILE_TIMEOUT_SECONDS
+    interval_s: float = RECONCILE_INTERVAL_SECONDS
+    sleep: Callable[[float], None] | None = None
+    monotonic: Callable[[], float] | None = None
+    on_attempt: Callable[[int, DiscoveryStatus], None] = _ignore_attempt
 
 
 def _is_finite_number(value: object) -> TypeGuard[float]:
@@ -414,21 +390,7 @@ def _is_positive_pid(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
-def _ignore_attempt(_attempt: int, _verdict: DiscoveryStatus) -> None:
-    """Drop a poll observation, for callers that want no reporting."""
-
-
-def reconcile_discovery(
-    resolve: Callable[[], MachineResolution],
-    probe_liveness: Callable[[MachineResolution], LivenessSignals],
-    probe_health: Callable[[int], dict[str, Any] | None],
-    *,
-    timeout_s: float = RECONCILE_TIMEOUT_SECONDS,
-    interval_s: float = RECONCILE_INTERVAL_SECONDS,
-    sleep: Callable[[float], None] | None = None,
-    monotonic: Callable[[], float] | None = None,
-    on_attempt: Callable[[int, DiscoveryStatus], None] = _ignore_attempt,
-) -> ReconcileOutcome:
+def reconcile_discovery(request: ReconcileRequest) -> ReconcileOutcome:
     """Wait boundedly for the owner's own heartbeat to republish discovery.
 
     Deliberately non-destructive: the singleton owner is the only process that
@@ -445,20 +407,20 @@ def reconcile_discovery(
     """
     import time as _time
 
-    clock = monotonic or _time.monotonic
-    wait = sleep or _time.sleep
+    clock = request.monotonic or _time.monotonic
+    wait = request.sleep or _time.sleep
 
     started = clock()
-    deadline = started + max(0.0, timeout_s)
+    deadline = started + max(0.0, request.timeout_s)
     attempts = 0
     verdict: DiscoveryStatus | None = None
 
     while True:
         attempts += 1
-        resolution = resolve()
-        signals = probe_liveness(resolution)
+        resolution = request.resolve()
+        signals = request.probe_liveness(resolution)
         health = (
-            probe_health(resolution.port)
+            request.probe_health(resolution.port)
             if resolution.port is not None and signals.port_listening
             else None
         )
@@ -490,8 +452,8 @@ def reconcile_discovery(
                 elapsed_s=clock() - started,
                 final=verdict,
                 detail=(
-                    f"{verdict.label}; discovery did not converge within {timeout_s:g}s"
+                    f"{verdict.label}; discovery did not converge within {request.timeout_s:g}s"
                 ),
             )
-        on_attempt(attempts, verdict)
-        wait(min(interval_s, max(0.0, deadline - clock())))
+        request.on_attempt(attempts, verdict)
+        wait(min(request.interval_s, max(0.0, deadline - clock())))

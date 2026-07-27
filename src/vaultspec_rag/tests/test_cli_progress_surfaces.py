@@ -683,7 +683,11 @@ class TestReconcileProgress:
             DISCOVERY_STATE_DEGRADED,
             MachineResolution,
         )
-        from ..serviceclient._status import LivenessSignals, reconcile_discovery
+        from ..serviceclient._status import (
+            LivenessSignals,
+            ReconcileRequest,
+            reconcile_discovery,
+        )
 
         clock = _Clock()
 
@@ -699,10 +703,10 @@ class TestReconcileProgress:
         buffer = io.StringIO()
         reporter = _reporter(buffer, interactive=False)
         with reporter:
-            outcome = reconcile_discovery(
-                lambda: unpublished,
-                lambda _resolution: LivenessSignals(pid=4321, pid_alive=True),
-                lambda _port: None,
+            outcome = reconcile_discovery(ReconcileRequest(
+                resolve=lambda: unpublished,
+                probe_liveness=lambda _resolution: LivenessSignals(pid=4321, pid_alive=True),
+                probe_health=lambda _port: None,
                 timeout_s=3.0,
                 interval_s=1.0,
                 sleep=_tick,
@@ -710,7 +714,7 @@ class TestReconcileProgress:
                 on_attempt=lambda attempt, verdict: reporter.heartbeat(
                     f"Waiting for discovery: {verdict.label} (poll {attempt})"
                 ),
-            )
+            ))
 
         assert not outcome.converged
         assert outcome.attempts > 1, "premise: the wait must actually loop"
@@ -751,7 +755,7 @@ class TestStorageProgress:
 
     def test_survey_counts_collections_against_a_known_total(self):
         """The survey's per-collection round trips are reported N of M."""
-        from ..storage_ops import gather_survey
+        from ..storage_survey_ops import gather_survey
 
         client = self._client_with(("r0123456789ab_docs", "r0123456789ab_code"))
         buffer = io.StringIO()
@@ -768,7 +772,7 @@ class TestStorageProgress:
 
     def test_reconcile_reports_the_geometry_read_it_starts_with(self):
         """The geometry read precedes any per-collection work."""
-        from ..storage_ops import reconcile_collections
+        from ..storage_reconciliation import reconcile_collections
 
         client = self._client_with(("r0123456789ab_docs",))
         buffer = io.StringIO()
@@ -790,7 +794,7 @@ class TestStorageProgress:
 
     def test_migrate_names_each_collection_in_flight(self):
         """A copy that moves every point must say which one it is on."""
-        from ..storage_ops import migrate_collections
+        from ..storage_migration import migrate_collections
 
         source = self._client_with(("r0123456789ab_docs",))
         target = self._client_with(())
@@ -814,7 +818,7 @@ class TestStorageProgress:
     def test_prune_names_each_orphaned_namespace(self, isolated_singleton_dirs: Path):
         """Reclamation reports the namespace it is working through."""
         from ..storage_manifest import record_root
-        from ..storage_ops import prune_orphaned
+        from ..storage_survey_ops import prune_orphaned
 
         del isolated_singleton_dirs
         vanished = "C:/definitely/not/a/real/root/for/this/test"
