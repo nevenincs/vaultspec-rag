@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 from functools import partial
 from pathlib import Path
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ._units import bytes_to_mib
-from .job_manager import JobAttemptContext, JobExecutionResult
+from .job_manager.models import JobAttemptContext, JobExecutionResult
 from .job_models import (
     IndexResilienceSnapshot,
     JobMode,
@@ -25,34 +26,44 @@ if TYPE_CHECKING:
     from .indexer import CodebaseIndexer, DocumentIndexer
     from .indexer._codebase_indexer import CodeIndexPreflight
     from .indexer._document_indexer import DocumentIndexPreflight
-    from .job_manager import JobManager
+    from .job_manager.manager import JobManager
     from .job_models import JobSnapshot
     from .service import ServiceRegistry
 
 
-def bind_index_job(
-    manager: JobManager,
-    job_id: str,
-    *,
-    registry: ServiceRegistry,
-    code_preflight: CodeIndexPreflight | None,
-    document_preflight: DocumentIndexPreflight | None,
-    on_started: Callable[[JobSnapshot], None] | None = None,
-    on_finished: (
-        Callable[
-            [JobSnapshot, float, JobExecutionResult | None, BaseException | None],
-            None,
-        ]
-        | None
-    ) = None,
-) -> JobOutcome:
+@dataclass(frozen=True, slots=True)
+class IndexJobBinding:
+    """Dependencies and callbacks bound to one durable indexing job."""
+
+    manager: JobManager
+    job_id: str
+    registry: ServiceRegistry
+    code_preflight: CodeIndexPreflight | None
+    document_preflight: DocumentIndexPreflight | None
+    on_started: Callable[[JobSnapshot], None] | None = None
+    on_finished: Callable[[JobSnapshot, float, JobExecutionResult | None, BaseException | None], None] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _AttemptDispatch:
+    """Stable execution authority for one source-specific index attempt."""
+
+    source: JobSource
+    manager: JobManager
+    job_id: str
+    root: Path
+    clean: bool
+    registry: ServiceRegistry
+
+
+def bind_index_job(binding: IndexJobBinding) -> JobOutcome:
     """Bind one restored or newly admitted indexing job to production services."""
     # Admission authority proves creation was validated; execution rediscovers
     # after queueing so paused, retried, and restored jobs cannot use stale scope.
-    del code_preflight, document_preflight
-    snapshot = manager.get(job_id)
+    _ = (binding.code_preflight, binding.document_preflight)
+    snapshot = binding.manager.get(binding.job_id)
     if snapshot is None:
-        raise RuntimeError(f"Cannot bind unknown job: {job_id}")
+        raise RuntimeError(f"Cannot bind unknown job: {binding.job_id}")
     spec = snapshot.spec
     if (
         spec.operation is not JobOperation.INDEX
@@ -60,61 +71,47 @@ def bind_index_job(
         or spec.project_root is None
         or spec.mode is None
     ):
-        raise RuntimeError(f"Cannot bind unsupported durable job: {job_id}")
+        raise RuntimeError(f"Cannot bind unsupported durable job: {binding.job_id}")
     root = Path(spec.project_root).resolve()
     clean = spec.mode is JobMode.REBUILD
     if spec.source is JobSource.VAULT:
         runner = partial(
             _run_vault_attempt,
-            manager=manager,
-            job_id=job_id,
-            root=root,
-            clean=clean,
-            registry=registry,
+            dispatch=_AttemptDispatch(JobSource.VAULT, binding.manager, binding.job_id, root, clean, binding.registry),
         )
     else:
         runner = partial(
             _run_indexing_attempt,
-            source=spec.source,
-            manager=manager,
-            job_id=job_id,
-            root=root,
-            clean=clean,
-            registry=registry,
+            dispatch=_AttemptDispatch(spec.source, binding.manager, binding.job_id, root, clean, binding.registry),
         )
-    return manager.bind_dispatch(
-        job_id,
+    return binding.manager.bind_dispatch(
+        binding.job_id,
         runner,
-        on_started=on_started,
-        on_finished=on_finished,
+        on_started=binding.on_started,
+        on_finished=binding.on_finished,
     )
 
 
 def _run_vault_attempt(
     context: JobAttemptContext,
-    *,
-    manager: JobManager,
-    job_id: str,
-    root: Path,
-    clean: bool,
-    registry: ServiceRegistry,
+    *, dispatch: _AttemptDispatch,
 ) -> JobExecutionResult:
     """Run one vault attempt through the exact service registry."""
     from .jobs import JobProgressReporter
 
-    registry.load_model()
+    dispatch.registry.load_model()
     try:
-        with registry.lease(root) as slot:
+        with dispatch.registry.lease(dispatch.root) as slot:
             context.set_resources(project_lease_held=True)
             try:
                 context.set_resources(writer_lock_held=True)
-                reporter = JobProgressReporter(job_id, context=context)
-                snapshot = manager.get(job_id)
+                reporter = JobProgressReporter(dispatch.job_id, context=context)
+                snapshot = dispatch.manager.get(dispatch.job_id)
                 resumed = (
                     snapshot is not None
                     and snapshot.attempt.resumed_from_attempt is not None
                 )
-                if clean:
+                if dispatch.clean:
                     result = slot.vault_indexer.full_index(
                         clean=not resumed,
                         reporter=reporter,
@@ -142,13 +139,7 @@ def _run_vault_attempt(
 
 def _run_indexing_attempt(
     context: JobAttemptContext,
-    *,
-    source: JobSource,
-    manager: JobManager,
-    job_id: str,
-    root: Path,
-    clean: bool,
-    registry: ServiceRegistry,
+    *, dispatch: _AttemptDispatch,
 ) -> JobExecutionResult:
     """Run one code or document attempt through fresh execution authority.
 
@@ -184,22 +175,22 @@ def _run_indexing_attempt(
     code_preflight: CodeIndexPreflight | None = None
     document_preflight: DocumentIndexPreflight | None = None
     context.control.checkpoint()
-    if source is JobSource.CODE:
-        code_preflight = validate_code_job_admission(root)
+    if dispatch.source is JobSource.CODE:
+        code_preflight = validate_code_job_admission(dispatch.root)
     else:
         document_preflight = validate_document_job_admission(
-            root, run_control=context.control
+            dispatch.root, run_control=context.control
         )
-    context.set_resilience(_admitted_resilience(source))
+    context.set_resilience(_admitted_resilience(dispatch.source))
     context.control.checkpoint()
-    registry.load_model()
+    dispatch.registry.load_model()
     try:
-        with registry.lease(root) as slot:
+        with dispatch.registry.lease(dispatch.root) as slot:
             context.set_resources(project_lease_held=True)
             try:
                 context.set_resources(writer_lock_held=True, pipeline_active=True)
-                reporter = JobProgressReporter(job_id, context=context)
-                snapshot = manager.get(job_id)
+                reporter = JobProgressReporter(dispatch.job_id, context=context)
+                snapshot = dispatch.manager.get(dispatch.job_id)
                 resumed = (
                     snapshot is not None
                     and snapshot.attempt.resumed_from_attempt is not None
@@ -214,7 +205,7 @@ def _run_indexing_attempt(
                                 preflight=code_preflight,
                                 run_control=context.control,
                             )
-                            if clean
+                            if dispatch.clean
                             else code_indexer.incremental_index(
                                 reporter=reporter,
                                 preflight=code_preflight,
@@ -230,7 +221,7 @@ def _run_indexing_attempt(
                                 preflight=document_preflight,
                                 run_control=context.control,
                             )
-                            if clean
+                            if dispatch.clean
                             else document_indexer.incremental_index(
                                 reporter=reporter,
                                 preflight=document_preflight,

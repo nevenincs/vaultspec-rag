@@ -1020,17 +1020,17 @@ def _bind_index_dispatch(
     registry: ServiceRegistry | None = None,
 ) -> JobOutcome:
     """Attach one logical job to the production indexing implementation."""
-    from .job_dispatch import bind_index_job
+    from .job_dispatch import IndexJobBinding, bind_index_job
 
-    return bind_index_job(
-        manager,
-        job_id,
+    return bind_index_job(IndexJobBinding(
+        manager=manager,
+        job_id=job_id,
         registry=get_registry() if registry is None else registry,
         code_preflight=code_preflight,
         document_preflight=document_preflight,
         on_started=_sync_legacy_started,
         on_finished=_sync_legacy_finished,
-    )
+    ))
 
 
 def _prepare_index_job_activation(

@@ -41,8 +41,9 @@ from ...indexer._preprocess_runner import run_preprocessor
 from ...indexer._run_policy import RunPolicy
 from ...indexer._streaming import iter_weighted_document_slices
 from ...job_control import CancelRequested, RunControlToken
-from ...job_dispatch import _run_indexing_attempt
-from ...job_manager import JobAttemptContext, JobManager
+from ...job_dispatch import _AttemptDispatch, _run_indexing_attempt
+from ...job_manager.manager import JobManager
+from ...job_manager.models import JobAttemptContext
 from ...job_models import (
     JobInitiator,
     JobMode,
@@ -327,12 +328,7 @@ async def test_document_attempt_honors_cancellation_before_admission(
         with pytest.raises(CancelRequested):
             _run_indexing_attempt(
                 context,
-                source=JobSource.DOCUMENT,
-                manager=manager,
-                job_id=created.job.id,
-                root=tmp_path,
-                clean=False,
-                registry=registry,
+                dispatch=_AttemptDispatch(JobSource.DOCUMENT, manager, created.job.id, tmp_path, False, registry),
             )
     finally:
         registry.close_all()
@@ -503,7 +499,7 @@ def test_failed_document_extraction_never_publishes_complete_hash_metadata(
     from ...indexer import DocumentIndexer
     from ...indexer._document_meta import document_metadata_path, read_document_meta
     from ...progress import NullProgressReporter
-    from ...store import VaultStore
+    from ...store_runtime import VaultStore
 
     attempts = tmp_path / "attempts.txt"
     extractor = tmp_path / "fail_again.py"
