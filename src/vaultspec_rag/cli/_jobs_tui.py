@@ -125,37 +125,72 @@ def _job_revision(job: dict[str, object]) -> int | None:
     return revision
 
 
-def _state_cell(job: dict[str, object], frame: str, pending: str | None) -> Text:
+def _fit(value: str, cells: int) -> str:
+    """Trim *value* to *cells*, marking the trim.
+
+    Every cell in this table is exactly two lines tall. A value wider than its
+    column would otherwise wrap onto the second line and push that line's own
+    content out of the row entirely - which is how a progress bar, a job id and
+    an initiator all silently disappear at moderate widths. Truncating keeps
+    each line in its place; losing the tail of one label is far cheaper than
+    losing a whole line of the row.
+    """
+    if cells <= 0 or len(value) <= cells:
+        return value
+    return value[: max(0, cells - 1)] + "…"
+
+
+def _two_line(
+    top: str,
+    bottom: str,
+    cells: int,
+    *,
+    top_style: str = "",
+    bottom_style: str = "dim",
+) -> Text:
+    """Compose one fixed two-line cell, each line trimmed to *cells*."""
+    text = Text(_fit(top, cells), style=top_style)
+    text.append("\n")
+    text.append(_fit(bottom, cells), style=bottom_style)
+    return text
+
+
+def _state_cell(
+    job: dict[str, object],
+    frame: str,
+    pending: str | None,
+    cells: int,
+) -> Text:
     """Render the state cell: phase, a live glyph, and any pending request."""
     label = _phase_label(job)
-    style = _STATE_STYLES.get(label, "")
     running = str(job.get("phase", "")) == "running" and not _job_is_waiting(job)
     glyph = f"{frame} " if running else "  "
-    cell = Text(f"{glyph}{label}", style=style)
+    desired = job.get("desired_state")
     if pending is not None:
         # A requested control is not an observed one. Saying so keeps the
         # view honest across the window where the service has not yet
         # acknowledged the request.
-        cell.append(f"\n  {pending} requested", style="italic yellow")
+        second, second_style = f" {pending} requested", "italic yellow"
+    elif isinstance(desired, str) and desired and desired != job.get("state"):
+        second, second_style = f" → {desired}", "italic yellow"
     else:
-        desired = job.get("desired_state")
-        state = job.get("state")
-        if isinstance(desired, str) and desired and desired != state:
-            cell.append(f"\n  → {desired}", style="italic yellow")
-        else:
-            cell.append("\n")
-    return cell
+        second, second_style = "", "dim"
+    return _two_line(
+        f"{glyph}{label}",
+        second,
+        cells,
+        top_style=_STATE_STYLES.get(label, ""),
+        bottom_style=second_style,
+    )
 
 
-def _job_cell(job: dict[str, object]) -> Text:
-    cell = Text(_operation_label(job), style="bold")
-    cell.append(f"\n{_short_id(job)}", style="dim")
+def _job_cell(job: dict[str, object], cells: int) -> Text:
     initiator = job.get("initiator")
+    kind = ""
     if isinstance(initiator, dict):
-        kind = cast("dict[str, object]", initiator).get("kind")
-        if kind:
-            cell.append(f" · {kind}", style="dim")
-    return cell
+        kind = str(cast("dict[str, object]", initiator).get("kind") or "")
+    subtitle = f"{_short_id(job)} · {kind}" if kind else _short_id(job)
+    return _two_line(_operation_label(job), subtitle, cells, top_style="bold")
 
 
 def _elide_left(value: str, cells: int) -> str:
@@ -171,23 +206,19 @@ def _elide_left(value: str, cells: int) -> str:
     return "…" + value[-(cells - 1) :]
 
 
-def _path_cell(job: dict[str, object], path_cells: int) -> Text:
+def _path_cell(job: dict[str, object], cells: int) -> Text:
     """Render the project and its root, tail-first when the root is long."""
-    cell = Text(_project_label(job))
     root = _project_root(job)
-    shown = _elide_left(root, path_cells) if root else "path not reported"
-    cell.append(f"\n{shown}", style="dim")
-    return cell
+    shown = _elide_left(root, cells) if root else "path not reported"
+    return _two_line(_project_label(job), shown, cells)
 
 
-def _progress_cell(job: dict[str, object], bar_cells: int) -> Text:
+def _progress_cell(job: dict[str, object], cells: int, bar_cells: int) -> Text:
     """Render the progress cell, sizing the bar to the column it lands in."""
     detail = _human_progress(job) or "—"
-    cell = Text(detail)
     stale = _stale_progress_label(job)
     if stale:
-        cell.append(f"\n{stale}", style="bold red")
-        return cell
+        return _two_line(detail, stale, cells, bottom_style="bold red")
     progress = job.get("progress")
     bar = ""
     if isinstance(progress, dict) and bar_cells > 0:
@@ -204,19 +235,18 @@ def _progress_cell(job: dict[str, object], bar_cells: int) -> Text:
             ratio = min(1.0, max(0.0, completed / total))
             filled = round(bar_cells * ratio)
             bar = f"{'█' * filled}{'░' * (bar_cells - filled)} {round(100 * ratio)}%"
-    cell.append(f"\n{bar}", style="dim")
-    return cell
+    return _two_line(detail, bar, cells)
 
 
-def _time_cell(job: dict[str, object]) -> Text:
-    cell = Text(_compact_duration(job.get("runtime_seconds")))
+def _time_cell(job: dict[str, object], cells: int) -> Text:
     remaining = job.get("estimated_remaining_seconds")
-    if isinstance(remaining, int | float) and not isinstance(remaining, bool):
-        cell.append(f"\n~{_compact_duration(remaining)} left", style="dim")
-    else:
+    estimate = (
+        f"~{_compact_duration(remaining)} left"
+        if isinstance(remaining, int | float) and not isinstance(remaining, bool)
         # No estimate is not a zero estimate.
-        cell.append("\n—", style="dim")
-    return cell
+        else "—"
+    )
+    return _two_line(_compact_duration(job.get("runtime_seconds")), estimate, cells)
 
 
 class JobsTuiApp(App[None]):
@@ -282,7 +312,7 @@ class JobsTuiApp(App[None]):
         self._last_error: str | None = None
         self._show_log = False
         self._bar_cells = 0
-        self._path_cells = 0
+        self._column_cells: dict[str, int] = {}
 
     def compose(self) -> ComposeResult:
         yield Static(id="summary")
@@ -343,14 +373,14 @@ class JobsTuiApp(App[None]):
                 _MIN_COLUMN_CELLS, int(available * weight / total_weight)
             )
             column.auto_width = False
-        path = table.columns.get("path")
-        self._path_cells = path.width if path is not None else 0
-        progress = table.columns.get("progress")
+            self._column_cells[key] = column.width
         # The bar shares its cell with a trailing " 100%", so it takes what
         # the column has left rather than a width of its own.
-        self._bar_cells = (
-            max(0, progress.width - len(" 100%")) if progress is not None else 0
-        )
+        self._bar_cells = max(0, self._column_cells.get("progress", 0) - len(" 100%"))
+
+    def _cells(self, column: str) -> int:
+        """Return the current width of *column*, or zero before layout."""
+        return self._column_cells.get(column, 0)
 
     def _table(self) -> DataTable | None:
         """Return the table, or ``None`` when it is not mounted.
@@ -380,7 +410,12 @@ class JobsTuiApp(App[None]):
                     table.update_cell(
                         job_id,
                         "state",
-                        _state_cell(job, frame, _pending_label(self._pending, job_id)),
+                        _state_cell(
+                            job,
+                            frame,
+                            _pending_label(self._pending, job_id),
+                            self._cells("state"),
+                        ),
                     )
         self._render_summary()
 
@@ -453,11 +488,16 @@ class JobsTuiApp(App[None]):
 
     def _add_row(self, table: DataTable, job: dict[str, object], frame: str) -> None:
         table.add_row(
-            _state_cell(job, frame, _pending_label(self._pending, _job_id(job))),
-            _job_cell(job),
-            _path_cell(job, self._path_cells),
-            _progress_cell(job, self._bar_cells),
-            _time_cell(job),
+            _state_cell(
+                job,
+                frame,
+                _pending_label(self._pending, _job_id(job)),
+                self._cells("state"),
+            ),
+            _job_cell(job, self._cells("job")),
+            _path_cell(job, self._cells("path")),
+            _progress_cell(job, self._cells("progress"), self._bar_cells),
+            _time_cell(job, self._cells("time")),
             height=2,
             key=_job_id(job),
         )
@@ -465,11 +505,13 @@ class JobsTuiApp(App[None]):
     def _update_row(self, table: DataTable, job: dict[str, object], frame: str) -> None:
         job_id = _job_id(job)
         cells = {
-            "state": _state_cell(job, frame, _pending_label(self._pending, job_id)),
-            "job": _job_cell(job),
-            "path": _path_cell(job, self._path_cells),
-            "progress": _progress_cell(job, self._bar_cells),
-            "time": _time_cell(job),
+            "state": _state_cell(
+                job, frame, _pending_label(self._pending, job_id), self._cells("state")
+            ),
+            "job": _job_cell(job, self._cells("job")),
+            "path": _path_cell(job, self._cells("path")),
+            "progress": _progress_cell(job, self._cells("progress"), self._bar_cells),
+            "time": _time_cell(job, self._cells("time")),
         }
         for column, value in cells.items():
             table.update_cell(job_id, column, value)
