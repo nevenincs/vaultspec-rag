@@ -8,7 +8,7 @@ import stat
 import tempfile
 from contextlib import contextmanager
 from contextvars import Context
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -783,47 +783,38 @@ def _run_mode_migration(request: _ModeMigrationRequest) -> None:
     request.report.mcp_sync_results.append(migration)
 
 
-def install_run(
-    path: Path | None = None,
-    *,
-    upgrade: bool = False,
-    dry_run: bool = False,
-    force: bool = False,
-    skip: set[str] | None = None,
-    configure_torch: bool = True,
-    assume_yes: bool = False,
-    sync_after: bool = False,
-    confirm: ConfirmFn | None = None,
-    provision: bool = False,
-    local_only: bool = False,
-    provision_skip: set[str] | None = None,
-    torch_group: str | None = None,
-    install_mcp: bool = False,
-    mode: InstallMode | None = None,
-) -> InstallReport:
-    """Run install behind one required-node topology transaction."""
-    skip_tokens = skip or set()
-    if "mcp" in skip_tokens:
-        return _install_run_unchecked(
-            path,
-            upgrade=upgrade,
-            dry_run=dry_run,
-            force=force,
-            skip=skip_tokens,
-            configure_torch=configure_torch,
-            assume_yes=assume_yes,
-            sync_after=sync_after,
-            confirm=confirm,
-            provision=provision,
-            local_only=local_only,
-            provision_skip=provision_skip,
-            torch_group=torch_group,
-            install_mcp=install_mcp,
-            mode=mode,
-        )
+@dataclass(frozen=True, slots=True)
+class _InstallRunRequest:
+    path: Path | None = None
+    upgrade: bool = False
+    dry_run: bool = False
+    force: bool = False
+    skip: set[str] | None = None
+    configure_torch: bool = True
+    assume_yes: bool = False
+    sync_after: bool = False
+    confirm: ConfirmFn | None = None
+    provision: bool = False
+    local_only: bool = False
+    provision_skip: set[str] | None = None
+    torch_group: str | None = None
+    install_mcp: bool = False
+    mode: InstallMode | None = None
 
-    target = _resolve_target(path, bootstrap=False)
-    action = "dry_run" if dry_run else ("upgrade" if upgrade else "install")
+
+def install_run(path: Path | None = None, **options: object) -> InstallReport:
+    """Run install behind one required-node topology transaction."""
+    return _install_run(_InstallRunRequest(path=path, **options))
+
+
+def _install_run(request: _InstallRunRequest) -> InstallReport:
+    """Run install behind one required-node topology transaction."""
+    skip_tokens = request.skip or set()
+    if "mcp" in skip_tokens:
+        return _install_run_unchecked(replace(request, skip=skip_tokens))
+
+    target = _resolve_target(request.path, bootstrap=False)
+    action = "dry_run" if request.dry_run else ("upgrade" if request.upgrade else "install")
     failure = InstallReport(action=action, target=target)
     try:
         topology = inspect_required_mcp_topology(target)
@@ -833,36 +824,22 @@ def install_run(
             _record_project_inspection_error(
                 failure,
                 project_exc,
-                record_torch_inspect_error=configure_torch,
+                record_torch_inspect_error=request.configure_torch,
             )
         message = topology_preflight_failure(exc)
         record_mcp_failure(failure, message)
         return failure
-    if not install_mcp and topology.disenrollment_links:
+    if not request.install_mcp and topology.disenrollment_links:
         message = LINKED_NODES_NOT_REMOVABLE
         record_mcp_failure(failure, message)
         return failure
 
     def run() -> InstallReport:
         return _install_run_unchecked(
-            target,
-            upgrade=upgrade,
-            dry_run=dry_run,
-            force=force,
-            skip=skip_tokens,
-            configure_torch=configure_torch,
-            assume_yes=assume_yes,
-            sync_after=sync_after,
-            confirm=confirm,
-            provision=provision,
-            local_only=local_only,
-            provision_skip=provision_skip,
-            torch_group=torch_group,
-            install_mcp=install_mcp,
-            mode=mode,
+            replace(request, path=target, skip=skip_tokens)
         )
 
-    if dry_run:
+    if request.dry_run:
         return run()
 
     with tempfile.TemporaryDirectory(prefix="vaultspec-rag-mcp-replay-") as raw:
@@ -870,21 +847,17 @@ def install_run(
         topology.populate_projection(replay_target)
         Context().run(
             _install_run_unchecked,
-            replay_target,
-            upgrade=upgrade,
-            dry_run=False,
-            force=force,
-            skip=set(skip_tokens),
-            configure_torch=False,
-            assume_yes=True,
-            sync_after=False,
-            confirm=None,
-            provision=False,
-            local_only=local_only,
-            provision_skip=provision_skip,
-            torch_group=torch_group,
-            install_mcp=install_mcp,
-            mode=mode,
+            replace(
+                request,
+                path=replay_target,
+                dry_run=False,
+                skip=set(skip_tokens),
+                configure_torch=False,
+                assume_yes=True,
+                sync_after=False,
+                confirm=None,
+                provision=False,
+            ),
         )
         topology.capture_expected_projection(replay_target)
 
@@ -910,24 +883,7 @@ def install_run(
     return report
 
 
-def _install_run_unchecked(
-    path: Path | None = None,
-    *,
-    upgrade: bool = False,
-    dry_run: bool = False,
-    force: bool = False,
-    skip: set[str] | None = None,
-    configure_torch: bool = True,
-    assume_yes: bool = False,
-    sync_after: bool = False,
-    confirm: ConfirmFn | None = None,
-    provision: bool = False,
-    local_only: bool = False,
-    provision_skip: set[str] | None = None,
-    torch_group: str | None = None,
-    install_mcp: bool = False,
-    mode: InstallMode | None = None,
-) -> InstallReport:
+def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
     """Install vaultspec-rag enrollment into a workspace.
 
     Self-sufficient: idempotently creates any missing directories rag
@@ -1000,6 +956,16 @@ def _install_run_unchecked(
         provisioning outcome on ``report.provision_outcome`` when
         provisioning ran.
     """
+    (
+        path, upgrade, dry_run, force, skip, configure_torch, assume_yes,
+        sync_after, confirm, provision, local_only, provision_skip, torch_group,
+        install_mcp, mode,
+    ) = (
+        request.path, request.upgrade, request.dry_run, request.force, request.skip,
+        request.configure_torch, request.assume_yes, request.sync_after,
+        request.confirm, request.provision, request.local_only, request.provision_skip,
+        request.torch_group, request.install_mcp, request.mode,
+    )
     skip = skip or set()
     action = "dry_run" if dry_run else ("upgrade" if upgrade else "install")
     target, report, fresh_mcp_providers, provider_intent_ready = (
