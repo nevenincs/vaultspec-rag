@@ -430,6 +430,18 @@ class _RawDocumentFallback:
     run_control: RunControl
 
 
+@dataclass(frozen=True, slots=True)
+class _RawCodeFile:
+    """Already-read source bytes and the identity they must produce."""
+
+    path: pathlib.Path
+    root_dir: pathlib.Path
+    rel_path: str
+    content_hash: str
+    raw: bytes
+    execution_policy: ChunkExecutionPolicy
+
+
 def _decode_source(
     raw: bytes,
     path: pathlib.Path,
@@ -1072,22 +1084,19 @@ def chunk_and_hash_file(
     # ``raw`` is bound on every reaching path for the same rule/prep coupling as
     # in ``chunk_file_with_status`` above; basedpyright cannot track it.
     return _raw_file_result(
-        path,
-        root_dir,
-        rel_path,
-        content_hash,
-        raw,  # pyright: ignore[reportPossiblyUnboundVariable]
-        execution_policy,
+        _RawCodeFile(
+            path=path,
+            root_dir=root_dir,
+            rel_path=rel_path,
+            content_hash=content_hash,
+            raw=raw,  # pyright: ignore[reportPossiblyUnboundVariable]
+            execution_policy=execution_policy,
+        )
     )
 
 
 def _raw_file_result(
-    path: pathlib.Path,
-    root_dir: pathlib.Path,
-    rel_path: str,
-    content_hash: str,
-    raw: bytes,
-    execution_policy: ChunkExecutionPolicy,
+    source: _RawCodeFile,
 ) -> FileChunkResult:
     """Chunk already-read raw bytes into a hash-carrying :class:`FileChunkResult`.
 
@@ -1095,11 +1104,16 @@ def _raw_file_result(
     chunking failures propagate so callers cannot publish a hash for vectors
     that were never produced.
     """
-    content = _decode_source(raw, path, execution_policy)
+    content = _decode_source(source.raw, source.path, source.execution_policy)
     if content is None:
-        return FileChunkResult(rel_path, content_hash, [])
-    chunks = _chunk_decoded(content, path, root_dir, execution_policy.html_strip)
-    return FileChunkResult(rel_path, content_hash, chunks)
+        return FileChunkResult(source.rel_path, source.content_hash, [])
+    chunks = _chunk_decoded(
+        content,
+        source.path,
+        source.root_dir,
+        source.execution_policy.html_strip,
+    )
+    return FileChunkResult(source.rel_path, source.content_hash, chunks)
 
 
 @dataclass(slots=True)
@@ -1310,12 +1324,14 @@ def _passthrough_batch_member(
         )
     assert raw is not None
     return _raw_file_result(
-        member.path,
-        root_dir,
-        member.rel_path,
-        content_hash,
-        raw,
-        execution_policy,
+        _RawCodeFile(
+            path=member.path,
+            root_dir=root_dir,
+            rel_path=member.rel_path,
+            content_hash=content_hash,
+            raw=raw,
+            execution_policy=execution_policy,
+        )
     )
 
 
