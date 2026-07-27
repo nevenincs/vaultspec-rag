@@ -9,6 +9,7 @@ related:
   - '[[2026-06-26-storage-schema-contract-adr]]'
   - '[[2026-06-26-storage-schema-contract-research]]'
 ---
+
 # `storage-schema-contract` plan
 
 ## Description

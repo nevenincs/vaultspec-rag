@@ -133,6 +133,7 @@ since we can't kill elevated processes anyway).
 - **D4** adds ~20 lines of Windows-specific ctypes code. The fallback
   path (return `True` on `OpenProcess` failure) preserves current behavior
   for edge cases.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

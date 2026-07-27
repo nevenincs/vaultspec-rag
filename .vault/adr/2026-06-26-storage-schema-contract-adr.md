@@ -178,6 +178,7 @@ drop-and-recreate behavior and the project's scale.
   unversioned.
 
 (Holds one full execution cycle before promotion, per the `vaultspec-codify` discipline.)
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

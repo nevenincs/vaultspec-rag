@@ -580,6 +580,7 @@ its own effort.
 
 **Hard-rolled atomic write helper inside rag.** Rejected: reuse
 `vaultspec_core.core.helpers.atomic_write` for one source of truth.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

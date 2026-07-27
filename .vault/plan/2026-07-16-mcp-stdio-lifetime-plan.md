@@ -9,6 +9,7 @@ related:
   - '[[2026-07-16-mcp-stdio-lifetime-adr]]'
   - '[[2026-07-16-mcp-stdio-lifetime-research]]'
 ---
+
 # `mcp-stdio-lifetime` plan
 
 ## Description

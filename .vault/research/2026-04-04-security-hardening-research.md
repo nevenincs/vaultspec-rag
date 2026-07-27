@@ -204,5 +204,7 @@ _is_our_service(pid) on Windows:
 All four fixes are isolated, non-breaking, and testable without mocks.
 SEC-001 and SEC-002 are the highest value — they close the widest attack
 surface. SEC-003 is cosmetic hardening. SEC-004 improves Windows parity.
+
 ## Sources
+
 - Related record identifiers: `2026-04-02-service-graph-code-review-audit`, `2026-04-02-service-graph-adr`.

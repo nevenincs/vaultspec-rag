@@ -9,6 +9,7 @@ related:
   - '[[2026-07-24-index-throughput-research]]'
   - '[[2026-07-24-index-throughput-adr]]'
 ---
+
 # `index-throughput` plan
 
 ## Description

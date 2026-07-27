@@ -8,6 +8,7 @@ step_id: 'S01'
 related:
   - "[[2026-07-27-maintainability-remediation-plan]]"
 ---
+
 ## Outcome
 
 Reconciled the active direct-owner typing change in `cli/_service_jobs.py`: the Typer command override now accepts Click's concrete context type under `TYPE_CHECKING`, preserving the runtime command surface while satisfying static analysis.

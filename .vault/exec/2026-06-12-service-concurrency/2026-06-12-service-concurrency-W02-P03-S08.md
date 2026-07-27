@@ -8,6 +8,7 @@ step_id: 'S08'
 related:
   - "[[2026-06-12-service-concurrency-plan]]"
 ---
+
 # Convert the post-rerank multiplicative graph boost into a bounded additive nudge
 
 ## Description

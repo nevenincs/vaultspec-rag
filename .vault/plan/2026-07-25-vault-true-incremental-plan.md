@@ -11,6 +11,7 @@ related:
   - '[[2026-07-24-index-throughput-research]]'
   - '[[2026-07-24-worktree-index-reuse-adr]]'
 ---
+
 # `vault-true-incremental` plan
 
 ## Description

@@ -10,6 +10,7 @@ related:
   - '[[2026-07-25-service-release-compatibility-reference]]'
   - '[[2026-07-27-service-release-compatibility-research]]'
 ---
+
 # `service-release-compatibility` plan
 
 ### Phase `P01` - publication and classification

@@ -98,6 +98,7 @@ substrate.
   secret-access error. Documented in workflow.
 - No new exception suppression; no shims; no test mandate
   violations.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

@@ -36,4 +36,5 @@ verdict to `unverifiable` and must never fail the index run that was creating
 the collection.
 
 ## Notes
+
 Template evidence: intro_commit=bb97c918472220397b2f4b63f5dfbd0549b70a78; template_commit=bb97c918472220397b2f4b63f5dfbd0549b70a78:.vaultspec/templates/exec-step.md requires Description, Outcome, and Notes. This repair preserves the retained record text and adds no new implementation claim.

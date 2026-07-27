@@ -14,7 +14,7 @@ related:
 
 ## summary
 
-Implements ``2026-04-22-install-cuda-adr``. Scope:
+Implements `2026-04-22-install-cuda-adr`. Scope:
 
 - New module `src/vaultspec_rag/torch_config.py`.
 - Extend `install_run` / `uninstall_run` in `commands.py`.
@@ -91,7 +91,7 @@ Implement per the ADR surface:
 
 Implementation tips (not verbatim code):
 
-- Use `tomlkit.aot()` (array-of-tables) when adding ``tool.uv.index``
+- Use `tomlkit.aot()` (array-of-tables) when adding `tool.uv.index`
   to a doc that has no `[tool.uv]` table yet.
 - Use `tomlkit.array()` + `tomlkit.inline_table()` for the
   `torch = [{ index = ..., marker = ... }]` source (list of inline
@@ -367,7 +367,7 @@ match the new flag surface exactly.
 **Awaiting user approval before proceeding to step 1.**
 
 Per the project's execution convention
-(``2026-04-12-vaultspec-rag-install-adr`` and CLAUDE.md mandate
+(`2026-04-12-vaultspec-rag-install-adr` and CLAUDE.md mandate
 "The user must approve plans before execution proceeds"), no code
 changes land until this plan is approved.
 

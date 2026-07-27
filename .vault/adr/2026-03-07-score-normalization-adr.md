@@ -7,6 +7,7 @@ modified: '2026-07-27'
 related:
   - '[[2026-03-07-continuous-research]]'
 ---
+
 # `gpu-rag-stack` adr: `Sigmoid + min-max per-source normalization in search_all()` | (**status:** `accepted`)
 
 ## Problem Statement

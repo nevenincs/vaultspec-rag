@@ -14,7 +14,7 @@ related:
 
 ## scope
 
-Implements ``2026-04-22-install-cuda-adr`` per ``2026-04-22-install-cuda-plan``.
+Implements `2026-04-22-install-cuda-adr` per `2026-04-22-install-cuda-plan`.
 Resolves github issue #81: https://github.com/nevenincs/vaultspec-rag/issues/81.
 
 ## artefacts landed
@@ -39,7 +39,7 @@ Total: 37 new tests, all passing. 382 unit tests pass overall. ty clean. ruff cl
 - Non-TTY detection lives at the CLI edge (`cli.py` reads `sys.stdin.isatty()`); `commands.py` takes an optional `ConfirmFn` callable and treats `None` as "no interactive channel, refuse to guess".
 - `uninstall_run` now calls `_run_torch_config_uninstall` even when `.vaultspec/` is absent, so a workspace where rag's enrollment was manually deleted still gets its torch-config block removed.
 - `_handle_gpu_error` lazily imports torch inside the helper so the `ImportError` fast path stays cheap.
-- CPU_ONLY message renders the manual snippet with Rich markup disabled (`console.print(manual_snippet(), markup=False)`), otherwise ``tool.uv.index`` is swallowed as markup syntax. Bug caught during smoke testing, not shipped.
+- CPU_ONLY message renders the manual snippet with Rich markup disabled (`console.print(manual_snippet(), markup=False)`), otherwise `tool.uv.index` is swallowed as markup syntax. Bug caught during smoke testing, not shipped.
 - `sync_after=True` shells out to `uv sync --reinstall-package torch` via `subprocess.run(..., check=False, capture_output=True)` — non-zero exit becomes a warning, never a hard failure.
 
 ## test results

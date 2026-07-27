@@ -715,9 +715,7 @@ def _run_probes_during_matching_rebuild(
                 inputs.matching_empty_query,
             ),
         )
-        _wait_for_mcp_initialization(
-            initialized, mcp_future, inputs.port, inputs.token
-        )
+        _wait_for_mcp_initialization(initialized, mcp_future, inputs.port, inputs.token)
         job_id = _submit_clean_vault_rebuild(
             inputs.port,
             inputs.token,

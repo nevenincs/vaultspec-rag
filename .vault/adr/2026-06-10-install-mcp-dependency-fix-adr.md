@@ -136,6 +136,7 @@ correct layer the moment upstream makes it available.
   `os.add_dll_directory` shim for `pywin32`); fix the symptom at the layer the
   project controls — its own metadata, a guarded import with an actionable
   error, or a version floor that tracks the upstream fix.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

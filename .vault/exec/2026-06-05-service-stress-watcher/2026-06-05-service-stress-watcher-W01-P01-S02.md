@@ -16,7 +16,9 @@ related:
 - `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`
 
 - Add `test_watcher_detects_and_indexes_file` async test case.
+
 - Establish active watcher loop using `watch_and_reindex` pointed at temporary directory.
+
 - Verify file additions trigger debounced watcher execution and updates vector tables.
 
 ## Outcome

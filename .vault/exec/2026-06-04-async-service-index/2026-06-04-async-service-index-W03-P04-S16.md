@@ -16,6 +16,7 @@ related:
 - `src/vaultspec_rag/api.py`
 
 - Implement and expose `clean` (database clean/wipe) and `get_status` (RAG status, hardware metrics) facade functions inside the public `src/vaultspec_rag/api.py` module.
+
 - Move collection dropping, metadata sidecar deletion, and GPU VRAM query routines out of CLI/MCP and into these API functions.
 
 ## Outcome

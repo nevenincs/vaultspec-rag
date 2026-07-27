@@ -9,6 +9,7 @@ related:
   - "[[2026-07-27-maintainability-remediation-radon-module-ownership-reference]]"
   - "[[2026-06-01-module-split-adr]]"
 ---
+
 # `maintainability-remediation` adr: direct-owner decomposition | (**status:** `accepted`)
 
 ## Problem Statement

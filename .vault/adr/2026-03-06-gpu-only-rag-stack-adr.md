@@ -8,6 +8,7 @@ related:
   - '[[2026-03-06-gpu-rag-architecture-research]]'
   - '[[2026-03-06-gpu-vector-search-deep-dive-research]]'
 ---
+
 # `gpu-rag-stack` adr: `GPU-Only RAG Stack â€” sentence-transformers + Qwen3 + SPLADE v3` | (**status:** `accepted`)
 
 ## Problem Statement

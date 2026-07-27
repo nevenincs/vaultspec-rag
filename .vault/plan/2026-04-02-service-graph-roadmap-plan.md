@@ -230,6 +230,7 @@ M4 and M5 can run in parallel after M3 completes.
 See the summary above.
 
 ## Steps
+
 Retained-plan evidence: the milestone and wave sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
 
 ## Parallelization

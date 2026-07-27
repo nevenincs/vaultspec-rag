@@ -25,4 +25,5 @@ related:
 Retrieval provenance is unchanged for units that fit and correctly attributed for units that split; covered by the oversized-unit test asserting every fragment carries the parent's fields.
 
 ## Notes
+
 Template evidence: intro_commit=2b44d249d2461916216580e2c02d7162013b3ccd; template_commit=2b44d249d2461916216580e2c02d7162013b3ccd:.vaultspec/templates/exec-step.md requires Description, Outcome, and Notes. This repair preserves the retained record text and adds no new implementation claim.

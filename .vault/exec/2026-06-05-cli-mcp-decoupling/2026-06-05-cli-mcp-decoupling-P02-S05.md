@@ -16,9 +16,13 @@ related:
 - `src/vaultspec_rag/api.py`
 
 - Implement `get_service_state` inside `src/vaultspec_rag/api.py`.
+
 - Query RAG status (document counts, GPU device, VRAM) via `get_status(root)`.
+
 - Query registry active projects snapshot.
+
 - Format file watcher config and active watched roots list.
+
 - Expose the function in the public `__all__` facade list.
 
 ## Outcome

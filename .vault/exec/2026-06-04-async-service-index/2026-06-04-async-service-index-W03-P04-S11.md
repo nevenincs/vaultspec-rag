@@ -16,7 +16,9 @@ related:
 - `src/vaultspec_rag/jobs.py`
 
 - Move background reindexing task and jobs registry into `src/vaultspec_rag/jobs.py` to decouple task execution from the MCP transport layer.
+
 - Keep strong references to background asyncio Tasks inside a module-level set in `jobs.py`.
+
 - Expose a callback registration function to allow wrapper layers to listen to job complete events.
 
 ## Outcome

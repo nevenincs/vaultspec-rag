@@ -8,6 +8,7 @@ modified: '2026-07-27'
 related:
   - '[[2026-06-09-operability-hardening-plan]]'
 ---
+
 # operability-hardening W02-P03-S07
 
 ## Description

@@ -11,6 +11,7 @@ related:
   - "[[2026-07-24-operator-feedback-hardening-adr]]"
   - "[[2026-07-21-managed-log-contract-adr]]"
 ---
+
 # `jobs-tui` adr: `the live jobs view becomes an owned-screen interface` | (**status:** `accepted`)
 
 ## Problem Statement

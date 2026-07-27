@@ -108,8 +108,11 @@ Single-file change. Phases 1-3 sequential within `cli.py`.
   Windows is a much larger uvicorn-integration change and is
   separately filed-able if the cli.lifecycle mirror proves
   insufficient.
+
 ## Description
+
 - This plan implements the scope recorded in `2026-05-31-win-shutdown-log-adr`, `2026-05-31-win-shutdown-log-research`.
 
 ## Steps
+
 1. Execute the existing proposed changes and tasks with their recorded verification.

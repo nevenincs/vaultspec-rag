@@ -288,7 +288,7 @@ class DocumentChunkingPolicy:
             raise ValueError(
                 "chunk_overlap_chars must be smaller than chunk_chars, got "
                 f"overlap={self.chunk_overlap_chars}, budget={self.chunk_chars}"
-        )
+            )
 
 
 @dataclass(frozen=True, slots=True)

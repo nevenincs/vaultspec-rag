@@ -5,6 +5,7 @@ tags:
 date: '2026-03-07'
 modified: '2026-07-27'
 ---
+
 # Continuous Research Loop Findings â€” 2026-03-07
 
 ## Findings
@@ -548,11 +549,11 @@ to each `Prefetch` individually?
 
 ### Runtime test results (Qdrant local mode)
 
-| Scenario                                          | Filter placement                      | Result                                           |
-| ------------------------------------------------- | ------------------------------------- | ------------------------------------------------ |
+| Scenario                                          | Filter placement                      | Result                                             |
+| ------------------------------------------------- | ------------------------------------- | -------------------------------------------------- |
 | Top-level `query_filter` only                     | `query_points(query_filter=...)`      | **FILTER IGNORED** â€” unfiltered results returned |
 | Per-Prefetch `filter`                             | `Prefetch(filter=...)` on each branch | **WORKS** â€” only matching points returned        |
-| No filter                                         | baseline                              | All points returned                              |
+| No filter                                         | baseline                              | All points returned                                |
 | Top-level `query_filter` + no per-Prefetch filter | `query_points(query_filter=...)`      | **FILTER IGNORED** â€” same as no filter           |
 
 ### Critical finding
@@ -1203,11 +1204,11 @@ from MCP tool handlers that may run in worker threads (via
 
 ### Lock type comparison
 
-| Lock type        | Thread-safe | Async-safe        | Can use from worker thread | Can use from coroutine     |
-| ---------------- | ----------- | ----------------- | -------------------------- | -------------------------- |
+| Lock type        | Thread-safe | Async-safe        | Can use from worker thread | Can use from coroutine       |
+| ---------------- | ----------- | ----------------- | -------------------------- | ---------------------------- |
 | `threading.Lock` | Yes         | **DEADLOCK RISK** | Yes                        | **NO** â€” blocks event loop |
-| `asyncio.Lock`   | **No**      | Yes               | **No** â€” not thread-safe   | Yes                        |
-| `anyio.Lock`     | **No**      | Yes               | **No** â€” not thread-safe   | Yes                        |
+| `asyncio.Lock`   | **No**      | Yes               | **No** â€” not thread-safe | Yes                          |
+| `anyio.Lock`     | **No**      | Yes               | **No** â€” not thread-safe | Yes                          |
 
 ### Why threading.Lock deadlocks in async context
 

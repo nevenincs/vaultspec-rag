@@ -11,6 +11,7 @@ related:
   - "[[2026-06-24-vault-pipeline-search-adr]]"
   - '[[2026-07-22-search-noise-filtering-candidate-budget-audit]]'
 ---
+
 # `search-noise-filtering` adr: `query-time domain noise filtering, ranking, and a persistent noise profile` | (**status:** `accepted`)
 
 ## Problem Statement

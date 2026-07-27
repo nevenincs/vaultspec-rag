@@ -478,8 +478,15 @@ class CodeContentDiscovery:
 
     def _process_scan_files(self, request: _ScanFileRequest) -> tuple[int, int]:
         (
-            dirpath, files, rel_dir, policy, result, counts, samples,
-            sample_limit, run_control,
+            dirpath,
+            files,
+            rel_dir,
+            policy,
+            result,
+            counts,
+            samples,
+            sample_limit,
+            run_control,
         ) = (
             request.dirpath,
             request.files,

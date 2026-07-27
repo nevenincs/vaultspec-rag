@@ -8,6 +8,7 @@ related:
   - '[[2026-07-25-adr-plan-coverage-triage-audit]]'
   - '[[2026-07-26-adr-plan-coverage-triage-corpus-reconciliation-audit]]'
 ---
+
 # `vault-corpus-curation` audit: `Warning remediation`
 
 ## Scope

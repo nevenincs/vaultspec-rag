@@ -10,6 +10,7 @@ related:
   - '[[2026-04-02-service-graph-research]]'
   - '[[2026-04-01-cicl-pipeline-research]]'
 ---
+
 # `ecosystem-integration` research: `vaultspec-rag + vaultspec-core cohabitation`
 
 ## Findings

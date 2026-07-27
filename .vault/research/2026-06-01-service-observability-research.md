@@ -42,5 +42,7 @@ that ADR-B builds on. ADR-A already delivered the watcher config + control half
   route + MCP tool + CLI); Tier 2b jobs/queue (the net-new registry); Tier 3
   `/metrics` (greenfield, HTTP-native, pull/on-demand to avoid a background
   thread).
+
 ## Sources
+
 - Related record identifiers: `2026-06-01-service-operability-research`.

@@ -16,6 +16,7 @@ related:
 - `src/vaultspec_rag/mcp_server/_tools.py`
 
 - Refactor `search_vault` and `search_codebase` MCP tool handlers inside `src/vaultspec_rag/mcp_server/_tools.py` to call the public backend API functions `vaultspec_rag.search_vault` and `vaultspec_rag.search_codebase` rather than leasing slots and executing searches directly.
+
 - Convert MCP handlers to act strictly as thin transport delegates.
 
 ## Outcome

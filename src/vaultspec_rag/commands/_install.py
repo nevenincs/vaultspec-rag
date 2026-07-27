@@ -559,12 +559,27 @@ class _CoreSyncRequest:
 
 def _run_core_sync(request: _CoreSyncRequest) -> None:
     (
-        target, report, dry_run, force, skip, mode, install_mcp, upgrade,
-        mode_flipped, fresh_providers,
+        target,
+        report,
+        dry_run,
+        force,
+        skip,
+        mode,
+        install_mcp,
+        upgrade,
+        mode_flipped,
+        fresh_providers,
     ) = (
-        request.target, request.report, request.dry_run, request.force,
-        request.skip, request.mode, request.install_mcp, request.upgrade,
-        request.mode_flipped, request.fresh_providers,
+        request.target,
+        request.report,
+        request.dry_run,
+        request.force,
+        request.skip,
+        request.mode,
+        request.install_mcp,
+        request.upgrade,
+        request.mode_flipped,
+        request.fresh_providers,
     )
     manifest_snapshots = {
         path: file_snapshot(path)
@@ -861,9 +876,7 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
         return failure
 
     def run() -> InstallReport:
-        return _install_run_unchecked(
-            replace(request, path=target, skip=skip_tokens)
-        )
+        return _install_run_unchecked(replace(request, path=target, skip=skip_tokens))
 
     if request.dry_run:
         return run()
@@ -983,14 +996,37 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
         provisioning ran.
     """
     (
-        path, upgrade, dry_run, force, skip, configure_torch, assume_yes,
-        sync_after, confirm, provision, local_only, provision_skip, torch_group,
-        install_mcp, mode,
+        path,
+        upgrade,
+        dry_run,
+        force,
+        skip,
+        configure_torch,
+        assume_yes,
+        sync_after,
+        confirm,
+        provision,
+        local_only,
+        provision_skip,
+        torch_group,
+        install_mcp,
+        mode,
     ) = (
-        request.path, request.upgrade, request.dry_run, request.force, request.skip,
-        request.configure_torch, request.assume_yes, request.sync_after,
-        request.confirm, request.provision, request.local_only, request.provision_skip,
-        request.torch_group, request.install_mcp, request.mode,
+        request.path,
+        request.upgrade,
+        request.dry_run,
+        request.force,
+        request.skip,
+        request.configure_torch,
+        request.assume_yes,
+        request.sync_after,
+        request.confirm,
+        request.provision,
+        request.local_only,
+        request.provision_skip,
+        request.torch_group,
+        request.install_mcp,
+        request.mode,
     )
     skip = skip or set()
     action = "dry_run" if dry_run else ("upgrade" if upgrade else "install")

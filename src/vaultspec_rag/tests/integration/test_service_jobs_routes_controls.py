@@ -41,6 +41,7 @@ def test_jobs_route_canonical_control_retry_and_delete(
     _assert_route_exact_id_contract(client, headers, job_id)
     _assert_route_paused_filter(client, headers, job_id)
 
+
 @pytest.mark.unit
 def test_jobs_route_control_retry_and_terminal_delete(
     _routes_app: tuple[TestClient, str],
@@ -56,6 +57,7 @@ def test_jobs_route_control_retry_and_terminal_delete(
     _assert_route_control_conflicts(client, headers, job_id)
     _cancel_route_job(client, headers, job_id, int(job["revision"]))
     _retry_delete_route_job(client, headers, job_id)
+
 
 @pytest.mark.unit
 def test_jobs_route_enforces_nonterminal_capacity(
@@ -121,6 +123,7 @@ def test_jobs_route_enforces_nonterminal_capacity(
             else:
                 os.environ[key] = value
         reset_config()
+
 
 @pytest.mark.unit
 def test_reindex_route_rejects_unknown_type(

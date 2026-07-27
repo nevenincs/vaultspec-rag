@@ -10,6 +10,7 @@ related:
   - '[[2026-07-21-machine-discovery-recovery-research]]'
   - '[[2026-07-21-machine-discovery-recovery-reference]]'
 ---
+
 # `machine-discovery-recovery` plan
 
 ## Description

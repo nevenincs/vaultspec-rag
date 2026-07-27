@@ -20,12 +20,15 @@ related:
 - Authored `test_intent_ranking.py`: a quality-marked harness that loads the labeled query
   set, builds a `{doc_id: grade}` gold map, and scores each query's ranked ids with the
   role-aware metrics per declared intent (Authoritative@3 for orientation, MRR for the rest).
+
 - Added a session fixture `real_vault_searcher` that copies the project `.vault/` (excluding
   the on-disk index data and locks) into a temp root, indexes it on the real GPU, and yields
   a `VaultSearcher`, so the gate runs against the real competing corpus without touching the
   project index or the running service's store lock.
+
 - Exposed `run_evaluation(searcher)` as reusable orchestration so baseline and post-prior
   rankings score through the same routine.
+
 - Added a structural gate asserting every query yields well-formed, in-range per-intent
   metrics.
 

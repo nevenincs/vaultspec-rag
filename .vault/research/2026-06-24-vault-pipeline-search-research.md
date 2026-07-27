@@ -6,6 +6,7 @@ date: '2026-06-24'
 modified: '2026-07-27'
 related: []
 ---
+
 # `vault-pipeline-search` research: `intent-aware pipeline ranking for vault search`
 
 ## Findings

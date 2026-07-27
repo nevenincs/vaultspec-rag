@@ -267,10 +267,12 @@ def test_config_edit_during_extraction_cannot_change_active_snapshot(
             tmp_path,
             rag_components["model"],
             store,
-            options=CodebaseIndexer.Options(content_policy=RootContentPolicy(
-                SourceProfileVersion.CONVENTIONAL_V1,
-                (ContentRoute("z_markup.html", ContentKind.CODE),),
-            )),
+            options=CodebaseIndexer.Options(
+                content_policy=RootContentPolicy(
+                    SourceProfileVersion.CONVENTIONAL_V1,
+                    (ContentRoute("z_markup.html", ContentKind.CODE),),
+                )
+            ),
         )
         changed_paths = [paths.source, paths.html]
         preflight = indexer.preflight_changed_paths(changed_paths)

@@ -104,5 +104,7 @@ Pursue O1 (targeted reindex from the change set) as the core change, preserving
 the full-scan path for explicit/clean/first-run indexing and composing with the
 existing debounce/cooldown gating. O2's hash cache is a possible follow-on but
 not required. O3 is configuration, owned by #143/#144.
+
 ## Sources
+
 - The analysis and source locations cited inline in this research record.

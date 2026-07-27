@@ -12,6 +12,7 @@ related:
   - "[[2026-07-21-service-job-control-adr]]"
   - "[[2026-07-21-large-index-resilience-adr]]"
 ---
+
 # `search-index-availability` adr: `authoritative empty search responses during index work` | (**status:** `accepted`)
 
 ## Problem Statement

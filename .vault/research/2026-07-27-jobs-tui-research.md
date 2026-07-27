@@ -11,6 +11,7 @@ related:
   - "[[2026-07-21-managed-log-contract-adr]]"
   - "[[2026-04-12-index-progress-bars-adr]]"
 ---
+
 # `jobs-tui` research: `an interactive operator TUI for the jobs surface`
 
 ## Findings

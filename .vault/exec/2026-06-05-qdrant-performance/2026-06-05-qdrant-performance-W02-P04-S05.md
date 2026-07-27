@@ -16,7 +16,9 @@ related:
 - `src/vaultspec_rag/store.py`
 
 - Add `like_ids` and `unlike_ids` optional parameters to `hybrid_search` and `hybrid_search_codebase` methods.
+
 - Retrieve and resolve stable UUIDs from input document or chunk IDs.
+
 - Construct `RecommendQuery` with positive/negative points list to guide the dense prefetch search when feedback vectors are specified.
 
 ## Outcome

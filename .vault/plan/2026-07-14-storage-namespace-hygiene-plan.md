@@ -9,6 +9,7 @@ related:
   - '[[2026-07-14-storage-namespace-hygiene-adr]]'
   - '[[2026-07-14-storage-namespace-hygiene-research]]'
 ---
+
 # `storage-namespace-hygiene` plan
 
 ## Description

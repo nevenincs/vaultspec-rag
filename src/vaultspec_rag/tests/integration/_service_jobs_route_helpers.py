@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
     import httpx
 
+
 @pytest.fixture(name="_routes_app")
 def _routes_app(  # pyright: ignore[reportUnusedFunction]
     _clean_jobs: None,
@@ -68,6 +69,7 @@ def _routes_app(  # pyright: ignore[reportUnusedFunction]
         else:
             os.environ[EnvVar.STATUS_DIR] = prior_status_dir
         reset_config()
+
 
 def _create_route_job(
     client: TestClient,
@@ -212,6 +214,7 @@ def _assert_route_paused_filter(
     )
     assert filtered.status_code == 200
     assert [entry["id"] for entry in filtered.json()["jobs"]] == [job_id]
+
 
 def _assert_route_control_conflicts(
     client: TestClient,

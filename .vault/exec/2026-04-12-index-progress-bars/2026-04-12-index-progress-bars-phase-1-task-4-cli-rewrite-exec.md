@@ -36,9 +36,12 @@ final summary table after the context exits is preserved verbatim.
 
 CLI unit tests (`test_cli.py`, `test_cli_warmup.py`) still green — the
 reporter wiring doesn't break any CLI entry point.
+
 ## Notes
+
 - Scope and evidence remain those recorded in this execution record.
 - Related record identifiers: `2026-04-12-index-progress-bars-phase-1-plan`.
 
 ## Outcome
+
 - The existing execution summary is the authoritative result; no additional outcome is inferred here.

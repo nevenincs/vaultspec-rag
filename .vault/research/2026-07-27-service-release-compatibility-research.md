@@ -9,6 +9,7 @@ related:
   - "[[2026-07-25-service-release-compatibility-plan]]"
   - "[[2026-07-25-service-release-compatibility-reference]]"
 ---
+
 # `service-release-compatibility` research: `Compatibility lifecycle evidence`
 
 ## Findings

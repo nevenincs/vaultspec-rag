@@ -154,6 +154,7 @@ throwaway code. The ADR's phased approach anticipated this — phase 1
 - Phase 4 (documentation) — depends on phase 2 completion
 - #48 (pre-commit hooks) — awaits core#36
 - #55 (MCP registry) — awaits core#43
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

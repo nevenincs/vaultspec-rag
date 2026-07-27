@@ -197,8 +197,11 @@ ______________________________________________________________________
 **Verified Against:** qdrant-client installed (version unknown)
 **Inspection Method:** Python introspection of `qdrant_client.models` via `inspect` module
 **Test Files:** None (API verification only)
+
 ## Findings
+
 - The verification results recorded above support the conclusion of this research.
 
 ## Sources
+
 - Evidence cited inline: `src/vaultspec_rag/store.py`.

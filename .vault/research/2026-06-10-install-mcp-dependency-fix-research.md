@@ -120,5 +120,7 @@ Whether to also surface the Windows `pywin32`/`uv` remediation in install
 documentation or only in the guarded import's error text, and whether to file
 the upstream-pin follow-up as a tracked issue now so the `mcp>=<fixed>` floor is
 not forgotten once #2233 lands.
+
 ## Sources
+
 - Evidence cited inline: `src/vaultspec_rag/server/_main.py`, `src/vaultspec_rag/mcp/`.

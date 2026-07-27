@@ -9,6 +9,7 @@ related:
   - '[[2026-07-27-body-schema-provenance-adr]]'
   - '[[2026-07-27-body-schema-provenance-policy-research]]'
 ---
+
 # `body-schema-provenance` plan
 
 ### Phase `P01` - Immutable contracts

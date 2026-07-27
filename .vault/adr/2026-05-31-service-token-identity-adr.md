@@ -142,6 +142,7 @@ not see the new CLI report the daemon as crashed.
   fields. No coordinated upgrade required.
 - `_health_probe` gains a debug log line — partial down-payment
   on gh #130. Full sweep stays scoped to that PR.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

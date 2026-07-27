@@ -8,6 +8,7 @@ step_id: 'S17'
 related:
   - "[[2026-06-12-service-concurrency-plan]]"
 ---
+
 # Replace the SPLADE densify-and-loop conversion with a single coalesced sparse-tensor pass
 
 ## Description

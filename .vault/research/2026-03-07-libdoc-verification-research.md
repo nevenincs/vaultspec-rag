@@ -5,6 +5,7 @@ tags:
 date: '2026-03-07'
 modified: '2026-07-27'
 ---
+
 # Library Documentation Verification Audit
 
 ## Findings
@@ -338,9 +339,9 @@ Not a bug â€” `_relevance_score` is for ranking, not comparison â€” bu
 | #   | Issue                                                              | Severity | Action                                                         |
 | --- | ------------------------------------------------------------------ | -------- | -------------------------------------------------------------- |
 | 1   | Docstring claims sigmoid but none exists                           | MEDIUM   | Add `activation_fn=Sigmoid()` to CrossEncoder or fix docstring |
-| 2   | `_normalize_minmax()` formula and edge cases                       | â€”        | Correct, no action needed                                      |
+| 2   | `_normalize_minmax()` formula and edge cases                       | â€”      | Correct, no action needed                                      |
 | 3   | Graph multiplicative boost inverts on negative CrossEncoder logits | **HIGH** | Fix: sigmoid before graph, or switch to additive boost         |
-| 4   | Weight application in `search_all()`                               | â€”        | Correct, no action needed                                      |
+| 4   | Weight application in `search_all()`                               | â€”      | Correct, no action needed                                      |
 | 5   | Inconsistent score scales across search methods                    | LOW      | Informational                                                  |
 
 ______________________________________________________________________
@@ -433,11 +434,11 @@ Switch from `FusionQuery(fusion=Fusion.RRF)` to `RrfQuery(rrf=Rrf(k=60))` for mo
 
 | #   | Issue                                                 | Severity   | Action                                                        |
 | --- | ----------------------------------------------------- | ---------- | ------------------------------------------------------------- |
-| 1   | All payload index types match their filter operations | â€”          | No action needed                                              |
+| 1   | All payload index types match their filter operations | â€”        | No action needed                                              |
 | 2   | KEYWORD index on `date` prevents future range queries | LOW        | Informational; redesign if date ranges needed                 |
 | 3   | KEYWORD index on `path` does exact match, not prefix  | LOW        | Already noted in R21-m4                                       |
 | 4   | `FusionQuery` uses RRF k=2 (not k=60)                 | **MEDIUM** | Switch to `RrfQuery(rrf=Rrf(k=60))` for standard RRF behavior |
-| 5   | `RrfQuery` available since qdrant-client 1.16.0       | â€”          | Verify installed version before switching                     |
+| 5   | `RrfQuery` available since qdrant-client 1.16.0       | â€”        | Verify installed version before switching                     |
 
 ______________________________________________________________________
 
@@ -522,12 +523,12 @@ Practical AST-aware chunking library. Benchmark results:
 
 | #   | Finding                                                              | Severity | Action                                                     |
 | --- | -------------------------------------------------------------------- | -------- | ---------------------------------------------------------- |
-| 1   | Function/class-level AST chunking is validated by literature         | â€”        | No change needed; our approach is correct                  |
+| 1   | Function/class-level AST chunking is validated by literature         | â€”      | No change needed; our approach is correct                  |
 | 2   | Small AST nodes (imports, constants) create low-quality chunks       | LOW      | Consider merging small consecutive nodes up to size budget |
 | 3   | Large classes may exceed embedding context or get truncated          | LOW      | Consider recursive decomposition at method boundaries      |
-| 4   | No overlap needed for AST chunks                                     | â€”        | Current behavior is correct                                |
-| 5   | Qwen3-Embedding has no code-specific chunking guidance               | â€”        | Informational                                              |
-| 6   | `max_embed_chars=8000` is safely within model's 16K-token sweet spot | â€”        | No change needed                                           |
+| 4   | No overlap needed for AST chunks                                     | â€”      | Current behavior is correct                                |
+| 5   | Qwen3-Embedding has no code-specific chunking guidance               | â€”      | Informational                                              |
+| 6   | `max_embed_chars=8000` is safely within model's 16K-token sweet spot | â€”      | No change needed                                           |
 
 ______________________________________________________________________
 
@@ -553,7 +554,7 @@ These boosts apply to the already-truncated `top_k` results (line 292 truncates 
 | 4        | 13    | 3.3%       | 1.4x          |
 | 5-9      | 12    | 3.1%       | 1.5x-1.9x     |
 | 10+      | 11    | 2.8%       | 2.0x (capped) |
-| **Mean** | â€”     | â€”          | **1.13x**     |
+| **Mean** | â€”   | â€”        | **1.13x**     |
 
 Key observations:
 
@@ -568,7 +569,7 @@ Key observations:
 
 | Scenario                        | Base score   | Links  | Boosted score  | Problem?                   |
 | ------------------------------- | ------------ | ------ | -------------- | -------------------------- |
-| Strong match, no links          | 0.90         | 0      | 0.900          | â€”                          |
+| Strong match, no links          | 0.90         | 0      | 0.900          | â€”                        |
 | Moderate match, 10+ links       | 0.50         | 10     | 1.000          | Overtakes strong match     |
 | Weak match, 10+ links + feature | 0.50         | 10     | 1.150          | 28% above strong match     |
 | Strong match, 2 links           | 0.90         | 2      | 1.080          | Acceptable nudge           |
@@ -614,9 +615,9 @@ IR literature on combining link-based and content-based scores:
 | --- | ----------------------------------------------------------------------------------- | -------- | ---------------------------------------------------- |
 | 1   | 2.0x max boost can cause hub docs (score 0.5) to outrank strong matches (score 0.9) | LOW      | Reduce coefficient from 0.1 to 0.05 (max 1.5x)       |
 | 2   | Feature boost stacking reaches 2.3x combined maximum                                | LOW      | Acceptable, but depends on item 1                    |
-| 3   | 70% of docs get no boost; typical boost is 1.0x-1.2x                                | â€”        | Well-calibrated for the common case                  |
-| 4   | Cap at 10 links is reasonable (only 2.8% of docs exceed it)                         | â€”        | No change needed                                     |
-| 5   | Multiplicative boosting is correct approach per IR literature                       | â€”        | No change needed                                     |
+| 3   | 70% of docs get no boost; typical boost is 1.0x-1.2x                                | â€”      | Well-calibrated for the common case                  |
+| 4   | Cap at 10 links is reasonable (only 2.8% of docs exceed it)                         | â€”      | No change needed                                     |
+| 5   | Multiplicative boosting is correct approach per IR literature                       | â€”      | No change needed                                     |
 | 6   | Log-dampening is an alternative to reducing coefficient                             | LOW      | Optional; diminishing returns matches link semantics |
 
 ## Sources

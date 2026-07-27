@@ -8,6 +8,7 @@ step_id: 'S11'
 related:
   - "[[2026-07-21-index-backpressure-storage-hygiene-plan]]"
 ---
+
 # add preflight tests covering refusal, pass-through, and envelope shape
 
 ## Description
