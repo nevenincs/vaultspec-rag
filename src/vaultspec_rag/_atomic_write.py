@@ -35,6 +35,7 @@ import pathlib
 import random
 import sys
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ._backoff import jittered_backoff
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 __all__ = [
+    "JsonWriteOptions",
     "NotDurableError",
     "fsync_directory",
     "replace_atomically",
@@ -65,6 +67,19 @@ _MOVEFILE_WRITE_THROUGH = 0x8
 
 #: Windows ``ERROR_ACCESS_DENIED`` and ``ERROR_SHARING_VIOLATION``.
 _SHARING_WINERRORS = frozenset({5, 32})
+
+
+@dataclass(frozen=True)
+class JsonWriteOptions:
+    """Serialization and durability choices for an atomic JSON publication."""
+
+    indent: int | None = None
+    sort_keys: bool = False
+    compact: bool = False
+    durable: bool = False
+
+
+_DEFAULT_JSON_WRITE_OPTIONS = JsonWriteOptions()
 
 
 class NotDurableError(OSError):
@@ -166,11 +181,7 @@ def _move_file_write_through(source: Path | str, destination: Path | str) -> Non
 def write_json_atomically(
     path: Path | str,
     payload: Any,
-    *,
-    indent: int | None = None,
-    sort_keys: bool = False,
-    compact: bool = False,
-    durable: bool = False,
+    options: JsonWriteOptions = _DEFAULT_JSON_WRITE_OPTIONS,
 ) -> None:
     """Publish *payload* as JSON at *path*, atomically, leaving no temp behind.
 
@@ -189,8 +200,8 @@ def write_json_atomically(
       target, the pid and a random suffix, and is dot-prefixed so it does not
       look like product data to anything listing the directory.
 
-    ``durable`` forces the bytes and the rename to disk, for a record that has
-    to survive a crash rather than merely a concurrent reader. It does both:
+    ``options.durable`` forces the bytes and the rename to disk, for a record
+    that has to survive a crash rather than merely a concurrent reader. It does both:
     forcing only the rename, as one caller did, durably publishes contents the
     kernel was never told to flush.
 
@@ -203,9 +214,9 @@ def write_json_atomically(
     target = pathlib.Path(path)
     encoded = json.dumps(
         payload,
-        indent=indent,
-        sort_keys=sort_keys,
-        separators=(",", ":") if compact else None,
+        indent=options.indent,
+        sort_keys=options.sort_keys,
+        separators=(",", ":") if options.compact else None,
         # NaN and Infinity are not JSON. Python emits them anyway and reads
         # them back, so a document carrying one round-trips here and is
         # rejected by every stricter reader. One caller already refused them;
@@ -223,10 +234,10 @@ def write_json_atomically(
         # elsewhere for the same payload.
         with temporary.open("w", encoding="utf-8", newline="") as handle:
             handle.write(encoded)
-            if durable:
+            if options.durable:
                 handle.flush()
                 os.fsync(handle.fileno())
-        if durable:
+        if options.durable:
             replace_durably(temporary, target)
         else:
             replace_atomically(temporary, target)

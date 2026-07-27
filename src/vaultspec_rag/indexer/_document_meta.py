@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from .. import store_schema
-from .._atomic_write import write_json_atomically
+from .._atomic_write import JsonWriteOptions, write_json_atomically
 from ._document_identity import normalize_document_source_path
 
 if TYPE_CHECKING:
@@ -214,7 +214,9 @@ def read_document_meta(meta_path: Path) -> DocumentIndexMetadata | None:
 def write_document_meta(meta_path: Path, metadata: DocumentIndexMetadata) -> None:
     """Publish document metadata and its explicit completeness state atomically."""
     write_json_atomically(
-        meta_path, metadata.as_payload(), sort_keys=True, compact=True, durable=True
+        meta_path,
+        metadata.as_payload(),
+        JsonWriteOptions(sort_keys=True, compact=True, durable=True),
     )
 
 
