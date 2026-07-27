@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -10,6 +9,7 @@ import pytest
 from vaultspec_rag import jobs as _jobs
 from vaultspec_rag.job_models import JobSource
 
+from .._job_records import activity_record
 from ._service_jobs_route_helpers import (
     _routes_app as _routes_app_fixture,
 )
@@ -20,6 +20,12 @@ __all__ = ["_clean_jobs_fixture", "_routes_app_fixture"]
 if TYPE_CHECKING:
     import httpx
     from starlette.testclient import TestClient
+
+# The start stamp is pushed well outside the window the query asks for, so the
+# record is only reachable through the progress stamp; the window itself is wide
+# enough that no amount of host load can move a just-written stamp out of it.
+_STARTED_BEFORE_WINDOW_SECONDS = 600.0
+_SINCE_WINDOW_SECONDS = 60.0
 
 
 @pytest.mark.unit
@@ -179,14 +185,28 @@ def test_jobs_route_query_matches_runtime_and_initiator(
 def test_jobs_route_since_uses_progress_update_time(
     _routes_app: tuple[TestClient, str],
 ) -> None:
+    """A job started outside the window is returned on its progress stamp.
+
+    Backdating the start stamp is what gives the assertion teeth: the record can
+    only come back on the strength of the progress stamp, and it comes back by a
+    minute rather than by milliseconds. Producing the same shape by waiting
+    would run the whole assertion inside a sub-second race against the durable
+    snapshot write ``record_progress`` performs after stamping.
+    """
     running_id = _jobs.record_start(JobSource.CODE, "tool")
-    time.sleep(0.2)
+    with activity_record(running_id) as record:
+        record["started_at"] = (
+            cast("float", record["started_at"]) - _STARTED_BEFORE_WINDOW_SECONDS
+        )
     _jobs.record_progress(running_id, "embed", completed=1, total=10)
     client, token = _routes_app
 
     response = cast(
         "httpx.Response",
-        client.get("/jobs", params={"token": token, "since": "0.1"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+        client.get(  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+            "/jobs",
+            params={"token": token, "since": str(_SINCE_WINDOW_SECONDS)},
+        ),
     )
 
     assert response.status_code == 200
