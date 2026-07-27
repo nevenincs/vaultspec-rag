@@ -11,37 +11,25 @@ import contextlib
 import hashlib
 import logging
 import pathlib
-import queue
 import time
-from functools import partial
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 from .._atomic_write import write_json_atomically
 from .._index_breadth import PUBLISHED_FILES_KEY, PUBLISHED_POINTS_KEY
-from .._job_errors import JobError, JobErrorKind
 from .._store_models import (
     generation_code_collection,
     publish_generation_as_served,
 )
-from ..index_profiles import (
-    SupportMeasurement,
-    SupportProfileLimits,
-    get_index_support_profile,
-)
-from ..job_control import NO_RUN_CONTROL, RunControlSignal
+from ..job_control import NO_RUN_CONTROL
 from . import _chunk_worker, _code_meta, _preprocess_glue
-from ._chunk_producer import (
-    CONTROL_POLL_SECONDS,
-    CodeChunkProducer,
-    WeightedCodeSegmentQueue,
-    drain_code_chunks,
-)
+from ._chunk_producer import CodeChunkProducer
 from ._code_meta import (
     CODE_EMBED_SCHEMA,
     CONTENT_EPOCH_KEY,
     EMBED_SCHEMA_KEY,
     MEMBERSHIP_EPOCH_KEY,
 )
+from ._consumer_pipeline import CodeConsumerPipeline, CodePipelineLimits
 from ._content_discovery import (
     DEFAULT_SCAN_SAMPLE_LIMIT as _DEFAULT_SCAN_SAMPLE_LIMIT,
 )
@@ -58,33 +46,22 @@ from ._content_policy import (
     RootContentPolicy,
     SourceProfileVersion,
 )
-from ._file_state import FileStateKind
 from ._generation_lifecycle import CodeGenerationLifecycle
+from ._incremental_commit import CodeIncrementalCommit
 from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
 from ._route_migration import reconcile_generation_storage
-from ._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
-from ._run_ledger import (
-    CommitUnitKind,
-    RunLedgerCompatibilityError,
-    RunOperation,
-)
-from ._streaming import (
-    CodeFileSegment,
-    WeightedCodeSlice,
-    _release_cuda_cache,
-    encode_and_upsert_code_slice,
-    iter_code_file_segments,
-    iter_weighted_code_slices,
-)
+from ._run_ledger import RunLedgerCompatibilityError, RunOperation
+from ._support_budget import CodeSupportBudget
 from ._vault_prep import IndexResult
 
 if TYPE_CHECKING:
     import threading
-    from collections.abc import Callable, Iterable, Iterator
+    from collections.abc import Iterable
 
     from ..embeddings import EmbeddingModel
+    from ..index_profiles import SupportMeasurement
     from ..job_control import RunControl
-    from ..memory_probe import MemoryBudget, MemoryBudgetSnapshot, MemoryProbe
+    from ..memory_probe import MemoryBudgetSnapshot
     from ..progress import ProgressReporter
     from ..store import VaultStore
     from ._chunk_worker import FileChunkResult
@@ -92,76 +69,10 @@ if TYPE_CHECKING:
         PreprocessContext,
     )
     from ._resolved_policy import ResolvedIndexPolicy
-    from ._reuse import DonorReuseContext, ReuseStats
-    from ._run_policy import RunPolicy
+    from ._reuse import ReuseStats
+    from ._run_checkpoint import CodeRunCheckpoint
 
 logger = logging.getLogger(__name__)
-
-# Upper bound on how long pipeline shutdown waits for the GPU consumer thread
-# to drain its final batch and terminate. Generous enough for any healthy
-# final encode (a couple of slices) yet finite, so a wedged CUDA/Qdrant call
-# escalates to a raised error instead of hanging the producer and holding the
-# indexer's writer lock forever (#155).
-_CONSUMER_SHUTDOWN_TIMEOUT_S = 300.0
-
-#: Conservative chunks-per-file factor for the pre-pool disk pre-flight;
-#: a measured large mixed-language tree averaged ~12 chunks per source file.
-_CHUNKS_PER_FILE_ESTIMATE = 12
-
-# The digest a zero-byte source hashes to. Comparing against it identifies an
-# empty read exactly, from the hash the chunk worker already returned, without
-# re-reading a file that may still be mid-write.
-_EMPTY_SOURCE_DIGEST = hashlib.blake2b(b"").hexdigest()
-
-
-class _UnsettledCodeConsumerError(RuntimeError):
-    """The code consumer remained live after its bounded shutdown wait."""
-
-
-class _IncrementalPublication(NamedTuple):
-    """What one incremental ingest phase produced, for the caller to commit.
-
-    Named rather than a bare 4-tuple because both callers use every field and
-    two of them are ``set[str]`` - positionally interchangeable, and silently
-    so if the order were ever transposed.
-    """
-
-    prior_ids_by_path: dict[str, set[str]]
-    existing_ids: set[str]
-    published_ids: set[str]
-    published_hashes: dict[str, str]
-
-
-class _CodePipelineLimits(NamedTuple):
-    """Frozen weighted limits shared by code-index producers and consumer."""
-
-    segment_max_chunks: int
-    segment_max_bytes: int
-    queue_max_chunks: int
-    queue_max_bytes: int
-    slice_max_chunks: int
-    slice_max_bytes: int
-    dense_dimension: int
-    sparse_enabled: bool
-    sparse_dimension: int
-    encode_batch_size: int
-    flush_slices: int
-
-    @property
-    def run_configuration(self) -> CodeRunConfiguration:
-        """Project the limits a resumed generation must be compatible with."""
-        return CodeRunConfiguration(
-            segment_max_chunks=self.segment_max_chunks,
-            segment_max_bytes=self.segment_max_bytes,
-            queue_max_chunks=self.queue_max_chunks,
-            queue_max_bytes=self.queue_max_bytes,
-            slice_max_chunks=self.slice_max_chunks,
-            slice_max_bytes=self.slice_max_bytes,
-            sparse_enabled=self.sparse_enabled,
-            sparse_dimension=self.sparse_dimension,
-            encode_batch_size=self.encode_batch_size,
-            flush_slices=self.flush_slices,
-        )
 
 
 class CodebaseIndexer:
@@ -256,11 +167,8 @@ class CodebaseIndexer:
         # starts and cleared at the start of every public run so an earlier
         # run's counters can never leak into a later result.
         self._reuse_stats: ReuseStats | None = None
-        self._donor_reuse: DonorReuseContext | None = None
         self._resolved_policy: ResolvedIndexPolicy | None = None
-        self._support_measurement = SupportMeasurement(0, 0)
-        self._support_limits: SupportProfileLimits | None = None
-        self._support_profile_name: str | None = None
+        self._support_budget = CodeSupportBudget(self.model)
         self._lifecycle = CodeGenerationLifecycle(
             self.root_dir,
             data_root=self._data_root,
@@ -269,12 +177,34 @@ class CodebaseIndexer:
             load_meta=self._load_meta,
             read_meta_raw=self._read_meta_raw,
         )
-        self._memory_budget: MemoryBudget | None = None
+        self._consumer_pipeline = CodeConsumerPipeline(
+            self.root_dir,
+            self.model,
+            self.store,
+            self._producer,
+            self._lifecycle,
+            gpu_lock=self._gpu_lock,
+            begin_memory_budget=self._support_budget.begin_memory_budget,
+            sample_memory_budget=self._support_budget.sample_memory_budget,
+            forward_peak_recording=self._support_budget.forward_peak_recording,
+            fail_cuda_oom=self._support_budget.fail_cuda_oom,
+            begin_support_measurement=self._support_budget.begin_support_measurement,
+            measure_code_segments=self._support_budget.measure_code_segments,
+            record_extracted_bytes=self._support_budget.record_extracted_bytes,
+            record_preprocess_result=self._record_preprocess_result,
+        )
+        self._incremental_commit = CodeIncrementalCommit(
+            self.store,
+            self._lifecycle,
+            self._meta_path,
+            self._pipeline_chunk_and_embed,
+            self._write_meta,
+        )
 
     @property
     def support_measurement(self) -> SupportMeasurement:
         """Return the latest immutable code workload measurement snapshot."""
-        return self._support_measurement
+        return self._support_budget.measurement
 
     @property
     def last_checkpoint(self) -> CodeRunCheckpoint | None:
@@ -284,149 +214,8 @@ class CodebaseIndexer:
     @property
     def memory_budget_snapshot(self) -> MemoryBudgetSnapshot | None:
         """Return the latest immutable enforced-memory observation."""
-        budget = self._memory_budget
+        budget = self._support_budget.memory_budget
         return budget.snapshot if budget is not None else None
-
-    def _begin_memory_budget(self) -> None:
-        """Freeze and sample one production memory budget before dispatch."""
-        from ..memory_probe import MemoryBudget
-        from ._resource_ceilings import admit_index_ceilings
-
-        ceilings = admit_index_ceilings(self.model, self._support_limits)
-        self._memory_budget = MemoryBudget(
-            rss_ceiling_mb=ceilings.rss_ceiling_mb,
-            cuda_ceiling_mb=ceilings.enforced_cuda_ceiling_mb,
-            cuda_baseline_mb=ceilings.cuda_baseline_mb,
-        )
-        self._sample_memory_budget("before code dispatch")
-
-    def _forward_peak_recording(self) -> contextlib.AbstractContextManager[None]:
-        """Route this thread's forward-peak captures into the job budget."""
-        from ..memory_probe import record_forward_peaks
-
-        budget = self._memory_budget
-        if budget is None:
-            return contextlib.nullcontext()
-        return record_forward_peaks(budget.record_forward_peak_mb)
-
-    def _sample_memory_budget(self, label: str) -> MemoryBudgetSnapshot:
-        """Enforce the current budget and retain its resource high-water."""
-        from ..memory_probe import snapshot_resource_bytes
-
-        budget = self._memory_budget
-        if budget is None:
-            raise RuntimeError("code memory budget was not admitted")
-        snapshot = budget.sample(label)
-        rss_bytes, cuda_bytes = snapshot_resource_bytes(snapshot)
-        self._record_resource_measurement(
-            rss_bytes=rss_bytes,
-            cuda_bytes=cuda_bytes,
-        )
-        return snapshot
-
-    def _fail_cuda_oom(self, label: str, exc: BaseException) -> None:
-        """Translate allocator exhaustion through the admitted budget latch."""
-        budget = self._memory_budget
-        if budget is None:
-            raise RuntimeError("code memory budget was not admitted") from exc
-        budget.fail_cuda_oom(label=label, detail=str(exc))
-
-    def _begin_support_measurement(
-        self,
-        paths: Iterable[pathlib.Path],
-    ) -> None:
-        """Measure source dimensions by streaming path metadata only."""
-        from ..config import get_config
-
-        source_files = 0
-        source_bytes = 0
-        for path in paths:
-            source_files += 1
-            source_bytes += path.stat().st_size
-        profile = get_index_support_profile(get_config().index_support_profile)
-        self._support_limits = profile.code
-        self._support_profile_name = profile.name
-        self._set_support_measurement(
-            SupportMeasurement(
-                source_files=source_files,
-                source_bytes=source_bytes,
-                queue_bytes=int(get_config().index_queue_max_bytes),
-            )
-        )
-
-    def _record_extracted_bytes(self, extracted_bytes: int) -> None:
-        """Add extractor output bytes without retaining output beyond one file."""
-        if extracted_bytes <= 0:
-            return
-        current = self.support_measurement
-        self._set_support_measurement(
-            SupportMeasurement(
-                source_files=current.source_files,
-                source_bytes=current.source_bytes,
-                generated_chunks=current.generated_chunks,
-                weighted_bytes=current.weighted_bytes,
-                extracted_bytes=current.extracted_bytes + extracted_bytes,
-                queue_bytes=current.queue_bytes,
-                rss_bytes=current.rss_bytes,
-                cuda_bytes=current.cuda_bytes,
-            )
-        )
-
-    def _record_resource_measurement(
-        self,
-        *,
-        rss_bytes: int,
-        cuda_bytes: int,
-    ) -> None:
-        """Merge observed process and CUDA high-water dimensions."""
-        current = self.support_measurement
-        self._set_support_measurement(
-            SupportMeasurement(
-                source_files=current.source_files,
-                source_bytes=current.source_bytes,
-                generated_chunks=current.generated_chunks,
-                weighted_bytes=current.weighted_bytes,
-                extracted_bytes=current.extracted_bytes,
-                queue_bytes=current.queue_bytes,
-                rss_bytes=max(current.rss_bytes, rss_bytes),
-                cuda_bytes=max(current.cuda_bytes, cuda_bytes),
-            )
-        )
-
-    def _set_support_measurement(self, measured: SupportMeasurement) -> None:
-        """Publish one snapshot and reject its first exceeded dimension."""
-        self._support_measurement = measured
-        limits = self._support_limits
-        exceeded = limits.exceeded_by(measured) if limits is not None else None
-        if exceeded is None:
-            return
-        dimension, actual, limit = exceeded
-        raise JobError(
-            JobErrorKind.CORPUS_LIMIT_EXCEEDED,
-            f"code {dimension} is {actual}; profile "
-            f"{self._support_profile_name!r} permits {limit}",
-        )
-
-    def _measure_code_segments(
-        self,
-        segments: Iterable[CodeFileSegment],
-    ) -> Iterator[CodeFileSegment]:
-        """Measure generated workload while retaining one bounded segment."""
-        for segment in segments:
-            current = self.support_measurement
-            self._set_support_measurement(
-                SupportMeasurement(
-                    source_files=current.source_files,
-                    source_bytes=current.source_bytes,
-                    generated_chunks=current.generated_chunks + len(segment.chunks),
-                    weighted_bytes=current.weighted_bytes + segment.estimated_bytes,
-                    extracted_bytes=current.extracted_bytes,
-                    queue_bytes=current.queue_bytes,
-                    rss_bytes=current.rss_bytes,
-                    cuda_bytes=current.cuda_bytes,
-                )
-            )
-            yield segment
 
     def resolve_policy_snapshot(self) -> ResolvedIndexPolicy:
         """Resolve one immutable policy snapshot before any mutation authority.
@@ -475,7 +264,6 @@ class CodebaseIndexer:
     def _reset_reuse_state(self) -> None:
         """Clear per-run donor reuse and drift state at the start of a run."""
         self._reuse_stats = None
-        self._donor_reuse = None
         self._lifecycle.forget_open_generation()
         # Cleared per run so a generation target can never leak from a
         # finished rebuild into the next job on this indexer.
@@ -701,295 +489,6 @@ class CodebaseIndexer:
         """
         return self._discovery.scan_files()
 
-    def _iter_consumer_segments(
-        self,
-        segment_queue: WeightedCodeSegmentQueue,
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> Iterator[CodeFileSegment]:
-        """Yield queued segments until the producer supplies its sentinel."""
-        while True:
-            run_control.checkpoint()
-            try:
-                segment = segment_queue.get(timeout=CONTROL_POLL_SECONDS)
-            except queue.Empty:
-                self._sample_memory_budget("code consumer queue wait")
-                continue
-            run_control.checkpoint()
-            if segment is None:
-                return
-            yield segment
-
-    def _record_confirmed_slice(
-        self,
-        segments: tuple[CodeFileSegment, ...],
-        metadata: dict[str, str],
-    ) -> None:
-        """Persist the file units covered by one confirmed store mutation.
-
-        Routed through the drift owner rather than straight at the checkpoint:
-        the store write has already been confirmed here, so a path that moved
-        since its digest was observed must be superseded and re-recorded, not
-        allowed to fail a run that has otherwise succeeded.
-        """
-        self._lifecycle.drift_owner.record_segments(segments, metadata)
-
-    def _consume_weighted_slice(
-        self,
-        weighted_slice: WeightedCodeSlice,
-        *,
-        slice_index: int,
-        limits: _CodePipelineLimits,
-        new_ids: set[str],
-        total: list[int],
-        metadata: dict[str, str],
-        checkpoint: CodeRunCheckpoint | None,
-        probe: MemoryProbe,
-        ingest_wait: bool,
-        run_control: RunControl,
-    ) -> None:
-        """Encode, store, and account for one bounded weighted slice."""
-        run_control.checkpoint()
-        self._sample_memory_budget(f"slice-{slice_index}-before-encode")
-        slice_chunks = sorted(
-            weighted_slice.chunks,
-            key=lambda chunk: -len(chunk.content),
-        )
-        try:
-            probe.checkpoint(f"slice-{slice_index}-before-encode")
-            completed_slice_index = slice_index + 1
-            on_storage_confirmed = (
-                partial(
-                    self._record_confirmed_slice,
-                    weighted_slice.segments,
-                    metadata,
-                )
-                if checkpoint is not None
-                else None
-            )
-
-            def _after_forward(kind: str) -> None:
-                run_control.checkpoint()
-                self._sample_memory_budget(
-                    f"slice-{completed_slice_index}-after-{kind}-forward"
-                )
-                run_control.checkpoint()
-
-            def _on_cuda_oom(exc: BaseException) -> None:
-                self._fail_cuda_oom(
-                    f"slice-{completed_slice_index}-allocator-oom",
-                    exc,
-                )
-
-            # Route the lock-bracketed forward captures of this consumer
-            # thread into this job's own budget, so checkpoints enforce
-            # the job's demand rather than a process-wide high-water.
-            with self._forward_peak_recording():
-                encode_and_upsert_code_slice(
-                    slice_chunks,
-                    model=self.model,
-                    store=self.store,
-                    gpu_lock=self._gpu_lock,
-                    release_cache=(completed_slice_index % limits.flush_slices == 0),
-                    encode_batch_size=limits.encode_batch_size,
-                    write_policy=(
-                        checkpoint.run_policy.store_write_policy
-                        if checkpoint is not None
-                        else None
-                    ),
-                    ingest_wait=ingest_wait,
-                    collection=self._code_build_target,
-                    on_storage_confirmed=on_storage_confirmed,
-                    after_forward=_after_forward,
-                    on_cuda_oom=_on_cuda_oom,
-                    run_control=run_control,
-                    reuse=self._donor_reuse,
-                )
-            run_control.checkpoint()
-            new_ids.update(chunk.id for chunk in slice_chunks)
-            total[0] += len(slice_chunks)
-            probe.checkpoint(f"slice-{completed_slice_index}-after-store")
-            self._sample_memory_budget(f"slice-{completed_slice_index}-after-store")
-        finally:
-            del slice_chunks
-
-    def _finish_consumer_probe(
-        self,
-        probe: MemoryProbe | None,
-        consumer_exceptions: list[BaseException],
-    ) -> None:
-        """Release consumer resources while retaining every cleanup failure."""
-        try:
-            self._sample_memory_budget("code consumer cleanup")
-        except BaseException as exc:
-            consumer_exceptions.append(exc)
-        try:
-            _release_cuda_cache()
-            if probe is not None and probe.samples:
-                logger.info("%s", probe.report())
-        except BaseException as exc:
-            consumer_exceptions.append(exc)
-
-    def _run_weighted_consumer(
-        self,
-        segment_queue: WeightedCodeSegmentQueue,
-        consumer_exceptions: list[BaseException],
-        limits: _CodePipelineLimits,
-        new_ids: set[str],
-        total: list[int],
-        metadata: dict[str, str],
-        checkpoint: CodeRunCheckpoint | None,
-        ingest_wait: bool,
-        run_control: RunControl,
-    ) -> None:
-        """Run the sole weighted consumer and retain failures for the producer."""
-        from ..memory_probe import MemoryProbe
-
-        probe: MemoryProbe | None = None
-        try:
-            probe = MemoryProbe(name="codebase-index")
-            with probe:
-                self._sample_memory_budget("code consumer start")
-                segments = self._iter_consumer_segments(
-                    segment_queue,
-                    run_control=run_control,
-                )
-                for slice_index, weighted_slice in enumerate(
-                    iter_weighted_code_slices(
-                        segments,
-                        max_chunks=limits.slice_max_chunks,
-                        max_bytes=limits.slice_max_bytes,
-                        run_control=run_control,
-                    )
-                ):
-                    self._consume_weighted_slice(
-                        weighted_slice,
-                        slice_index=slice_index,
-                        limits=limits,
-                        new_ids=new_ids,
-                        total=total,
-                        metadata=metadata,
-                        checkpoint=checkpoint,
-                        probe=probe,
-                        ingest_wait=ingest_wait,
-                        run_control=run_control,
-                    )
-        except BaseException as exc:
-            consumer_exceptions.append(exc)
-        finally:
-            self._finish_consumer_probe(probe, consumer_exceptions)
-
-    def _spawn_weighted_consumer(
-        self,
-        segment_queue: WeightedCodeSegmentQueue,
-        consumer_exceptions: list[BaseException],
-        limits: _CodePipelineLimits,
-        new_ids: set[str],
-        total: list[int],
-        metadata: dict[str, str],
-        checkpoint: CodeRunCheckpoint | None,
-        *,
-        ingest_wait: bool = True,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> threading.Thread:
-        """Start the sole GPU consumer for weighted file segments."""
-        import contextvars
-        import threading
-
-        # The consumer runs under a copy of the spawning attempt's context
-        # so its timed GPU-lock waits accumulate on the owning job record;
-        # a bare Thread would silently detach the attribution.
-        consumer = threading.Thread(
-            target=contextvars.copy_context().run,
-            args=(
-                self._run_weighted_consumer,
-                segment_queue,
-                consumer_exceptions,
-                limits,
-                new_ids,
-                total,
-                metadata,
-                checkpoint,
-                ingest_wait,
-                run_control,
-            ),
-            name="codebase-indexer-consumer",
-        )
-        consumer.start()
-        return consumer
-
-    @staticmethod
-    def _drain_consumer(
-        consumer: threading.Thread,
-        segment_queue: WeightedCodeSegmentQueue,
-        run_policy: RunPolicy,
-        sample_memory: Callable[[str], object] | None = None,
-    ) -> None:
-        """Finish normal work under the durable no-progress authority."""
-        sentinel_delivered = False
-        while consumer.is_alive() and not sentinel_delivered:
-            run_policy.checkpoint("code consumer drain sentinel")
-            timeout = min(
-                CONTROL_POLL_SECONDS,
-                run_policy.remaining_seconds(),
-            )
-            try:
-                segment_queue.put(None, timeout=timeout)
-            except queue.Full:
-                if sample_memory is not None:
-                    sample_memory("code consumer drain sentinel wait")
-                continue
-            sentinel_delivered = True
-        while consumer.is_alive():
-            run_policy.checkpoint("code consumer drain")
-            consumer.join(
-                timeout=min(
-                    CONTROL_POLL_SECONDS,
-                    run_policy.remaining_seconds(),
-                )
-            )
-            if consumer.is_alive() and sample_memory is not None:
-                sample_memory("code consumer drain wait")
-
-    def _cleanup_consumer(
-        self,
-        consumer: threading.Thread,
-        segment_queue: WeightedCodeSegmentQueue,
-    ) -> bool:
-        """Bound cleanup after a producer, control, or liveness failure."""
-        deadline = time.monotonic() + _CONSUMER_SHUTDOWN_TIMEOUT_S
-        while consumer.is_alive():
-            try:
-                segment_queue.put(None, timeout=CONTROL_POLL_SECONDS)
-                break
-            except queue.Full:
-                if time.monotonic() >= deadline:
-                    break
-        consumer.join(timeout=max(0.0, deadline - time.monotonic()))
-        return consumer.is_alive()
-
-    def _resolve_code_pipeline_limits(self) -> _CodePipelineLimits:
-        """Freeze code segment, queue, slice, and model limits."""
-        from ..config import get_config
-        from ..store_schema import effective_sparse_dim
-
-        config = get_config()
-        sparse_enabled = bool(config.sparse_enabled)
-        sparse_dimension = effective_sparse_dim(self.model)
-        return _CodePipelineLimits(
-            segment_max_chunks=int(config.index_segment_max_chunks),
-            segment_max_bytes=int(config.index_segment_max_bytes),
-            queue_max_chunks=int(config.index_queue_max_chunks),
-            queue_max_bytes=int(config.index_queue_max_bytes),
-            slice_max_chunks=int(config.index_queue_max_chunks),
-            slice_max_bytes=int(config.index_queue_max_bytes),
-            dense_dimension=int(config.embedding_dimension),
-            sparse_enabled=sparse_enabled,
-            sparse_dimension=sparse_dimension,
-            encode_batch_size=int(config.embedding_code_encode_batch_size),
-            flush_slices=max(1, int(config.index_cache_flush_slices)),
-        )
-
     def _resume_pending_finalization(
         self,
         checkpoint: CodeRunCheckpoint,
@@ -1034,302 +533,36 @@ class CodebaseIndexer:
             drift=self._lifecycle.drift_snapshot(),
         )
 
-    @staticmethod
-    def _code_result_failure(
-        result: FileChunkResult,
-    ) -> tuple[FileStateKind, JobErrorKind, str] | None:
-        """Return the durable state and typed error for a failed file result."""
-        if result.preprocess_status == "skipped":
-            return (
-                FileStateKind.EXTRACT_RETRYABLE,
-                JobErrorKind.EXTRACTION_RETRYABLE,
-                result.preprocess_reason or "preprocessor skipped the file",
-            )
-        if result.chunks:
-            return None
-        if result.preprocess_status == "ok":
-            return (
-                FileStateKind.EXTRACT_RETRYABLE,
-                JobErrorKind.EXTRACTION_RETRYABLE,
-                "admitted code source produced no indexable chunks",
-            )
-        return (
-            FileStateKind.CHUNK_FAILED,
-            JobErrorKind.CHUNK_FAILED,
-            "admitted code source produced no indexable chunks",
-        )
-
-    def _record_empty_source(
-        self,
-        result: FileChunkResult,
-        checkpoint: CodeRunCheckpoint | None,
-    ) -> bool:
-        """Converge an empty source instead of failing the run over it.
-
-        A file that reads as zero bytes yields no chunks, which is not a
-        chunking defect - there was nothing to chunk. Treating it as one let a
-        single file caught mid-save abort an entire indexing job, which is how
-        one editor save became a failed generation and, through resume, a
-        sustained outage.
-
-        The rejection is stable only against the hash that evidenced it, so a
-        file caught mid-save converges against the empty hash and is classified
-        again under its real content once the save lands, while a genuinely
-        empty file keeps that hash and stays converged. Neither retries
-        forever, and neither needs the run to fail.
-
-        Returns:
-            True when the result was an empty source and has been recorded.
-        """
-        if result.chunks or result.content_hash != _EMPTY_SOURCE_DIGEST:
-            return False
-        if checkpoint is not None:
-            checkpoint.record_empty_source(
-                result.rel_path,
-                content_hash=self._lifecycle.checkpoint_content_hash(
-                    result.content_hash
-                ),
-            )
-        logger.debug(
-            "Converged empty source %s with no indexable content",
-            result.rel_path,
-        )
-        return True
-
-    def _raise_code_result_failure(
-        self,
-        result: FileChunkResult,
-        checkpoint: CodeRunCheckpoint | None,
-    ) -> None:
-        """Record and raise a typed failure for a non-indexable file result."""
-        if self._record_empty_source(result, checkpoint):
-            return
-        failure = self._code_result_failure(result)
-        if failure is None:
-            return
-        failure_state, failure_kind, detail = failure
-        if checkpoint is not None:
-            checkpoint.record_processing_failure(
-                result.rel_path,
-                failure_state,
-                detail,
-                content_hash=self._lifecycle.checkpoint_content_hash(
-                    result.content_hash
-                ),
-            )
-        raise JobError(failure_kind, detail)
-
-    def _enqueue_code_result(
-        self,
-        result: FileChunkResult,
-        *,
-        limits: _CodePipelineLimits,
-        segment_queue: WeightedCodeSegmentQueue,
-        consumer: threading.Thread,
-        consumer_exceptions: list[BaseException],
-        metadata: dict[str, str],
-        checkpoint: CodeRunCheckpoint | None,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> bool:
-        """Drain one file result into bounded weighted segments."""
-        run_control.checkpoint()
-        self._record_preprocess_result(result)
-        self._raise_code_result_failure(result, checkpoint)
-        if result.preprocess_status == "ok":
-            self._record_extracted_bytes(
-                sum(len(chunk.content.encode("utf-8")) for chunk in result.chunks)
-            )
-        metadata[result.rel_path] = result.content_hash
-        segments = iter_code_file_segments(
-            drain_code_chunks(result.chunks),
-            max_chunks=limits.segment_max_chunks,
-            max_bytes=limits.segment_max_bytes,
-            dense_dimension=limits.dense_dimension,
-            sparse_enabled=limits.sparse_enabled,
-            sparse_dimension=limits.sparse_dimension,
-            run_control=run_control,
-        )
-        measured_segments = self._measure_code_segments(segments)
-        pending_segments = (
-            checkpoint.pending_segments(measured_segments, result.content_hash)
-            if checkpoint is not None
-            else measured_segments
-        )
-        return self._producer.submit_segments(
-            pending_segments,
-            segment_queue=segment_queue,
-            consumer=consumer,
-            consumer_exceptions=consumer_exceptions,
-            on_wait=self._sample_memory_budget,
-            run_control=run_control,
-        )
-
-    def _finish_weighted_consumer(
-        self,
-        consumer: threading.Thread,
-        segment_queue: WeightedCodeSegmentQueue,
-        consumer_exceptions: list[BaseException],
-        producer_exception: BaseException | None,
-        checkpoint: CodeRunCheckpoint,
-    ) -> None:
-        """Stop the consumer and preserve cleanup/error precedence."""
-        drain_failure: BaseException | None = None
-        if producer_exception is None:
-            try:
-                self._drain_consumer(
-                    consumer,
-                    segment_queue,
-                    checkpoint.run_policy,
-                    self._sample_memory_budget,
-                )
-            except BaseException as exc:
-                drain_failure = exc
-        cleanup_required = producer_exception is not None or drain_failure is not None
-        if cleanup_required and self._cleanup_consumer(consumer, segment_queue):
-            logger.error(
-                "GPU consumer cleanup did not terminate within %.0fs after "
-                "failure; aborting (a CUDA or Qdrant call may be wedged)",
-                _CONSUMER_SHUTDOWN_TIMEOUT_S,
-            )
-            error = _UnsettledCodeConsumerError(
-                "codebase index GPU consumer thread did not terminate"
-            )
-            if drain_failure is not None:
-                raise error from drain_failure
-            if producer_exception is not None:
-                raise error from producer_exception
-            raise error
-        if drain_failure is not None:
-            raise drain_failure
-        consumer_failure = next(
-            (
-                exc
-                for exc in consumer_exceptions
-                if not isinstance(exc, RunControlSignal)
-            ),
-            None,
-        )
-        if consumer_failure is not None:
-            raise consumer_failure
-        if producer_exception is not None:
-            raise producer_exception
-        if consumer_exceptions:
-            raise consumer_exceptions[0]
-
     def _pipeline_chunk_and_embed(
         self,
         paths: list[pathlib.Path],
         *,
         reporter: ProgressReporter,
         checkpoint: CodeRunCheckpoint,
-        limits: _CodePipelineLimits,
+        limits: CodePipelineLimits,
         ingest_wait: bool = True,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> tuple[set[str], int, dict[str, str]]:
-        """Overlap bounded CPU production with one weighted GPU consumer."""
-        from ._donor_candidates import CollectionKind
-        from ._reuse import resolve_donor_reuse
+        """Chunk, embed, and upsert *paths* through the consumer pipeline.
 
-        # One donor resolution per run: the consumer thread reads the
-        # resolved context per slice, outside the GPU lock.
-        self._reuse_stats, self._donor_reuse = resolve_donor_reuse(
-            self.root_dir,
-            CollectionKind.CODE,
-            self.store,
-            expected_content_epoch=self._content_epoch or "",
+        The pipeline itself is stateless across runs; this adapts it to the
+        indexer's per-run state, supplying the content epoch and generation
+        build target it needs and republishing the donor-reuse telemetry it
+        resolved so later result construction can read it back through
+        ``_reuse_snapshot``.
+        """
+        result = self._consumer_pipeline.run(
+            paths,
+            reporter=reporter,
+            checkpoint=checkpoint,
+            limits=limits,
+            content_epoch=self._content_epoch,
+            code_build_target=self._code_build_target,
+            ingest_wait=ingest_wait,
+            run_control=run_control,
         )
-        new_ids: set[str] = set()
-        new_ids.update(checkpoint.ledger.iter_point_ids(checkpoint.generation_id))
-        if checkpoint.generation.signature.operation is not RunOperation.FULL:
-            new_ids.update(
-                checkpoint.ledger.iter_retained_point_ids(checkpoint.generation_id)
-            )
-        metadata: dict[str, str] = {}
-        total = [len(new_ids)]
-        self._begin_support_measurement(paths)
-        # A generation build holds both collections at once, so the served
-        # points are part of what has to fit. Charged through the one existing
-        # estimator rather than a second sizing rule: a root that cannot afford
-        # the duplicate is refused here and keeps serving what it has, which is
-        # the whole reason the build never touches the served collection.
-        duplicate_points = (
-            self.store.count_code() if self._code_build_target is not None else 0
-        )
-        self.store.disk_headroom_preflight(
-            len(paths) * _CHUNKS_PER_FILE_ESTIMATE + duplicate_points
-        )
-        run_control.checkpoint()
-        reporter.phase_start("chunk + embed", len(paths))
-        try:
-            if not paths:
-                return new_ids, total[0], metadata
-            self._begin_memory_budget()
-            segment_queue = WeightedCodeSegmentQueue(
-                max_chunks=limits.queue_max_chunks,
-                max_bytes=limits.queue_max_bytes,
-            )
-            consumer_exceptions: list[BaseException] = []
-            consumer = self._spawn_weighted_consumer(
-                segment_queue,
-                consumer_exceptions,
-                limits,
-                new_ids,
-                total,
-                metadata,
-                checkpoint,
-                ingest_wait=ingest_wait,
-                run_control=run_control,
-            )
-
-            def _publish_result(result: FileChunkResult) -> bool:
-                return self._enqueue_code_result(
-                    result,
-                    limits=limits,
-                    segment_queue=segment_queue,
-                    consumer=consumer,
-                    consumer_exceptions=consumer_exceptions,
-                    metadata=metadata,
-                    checkpoint=checkpoint,
-                    run_control=run_control,
-                )
-
-            producer_exception: BaseException | None = None
-            try:
-                batch_groups, singles = self._producer.partition_batch_work(
-                    paths, run_control=run_control
-                )
-                if batch_groups:
-                    self._producer.produce_batch_groups(
-                        batch_groups,
-                        _publish_result,
-                        reporter,
-                        run_control=run_control,
-                    )
-                if singles:
-                    self._producer.produce_singles(
-                        singles,
-                        publish_result=_publish_result,
-                        consumer_failed=lambda: (
-                            bool(consumer_exceptions) or not consumer.is_alive()
-                        ),
-                        reporter=reporter,
-                        total=total,
-                        run_control=run_control,
-                    )
-            except BaseException as exc:
-                producer_exception = exc
-            finally:
-                self._finish_weighted_consumer(
-                    consumer,
-                    segment_queue,
-                    consumer_exceptions,
-                    producer_exception,
-                    checkpoint,
-                )
-        finally:
-            reporter.phase_end()
-        run_control.checkpoint()
-        return new_ids, total[0], metadata
+        self._reuse_stats = result.reuse_stats
+        return result.new_ids, result.total, result.metadata
 
     def _prepare_full_paths(
         self,
@@ -1356,258 +589,6 @@ class CodebaseIndexer:
             reporter.phase_end()
         run_control.checkpoint()
         return self._partition_disabled_paths(paths, policy)
-
-    def _supersede_and_publish(
-        self,
-        *,
-        checkpoint: CodeRunCheckpoint,
-        hashes: dict[str, str],
-        to_index: set[str],
-        paths_to_index: list[pathlib.Path],
-        attempted_paths: set[str],
-        reporter: ProgressReporter,
-        limits: _CodePipelineLimits,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> _IncrementalPublication:
-        """Supersede this run's re-ingested snapshot, then stream and publish.
-
-        The whole-run and scoped incremental paths performed this identical
-        sequence, differing only in which hash mapping seeds the supersede -
-        every current hash for a full incremental pass, only the changed ones
-        for a scoped one. Everything after it diverges, which is why the phase
-        is shared and the callers are not.
-
-        The supersede is deliberately narrowed to ``to_index``: re-opening any
-        other path would drop its points without republishing them, so the
-        mapping passed here decides what stays addressable. A second copy of
-        that scoping rule is the kind that loses points rather than raising.
-        """
-        run_control.checkpoint()
-        self._lifecycle.drift_owner.supersede_snapshot(
-            {rel: hashes[rel] for rel in to_index}
-        )
-        run_control.checkpoint()
-        prior_ids_by_path = self._incremental_prior_ids_by_path(
-            checkpoint,
-            attempted_paths,
-        )
-        existing_ids: set[str] = (
-            set(self._get_chunk_ids_for_files(attempted_paths))
-            if attempted_paths
-            else set()
-        )
-        run_control.checkpoint()
-        published_ids, published_hashes = self._publish_incremental_paths(
-            paths=paths_to_index,
-            attempted_paths=attempted_paths,
-            existing_ids=existing_ids,
-            reporter=reporter,
-            checkpoint=checkpoint,
-            limits=limits,
-            run_control=run_control,
-        )
-        return _IncrementalPublication(
-            prior_ids_by_path=prior_ids_by_path,
-            existing_ids=existing_ids,
-            published_ids=published_ids,
-            published_hashes=published_hashes,
-        )
-
-    def _publish_incremental_paths(
-        self,
-        *,
-        paths: list[pathlib.Path],
-        attempted_paths: set[str],
-        existing_ids: set[str],
-        reporter: ProgressReporter,
-        checkpoint: CodeRunCheckpoint,
-        limits: _CodePipelineLimits,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> tuple[set[str], dict[str, str]]:
-        """Stream changed paths and roll back attempt-introduced IDs."""
-        try:
-            published_ids, _total, published_hashes = self._pipeline_chunk_and_embed(
-                paths,
-                reporter=reporter,
-                checkpoint=checkpoint,
-                limits=limits,
-                run_control=run_control,
-            )
-        except _UnsettledCodeConsumerError:
-            raise
-        except BaseException:
-            self._discard_failed_incremental_additions(
-                attempted_paths=attempted_paths,
-                existing_ids=existing_ids,
-                protected_ids=set(
-                    checkpoint.ledger.iter_point_ids(checkpoint.generation_id)
-                ),
-            )
-            raise
-        return published_ids, published_hashes
-
-    def _discard_failed_incremental_additions(
-        self,
-        *,
-        attempted_paths: set[str],
-        existing_ids: set[str],
-        protected_ids: set[str] | None = None,
-    ) -> None:
-        """Best-effort rollback after every consumer has settled."""
-        if not attempted_paths:
-            return
-        try:
-            current_ids = set(self._get_chunk_ids_for_files(attempted_paths))
-            introduced_ids = sorted(
-                current_ids - existing_ids - (protected_ids or set())
-            )
-            if introduced_ids:
-                self.store.delete_code_chunks(introduced_ids)
-        except Exception:
-            logger.error(
-                "Failed to clean partial incremental code publication",
-                exc_info=True,
-            )
-
-    def _incremental_prior_ids_by_path(
-        self,
-        checkpoint: CodeRunCheckpoint,
-        rel_paths: set[str],
-    ) -> dict[str, set[str]]:
-        """Combine carried evidence with real current storage observations."""
-        result = self._lifecycle.checkpoint_ids_by_path(
-            checkpoint,
-            rel_paths,
-            retained=True,
-        )
-        for rel in rel_paths:
-            result[rel].update(self._get_chunk_ids_for_files({rel}))
-        return result
-
-    def _delete_incremental_obsolete(
-        self,
-        *,
-        existing_ids: set[str],
-        published_ids: set[str],
-        prior_ids_by_path: dict[str, set[str]] | None,
-        deleted_paths: set[str] | None,
-        checkpoint: CodeRunCheckpoint | None,
-    ) -> None:
-        """Delete and checkpoint exact obsolete identities path by path."""
-        if checkpoint is None or prior_ids_by_path is None:
-            obsolete_ids = sorted(existing_ids - published_ids)
-            if obsolete_ids:
-                self.store.delete_code_chunks(obsolete_ids)
-            return
-        current_ids_by_path = self._lifecycle.checkpoint_ids_by_path(
-            checkpoint,
-            set(prior_ids_by_path),
-            retained=False,
-        )
-        committed_deletions = {
-            (unit.rel_path, unit.kind)
-            for unit in checkpoint.ledger.iter_units(checkpoint.generation_id)
-            if unit.kind in (CommitUnitKind.DELETE_PATH, CommitUnitKind.DELETE_STALE)
-        }
-        for rel in sorted(prior_ids_by_path):
-            deletion_kind = (
-                CommitUnitKind.DELETE_PATH
-                if rel in (deleted_paths or set())
-                else CommitUnitKind.DELETE_STALE
-            )
-            if (rel, deletion_kind) in committed_deletions:
-                continue
-            obsolete_ids = tuple(
-                sorted(prior_ids_by_path[rel] - current_ids_by_path.get(rel, set()))
-            )
-            if not obsolete_ids:
-                continue
-            self.store.delete_code_chunks(list(obsolete_ids))
-            if deletion_kind is CommitUnitKind.DELETE_PATH:
-                checkpoint.record_confirmed_deletion(rel, obsolete_ids)
-            else:
-                checkpoint.record_confirmed_stale_deletion(rel, obsolete_ids)
-
-    def _commit_incremental_replacement(
-        self,
-        *,
-        policy: ResolvedIndexPolicy,
-        existing_ids: set[str],
-        published_ids: set[str],
-        prior_ids_by_path: dict[str, set[str]] | None = None,
-        deleted_paths: set[str] | None = None,
-        checkpoint: CodeRunCheckpoint | None = None,
-        metadata: dict[str, str],
-        files_count: int,
-        protect_replacement: bool,
-        reporter: ProgressReporter,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> None:
-        """Delete obsolete IDs and publish metadata at one safe control edge."""
-        commit_started = False
-        try:
-            run_control.checkpoint()
-            publication_span = (
-                (
-                    checkpoint.run_policy.protected("incremental code replacement")
-                    if checkpoint is not None
-                    else run_control.protected()
-                )
-                if protect_replacement
-                else contextlib.nullcontext()
-            )
-            with publication_span:
-                commit_started = True
-                reporter.phase_start("delete removed", files_count)
-                try:
-                    self._delete_incremental_obsolete(
-                        existing_ids=existing_ids,
-                        published_ids=published_ids,
-                        prior_ids_by_path=prior_ids_by_path,
-                        deleted_paths=deleted_paths,
-                        checkpoint=checkpoint,
-                    )
-                    reporter.advance(files_count)
-                finally:
-                    reporter.phase_end()
-                reporter.phase_start("write metadata", 1)
-                try:
-                    if checkpoint is None:
-                        self._write_meta(
-                            metadata,
-                            policy=policy,
-                            published_points=self.store.count_code(),
-                            published_files=self.store.count_code_files(),
-                        )
-                    else:
-                        reconcile_generation_storage(
-                            self.store,
-                            checkpoint,
-                            policy,
-                            ContentKind.CODE,
-                        )
-                        checkpoint.publish_metadata(
-                            self._meta_path,
-                            published_points=self.store.count_code(),
-                            published_files=self.store.count_code_files(),
-                        )
-                        checkpoint.publish_generation()
-                    reporter.advance(1)
-                finally:
-                    reporter.phase_end()
-        except RunControlSignal:
-            if not commit_started and checkpoint is None:
-                introduced_ids = sorted(published_ids - existing_ids)
-                try:
-                    if introduced_ids:
-                        self.store.delete_code_chunks(introduced_ids)
-                except Exception:
-                    logger.error(
-                        "Failed to roll back code publication before commit",
-                        exc_info=True,
-                    )
-            raise
-        run_control.checkpoint()
 
     def _scan_and_hash_incremental_inputs(
         self,
@@ -1782,7 +763,7 @@ class CodebaseIndexer:
                 clean=clean,
             )
         )
-        limits = self._resolve_code_pipeline_limits()
+        limits = self._consumer_pipeline.resolve_limits()
         checkpoint = self._lifecycle.open_checkpoint(
             policy=policy,
             operation=RunOperation.FULL,
@@ -2117,7 +1098,7 @@ class CodebaseIndexer:
         attempted_paths = to_index | deleted_files
         if not attempted_paths:
             return self._unchanged_incremental_result(started_at=start)
-        limits = self._resolve_code_pipeline_limits()
+        limits = self._consumer_pipeline.resolve_limits()
         try:
             checkpoint = self._lifecycle.open_checkpoint(
                 policy=policy,
@@ -2147,7 +1128,7 @@ class CodebaseIndexer:
         )
         if resumed_publication is not None:
             return resumed_publication
-        publication = self._supersede_and_publish(
+        publication = self._incremental_commit.supersede_and_publish(
             checkpoint=checkpoint,
             hashes=current_hashes,
             to_index=to_index,
@@ -2158,7 +1139,7 @@ class CodebaseIndexer:
             run_control=run_control,
         )
         current_hashes.update(publication.published_hashes)
-        self._commit_incremental_replacement(
+        self._incremental_commit.commit_replacement(
             policy=policy,
             existing_ids=publication.existing_ids,
             published_ids=publication.published_ids,
@@ -2314,7 +1295,7 @@ class CodebaseIndexer:
         attempted_paths = to_index | delete_files
         if not attempted_paths:
             return self._unchanged_incremental_result(started_at=start)
-        limits = self._resolve_code_pipeline_limits()
+        limits = self._consumer_pipeline.resolve_limits()
         try:
             checkpoint = self._lifecycle.open_checkpoint(
                 policy=policy,
@@ -2343,7 +1324,7 @@ class CodebaseIndexer:
         )
         if resumed_publication is not None:
             return resumed_publication
-        publication = self._supersede_and_publish(
+        publication = self._incremental_commit.supersede_and_publish(
             checkpoint=checkpoint,
             hashes=changed_hashes,
             to_index=to_index,
@@ -2357,7 +1338,7 @@ class CodebaseIndexer:
         new_metadata.update(publication.published_hashes)
         for rel in delete_files:
             new_metadata.pop(rel, None)
-        self._commit_incremental_replacement(
+        self._incremental_commit.commit_replacement(
             policy=policy,
             existing_ids=publication.existing_ids,
             published_ids=publication.published_ids,
