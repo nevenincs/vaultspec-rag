@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "MemoryBudget",
     "MemoryBudgetSnapshot",
+    "CudaCeilingObservation",
     "MemoryProbe",
     "MemorySample",
     "cuda_forward_peak_capture",
@@ -228,24 +229,30 @@ def resolve_index_cuda_ceiling_mb(
     ``profile_cuda_mb`` - the profile figure becomes a default rather than a
     hard cap.
     """
-    return cuda_ceiling_from_observation(
+    return cuda_ceiling_from_observation(CudaCeilingObservation(
         device_total_mb=cuda_device_total_mb(),
         free_mb=cuda_free_memory_mb(),
         configured_mb=configured_mb,
         headroom_mb=headroom_mb,
         profile_cuda_mb=profile_cuda_mb,
         baseline_mb=baseline_mb,
-    )
+    ))
+
+
+@dataclass(frozen=True, slots=True)
+class CudaCeilingObservation:
+    """One fixed CUDA capacity observation used to derive an index ceiling."""
+
+    device_total_mb: float | None
+    free_mb: float | None
+    configured_mb: float
+    headroom_mb: float
+    profile_cuda_mb: float
+    baseline_mb: float
 
 
 def cuda_ceiling_from_observation(
-    *,
-    device_total_mb: float | None,
-    free_mb: float | None,
-    configured_mb: float,
-    headroom_mb: float,
-    profile_cuda_mb: float,
-    baseline_mb: float,
+    observation: CudaCeilingObservation,
 ) -> float:
     """Derive the ceiling from one device observation.
 
@@ -257,14 +264,20 @@ def cuda_ceiling_from_observation(
 
     ``None`` means the corresponding probe had nothing to report.
     """
-    if configured_mb and configured_mb > 0:
-        return float(configured_mb)
-    if device_total_mb is None:
-        return float(profile_cuda_mb)
-    total_capped = max(0.0, device_total_mb - headroom_mb)
-    if free_mb is None:
+    if observation.configured_mb and observation.configured_mb > 0:
+        return float(observation.configured_mb)
+    if observation.device_total_mb is None:
+        return float(observation.profile_cuda_mb)
+    total_capped = max(0.0, observation.device_total_mb - observation.headroom_mb)
+    if observation.free_mb is None:
         return total_capped
-    return max(0.0, min(baseline_mb + free_mb - headroom_mb, total_capped))
+    return max(
+        0.0,
+        min(
+            observation.baseline_mb + observation.free_mb - observation.headroom_mb,
+            total_capped,
+        ),
+    )
 
 
 def current_cuda_mb() -> tuple[float, float]:
@@ -486,6 +499,20 @@ class MemoryBudgetSnapshot:
     cuda_ceiling_mb: float | None
 
 
+@dataclass(frozen=True, slots=True)
+class _MemoryBudgetReading:
+    """One normalized memory observation retained by a budget."""
+
+    label: str
+    rss_mb: float
+    rss_available: bool
+    cuda_allocated_mb: float
+    cuda_reserved_mb: float
+    cuda_peak_allocated_mb: float
+    cuda_peak_reserved_mb: float
+    cuda_available: bool
+
+
 def snapshot_resource_bytes(snapshot: MemoryBudgetSnapshot) -> tuple[int, int]:
     """Project a snapshot's high-water readings into corpus-limit bytes.
 
@@ -677,7 +704,7 @@ class MemoryBudget:
         self._raise_if_latched()
         measured_rss = rss_mb
         measured_cuda = cuda_mb
-        return self._record(
+        return self._record(_MemoryBudgetReading(
             label=label,
             rss_mb=measured_rss if measured_rss is not None else 0.0,
             rss_available=measured_rss is not None,
@@ -690,7 +717,7 @@ class MemoryBudget:
                 measured_cuda[1] if measured_cuda is not None else 0.0
             ),
             cuda_available=measured_cuda is not None,
-        )
+        ))
 
     def observe(
         self,
@@ -716,7 +743,7 @@ class MemoryBudget:
             "float",
             _valid_memory_mb("cuda_reserved_mb", cuda_reserved_mb),
         )
-        return self._record(
+        return self._record(_MemoryBudgetReading(
             label=label,
             rss_mb=rss,
             rss_available=True,
@@ -725,7 +752,7 @@ class MemoryBudget:
             cuda_peak_allocated_mb=allocated,
             cuda_peak_reserved_mb=reserved,
             cuda_available=True,
-        )
+        ))
 
     def fail_cuda_oom(self, *, label: str, detail: str) -> None:
         """Latch allocator exhaustion as the canonical CUDA ceiling outcome."""
@@ -748,20 +775,9 @@ class MemoryBudget:
         if failure is not None:
             raise JobError(*failure)
 
-    def _record(
-        self,
-        *,
-        label: str,
-        rss_mb: float,
-        rss_available: bool,
-        cuda_allocated_mb: float,
-        cuda_reserved_mb: float,
-        cuda_peak_allocated_mb: float,
-        cuda_peak_reserved_mb: float,
-        cuda_available: bool,
-    ) -> MemoryBudgetSnapshot:
+    def _record(self, reading: _MemoryBudgetReading) -> MemoryBudgetSnapshot:
         """Atomically retain one observation and latch its first violation."""
-        if not label.strip():
+        if not reading.label.strip():
             msg = "memory budget sample label must not be empty"
             raise ValueError(msg)
 
@@ -772,23 +788,23 @@ class MemoryBudget:
             else:
                 previous = self._snapshot
                 snapshot = MemoryBudgetSnapshot(
-                    label=label,
-                    rss_mb=rss_mb,
-                    rss_available=rss_available,
+                    label=reading.label,
+                    rss_mb=reading.rss_mb,
+                    rss_available=reading.rss_available,
                     peak_rss_mb=max(
-                        rss_mb if rss_available else 0.0,
+                        reading.rss_mb if reading.rss_available else 0.0,
                         previous.peak_rss_mb if previous else 0.0,
                     ),
                     rss_ceiling_mb=self.rss_ceiling_mb,
-                    cuda_allocated_mb=cuda_allocated_mb,
-                    cuda_available=cuda_available,
+                    cuda_allocated_mb=reading.cuda_allocated_mb,
+                    cuda_available=reading.cuda_available,
                     peak_cuda_allocated_mb=max(
-                        cuda_peak_allocated_mb if cuda_available else 0.0,
+                        reading.cuda_peak_allocated_mb if reading.cuda_available else 0.0,
                         previous.peak_cuda_allocated_mb if previous else 0.0,
                     ),
-                    cuda_reserved_mb=cuda_reserved_mb,
+                    cuda_reserved_mb=reading.cuda_reserved_mb,
                     peak_cuda_reserved_mb=max(
-                        cuda_peak_reserved_mb if cuda_available else 0.0,
+                        reading.cuda_peak_reserved_mb if reading.cuda_available else 0.0,
                         previous.peak_cuda_reserved_mb if previous else 0.0,
                     ),
                     cuda_ceiling_mb=self.cuda_ceiling_mb,

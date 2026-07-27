@@ -320,24 +320,24 @@ def test_cuda_ceiling_auto_derives_or_falls_back_to_profile() -> None:
     # that happens to present one.
     from .. import memory_probe
 
-    derived = memory_probe.cuda_ceiling_from_observation(
+    derived = memory_probe.cuda_ceiling_from_observation(memory_probe.CudaCeilingObservation(
         device_total_mb=16376.0,
         free_mb=None,
         configured_mb=0.0,
         headroom_mb=2048.0,
         profile_cuda_mb=12288.0,
         baseline_mb=0.0,
-    )
+    ))
     assert derived == 16376.0 - 2048.0
 
-    fallback = memory_probe.cuda_ceiling_from_observation(
+    fallback = memory_probe.cuda_ceiling_from_observation(memory_probe.CudaCeilingObservation(
         device_total_mb=None,
         free_mb=None,
         configured_mb=0.0,
         headroom_mb=2048.0,
         profile_cuda_mb=12288.0,
         baseline_mb=0.0,
-    )
+    ))
     assert fallback == 12288.0
 
 
@@ -354,14 +354,14 @@ def test_cuda_ceiling_auto_is_absolute_over_free_plus_resident_baseline() -> Non
     from .. import memory_probe
 
     baseline = 5000.0
-    ceiling = memory_probe.cuda_ceiling_from_observation(
+    ceiling = memory_probe.cuda_ceiling_from_observation(memory_probe.CudaCeilingObservation(
         device_total_mb=16000.0,
         free_mb=6000.0,
         configured_mb=0.0,
         headroom_mb=2048.0,
         profile_cuda_mb=12288.0,
         baseline_mb=baseline,
-    )
+    ))
     budget = memory_probe.MemoryBudget(
         cuda_ceiling_mb=ceiling,
         cuda_baseline_mb=baseline,
@@ -377,14 +377,14 @@ def test_cuda_ceiling_auto_is_absolute_over_free_plus_resident_baseline() -> Non
     assert ceiling == baseline + 6000.0 - 2048.0
 
     # An idle-device free reading recovers the total - headroom clamp.
-    clamped = memory_probe.cuda_ceiling_from_observation(
+    clamped = memory_probe.cuda_ceiling_from_observation(memory_probe.CudaCeilingObservation(
         device_total_mb=16000.0,
         free_mb=15500.0,
         configured_mb=0.0,
         headroom_mb=2048.0,
         profile_cuda_mb=12288.0,
         baseline_mb=baseline,
-    )
+    ))
     assert clamped == 16000.0 - 2048.0
 
 
