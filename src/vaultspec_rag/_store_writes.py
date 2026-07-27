@@ -91,6 +91,18 @@ class StoreWritePolicy:
     wait: Callable[[float], None]
 
 
+@dataclass(frozen=True, slots=True)
+class _RetryExhaustion:
+    """The terminal state of one transient store-operation failure."""
+
+    error: BaseException
+    description: str
+    attempt: int
+    attempts: int
+    elapsed_left: float | None
+    max_elapsed_seconds: float | None
+
+
 def classify_write_error(err: BaseException) -> Literal["unrecoverable", "transient"]:
     """Classify a store write failure; unrecoverable means retrying is futile.
 
@@ -199,12 +211,14 @@ def run_store_operation_with_retry[T](
                 is not None
             ):
                 _log_give_up(
-                    exc,
-                    description=description,
-                    attempt=attempt,
-                    attempts=attempts,
-                    elapsed_left=elapsed_left,
-                    max_elapsed_seconds=max_elapsed_seconds,
+                    _RetryExhaustion(
+                        error=exc,
+                        description=description,
+                        attempt=attempt,
+                        attempts=attempts,
+                        elapsed_left=elapsed_left,
+                        max_elapsed_seconds=max_elapsed_seconds,
+                    )
                 )
                 raise
 
@@ -303,33 +317,29 @@ def _terminal_reason(
     return None
 
 
-def _log_give_up(
-    exc: BaseException,
-    *,
-    description: str,
-    attempt: int,
-    attempts: int,
-    elapsed_left: float | None,
-    max_elapsed_seconds: float | None,
-) -> None:
+def _log_give_up(exhaustion: _RetryExhaustion) -> None:
     """Record why a transient failure was not retried again."""
     if (
-        _terminal_reason(attempt=attempt, attempts=attempts, elapsed_left=elapsed_left)
+        _terminal_reason(
+            attempt=exhaustion.attempt,
+            attempts=exhaustion.attempts,
+            elapsed_left=exhaustion.elapsed_left,
+        )
         == "attempts"
     ):
         logger.error(
             "store operation %s failed after %d attempts: %s",
-            description,
-            attempts,
-            exc,
+            exhaustion.description,
+            exhaustion.attempts,
+            exhaustion.error,
         )
         return
     logger.error(
         "store operation %s exhausted its %.1fs budget after %d attempt(s): %s",
-        description,
-        max_elapsed_seconds,
-        attempt,
-        exc,
+        exhaustion.description,
+        exhaustion.max_elapsed_seconds,
+        exhaustion.attempt,
+        exhaustion.error,
     )
 
 

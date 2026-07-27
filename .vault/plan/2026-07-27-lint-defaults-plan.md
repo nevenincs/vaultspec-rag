@@ -38,7 +38,7 @@ Refactor core modules and search behavior so internal operations meet upstream c
 - [ ] `P01.S05` - Remediate upstream-default complexity findings; `src/vaultspec_rag/_process_probe.py`.
 - [x] `P01.S06` - Remediate upstream-default complexity findings; `src/vaultspec_rag/_public_search.py`.
 - [x] `P01.S07` - Remediate upstream-default complexity findings; `src/vaultspec_rag/_store_search.py`.
-- [ ] `P01.S08` - Remediate upstream-default complexity findings; `src/vaultspec_rag/_store_writes.py`.
+- [x] `P01.S08` - Remediate upstream-default complexity findings; `src/vaultspec_rag/_store_writes.py`.
 - [ ] `P01.S09` - Remediate upstream-default complexity findings; `src/vaultspec_rag/api.py`.
 - [ ] `P01.S27` - Remediate upstream-default complexity findings; `src/vaultspec_rag/generation_survey.py`.
 - [ ] `P01.S28` - Remediate upstream-default complexity findings; `src/vaultspec_rag/index_profiles.py`.
