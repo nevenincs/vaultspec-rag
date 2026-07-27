@@ -38,7 +38,9 @@ class TestHelpfulness:
         store: VaultStore = rag_components["store"]
         root: Path = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         results = searcher.search_vault("audit report security compliance", top_k=10)
 
         result_ids = [r.id for r in results]
@@ -56,7 +58,9 @@ class TestHelpfulness:
         store: VaultStore = rag_components["store"]
         root: Path = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         results = searcher.search_vault("architecture decision trade-offs", top_k=10)
 
         assert len(results) > 0, "Should find architecture docs"
@@ -74,7 +78,9 @@ class TestHelpfulness:
         store: VaultStore = rag_components["store"]
         root: Path = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         results = searcher.search_vault(
             "implementation plan milestones deliverables",
             top_k=10,
@@ -96,7 +102,9 @@ class TestHelpfulness:
         store: VaultStore = rag_components["store"]
         root: Path = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         # Pick the first needle from the manifest
         needle = next(iter(manifest.needles))
         expected_doc_id = manifest.needles[needle]
@@ -120,7 +128,9 @@ class TestHelpfulness:
         store: VaultStore = rag_components["store"]
         root: Path = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         results = searcher.search_vault("croissant boulangerie patisserie", top_k=5)
 
         # No such content exists in the synthetic corpus
@@ -142,7 +152,9 @@ class TestHelpfulness:
         store: VaultStore = rag_components["store"]
         root: Path = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         results = searcher.search_vault("type:adr architecture", top_k=10)
 
         assert len(results) > 0, "Should find ADR architecture docs"
@@ -162,7 +174,9 @@ class TestHelpfulness:
 
         # Pick a feature that has docs in the corpus
         target_feature: str = manifest.docs[0].feature
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         results = searcher.search_vault(
             f"feature:{target_feature} implementation",
             top_k=10,
@@ -182,7 +196,9 @@ class TestHelpfulness:
         store: VaultStore = rag_components["store"]
         root: Path = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         results = searcher.search_vault("date:2026-01-01 architecture", top_k=10)
 
         assert len(results) > 0, "Should find docs from 2026-01-01"
@@ -205,7 +221,9 @@ class TestHelpfulness:
         assert adr_docs, "Synthetic corpus must have ADR docs"
         target_feature: str = adr_docs[0].feature
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         results = searcher.search_vault(
             f"type:adr feature:{target_feature}",
             top_k=10,
@@ -231,7 +249,9 @@ class TestHelpfulness:
         store: VaultStore = rag_components["store"]
         root: Path = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
 
         # Test with multiple needles
         tested = 0
@@ -267,7 +287,9 @@ class TestHelpfulness:
         store: VaultStore = rag_components_full["store"]
         root: Path = rag_components_full["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components_full["reranker"]
+        )
         results = searcher.search_vault("implementation plan architecture", top_k=15)
 
         assert len(results) >= 2, "Need at least 2 results to compare authority"
@@ -301,7 +323,9 @@ class TestHelpfulness:
         store: VaultStore = rag_components["store"]
         root: Path = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
 
         queries = ["architecture", "implementation", "research", "audit"]
         for q in queries:
@@ -321,7 +345,9 @@ class TestHelpfulness:
         store: VaultStore = rag_components["store"]
         root: Path = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         results_3 = searcher.search_vault("implementation plan", top_k=3)
         results_10 = searcher.search_vault("implementation plan", top_k=10)
 
@@ -345,7 +371,9 @@ class TestHelpfulness:
         store: VaultStore = rag_components["store"]
         root: Path = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         results = searcher.search_vault("quantum physics dark matter", top_k=5)
 
         if results:
@@ -365,7 +393,9 @@ class TestHelpfulness:
         store: VaultStore = rag_components["store"]
         root: Path = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         results = searcher.search_vault("asdfghjkl zxcvbnm", top_k=5)
 
         if results:

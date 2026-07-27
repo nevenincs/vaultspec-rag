@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from pytest import TempPathFactory
+    from sentence_transformers import CrossEncoder
 
     from ...embeddings import EmbeddingModel
     from ..conftest import RagComponentsWithManifest
@@ -227,6 +228,7 @@ def isolated_lock(tmp_path: Path) -> Generator[Path]:
 @pytest.fixture(scope="session")
 def rag_components_with_code(
     embedding_model: EmbeddingModel,
+    shared_reranker: CrossEncoder,
     tmp_path_factory: TempPathFactory,
 ) -> Generator[RagComponentsWithManifest]:
     """RAG components with vault + codebase indexed.
@@ -249,6 +251,7 @@ def rag_components_with_code(
         components.__class__(  # type: ignore[call-arg]
             **components,  # type: ignore[misc]
             manifest=manifest,
+            reranker=shared_reranker,
         ),
     )
 

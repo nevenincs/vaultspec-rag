@@ -29,7 +29,9 @@ class TestVaultSearch:
         store = rag_components["store"]
         root = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         # search_vault searches only the vault collection.
         results = searcher.search_vault("architecture decision", top_k=5)
 
@@ -46,7 +48,9 @@ class TestVaultSearch:
         store = rag_components["store"]
         root = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         results = searcher.search_vault("implementation plan", top_k=5)
 
         scores = [r.score for r in results]
@@ -59,7 +63,9 @@ class TestVaultSearch:
         store = rag_components["store"]
         root = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         results = searcher.search_vault("type:adr architecture", top_k=10)
 
         # All results should be ADRs
@@ -73,7 +79,9 @@ class TestVaultSearch:
         store = rag_components["store"]
         root = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         results = searcher.search_vault("project", top_k=3)
 
         assert len(results) <= 3
@@ -85,7 +93,9 @@ class TestVaultSearch:
         store = rag_components["store"]
         root = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         results = searcher.search_vault("architecture", top_k=1)
 
         if results:
@@ -99,6 +109,7 @@ class TestVaultSearch:
             rag_components["root"],
             rag_components["model"],
             rag_components["store"],
+            reranker=rag_components["reranker"],
         )
         results = searcher.search_vault("architecture decision", top_k=5)
 
@@ -114,6 +125,7 @@ class TestVaultSearch:
             rag_components["root"],
             rag_components["model"],
             rag_components["store"],
+            reranker=rag_components["reranker"],
         )
         results = searcher.search_vault("connector protocol", top_k=5)
 
@@ -129,6 +141,7 @@ class TestVaultSearch:
             rag_components["root"],
             rag_components["model"],
             rag_components["store"],
+            reranker=rag_components["reranker"],
         )
         results = searcher.search_vault("pipeline executor", top_k=5)
 
@@ -147,7 +160,9 @@ class TestVaultSearch:
         store = rag_components["store"]
         root = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
 
         # Get baseline results first
         baseline = searcher.search_vault("architecture decision", top_k=5)
@@ -188,7 +203,9 @@ class TestSearchEdgeCases:
         store = rag_components["store"]
         root = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         searcher._sparse_enabled = False
 
         _parsed, _text, dense, sparse = searcher._encode_query("test query")
@@ -203,7 +220,9 @@ class TestSearchEdgeCases:
         store = rag_components["store"]
         root = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         searcher._sparse_enabled = True
 
         _parsed, _text, _dense, sparse = searcher._encode_query("test query")
@@ -218,7 +237,9 @@ class TestSearchEdgeCases:
         store = rag_components["store"]
         root = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         results = searcher.search_vault("", top_k=5)
         # Should return some results (empty query still embeds something)
         # or empty list -- but must not crash
@@ -232,7 +253,9 @@ class TestSearchEdgeCases:
         store = rag_components["store"]
         root = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         results = searcher.search_vault("type:adr", top_k=10)
         assert isinstance(results, list)
         # Should find some ADR docs
@@ -248,7 +271,9 @@ class TestSearchEdgeCases:
         store = rag_components["store"]
         root = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         results = searcher.search_vault("type:nonexistent some query", top_k=5)
         assert isinstance(results, list)
         assert len(results) == 0
@@ -261,7 +286,9 @@ class TestSearchEdgeCases:
         store = rag_components["store"]
         root = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
 
         special_queries = [
             'query with "quotes"',
@@ -281,7 +308,9 @@ class TestSearchEdgeCases:
         store = rag_components["store"]
         root = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         long_query = "architecture decision " * 30  # ~660 chars
         results = searcher.search_vault(long_query, top_k=5)
         assert isinstance(results, list)
@@ -297,7 +326,9 @@ class TestSearchEdgeCases:
         store = rag_components["store"]
         root = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         # These contain SQL special chars that could break the WHERE clause
         adversarial_queries = [
             "type:adr' OR 1=1 --",
@@ -323,7 +354,9 @@ class TestSearchEdgeCases:
         store = rag_components["store"]
         root = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         searcher._sparse_enabled = False
 
         results = searcher.search_vault("architecture", top_k=5)
@@ -341,7 +374,9 @@ class TestSearchEdgeCases:
         store = rag_components["store"]
         root = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         searcher._sparse_enabled = False
 
         results = searcher.search_codebase("def", top_k=5)
@@ -359,6 +394,7 @@ class TestRerank:
             rag_components["root"],
             rag_components["model"],
             rag_components["store"],
+            reranker=rag_components["reranker"],
         )
         searcher._reranker_enabled = False
 
@@ -392,7 +428,13 @@ class TestRerank:
     def test_rerank_enabled_resorts_by_crossencoder(
         self, rag_components: _RagComponents
     ):
-        """When reranker is enabled, CrossEncoder rescores and reorders."""
+        """When reranker is enabled, CrossEncoder rescores and reorders.
+
+        Deliberately constructs the searcher WITHOUT a shared reranker: this is
+        the one integration test that exercises the lazy ``_get_reranker`` load
+        path end-to-end. Every other test injects the session-shared instance,
+        the same wiring the service uses for its project slots.
+        """
         from ...search import VaultSearcher
 
         searcher = VaultSearcher(
@@ -443,6 +485,7 @@ class TestRerank:
             rag_components["root"],
             rag_components["model"],
             rag_components["store"],
+            reranker=rag_components["reranker"],
         )
         searcher._reranker_enabled = True
 
@@ -496,6 +539,7 @@ class TestRerank:
             rag_components["root"],
             rag_components["model"],
             rag_components["store"],
+            reranker=rag_components["reranker"],
         )
         searcher._reranker_enabled = True
 
