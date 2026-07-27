@@ -242,43 +242,43 @@ class TestJobsLifecycle:
         reset()
 
     def test_record_start_returns_id(self) -> None:
-        job_id = record_start("vault", "tool")
+        job_id = record_start(JobSource.VAULT, "tool")
         assert isinstance(job_id, str) and len(job_id) == 32
 
     def test_snapshot_contains_started_record(self) -> None:
-        job_id = record_start("vault", "tool")
+        job_id = record_start(JobSource.VAULT, "tool")
         records = snapshot()
         ids = [r["id"] for r in records]
         assert job_id in ids
 
     def test_record_finish_transitions_to_done(self) -> None:
-        job_id = record_start("code", "watcher")
+        job_id = record_start(JobSource.CODE, "watcher")
         record_finish(job_id, result="ok")
         records = {r["id"]: r for r in snapshot()}
         assert records[job_id]["phase"] == "done"
 
     def test_record_finish_transitions_to_error(self) -> None:
-        job_id = record_start("vault", "watcher")
+        job_id = record_start(JobSource.VAULT, "watcher")
         record_finish(job_id, error="boom")
         records = {r["id"]: r for r in snapshot()}
         assert records[job_id]["phase"] == "error"
         assert records[job_id]["result"] == "boom"
 
     def test_snapshot_is_newest_first(self) -> None:
-        id1 = record_start("vault", "tool")
-        id2 = record_start("code", "tool")
+        id1 = record_start(JobSource.VAULT, "tool")
+        id2 = record_start(JobSource.CODE, "tool")
         ids = [r["id"] for r in snapshot()]
         assert ids.index(id2) < ids.index(id1)
 
     def test_started_record_defaults_preprocess_fields(self) -> None:
-        job_id = record_start("code", "tool")
+        job_id = record_start(JobSource.CODE, "tool")
         record = {r["id"]: r for r in snapshot()}[job_id]
         assert record["preprocess_ok"] == 0
         assert record["preprocess_skipped"] == 0
         assert record["preprocess_failures"] == []
 
     def test_record_finish_surfaces_preprocess_failures(self) -> None:
-        job_id = record_start("code", "tool")
+        job_id = record_start(JobSource.CODE, "tool")
         failures = ["docs/a.pdf: extractor timeout", "docs/b.xls: exit 1"]
         record_finish(
             job_id,
@@ -293,7 +293,7 @@ class TestJobsLifecycle:
         assert record["preprocess_failures"] == failures
 
     def test_serialized_preprocess_failures_are_copied(self) -> None:
-        job_id = record_start("code", "tool")
+        job_id = record_start(JobSource.CODE, "tool")
         failures = ["docs/a.pdf: timeout"]
         record_finish(job_id, preprocess_failures=failures)
         serialized = {r["id"]: r for r in snapshot()}[job_id]
@@ -311,7 +311,7 @@ class TestJobsLifecycle:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         with caplog.at_level(logging.INFO, logger="vaultspec_rag.jobs"):
-            job_id = record_start("vault", "tool", command="reindex_vault")
+            job_id = record_start(JobSource.VAULT, "tool", command="reindex_vault")
             record_finish(job_id, result="ok")
 
         messages = [
@@ -346,7 +346,7 @@ class TestJobErrorKind:
         result: str | None = None,
         error: str | None = None,
     ) -> dict[str, object]:
-        job_id = record_start("code", "tool")
+        job_id = record_start(JobSource.CODE, "tool")
         record_finish(job_id, result=result, error=error)
         return {r["id"]: r for r in snapshot()}[job_id]
 
@@ -376,7 +376,7 @@ class TestJobErrorKind:
         assert record["error_kind"] is None
 
     def test_started_record_defaults_error_kind_none(self) -> None:
-        job_id = record_start("vault", "tool")
+        job_id = record_start(JobSource.VAULT, "tool")
         record = {r["id"]: r for r in snapshot()}[job_id]
         assert record["error_kind"] is None
 
@@ -706,7 +706,7 @@ class TestInterruptedJobRestore:
     def test_running_job_survives_a_simulated_daemon_death(self) -> None:
         from ..jobs import restore_interrupted
 
-        job_id = record_start("code", "tool", command="reindex_codebase")
+        job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
         # Simulate the daemon dying: the in-memory ring vanishes, the
         # persisted snapshot stays.
         reset()
@@ -723,7 +723,7 @@ class TestInterruptedJobRestore:
     def test_finished_jobs_are_not_restored(self) -> None:
         from ..jobs import restore_interrupted
 
-        job_id = record_start("vault", "tool")
+        job_id = record_start(JobSource.VAULT, "tool")
         record_finish(job_id, result="ok")
         reset()
         assert restore_interrupted() == 0
@@ -732,7 +732,7 @@ class TestInterruptedJobRestore:
     def test_restore_is_not_repeated_on_second_startup(self) -> None:
         from ..jobs import restore_interrupted
 
-        record_start("code", "tool")
+        record_start(JobSource.CODE, "tool")
         reset()
         assert restore_interrupted() == 1
         reset()
@@ -2057,7 +2057,7 @@ class TestInterruptedJobDegradationSplit:
 
         reset()
         try:
-            job_id = record_start("code", "tool")
+            job_id = record_start(JobSource.CODE, "tool")
             # Losing the in-memory ring while the persisted snapshot survives
             # is exactly what a killed daemon leaves behind.
             reset()

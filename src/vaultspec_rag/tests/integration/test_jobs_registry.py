@@ -139,7 +139,7 @@ def _assert_resource_snapshot(raw: object) -> dict[str, object]:
 
 @pytest.mark.unit
 def test_record_start_then_finish_produces_done_snapshot(_clean_jobs: None) -> None:
-    job_id = _jobs.record_start("vault", "tool")
+    job_id = _jobs.record_start(JobSource.VAULT, "tool")
 
     running = _jobs.snapshot()
     assert len(running) == 1
@@ -179,7 +179,7 @@ def test_record_start_then_finish_produces_done_snapshot(_clean_jobs: None) -> N
 
 @pytest.mark.unit
 def test_record_finish_with_error_sets_error_phase(_clean_jobs: None) -> None:
-    job_id = _jobs.record_start("code", "watcher")
+    job_id = _jobs.record_start(JobSource.CODE, "watcher")
     _jobs.record_finish(job_id, error="boom")
 
     entry = _jobs.snapshot()[0]
@@ -192,7 +192,7 @@ def test_record_finish_with_error_sets_error_phase(_clean_jobs: None) -> None:
 
 @pytest.mark.unit
 def test_record_finish_unknown_id_is_noop(_clean_jobs: None) -> None:
-    job_id = _jobs.record_start("vault", "tool")
+    job_id = _jobs.record_start(JobSource.VAULT, "tool")
     _jobs.record_finish("does-not-exist", result="ignored")
 
     entries = _jobs.snapshot()
@@ -203,9 +203,9 @@ def test_record_finish_unknown_id_is_noop(_clean_jobs: None) -> None:
 
 @pytest.mark.unit
 def test_snapshot_is_newest_first(_clean_jobs: None) -> None:
-    first = _jobs.record_start("vault", "tool")
-    second = _jobs.record_start("code", "tool")
-    third = _jobs.record_start("vault", "watcher")
+    first = _jobs.record_start(JobSource.VAULT, "tool")
+    second = _jobs.record_start(JobSource.CODE, "tool")
+    third = _jobs.record_start(JobSource.VAULT, "watcher")
 
     ids = [entry["id"] for entry in _jobs.snapshot()]
     assert ids == [third, second, first]
@@ -213,7 +213,7 @@ def test_snapshot_is_newest_first(_clean_jobs: None) -> None:
 
 @pytest.mark.unit
 def test_snapshot_returns_independent_copies(_clean_jobs: None) -> None:
-    _jobs.record_start("vault", "tool", command="reindex_vault")
+    _jobs.record_start(JobSource.VAULT, "tool", command="reindex_vault")
     snap = _jobs.snapshot()
     snap[0]["phase"] = "tampered"
     initiator = snap[0]["initiator"]
@@ -245,7 +245,7 @@ def test_snapshot_returns_independent_copies(_clean_jobs: None) -> None:
 @pytest.mark.unit
 def test_registry_is_bounded(_clean_jobs: None) -> None:
     overflow = _jobs.MAX_RECORDS + 50
-    ids = [_jobs.record_start("vault", "tool") for _ in range(overflow)]
+    ids = [_jobs.record_start(JobSource.VAULT, "tool") for _ in range(overflow)]
 
     snap = _jobs.snapshot()
     assert len(snap) == _jobs.MAX_RECORDS
@@ -269,7 +269,7 @@ def test_concurrent_writers_do_not_corrupt(_clean_jobs: None) -> None:
     def _worker() -> None:
         barrier.wait()
         for _ in range(per_writer):
-            jid = _jobs.record_start("vault", "tool")
+            jid = _jobs.record_start(JobSource.VAULT, "tool")
             _jobs.record_finish(jid, result="ok")
 
     threads = [threading.Thread(target=_worker) for _ in range(writers)]

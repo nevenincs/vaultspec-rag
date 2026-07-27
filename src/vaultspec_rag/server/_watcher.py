@@ -709,14 +709,13 @@ async def _wait_for_managed_watcher_attempts(root: Path, deadline: float) -> boo
 def _active_watcher_jobs(root: Path) -> list[JobSnapshot]:
     """Return exact active indexing jobs originated by this watcher root."""
     from .. import jobs as _jobs
-    from ..job_models import JobOperation, JobSource
+    from ..job_models import JobOperation
 
     return [
         snapshot
         for snapshot in _jobs.get_job_manager().active()
         if snapshot.spec.operation is JobOperation.INDEX
-        and snapshot.spec.source
-        in {JobSource.VAULT, JobSource.CODE, JobSource.DOCUMENT}
+        and snapshot.spec.source.is_corpus
         and snapshot.initiator.kind == "watcher"
         and snapshot.spec.project_root is not None
         and Path(snapshot.spec.project_root).resolve() == root

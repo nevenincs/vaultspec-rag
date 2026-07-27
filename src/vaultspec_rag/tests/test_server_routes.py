@@ -19,6 +19,7 @@ from .. import store_schema
 from .._job_errors import STALL_THRESHOLD_SECONDS
 from .._readiness import compute_readiness
 from ..config import EnvVar, reset_config
+from ..job_models import JobSource
 from ..server import health_handler
 
 if TYPE_CHECKING:
@@ -159,9 +160,9 @@ class TestHealthJobsRollup:
         )
         from ..jobs import get_job_manager, record_finish, record_start
 
-        failed_id = record_start("code", "tool")
+        failed_id = record_start(JobSource.CODE, "tool")
         record_finish(failed_id, error=_DISK_FULL)
-        running_id = record_start("vault", "tool")
+        running_id = record_start(JobSource.VAULT, "tool")
         paused = get_job_manager().create(
             JobSpec(
                 operation=JobOperation.INDEX,
@@ -214,7 +215,7 @@ class TestHealthFailureGenerationBound:
         from ..jobs import record_finish, record_start
         from ..server._lifespan import _jobs_health
 
-        failed_id = record_start("code", "tool")
+        failed_id = record_start(JobSource.CODE, "tool")
         record_finish(failed_id, error=_DISK_FULL)
         time.sleep(_CLOCK_TICK_GAP_SECONDS)
         _begin_generation()
@@ -233,7 +234,7 @@ class TestHealthFailureGenerationBound:
 
         _begin_generation()
         time.sleep(_CLOCK_TICK_GAP_SECONDS)
-        failed_id = record_start("code", "tool")
+        failed_id = record_start(JobSource.CODE, "tool")
         record_finish(failed_id, error=_DISK_FULL)
 
         jobs_health, degraded_reasons = _jobs_health()
@@ -250,7 +251,7 @@ class TestHealthFailureGenerationBound:
         from ..jobs import record_progress, record_start
         from ..server._lifespan import _jobs_health
 
-        running_id = record_start("code", "watcher")
+        running_id = record_start(JobSource.CODE, "watcher")
         record_progress(running_id, "embed", 3, 20)
         with _activity_record(running_id) as record:
             progress = cast("dict[str, Any]", record["progress"])
@@ -275,7 +276,7 @@ class TestHealthFailureGenerationBound:
         from ..jobs import record_finish, record_start
         from ..server._lifespan import _jobs_health
 
-        failed_id = record_start("code", "tool")
+        failed_id = record_start(JobSource.CODE, "tool")
         record_finish(failed_id, error=_DISK_FULL)
         with _activity_record(failed_id) as record:
             record["finished_at"] = stamp
@@ -307,7 +308,7 @@ class TestHealthFailureGenerationBound:
         _begin_generation()
         baseline: dict[str, Any] = cast("dict[str, Any]", client.get("/health").json())
 
-        failed_id = record_start("code", "tool")
+        failed_id = record_start(JobSource.CODE, "tool")
         record_finish(failed_id, error=_DISK_FULL)
         time.sleep(_CLOCK_TICK_GAP_SECONDS)
         _begin_generation()

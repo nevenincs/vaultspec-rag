@@ -1404,11 +1404,7 @@ class JobManager:
                     message="Progress from a stale attempt was ignored.",
                     job=self._snapshot_locked(managed),
                 )
-            if managed.snapshot.state not in {
-                JobState.RUNNING,
-                JobState.PAUSING,
-                JobState.CANCELLING,
-            }:
+            if not managed.snapshot.state.is_live_attempt:
                 return self._error(
                     command,
                     "invalid_transition",
@@ -2238,11 +2234,7 @@ class JobManager:
                         active,
                     )
                 return self._error(command, "job_not_found", "The job was not found.")
-            if parent.snapshot.state not in {
-                JobState.FAILED,
-                JobState.CANCELLED,
-                JobState.INTERRUPTED,
-            }:
+            if not parent.snapshot.state.is_retryable:
                 return self._error(
                     command,
                     "job_not_retryable",
@@ -2380,11 +2372,7 @@ class JobManager:
         if resumable:
             self._active[snapshot.id] = managed
             return
-        if snapshot.state in {
-            JobState.RUNNING,
-            JobState.PAUSING,
-            JobState.CANCELLING,
-        }:
+        if snapshot.state.is_live_attempt:
             self._active[snapshot.id] = managed
             self._replace_snapshot_locked(
                 managed,

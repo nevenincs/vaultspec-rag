@@ -1784,7 +1784,7 @@ def _routes_app(  # pyright: ignore[reportUnusedFunction]
     os.environ[EnvVar.STATUS_DIR] = str(tmp_path / "route-status")
     reset_config()
     _jobs.reset()
-    job_id = _jobs.record_start("vault", "tool")
+    job_id = _jobs.record_start(JobSource.VAULT, "tool")
     _jobs.record_finish(job_id, result="+1 /0 -0 (5ms)")
 
     prev_token = _m._SERVICE_TOKEN
@@ -2342,7 +2342,7 @@ def test_jobs_route_respects_limit_param(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     # Seed a second record so a limit=1 actually trims.
-    _jobs.record_start("code", "watcher")
+    _jobs.record_start(JobSource.CODE, "watcher")
     client, token = _routes_app
     response = cast(
         "httpx.Response",
@@ -2356,7 +2356,7 @@ def test_jobs_route_respects_limit_param(
 def test_jobs_route_prioritises_running_before_limit(
     _routes_app: tuple[TestClient, str],
 ) -> None:
-    running_id = _jobs.record_start("code", "watcher")
+    running_id = _jobs.record_start(JobSource.CODE, "watcher")
     client, token = _routes_app
     response = cast(
         "httpx.Response",
@@ -2373,8 +2373,8 @@ def test_jobs_route_prioritises_running_before_limit(
 def test_jobs_route_prioritises_failed_before_completed_limit(
     _routes_app: tuple[TestClient, str],
 ) -> None:
-    _jobs.record_finish(_jobs.record_start("code", "tool"), result="newer done")
-    failed_id = _jobs.record_start("code", "tool")
+    _jobs.record_finish(_jobs.record_start(JobSource.CODE, "tool"), result="newer done")
+    failed_id = _jobs.record_start(JobSource.CODE, "tool")
     _jobs.record_finish(failed_id, error="boom")
     client, token = _routes_app
 
@@ -2393,7 +2393,7 @@ def test_jobs_route_prioritises_failed_before_completed_limit(
 def test_jobs_route_filters_phase_source_trigger_and_query(
     _routes_app: tuple[TestClient, str],
 ) -> None:
-    _jobs.record_start("code", "watcher")
+    _jobs.record_start(JobSource.CODE, "watcher")
     client, token = _routes_app
     response = cast(
         "httpx.Response",
@@ -2420,7 +2420,7 @@ def test_jobs_route_filters_phase_source_trigger_and_query(
 def test_jobs_route_accepts_codebase_source_alias(
     _routes_app: tuple[TestClient, str],
 ) -> None:
-    running_id = _jobs.record_start("code", "watcher")
+    running_id = _jobs.record_start(JobSource.CODE, "watcher")
     client, token = _routes_app
     response = cast(
         "httpx.Response",
@@ -2437,9 +2437,9 @@ def test_jobs_route_accepts_codebase_source_alias(
 def test_jobs_route_filters_failed_job_id_and_since(
     _routes_app: tuple[TestClient, str],
 ) -> None:
-    failed_id = _jobs.record_start("code", "tool")
+    failed_id = _jobs.record_start(JobSource.CODE, "tool")
     _jobs.record_finish(failed_id, error="boom")
-    _jobs.record_finish(_jobs.record_start("vault", "watcher"), result="old")
+    _jobs.record_finish(_jobs.record_start(JobSource.VAULT, "watcher"), result="old")
     client, token = _routes_app
 
     response = cast(
@@ -2472,7 +2472,7 @@ def test_jobs_route_query_matches_runtime_and_initiator(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     running_id = _jobs.record_start(
-        "code",
+        JobSource.CODE,
         "tool",
         command="reindex_codebase",
         initiator_kind="cli",
@@ -2494,7 +2494,7 @@ def test_jobs_route_query_matches_runtime_and_initiator(
 def test_jobs_route_since_uses_progress_update_time(
     _routes_app: tuple[TestClient, str],
 ) -> None:
-    running_id = _jobs.record_start("code", "tool")
+    running_id = _jobs.record_start(JobSource.CODE, "tool")
     time.sleep(0.2)
     _jobs.record_progress(running_id, "embed", completed=1, total=10)
     client, token = _routes_app
@@ -2516,7 +2516,7 @@ def test_jobs_route_job_id_prefix_can_return_multiple_matches(
 ) -> None:
     ids_by_prefix: dict[str, list[str]] = {}
     for _ in range(17):
-        job_id = _jobs.record_start("vault", "tool")
+        job_id = _jobs.record_start(JobSource.VAULT, "tool")
         ids_by_prefix.setdefault(job_id[:1], []).append(job_id)
     prefix = next(prefix for prefix, ids in ids_by_prefix.items() if len(ids) > 1)
     client, token = _routes_app

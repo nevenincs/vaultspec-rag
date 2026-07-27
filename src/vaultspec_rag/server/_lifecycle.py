@@ -50,6 +50,7 @@ import vaultspec_rag.server as _m
 
 from .._runtime_identity import interpreter_fields
 from ..config import SERVICE_STATUS_FILENAME, managed_status_dir
+from ..job_models import JobSource
 from ..logging_config import log_event
 from ..serviceclient._discovery import (
     HEARTBEAT_STALENESS_SECONDS,
@@ -710,7 +711,7 @@ def _storage_maintenance_tick_sync() -> None:
     from .. import jobs as _jobs_registry
 
     job_id = _jobs_registry.record_start(
-        "maintenance", "schedule", command="storage_maintenance"
+        JobSource.MAINTENANCE, "schedule", command="storage_maintenance"
     )
     url = cfg.effective_qdrant_url
     client = QdrantClient(url=url, timeout=_QDRANT_CLIENT_OP_TIMEOUT_SECONDS)

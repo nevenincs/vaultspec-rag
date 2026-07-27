@@ -19,7 +19,14 @@ import vaultspec_rag.server as _server_state
 
 from ...cli import app
 from ...config import EnvVar, reset_config
-from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
+from ...job_models import (
+    DesiredJobState,
+    JobInitiator,
+    JobMode,
+    JobOperation,
+    JobSource,
+    JobSpec,
+)
 from ...jobs import get_job_manager
 from ...jobs import reset as reset_jobs
 from ...mcp._mcp import mcp
@@ -176,7 +183,7 @@ def _assert_transport_conflicts(port: int, job_id: str) -> None:
     assert detail_job["desired_state"] == "paused"
     force_rejected = _try_http_set_job_desired_state(
         job_id,
-        "running",
+        DesiredJobState.RUNNING,
         port,
         mode="force",
         timeout=5.0,
@@ -199,7 +206,7 @@ def _complete_transport_lifecycle(
     """Cancel, retry, delete, and verify absence through typed transport."""
     cancelled = _try_http_set_job_desired_state(
         job_id,
-        "cancelled",
+        DesiredJobState.CANCELLED,
         port,
         expected_revision=revision,
         timeout=5.0,
