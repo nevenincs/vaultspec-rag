@@ -44,7 +44,7 @@ def _job(
     phase: str = "running",
     state: str = "running",
     desired: str | None = None,
-    root: str = "Y:/code/vaultspec-rag-worktrees/main",
+    root: str = "/repos/example-worktrees/main",
     completed: int = 300,
     total: int | None = 1000,
     remaining: float | None = 140.0,
@@ -1157,14 +1157,19 @@ class TestServiceHealthIsVisible:
         app = _app(control_service, jobs)
         async with app.run_test(size=_WIDE, notifications=True) as pilot:
             await _ready(pilot, app)
+            # The stamp of the fetch this payload belongs to, captured now
+            # rather than derived later: how many generations the refresh below
+            # consumes is not this test's business, and counting backwards from
+            # the end makes the assertion depend on it.
+            stale_generation = app._generation
             stale = _try_http_admin("get_jobs", {"limit": 20}, control_service.port)
 
             control_service.set_jobs(jobs[1:])
             app.refresh_jobs()
             await _await_painted(pilot, app, "showing 2 of 2")
 
-            # The older fetch finally completes.
-            app._apply_result(stale, app._generation - 1)
+            # The older fetch finally completes, under its own stamp.
+            app._apply_result(stale, stale_generation)
             await pilot.pause()
             painted = _screen_text(app)
 
