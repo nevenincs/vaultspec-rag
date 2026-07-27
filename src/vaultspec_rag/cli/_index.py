@@ -134,27 +134,36 @@ def _parse_index_source(
 
 
 def _format_index_duration(raw: object) -> str:
+    milliseconds = _duration_milliseconds(raw)
+    if milliseconds is None:
+        return "not reported"
+    if milliseconds < 1000:
+        return _counted_unit(milliseconds, "millisecond")
+    seconds = milliseconds / 1000.0
+    if seconds < 10:
+        return (
+            _counted_unit(int(seconds), "second")
+            if seconds.is_integer()
+            else f"{seconds:.1f} seconds"
+        )
+    return _counted_unit(round(seconds), "second")
+
+
+def _duration_milliseconds(raw: object) -> int | None:
+    """Normalize an optional daemon duration into a non-negative whole value."""
     if isinstance(raw, int | float):
         raw_milliseconds = float(raw)
     elif isinstance(raw, str):
         try:
             raw_milliseconds = float(raw)
         except ValueError:
-            return "not reported"
+            return None
     else:
-        return "not reported"
+        return None
     try:
-        milliseconds = max(0, int(raw_milliseconds))
+        return max(0, int(raw_milliseconds))
     except (OverflowError, ValueError):
-        return "not reported"
-    if milliseconds < 1000:
-        return _counted_unit(milliseconds, "millisecond")
-    seconds = milliseconds / 1000.0
-    if seconds < 10:
-        if seconds.is_integer():
-            return _counted_unit(int(seconds), "second")
-        return f"{seconds:.1f} seconds"
-    return _counted_unit(round(seconds), "second")
+        return None
 
 
 def _print_index_summary(sources: list[dict[str, object]], *, via: str) -> None:
