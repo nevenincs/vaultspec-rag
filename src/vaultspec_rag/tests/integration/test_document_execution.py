@@ -26,6 +26,7 @@ from ...index_profiles import (
     validate_profile_admission,
 )
 from ...indexer._chunk_worker import (
+    DocumentChunkingOptions,
     DocumentFileChunkResult,
     chunk_document_and_hash_file,
     chunk_file_with_status,
@@ -126,7 +127,9 @@ def test_extractor_owned_binary_bypasses_decoder_and_source_cap_prevents_launch(
     _write_rule(tmp_path, command=_command(extractor))
     context = _context(tmp_path)
 
-    extracted = chunk_document_and_hash_file(source, tmp_path, context)
+    extracted = chunk_document_and_hash_file(
+        source, tmp_path, DocumentChunkingOptions(prep=context)
+    )
 
     assert isinstance(extracted, DocumentFileChunkResult)
     assert extracted.preprocess_status == "ok"
@@ -144,7 +147,9 @@ def test_extractor_owned_binary_bypasses_decoder_and_source_cap_prevents_launch(
         max_emitted_bytes=context.max_emitted_bytes,
         project_root=tmp_path,
     )
-    refused = chunk_document_and_hash_file(source, tmp_path, capped)
+    refused = chunk_document_and_hash_file(
+        source, tmp_path, DocumentChunkingOptions(prep=capped)
+    )
 
     assert refused.preprocess_status == "skipped"
     assert refused.chunks == []
@@ -167,7 +172,9 @@ def test_document_passthrough_stays_document_owned_and_code_worker_fails_closed(
     _write_rule(tmp_path, command=_command(extractor), on_error="passthrough")
     context = _context(tmp_path)
 
-    result = chunk_document_and_hash_file(source, tmp_path, context)
+    result = chunk_document_and_hash_file(
+        source, tmp_path, DocumentChunkingOptions(prep=context)
+    )
 
     assert marker.exists()
     assert isinstance(result, DocumentFileChunkResult)
@@ -205,7 +212,7 @@ def test_raw_document_stream_is_memory_bounded_and_cooperatively_cancelled(
     cancelled = stream_document_and_hash_file(
         source,
         tmp_path,
-        run_control=control,
+        DocumentChunkingOptions(run_control=control),
     )
     control.request_cancel()
     with pytest.raises(CancelRequested):
