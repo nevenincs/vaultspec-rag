@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, cast
 
 import typer
@@ -53,6 +54,17 @@ if TYPE_CHECKING:
 __all__ = ["_suppress_hf_progress", "handle_search"]
 
 
+@dataclass(frozen=True, slots=True)
+class _ServiceSearchRenderRequest:
+    """Presentation inputs shared by every service-search outcome shape."""
+
+    query: str
+    search_type: str
+    json_mode: bool
+    show_scores: bool
+    target: pathlib.Path | None = None
+
+
 def _suppress_hf_progress() -> None:
     """Silence HuggingFace and sentence-transformers tqdm bars.
 
@@ -68,67 +80,55 @@ def _suppress_hf_progress() -> None:
 
 def _handle_service_results(
     service_results: list[dict[str, object]] | dict[str, object] | None,
-    query: str,
-    search_type: str,
-    json_mode: bool,
-    show_scores: bool,
-    target: pathlib.Path | None = None,
+    request: _ServiceSearchRenderRequest,
 ) -> None:
     if isinstance(service_results, dict):
         if service_results.get("ok") is False:
             _display_service_error(
                 service_results,
-                json_mode=json_mode,
+                json_mode=request.json_mode,
                 command="search",
             )
             raise typer.Exit(code=1)
         if "results" in service_results:
             _handle_service_success(
                 service_results,
-                query,
-                search_type,
-                json_mode,
-                show_scores,
-                target,
+                request,
             )
             return
         _display_service_error(
             service_results,
-            json_mode=json_mode,
+            json_mode=request.json_mode,
             command="search",
         )
         raise typer.Exit(code=1)
-    if json_mode:
+    if request.json_mode:
         _emit_json(
             True,
             "search",
             data={
-                "query": query,
-                "search_type": search_type,
+                "query": request.query,
+                "search_type": request.search_type,
                 "via": "service",
                 "results": list(service_results or []),
             },
         )
         return
     if not service_results:
-        _plain(f"No {search_type} results found for: {query}")
+        _plain(f"No {request.search_type} results found for: {request.query}")
         return
     _display_search_results(
         service_results,
-        search_type,
+        request.search_type,
         via="service",
-        show_scores=show_scores,
-        root=target,
+        show_scores=request.show_scores,
+        root=request.target,
     )
 
 
 def _handle_service_success(
     payload: dict[str, object],
-    query: str,
-    search_type: str,
-    json_mode: bool,
-    show_scores: bool,
-    target: pathlib.Path | None = None,
+    request: _ServiceSearchRenderRequest,
 ) -> None:
     raw_results = payload.get("results")
     results = (
@@ -136,24 +136,24 @@ def _handle_service_success(
         if isinstance(raw_results, list)
         else []
     )
-    if json_mode:
+    if request.json_mode:
         data = dict(payload)
-        data["query"] = query
-        data["search_type"] = search_type
+        data["query"] = request.query
+        data["search_type"] = request.search_type
         data["via"] = "service"
         _emit_json(True, "search", data=data)
         return
     if not results:
-        _render_empty_service_results(payload, query, search_type)
+        _render_empty_service_results(payload, request.query, request.search_type)
         _render_shortfall_warnings(payload)
         _render_partial_domain_failures(payload)
         return
     _display_search_results(
         results,
-        search_type,
+        request.search_type,
         via="service",
-        show_scores=show_scores,
-        root=target,
+        show_scores=request.show_scores,
+        root=request.target,
     )
     _render_shortfall_warnings(payload)
     _render_partial_domain_failures(payload)
@@ -1193,11 +1193,13 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
         if service_results is not None:
             _handle_service_results(
                 service_results,
-                query,
-                search_type.value,
-                json_mode,
-                show_scores,
-                target,
+                _ServiceSearchRenderRequest(
+                    query,
+                    search_type.value,
+                    json_mode,
+                    show_scores,
+                    target,
+                ),
             )
             return
         if not mandate:
