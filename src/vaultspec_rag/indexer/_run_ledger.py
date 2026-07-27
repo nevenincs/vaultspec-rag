@@ -16,11 +16,11 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from enum import StrEnum
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from ._content_policy import AdmissionReason, ContentKind
-from ._file_state import FileState, FileStateKind
+from ._file_state import FileState, FileStateKind, validate_rel_path
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator, Mapping
@@ -306,7 +306,7 @@ class CommitUnit:
     source_digest: str | None = None
 
     def __post_init__(self) -> None:
-        _validate_rel_path(self.rel_path)
+        validate_rel_path(self.rel_path)
         if not isinstance(self.kind, CommitUnitKind):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
             raise TypeError("kind must be a CommitUnitKind")
         if isinstance(self.segment_ordinal, bool) or self.segment_ordinal < 0:
@@ -605,7 +605,7 @@ class RunLedger:
         an older generation and still present in storage. Rejections and
         failures do not certify stored ownership and cannot mask that evidence.
         """
-        _validate_rel_path(rel_path)
+        validate_rel_path(rel_path)
         with self._connect() as connection:
             row = connection.execute(
                 """
@@ -824,7 +824,7 @@ class RunLedger:
 
     def file_complete(self, generation_id: str, rel_path: str) -> bool:
         """Return whether every segment (or the deletion unit) is committed."""
-        _validate_rel_path(rel_path)
+        validate_rel_path(rel_path)
         with self._connect() as connection:
             complete, _digest = self._file_completion_evidence(
                 connection,
@@ -991,7 +991,7 @@ class RunLedger:
         if batch_size <= 0:
             raise ValueError("batch_size must be positive")
         if rel_path is not None:
-            _validate_rel_path(rel_path)
+            validate_rel_path(rel_path)
         last_key: tuple[str, int, int, str] | None = None
         while True:
             condition = ""
@@ -1104,7 +1104,7 @@ class RunLedger:
 
     def record_path_deleted(self, generation_id: str, rel_path: str) -> None:
         """Remove carried/current manifest state after confirmed path deletion."""
-        _validate_rel_path(rel_path)
+        validate_rel_path(rel_path)
         with self._transaction() as connection:
             generation = self._require_mutable_generation(connection, generation_id)
             if generation["finalization_phase"] != FinalizationPhase.INGESTING.value:
@@ -1149,7 +1149,7 @@ class RunLedger:
         the replacement points together, and dropping that union would delete
         the very content the re-record is about to claim.
         """
-        _validate_rel_path(rel_path)
+        validate_rel_path(rel_path)
         with self._connect() as connection:
             rows = connection.execute(
                 """
@@ -1207,7 +1207,7 @@ class RunLedger:
             RunLedgerStateError: When the generation has left ingestion, so
                 its file states can no longer change.
         """
-        _validate_rel_path(rel_path)
+        validate_rel_path(rel_path)
         with self._transaction() as connection:
             generation = self._require_mutable_generation(connection, generation_id)
             if generation["finalization_phase"] != FinalizationPhase.INGESTING.value:
@@ -1834,21 +1834,6 @@ class RunLedger:
             terminal_detail=terminal_detail,
             parent_generation_id=parent_generation_id,
         )
-
-
-def _validate_rel_path(rel_path: str) -> None:
-    path = PurePosixPath(rel_path)
-    if (
-        not rel_path
-        or rel_path == "."
-        or path.is_absolute()
-        or PureWindowsPath(rel_path).drive
-        or "\0" in rel_path
-        or "\\" in rel_path
-        or ".." in path.parts
-        or path.as_posix() != rel_path
-    ):
-        raise ValueError("rel_path must be canonical project-relative POSIX syntax")
 
 
 def _is_digest(value: object) -> bool:

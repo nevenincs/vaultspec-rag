@@ -830,6 +830,93 @@ class TestAtomicReplaceHasOneImplementation:
         assert replace_atomically is not replace_durably
 
 
+class TestValidationRulesAreStatedOnce:
+    """A rejection rule lives in one function, not one per caller.
+
+    Two validations were written twice. The rel_path check - nine clauses
+    deciding whether a stored path is canonical and project-relative - existed
+    as a row's own method and again as a ledger function, byte-identical. The
+    content-route pattern check existed at the configuration boundary and again
+    in the compiled policy vocabulary.
+
+    Neither had drifted, and that is the whole difficulty: a duplicated
+    rejection rule does not fail when it diverges, it just starts accepting
+    different things in different places. Four of the rel_path clauses are
+    containment checks - a backslash, a drive letter, an absolute path, and
+    ``..`` each name a file outside the project the row claims to describe -
+    so the copy that loses one accepts a path the other rejects, and which one
+    runs depends on whether the value arrived as a row or through the ledger.
+
+    Checked by message, because the message is what a second copy must
+    reproduce to be a copy at all, and because the two rel_path bodies were
+    identical while living in different shapes - a method and a function - that
+    a body-comparison scan with a statement-count floor never compared.
+    """
+
+    #: Rejection message -> the module allowed to raise it.
+    _OWNERS: ClassVar[dict[str, str]] = {
+        "rel_path must be canonical project-relative POSIX syntax": "_file_state.py",
+        "content route pattern must not be empty": "_content_route_syntax.py",
+        "content route pattern must not contain NUL": "_content_route_syntax.py",
+    }
+
+    def test_no_module_but_the_owner_raises_the_rule(self) -> None:
+        """A second module raising the same rejection is a second rule."""
+        offenders: list[str] = []
+        for path in _every_production_file():
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Constant):
+                    continue
+                if not isinstance(node.value, str):
+                    continue
+                owner = self._OWNERS.get(node.value)
+                if owner is not None and path.name != owner:
+                    offenders.append(f"{path.name}:{node.lineno} raises {node.value!r}")
+        assert not offenders, (
+            f"a validation rule is stated outside the module that owns it: "
+            f"{offenders}; call the shared validator, because a duplicated "
+            "rejection does not fail when it drifts - it just starts "
+            "accepting different things on different paths"
+        )
+
+    def test_the_ledger_and_the_row_share_one_validator(self) -> None:
+        """Not equal behaviour - the same function, reached from both.
+
+        Proven able to fail: giving the ledger its own copy again fails the
+        message guard above, and rebinding the name here to an equivalent
+        local function fails this identity assertion.
+        """
+        from ..indexer import _file_state, _run_ledger
+
+        assert _run_ledger.validate_rel_path is _file_state.validate_rel_path
+
+    def test_containment_clauses_all_still_reject(self) -> None:
+        """The four clauses that keep a row inside the project.
+
+        Proven able to fail: dropping any one of the ``..``, backslash, drive,
+        or absolute clauses from the canonical validator fails this on the
+        case that clause is the only one catching.
+        """
+        from ..indexer._file_state import validate_rel_path
+
+        validate_rel_path("src/a.py")
+        for escaping in (
+            "..",
+            "../escape",
+            "a/../../etc/passwd",
+            "/abs/path",
+            "C:/win/path",
+            "back" + chr(92) + "slash",
+            "nul" + chr(0) + "byte",
+        ):
+            with pytest.raises(ValueError, match="canonical project-relative"):
+                validate_rel_path(escaping)
+
+
 class TestPinnedAssetNamesAreNamedOnce:
     """Every release asset filename is written once and pinned once.
 
