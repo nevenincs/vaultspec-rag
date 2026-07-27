@@ -477,16 +477,24 @@ def _job_matches(
         (
             _job_id_matches(record, filters.job_id),
             not filters.failed or record_state == JobState.FAILED.value,
-            _job_updated_since(record, since_seconds=filters.since_seconds, now=filters.now),
+            _job_updated_since(
+                record,
+                since_seconds=filters.since_seconds,
+                now=filters.now,
+            ),
             filters.phase is None or _job_phase(record, record_state) == filters.phase,
             filters.state is None or record_state == filters.state,
-            filters.desired_state is None or _job_desired_state(record) == filters.desired_state,
-            filters.controllable is None or _job_controllable(record) is filters.controllable,
+            filters.desired_state is None
+            or _job_desired_state(record) == filters.desired_state,
+            filters.controllable is None
+            or _job_controllable(record) is filters.controllable,
             filters.source is None or _job_source(record) == filters.source,
             filters.trigger is None or _job_trigger(record) == filters.trigger,
         )
     )
-    return matches_filters and (filters.query is None or filters.query in _job_search_text(record))
+    return matches_filters and (
+        filters.query is None or filters.query in _job_search_text(record)
+    )
 
 
 def _job_nested_values(raw: object) -> list[str]:
@@ -628,7 +636,7 @@ def _prioritise_running_jobs(
     def priority(record: dict[str, object]) -> int:
         state = job_state(record)
         priorities = {
-            **{value: 0 for value in _TRANSITIONAL_STATES},
+            **dict.fromkeys(_TRANSITIONAL_STATES, 0),
             "running": 1, "queued": 2, "paused": 3,
             "failed": 4, "interrupted": 4, "cancelled": 5, "succeeded": 6,
         }

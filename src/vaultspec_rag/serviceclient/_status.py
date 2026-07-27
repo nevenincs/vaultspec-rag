@@ -224,11 +224,36 @@ def _discovery_status_fields(
     # models: its silent port and unstarted heartbeat are expected, so this is
     # checked before either is treated as a fault.
     for failed, state, label, exit_code in (
-        (not facts.pid_alive, STATUS_CRASHED, "crashed (recorded process is not running)", EXIT_FAULT),
-        (not facts.pid_matches_service, STATUS_CRASHED, "crashed (PID reused by an unrelated process)", EXIT_FAULT),
-        (facts.phase == SERVICE_PHASE_WARMING, STATUS_WARMING, LABEL_WARMING, EXIT_WARMING),
-        (not facts.port_listening, STATUS_CRASHED, LABEL_CRASHED_PORT_SILENT, EXIT_FAULT),
-        (facts.heartbeat_stale, STATUS_CRASHED, LABEL_CRASHED_HEARTBEAT_STALE, EXIT_FAULT),
+        (
+            not facts.pid_alive,
+            STATUS_CRASHED,
+            "crashed (recorded process is not running)",
+            EXIT_FAULT,
+        ),
+        (
+            not facts.pid_matches_service,
+            STATUS_CRASHED,
+            "crashed (PID reused by an unrelated process)",
+            EXIT_FAULT,
+        ),
+        (
+            facts.phase == SERVICE_PHASE_WARMING,
+            STATUS_WARMING,
+            LABEL_WARMING,
+            EXIT_WARMING,
+        ),
+        (
+            not facts.port_listening,
+            STATUS_CRASHED,
+            LABEL_CRASHED_PORT_SILENT,
+            EXIT_FAULT,
+        ),
+        (
+            facts.heartbeat_stale,
+            STATUS_CRASHED,
+            LABEL_CRASHED_HEARTBEAT_STALE,
+            EXIT_FAULT,
+        ),
     ):
         if failed:
             return state, label, exit_code
@@ -452,7 +477,8 @@ def reconcile_discovery(request: ReconcileRequest) -> ReconcileOutcome:
                 elapsed_s=clock() - started,
                 final=verdict,
                 detail=(
-                    f"{verdict.label}; discovery did not converge within {request.timeout_s:g}s"
+                    f"{verdict.label}; discovery did not converge within "
+                    f"{request.timeout_s:g}s"
                 ),
             )
         request.on_attempt(attempts, verdict)
