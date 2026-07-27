@@ -78,14 +78,15 @@ def _locale_variant_key(path: str) -> str | None:
     Pure function - no I/O, no realistic exception surface.
     """
     parts = path.rsplit(".", 1)
-    if len(parts) != 2:
+    if len(parts) != 2 or parts[-1].lower() not in _LOCALE_FILE_EXTS:
         return None
     stem, ext = parts
-    if ext.lower() not in _LOCALE_FILE_EXTS:
-        return None
     segments = stem.split("/")
-    if not segments:
-        return None
+    return _locale_variant_key_from_parts(segments, ext)
+
+
+def _locale_variant_key_from_parts(segments: list[str], ext: str) -> str | None:
+    """Build the locale stem after extension validation and path splitting."""
     last = segments[-1]
     # Shape A: ``.../<lang>.<ext>`` - e.g. ``locales/en.yml``.
     # Key is the parent directory.
