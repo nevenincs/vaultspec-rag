@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple, cast
 
 from .._operator_commands import (
+    IndexCommandOptions,
     index_command,
     server_jobs_command,
     server_status_command,
@@ -442,7 +443,9 @@ def _conformance_finding(
             "their vectors cannot be ranked against queries from the current "
             "model; rebuild the affected index to restore ranking"
         ),
-        command=index_command(PublicSourceType.COMBINED, rebuild=True),
+        command=index_command(
+            PublicSourceType.COMBINED, IndexCommandOptions(rebuild=True)
+        ),
         family=CONFORMANCE_FAMILY,
     )
 
