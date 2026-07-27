@@ -10,6 +10,8 @@ manifest never touches the real host. No GPU: these are pure storage ops.
 from __future__ import annotations
 
 import os
+import threading
+import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -758,6 +760,83 @@ def test_archive_manifest_carries_identity_from_the_real_manifest(
         assert entry["identity"]["sparse_model"] is None
     finally:
         client.close()
+@pytest.mark.usefixtures("isolated_status_dir")
+def test_archive_rejects_a_real_write_after_its_first_snapshot(
+    ops_qdrant: QdrantSupervisor,
+    tmp_path: Path,
+) -> None:
+    """The completed-archive gate catches a live write with real Qdrant I/O.
+
+    A real writer watches Qdrant's first snapshot artifact, then upserts a
+    second point while the archive is still taking the remaining collection
+    snapshots. Removing the completed-archive verification makes
+    `archive_prefix` return instead of raising.
+    """
+    from qdrant_client import QdrantClient, models
+
+    from ...storage_reclamation import archive_prefix
+
+    client = QdrantClient(url=ops_qdrant.url, timeout=30)
+    writer = QdrantClient(url=ops_qdrant.url, timeout=30)
+    thread: threading.Thread | None = None
+    try:
+        root = tmp_path / "archive-race"
+        root.mkdir()
+        prefix = root_collection_prefix(root)
+        record_root(root, backend="server")
+        names = [f"{prefix}archive_race_{index}" for index in range(3)]
+        for name in names:
+            _make_collection(client, name)
+
+        snapshots_dir = ops_qdrant.storage_dir.parent / "snapshots"
+        first_snapshot_dir = snapshots_dir / names[0]
+        write_landed = threading.Event()
+        writer_error: list[Exception] = []
+
+        def write_after_first_snapshot() -> None:
+            deadline = time.monotonic() + 30.0
+            while time.monotonic() < deadline:
+                if first_snapshot_dir.is_dir() and any(first_snapshot_dir.iterdir()):
+                    try:
+                        writer.upsert(
+                            collection_name=names[0],
+                            points=[
+                                models.PointStruct(
+                                    id=2,
+                                    vector=[0.4, 0.3, 0.2, 0.1],
+                                    payload={},
+                                )
+                            ],
+                            wait=True,
+                        )
+                    except Exception as exc:
+                        writer_error.append(exc)
+                    else:
+                        write_landed.set()
+                    return
+                time.sleep(0.001)
+
+        thread = threading.Thread(target=write_after_first_snapshot)
+        thread.start()
+        with pytest.raises(RuntimeError, match="archived snapshot point count changed"):
+            archive_prefix(
+                client,
+                prefix,
+                snapshots_dir=snapshots_dir,
+                archive_dir=tmp_path / "archive",
+            )
+    finally:
+        if thread is not None:
+            thread.join(timeout=30)
+        writer.close()
+        client.close()
+
+    assert thread is not None
+    assert not thread.is_alive()
+    assert writer_error == []
+    assert write_landed.is_set()
+
+
 
 
 @pytest.mark.usefixtures("isolated_status_dir")
