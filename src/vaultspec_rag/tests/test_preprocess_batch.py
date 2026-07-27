@@ -450,9 +450,16 @@ def test_batch_relative_echoed_path_resolves_against_project_root(
 # --------------------------------------------------------------------------
 
 _COUNTING_BODY = """
-    import json, sys
+    import json, os, sys
     log, manifest = sys.argv[1], sys.argv[2]
-    with open(log, "a", encoding="utf-8") as counter:
+    # One marker FILE per spawn, not one appended line. Python's "a" mode is
+    # O_APPEND, atomic on POSIX but implemented by the Windows CRT as
+    # seek-to-end-then-write: two concurrent workers both seek to 0 on the
+    # empty file and one write is lost, under-counting the spawns this
+    # instrument exists to count.
+    os.makedirs(log, exist_ok=True)
+    marker = os.path.join(log, "%d-%s" % (os.getpid(), os.urandom(8).hex()))
+    with open(marker, "w", encoding="utf-8") as counter:
         counter.write("spawn\\n")
     with open(manifest, encoding="utf-8") as fh:
         paths = [line.rstrip("\\n") for line in fh if line.strip()]
@@ -466,7 +473,7 @@ _COUNTING_BODY = """
 
 
 def _counting_context(tmp_path: Path) -> tuple[PreprocessContext, Path]:
-    log = tmp_path / "spawns.log"
+    log = tmp_path / "spawns"
     script = _script(tmp_path, _COUNTING_BODY, name="counting.py")
     command = (
         f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} "
@@ -495,9 +502,10 @@ def _counting_context(tmp_path: Path) -> tuple[PreprocessContext, Path]:
 
 
 def _spawn_count(log: Path) -> int:
-    if not log.exists():
+    """Count spawn markers - one file per spawn, so concurrency cannot lose one."""
+    if not log.is_dir():
         return 0
-    return len([line for line in log.read_text(encoding="utf-8").splitlines() if line])
+    return len(list(log.iterdir()))
 
 
 def test_chunk_batch_files_one_spawn_for_many_files(tmp_path: Path) -> None:
@@ -638,7 +646,7 @@ def test_production_path_multi_worker_pool_over_batch_groups(
     monkeypatch.setenv(EnvVar.INDEX_CHUNK_WORKERS.value, "2")
     reset_config()
 
-    log = tmp_path / "spawns.log"
+    log = tmp_path / "spawns"
     script = _script(tmp_path, _COUNTING_BODY, name="counting.py")
     command = (
         f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} "
