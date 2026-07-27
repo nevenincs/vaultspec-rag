@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Mapping
 
     from pytest import TempPathFactory
+    from sentence_transformers import CrossEncoder
 
     from .. import CodebaseIndexer, EmbeddingModel, VaultIndexer, VaultStore
     from ..indexer import IndexResult
@@ -213,6 +214,7 @@ class RagComponentsWithManifest(TypedDict):
     index_result: IndexResult
     root: Path
     manifest: CorpusManifest
+    reranker: CrossEncoder
 
 
 def _index_corpus(
@@ -261,6 +263,39 @@ def embedding_model() -> EmbeddingModel:
 
 
 @pytest.fixture(scope="session")
+def shared_reranker() -> Generator[CrossEncoder]:
+    """One CrossEncoder for the whole session, shared the way the service shares it.
+
+    The service loads exactly one reranker on its registry and injects it into
+    every searcher it constructs; a searcher built without one lazily loads a
+    private ~2.3 GB copy on first rerank instead. Dozens of per-test copies
+    outlive their tests until garbage collection and push the device into
+    shared-system-memory fallback, degrading every later forward pass. Loading
+    through the registry keeps this fixture on the production construction
+    path; missing snapshots are acquired by the killable setup worker first,
+    and the offline overrides make the load itself run cache-only, exactly as
+    the ``embedding_model`` fixture does.
+    """
+    from ..service import ServiceRegistry
+
+    cfg = get_config()
+    ensure_model_snapshots(
+        (str(cfg.reranker_model),),
+        timeout_seconds=model_setup_timeout_seconds(),
+    )
+    registry = ServiceRegistry()
+    with managed_env(
+        **{
+            EnvVar.HF_HUB_OFFLINE.value: "1",
+            EnvVar.TRANSFORMERS_OFFLINE.value: "1",
+        }
+    ):
+        reranker = registry.get_reranker()
+    yield reranker
+    registry.close_all()
+
+
+@pytest.fixture(scope="session")
 def synthetic_vault(tmp_path_factory: TempPathFactory) -> CorpusManifest:
     """Session-scoped synthetic vault with 24 well-formed docs."""
     root = tmp_path_factory.mktemp("vault")
@@ -270,6 +305,7 @@ def synthetic_vault(tmp_path_factory: TempPathFactory) -> CorpusManifest:
 @pytest.fixture(scope="session")
 def rag_components(
     embedding_model: EmbeddingModel,
+    shared_reranker: CrossEncoder,
     synthetic_vault: CorpusManifest,
 ) -> Generator[RagComponentsWithManifest]:
     """Real RAG components backed by the synthetic vault.
@@ -289,6 +325,7 @@ def rag_components(
         index_result=components["index_result"],
         root=components["root"],
         manifest=synthetic_vault,
+        reranker=shared_reranker,
     )
 
     components["store"].close()
@@ -297,6 +334,7 @@ def rag_components(
 @pytest.fixture(scope="session")
 def rag_components_full(
     embedding_model: EmbeddingModel,
+    shared_reranker: CrossEncoder,
     tmp_path_factory: TempPathFactory,
 ) -> Generator[RagComponentsWithManifest]:
     """Real RAG components with a larger synthetic corpus (48 docs).
@@ -318,6 +356,7 @@ def rag_components_full(
         index_result=components["index_result"],
         root=components["root"],
         manifest=manifest,
+        reranker=shared_reranker,
     )
 
     components["store"].close()

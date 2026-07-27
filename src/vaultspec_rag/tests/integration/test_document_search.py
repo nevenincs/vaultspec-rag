@@ -50,7 +50,9 @@ def test_document_and_combined_search_use_real_content_and_stable_selection(
         assert indexed.total >= 3
         assert store.count_document() >= 3
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components_with_code["reranker"]
+        )
         documents = searcher.search_document(phrase, top_k=3)
         assert len(documents) == 3
         assert all(result.source == "document" for result in documents)
