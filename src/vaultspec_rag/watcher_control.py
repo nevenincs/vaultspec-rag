@@ -1894,12 +1894,14 @@ def _sync_legacy_snapshot(
         _jobs.record_finish(
             snapshot.id,
             result=snapshot.result,
-            preprocess_ok=result.preprocess_ok if result is not None else 0,
-            preprocess_skipped=result.preprocess_skipped if result is not None else 0,
-            preprocess_failures=(
-                list(result.preprocess_failures) if result is not None else None
+            details=_jobs._FinishDetails(
+                preprocess_ok=result.preprocess_ok if result is not None else 0,
+                preprocess_skipped=result.preprocess_skipped if result is not None else 0,
+                preprocess_failures=(
+                    list(result.preprocess_failures) if result is not None else None
+                ),
+                reuse=result.reuse if result is not None else None,
             ),
-            reuse=result.reuse if result is not None else None,
         )
     elif snapshot.state is JobState.FAILED:
         _jobs.record_finish(
