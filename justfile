@@ -329,7 +329,7 @@ _dev-test target='all':
     "python" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -n auto --dist loadfile -m "not (integration or quality or performance or robustness or subprocess_gpu or cuda)" ; break } \
     "fast" { {{uvr}} pytest src/vaultspec_rag/tests/ -x -q --tb=short -m unit ; break } \
     "gpu" { \
-      {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "integration or quality or robustness or cuda" ; \
+      {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "(integration or quality or robustness or cuda) and not subprocess_gpu" ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
       {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "subprocess_gpu" ; \
       break \
