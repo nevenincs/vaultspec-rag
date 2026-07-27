@@ -12,8 +12,8 @@ from dataclasses import dataclass
 from typing import Any, cast, get_args
 
 import typer
-from typer.core import TyperCommand, TyperOption
 from typer._types import TyperChoice
+from typer.core import TyperCommand, TyperOption
 
 from ..logging_config import (
     DEFAULT_MANAGED_LOG_LINES,
@@ -50,12 +50,45 @@ class _ServiceLogsCommand(TyperCommand):
         super().__init__(*args, **kwargs)
         self.params.extend(
             (
-                TyperOption(param_decls=["--limit"], type=int, default=DEFAULT_MANAGED_LOG_LINES, help="Maximum recent lines returned per selected source."),
-                TyperOption(param_decls=["--source"], type=TyperChoice(get_args(ManagedLogSource)), default="all", help="Managed log source: service, qdrant, or all."),
-                TyperOption(param_decls=["--job-id"], type=str, default=None, help="Keep lines containing this job ID."),
-                TyperOption(param_decls=["--contains"], type=str, default=None, help="Keep lines containing this text."),
-                TyperOption(param_decls=["--port"], type=int, default=None, help="Use this live service port before reading retained local logs."),
-                TyperOption(param_decls=["--json"], default=False, is_flag=True, help="Emit JSON for scripts instead of human text."),
+                TyperOption(
+                    param_decls=["--limit"],
+                    type=int,
+                    default=DEFAULT_MANAGED_LOG_LINES,
+                    help="Maximum recent lines returned per selected source.",
+                ),
+                TyperOption(
+                    param_decls=["--source"],
+                    type=TyperChoice(get_args(ManagedLogSource)),
+                    default="all",
+                    help="Managed log source: service, qdrant, or all.",
+                ),
+                TyperOption(
+                    param_decls=["--job-id"],
+                    type=str,
+                    default=None,
+                    help="Keep lines containing this job ID.",
+                ),
+                TyperOption(
+                    param_decls=["--contains"],
+                    type=str,
+                    default=None,
+                    help="Keep lines containing this text.",
+                ),
+                TyperOption(
+                    param_decls=["--port"],
+                    type=int,
+                    default=None,
+                    help=(
+                        "Use this live service port before reading retained "
+                        "local logs."
+                    ),
+                ),
+                TyperOption(
+                    param_decls=["--json"],
+                    default=False,
+                    is_flag=True,
+                    help="Emit JSON for scripts instead of human text.",
+                ),
             )
         )
 
@@ -109,7 +142,9 @@ def _run_service_logs(options: _ServiceLogsOptions) -> None:
     """Show grouped raw service and Qdrant logs live or offline."""
     filters = managed_log_filters(job_id=options.job_id, contains=options.contains)
     limit = clamp_managed_log_lines(options.lines)
-    resolved_port = options.port if options.port is not None else _default_service_port()
+    resolved_port = (
+        options.port if options.port is not None else _default_service_port()
+    )
     result: dict[str, object] | None = None
     if resolved_port is not None:
         result = _try_http_admin(
