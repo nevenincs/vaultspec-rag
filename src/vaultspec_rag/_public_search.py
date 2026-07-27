@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pathlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ._source_types import PublicSourceType
@@ -19,7 +19,9 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CodeCombinedSearchFilters",
+    "CombinedSearchRequest",
     "DocumentCombinedSearchFilters",
+    "DocumentSearchRequest",
     "VaultCombinedSearchFilters",
     "search_combined",
     "search_combined_timed",
@@ -67,48 +69,57 @@ class DocumentCombinedSearchFilters:
     locator_kind: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class DocumentSearchRequest:
+    """One document-only search operation and its owned filters."""
+
+    root_dir: pathlib.Path
+    query: str
+    top_k: int = 5
+    source_path: str | None = None
+    extractor_id: str | None = None
+    extractor_version: str | None = None
+    locator_kind: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CombinedSearchRequest:
+    """One combined search operation and its domain-owned filters."""
+
+    root_dir: pathlib.Path
+    query: str
+    top_k: int = 5
+    vault_filters: VaultCombinedSearchFilters = field(
+        default_factory=VaultCombinedSearchFilters
+    )
+    code_filters: CodeCombinedSearchFilters = field(
+        default_factory=CodeCombinedSearchFilters
+    )
+    document_filters: DocumentCombinedSearchFilters = field(
+        default_factory=DocumentCombinedSearchFilters
+    )
+
+
 def search_documents(
-    root_dir: pathlib.Path,
-    query: str,
-    *,
-    top_k: int = 5,
-    source_path: str | None = None,
-    extractor_id: str | None = None,
-    extractor_version: str | None = None,
-    locator_kind: str | None = None,
+    request: DocumentSearchRequest,
 ) -> list[DocumentSearchResult]:
     """Search only the independently owned document collection."""
-    results, _timings = search_documents_timed(
-        root_dir,
-        query,
-        top_k=top_k,
-        source_path=source_path,
-        extractor_id=extractor_id,
-        extractor_version=extractor_version,
-        locator_kind=locator_kind,
-    )
+    results, _timings = search_documents_timed(request)
     return results
 
 
 def search_documents_timed(
-    root_dir: pathlib.Path,
-    query: str,
-    *,
-    top_k: int = 5,
-    source_path: str | None = None,
-    extractor_id: str | None = None,
-    extractor_version: str | None = None,
-    locator_kind: str | None = None,
+    request: DocumentSearchRequest,
 ) -> tuple[list[DocumentSearchResult], dict[str, float]]:
     """Search documents and return canonical service timing fields."""
     validate_search_filters(
         PublicSourceType.DOCUMENT,
-        source_path=source_path,
-        extractor_id=extractor_id,
-        extractor_version=extractor_version,
-        locator_kind=locator_kind,
+        source_path=request.source_path,
+        extractor_id=request.extractor_id,
+        extractor_version=request.extractor_version,
+        locator_kind=request.locator_kind,
     )
-    root = pathlib.Path(root_dir).resolve()
+    root = pathlib.Path(request.root_dir).resolve()
     registry = get_registry()
     indexed_count = registry.document_chunk_count(root)
     if indexed_count == 0:
@@ -116,12 +127,12 @@ def search_documents_timed(
     registry.load_model()
     with registry.lease(root) as slot:
         results, timings = slot.searcher.search_document_timed(
-            query,
-            top_k=top_k,
-            source_path=source_path,
-            extractor_id=extractor_id,
-            extractor_version=extractor_version,
-            locator_kind=locator_kind,
+            request.query,
+            top_k=request.top_k,
+            source_path=request.source_path,
+            extractor_id=request.extractor_id,
+            extractor_version=request.extractor_version,
+            locator_kind=request.locator_kind,
         )
     timings["indexed_count"] = float(indexed_count)
     return results, timings
@@ -206,67 +217,45 @@ def _indexed_domain_outcome(
 
 
 def search_combined(
-    root_dir: pathlib.Path,
-    query: str,
-    *,
-    top_k: int = 5,
-    vault_filters: VaultCombinedSearchFilters | None = None,
-    code_filters: CodeCombinedSearchFilters | None = None,
-    document_filters: DocumentCombinedSearchFilters | None = None,
+    request: CombinedSearchRequest,
 ) -> CombinedSearchOutcome:
     """Search all domains while retaining independent failures."""
-    outcome, _timings = search_combined_timed(
-        root_dir,
-        query,
-        top_k=top_k,
-        vault_filters=vault_filters,
-        code_filters=code_filters,
-        document_filters=document_filters,
-    )
+    outcome, _timings = search_combined_timed(request)
     return outcome
 
 
 def search_combined_timed(
-    root_dir: pathlib.Path,
-    query: str,
-    *,
-    top_k: int = 5,
-    vault_filters: VaultCombinedSearchFilters | None = None,
-    code_filters: CodeCombinedSearchFilters | None = None,
-    document_filters: DocumentCombinedSearchFilters | None = None,
+    request: CombinedSearchRequest,
 ) -> tuple[CombinedSearchOutcome, dict[str, float]]:
     """Search all domains under one lease with explicit partial outcomes."""
-    vault_filters = vault_filters or VaultCombinedSearchFilters()
-    code_filters = code_filters or CodeCombinedSearchFilters()
-    document_filters = document_filters or DocumentCombinedSearchFilters()
     validate_search_filters(
         PublicSourceType.COMBINED,
-        language=code_filters.language,
-        path=code_filters.path,
-        node_type=code_filters.node_type,
-        function_name=code_filters.function_name,
-        class_name=code_filters.class_name,
-        doc_type=vault_filters.doc_type,
-        feature=vault_filters.feature,
-        date=vault_filters.date,
-        tag=vault_filters.tag,
-        include_paths=list(code_filters.include_paths) or None,
-        exclude_paths=list(code_filters.exclude_paths) or None,
-        dedup_locales=code_filters.dedup_locales,
-        prefer=code_filters.prefer,
-        exclude_domains=list(code_filters.exclude_domains) or None,
-        only_domains=list(code_filters.only_domains) or None,
-        include_domains=list(code_filters.include_domains) or None,
-        source_path=document_filters.source_path,
-        extractor_id=document_filters.extractor_id,
-        extractor_version=document_filters.extractor_version,
-        locator_kind=document_filters.locator_kind,
+        language=request.code_filters.language,
+        path=request.code_filters.path,
+        node_type=request.code_filters.node_type,
+        function_name=request.code_filters.function_name,
+        class_name=request.code_filters.class_name,
+        doc_type=request.vault_filters.doc_type,
+        feature=request.vault_filters.feature,
+        date=request.vault_filters.date,
+        tag=request.vault_filters.tag,
+        include_paths=list(request.code_filters.include_paths) or None,
+        exclude_paths=list(request.code_filters.exclude_paths) or None,
+        dedup_locales=request.code_filters.dedup_locales,
+        prefer=request.code_filters.prefer,
+        exclude_domains=list(request.code_filters.exclude_domains) or None,
+        only_domains=list(request.code_filters.only_domains) or None,
+        include_domains=list(request.code_filters.include_domains) or None,
+        source_path=request.document_filters.source_path,
+        extractor_id=request.document_filters.extractor_id,
+        extractor_version=request.document_filters.extractor_version,
+        locator_kind=request.document_filters.locator_kind,
     )
-    root = pathlib.Path(root_dir).resolve()
+    root = pathlib.Path(request.root_dir).resolve()
     registry = get_registry()
     counts, count_failures, timings = _count_combined_domains(root)
     if not any(counts.values()):
-        return _empty_or_failed_combined_outcome(count_failures, top_k), timings
+        return _empty_or_failed_combined_outcome(count_failures, request.top_k), timings
 
     registry.load_model()
     with registry.lease(root) as slot:
@@ -275,13 +264,13 @@ def search_combined_timed(
             counts,
             count_failures,
             lambda: slot.searcher.search_vault(
-                query,
-                top_k=top_k,
-                doc_type=vault_filters.doc_type,
-                feature=vault_filters.feature,
-                date=vault_filters.date,
-                tag=vault_filters.tag,
-                intent=vault_filters.intent,
+                request.query,
+                top_k=request.top_k,
+                doc_type=request.vault_filters.doc_type,
+                feature=request.vault_filters.feature,
+                date=request.vault_filters.date,
+                tag=request.vault_filters.tag,
+                intent=request.vault_filters.intent,
             ),
         )
         code = _indexed_domain_outcome(
@@ -289,20 +278,20 @@ def search_combined_timed(
             counts,
             count_failures,
             lambda: slot.searcher.search_codebase(
-                query,
-                top_k=top_k,
-                language=code_filters.language,
-                path=code_filters.path,
-                node_type=code_filters.node_type,
-                function_name=code_filters.function_name,
-                class_name=code_filters.class_name,
-                include_paths=list(code_filters.include_paths) or None,
-                exclude_paths=list(code_filters.exclude_paths) or None,
-                dedup_locales=code_filters.dedup_locales,
-                prefer=code_filters.prefer,
-                exclude_domains=list(code_filters.exclude_domains) or None,
-                only_domains=list(code_filters.only_domains) or None,
-                include_domains=list(code_filters.include_domains) or None,
+                request.query,
+                top_k=request.top_k,
+                language=request.code_filters.language,
+                path=request.code_filters.path,
+                node_type=request.code_filters.node_type,
+                function_name=request.code_filters.function_name,
+                class_name=request.code_filters.class_name,
+                include_paths=list(request.code_filters.include_paths) or None,
+                exclude_paths=list(request.code_filters.exclude_paths) or None,
+                dedup_locales=request.code_filters.dedup_locales,
+                prefer=request.code_filters.prefer,
+                exclude_domains=list(request.code_filters.exclude_domains) or None,
+                only_domains=list(request.code_filters.only_domains) or None,
+                include_domains=list(request.code_filters.include_domains) or None,
             ),
         )
         document = _indexed_domain_outcome(
@@ -310,12 +299,12 @@ def search_combined_timed(
             counts,
             count_failures,
             lambda: slot.searcher.search_document(
-                query,
-                top_k=top_k,
-                source_path=document_filters.source_path,
-                extractor_id=document_filters.extractor_id,
-                extractor_version=document_filters.extractor_version,
-                locator_kind=document_filters.locator_kind,
+                request.query,
+                top_k=request.top_k,
+                source_path=request.document_filters.source_path,
+                extractor_id=request.document_filters.extractor_id,
+                extractor_version=request.document_filters.extractor_version,
+                locator_kind=request.document_filters.locator_kind,
             ),
         )
-    return CombinedSearchOutcome(vault, code, document, top_k), timings
+    return CombinedSearchOutcome(vault, code, document, request.top_k), timings

@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from vaultspec_rag import CombinedSearchRequest, DocumentSearchRequest
+
 from ..._public_search import (
     DocumentCombinedSearchFilters,
     search_combined,
@@ -22,8 +24,8 @@ pytestmark = pytest.mark.integration
 
 
 def test_empty_document_and_combined_search_need_no_model(tmp_path: Path) -> None:
-    assert search_documents(tmp_path, "query") == []
-    combined = search_combined(tmp_path, "query")
+    assert search_documents(DocumentSearchRequest(tmp_path, "query")) == []
+    combined = search_combined(CombinedSearchRequest(tmp_path, "query"))
     assert combined.results == []
     assert not combined.partial
     assert combined.vault.ok
@@ -56,21 +58,25 @@ def test_non_empty_public_facade_applies_document_owned_combined_filters(
     try:
         assert indexed.total >= 2
         documents = search_documents(
-            tmp_path,
-            phrase,
-            top_k=5,
-            source_path=selected_path,
+            DocumentSearchRequest(
+                tmp_path,
+                phrase,
+                top_k=5,
+                source_path=selected_path,
+            )
         )
         assert documents
         assert {result.path for result in documents} == {selected_path}
 
         combined = search_combined(
-            tmp_path,
-            phrase,
-            top_k=5,
-            document_filters=DocumentCombinedSearchFilters(
-                source_path=selected_path,
-            ),
+            CombinedSearchRequest(
+                tmp_path,
+                phrase,
+                top_k=5,
+                document_filters=DocumentCombinedSearchFilters(
+                    source_path=selected_path,
+                ),
+            )
         )
         assert combined.ok
         assert combined.document.ok

@@ -36,7 +36,9 @@ if TYPE_CHECKING:
     from ._public_index import DocumentScanResult, scan_documents
     from ._public_search import (
         CodeCombinedSearchFilters,
+        CombinedSearchRequest,
         DocumentCombinedSearchFilters,
+        DocumentSearchRequest,
         VaultCombinedSearchFilters,
         search_combined,
         search_combined_timed,
@@ -89,7 +91,9 @@ if TYPE_CHECKING:
 # Accessing ``vaultspec_rag.<name>`` imports the owning submodule on demand.
 _LAZY_EXPORTS: dict[str, str] = {
     "CodeCombinedSearchFilters": "_public_search",
+    "CombinedSearchRequest": "_public_search",
     "DocumentCombinedSearchFilters": "_public_search",
+    "DocumentSearchRequest": "_public_search",
     "VaultCombinedSearchFilters": "_public_search",
     "DocumentScanResult": "_public_index",
     "scan_documents": "_public_index",
@@ -141,9 +145,11 @@ __all__ = [
     "CodeCombinedSearchFilters",
     "CodebaseIndexer",
     "CombinedSearchOutcome",
+    "CombinedSearchRequest",
     "DocumentCombinedSearchFilters",
     "DocumentIndexer",
     "DocumentScanResult",
+    "DocumentSearchRequest",
     "DocumentSearchResult",
     "EmbeddingModel",
     "GraphCache",
