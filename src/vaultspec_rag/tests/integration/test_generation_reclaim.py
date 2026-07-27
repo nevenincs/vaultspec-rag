@@ -216,7 +216,11 @@ class TestTheCycleRunsTheGenerationPass:
         """
         from ..._store_models import publish_served_code_collection
         from ...storage_manifest import record_root
-        from ...storage_reclamation import ReclaimPolicy, run_maintenance_cycle
+        from ...storage_reclamation import (
+            MaintenanceCycleRequest,
+            ReclaimPolicy,
+            run_maintenance_cycle,
+        )
 
         _ = isolated_status_dir
         entry = record_root(tmp_path, backend="local")
@@ -226,13 +230,15 @@ class TestTheCycleRunsTheGenerationPass:
         publish_served_code_collection(tmp_path, served)
         try:
             result = run_maintenance_cycle(
-                client,
-                now=_NOW,
-                policy=ReclaimPolicy(),
-                storage_dir=None,
-                snapshots_dir=tmp_path / "snapshots",
-                archive_dir=tmp_path / "archive",
-                dry_run=True,
+                MaintenanceCycleRequest(
+                    client=client,
+                    now=_NOW,
+                    policy=ReclaimPolicy(),
+                    storage_dir=None,
+                    snapshots_dir=tmp_path / "snapshots",
+                    archive_dir=tmp_path / "archive",
+                    dry_run=True,
+                )
             )
             live = _live(client)
         finally:
