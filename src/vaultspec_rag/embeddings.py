@@ -575,8 +575,6 @@ class EmbeddingModel:
         """Run the finite dense OOM ladder with an explicit output lifetime."""
         import torch
 
-        from .memory_probe import cuda_forward_peak_capture
-
         if batch_size is None:
             batch_size = self._default_encode_batch_size()
 
@@ -718,53 +716,11 @@ class EmbeddingModel:
             try:
                 for start in range(0, len(truncated), batch_size):
                     texts_batch = truncated[start : start + batch_size]
-                    accelerator_tensor = None
-                    cpu_tensor = None
-                    cpu_sparse_tensor = None
                     try:
-                        if gpu_lock is None:
-                            accelerator_tensor = cast(
-                                "torch.Tensor",
-                                self._sparse_model.encode_document(
-                                    texts_batch,
-                                    batch_size=batch_size,
-                                    show_progress_bar=False,
-                                    convert_to_tensor=True,
-                                    convert_to_sparse_tensor=False,
-                                    save_to_cpu=False,
-                                ),
-                            )
-                        else:
-                            with timed_gpu_lock(gpu_lock), cuda_forward_peak_capture():
-                                accelerator_tensor = cast(
-                                    "torch.Tensor",
-                                    self._sparse_model.encode_document(
-                                        texts_batch,
-                                        batch_size=batch_size,
-                                        show_progress_bar=False,
-                                        convert_to_tensor=True,
-                                        convert_to_sparse_tensor=False,
-                                        save_to_cpu=False,
-                                    ),
-                                )
-
-                        # Sentence Transformers 5.6.0 otherwise performs this
-                        # transfer inside encode when save_to_cpu=True. Keep
-                        # the returned dense tensor GPU-resident only until the
-                        # forward lock is released, then immediately transfer
-                        # and drop the accelerator reference before CPU sparse
-                        # conversion and Python result mapping.
-                        cpu_tensor = accelerator_tensor.cpu()
-                        del accelerator_tensor
-                        accelerator_tensor = None
-                        cpu_sparse_tensor = cpu_tensor.to_sparse().coalesce()
-                        del cpu_tensor
-                        cpu_tensor = None
-                        results.extend(_sparse_tensor_to_results(cpu_sparse_tensor))
+                        results.extend(
+                            self._encode_sparse_batch(texts_batch, batch_size, gpu_lock)
+                        )
                     finally:
-                        del accelerator_tensor
-                        del cpu_tensor
-                        del cpu_sparse_tensor
                         del texts_batch
                 return results
             except torch.cuda.OutOfMemoryError:
@@ -777,6 +733,60 @@ class EmbeddingModel:
                     "CUDA OOM during sparse encoding, retrying with batch_size=%d",
                     batch_size,
                 )
+
+    def _encode_sparse_batch(
+        self,
+        texts_batch: list[str],
+        batch_size: int,
+        gpu_lock: threading.Lock | None,
+    ) -> list[SparseResult]:
+        """Run one sparse forward, then move and convert it outside the GPU lock."""
+        import torch
+
+        from .memory_probe import cuda_forward_peak_capture
+
+        accelerator_tensor = None
+        cpu_tensor = None
+        cpu_sparse_tensor = None
+        try:
+            if gpu_lock is None:
+                accelerator_tensor = cast(
+                    "torch.Tensor",
+                    self._sparse_model.encode_document(
+                        texts_batch,
+                        batch_size=batch_size,
+                        show_progress_bar=False,
+                        convert_to_tensor=True,
+                        convert_to_sparse_tensor=False,
+                        save_to_cpu=False,
+                    ),
+                )
+            else:
+                with timed_gpu_lock(gpu_lock), cuda_forward_peak_capture():
+                    accelerator_tensor = cast(
+                        "torch.Tensor",
+                        self._sparse_model.encode_document(
+                            texts_batch,
+                            batch_size=batch_size,
+                            show_progress_bar=False,
+                            convert_to_tensor=True,
+                            convert_to_sparse_tensor=False,
+                            save_to_cpu=False,
+                        ),
+                    )
+            # Sentence Transformers otherwise performs this transfer inside
+            # encode when save_to_cpu=True. Release the GPU tensor first.
+            cpu_tensor = accelerator_tensor.cpu()
+            del accelerator_tensor
+            accelerator_tensor = None
+            cpu_sparse_tensor = cpu_tensor.to_sparse().coalesce()
+            del cpu_tensor
+            cpu_tensor = None
+            return _sparse_tensor_to_results(cpu_sparse_tensor)
+        finally:
+            del accelerator_tensor
+            del cpu_tensor
+            del cpu_sparse_tensor
 
     def encode_query_sparse(self, query: str) -> SparseResult:
         """Encode a search query as a SPLADE sparse vector on GPU.
