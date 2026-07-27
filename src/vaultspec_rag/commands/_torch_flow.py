@@ -316,15 +316,26 @@ def _run_torch_config_uninstall(
         logger.error("torch_config.detect_state failed: %s", exc)
         report.torch_config_action = TorchConfigAction.ERROR
         report.warnings.append(f"torch-config inspect failed: {exc}")
-        return
+    else:
+        _apply_torch_uninstall_state(
+            state=state,
+            pyproject=pyproject,
+            report=report,
+            dry_run=dry_run,
+        )
 
-    if state == TorchConfigState.NO_PROJECT_FILE:
+
+def _apply_torch_uninstall_state(
+    *,
+    state: TorchConfigState,
+    pyproject: Path,
+    report: UninstallReport,
+    dry_run: bool,
+) -> None:
+    """Apply the uninstall action selected by an already-inspected TOML state."""
+    if state in {TorchConfigState.NO_PROJECT_FILE, TorchConfigState.MISSING}:
         report.torch_config_action = TorchConfigAction.ABSENT
-        return
-    if state == TorchConfigState.MISSING:
-        report.torch_config_action = TorchConfigAction.ABSENT
-        return
-    if state == TorchConfigState.CUSTOMISED:
+    elif state == TorchConfigState.CUSTOMISED:
         # remove_patch is safe to call on CUSTOMISED - it short-circuits
         # before any write and returns the conflict list. Call it in
         # both dry-run and wet modes so the report is symmetric with
@@ -335,38 +346,34 @@ def _run_torch_config_uninstall(
             logger.error("torch_config.remove_patch failed on CUSTOMISED: %s", exc)
             report.torch_config_action = TorchConfigAction.ERROR
             report.warnings.append(f"torch-config inspect failed: {exc}")
-            return
-        report.torch_config_action = TorchConfigAction.SKIPPED
-        report.torch_config_conflicts = list(patch_report.conflicts)
-        report.warnings.append(
-            "pyproject.toml has a non-canonical cu130 block; "
-            "skipping removal - resolve manually"
-        )
-        return
-
-    # state is CANONICAL.
-    if dry_run:
+        else:
+            report.torch_config_action = TorchConfigAction.SKIPPED
+            report.torch_config_conflicts = list(patch_report.conflicts)
+            report.warnings.append(
+                "pyproject.toml has a non-canonical cu130 block; "
+                "skipping removal - resolve manually"
+            )
+    elif dry_run:
         report.torch_config_action = TorchConfigAction.DRY_RUN
         report.torch_direct_dep_action = "dry_run"
-        return
-
-    try:
-        patch_report = _mutate.remove_patch(pyproject)
-    except Exception as exc:
-        logger.error("torch_config.remove_patch failed: %s", exc)
-        report.torch_config_action = TorchConfigAction.ERROR
-        report.warnings.append(f"torch-config write failed: {exc}")
-        return
-    report.torch_config_action = patch_report.action
-    report.torch_config_conflicts = list(patch_report.conflicts)
-    if patch_report.action == TorchConfigAction.REMOVED:
-        dep_report = _direct_dep.remove_managed_direct_torch_dep(pyproject)
-        report.torch_direct_dep_action = dep_report.action
-        report.torch_direct_dep_location = dep_report.location
-        report.torch_config_conflicts.extend(dep_report.conflicts)
-        if dep_report.action == "removed":
-            report.warnings.append(
-                "removed vaultspec-rag managed "
-                f"`{DIRECT_TORCH_REQUIREMENT}` from "
-                f"{dep_report.location}."
-            )
+    else:
+        try:
+            patch_report = _mutate.remove_patch(pyproject)
+        except Exception as exc:
+            logger.error("torch_config.remove_patch failed: %s", exc)
+            report.torch_config_action = TorchConfigAction.ERROR
+            report.warnings.append(f"torch-config write failed: {exc}")
+        else:
+            report.torch_config_action = patch_report.action
+            report.torch_config_conflicts = list(patch_report.conflicts)
+            if patch_report.action == TorchConfigAction.REMOVED:
+                dep_report = _direct_dep.remove_managed_direct_torch_dep(pyproject)
+                report.torch_direct_dep_action = dep_report.action
+                report.torch_direct_dep_location = dep_report.location
+                report.torch_config_conflicts.extend(dep_report.conflicts)
+                if dep_report.action == "removed":
+                    report.warnings.append(
+                        "removed vaultspec-rag managed "
+                        f"`{DIRECT_TORCH_REQUIREMENT}` from "
+                        f"{dep_report.location}."
+                    )
